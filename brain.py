@@ -22749,8 +22749,6 @@ def _check_tool_dedup(name: str, args: dict) -> str | None:
     threads and ThreadPoolExecutor batches that would otherwise each get a
     fresh, empty dedup set and miss every duplicate.
     """
-    if not _variance_flag("tool_dedup"):
-        return None
     _DEDUP_EXEMPT = {"memory_recall", "memory_shared", "delegate_task", "task_status",
                      "schedule_list", "schedule_history",
                      # read_document / read_file have their own per-session
@@ -22895,8 +22893,6 @@ def _read_doc_cache_lookup(path: str) -> str | None:
     same on-disk identity (mtime+size). Otherwise None — caller proceeds with
     the real read.
     """
-    if not _variance_flag("read_doc_cache"):
-        return None
     sid = _read_doc_cache_sid()
     try:
         st = os.stat(path)
@@ -23704,26 +23700,8 @@ def _extract_and_save_mcp_blobs_direct(raw_result: str, session_id: str) -> str:
     return json.dumps(parsed)
 
 
-# --- Concurrent Tool Execution (Phase 5) ---
-# Tools classified as concurrency-safe (read-only, no side effects)
-_CONCURRENT_SAFE_TOOLS = {
-    "read_file", "list_directory", "search_files", "read_document",
-    "memory_recall", "memory_shared",
-    "exa_search", "web_fetch",
-    "code_graph_query",
-    "schedule_list", "schedule_history", "list_nodes", "task_status",
-    "context_search", "context_detail", "context_recall",
-    "git_command",  # read-only git commands are safe (status, log, diff, blame)
-}
-
-
 def _execute_tools_batch(tool_calls: list[dict], event_callback=None, tool_round: int = 0) -> list[dict]:
-    """Execute a batch of tool calls with concurrent-safe parallelism.
-
-    Partitions tool calls into batches:
-    - Consecutive concurrent-safe tools run in parallel (ThreadPoolExecutor)
-    - Unsafe tools run sequentially, one at a time
-    Results are returned in the original order.
+    """Execute a batch of tool calls sequentially.
 
     Each tool_call dict: {"id": str, "name": str, "input": dict}
     Returns list of {"tool_use_id": str, "result": str} in order.
@@ -23737,121 +23715,23 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None, tool_round
     except Exception:
         pass
 
-    # Partition into batches: [(is_concurrent, [tool_calls...])]
-    batches = []
-    current_batch = []
-    current_is_concurrent = None
-
-    _parallel_enabled = _variance_flag("parallel_tool_batching")
-    for tc in tool_calls:
-        is_safe = _parallel_enabled and (tc["name"] in _CONCURRENT_SAFE_TOOLS)
-        # git_command: only safe for read-only subcommands
-        if tc["name"] == "git_command":
-            subcmd = tc["input"].get("subcommand", "")
-            if subcmd not in ("status", "log", "diff", "blame", "show", "branch", "tag", "remote"):
-                is_safe = False
-
-        if current_is_concurrent is None:
-            current_is_concurrent = is_safe
-        elif is_safe != current_is_concurrent:
-            batches.append((current_is_concurrent, current_batch))
-            current_batch = []
-            current_is_concurrent = is_safe
-        current_batch.append(tc)
-
-    if current_batch:
-        batches.append((current_is_concurrent, current_batch))
-
-    # Execute batches
     results = []
-    for is_concurrent, batch in batches:
-        if is_concurrent and len(batch) > 1:
-            # Parallel execution
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            # Snapshot parent thread-local context so worker threads inherit it.
-            # Without this, session-scoped dedup and MCP routing silently start
-            # fresh per thread and miss duplicate calls / agent context.
-            _parent_ctx = {
-                "current_session_id": getattr(_thread_local, 'current_session_id', None),
-                "session_id": getattr(_thread_local, 'session_id', None),
-                "current_agent": getattr(_thread_local, 'current_agent', None),
-                "mcp_manager": getattr(_thread_local, 'mcp_manager', None),
-                "current_user_id": getattr(_thread_local, 'current_user_id', None),
-            }
-            futures = {}
-            with ThreadPoolExecutor(max_workers=min(5, len(batch))) as executor:
-                for tc in batch:
-                    if event_callback:
-                        event_callback("tool_call", {"name": tc["name"], "args": tc["input"], "tool_round": tool_round})
-                    _display_tool_call(tc["name"], tc["input"])
-                    future = executor.submit(_execute_tool_in_thread, tc["name"], tc["input"],
-                                             tc["id"], event_callback, _parent_ctx)
-                    futures[future] = tc
-
-                # Collect results preserving order
-                result_map = {}
-                for future in as_completed(futures):
-                    tc = futures[future]
-                    try:
-                        result = future.result()
-                    except Exception as e:
-                        result = _err(f"Tool execution error: {e}")
-                    result_map[tc["id"]] = result
-                    _display_tool_result(tc["name"], result)
-                    if event_callback:
-                        event_callback("tool_result", {"name": tc["name"], "result": result, "tool_round": tool_round})
-
-            # Append in original order
-            for tc in batch:
-                results.append({"tool_use_id": tc["id"], "result": result_map[tc["id"]]})
-        else:
-            # Sequential execution
-            for tc in batch:
-                _display_tool_call(tc["name"], tc["input"])
-                if event_callback:
-                    event_callback("tool_call", {"name": tc["name"], "args": tc["input"], "tool_round": tool_round})
-                _thread_local.event_callback = event_callback
-                _thread_local.tool_use_id = tc["id"]
-                try:
-                    result = _execute_tool(tc["name"], tc["input"])
-                finally:
-                    _thread_local.event_callback = None
-                    _thread_local.tool_use_id = None
-                _display_tool_result(tc["name"], result)
-                if event_callback:
-                    event_callback("tool_result", {"name": tc["name"], "result": result, "tool_round": tool_round})
-                results.append({"tool_use_id": tc["id"], "result": result})
+    for tc in tool_calls:
+        _display_tool_call(tc["name"], tc["input"])
+        if event_callback:
+            event_callback("tool_call", {"name": tc["name"], "args": tc["input"], "tool_round": tool_round})
+        _thread_local.event_callback = event_callback
+        _thread_local.tool_use_id = tc["id"]
+        try:
+            result = _execute_tool(tc["name"], tc["input"])
+        finally:
+            _thread_local.event_callback = None
+            _thread_local.tool_use_id = None
+        _display_tool_result(tc["name"], result)
+        if event_callback:
+            event_callback("tool_result", {"name": tc["name"], "result": result, "tool_round": tool_round})
+        results.append({"tool_use_id": tc["id"], "result": result})
     return results
-
-
-def _execute_tool_in_thread(name: str, args: dict, tool_id: str, event_callback,
-                             parent_ctx: dict | None = None) -> str:
-    """Execute a single tool in a worker thread with proper thread-local setup.
-
-    parent_ctx carries thread-local state that must travel into the worker thread
-    so downstream code (session-scoped dedup, worker idempotency keys, MCP routing,
-    agent context) sees the same environment as the calling agentic-loop thread.
-    """
-    ctx = parent_ctx or {}
-    _thread_local.event_callback = event_callback
-    _thread_local.tool_use_id = tool_id
-    # Propagate parent session/agent/mcp context so session-scoped state
-    # (dedup, worker keys) isn't silently duplicated per thread.
-    _worker_ctx = ExecutionContext(
-        mode="delegate",
-        agent_id=getattr(ctx.get("current_agent"), "agent_id", "") or "",
-        session_id=ctx.get("current_session_id") or ctx.get("session_id") or "",
-        user_id=ctx.get("current_user_id") or "",
-        mcp_manager=ctx.get("mcp_manager"),
-    )
-    _worker_ctx_agent = ctx.get("current_agent")
-    init_thread_context(_worker_ctx, agent_config=_worker_ctx_agent)
-    try:
-        return _execute_tool(name, args)
-    finally:
-        _thread_local.event_callback = None
-        _thread_local.tool_use_id = None
-        clear_thread_context()
 
 
 def _execute_tool(name: str, args: dict) -> str:
@@ -23967,17 +23847,6 @@ def _execute_tool_inner(name: str, args: dict) -> str:
 
 MAX_TOOL_ROUNDS = 15  # Maximum number of tool-use round trips before forcing a text response
 MAX_TOOL_ROUNDS_PROXY = 8  # Tighter limit for CLIProxyAPI (shares personal OAuth quota)
-MAX_OUTPUT_RECOVERY_LIMIT = 3  # Max resume attempts when model hits output token limit
-# Diminishing-returns guard: after MIN_ROUND rounds, if the last WINDOW completion-token deltas
-# are all below THRESHOLD, stop — the model is plateauing in the tool loop.
-DIMINISHING_MIN_ROUND = 3
-DIMINISHING_WINDOW = 2
-DIMINISHING_THRESHOLD_TOKENS = 500
-_MAX_OUTPUT_RESUME_MSG = (
-    "Output token limit hit. Resume directly — no apology, no recap of what you were doing. "
-    "Pick up mid-thought, mid-sentence, mid-code exactly where you stopped."
-)
-
 # Intent-vs-action guard: detects "I'll write…/Let me search…" stalls where the
 # model announces the next step but stops without calling the tool. Compiled
 # once at module load. Anchored to the LAST sentence of the reply.
@@ -24023,17 +23892,6 @@ def _middleware_cancel_check(messages, tool_round, event_callback, **ctx):
         raise TaskCancelled()
     return messages, True
 
-def _middleware_tool_result_budget(messages, tool_round, event_callback, **ctx):
-    """Persist oversized tool results to disk (Layer 1)."""
-    _apply_tool_result_budget(messages, session_id=ctx.get("session_id"))
-    return messages, True
-
-def _middleware_microcompact(messages, tool_round, event_callback, **ctx):
-    """Clear stale tool results every 2 rounds (Layer 2)."""
-    if tool_round > 0 and tool_round % 2 == 0:
-        messages, freed = _microcompact(messages, keep_recent=5)
-    return messages, True
-
 def _middleware_compress_old(messages, tool_round, event_callback, **ctx):
     """Compress old tool results when accumulated budget exceeded (Layer 3)."""
     if tool_round > 0:
@@ -24043,105 +23901,22 @@ def _middleware_compress_old(messages, tool_round, event_callback, **ctx):
             _compress_old_tool_results(messages, keep_recent=4)
     return messages, True
 
-# Tools that python_exec can replace when chained
-_PYEXEC_CONSOLIDATABLE = {
-    "read_file", "list_directory", "search_files",
-    "read_document", "write_document", "edit_document",
-    "write_file", "edit_file",
-}
-
-def _middleware_pyexec_hint(messages, tool_round, event_callback, **ctx):
-    """Suggest python_exec when the model chains 3+ file/doc tool calls."""
-    if tool_round < 1:
-        return messages, True
-    # Only if agent has code_exec enabled
-    allowed = _get_agent_tool_names()
-    if allowed is not None and "python_exec" not in allowed:
-        return messages, True
-    # Don't hint if already using python_exec this session
-    if getattr(_thread_local, '_pyexec_hint_sent', False):
-        return messages, True
-
-    # Count consolidatable tool calls in the current turn (all rounds since last user message)
-    consolidatable_count = 0
-    for msg in reversed(messages):
-        if msg.get("role") == "user" and "tool_call_id" not in msg and "[Efficiency hint" not in msg.get("content", ""):
-            break
-        if msg.get("role") == "assistant" and "tool_calls" in msg:
-            for tc in msg["tool_calls"]:
-                name = tc.get("function", {}).get("name", "")
-                if name in _PYEXEC_CONSOLIDATABLE:
-                    consolidatable_count += 1
-
-    if consolidatable_count >= 3:
-        _thread_local._pyexec_hint_sent = True
-        hint = (
-            "[Efficiency hint: You made multiple file/document tool calls that could be consolidated "
-            "into a single python_exec call. For multi-file reads, data processing, or bulk operations, "
-            "write one Python script instead of chaining tool calls — each tool round re-sends the full "
-            "context to the LLM. Use python_exec for the remaining work if applicable.]"
-        )
-        messages.append({"role": "user", "content": hint})
-    return messages, True
-
 # Ordered middleware pipeline — runs between tool rounds (NOT for full LCM compaction,
 # which happens at turn boundaries in send_message before round 0)
 _MIDDLEWARE_PIPELINE = [
     _middleware_cancel_check,
-    _middleware_tool_result_budget,
-    _middleware_pyexec_hint,
-    _middleware_microcompact,
     _middleware_compress_old,
 ]
-
-_MIDDLEWARE_FLAG_NAMES = {
-    _middleware_tool_result_budget: "tool_result_budget_middleware",
-    _middleware_pyexec_hint:        "pyexec_hint_middleware",
-    _middleware_microcompact:       "microcompact_middleware",
-    _middleware_compress_old:       "compress_old_middleware",
-}
 
 def _run_middleware(messages, tool_round, event_callback, **ctx):
     """Run the pre-turn middleware pipeline. Returns (messages, should_continue)."""
     for mw in _MIDDLEWARE_PIPELINE:
-        flag_name = _MIDDLEWARE_FLAG_NAMES.get(mw)
-        if flag_name and not _variance_flag(flag_name):
-            continue
         messages, should_continue = mw(messages, tool_round, event_callback, **ctx)
         if not should_continue:
             return messages, False
     return messages, True
 MAX_TOOL_RESULT_CHARS = 30000  # ~7,500 tokens — truncate individual tool results beyond this
 MAX_TOOL_RESULTS_TOKENS = 50000  # Cap accumulated tool results per turn before compressing old ones
-
-# Variance kill-switches retired in Phase 5 (sidecar owns the loop now).
-# This stub keeps the existing _variance_flag(name) call sites compiling until
-# step 6 (middleware deletion) and step 7 (native-loop deletion) collapse the
-# guarded branches. The boolean returned matches the v8.37.0 validated default
-# for each flag — same runtime behavior as production today.
-_VARIANCE_FROZEN_DEFAULTS = {
-    "force_all_light": True,
-    "worker_subagent": False,
-    "auto_isolation": False,
-    "tool_result_summariser": False,
-    "tool_result_budget_middleware": False,
-    "microcompact_middleware": False,
-    "compress_old_middleware": True,
-    "pyexec_hint_middleware": False,
-    "diminishing_returns_guard": False,
-    "max_output_recovery": False,
-    "truncated_tool_call_discard": False,
-    "proactive_round0_compaction": False,
-    "reactive_400_compaction": False,
-    "parallel_tool_batching": False,
-    "tool_dedup": True,
-    "read_doc_cache": True,
-    "sanitize_tool_result_cap": False,
-    "intent_action_guard": True,
-}
-
-def _variance_flag(name: str) -> bool:
-    return _VARIANCE_FROZEN_DEFAULTS.get(name, True)
 
 # Per-agent runtime limits (overridable via agent.json "limits" block)
 AGENT_LIMITS_DEFAULTS = {
@@ -24208,13 +23983,6 @@ def _sanitize_tool_result(name: str, result: str) -> str:
     # Replace base64 image blobs with placeholder
     result = _BASE64_DATA_RE.sub('"data": "[base64 image removed — already processed]"', result)
     result = _BASE64_RAW_RE.sub('[base64 data removed]', result)
-
-    # Truncate oversized results
-    if _variance_flag("sanitize_tool_result_cap"):
-        _char_limit = _get_agent_limits().get("tool_result_char_limit", MAX_TOOL_RESULT_CHARS)
-        if len(result) > _char_limit:
-            result = result[:_char_limit] + \
-                f"\n\n[Result truncated from {len(result):,} to {_char_limit:,} chars]"
     return result
 
 
@@ -24250,18 +24018,17 @@ def _compress_old_tool_results(messages: list[dict], keep_recent: int = 4):
                         block["content"] = content[:200] + "\n[...compressed...]"
 
 
-# --- Tool Result Budget (Phase 3): Persist large results to disk ---
+# --- Tool Result Budget: persist large results to disk ---
+# Called unconditionally from handlers/chat.py before every turn; the variance
+# flag that used to gate this middleware was retired in Phase 5 step 6 but the
+# preprocessing call site stays until step 7's broader cleanup.
 
 TOOL_RESULT_BUDGET_THRESHOLD = 50000  # chars — persist results larger than this
 TOOL_RESULT_PREVIEW_SIZE = 2000  # chars — preview kept in context
 
 def _apply_tool_result_budget(messages: list[dict], session_id: str | None = None,
                                agent_id: str | None = None) -> int:
-    """Persist oversized tool results to disk and replace with truncated previews.
-
-    Modeled on Claude Code's applyToolResultBudget (toolResultStorage.ts).
-    Returns the number of results persisted.
-    """
+    """Persist oversized tool results to disk and replace with truncated previews."""
     if not session_id:
         session_id = getattr(_thread_local, 'current_session_id', None) or ""
     if not agent_id:
@@ -24318,41 +24085,29 @@ def _apply_tool_result_budget(messages: list[dict], session_id: str | None = Non
     return persisted
 
 
-# --- Microcompact (Phase 4): Strip stale tool results ---
+# --- Microcompact: strip stale tool results ---
+# Called unconditionally from handlers/chat.py before every turn.
 
-# Tools whose results become stale quickly and can be safely cleared
 _MICROCOMPACT_TOOLS = {
     "read_file", "execute_command", "search_files", "list_directory",
     "web_fetch", "exa_search", "read_document", "code_graph_query",
-    "write_file", "edit_file",  # write results are just confirmations
+    "write_file", "edit_file",
     "python_exec",
 }
-# Tool call arguments that should be truncated in old assistant messages (model already knows what it wrote)
 _COMPACT_TOOL_ARGS = {"python_exec": "code", "execute_command": "command"}
-# Tools whose results are context-critical and must never be cleared
 _MICROCOMPACT_EXEMPT = {
     "memory_recall", "memory_shared", "delegate_task", "task_status",
     "context_search", "context_detail", "context_recall",
 }
 
 def _microcompact(messages: list[dict], keep_recent: int = 5) -> tuple[list[dict], int]:
-    """Lightweight compaction: clear old tool results for compactable tools.
-
-    Modeled on Claude Code's microcompactMessages. Unlike _compress_old_tool_results
-    which truncates to 200 chars, this completely replaces stale content with a
-    minimal marker, and is tool-aware (only clears known-safe tools).
-
-    Returns (messages, estimated_tokens_freed).
-    """
+    """Clear old tool results for compactable tools. Returns (messages, tokens_freed)."""
     tokens_freed = 0
-
-    # Collect (index, tool_name, content_size) for all tool results
     tool_entries = []  # (msg_index, tool_name, content_size, is_openai)
     for i, msg in enumerate(messages):
         if msg.get("role") == "tool":
             content = msg.get("content", "")
             content_size = len(content) if isinstance(content, str) else 0
-            # Try to find the tool name from the preceding assistant message
             tool_name = _find_tool_name_for_result(messages, i, msg.get("tool_call_id"))
             tool_entries.append((i, tool_name, content_size, True))
         elif msg.get("role") == "user" and isinstance(msg.get("content"), list):
@@ -24363,19 +24118,15 @@ def _microcompact(messages: list[dict], keep_recent: int = 5) -> tuple[list[dict
                     tool_name = _find_tool_name_for_block(messages, block.get("tool_use_id"))
                     tool_entries.append((i, tool_name, content_size, False))
 
-    # Filter to compactable tools only
     compactable = [e for e in tool_entries
                    if e[1] and e[1] in _MICROCOMPACT_TOOLS and e[1] not in _MICROCOMPACT_EXEMPT]
-
-    # Keep the most recent N, clear the rest
     if len(compactable) <= keep_recent:
         return messages, 0
-
     to_clear = compactable[:-keep_recent]
 
     cleared_indices = set()
     for idx, tool_name, content_size, is_openai in to_clear:
-        if content_size <= 100:  # Already cleared or tiny
+        if content_size <= 100:
             continue
         msg = messages[idx]
         marker = f"[Old {tool_name} result cleared]"
@@ -24391,10 +24142,7 @@ def _microcompact(messages: list[dict], keep_recent: int = 5) -> tuple[list[dict
                         block["content"] = marker
         cleared_indices.add(idx)
 
-    # Also truncate large tool call arguments in old assistant messages
-    # (the model already knows what code it wrote — no need to re-send it)
     for idx in cleared_indices:
-        # Find the assistant message that owns this tool result
         tool_call_id = messages[idx].get("tool_call_id")
         if not tool_call_id:
             continue
@@ -24415,13 +24163,11 @@ def _microcompact(messages: list[dict], keep_recent: int = 5) -> tuple[list[dict
                             except (json.JSONDecodeError, KeyError):
                                 pass
                 break
-
     return messages, tokens_freed
 
 
 def _find_tool_name_for_result(messages: list[dict], tool_msg_idx: int,
                                 tool_call_id: str | None) -> str | None:
-    """Find the tool name for an OpenAI-style tool result by scanning backwards."""
     if not tool_call_id:
         return None
     for i in range(tool_msg_idx - 1, -1, -1):
@@ -24434,7 +24180,6 @@ def _find_tool_name_for_result(messages: list[dict], tool_msg_idx: int,
 
 
 def _find_tool_name_for_block(messages: list[dict], tool_use_id: str | None) -> str | None:
-    """Find the tool name for an Anthropic-style tool_result by scanning backwards."""
     if not tool_use_id:
         return None
     for msg in reversed(messages):
@@ -25282,12 +25027,8 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             mark_model_used(model)
         except Exception:
             pass
-        _thread_local._pyexec_hint_sent = False
-        _thread_local._max_output_recovery_count = 0
         _thread_local._intent_action_recovery_count = 0
-        _thread_local._has_attempted_reactive_compact = False
         _thread_local._escape_watcher = escape_watcher
-        _thread_local._round_deltas = []
 
         # First-turn greeting: prepend the user's preferred name to the first
         # user message of a session. Kept OUT of the system prompt so the
@@ -25654,38 +25395,8 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     # Hard stop: terminate the loop entirely at 1.5x the soft cap to prevent runaway recursion
     if _tool_round >= int(effective_max_rounds * 1.5):
         return "[Tool round limit reached — stopping to prevent runaway loop. Check chat for partial progress.]"
-    # Diminishing-returns guard: if recent rounds added very little, the model is plateauing.
-    _deltas = getattr(_thread_local, '_round_deltas', None) or []
-    if (_variance_flag("diminishing_returns_guard")
-            and tools
-            and _tool_round >= DIMINISHING_MIN_ROUND
-            and len(_deltas) >= DIMINISHING_WINDOW
-            and all(d < DIMINISHING_THRESHOLD_TOKENS for d in _deltas[-DIMINISHING_WINDOW:])):
-        if event_callback:
-            event_callback("tool_loop_stop", {
-                "reason": "diminishing_returns",
-                "tool_round": _tool_round,
-                "recent_deltas": _deltas[-DIMINISHING_WINDOW:],
-            })
-        print(f"[diminishing returns: last {DIMINISHING_WINDOW} rounds added "
-              f"{_deltas[-DIMINISHING_WINDOW:]} tokens — stopping tool loop]", flush=True)
-        tools = False
     headers = make_headers(api_key)
     endpoint = f"{base_url}/chat/completions"
-
-    # Proactive compaction at the start of each new user turn (round 0).
-    # The middleware pipeline only runs between tool rounds, so a context that
-    # fills up between turns would otherwise slip through until the provider
-    # returns a 400 or the safety pre-flight fires.
-    if _tool_round == 0 and _variance_flag("proactive_round0_compaction"):
-        _sid_pre = session_id or getattr(_thread_local, 'current_session_id', None) or ""
-        max_ctx_pre = get_model_max_context(model)
-        messages, _pre_compacted = _check_and_compact(
-            messages, model, api_key, base_url,
-            max_tokens=max_ctx_pre, session_id=_sid_pre,
-        )
-        if _pre_compacted and event_callback:
-            event_callback("compacted", {})
 
     # Strip metadata from messages — API providers don't accept extra fields
     # Keep fields required by OpenAI tool call protocol.
@@ -25867,40 +25578,6 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         except:
             pass
         if e.code == 400:
-            # Reactive compact recovery (Phase 8): if prompt too long, try compaction
-            _prompt_too_long = ("prompt is too long" in error_msg.lower() or
-                                "maximum context length" in error_msg.lower() or
-                                "too many tokens" in error_msg.lower() or
-                                "context_length_exceeded" in error_msg.lower())
-            _has_attempted = getattr(_thread_local, '_has_attempted_reactive_compact', False)
-            if _prompt_too_long and not _has_attempted and _variance_flag("reactive_400_compaction"):
-                _thread_local._has_attempted_reactive_compact = True
-                logging.info(f"Prompt too long at round {_tool_round}, attempting reactive compact")
-                if event_callback:
-                    event_callback("compacting", {"reason": "prompt_too_long"})
-                # Layer 1: try microcompact
-                messages, mc_freed = _microcompact(messages, keep_recent=3)
-                if mc_freed > 0:
-                    if event_callback:
-                        event_callback("compacted", {"method": "microcompact", "freed": mc_freed})
-                    return send_message(messages, model, api_key, base_url,
-                                        silent=silent, tools=tools, escape_watcher=escape_watcher,
-                                        _tool_round=_tool_round, event_callback=event_callback,
-                                        inference_params=inference_params, session_id=session_id)
-                # Layer 2: try full LLM compaction
-                _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
-                max_ctx = get_model_max_context(model)
-                messages, compacted = _check_and_compact(
-                    messages, model, api_key, base_url,
-                    max_tokens=max_ctx, session_id=_sid, force=True,
-                )
-                if compacted:
-                    if event_callback:
-                        event_callback("compacted", {"method": "reactive_compact"})
-                    return send_message(messages, model, api_key, base_url,
-                                        silent=silent, tools=tools, escape_watcher=escape_watcher,
-                                        _tool_round=_tool_round, event_callback=event_callback,
-                                        inference_params=inference_params, session_id=session_id)
             print(error_msg, file=sys.stderr)
             _thread_local._last_send_error = {"code": e.code, "message": error_msg, "permanent": True}
             return None
@@ -26291,89 +25968,17 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             "tool_round": _tool_round,
         })
 
-    # Track per-round completion-token deltas for the diminishing-returns guard (checked at top of next round)
-    _deltas_list = getattr(_thread_local, '_round_deltas', None)
-    if _deltas_list is not None:
-        _deltas_list.append(_usage_out)
-
     # End LLM trace span (OpenAI handler)
     _llm_span_oai = getattr(_thread_local, 'current_trace_span', None)
     if _trace_manager and _llm_span_oai and _llm_span_oai.get("type") == "llm_call":
         _trace_manager.end_span(_llm_span_oai, status="ok",
                                  tokens_in=_usage_in, tokens_out=_usage_out)
 
-    # Detect truncated tool calls: finish_reason == "length" with incomplete JSON args
-    if finish_reason == "length" and tool_calls_map and _variance_flag("truncated_tool_call_discard"):
-        has_truncated = False
-        for tc in tool_calls_map.values():
-            try:
-                json.loads(tc["arguments"])
-            except (json.JSONDecodeError, ValueError):
-                has_truncated = True
-                break
-        if has_truncated:
-            print(f"[thinking model: truncated tool call detected, discarding incomplete tools]",
-                  file=sys.stderr)
-            tool_calls_map.clear()
-
-    # Max output token recovery (Phase 2): if model hit output limit, auto-resume
-    if finish_reason == "length" and not tool_calls_map and _variance_flag("max_output_recovery"):
-        recovery_count = getattr(_thread_local, '_max_output_recovery_count', 0)
-        if recovery_count < MAX_OUTPUT_RECOVERY_LIMIT:
-            _thread_local._max_output_recovery_count = recovery_count + 1
-            if event_callback:
-                event_callback("max_tokens_recovery", {
-                    "attempt": recovery_count + 1,
-                    "max_attempts": MAX_OUTPUT_RECOVERY_LIMIT,
-                })
-            # Thinking models consume max_tokens with invisible reasoning tokens.
-            # If visible output is <25% of completion budget, double max_tokens.
-            recovery_params = dict(inference_params) if inference_params else {}
-            visible_tokens = len(full_text) // 4
-            current_max = payload.get("max_tokens", get_model_max_output(model))
-            if _usage_out > 0 and visible_tokens < _usage_out * 0.25:
-                max_cap = get_model_max_context(model)
-                boosted = min(current_max * 2, max_cap)
-                if boosted > current_max:
-                    recovery_params["max_tokens"] = boosted
-                    print(f"[thinking model: boosting max_tokens {current_max} → {boosted}]",
-                          file=sys.stderr)
-            # Build continuation: assistant partial + resume prompt
-            if full_text:
-                messages.append({"role": "assistant", "content": full_text})
-                messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
-                return send_message(messages, model, api_key, base_url,
-                                    silent=silent, tools=tools, escape_watcher=escape_watcher,
-                                    _tool_round=_tool_round, event_callback=event_callback,
-                                    inference_params=recovery_params, session_id=session_id)
-        # Recovery exhausted or no text to resume from — inform the user
-        current_max = payload.get("max_tokens", get_model_max_output(model))
-        hint = (f"Output token limit reached (max_tokens={current_max}) and recovery "
-                f"attempts exhausted ({MAX_OUTPUT_RECOVERY_LIMIT}/{MAX_OUTPUT_RECOVERY_LIMIT}). "
-                f"This model may be using too many tokens on internal reasoning. "
-                f"Try: increase max_output in model settings, use a simpler prompt, "
-                f"or switch to a non-thinking model.")
-        print(f"[max_tokens exhausted] {hint}", file=sys.stderr)
-        if event_callback:
-            event_callback("max_tokens_exhausted", {
-                "message": hint,
-                "max_tokens": current_max,
-                "model": model,
-            })
-        if full_text:
-            full_text += f"\n\n⚠️ *{hint}*"
-        else:
-            full_text = f"⚠️ *{hint}*"
-        _thread_local._max_output_recovery_count = 0
-        _thread_local._intent_action_recovery_count = 0
-        return full_text
-
     if not tool_calls_map:
         # Intent-vs-action guard: catch "Now I'll write…/Let me search…" stalls.
         # When finish_reason=stop, no tool calls, and the visible text is short
         # AND announces a next action it didn't take — re-prompt once.
-        if (_variance_flag("intent_action_guard")
-                and full_text
+        if (full_text
                 and _usage_out is not None and _usage_out < 100  # short stall, not a real reply
                 and _INTENT_ACTION_PATTERNS.search(full_text)):
             _guard_count = getattr(_thread_local, '_intent_action_recovery_count', 0)
@@ -26401,8 +26006,7 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             _trace_manager.end_span(_req_span_oai, status="ok",
                                      tokens_in=_usage_in, tokens_out=_usage_out)
             _thread_local.request_trace_span = None
-        # Reset recovery counters on successful completion
-        _thread_local._max_output_recovery_count = 0
+        # Reset recovery counter on successful completion
         _thread_local._intent_action_recovery_count = 0
         return full_text
 

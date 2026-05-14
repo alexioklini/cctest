@@ -600,102 +600,14 @@ def _summarise_tool_result(
     artifact_meta: dict,
     session_id: str,
 ) -> tuple[str, list[dict], dict]:
-    """Call a cheap LLM to summarise the raw tool result.
+    """Return a static description of a worker tool result.
 
-    Uses the session's current model by default (cache reuse), with optional
-    per-agent override via agent.json summariser_model.
-
-    Returns (summary_text, sections_list, usage_dict).
-    usage_dict has keys: tokens_in, tokens_out, model. Zeros on fallback.
+    The LLM summariser was retired with the Phase 5 variance-flag deletion
+    (`tool_result_summariser=False`). Kept as a function (not inlined) because
+    `run_worker_subagent` and `maybe_retroactive_isolate` both expect the
+    3-tuple return shape — collapsing the callers is a step-7 concern.
     """
-    from brain import (
-        _thread_local, send_message_with_fallback,
-        resolve_provider_for_model, gdpr_pick_model_for_background,
-        GDPRBlockedError, _variance_flag,
-    )
-
-    # Variance kill-switch: skip the LLM summariser entirely → static summary
-    if not _variance_flag("tool_result_summariser"):
-        return _static_summary(tool_name, artifact_meta), [], {"tokens_in": 0, "tokens_out": 0, "model": ""}
-
-    cfg = _load_config()
-    max_chars = cfg.get("summariser_max_input_chars", 32000)
-
-    # Resolve model: agent override → session model
-    agent = getattr(_thread_local, 'current_agent', None)
-    override_model = ""
-    if agent:
-        agent_cfg = agent.config if hasattr(agent, 'config') else {}
-        override_model = (agent_cfg.get("summariser_model") or "").strip()
-
-    model = override_model or getattr(_thread_local, '_current_model', None) or ""
-    _zero_usage = {"tokens_in": 0, "tokens_out": 0, "model": model}
-    if not model:
-        return _static_summary(tool_name, artifact_meta), [], _zero_usage
-
-    truncated = raw_result[:max_chars]
-    if len(raw_result) > max_chars:
-        truncated += f"\n\n[... truncated from {len(raw_result):,} to {max_chars:,} chars]"
-
-    args_brief = json.dumps(args, ensure_ascii=False, default=str)
-    if len(args_brief) > 500:
-        args_brief = args_brief[:500] + "..."
-
-    # GDPR auto-fallback: tool results may contain personal data from the
-    # user's request or the tool's response. Reroute to the local fallback
-    # before summarising if PII is present and the current model is cloud.
-    # Hard-block with no local route → fall back to the static summary so
-    # the worker envelope still gets a description without leaking to cloud.
-    try:
-        model = gdpr_pick_model_for_background(
-            model, [args_brief, truncated], purpose=f"tool_summariser:{tool_name}")
-    except GDPRBlockedError:
-        return _static_summary(tool_name, artifact_meta), [], _zero_usage
-    except Exception:
-        pass
-    _zero_usage["model"] = model
-
-    try:
-        prov = resolve_provider_for_model(model)
-    except Exception:
-        return _static_summary(tool_name, artifact_meta), [], _zero_usage
-
-    messages = [
-        {"role": "system", "content": _SUMMARISER_SYSTEM},
-        {"role": "user", "content": (
-            f"Tool: {tool_name}\n"
-            f"Args: {args_brief}\n"
-            f"Output ({artifact_meta['size_bytes']} bytes):\n\n{truncated}"
-        )},
-    ]
-
-    usage_capture = {"tokens_in": 0, "tokens_out": 0, "model": model}
-
-    def _capture_cb(event_type, data):
-        if event_type == "usage":
-            usage_capture["tokens_in"] = data.get("tokens_in", 0)
-            usage_capture["tokens_out"] = data.get("tokens_out", 0)
-
-    try:
-        text = send_message_with_fallback(
-            messages,
-            model,
-            prov.get("api_key", ""),
-            prov.get("base_url", ""),
-            silent=True,
-            tools=False,
-            event_callback=_capture_cb,
-            provider_resolver=resolve_provider_for_model,
-            inference_params={"max_tokens": 512, "temperature": 0.0},
-            session_id=session_id,
-        )
-        if not text:
-            return _static_summary(tool_name, artifact_meta), [], usage_capture
-
-        summary, sections = _parse_summariser_output(text)
-        return summary, sections, usage_capture
-    except Exception:
-        return _static_summary(tool_name, artifact_meta), [], usage_capture
+    return _static_summary(tool_name, artifact_meta), [], {"tokens_in": 0, "tokens_out": 0, "model": ""}
 
 
 def _static_summary(tool_name: str, artifact_meta: dict) -> str:
@@ -991,36 +903,10 @@ def route_tool_execution(
     args: dict,
     inner_fn: Callable[[str, dict], str],
 ) -> str:
-    """Entry point. Decides direct vs worker execution.
+    """Entry point — runs the tool inline.
 
-    inner_fn must be claude_cli._execute_tool_inner — passed in explicitly
-    to keep execution.py decoupled from the full claude_cli import graph.
+    The worker-subagent / auto-isolation paths were retired with the Phase 5
+    variance-flag deletion. This thin wrapper is kept because brain._execute_tool
+    still imports it; step 7 (native-loop deletion) collapses it.
     """
-    cfg = _load_config()
-    if not cfg["workers_enabled"]:
-        return inner_fn(tool_name, args)
-
-    from brain import _thread_local, _variance_flag
-    if getattr(_thread_local, 'in_worker_subagent', False):
-        return inner_fn(tool_name, args)
-
-    # Variance kill-switches: force every tool down the light path.
-    if _variance_flag("force_all_light"):
-        return inner_fn(tool_name, args)
-
-    heaviness = _resolve_heaviness(tool_name, args)
-
-    if heaviness == "light":
-        return inner_fn(tool_name, args)
-
-    if heaviness == "heavy":
-        # If worker subagent is disabled, fall back to light path
-        if not _variance_flag("worker_subagent"):
-            return inner_fn(tool_name, args)
-        return run_worker_subagent(tool_name, args, inner_fn)
-
-    # "auto": execute direct, then check size
-    result = inner_fn(tool_name, args)
-    if not _variance_flag("auto_isolation"):
-        return result
-    return maybe_retroactive_isolate(tool_name, args, result)
+    return inner_fn(tool_name, args)
