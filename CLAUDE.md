@@ -336,10 +336,82 @@ Tool dispatch is **synchronous** by design — `handle_tools_call` returns to
 the sidecar before the proxy's translator drains `tool_dispatch_done`. Don't
 make dispatch async without rethinking the result-capture handoff.
 
+### Per-tool settings (admin-editable, global)
+
+`config.json → tool_settings` is a per-tool admin-editable record keyed by
+tool name. Loaded into `engine._tool_settings` at startup; mirrored onto
+`server_config["tool_settings"]`. Schema per record:
+
+```
+{
+  enabled:      bool   # default True. Global kill switch — false hides the
+                       # tool from EVERY agent, regardless of token_config.
+                       # Server-internal callers (Brain dispatching its own
+                       # tool_*() calls) are unaffected.
+  deferred:     bool   # default False. Per-tool defer override. ORs with
+                       # the per-agent group-level deferred_tool_groups —
+                       # a tool defers when EITHER applies.
+  description:  str    # prose injected into the system prompt when the
+  when_to_use:  str    # tool is in the active set. All four sections are
+  warnings:     str    # rendered under `## <tool_name> / ### <Section>`
+  examples:     str    # by `_render_tool_descriptions`. Empty = omitted.
+  applies_with: list   # all-of gate — tool's prose renders only when
+                       # every name in this list is also active.
+}
+```
+
+Defaults: `enabled=true`, `deferred=false`, all prose empty. Adding a prose
+record never accidentally hides or defers the tool. The renderer skips
+records where `enabled=false` defensively, even if a stale active set
+somehow contains the tool.
+
+**Endpoints**:
+- `GET /v1/tools/settings` — admin-only. Returns all 63 tools (sorted)
+  merged with their settings + reverse-indexed `group` string. Tools
+  without a record get safe defaults so the UI can render a single
+  affordance per tool.
+- `POST /v1/tools/settings` — admin-only. Saves one tool's record
+  atomically. Validates: `name` must exist in `TOOL_DISPATCH`, every
+  entry in `applies_with` must be a known tool, no self-reference,
+  `enabled`/`deferred` must be bool. Persists to `config.json`. Audited
+  via `engine._audit_log` (`action_type=tool_settings_save`).
+
+The legacy `tools.md` file is gone — its anchored blocks were one-shot
+migrated into `tool_settings` records on first server startup post-migration
+(see `migrate_tool_settings_from_md` in `brain.py`). Anchor → leading-tool
+mapping; multi-anchor blocks (`exa_search,web_fetch`) attach to the leader
+with the rest going into `applies_with`.
+
+**Admin UI** (`web/js/settings.js` — General Settings → Tools tab):
+grouped collapsible registry showing all 63 tools. Per-tool expanded
+panel exposes: enabled/deferred toggles, group label (read-only),
+optional integration knobs (for the ~13 tools with `tool_config` entries
+— API keys, timeouts, model selectors), 4 prose textareas, applies_with
+multi-select. Two save scopes: `Save` → POST `/v1/tools/settings`,
+`Save integration` → POST `/v1/tools/config` (legacy endpoint, single-key
+body for atomic per-tool replacement).
+
+**Tool prose vs project disciplines** (Topic A / B split, v9.0.x):
+- **Topic A — retrieval discipline** (search-first, query keyword shape,
+  saving guidance) lives in `tool_settings.mempalace_query.description`.
+  Renders for EVERY chat that has the tool, regardless of project mode.
+  Admin-editable.
+- **Topic B — output-format discipline** (refuse-on-empty, no-filler
+  precision, per-claim citation) lives in the `DEFAULT_PROJECT_INSTRUCTIONS`
+  constant in `brain.py`. Renders only when project + research_mode is on.
+  Hardcoded (Brain behavior, not user-editable). See "Project Mode" below.
+
 **Constraints**:
-- `execute_command`: no TTY, no stdin, `TERM=dumb`. Banned commands in `tools.md`.
-- Memory is MemPalace **direct, not MCP**. Tool: `mempalace_query` (+ `save_chat_to_memory`, `mempalace_get_drawer`, `mempalace_list_drawers`).
-- **Adding a new tool** = 4 edit sites in `brain.py`: `TOOL_DEFINITIONS`, `TOOL_GROUPS`, the `tool_*` function, `TOOL_DISPATCH`. No engine/tools/ entries unless the implementation is genuinely large (only `image_gen.py` qualifies today).
+- `execute_command`: no TTY, no stdin, `TERM=dumb`. Banned commands in
+  `tool_settings.execute_command.description`.
+- Memory is MemPalace **direct, not MCP**. Tool: `mempalace_query`
+  (+ `save_chat_to_memory`, `mempalace_get_drawer`, `mempalace_list_drawers`).
+- **Adding a new tool** = 4 edit sites in `brain.py`: `TOOL_DEFINITIONS`,
+  `TOOL_GROUPS`, the `tool_*` function, `TOOL_DISPATCH`. Per-tool prose
+  is added later via the admin UI, not in code.
+- **Pre-existing**: 4 tools (`memory_delete`, `memory_recall`, `memory_shared`,
+  `memory_persist`) are missing from `TOOL_GROUPS` — surface as
+  `(ungrouped)` in the admin UI. Brain.py bug, separate fix.
 
 ## Server API
 
@@ -401,23 +473,43 @@ Tree-sitter AST parsing, SQLite in `code-graph.db`. 14 langs. Qualified names `{
 - Archive: `status: "archived"` (files preserved). Delete: soft to `.trash/`.
 - **Notes**: AI editing uses `write_file`/`edit_file` (not tag-based). Note-AI sessions use `status: note_chat`, hidden from project chat list.
 
-### Project Mode: `research_mode` (v8.31.0)
+### Project Mode: `research_mode` (v8.31.0, split v9.0.x)
 
-`project.json.research_mode` (bool) gates the strict retrieval/refusal regime independently of the `instructions` field. Per-session `sessions.research_mode_override` (sticky NULL/0/1) layers on top — set from the composer button or session settings; null = use project default.
+`project.json.research_mode` (bool) gates the **output-format discipline**
+(Topic B — refuse-on-empty, precision, per-claim citation) independently
+of the `instructions` field. Per-session `sessions.research_mode_override`
+(sticky NULL/0/1) layers on top — set from the composer button or session
+settings; null = use project default.
 
 Effective mode = `session.research_mode_override if not None else project.research_mode`. Resolution lives in `_build_system_prompt` (sets `_thread_local.research_mode_override` upstream so `handlers/chat.py` reads the same value when gating the citation validator + re-round).
+
+**The split** (Topic A / B, v9.0.x):
+
+| Discipline | Source | Gating |
+|---|---|---|
+| Search-first ("memory IS the answer") | `tool_settings.mempalace_query.description` | tool present in active set |
+| Query discipline (short keywords, drop fillers) | `tool_settings.mempalace_query.description` | tool present |
+| Saving guidance (`save_chat_to_memory`) | `tool_settings.mempalace_query.description` | tool present |
+| **Refuse-on-empty** | `DEFAULT_PROJECT_INSTRUCTIONS` (brain.py) | project + research_mode |
+| **Precision discipline** (no plausible-sounding filler) | `DEFAULT_PROJECT_INSTRUCTIONS` | project + research_mode |
+| **Per-claim citation** (verbatim quotes per bullet) | `DEFAULT_PROJECT_INSTRUCTIONS` | project + research_mode |
+
+Topic A (retrieval discipline) is admin-editable per-tool — see the
+"Per-tool settings" subsection of "Tools" above. Topic B is hardcoded
+Brain behavior toggled by `research_mode`.
 
 **Research mode ON** (Q&A / policy-reproduction / compliance projects):
 - Strict `PROJECT MEMORY` block — mandatory 3-step flow (`mempalace_query` → `read_document(path=read_path)` → answer); REFUSE-on-error.
 - KG decision rule (`mempalace_kg_search` first if research_mode AND `kg.enabled`).
-- `DEFAULT_PROJECT_INSTRUCTIONS` discipline block injected DIRECTLY by Brain (REFUSAL / PRECISION / CITATION / QUERY).
+- `DEFAULT_PROJECT_INSTRUCTIONS` discipline block (REFUSAL / PRECISION / CITATION) injected DIRECTLY by Brain.
 - Server-side citation validator + synchronous re-round on threshold violation (>30% uncited or ≥2 unverified quotes), gated by `mempalace.citation_reround.enabled`.
 
 **Research mode OFF** (codegen / drafting / build-with-context projects):
-- Soft `PROJECT MEMORY` block — "memory is available, use `mempalace_query` when relevant", no forced flow, no refuse-on-error.
+- Soft `PROJECT MEMORY` block — "memory is available, use `mempalace_query` when relevant", no forced flow.
 - KG hint block skipped (model can still discover the tools from definitions).
-- `DEFAULT_PROJECT_INSTRUCTIONS` NOT injected.
+- `DEFAULT_PROJECT_INSTRUCTIONS` NOT injected — model can correctly fall back on training-data framing for build/draft workflows.
 - Citation validator + re-round skipped entirely.
+- **Topic A still active** — the model still gets search-first + query-discipline guidance via the `mempalace_query` tool description.
 
 **Owner `instructions` field is purely additive** in both modes — appended verbatim after the mode-specific blocks. Never used as a fallback for the disciplines (that was the v8.23 behavior; replaced because it conflated owner intent with Brain behavior). Editor lost the "Load default" button + helper text.
 
@@ -427,7 +519,7 @@ Effective mode = `session.research_mode_override if not None else project.resear
 
 Brain mechanics (3-step flow text body when ON, BINARY DOCUMENTS block, `read_path` vs `read_path_original`) STAY in system prompt regardless of mode — infrastructure facts.
 
-`DEFAULT_PROJECT_INSTRUCTIONS` constant kept as the source of the discipline text; injected only when research_mode is on. Endpoint `/v1/projects/default-instructions` removed.
+`DEFAULT_PROJECT_INSTRUCTIONS` constant in `brain.py` is the Topic-B discipline text; injected only when research_mode is on. Endpoint `/v1/projects/default-instructions` removed.
 
 **Anti-room-name-guessing**: `mempalace_query` `room` parameter description enumerates real rooms (`general`/`artifacts`/`chat`/`chat_summary`/`chat_attachment`/`reference`) and forbids invention. Earlier permissive list got used as valid vocab by models.
 
