@@ -419,12 +419,30 @@ agent supplies layer 2. The call's `purpose` is decided by the task's
   decomposition (name / description / schema). Surfaced in General
   Settings → Tools tab as the "Tool definition cost" header + per-row
   `Nt` token badge.
+- `GET /v1/research-mode/disciplines` — admin-only. Returns the three
+  admin-editable disciplines (refusal/precision/citation) that get
+  injected into the system prompt for project chats with research_mode
+  on. Response: `{sections, defaults, section_order}`.
+- `POST /v1/research-mode/disciplines` — admin-only. Body
+  `{refusal?, precision?, citation?}` (each must be a string).
+  Per-section opt-out via empty string; missing keys leave existing
+  values untouched. Persists to `config.json → research_mode_disciplines`.
+  Audit action: `research_mode_disciplines_save`.
 
 The legacy `tools.md` file is gone — its anchored blocks were one-shot
 migrated into `tool_settings` records on first server startup post-migration
 (see `migrate_tool_settings_from_md` in `brain.py`). Anchor → leading-tool
 mapping; multi-anchor blocks (`exa_search,web_fetch`) attach to the leader
 with the rest going into `applies_with`.
+
+**Project-flow text** (3-step retrieval, `read_path` how-to, KG decision
+rule, BINARY DOCUMENTS pipeline note) lives in the per-tool descriptions
+of `mempalace_query`, `read_document`, `mempalace_kg_search`,
+`mempalace_kg_query` — NOT in `_build_system_prompt`. The KG and
+read_document descriptions carry `applies_with: ["mempalace_query"]` so
+they only render in project-retrieval contexts. Brain.py only emits a
+short "this is a project chat with its own memory" paragraph from the
+prompt; everything tool-related is in tool config.
 
 **Admin UI** (`web/js/settings.js` — General Settings → Tools tab):
 grouped collapsible registry showing all 63 tools. Per-tool expanded
@@ -531,29 +549,30 @@ Effective mode = `session.research_mode_override if not None else project.resear
 
 | Discipline | Source | Gating |
 |---|---|---|
-| Search-first ("memory IS the answer") | `tool_settings.mempalace_query.description` | tool present in active set |
-| Query discipline (short keywords, drop fillers) | `tool_settings.mempalace_query.description` | tool present |
-| Saving guidance (`save_chat_to_memory`) | `tool_settings.mempalace_query.description` | tool present |
-| **Refuse-on-empty** | `DEFAULT_PROJECT_INSTRUCTIONS` (brain.py) | project + research_mode |
-| **Precision discipline** (no plausible-sounding filler) | `DEFAULT_PROJECT_INSTRUCTIONS` | project + research_mode |
-| **Per-claim citation** (verbatim quotes per bullet) | `DEFAULT_PROJECT_INSTRUCTIONS` | project + research_mode |
+| Search-first ("memory IS the answer") + query discipline + saving | `tool_settings.mempalace_query.description` | tool present in active set |
+| 3-step retrieval flow (query → read_document → answer) | `tool_settings.mempalace_query.description` (extends with project-flow content for project chats) | tool present |
+| `read_path` / `.md` companion / BINARY DOCUMENTS | `tool_settings.read_document.description` | `applies_with: ["mempalace_query"]` (project chats only) |
+| KG decision rule + examples | `tool_settings.mempalace_kg_search.description` | `applies_with: ["mempalace_query"]` |
+| KG entity-neighbourhood note | `tool_settings.mempalace_kg_query.description` | `applies_with: ["mempalace_query"]` |
+| **Refuse-on-empty** | `config.json → research_mode_disciplines.refusal` (admin-editable) | project + research_mode |
+| **Precision discipline** (no plausible-sounding filler) | `config.json → research_mode_disciplines.precision` (admin-editable) | project + research_mode |
+| **Per-claim citation** (verbatim quotes per bullet) | `config.json → research_mode_disciplines.citation` (admin-editable) | project + research_mode |
 
 Topic A (retrieval discipline) is admin-editable per-tool — see the
 "Per-tool settings" subsection of "Tools" above. Topic B is hardcoded
 Brain behavior toggled by `research_mode`.
 
 **Research mode ON** (Q&A / policy-reproduction / compliance projects):
-- Strict `PROJECT MEMORY` block — mandatory 3-step flow (`mempalace_query` → `read_document(path=read_path)` → answer); REFUSE-on-error.
-- KG decision rule (`mempalace_kg_search` first if research_mode AND `kg.enabled`).
-- `DEFAULT_PROJECT_INSTRUCTIONS` discipline block (REFUSAL / PRECISION / CITATION) injected DIRECTLY by Brain.
+- Soft `PROJECT MEMORY` block in the prompt — short project-info paragraph ("MUST consult the project's memory tools first"). The detailed retrieval flow lives in tool descriptions, not in the prompt (see "Per-tool prompt prose" below).
+- 3-step flow / `read_path` how-to / KG decision rule / BINARY DOCUMENTS pipeline note all rendered via `_render_tool_descriptions` from `tool_settings.{mempalace_query, read_document, mempalace_kg_search, mempalace_kg_query}.description`. Admin-editable. Auto-gated by `applies_with: ["mempalace_query"]` so they only appear when retrieval is in scope.
+- Three discipline sections (REFUSAL / PRECISION / CITATION) injected from `config.json → research_mode_disciplines` (admin-editable, GET/POST `/v1/research-mode/disciplines`). Per-section opt-out via empty string. Defaults seeded from `RESEARCH_MODE_DISCIPLINE_DEFAULTS` in brain.py.
 - Server-side citation validator + synchronous re-round on threshold violation (>30% uncited or ≥2 unverified quotes), gated by `mempalace.citation_reround.enabled`.
 
 **Research mode OFF** (codegen / drafting / build-with-context projects):
-- Soft `PROJECT MEMORY` block — "memory is available, use `mempalace_query` when relevant", no forced flow.
-- KG hint block skipped (model can still discover the tools from definitions).
-- `DEFAULT_PROJECT_INSTRUCTIONS` NOT injected — model can correctly fall back on training-data framing for build/draft workflows.
+- Soft `PROJECT MEMORY` block in the prompt — "memory is available, use `mempalace_query` when relevant".
+- Per-tool descriptions for memory tools still render (Topic A — search-first, query discipline).
+- `research_mode_disciplines` NOT injected — model can correctly fall back on training-data framing for build/draft workflows.
 - Citation validator + re-round skipped entirely.
-- **Topic A still active** — the model still gets search-first + query-discipline guidance via the `mempalace_query` tool description.
 
 **Owner `instructions` field is purely additive** in both modes — appended verbatim after the mode-specific blocks. Never used as a fallback for the disciplines (that was the v8.23 behavior; replaced because it conflated owner intent with Brain behavior). Editor lost the "Load default" button + helper text.
 
