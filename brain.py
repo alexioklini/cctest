@@ -1916,47 +1916,57 @@ def _get_token_config(agent_id: str | None = None) -> dict:
 
 
 def _get_agent_tool_names(agent_id: str | None = None) -> set[str] | None:
-    """Get the set of allowed tool names for an agent based on its config.
+    """Get the set of allowed tool names for an agent based on the global ×
+    agent-override hierarchy.
 
-    Filters:
-      1. Per-agent tool_groups + extra_tools whitelist (if any)
-      2. Per-tool global enabled flag (tool_settings[name].enabled = false
-         hides the tool from EVERY agent, regardless of agent config — admin
-         kill switch)
+    Resolution per tool:
+      1. Global `tool_settings.<name>.enabled` (default True) — admin kill
+         switch
+      2. Agent override `token_config.tool_overrides.<name>.enabled` — when
+         present, overrides the global value (tristate semantics: field
+         absent = inherit, present = override)
 
-    Returns None when neither the agent whitelist nor any disabled-tool
-    filtering applies (caller treats None as 'all tools'). When any tool is
-    globally disabled, returns the explicit allowed set so the disabled
-    tool drops out.
+    Returns the explicit set of enabled tool names. When `agent_id` is
+    None or the agent has no overrides, returns the full TOOL_DISPATCH
+    keyset minus globally-disabled tools (so callers can intersect with
+    purpose-specific subsets cleanly).
+
+    Returns None ONLY when nothing is disabled at any layer — caller
+    treats None as 'all tools' and skips the explicit filter (small
+    optimisation for the common no-config case).
     """
-    tcfg = _get_token_config(agent_id)
-    tool_groups = tcfg.get("tool_groups")
-    extra_tools = tcfg.get("extra_tools")
+    # Cheap fast path: if no global tool_settings AND no agent overrides,
+    # there's nothing to filter — return None.
+    has_global = bool(_tool_settings)
+    agent_overrides = {}
+    if agent_id:
+        agent = getattr(_thread_local, 'current_agent', None)
+        if agent and getattr(agent, 'agent_id', None) == agent_id:
+            agent_overrides = (agent.config.get("token_config", {}) or {}).get("tool_overrides") or {}
+        else:
+            try:
+                cfg_path = os.path.join(AGENTS_DIR, agent_id, "agent.json")
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    agent_overrides = (json.load(f).get("token_config", {}) or {}).get("tool_overrides") or {}
+            except (OSError, json.JSONDecodeError):
+                agent_overrides = {}
+    if not has_global and not agent_overrides:
+        return None  # No filter active — caller falls through to "all tools"
 
-    # Build the agent's allowed set. None = no agent-level whitelist.
-    if tool_groups or extra_tools:
-        names: set[str] = set()
-        if tool_groups:
-            for g in tool_groups:
-                names.update(TOOL_GROUPS.get(g, set()))
-        if extra_tools:
-            names.update(extra_tools)
-    else:
-        names = None
-
-    # Apply the global per-tool kill switch. If nothing is disabled, the
-    # agent-level result is unchanged (None still means "all tools"). If
-    # anything is disabled, materialise the full set minus disabled.
-    disabled = {n for n, rec in (_tool_settings or {}).items()
-                if rec and not rec.get("enabled", True)}
-    if not disabled:
-        return names
-    if names is None:
-        # No agent whitelist + at least one disabled tool → return the
-        # full TOOL_DISPATCH keyset minus disabled, so the caller has an
-        # explicit allowed set to filter against.
-        return set(TOOL_DISPATCH.keys()) - disabled
-    return names - disabled
+    # Walk every tool, apply layered enabled. Tools not in TOOL_DISPATCH
+    # are ignored (they can't be called anyway).
+    names: set[str] = set()
+    for name in TOOL_DISPATCH.keys():
+        # Global layer
+        global_rec = (_tool_settings or {}).get(name) or {}
+        enabled = bool(global_rec.get("enabled", True))
+        # Agent override layer (tristate: field present = override)
+        override = agent_overrides.get(name) or {}
+        if "enabled" in override:
+            enabled = bool(override["enabled"])
+        if enabled:
+            names.add(name)
+    return names
 
 
 def _should_defer_mcp(defer_setting, mcp_tools: list[dict], model: str,
@@ -2279,30 +2289,59 @@ def resolve_active_tools(
     defs = TOOL_DEFINITIONS_OPENAI if is_openai_shape else TOOL_DEFINITIONS
     tools = _filter_tools(defs, base_set, is_openai=is_openai_shape)
 
-    # Defer subtraction (always applied; survives the resolver call for
-    # every purpose except transform). A tool is deferred when EITHER:
-    #   (a) its group is in the agent's deferred_tool_groups, OR
-    #   (b) its own tool_settings[name].deferred flag is true (per-tool
-    #       global override on top of group-level config).
-    # Deferred tools are still routable via tool_search and stay live once
-    # the model has discovered them this turn (discovered_tools set).
+    def _name_of(t: dict) -> str:
+        return (t.get("function", {}) or {}).get("name", "") if is_openai_shape else t.get("name", "")
+
+    # Purpose filter: tools whose global `purposes` list doesn't include
+    # the current call purpose drop here (not even discoverable via
+    # tool_search). Empty/missing purposes list = "all purposes" so tools
+    # without an opinion stay live for every purpose. Skipped for
+    # research_minimal because base_set is already minimal-flagged tools
+    # only — no further filter needed.
+    if purpose != "research_minimal":
+        tools = [t for t in tools if tool_passes_purpose(_name_of(t), purpose)]
+
+    # Defer subtraction. A tool is deferred when its EFFECTIVE deferred flag
+    # (global tool_settings.<name>.deferred, possibly overridden by the
+    # agent's tool_overrides.<name>.deferred) is true. Same hierarchy as
+    # enabled. Deferred tools are still routable via tool_search and stay
+    # live once the model has discovered them this turn (discovered_tools
+    # set). Skipped for research_minimal (the lean harness path doesn't
+    # use defer — every minimal tool is in-prompt from round 0).
+    if purpose != "research_minimal":
+        # Pre-compute agent overrides once
+        agent_overrides: dict = {}
+        if agent_id:
+            agent_ctx = getattr(_thread_local, 'current_agent', None)
+            if agent_ctx and getattr(agent_ctx, 'agent_id', None) == agent_id:
+                agent_overrides = (agent_ctx.config.get("token_config", {}) or {}).get("tool_overrides") or {}
+            else:
+                try:
+                    cfg_path = os.path.join(AGENTS_DIR, agent_id, "agent.json")
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        agent_overrides = (json.load(f).get("token_config", {}) or {}).get("tool_overrides") or {}
+                except (OSError, json.JSONDecodeError):
+                    agent_overrides = {}
+        deferred_names: set[str] = set()
+        # Global per-tool defer
+        for _n, _rec in (_tool_settings or {}).items():
+            if _rec and _rec.get("deferred"):
+                deferred_names.add(_n)
+        # Agent overrides — tristate: present field wins, may override either way
+        for _n, _ovr in agent_overrides.items():
+            if "deferred" in _ovr:
+                if _ovr["deferred"]:
+                    deferred_names.add(_n)
+                else:
+                    deferred_names.discard(_n)
+        if deferred_names:
+            discovered = discovered_tools or set()
+            tools = [t for t in tools
+                     if _name_of(t) not in deferred_names or _name_of(t) in discovered]
+
+    # Other code paths below still use _get_token_config for non-tool config
+    # (defer_mcp, mcp_tool_filter). Keep for compatibility.
     tcfg = _get_token_config(agent_id)
-    deferred_groups = set(tcfg.get("deferred_tool_groups") or [])
-    deferred_names: set[str] = set()
-    for dg in deferred_groups:
-        deferred_names.update(TOOL_GROUPS.get(dg, set()))
-    # Per-tool defer overrides
-    for _n, _rec in (_tool_settings or {}).items():
-        if _rec and _rec.get("deferred"):
-            deferred_names.add(_n)
-    if deferred_names:
-        discovered = discovered_tools or set()
-
-        def _name_of(t: dict) -> str:
-            return (t.get("function", {}) or {}).get("name", "") if is_openai_shape else t.get("name", "")
-
-        tools = [t for t in tools
-                 if _name_of(t) not in deferred_names or _name_of(t) in discovered]
 
     # MCP tools — mirror the send_message + warmup paths bytewise.
     if mcp_manager is not None and purpose == "interactive":
