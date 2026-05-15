@@ -1711,7 +1711,7 @@ DEFAULT_TOOL_GROUPS = {"core", "memory", "context", "web", "delegation", "git", 
 TOKEN_CONFIG_DEFAULTS = {
     "tool_groups": None,           # None = all tools, list = specific groups from TOOL_GROUPS
     "extra_tools": None,           # Additional individual tool names beyond groups
-    "include_tools_guide": True,   # Inject tools.md into system prompt
+    "include_tools_guide": True,   # Inject per-tool prompt prose into system prompt
     "include_memory_summary": False, # MemPalace migration: built-in memory summary disabled
     "memory_summary_cap": 3000,    # (unused after migration; agents query mempalace MCP directly)
     "compact_threshold": None,     # None = use default (0.60), float = override
@@ -2379,71 +2379,48 @@ def migrate_tool_settings_from_md(tools_md_path: str) -> dict:
     return settings
 
 
-# tools.md parse cache — re-read on mtime change. Keeps the renderer fast
-# (the file is small but parsing it on every system-prompt build is wasteful).
-_TOOL_RULES_CACHE: dict[str, tuple[float, list[tuple[set[str], str]]]] = {}
+# Live runtime state, populated by server.py at startup from config.json
+# tool_settings (and refreshed when admin saves via /v1/tools/settings).
+# Keyed by leading tool name; record shape per `empty_tool_setting()`.
+_tool_settings: dict[str, dict] = {}
 
 
-def _parse_tool_rules(path: str) -> list[tuple[set[str], str]]:
-    """Parse tools.md into [(anchor_tools, block_text), …].
+def _render_tool_descriptions(active_tool_names: set[str]) -> str:
+    """Render per-tool prompt prose for the active tool set.
 
-    Each block is delimited by an HTML comment `<!-- @anchor:t1,t2,… -->`.
-    A block fires when **all** of its anchor tools are present in the active
-    tool set; this matches the EXA_PROTOCOL rule (needs both exa_search and
-    web_fetch) without inventing a separate "all-of" predicate.
+    For each leading tool present in `active_tool_names` whose settings record
+    has at least one non-empty section AND whose `applies_with` requirement is
+    satisfied (every name in the list also present), emit a `## name` heading
+    followed by `### Description / When to use / Warnings / Examples`
+    subsections (only the non-empty ones, fixed order — KV-cache stable).
 
-    Cached by mtime.
+    Returns "" when nothing applies (typical for `transform` / most
+    `memory_summary` calls and any agent whose active tools have all-empty
+    descriptions). When one or more apply, the returned string is the text
+    only — no leading header — so the caller can decide how to delimit it.
     """
-    try:
-        st = os.stat(path)
-    except OSError:
-        return []
-    cached = _TOOL_RULES_CACHE.get(path)
-    if cached and cached[0] == st.st_mtime:
-        return cached[1]
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-    except OSError:
-        return []
-    blocks: list[tuple[set[str], str]] = []
-    # Split on the anchor marker; the first chunk before any marker is
-    # discarded (it's prose introducing the file, not a rules block).
-    import re as _re
-    parts = _re.split(r"<!--\s*@anchor:([^>]+?)\s*-->", text)
-    # parts looks like: [preamble, anchor1, body1, anchor2, body2, …]
-    for i in range(1, len(parts), 2):
-        anchor = parts[i].strip()
-        body = parts[i + 1] if (i + 1) < len(parts) else ""
-        names = {n.strip() for n in anchor.split(",") if n.strip()}
-        if not names:
-            continue
-        # Trim leading whitespace introduced by the comment delimiter.
-        blocks.append((names, body.lstrip("\n").rstrip() + "\n"))
-    _TOOL_RULES_CACHE[path] = (st.st_mtime, blocks)
-    return blocks
-
-
-def _render_tool_rules(active_tool_names: set[str],
-                       tools_md_path: str | None = None) -> str:
-    """Render the conditional tool-rules block for the active tool set.
-
-    Returns "" when none of the anchored rules apply (typical for `transform`
-    and most `memory_summary` calls). When one or more apply, the returned
-    string is the rules text only — no leading header — so the caller can
-    decide how to delimit it.
-    """
-    if not active_tool_names:
+    if not active_tool_names or not _tool_settings:
         return ""
-    if tools_md_path is None:
-        tools_md_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "tools.md")
-    blocks = _parse_tool_rules(tools_md_path)
     out_parts: list[str] = []
-    for anchor_names, body in blocks:
-        if anchor_names.issubset(active_tool_names):
-            out_parts.append(body)
-    return "\n".join(out_parts).rstrip() + ("\n" if out_parts else "")
+    # Iterate by sorted tool name so the rendered order is deterministic
+    # (KV-prefix stability across turns even if admin edits one record).
+    for name in sorted(_tool_settings.keys()):
+        if name not in active_tool_names:
+            continue
+        rec = _tool_settings[name] or {}
+        applies_with = rec.get("applies_with") or []
+        if applies_with and not all(req in active_tool_names for req in applies_with):
+            continue
+        sections: list[str] = []
+        for field in _TOOL_SETTING_FIELDS:
+            body = (rec.get(field) or "").strip()
+            if not body:
+                continue
+            sections.append(f"### {_TOOL_SETTING_FIELD_TITLES[field]}\n{body}")
+        if not sections:
+            continue
+        out_parts.append(f"## {name}\n" + "\n\n".join(sections))
+    return "\n\n".join(out_parts).rstrip() + ("\n" if out_parts else "")
 
 
 # --- Tool Execution ---
@@ -6466,24 +6443,6 @@ Adapt your behavior to the tasks you are given.
         path = os.path.join(self.dir, "soul.md")
         try:
             with open(path, "r") as f:
-                return f.read()
-        except OSError:
-            return ""
-
-    @property
-    def tools_guide(self) -> str:
-        """Load per-agent tools.md, falling back to global tools.md."""
-        agent_tools = os.path.join(self.dir, "tools.md")
-        if os.path.exists(agent_tools):
-            try:
-                with open(agent_tools, "r") as f:
-                    return f.read()
-            except OSError:
-                pass
-        # Fall back to global tools.md
-        global_tools = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools.md")
-        try:
-            with open(global_tools, "r") as f:
                 return f.read()
         except OSError:
             return ""
@@ -12544,7 +12503,9 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
             # truth, PROMPT_TOOLS_UNIFICATION_PLAN.md). discovered_tools is
             # empty on turn 0 in both cases — deferred groups stay deferred.
             # System prompt and tool list MUST agree on active_tool_names so
-            # the conditional tools.md rule blocks are identical.
+            # the per-tool prose blocks rendered by `_render_tool_descriptions`
+            # are byte-identical between warmup and the live request (KV-prefix
+            # stability).
             all_tools = resolve_active_tools(
                 purpose="interactive",
                 agent_id=agent_id,
@@ -12723,7 +12684,6 @@ class TaskRunner:
         cwd = os.getcwd()
         os_name = platform.system()
         soul = target.soul
-        tools_guide = target.tools_guide
 
         from datetime import datetime as _dt
         system_prompt = (
@@ -12755,8 +12715,12 @@ class TaskRunner:
                     system_prompt += f"Team peers: {', '.join(peers)}\n"
                 system_prompt += "Use memory_shared(scope='team') for team-level shared knowledge.\n"
 
-        if tools_guide:
-            system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
+        # Per-tool prompt prose for the delegate's resolved tool set.
+        _delegate_tool_names = _get_agent_tool_names(agent_id)
+        if _delegate_tool_names:
+            _rules = _render_tool_descriptions(_delegate_tool_names)
+            if _rules:
+                system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{_rules}"
 
         # Build team-aware agent registry for this delegate
         agent_registry = build_agent_registry(for_agent_id=agent_id)
@@ -15551,12 +15515,10 @@ class Scheduler:
         except (TypeError, ValueError):
             _task_caveman = 0
 
-        # Init thread context before building the system prompt — _build_system_prompt
-        # reads current_agent from thread-local for soul.md / tools_guide.
-        # Pin user_id so client-mode ambient proxy can pick a tab of the
-        # task's owner. Empty for legacy tasks without owner — picker returns
-        # None and the call fails fast (Stage 2: persistent admin agent
-        # client closes that hole).
+        # Init thread context before building the system prompt —
+        # _build_system_prompt reads current_agent from thread-local for soul.md.
+        # Pin user_id so quota / audit lookups attribute correctly. Empty for
+        # legacy tasks without owner.
         _sched_ctx_pre = ExecutionContext(
             mode="scheduled",
             agent_id=agent_id,
@@ -15570,8 +15532,8 @@ class Scheduler:
         # (PROMPT_TOOLS_UNIFICATION_PLAN.md). Default purpose for scheduled
         # tasks is `research_minimal` (lean prompt); per-schedule
         # `tool_profile='interactive'` opts back into the full agent
-        # surface. active_tool_names is computed inline so the conditional
-        # tools.md rule blocks match the wire payload.
+        # surface. active_tool_names is computed inline so the per-tool
+        # prose blocks match the wire payload (KV-prefix stability).
         #
         # Determine the purpose from the same sources used later for the
         # sidecar call (token_config + memory_summary name prefix). Hoisted
@@ -23954,11 +23916,11 @@ def _build_system_prompt(include_memory_summary: bool = True,
         `minimal_role` fragments on minimal-flagged tools. Default for
         scheduled tasks (override via schedules.tool_profile='interactive').
 
-    active_tool_names: when provided, the conditional tool-rules blocks from
-        tools.md (`_render_tool_rules`) replace the unconditional appended
-        tools.md content. Legacy callers (CLI single-message, sessions
-        diagnostic) leave it None and get the full tools.md to keep their
-        snapshots identical until they migrate.
+    active_tool_names: when provided, per-tool prompt prose configured in
+        admin → Tools settings is appended via `_render_tool_descriptions`,
+        gated on tool presence + per-tool `applies_with` all-of rules. When
+        None, no per-tool prose section is emitted (callers must pass the
+        resolved active set to opt in).
 
     Caches per (session, purpose, include_memory_summary, has_active_tool_names,
     has_task_name) to avoid disk I/O on every tool loop iteration.
@@ -23995,22 +23957,13 @@ def _build_system_prompt(include_memory_summary: bool = True,
     cwd = os.getcwd()
     os_name = platform.system()
 
-    # Load agent soul and tools guide (prefer thread-local for concurrent requests)
+    # Load agent soul (prefer thread-local for concurrent requests). Tools
+    # guide is now rendered from per-tool admin settings via
+    # `_render_tool_descriptions(active_tool_names)` — the legacy on-disk
+    # tools.md path is gone.
     agent = getattr(_thread_local, 'current_agent', None) or _current_agent
     agent_id = agent.agent_id if agent else "main"
     soul = agent.soul if agent else ""
-    tools_guide = agent.tools_guide if agent else ""
-
-    # If no agent-specific tools guide, try global. Only used when the
-    # caller doesn't pass active_tool_names (legacy callers); the conditional
-    # `_render_tool_rules` path reads tools.md itself.
-    if not tools_guide and active_tool_names is None:
-        tools_md_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools.md")
-        try:
-            with open(tools_md_path, "r") as f:
-                tools_guide = f.read()
-        except (OSError, IOError):
-            pass
 
     # Build agent registry
     agent_registry = build_agent_registry(for_agent_id=agent_id)
@@ -24074,9 +24027,9 @@ def _build_system_prompt(include_memory_summary: bool = True,
             "— they are not memorable. Be terse: emit tool calls, not "
             "narration.\n\n"
         )
-        # Conditional tool rules — usually empty for memory tools.
+        # Per-tool prompt prose — usually empty for memory tools.
         if active_tool_names is not None:
-            _rules = _render_tool_rules(active_tool_names)
+            _rules = _render_tool_descriptions(active_tool_names)
             if _rules:
                 system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{_rules}"
         _system_prompt_cache[cache_key] = (system_instruction, _time.time())
@@ -24439,19 +24392,14 @@ def _build_system_prompt(include_memory_summary: bool = True,
             system_instruction += f"  - {_dg}: {', '.join(sorted(TOOL_GROUPS[_dg]))}\n"
         system_instruction += "\n"
 
-    if tcfg.get("include_tools_guide", True):
-        if active_tool_names is not None:
-            # New conditional-rules path: only the blocks anchored to active
-            # tools are emitted. ~1.5 KB total when all three blocks apply,
-            # 0 chars when none do. Replaces the unconditional 4.5 KB
-            # tools.md injection (PROMPT_TOOLS_UNIFICATION_PLAN.md).
-            _rules = _render_tool_rules(active_tool_names)
-            if _rules:
-                system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{_rules}"
-        elif tools_guide:
-            # Legacy path: caller didn't pass active_tool_names, so we keep
-            # the full tools.md injection. Audited callers will migrate.
-            system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
+    if tcfg.get("include_tools_guide", True) and active_tool_names is not None:
+        # Per-tool prompt prose for the active tool set, sourced from admin
+        # → Tools settings (server_config["tool_settings"], populated at
+        # startup from config.json). Empty when no active tool has any
+        # configured description (e.g. transform / memory_summary purposes).
+        _rules = _render_tool_descriptions(active_tool_names)
+        if _rules:
+            system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{_rules}"
 
     # Cache the BASE prose (no caveman, no plan suffix). Post-processing
     # is applied below so the cached value is reusable across caveman/plan

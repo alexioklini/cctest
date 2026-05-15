@@ -3066,6 +3066,9 @@ def main():
             except Exception as e:
                 print(f"Tool settings: migration persist failed: {e}")
     server_config["tool_settings"] = tool_settings_cfg or {}
+    # Mirror onto engine globals so brain._render_tool_descriptions sees them
+    # without an import dependency on server_config.
+    engine._tool_settings = server_config["tool_settings"]
 
     # Initialize models config
     existing_models = file_config.get("models")
