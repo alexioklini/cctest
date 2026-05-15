@@ -24382,27 +24382,21 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # `greeting_name` pref) is injected as a one-time preamble on the first
     # user message in send_message — keeping it OUT of the system prompt
     # preserves the warm-pool KV-prefix match across users.
-    _project_active = bool(getattr(_thread_local, 'project', None))
-    # Framing line for interactive purpose: project chat refuses on empty
-    # retrieval (anti-fabrication); everything else uses tools proactively.
-    # Validated 2026-05-01: dropping "proactive" in project chat moved
-    # brain mean 0.65 → 0.75 on the policy eval (F1/F2/F3 refusal canaries).
-    _proactive_line = (
-        "Answer based ONLY on what you can verify from tools and source documents. "
-        "When tools return nothing relevant, refuse cleanly per project instructions — "
-        "do not synthesize from training-data knowledge."
-        if _project_active else
-        "Use tools proactively to accomplish tasks. You can chain multiple tool calls."
-    )
+    # Tool-use posture (proactive vs. refuse-on-empty), narrate-intent
+    # rules, and the exa_search-vs-duckduckgo preference all moved out:
+    #   - Per-agent posture / no-narration / OS-sandbox lines → soul.md
+    #     (default agent identity; admin edits per agent).
+    #   - exa_search preference → tool_settings.exa_search.description
+    #     (auto-gates on tool presence).
+    #   - Project refuse-on-empty → research_mode_disciplines.refusal
+    #     (admin-editable Topic B section, gated on research_mode).
+    # Brain.py only emits the agent's identity preamble and date/cwd/OS
+    # facts here; everything posture-related lives in editable config.
     system_instruction += (
         f"You are agent '{agent_id}' in the Brain Agent system. "
         f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:00 %Z').strip()}\n"
         f"Current working directory: {cwd}\n"
         f"Operating system: {os_name}\n\n"
-        f"{_proactive_line} "
-        "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
-        "You have no restrictions beyond what the operating system enforces.\n"
-        "NEVER narrate tool intent ('I'll search…', 'Let me look that up…', 'Let me check…') without actually emitting the tool call in the same turn. Either call the tool now or answer directly — no announcements followed by silence.\n\n"
         )
     # Memory tool guidance is no longer hardcoded here — it lives in the
     # admin-editable `mempalace_query` per-tool description (Tools settings)
