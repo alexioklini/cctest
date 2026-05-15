@@ -2312,6 +2312,73 @@ def _active_tool_name_set(tools: list[dict], is_openai_shape: bool) -> set[str]:
     return {t.get("name", "") for t in tools}
 
 
+# --- Tool prompt settings (admin-editable per-tool prose) ---
+#
+# Each tool name → record with up to 4 prose sections plus an `applies_with`
+# all-of gate. Empty strings = section omitted from the rendered prompt; if
+# every section is empty, the tool contributes nothing (the model still gets
+# the JSON tool schema — only the prose guidance is gated).
+#
+# Storage: server_config["tool_settings"] (loaded from config.json["tool_settings"]).
+# Edited via admin endpoints (Commit 3); migrated from the legacy tools.md
+# anchored blocks at startup (Commit 1) — see migrate_tool_settings_from_md.
+#
+# Section render order (matters for KV-cache stability):
+#   1. Description
+#   2. When to use
+#   3. Warnings
+#   4. Examples
+_TOOL_SETTING_FIELDS = ("description", "when_to_use", "warnings", "examples")
+_TOOL_SETTING_FIELD_TITLES = {
+    "description": "Description",
+    "when_to_use": "When to use",
+    "warnings": "Warnings",
+    "examples": "Examples",
+}
+
+
+def empty_tool_setting() -> dict:
+    """Default empty tool settings record."""
+    return {field: "" for field in _TOOL_SETTING_FIELDS} | {"applies_with": []}
+
+
+def migrate_tool_settings_from_md(tools_md_path: str) -> dict:
+    """One-shot migration: parse legacy tools.md anchored blocks into the new
+    per-tool settings shape. Each anchor's body becomes the leading tool's
+    `description`; multi-anchor blocks attach to the first listed tool with
+    the rest going into `applies_with`.
+
+    Returns a dict suitable for `server_config["tool_settings"]`. Caller
+    decides whether to persist (only on first migration, when config.json
+    has no `tool_settings` key yet).
+    """
+    settings: dict[str, dict] = {}
+    try:
+        st = os.stat(tools_md_path)  # noqa: F841 — just exists-check
+    except OSError:
+        return settings
+    try:
+        with open(tools_md_path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return settings
+    import re as _re
+    parts = _re.split(r"<!--\s*@anchor:([^>]+?)\s*-->", text)
+    for i in range(1, len(parts), 2):
+        anchor = parts[i].strip()
+        body = parts[i + 1] if (i + 1) < len(parts) else ""
+        names = [n.strip() for n in anchor.split(",") if n.strip()]
+        if not names:
+            continue
+        leader = names[0]
+        applies_with = names[1:]
+        rec = empty_tool_setting()
+        rec["description"] = body.lstrip("\n").rstrip()
+        rec["applies_with"] = applies_with
+        settings[leader] = rec
+    return settings
+
+
 # tools.md parse cache — re-read on mtime change. Keeps the renderer fast
 # (the file is small but parsing it on every system-prompt build is wasteful).
 _TOOL_RULES_CACHE: dict[str, tuple[float, list[tuple[set[str], str]]]] = {}

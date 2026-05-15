@@ -3044,6 +3044,29 @@ def main():
     server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}
     server_config["sidecar"] = file_config.get("sidecar", {}) or {}
 
+    # Per-tool prompt settings (admin-editable prose appended to system prompt
+    # when the tool is in the active set). Migrate from legacy tools.md the
+    # first time we see a config without the new key, then persist so admins
+    # can edit via /v1/tools/settings without re-migrating.
+    tool_settings_cfg = file_config.get("tool_settings")
+    if tool_settings_cfg is None:
+        legacy_md = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools.md")
+        tool_settings_cfg = engine.migrate_tool_settings_from_md(legacy_md)
+        if tool_settings_cfg:
+            try:
+                config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+                _cfg_disk = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        _cfg_disk = json.load(f)
+                _cfg_disk["tool_settings"] = tool_settings_cfg
+                with open(config_path, "w") as f:
+                    json.dump(_cfg_disk, f, indent=2)
+                print(f"Tool settings: migrated {len(tool_settings_cfg)} entries from tools.md")
+            except Exception as e:
+                print(f"Tool settings: migration persist failed: {e}")
+    server_config["tool_settings"] = tool_settings_cfg or {}
+
     # Initialize models config
     existing_models = file_config.get("models")
     deleted_models = file_config.get("deleted_models", [])
