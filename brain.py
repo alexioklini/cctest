@@ -1902,19 +1902,46 @@ def _get_token_config(agent_id: str | None = None) -> dict:
 
 def _get_agent_tool_names(agent_id: str | None = None) -> set[str] | None:
     """Get the set of allowed tool names for an agent based on its config.
-    Returns None if no filtering is configured (all tools allowed)."""
+
+    Filters:
+      1. Per-agent tool_groups + extra_tools whitelist (if any)
+      2. Per-tool global enabled flag (tool_settings[name].enabled = false
+         hides the tool from EVERY agent, regardless of agent config — admin
+         kill switch)
+
+    Returns None when neither the agent whitelist nor any disabled-tool
+    filtering applies (caller treats None as 'all tools'). When any tool is
+    globally disabled, returns the explicit allowed set so the disabled
+    tool drops out.
+    """
     tcfg = _get_token_config(agent_id)
     tool_groups = tcfg.get("tool_groups")
     extra_tools = tcfg.get("extra_tools")
-    if not tool_groups and not extra_tools:
-        return None  # No filtering — all tools
-    names = set()
-    if tool_groups:
-        for g in tool_groups:
-            names.update(TOOL_GROUPS.get(g, set()))
-    if extra_tools:
-        names.update(extra_tools)
-    return names
+
+    # Build the agent's allowed set. None = no agent-level whitelist.
+    if tool_groups or extra_tools:
+        names: set[str] = set()
+        if tool_groups:
+            for g in tool_groups:
+                names.update(TOOL_GROUPS.get(g, set()))
+        if extra_tools:
+            names.update(extra_tools)
+    else:
+        names = None
+
+    # Apply the global per-tool kill switch. If nothing is disabled, the
+    # agent-level result is unchanged (None still means "all tools"). If
+    # anything is disabled, materialise the full set minus disabled.
+    disabled = {n for n, rec in (_tool_settings or {}).items()
+                if rec and not rec.get("enabled", True)}
+    if not disabled:
+        return names
+    if names is None:
+        # No agent whitelist + at least one disabled tool → return the
+        # full TOOL_DISPATCH keyset minus disabled, so the caller has an
+        # explicit allowed set to filter against.
+        return set(TOOL_DISPATCH.keys()) - disabled
+    return names - disabled
 
 
 def _should_defer_mcp(defer_setting, mcp_tools: list[dict], model: str,
@@ -2237,14 +2264,23 @@ def resolve_active_tools(
     defs = TOOL_DEFINITIONS_OPENAI if is_openai_shape else TOOL_DEFINITIONS
     tools = _filter_tools(defs, base_set, is_openai=is_openai_shape)
 
-    # Deferred-group subtraction (always applied; survives the resolver call
-    # for every purpose except transform).
+    # Defer subtraction (always applied; survives the resolver call for
+    # every purpose except transform). A tool is deferred when EITHER:
+    #   (a) its group is in the agent's deferred_tool_groups, OR
+    #   (b) its own tool_settings[name].deferred flag is true (per-tool
+    #       global override on top of group-level config).
+    # Deferred tools are still routable via tool_search and stay live once
+    # the model has discovered them this turn (discovered_tools set).
     tcfg = _get_token_config(agent_id)
     deferred_groups = set(tcfg.get("deferred_tool_groups") or [])
-    if deferred_groups:
-        deferred_names: set[str] = set()
-        for dg in deferred_groups:
-            deferred_names.update(TOOL_GROUPS.get(dg, set()))
+    deferred_names: set[str] = set()
+    for dg in deferred_groups:
+        deferred_names.update(TOOL_GROUPS.get(dg, set()))
+    # Per-tool defer overrides
+    for _n, _rec in (_tool_settings or {}).items():
+        if _rec and _rec.get("deferred"):
+            deferred_names.add(_n)
+    if deferred_names:
         discovered = discovered_tools or set()
 
         def _name_of(t: dict) -> str:
@@ -2317,8 +2353,32 @@ _TOOL_SETTING_FIELD_TITLES = {
 
 
 def empty_tool_setting() -> dict:
-    """Default empty tool settings record."""
-    return {field: "" for field in _TOOL_SETTING_FIELDS} | {"applies_with": []}
+    """Default empty tool settings record.
+
+    Defaults: enabled=True (off-by-explicit-edit only), deferred=False
+    (per-tool override on top of group-level deferred_tool_groups).
+    """
+    return ({field: "" for field in _TOOL_SETTING_FIELDS}
+            | {"applies_with": [], "enabled": True, "deferred": False})
+
+
+def tool_is_enabled(name: str) -> bool:
+    """Whether tool `name` is globally enabled. Default true when no record
+    exists or `enabled` field is missing — adding a prose record should not
+    accidentally hide a tool, and tools that nobody has touched stay live."""
+    rec = (_tool_settings or {}).get(name)
+    if rec is None:
+        return True
+    return bool(rec.get("enabled", True))
+
+
+def tool_is_deferred(name: str) -> bool:
+    """Per-tool defer override. Group-level `deferred_tool_groups` (per-agent)
+    is checked separately — a tool defers if EITHER applies."""
+    rec = (_tool_settings or {}).get(name)
+    if rec is None:
+        return False
+    return bool(rec.get("deferred", False))
 
 
 def migrate_tool_settings_from_md(tools_md_path: str) -> dict:
@@ -2387,6 +2447,11 @@ def _render_tool_descriptions(active_tool_names: set[str]) -> str:
         if name not in active_tool_names:
             continue
         rec = _tool_settings[name] or {}
+        # Defensive: a disabled tool should never reach the renderer because
+        # _get_agent_tool_names filters it out; double-check here so a stale
+        # active-set still doesn't leak its prose.
+        if not rec.get("enabled", True):
+            continue
         applies_with = rec.get("applies_with") or []
         if applies_with and not all(req in active_tool_names for req in applies_with):
             continue

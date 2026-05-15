@@ -1706,10 +1706,12 @@ class AdminHandlerMixin:
 
     def _handle_tool_settings_get(self):
         """GET /v1/tools/settings — admin-only. List all tools (full TOOL_DISPATCH
-        keyset, sorted) merged with their per-tool prompt-prose settings.
+        keyset, sorted) merged with their per-tool prompt-prose settings, group
+        membership, and global enabled / deferred flags.
 
-        Tools without a settings record get an empty record back so the UI can
-        render a single 'add description' affordance per tool.
+        Tools without a settings record get the empty defaults (enabled=true,
+        deferred=false, all prose blank) so the UI can render a single 'add
+        description' / toggle affordance per tool.
         """
         user = self._require_role("admin")
         if not user:
@@ -1718,12 +1720,20 @@ class AdminHandlerMixin:
             all_tools = sorted(engine.TOOL_DISPATCH.keys())
         except Exception:
             all_tools = []
+        # Reverse-index TOOL_GROUPS so each tool knows its group.
+        tool_to_group: dict[str, str] = {}
+        for grp_name, members in (engine.TOOL_GROUPS or {}).items():
+            for m in members:
+                tool_to_group.setdefault(m, grp_name)
         ts = engine._tool_settings or {}
         tools = []
         for name in all_tools:
             rec = ts.get(name) or {}
             tools.append({
                 "name": name,
+                "group": tool_to_group.get(name, ""),
+                "enabled": bool(rec.get("enabled", True)),
+                "deferred": bool(rec.get("deferred", False)),
                 "description": rec.get("description", "") or "",
                 "when_to_use": rec.get("when_to_use", "") or "",
                 "warnings": rec.get("warnings", "") or "",
@@ -1735,10 +1745,12 @@ class AdminHandlerMixin:
     def _handle_tool_settings_save(self):
         """POST /v1/tools/settings — admin-only. Save one tool's settings record.
 
-        Body: {name, description, when_to_use, warnings, examples, applies_with}.
-        Empty strings clear that section. applies_with is the list of OTHER
-        tool names that must also be present for this tool's prose to render
-        (all-of gate).
+        Body: {name, enabled?, deferred?, description?, when_to_use?, warnings?,
+               examples?, applies_with?}.
+        Empty strings clear that prose section. enabled defaults to True
+        (don't accidentally hide a tool by editing prose), deferred defaults
+        to False. applies_with is the list of OTHER tool names that must
+        also be present for this tool's prose to render (all-of gate).
         """
         user = self._require_role("admin")
         if not user:
@@ -1764,12 +1776,28 @@ class AdminHandlerMixin:
             if req not in engine.TOOL_DISPATCH:
                 self._send_json({"error": f"applies_with references unknown tool: {req}"}, 400)
                 return
+        # enabled / deferred — accept missing keys as defaults (true / false).
+        # Bools only — reject non-bool to avoid silent misconfig.
+        def _coerce_bool(val, default):
+            if val is None:
+                return default
+            if isinstance(val, bool):
+                return val
+            raise ValueError(f"expected bool")
+        try:
+            enabled = _coerce_bool(body.get("enabled"), True)
+            deferred = _coerce_bool(body.get("deferred"), False)
+        except ValueError as e:
+            self._send_json({"error": f"enabled/deferred must be boolean: {e}"}, 400)
+            return
         rec = {
             "description": str(body.get("description", "") or ""),
             "when_to_use": str(body.get("when_to_use", "") or ""),
             "warnings": str(body.get("warnings", "") or ""),
             "examples": str(body.get("examples", "") or ""),
             "applies_with": applies_with,
+            "enabled": enabled,
+            "deferred": deferred,
         }
         # Mutate in place so the dict referenced by both server_config and
         # engine._tool_settings stays in sync without re-pointing.
@@ -1801,7 +1829,9 @@ class AdminHandlerMixin:
                     agent="main",
                     action_type="tool_settings_save",
                     tool_name=name,
-                    args_summary=f"by={user.get('username','')} cleared={_all_empty} applies_with={applies_with}",
+                    args_summary=(f"by={user.get('username','')} enabled={enabled} "
+                                  f"deferred={deferred} cleared={_all_empty} "
+                                  f"applies_with={applies_with}"),
                     result_status="ok",
                 )
         except Exception:
