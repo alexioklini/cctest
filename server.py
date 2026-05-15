@@ -1058,6 +1058,7 @@ class BrainAgentHandler(
         "/v1/mempalace/stats",
         "/v1/mempalace/drawers",
         "/v1/tools/config",
+        "/v1/tools/settings",
         "/v1/context/config",
         "/v1/traces",
         "/v1/audit",
@@ -1081,6 +1082,7 @@ class BrainAgentHandler(
         "/v1/mempalace/classifier",
         "/v1/mempalace/drawers",
         "/v1/tools/config",
+        "/v1/tools/settings",
         "/v1/context/config",
         "/v1/traces",
         "/v1/audit",
@@ -1112,6 +1114,7 @@ class BrainAgentHandler(
         "/v1/mcp/connect",
         "/v1/mcp/disconnect",
         "/v1/tools/config",
+        "/v1/tools/settings",
         "/v1/context/config",
         "/v1/cache/clear",
         "/v1/channels",
@@ -1420,6 +1423,8 @@ class BrainAgentHandler(
             self._handle_quota_me()
         elif path == "/v1/quotas/config":
             self._handle_quota_config_get()
+        elif path == "/v1/tools/settings":
+            self._handle_tool_settings_get()
         elif path == "/v1/quotas/admin/users":
             self._handle_quota_admin_users()
         elif path.startswith("/v1/quotas/admin/breakdown"):
@@ -1683,6 +1688,8 @@ class BrainAgentHandler(
             self._handle_kg_reextract()
         elif path == "/v1/quotas/config":
             self._handle_quota_config_save()
+        elif path == "/v1/tools/settings":
+            self._handle_tool_settings_save()
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})

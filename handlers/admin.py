@@ -1704,6 +1704,110 @@ class AdminHandlerMixin:
             pass
         self._send_json(saved)
 
+    def _handle_tool_settings_get(self):
+        """GET /v1/tools/settings — admin-only. List all tools (full TOOL_DISPATCH
+        keyset, sorted) merged with their per-tool prompt-prose settings.
+
+        Tools without a settings record get an empty record back so the UI can
+        render a single 'add description' affordance per tool.
+        """
+        user = self._require_role("admin")
+        if not user:
+            return
+        try:
+            all_tools = sorted(engine.TOOL_DISPATCH.keys())
+        except Exception:
+            all_tools = []
+        ts = engine._tool_settings or {}
+        tools = []
+        for name in all_tools:
+            rec = ts.get(name) or {}
+            tools.append({
+                "name": name,
+                "description": rec.get("description", "") or "",
+                "when_to_use": rec.get("when_to_use", "") or "",
+                "warnings": rec.get("warnings", "") or "",
+                "examples": rec.get("examples", "") or "",
+                "applies_with": list(rec.get("applies_with") or []),
+            })
+        self._send_json({"tools": tools})
+
+    def _handle_tool_settings_save(self):
+        """POST /v1/tools/settings — admin-only. Save one tool's settings record.
+
+        Body: {name, description, when_to_use, warnings, examples, applies_with}.
+        Empty strings clear that section. applies_with is the list of OTHER
+        tool names that must also be present for this tool's prose to render
+        (all-of gate).
+        """
+        user = self._require_role("admin")
+        if not user:
+            return
+        body = self._read_json() or {}
+        name = (body.get("name") or "").strip()
+        if not name:
+            self._send_json({"error": "Missing tool name"}, 400)
+            return
+        if name not in engine.TOOL_DISPATCH:
+            self._send_json({"error": f"Unknown tool: {name}"}, 400)
+            return
+        applies_with_raw = body.get("applies_with") or []
+        if not isinstance(applies_with_raw, list):
+            self._send_json({"error": "applies_with must be a list"}, 400)
+            return
+        applies_with = [str(x).strip() for x in applies_with_raw if str(x).strip()]
+        # Reject self-references and unknown tools in applies_with
+        for req in applies_with:
+            if req == name:
+                self._send_json({"error": f"applies_with cannot reference self: {req}"}, 400)
+                return
+            if req not in engine.TOOL_DISPATCH:
+                self._send_json({"error": f"applies_with references unknown tool: {req}"}, 400)
+                return
+        rec = {
+            "description": str(body.get("description", "") or ""),
+            "when_to_use": str(body.get("when_to_use", "") or ""),
+            "warnings": str(body.get("warnings", "") or ""),
+            "examples": str(body.get("examples", "") or ""),
+            "applies_with": applies_with,
+        }
+        # Mutate in place so the dict referenced by both server_config and
+        # engine._tool_settings stays in sync without re-pointing.
+        ts = engine._tool_settings if engine._tool_settings is not None else {}
+        ts[name] = rec
+        engine._tool_settings = ts
+        try:
+            server_config["tool_settings"] = ts
+        except Exception:
+            pass
+        # Persist to config.json
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+            cfg = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    cfg = json.load(f)
+            cfg["tool_settings"] = ts
+            with open(config_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+        except Exception as e:
+            self._send_json({"error": f"Persist failed: {e}"}, 500)
+            return
+        # Audit
+        try:
+            if engine._audit_log:
+                _all_empty = not any(rec.get(f) for f in ("description", "when_to_use", "warnings", "examples"))
+                engine._audit_log.log_action(
+                    agent="main",
+                    action_type="tool_settings_save",
+                    tool_name=name,
+                    args_summary=f"by={user.get('username','')} cleared={_all_empty} applies_with={applies_with}",
+                    result_status="ok",
+                )
+        except Exception:
+            pass
+        self._send_json({"status": "saved", "name": name, "tool": rec})
+
     def _handle_quota_admin_users(self):
         """GET /v1/quotas/admin/users — admin-only. State for every user."""
         user = self._require_role("admin")
