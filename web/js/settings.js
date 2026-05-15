@@ -1539,6 +1539,105 @@ async function switchGeneralTab(tab, btn) {
   /* ─── TOOLS ─── */
   if (tab === 'tools') {
     try {
+      const [cfg, status, settingsResp] = await Promise.all([
+        API.get('/v1/tools/config'),
+        API.get('/v1/tools/status'),
+        API.get('/v1/tools/settings'),
+      ]);
+      const allTools = settingsResp.tools || [];
+      // Stash on window so per-tool save handlers can read the latest fetched
+      // record without refetching (gets clobbered on next tab switch).
+      window._toolSettingsCache = Object.fromEntries(allTools.map(t => [t.name, t]));
+      window._toolConfigCache = cfg || {};
+      window._toolStatusCache = status || {};
+
+      // Group → tools (sorted by name within group). '(ungrouped)' bucket
+      // surfaces tools missing from TOOL_GROUPS — server returns group=''
+      // for those.
+      const byGroup = {};
+      for (const t of allTools) {
+        const g = t.group || '(ungrouped)';
+        (byGroup[g] = byGroup[g] || []).push(t);
+      }
+      // Group order: core/memory/web first (most-edited), then alpha.
+      const PRIMARY_GROUPS = ['core', 'memory', 'context', 'web', 'documents'];
+      const otherGroups = Object.keys(byGroup).filter(g => !PRIMARY_GROUPS.includes(g)).sort();
+      const groupOrder = PRIMARY_GROUPS.filter(g => byGroup[g]).concat(otherGroups);
+
+      // Tools that have integration-knob support (the existing /v1/tools/config keys)
+      const INTEGRATION_TOOLS = new Set(Object.keys(cfg || {}));
+
+      // Helper: per-tool integration-status badge (re-uses old sBadge logic
+      // but only for tools that actually appear in /v1/tools/status).
+      const sBadge = (name) => {
+        const s = (status[name] || {}).status;
+        if (!s) return '';
+        const c = s==='configured'?'var(--success)':s==='disabled'?'var(--text-400)':'var(--error)';
+        const i = s==='configured'?'✓':s==='disabled'?'–':'✗';
+        return `<span style="font-size:10px;color:${c};font-weight:500">${i} ${esc(s)}</span>`;
+      };
+
+      // Per-tool row (collapsed). Click → toggles expanded panel below.
+      const toolRow = (t) => {
+        const integ = INTEGRATION_TOOLS.has(t.name) ? sBadge(t.name) : '';
+        const proseFlag = (t.description || t.when_to_use || t.warnings || t.examples)
+          ? `<span title="Custom prompt prose configured" style="font-size:10px;color:var(--accent)">★ prose</span>`
+          : '';
+        const appliesFlag = (t.applies_with && t.applies_with.length)
+          ? `<span title="Renders only when ${esc(t.applies_with.join(', '))} are also active" style="font-size:10px;color:var(--text-400)">+${t.applies_with.length}</span>`
+          : '';
+        const enabledColor = t.enabled ? 'var(--success)' : 'var(--text-400)';
+        const deferredColor = t.deferred ? 'var(--warning)' : 'var(--text-400)';
+        return `
+          <div class="tool-row" data-tool="${esc(t.name)}" style="border:1px solid var(--border-100);border-radius:6px;margin-bottom:6px;overflow:hidden">
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;background:var(--bg-100)" onclick="toggleToolPanel('${esc(t.name)}')">
+              <span style="font-family:var(--font-mono);font-size:12px;color:${enabledColor};font-weight:500;flex:1">${esc(t.name)}${t.enabled ? '' : ' <span style="color:var(--text-400);font-weight:400">(disabled)</span>'}</span>
+              ${proseFlag}
+              ${appliesFlag}
+              ${integ}
+              <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(245,158,11,0.12);color:${deferredColor};display:${t.deferred?'inline':'none'}" id="defer-badge-${esc(t.name)}">deferred</span>
+              <span style="font-size:14px;color:var(--text-400);transition:transform 0.1s" id="chevron-${esc(t.name)}">▸</span>
+            </div>
+            <div class="tool-panel" id="tool-panel-${esc(t.name)}" style="display:none;padding:12px 14px;background:var(--bg-50);border-top:1px solid var(--border-100)"></div>
+          </div>`;
+      };
+
+      // Group section (collapsible header + tool rows).
+      const groupSection = (gName, tools) => {
+        // Default-expanded if any tool in the group has non-default state
+        const hasNonDefault = tools.some(t =>
+          !t.enabled || t.deferred || t.description || t.when_to_use ||
+          t.warnings || t.examples || INTEGRATION_TOOLS.has(t.name));
+        const expanded = hasNonDefault;
+        return `
+          <div style="margin-bottom:14px">
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:4px;background:var(--bg-100)" onclick="toggleToolGroup('${esc(gName)}')">
+              <span style="font-size:14px;color:var(--text-400);transition:transform 0.1s" id="group-chevron-${esc(gName)}">${expanded?'▾':'▸'}</span>
+              <span style="font-size:13px;font-weight:600;color:var(--text-100);text-transform:uppercase;letter-spacing:0.04em">${esc(gName)}</span>
+              <span style="font-size:11px;color:var(--text-400)">${tools.length} tool${tools.length===1?'':'s'}</span>
+            </div>
+            <div id="group-body-${esc(gName)}" style="display:${expanded?'block':'none'};padding:8px 0 0 16px">
+              ${tools.map(toolRow).join('')}
+            </div>
+          </div>`;
+      };
+
+      C.innerHTML = P(`<div>
+        <div style="font-size:11px;color:var(--text-400);margin-bottom:12px">
+          ${allTools.length} tools across ${groupOrder.length} groups. Click a tool to expand and edit its enabled / defer flags, integration knobs (where applicable), and prompt prose.
+        </div>
+        ${groupOrder.map(g => groupSection(g, byGroup[g])).join('')}
+      </div>`);
+      return;
+    } catch(e) {
+      C.innerHTML = P('<div style="color:var(--error)">Failed to load tools settings: ' + esc(e.message || String(e)) + '</div>');
+      return;
+    }
+  }
+
+  /* ─── TOOLS (legacy flat layout, kept for reference) ─── */
+  if (tab === 'tools-legacy-NEVER-MATCHES') {
+    try {
       const [cfg, status] = await Promise.all([API.get('/v1/tools/config'), API.get('/v1/tools/status')]);
       const mc = state.modelsConfig?.models || {};
       // chat-capability dropdowns (refinement model, etc).
@@ -1837,6 +1936,315 @@ async function saveToolsConfig() {
     showToast('Tools configuration saved');
     switchGeneralTab('tools');
   } catch(e) { showToast('Failed to save: ' + e.message, true); }
+}
+
+/* ── Per-tool registry UI (Commit 5b) ── */
+
+function toggleToolGroup(groupName) {
+  const body = document.getElementById('group-body-' + groupName);
+  const chev = document.getElementById('group-chevron-' + groupName);
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (chev) chev.textContent = open ? '▸' : '▾';
+}
+
+function toggleToolPanel(toolName) {
+  const panel = document.getElementById('tool-panel-' + toolName);
+  const chev = document.getElementById('chevron-' + toolName);
+  if (!panel) return;
+  const open = panel.style.display !== 'none';
+  if (open) {
+    panel.style.display = 'none';
+    if (chev) chev.style.transform = '';
+  } else {
+    panel.innerHTML = renderToolPanelBody(toolName);
+    panel.style.display = 'block';
+    if (chev) chev.style.transform = 'rotate(90deg)';
+  }
+}
+
+function renderToolPanelBody(toolName) {
+  const t = (window._toolSettingsCache || {})[toolName];
+  if (!t) return '<div style="color:var(--error)">No data for ' + toolName + '</div>';
+  const cfg = (window._toolConfigCache || {})[toolName] || null;
+  const status = (window._toolStatusCache || {})[toolName] || null;
+  const allTools = Object.keys(window._toolSettingsCache || {}).filter(n => n !== toolName);
+
+  const txt = (id, label, val, rows=4) => `
+    <div style="margin-bottom:10px">
+      <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">${label}</div>
+      <textarea id="${id}" rows="${rows}" class="form-input" style="width:100%;font-family:var(--font-mono);font-size:11px;resize:vertical">${esc(val||'')}</textarea>
+    </div>`;
+
+  // applies_with multi-select
+  const aw = new Set(t.applies_with || []);
+  const awOptions = allTools.map(n =>
+    `<option value="${esc(n)}" ${aw.has(n)?'selected':''}>${esc(n)}</option>`
+  ).join('');
+
+  // Integration knobs section (only for tools that have one in tool_config)
+  let integHTML = '';
+  if (cfg) {
+    integHTML = `
+      <div style="margin-bottom:14px;padding:10px;border:1px dashed var(--border-100);border-radius:6px;background:var(--bg-100)">
+        <div style="font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
+          <span>Integration</span>
+          ${status ? `<span style="font-size:10px;color:var(--text-400)">${esc(status.status||'')}</span>` : ''}
+        </div>
+        ${renderToolIntegrationFields(toolName, cfg)}
+        <div style="margin-top:8px;display:flex;justify-content:flex-end">
+          <button class="btn-secondary" onclick="saveToolIntegration('${esc(toolName)}')" style="padding:4px 12px;font-size:11px">Save integration</button>
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px">
+      <div>
+        <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">Group</div>
+        <div style="font-size:12px;font-family:var(--font-mono);color:var(--text-100);padding:6px 8px;background:var(--bg-100);border-radius:4px">${esc(t.group || '(ungrouped)')}</div>
+      </div>
+      <div style="display:flex;gap:14px;align-items:end">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="ts-${esc(toolName)}-enabled" ${t.enabled?'checked':''}>
+          <span style="font-size:12px;color:var(--text-100)">Enabled</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="ts-${esc(toolName)}-deferred" ${t.deferred?'checked':''}>
+          <span style="font-size:12px;color:var(--text-100)" title="Hide from initial tool list; expose only via tool_search">Deferred</span>
+        </label>
+      </div>
+    </div>
+
+    ${integHTML}
+
+    <div style="font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px">Prompt prose</div>
+    ${txt('ts-' + toolName + '-description', 'Description', t.description, 6)}
+    ${txt('ts-' + toolName + '-when_to_use', 'When to use', t.when_to_use, 3)}
+    ${txt('ts-' + toolName + '-warnings', 'Warnings', t.warnings, 3)}
+    ${txt('ts-' + toolName + '-examples', 'Examples', t.examples, 4)}
+
+    <div style="margin-bottom:10px">
+      <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">
+        Applies with <span style="text-transform:none;font-weight:400">— prose renders only when ALL selected tools are also active (Cmd/Ctrl-click for multi-select)</span>
+      </div>
+      <select id="ts-${esc(toolName)}-applies_with" multiple size="4" class="form-input" style="width:100%;font-family:var(--font-mono);font-size:11px">${awOptions}</select>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn-secondary" onclick="resetToolPromptSettings('${esc(toolName)}')" style="padding:6px 14px;font-size:12px" title="Clear all prose fields and applies_with (does NOT touch enabled/deferred)">Clear prose</button>
+      <button class="btn-primary" onclick="saveToolPromptSettings('${esc(toolName)}')" style="padding:6px 14px;font-size:12px">Save</button>
+    </div>`;
+}
+
+// Renders the integration-knob form for the ~10 tools that have entries in
+// /v1/tools/config. Reuses the same field IDs as the legacy bulk save so
+// saveToolIntegration can pick them up via document.getElementById.
+function renderToolIntegrationFields(name, cfg) {
+  const lbl = (t) => `<div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px">${t}</div>`;
+  const maskF = (id, val) => `<div style="display:flex;gap:6px;align-items:center">
+    <input id="${id}" type="password" value="${esc(val||'')}" class="form-input" style="flex:1;font-family:var(--font-mono);font-size:11px" autocomplete="off">
+    <button class="btn-secondary" style="font-size:10px;padding:4px 8px" onclick="const i=document.getElementById('${id}');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
+  </div>`;
+  switch (name) {
+    case 'exa_search':
+      return `${lbl('API Key')}${maskF('tool-exa-key', cfg.api_key)}
+        ${lbl('Default Results Per Query')}
+        <input id="tool-exa-num" type="number" min="1" max="50" value="${cfg.default_num_results||5}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px">`;
+    case 'gmail':
+      return `${lbl('Email')}
+        <input id="tool-gmail-email" type="email" value="${esc(cfg.email||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
+        ${lbl('App Password')}${maskF('tool-gmail-pass', cfg.app_password)}
+        <div style="margin-top:6px"><a href="https://myaccount.google.com/apppasswords" target="_blank" style="font-size:11px;color:var(--accent)">Create app password</a></div>`;
+    case 'execute_command':
+      return `${lbl('Default Timeout (seconds)')}
+        <input id="tool-exec-timeout" type="number" min="1" max="600" value="${cfg.timeout||120}" class="form-input" style="width:100px;font-family:var(--font-mono);font-size:11px">
+        ${lbl('Banned Commands (comma-separated)')}
+        <input id="tool-exec-banned" type="text" value="${esc((cfg.banned_commands||[]).join(', '))}" class="form-input" style="font-family:var(--font-mono);font-size:11px">`;
+    case 'web_fetch':
+      return `<div style="display:flex;gap:12px">
+        <div>${lbl('Timeout (seconds)')}<input id="tool-wf-timeout" type="number" min="1" max="120" value="${cfg.timeout||30}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px"></div>
+        <div>${lbl('Max Size (MB)')}<input id="tool-wf-maxsize" type="number" min="1" max="100" value="${cfg.max_size_mb||10}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px"></div>
+      </div>`;
+    case 'refinement':
+      return `${lbl('Model')}
+        <input id="tool-refine-model" type="text" value="${esc(cfg.model||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px" placeholder="Auto (Haiku > Sonnet > cheapest)">`;
+    case 'read_document':
+      return `${lbl('Max File Size (MB)')}
+        <input id="tool-rdoc-maxsize" type="number" min="1" max="200" value="${cfg.max_file_size_mb||50}" class="form-input" style="width:100px;font-family:var(--font-mono);font-size:11px">
+        ${lbl('Vision Model (for images)')}
+        <input id="tool-rdoc-vision-model" type="text" value="${esc(cfg.vision_model||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">`;
+    case 'code_graph':
+      return `${lbl('Exclude Directories (comma-separated)')}
+        <input id="tool-cg-exclude" type="text" value="${esc(cfg.exclude_dirs||'node_modules,.git,__pycache__,venv')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
+        ${lbl('Max File Size (KB)')}
+        <input id="tool-cg-maxsize" type="number" min="50" max="5000" value="${cfg.max_file_size_kb||500}" class="form-input" style="width:100px;font-family:var(--font-mono);font-size:11px">`;
+    case 'transcribe_audio':
+      return `${lbl('Default Model')}
+        <input id="tool-ta-default-model" type="text" value="${esc(cfg.default_model||'mistral-experimental/voxtral-mini-latest')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
+        ${lbl('Fallback Model')}
+        <input id="tool-ta-fallback-model" type="text" value="${esc(cfg.fallback_model||'whisper-base')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">`;
+    case 'text_to_speech':
+      return `${lbl('Default Model')}
+        <input id="tool-tts-model" type="text" value="${esc(cfg.default_model||'mistral-experimental/voxtral-mini-tts-latest')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
+        ${lbl('Voice')}
+        <input id="tool-tts-voice" type="text" value="${esc(cfg.voice||'en_paul_neutral')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">`;
+    case 'translation':
+      return `${lbl('Default Model')}
+        <input id="tool-tr-model" type="text" value="${esc(cfg.default_model||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">`;
+    default:
+      return `<div style="font-size:11px;color:var(--text-400)">No integration fields for this tool.</div>`;
+  }
+}
+
+async function saveToolPromptSettings(toolName) {
+  const t = (window._toolSettingsCache || {})[toolName];
+  if (!t) { showToast('No cached record for ' + toolName, true); return; }
+  const get = (suffix) => document.getElementById('ts-' + toolName + '-' + suffix);
+  const aw = [...(get('applies_with')?.selectedOptions || [])].map(o => o.value);
+  const body = {
+    name: toolName,
+    enabled: !!get('enabled')?.checked,
+    deferred: !!get('deferred')?.checked,
+    description: get('description')?.value || '',
+    when_to_use: get('when_to_use')?.value || '',
+    warnings: get('warnings')?.value || '',
+    examples: get('examples')?.value || '',
+    applies_with: aw,
+  };
+  try {
+    const resp = await API.post('/v1/tools/settings', body);
+    showToast('Saved ' + toolName);
+    // Update local cache so the row badges + collapse state reflect new flags
+    if (window._toolSettingsCache && resp.tool) {
+      window._toolSettingsCache[toolName] = { ...window._toolSettingsCache[toolName], ...resp.tool };
+    }
+    // Refresh deferred badge inline
+    const badge = document.getElementById('defer-badge-' + toolName);
+    if (badge) badge.style.display = body.deferred ? 'inline' : 'none';
+    // Refresh prose badge inline (★ in the collapsed row header)
+    const row = document.querySelector('.tool-row[data-tool="' + toolName + '"]');
+    if (row) {
+      const headerSpans = row.querySelectorAll(':scope > div > span');
+      const proseSpan = [...headerSpans].find(s => s.textContent.trim().startsWith('★'));
+      const hasProse = !!(body.description || body.when_to_use || body.warnings || body.examples);
+      if (hasProse && !proseSpan) {
+        // Insert a new prose badge after the name span
+        const nameSpan = headerSpans[0];
+        if (nameSpan) {
+          const star = document.createElement('span');
+          star.title = 'Custom prompt prose configured';
+          star.style.cssText = 'font-size:10px;color:var(--accent)';
+          star.textContent = '★ prose';
+          nameSpan.parentNode.insertBefore(star, nameSpan.nextSibling);
+        }
+      } else if (!hasProse && proseSpan) {
+        proseSpan.remove();
+      }
+    }
+  } catch(e) {
+    showToast('Save failed: ' + (e.message || e), true);
+  }
+}
+
+function resetToolPromptSettings(toolName) {
+  const get = (suffix) => document.getElementById('ts-' + toolName + '-' + suffix);
+  ['description', 'when_to_use', 'warnings', 'examples'].forEach(f => {
+    const el = get(f);
+    if (el) el.value = '';
+  });
+  const aw = get('applies_with');
+  if (aw) [...aw.options].forEach(o => o.selected = false);
+  showToast('Cleared (not saved — click Save to persist)');
+}
+
+async function saveToolIntegration(toolName) {
+  // Reuse the legacy field IDs that saveToolsConfig built around. Each branch
+  // here mirrors that function's per-tool block, but POSTs only this one
+  // tool's record so the server's full-replacement-per-tool semantics work.
+  let rec;
+  switch (toolName) {
+    case 'exa_search':
+      rec = {
+        enabled: window._toolConfigCache?.exa_search?.enabled !== false,
+        api_key: document.getElementById('tool-exa-key')?.value || '',
+        default_num_results: parseInt(document.getElementById('tool-exa-num')?.value) || 5,
+      };
+      break;
+    case 'gmail':
+      rec = {
+        enabled: window._toolConfigCache?.gmail?.enabled !== false,
+        email: document.getElementById('tool-gmail-email')?.value || '',
+        app_password: document.getElementById('tool-gmail-pass')?.value || '',
+      };
+      break;
+    case 'execute_command':
+      const banned = (document.getElementById('tool-exec-banned')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+      rec = {
+        enabled: window._toolConfigCache?.execute_command?.enabled !== false,
+        timeout: parseInt(document.getElementById('tool-exec-timeout')?.value) || 120,
+        banned_commands: banned,
+      };
+      break;
+    case 'web_fetch':
+      rec = {
+        enabled: window._toolConfigCache?.web_fetch?.enabled !== false,
+        timeout: parseInt(document.getElementById('tool-wf-timeout')?.value) || 30,
+        max_size_mb: parseInt(document.getElementById('tool-wf-maxsize')?.value) || 10,
+      };
+      break;
+    case 'refinement':
+      rec = {
+        enabled: window._toolConfigCache?.refinement?.enabled !== false,
+        model: document.getElementById('tool-refine-model')?.value || '',
+      };
+      break;
+    case 'read_document':
+      rec = {
+        enabled: window._toolConfigCache?.read_document?.enabled !== false,
+        max_file_size_mb: parseInt(document.getElementById('tool-rdoc-maxsize')?.value) || 50,
+        vision_model: document.getElementById('tool-rdoc-vision-model')?.value || '',
+      };
+      break;
+    case 'code_graph':
+      rec = {
+        enabled: window._toolConfigCache?.code_graph?.enabled !== false,
+        exclude_dirs: document.getElementById('tool-cg-exclude')?.value || '',
+        max_file_size_kb: parseInt(document.getElementById('tool-cg-maxsize')?.value) || 500,
+      };
+      break;
+    case 'transcribe_audio':
+      rec = {
+        enabled: window._toolConfigCache?.transcribe_audio?.enabled !== false,
+        default_model: document.getElementById('tool-ta-default-model')?.value || '',
+        fallback_model: document.getElementById('tool-ta-fallback-model')?.value || '',
+      };
+      break;
+    case 'text_to_speech':
+      rec = {
+        enabled: window._toolConfigCache?.text_to_speech?.enabled !== false,
+        default_model: document.getElementById('tool-tts-model')?.value || '',
+        voice: document.getElementById('tool-tts-voice')?.value || '',
+      };
+      break;
+    case 'translation':
+      rec = {
+        enabled: window._toolConfigCache?.translation?.enabled !== false,
+        default_model: document.getElementById('tool-tr-model')?.value || '',
+      };
+      break;
+    default:
+      showToast('No integration save handler for ' + toolName, true);
+      return;
+  }
+  try {
+    await API.post('/v1/tools/config', { [toolName]: rec });
+    showToast('Integration saved for ' + toolName);
+    if (window._toolConfigCache) window._toolConfigCache[toolName] = rec;
+  } catch(e) {
+    showToast('Save failed: ' + (e.message || e), true);
+  }
 }
 
 async function saveMpClassifier() {
