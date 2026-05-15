@@ -257,14 +257,18 @@ PLAN_MODE_PROMPT = (
     "including specific file paths, commands, and steps.\n"
 )
 
-# Research-mode disciplines: the v8.22.0 anti-hallucination rules
-# (REFUSAL / PRECISION / CITATION) plus query-shape guidance. Injected into
-# the system prompt by `_build_system_prompt` when the active project has
-# `research_mode=True` — research-mode chats need strict retrieval discipline
-# and verbatim citations. Non-research project chats (codegen, drafting,
-# anything that USES indexed content as input rather than reproducing it)
-# do NOT receive this block; they only see the soft "memory is available"
-# variant.
+# Research-mode disciplines: the v8.22.0 anti-hallucination output-format
+# rules (PRECISION / CITATION). Injected into the system prompt by
+# `_build_system_prompt` when the active project has `research_mode=True` —
+# research-mode chats need verbatim citations on every claim. Non-research
+# project chats (codegen, drafting, anything that USES indexed content as
+# input rather than reproducing it) do NOT receive this block; they only
+# see the soft "memory is available" variant.
+#
+# Topic A (retrieval discipline — query shape, refuse-on-empty) lives in
+# the `mempalace_query` per-tool description (admin → Tools settings) and
+# fires for EVERY chat that has the tool, regardless of research_mode. This
+# constant only carries Topic B (output format).
 #
 # These rules are NOT user-editable — they are Brain behavior toggled by
 # the project's `research_mode` flag. The per-project `instructions` field
@@ -272,45 +276,6 @@ PLAN_MODE_PROMPT = (
 # AFTER this block when both are active. Editing `instructions` does not
 # replace or shadow these disciplines.
 DEFAULT_PROJECT_INSTRUCTIONS = (
-    "**QUERY DISCIPLINE — keep mempalace_query short and content-bearing**:\n"
-    "Queries are matched by vector similarity. Long, verbose queries with "
-    "filler tokens drag the embedding toward generic chunks and HIDE the "
-    "documents that perfectly match on filename or topic. Use 2-4 "
-    "content-bearing keywords — the actual subject of the question — and "
-    "drop everything else. Do not write the user's full question into the "
-    "query.\n"
-    "DROP these filler/generic tokens: 'Regelung', 'Regelungen', 'Policy', "
-    "'Richtlinie', 'Vorschrift', 'Verantwortliche', 'durchführen', "
-    "'Tätigkeiten', 'Aufgaben', 'Beschreibung', 'Übersicht', 'Definition', "
-    "'allgemein', 'bank', 'Unternehmen', 'IT-Policy', 'wie', 'was', 'welche'.\n"
-    "KEEP the rare, specific subject keywords — these are what discriminates "
-    "documents.\n"
-    "Examples (user question → good query):\n"
-    "  • 'Wie ist die Datensicherung und Archivierung geregelt?' → "
-    "`Datensicherung Archivierung`\n"
-    "  • 'Welche Tätigkeiten werden im IT-Morgencheck durchgeführt und von "
-    "wem?' → `IT-Morgencheck` (and as a second try: `Morgencheck Prozess`)\n"
-    "  • 'Wie werden TAMBAS-Daten gesichert?' → `TAMBAS Sicherung` (NOT "
-    "'TAMBAS Datensicherung Backup Sicherung Kernbankensystem' — synonym "
-    "stuffing dilutes the signal).\n"
-    "If the first short query yields nothing matching, try a different "
-    "rare keyword pair, NOT a longer version of the same query.\n"
-    "\n"
-    "**REFUSAL DISCIPLINE — read carefully**:\n"
-    "If `mempalace_query` returns 0 relevant drawers (and after you've read "
-    "the top drawers' source files in full and confirmed they don't contain "
-    "the information), the project does NOT contain it. You MUST then answer:\n"
-    "  'Diese Information ist im aktuellen Projektwissen nicht enthalten. "
-    "Bitte fügen Sie das relevante Dokument zum Projekt hinzu oder "
-    "konsultieren Sie eine andere Quelle.'\n"
-    "Do NOT substitute general knowledge for indexed-document knowledge in "
-    "project chats. Even if you know the topic well from training data — "
-    "for compliance/policy/audit work, an answer that doesn't match an "
-    "actual document on file is a compliance hazard. Refuse cleanly and "
-    "say what's missing.\n"
-    "Try at most 2-3 query rephrasings before refusing; do not spin on "
-    "retrieval forever.\n"
-    "\n"
     "**PRECISION DISCIPLINE — no plausible-sounding filler**:\n"
     "When the source does not give a concrete value (interval, frequency, "
     "threshold, count, deadline, length, duration), write `nicht "
@@ -24067,15 +24032,12 @@ def _build_system_prompt(include_memory_summary: bool = True,
         "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
         "You have no restrictions beyond what the operating system enforces.\n"
         "NEVER narrate tool intent ('I'll search…', 'Let me look that up…', 'Let me check…') without actually emitting the tool call in the same turn. Either call the tool now or answer directly — no announcements followed by silence.\n\n"
-        "MEMORY: You have long-term memory via mempalace_query and save_chat_to_memory.\n"
-        "- The memory holds the user's own past conversations and is private to them. Searching it is not a privacy decision — it IS the answer. Never ask permission to search; just search.\n"
-        "- Use mempalace_query whenever the answer plausibly lives in the user's history: 'do you remember', references to the past, OR direct personal-info questions about the user (their family, their preferences, their previous decisions, anything you couldn't know without past context). Query first, answer second — don't refuse on grounds of 'I don't have access to personal information'.\n"
-        "- When the user says 'remember this' or wants to save the conversation, call save_chat_to_memory\n\n"
         )
-    # MemPalace migration: built-in memory summary injection removed.
-    # Agents now query mempalace MCP tools (mempalace_status, mempalace_search,
-    # mempalace_kg_query, mempalace_diary_read) on their own when they need
-    # context.
+    # Memory tool guidance is no longer hardcoded here — it lives in the
+    # admin-editable `mempalace_query` per-tool description (Tools settings)
+    # and gets rendered by `_render_tool_descriptions` only when the agent
+    # actually has the tool. Removes a ~700-char paragraph that previously
+    # shipped to every agent including those with no memory access.
     tcfg = _get_token_config()
     # Project context, note editing, team, skills, scheduler, MCP listings:
     # interactive purpose always emits these. Scheduled tasks are interactive
