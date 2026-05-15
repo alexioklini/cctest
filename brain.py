@@ -15838,10 +15838,15 @@ class Scheduler:
         if _sched_purpose_pre == "transform":
             _sched_active_names: set[str] = set()
         else:
+            # Scheduled tasks resolve tools by global tool_settings + purpose
+            # filter ONLY — agent-level tool_overrides do NOT apply (per the
+            # v9.0.x design: scheduled tasks are call-purpose-driven, not
+            # agent-policy-driven). Pass agent_id=None to bypass the
+            # tool_overrides layer.
             _sched_active_names = {
                 t.get("name", "") for t in resolve_active_tools(
                     purpose=_sched_purpose_pre,
-                    agent_id=agent_id,
+                    agent_id=None,
                     discovered_tools=set(),
                     mcp_manager=None,  # MCP listing belongs in the prompt only
                     is_openai_shape=False,
@@ -15969,7 +15974,14 @@ class Scheduler:
 
                 _tool_context = {
                     "session_id": sched_session_id,
+                    # Tool dispatch needs the real agent_id (for thread-local
+                    # _setup, MemPalace wing scoping, audit attribution). The
+                    # _resolver_ bypasses agent overrides for scheduled tasks
+                    # (see _build_tool_list_agent_id below — set to None so
+                    # tool_overrides don't apply, only global tool_settings +
+                    # purpose filter).
                     "agent_id": agent_id,
+                    "tool_resolver_agent_id": None,
                     "user_id": (task_row.get("user_id") or ""),
                     "team_ids": [],
                     "project": "",  # schedules don't bind to a project today
