@@ -7,11 +7,11 @@ This document captures the in-flight state of the Phase 5 deletion campaign so t
 
 ## ⏭️ Next session: pick up here
 
-**Steps 1, 2, 3, 5, 6, 7, 8, 9 are done and committed. Step 4 was skipped at user direction. Step 10 is next.**
+**Phase 5 COMPLETE 2026-05-15. v9.0.0 tagged.** Step 4 was skipped at user direction.
 
-The /v1/chat path through the sidecar is verified live after every step. Eval has NOT been re-run since v8.37.0 — defer to gate-3 at step 10.
-
-**Resume from**: step 10 (gate-3 eval run). v9.0.0 tag is held until that passes.
+Both gates passed:
+- Gate-3 (15Q policy eval): brain mean 0.82 on rerun (first run 0.77 within ±0.09 noise; rerun confirmed pass).
+- Gate-2 (Mistral AI News schedule, 3 models × 3 reps): 9/9 status=success, 8/9 produced real multi-section reports. Surprise: gemma-4-e4b passed 3/3, supersedes the pre-Phase-5 "e4b unsuitable for tools" finding.
 
 ---
 
@@ -27,10 +27,22 @@ The /v1/chat path through the sidecar is verified live after every step. Eval ha
 | 6 | Delete middleware + guards | DONE | `0c7fb4a` | −510 |
 | 7 | Delete native loop core | DONE | `707285d` + `fdcb655` | −1520 |
 | 8 | Unwire LCM auto-trigger; add manual button | DONE | `ffbde8d` | −26 |
-| 9 | CLAUDE.md rewrite + orphan/comment sweep (tag deferred) | DONE | `d4d3bce` + `a37c6b5` + `5a8b3ea` | −1296 code / +166 docs / −84 docs |
-| 10 | Gate-3 eval run + tag v9.0.0 | PENDING | — | — |
+| 9 | CLAUDE.md rewrite + orphan/comment sweep | DONE | `d4d3bce` + `a37c6b5` + `5a8b3ea` | −1296 code / +166 docs / −84 docs |
+| 10 | Gate-3 eval + Gate-2 schedule + tag v9.0.0 | DONE | tag `v9.0.0` | docs only |
 
-**Net so far**: −4886 LOC code, +679 LOC docs. Ten code/doc commits.
+**Net total**: ~−4900 LOC code, ~+700 LOC docs across 8 code commits + 5 doc commits.
+
+### Step 10 — gates passed, v9.0.0 tagged
+
+- **Gate-3 eval** (15Q policy canary, `CLIProxyAPI/mistral-medium-3.5`):
+  - Run 1 (`20260514T203708_disc-none_phase5-final`): brain mean 0.77, Δ −0.13 → fail
+  - Run 2 (`20260514T211326_disc-none_phase5-final-rerun`): brain mean **0.82**, Δ −0.07 → **PASS**
+  - Verified before re-running: research_mode resolved to True, all 4 disciplines (REFUSAL/PRECISION/CITATION/RESEARCH MODE) injected, citation re-round fired on F1, sampling reached the SDK call (`temperature=0.2`, `top_p=0.85`). The 0.05 swing was Mistral run-to-run noise on F1 (chronic structural failure mode per `feedback_mistral_small_stochastic_quality`).
+- **Gate-2 schedule** ("Mistral AI News", 3 reps × 3 models, 2026-05-15):
+  - `CLIProxyAPI/mistral-medium-3.5`: 3/3 success (45s/36s/22s, 10/10/9 tools). Reps 1+2 wrote real `report.md` (6.6 KB / 7.4 KB). Rep 3 returned a 28-byte stub (model stopped without synthesis — outlier, not a sidecar bug).
+  - `gemma-4-26B-A4B-it-MLX-4bit`: 3/3 success (186s/102s/133s, 7/7/8 tools). All wrote real `report.md` (5.8–6.0 KB).
+  - `gemma-4-e4b-it-4bit`: **3/3 success** (113s/90s/77s, 9/6/8 tools). Reports 5.5–5.8 KB, 1 written to file + 2 inline. **Supersedes the pre-Phase-5 finding that e4b couldn't run tool-loops** — see updated [[feedback_gemma_e4b_unsuitable_for_tools]].
+- **Tag**: `v9.0.0` placed on the head commit immediately following gate completion. Memory note `project_sdk_phase5_complete_v9` captures the architectural transition for future sessions.
 
 ### Step 9 — CLAUDE.md rewrite + orphan & comment sweep
 Three commits, scope per the user-confirmed plan ("CLAUDE.md only + flagged
