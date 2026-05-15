@@ -1539,7 +1539,7 @@ async function switchGeneralTab(tab, btn) {
   /* ─── TOOLS ─── */
   if (tab === 'tools') {
     try {
-      const [cfg, status, settingsResp, breakdown] = await Promise.all([
+      const [cfg, status, settingsResp, breakdown, rmdResp] = await Promise.all([
         API.get('/v1/tools/config'),
         API.get('/v1/tools/status'),
         API.get('/v1/tools/settings'),
@@ -1548,7 +1548,12 @@ async function switchGeneralTab(tab, btn) {
         // agent-dependent). Agent-specific surface vs cost lives in
         // agent Tokens tab.
         API.get('/v1/tools/breakdown?agent=main').catch(() => ({})),
+        // Research-mode disciplines — admin-editable per-section text that
+        // gets injected into the system prompt for project chats with
+        // research_mode=on.
+        API.get('/v1/research-mode/disciplines').catch(() => null),
       ]);
+      window._rmdResp = rmdResp;
       const allTools = settingsResp.tools || [];
       // Stash on window so per-tool save handlers can read the latest fetched
       // record without refetching (gets clobbered on next tab switch).
@@ -1668,10 +1673,52 @@ async function switchGeneralTab(tab, btn) {
         </div>`;
       };
 
+      // Research-mode disciplines section — three textareas + reset
+      // buttons. Renders only when the GET succeeded.
+      let rmdHTML = '';
+      if (rmdResp && rmdResp.sections) {
+        const sectionLabels = {
+          refusal:   'Refusal discipline',
+          precision: 'Precision discipline',
+          citation:  'Citation discipline',
+        };
+        const sectionTextarea = (k) => {
+          const cur = rmdResp.sections[k] || '';
+          const isDefault = cur === (rmdResp.defaults[k] || '');
+          return `
+            <div style="margin-bottom:12px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                <span style="font-size:12px;font-weight:600;color:var(--text-100)">${esc(sectionLabels[k] || k)}</span>
+                <span style="font-size:10px;color:var(--text-400)">${isDefault ? '(default)' : '(custom)'}</span>
+                <button class="btn-secondary" style="font-size:10px;padding:2px 8px;margin-left:auto"
+                        onclick="resetResearchModeDiscipline('${esc(k)}')" title="Restore the factory default for this section">Reset</button>
+              </div>
+              <textarea id="rmd-${esc(k)}" rows="6" class="form-input"
+                style="width:100%;font-family:var(--font-mono);font-size:11px;resize:vertical">${esc(cur)}</textarea>
+            </div>`;
+        };
+        rmdHTML = `
+          <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px;margin-bottom:14px;background:var(--bg-100)">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
+              <div style="font-size:12px;font-weight:600;color:var(--text-100)">Research-mode disciplines</div>
+              <div style="font-size:11px;color:var(--text-400)">injected into the system prompt for project chats with research_mode=on</div>
+            </div>
+            <div style="font-size:10px;color:var(--text-400);margin-bottom:10px">
+              Edit each section below; clear a section to drop it from the prompt entirely. Per-tool retrieval guidance (search-first, query discipline, the 3-step flow) lives in the tool descriptions further down — these three sections cover the output posture only.
+            </div>
+            ${(rmdResp.section_order || ['refusal','precision','citation']).map(sectionTextarea).join('')}
+            <div style="display:flex;justify-content:flex-end;gap:8px">
+              <button class="btn-primary" onclick="saveResearchModeDisciplines()" style="padding:6px 14px;font-size:12px">Save disciplines</button>
+            </div>
+          </div>`;
+      }
+
       C.innerHTML = P(`<div>
         <div style="font-size:11px;color:var(--text-400);margin-bottom:12px">
           ${allTools.length} tools across ${groupOrder.length} groups. Click a tool to expand and edit its enabled / defer flags, purposes, integration knobs (where applicable), and prompt prose. The "<span style="font-family:var(--font-mono)">Nt</span>" badge in each row shows the tool's token cost in every request.
         </div>
+
+        ${rmdHTML}
 
         <div style="border:1px solid var(--border-100);border-radius:8px;padding:12px;margin-bottom:14px;background:var(--bg-100)">
           <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
@@ -2245,6 +2292,35 @@ function resetToolPromptSettings(toolName) {
   const aw = get('applies_with');
   if (aw) [...aw.options].forEach(o => o.selected = false);
   showToast('Cleared (not saved — click Save to persist)');
+}
+
+/* ── Research-mode disciplines (D2 + D3) ── */
+
+function resetResearchModeDiscipline(section) {
+  const ta = document.getElementById('rmd-' + section);
+  const dft = (window._rmdResp?.defaults || {})[section];
+  if (!ta || dft === undefined) {
+    showToast('No default available for ' + section, true);
+    return;
+  }
+  ta.value = dft;
+  showToast('Reset (not saved — click Save disciplines to persist)');
+}
+
+async function saveResearchModeDisciplines() {
+  const sections = (window._rmdResp?.section_order) || ['refusal', 'precision', 'citation'];
+  const body = {};
+  for (const k of sections) {
+    const ta = document.getElementById('rmd-' + k);
+    if (ta) body[k] = ta.value;
+  }
+  try {
+    const resp = await API.post('/v1/research-mode/disciplines', body);
+    showToast('Disciplines saved');
+    if (window._rmdResp) window._rmdResp.sections = resp.sections;
+  } catch(e) {
+    showToast('Save failed: ' + (e.message || e), true);
+  }
 }
 
 async function saveToolIntegration(toolName) {
