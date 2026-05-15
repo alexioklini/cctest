@@ -241,10 +241,26 @@ def _translate_anthropic_event(ev_type: str, data: dict,
     if ev_type == "anthropic.message_delta":
         # Usage updates ride here; emit a synthetic `usage` event so the
         # chat worker sees the same shape it gets from send_message today.
+        #
+        # `tokens_in` aggregates the three Anthropic input counters:
+        #   - input_tokens                  (uncached prompt bytes)
+        #   - cache_creation_input_tokens   (tokens written to cache this turn)
+        #   - cache_read_input_tokens       (tokens served from cache)
+        # The total is the actual prompt the model saw — what the user means
+        # by "tokens in." Splitting them was hiding the real number from
+        # providers that report 100% via cache_creation (e.g. oMLX
+        # /v1/messages, where input_tokens is always 0 and the prompt size
+        # lives in cache_creation_input_tokens) and undercounting on real
+        # Anthropic requests where prompt cache is in play.
         usage = data.get("usage") or {}
         if usage:
+            tokens_in = (
+                int(usage.get("input_tokens", 0) or 0)
+                + int(usage.get("cache_creation_input_tokens", 0) or 0)
+                + int(usage.get("cache_read_input_tokens", 0) or 0)
+            )
             callback("usage", {
-                "tokens_in": int(usage.get("input_tokens", 0) or 0),
+                "tokens_in": tokens_in,
                 "tokens_out": int(usage.get("output_tokens", 0) or 0),
                 "tool_round": state.get("round_index", 0),
             })
