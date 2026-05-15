@@ -24378,176 +24378,46 @@ def _build_system_prompt(include_memory_summary: bool = True,
             # is available, use it when relevant — so the model can
             # consume project facts as inputs without being forced to
             # quote-and-cite everything it produces.
+            # Soft project-info block — gives the model the context that
+            # this is a project chat with its own memory store. Detailed
+            # tool-usage guidance (3-step flow, KG decision rule,
+            # read_document how-to, BINARY DOCUMENTS) lives in the per-tool
+            # `tool_settings` descriptions and renders only when the
+            # corresponding tools are in the active set. Brain only ships
+            # project info from the prompt now — the tools speak for
+            # themselves.
             if _research_mode:
-              system_instruction += (
-                "\nPROJECT MEMORY — IMPORTANT:\n"
-            "This project has a dedicated, isolated memory store. By default, "
-            "`mempalace_query` searches ONLY this knowledge layer (mined "
-            "documents) — it does NOT include past chat turns or chat "
-            "summaries. This is deliberate: a wrong answer in an earlier "
-            "turn must never outrank the underlying source document. If "
-            "the user explicitly asks about something said earlier in this "
-            "project's chats ('what did we discuss', 'remember when I "
-            "said'), call `mempalace_query` again with "
-            "`include_chat_history=true` to search the chat layer.\n"
-            "BEFORE answering ANY question that could draw on project "
-            "knowledge — the user's documents, files in their input folders, "
-            "facts they previously told you, project decisions — you MUST "
-            "consult the project's memory tools first. Do not guess or rely "
-            "on general knowledge when the project may have specifics.\n"
-            "\n"
-            "**MANDATORY 3-STEP FLOW for every project-knowledge question**:\n"
-            "  Step 1: Call `mempalace_query` with the user's question (or "
-            "rephrased terms). This returns drawers — short ~800-char "
-            "search-result snippets, NOT the full document. Drawer text "
-            "is for ranking and pointing you at the right file; it is "
-            "NEVER sufficient to answer from on its own.\n"
-            "  Step 2: For EACH top-ranked drawer that looks relevant, "
-            "call `read_document` to load the FULL converted markdown "
-            "of the underlying document. Read enough of it to actually "
-            "find the information — formulas, tables, full paragraphs.\n"
-            "    **HOW TO CALL READ_DOCUMENT**: every drawer carries a "
-            "`read_path` field — absolute path to the curated "
-            "`.brain-extracted/<name>.<ext>.md` companion. Pass it "
-            "verbatim as `path`. Do NOT pass `source_file=...` (wrong "
-            "parameter name; call silently fails). Do NOT construct "
-            "paths from basenames + input-folder roots (the file may "
-            "live in a subfolder you don't know about).\n"
-            "    **Always prefer `read_path` (the .md)** over "
-            "`read_path_original` (the binary). The .md is what "
-            "Microsoft markitdown produced from the binary — better "
-            "table structure, heading hierarchy, OCR — and it's the "
-            "exact text the drawer search ranked. Reading the original "
-            "PDF re-extracts with a different (worse) extractor; "
-            "you'd lose the curation. Use `read_path_original` only as "
-            "a fallback when `read_path` errors or is empty.\n"
-            "    Worked example: drawer returns "
-            "`read_path=\"/private/tmp/kg-real-policies/.../.brain-extracted/"
-            "20_2 Informationssicherheit/20_2_1_2_ARL_ISMS "
-            "Risikomanagement Handbuch.pdf.md\"`. Call: "
-            "`read_document(path=\"<that read_path>\")` verbatim. The "
-            "result is the full curated markdown, ready to read end-"
-            "to-end for formulas, tables, full sections.\n"
-            "  Step 3: Answer ONLY from what you read in Step 2. The "
-            "drawer snippet from Step 1 is a pointer, not a quotation. "
-            "If `read_document` errors (file not found, wrong path, etc.) "
-            "do NOT answer from training data — re-issue the call with "
-            "the corrected path, or refuse cleanly per REFUSAL "
-            "DISCIPLINE below. **An errored read is a missing answer, "
-            "not an invitation to fall back to general knowledge.** "
-            "Every measured hallucination on this corpus has been "
-            "either: (a) answering from drawer text alone, or (b) "
-            "answering from training data after a read_document error.\n"
-            "Skipping Step 2 — or proceeding past a Step 2 error — is "
-            "the documented cause of wrong answers on this project.\n"
-            "\n")
-        else:
-            # Soft variant for non-research projects (research_mode=False).
-            # Project memory is still available; the model just isn't
-            # forced into the strict 3-step / refuse-on-error regime.
-            # Used for projects whose chats USE the indexed content as
-            # input for tasks (writing code, drafting docs, building
-            # tools) rather than reproducing it verbatim with citations.
-            system_instruction += (
-                "\nPROJECT MEMORY:\n"
-                "This project has a dedicated, isolated memory store. "
-                "Call `mempalace_query` whenever the user's request "
-                "could plausibly draw on the project's indexed "
-                "documents, input folders, or prior facts — it returns "
-                "short ~800-char drawer snippets that point at the "
-                "underlying file. For deeper context, follow up with "
-                "`read_document` on the drawer's `read_path` (the "
-                "curated `.brain-extracted/<name>.<ext>.md` companion) "
-                "or `read_path_original` (the original binary). "
-                "`mempalace_query` searches ONLY the document layer; "
-                "pass `include_chat_history=true` if the user "
-                "explicitly references prior chat turns. Cite sources "
-                "with `[Quelle: <basename> — \"<verbatim quote>\"]` "
-                "when you reproduce material from project documents — "
-                "but do not refuse to help when memory has nothing to "
-                "offer; fall back to general capability and the user's "
-                "own input as you normally would.\n\n"
-            )
-        if _research_mode and _kg_enabled_for_prompt:
-            system_instruction += (
-                "OPTIONAL STRUCTURED LOOKUP (knowledge graph):\n"
-                "  `mempalace_kg_search` — structured triple search by "
-                "predicate. Useful for: 'which laws are cited' "
-                "(predicate=cites), 'who is responsible for X' "
-                "(predicate=responsible_party), 'what does X require' "
-                "(predicate=requires), contradiction-detection ('all "
-                "requires-triples about retention'), coverage analysis, "
-                "responsibility matrices.\n"
-                "  `mempalace_kg_query` — entity neighbourhood. Useful "
-                "for 'what do we say about <specific entity>'.\n"
-                "DECISION RULE — when to skip read_document:\n"
-                "Each KG triple carries a `span` field: a short verbatim "
-                "quote (≤200 chars) from the source document that the "
-                "triple was extracted from. If `span` is non-empty, it IS "
-                "your citation — you do NOT need read_document for that "
-                "claim. Cite it as: [Quelle: <basename(source_file)> — "
-                "\"<span>\"]\n"
-                "Only call read_document when: (a) KG returns no results, "
-                "(b) span is empty or too short to support the claim, or "
-                "(c) the question asks for narrative context / calculations "
-                "/ tables that a triple cannot capture.\n"
-                "Preferred flow for factual policy questions:\n"
-                "  1. mempalace_kg_search(predicate=requires/forbids/etc.) "
-                "— if spans present → cite + answer, done\n"
-                "  2. mempalace_query — if drawers present → read_document "
-                "on source file for full context\n"
-                "Examples:\n"
-                "  • 'Was muss X tun?' → kg_search(predicate=requires, "
-                "subject_contains=X) first; span → cite directly\n"
-                "  • 'Was ist verboten?' → kg_search(predicate=forbids); "
-                "span → cite directly\n"
-                "  • 'Welche Gesetze werden zitiert?' → "
-                "kg_search(predicate=cites)\n"
-                "  • 'Wie wird X berechnet?' → 3-step flow (formula lives "
-                "in document, not in triples)\n"
-                "  • 'Wer ist verantwortlich für IT-Security?' → "
-                "kg_search(predicate=responsible_party)\n"
-                "Do NOT pass a `wing` argument — it is set automatically.\n"
-                "Do NOT pass a `room` argument either, unless you have "
-                "verified the exact room name from a previous successful "
-                "result. Brain's project miner uses room='general' for "
-                "all policy/document content; invented values like "
-                "'document' or 'documentation' silently return zero "
-                "drawers and lead to fabricated 'not in the documents' "
-                "answers. The default (no room filter) searches "
-                "everything in the wing — that is what you want.\n"
-                "Do NOT pass `include_chat_history=true` for "
-                "'how is X calculated' / 'what does the policy say' "
-                "questions — that flag switches the search to the "
-                "PROJECT CHAT wing (past conversations) instead of the "
-                "PROJECT KNOWLEDGE wing (the actual indexed documents). "
-                "Use it ONLY when the user explicitly references prior "
-                "chat ('what did we discuss about X', 'remember when I "
-                "said Y').\n"
-                "\n")
-        elif _research_mode and not _kg_enabled_for_prompt:
-            # Research mode but KG turned off in deployment config.
-            system_instruction += (
-                "(The knowledge graph is currently disabled for this "
-                "deployment; only `mempalace_query` + `read_document` "
-                "are available for project knowledge.)\n\n")
-        # PROJECT INPUT FOLDERS list + path-join example moved into the
-        # per-session preamble (see _project_preamble_text). Static
-        # binary-companion guidance stays here because it doesn't depend
-        # on which folders the project has, only on Brain's pipeline.
-        system_instruction += (
-            "BINARY DOCUMENTS (PDF, DOCX, PPTX, XLSX, EML, MSG) in project "
-            "input folders are auto-converted into companion `.md` files "
-            "under the hidden `.brain-extracted/` subdirectory before "
-            "mining. So a drawer with `source_file` like "
-            "`.brain-extracted/policy.pdf.md` actually came from "
-            "`policy.pdf` in the same folder — open the ORIGINAL binary "
-            "with read_document for full fidelity (tables, page layout, "
-            "complete spreadsheet rows beyond the preview). The `.md` is "
-            "a text preview optimised for retrieval and triple "
-            "extraction; use it only when you don't need the original "
-            "layout.\n\n"
-        )
+                system_instruction += (
+                    "\nPROJECT MEMORY:\n"
+                    "This project has a dedicated, isolated memory store. "
+                    "BEFORE answering ANY question that could draw on "
+                    "project knowledge — the user's documents, files in "
+                    "their input folders, facts they previously told you, "
+                    "project decisions — you MUST consult the project's "
+                    "memory tools first. Do not guess or rely on general "
+                    "knowledge when the project may have specifics. The "
+                    "memory tools' own descriptions (mempalace_query, "
+                    "read_document, mempalace_kg_search) carry the "
+                    "detailed retrieval flow and citation rules.\n\n"
+                )
+            else:
+                # Soft variant for non-research projects (research_mode=False).
+                # Project memory is available; the model isn't forced
+                # into the strict regime. Used for projects whose chats
+                # USE the indexed content as input for tasks (writing
+                # code, drafting docs, building tools) rather than
+                # reproducing it verbatim with citations.
+                system_instruction += (
+                    "\nPROJECT MEMORY:\n"
+                    "This project has a dedicated, isolated memory store. "
+                    "Call `mempalace_query` whenever the user's request "
+                    "could plausibly draw on the project's indexed "
+                    "documents, input folders, or prior facts. The tool's "
+                    "own description carries the search and read flow "
+                    "details — do not refuse to help when memory has "
+                    "nothing to offer; fall back to general capability "
+                    "and the user's own input as you normally would.\n\n"
+                )
         # Research-mode disciplines: REFUSAL + PRECISION + CITATION rules
         # that gate the strict retrieval/refusal regime. Emitted by Brain
         # directly when research_mode is on — NOT folded into the owner's
