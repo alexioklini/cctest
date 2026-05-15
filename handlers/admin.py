@@ -1852,6 +1852,96 @@ class AdminHandlerMixin:
             pass
         self._send_json({"status": "saved", "name": name, "tool": rec})
 
+    def _handle_research_mode_disciplines_get(self):
+        """GET /v1/research-mode/disciplines — admin-only. Returns the three
+        admin-editable discipline sections (refusal/precision/citation) that
+        get injected into the system prompt when research_mode is on.
+
+        Response shape:
+          { sections: {refusal, precision, citation},
+            defaults: {refusal, precision, citation} }
+        `sections` is the current effective value (merged with defaults for
+        any missing section). `defaults` lets the UI's reset-per-section
+        button restore the factory text.
+        """
+        user = self._require_role("admin")
+        if not user:
+            return
+        current = engine.get_research_mode_disciplines()
+        defaults = dict(engine.RESEARCH_MODE_DISCIPLINE_DEFAULTS)
+        self._send_json({
+            "sections": current,
+            "defaults": defaults,
+            "section_order": list(engine.RESEARCH_MODE_DISCIPLINE_SECTIONS),
+        })
+
+    def _handle_research_mode_disciplines_save(self):
+        """POST /v1/research-mode/disciplines — admin-only. Saves the three
+        sections atomically.
+
+        Body: {refusal?: str, precision?: str, citation?: str}
+        Empty strings = section omitted from the prompt. Missing keys leave
+        the existing value untouched.
+        """
+        user = self._require_role("admin")
+        if not user:
+            return
+        body = self._read_json() or {}
+        valid = set(engine.RESEARCH_MODE_DISCIPLINE_SECTIONS)
+        # Validate types
+        for k, v in body.items():
+            if k not in valid:
+                continue  # ignore unknown keys silently — forward-compat
+            if not isinstance(v, str):
+                self._send_json({"error": f"section {k!r} must be a string"}, 400)
+                return
+        # Merge: start from current persisted value, overwrite only sections
+        # the body provides.
+        current = dict(engine._research_mode_disciplines or {})
+        cleared_sections = []
+        for k in engine.RESEARCH_MODE_DISCIPLINE_SECTIONS:
+            if k in body:
+                v = body[k]
+                current[k] = v
+                if not v.strip():
+                    cleared_sections.append(k)
+        # Persist
+        engine._research_mode_disciplines = current
+        try:
+            server_config["research_mode_disciplines"] = current
+        except Exception:
+            pass
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+            cfg = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    cfg = json.load(f)
+            cfg["research_mode_disciplines"] = current
+            with open(config_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+        except Exception as e:
+            self._send_json({"error": f"Persist failed: {e}"}, 500)
+            return
+        # Audit
+        try:
+            if engine._audit_log:
+                _changed = [k for k in engine.RESEARCH_MODE_DISCIPLINE_SECTIONS if k in body]
+                engine._audit_log.log_action(
+                    agent="main",
+                    action_type="research_mode_disciplines_save",
+                    tool_name="-",
+                    args_summary=(f"by={user.get('username','')} "
+                                  f"sections={_changed} cleared={cleared_sections}"),
+                    result_status="ok",
+                )
+        except Exception:
+            pass
+        self._send_json({
+            "status": "saved",
+            "sections": engine.get_research_mode_disciplines(),
+        })
+
     def _handle_quota_admin_users(self):
         """GET /v1/quotas/admin/users — admin-only. State for every user."""
         user = self._require_role("admin")

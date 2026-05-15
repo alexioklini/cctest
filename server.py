@@ -1059,6 +1059,7 @@ class BrainAgentHandler(
         "/v1/mempalace/drawers",
         "/v1/tools/config",
         "/v1/tools/settings",
+        "/v1/research-mode/disciplines",
         "/v1/context/config",
         "/v1/traces",
         "/v1/audit",
@@ -1083,6 +1084,7 @@ class BrainAgentHandler(
         "/v1/mempalace/drawers",
         "/v1/tools/config",
         "/v1/tools/settings",
+        "/v1/research-mode/disciplines",
         "/v1/context/config",
         "/v1/traces",
         "/v1/audit",
@@ -1115,6 +1117,7 @@ class BrainAgentHandler(
         "/v1/mcp/disconnect",
         "/v1/tools/config",
         "/v1/tools/settings",
+        "/v1/research-mode/disciplines",
         "/v1/context/config",
         "/v1/cache/clear",
         "/v1/channels",
@@ -1425,6 +1428,8 @@ class BrainAgentHandler(
             self._handle_quota_config_get()
         elif path == "/v1/tools/settings":
             self._handle_tool_settings_get()
+        elif path == "/v1/research-mode/disciplines":
+            self._handle_research_mode_disciplines_get()
         elif path == "/v1/quotas/admin/users":
             self._handle_quota_admin_users()
         elif path.startswith("/v1/quotas/admin/breakdown"):
@@ -1690,6 +1695,8 @@ class BrainAgentHandler(
             self._handle_quota_config_save()
         elif path == "/v1/tools/settings":
             self._handle_tool_settings_save()
+        elif path == "/v1/research-mode/disciplines":
+            self._handle_research_mode_disciplines_save()
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})
@@ -3069,6 +3076,27 @@ def main():
     # Mirror onto engine globals so the resolver / renderer / migration helpers
     # see them without an import dependency on server_config.
     engine._tool_settings = server_config["tool_settings"]
+
+    # Research-mode disciplines — admin-editable per-section text. First-boot
+    # migration seeds from the brain.py defaults so admins see the live
+    # values in the editor instead of an empty dict.
+    rmd_cfg = file_config.get("research_mode_disciplines")
+    if rmd_cfg is None:
+        rmd_cfg = dict(engine.RESEARCH_MODE_DISCIPLINE_DEFAULTS)
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            _cfg_disk = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    _cfg_disk = json.load(f)
+            _cfg_disk["research_mode_disciplines"] = rmd_cfg
+            with open(config_path, "w") as f:
+                json.dump(_cfg_disk, f, indent=2)
+            print(f"Research-mode disciplines: seeded {len(rmd_cfg)} sections from defaults")
+        except Exception as e:
+            print(f"Research-mode disciplines: persist failed: {e}")
+    server_config["research_mode_disciplines"] = rmd_cfg
+    engine._research_mode_disciplines = server_config["research_mode_disciplines"]
 
     # Seed `purposes` on every TOOL_DISPATCH entry from current behavior
     # (interactive / research_minimal / memory_summary). Idempotent — only

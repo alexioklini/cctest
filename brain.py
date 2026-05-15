@@ -276,7 +276,14 @@ PLAN_MODE_PROMPT = (
 # is a purely additive layer for owner-supplied guidance and is appended
 # AFTER this block when both are active. Editing `instructions` does not
 # replace or shadow these disciplines.
-DEFAULT_PROJECT_INSTRUCTIONS = (
+# Research-mode disciplines, split into three admin-editable sections.
+# These are the SEED values — copied into config.json on first boot so
+# admins can edit them via General Settings → Tools. Runtime reads from
+# engine._research_mode_disciplines (populated from server_config at
+# startup, refreshed on POST /v1/research-mode/disciplines). The seeds
+# stay as factory defaults for the UI's reset-per-section button.
+
+_RESEARCH_MODE_DISCIPLINE_REFUSAL_DEFAULT = (
     "**REFUSAL DISCIPLINE — refuse cleanly when retrieval comes back empty**:\n"
     "If `mempalace_query` returns 0 relevant drawers (and after you've read "
     "the top drawers' source files in full and confirmed they don't contain "
@@ -288,8 +295,10 @@ DEFAULT_PROJECT_INSTRUCTIONS = (
     "in this project. Even if you know the topic well from training data, "
     "for compliance / policy / audit work, an answer that doesn't match an "
     "actual document on file is a fabrication hazard. Refuse cleanly and "
-    "say what's missing.\n"
-    "\n"
+    "say what's missing."
+)
+
+_RESEARCH_MODE_DISCIPLINE_PRECISION_DEFAULT = (
     "**PRECISION DISCIPLINE — no plausible-sounding filler**:\n"
     "When the source does not give a concrete value (interval, frequency, "
     "threshold, count, deadline, length, duration), write `nicht "
@@ -300,8 +309,10 @@ DEFAULT_PROJECT_INSTRUCTIONS = (
     "'zeitnah', 'angemessen'), the very next characters must be a "
     "wörtliches Zitat (`> \"...\"`) from the read_document output proving "
     "the source actually says that. No quote → drop the qualifier. "
-    "ISO-27001-typical phrasing from training data is NOT a source.\n"
-    "\n"
+    "ISO-27001-typical phrasing from training data is NOT a source."
+)
+
+_RESEARCH_MODE_DISCIPLINE_CITATION_DEFAULT = (
     "**CITATION DISCIPLINE — per-claim, not per-block**:\n"
     "EVERY factual sentence and EVERY bullet point that came from the "
     "project must carry its OWN [Quelle: <basename> — \"<wörtliches Zitat "
@@ -347,6 +358,73 @@ DEFAULT_PROJECT_INSTRUCTIONS = (
     "quote alone is sufficient.\n"
     "Multiple sources for one claim → repeat the bracket: [Quelle: "
     "A.pdf — \"...\"] [Quelle: B.docx — \"...\"]."
+)
+
+# Section keys + their factory defaults. Iteration order is the
+# concatenation order in the prompt — refusal → precision → citation,
+# matching the original DEFAULT_PROJECT_INSTRUCTIONS.
+RESEARCH_MODE_DISCIPLINE_SECTIONS = ("refusal", "precision", "citation")
+RESEARCH_MODE_DISCIPLINE_DEFAULTS = {
+    "refusal":   _RESEARCH_MODE_DISCIPLINE_REFUSAL_DEFAULT,
+    "precision": _RESEARCH_MODE_DISCIPLINE_PRECISION_DEFAULT,
+    "citation":  _RESEARCH_MODE_DISCIPLINE_CITATION_DEFAULT,
+}
+
+# Runtime state populated by server.py at startup from
+# config.json["research_mode_disciplines"]. Same {refusal, precision,
+# citation} shape; empty strings mean "section omitted from prompt".
+_research_mode_disciplines: dict[str, str] = {}
+
+
+def get_research_mode_disciplines() -> dict[str, str]:
+    """Effective research-mode disciplines, merged with seed defaults.
+    Any section missing or empty in the runtime config falls back to the
+    seed default. Returns a fresh dict every call so callers can mutate
+    locally without touching state."""
+    out: dict[str, str] = {}
+    cfg = _research_mode_disciplines or {}
+    for k in RESEARCH_MODE_DISCIPLINE_SECTIONS:
+        v = cfg.get(k)
+        if isinstance(v, str) and v.strip():
+            out[k] = v
+        else:
+            out[k] = RESEARCH_MODE_DISCIPLINE_DEFAULTS[k]
+    return out
+
+
+def render_research_mode_disciplines() -> str:
+    """Concatenate the three sections (refusal → precision → citation)
+    into the prompt block that fires when research_mode is on. Sections
+    with explicit empty-string in the config (admin cleared it) are
+    skipped — admin opt-out per section, not just whole-block opt-out.
+    """
+    cfg = _research_mode_disciplines or {}
+    parts: list[str] = []
+    for k in RESEARCH_MODE_DISCIPLINE_SECTIONS:
+        # An admin who explicitly saved "" wants that section gone.
+        # Missing key → fall back to default.
+        if k in cfg:
+            v = cfg[k]
+            if not (isinstance(v, str) and v.strip()):
+                continue
+            parts.append(v.strip())
+        else:
+            parts.append(RESEARCH_MODE_DISCIPLINE_DEFAULTS[k].strip())
+    if not parts:
+        return ""
+    return "\n\n".join(parts)
+
+
+# Back-compat alias — callers that still read DEFAULT_PROJECT_INSTRUCTIONS
+# get the merged-with-defaults concatenation, same string they got before.
+# Will be removed once external references (memory notes, comments) are
+# updated.
+def _default_project_instructions_compat() -> str:
+    return render_research_mode_disciplines()
+DEFAULT_PROJECT_INSTRUCTIONS = (
+    _RESEARCH_MODE_DISCIPLINE_REFUSAL_DEFAULT + "\n\n"
+    + _RESEARCH_MODE_DISCIPLINE_PRECISION_DEFAULT + "\n\n"
+    + _RESEARCH_MODE_DISCIPLINE_CITATION_DEFAULT
 )
 
 CAVEMAN_CHAT_PROMPTS = {
@@ -24424,10 +24502,12 @@ def _build_system_prompt(include_memory_summary: bool = True,
         # editable Instructions field. Owner instructions remain a purely
         # additive layer regardless of mode.
         if _research_mode:
-            system_instruction += (
-                "RESEARCH MODE DISCIPLINES (refusal, precision, citation):\n"
-                f"{DEFAULT_PROJECT_INSTRUCTIONS}\n\n"
-            )
+            _disc = render_research_mode_disciplines()
+            if _disc:
+                system_instruction += (
+                    "RESEARCH MODE DISCIPLINES (refusal, precision, citation):\n"
+                    f"{_disc}\n\n"
+                )
         # Inject project Instructions verbatim if the owner has set them.
         # Instructions are purely additive owner-supplied guidance — they
         # are NOT used as a fallback for the citation/refusal disciplines.
