@@ -258,17 +258,18 @@ PLAN_MODE_PROMPT = (
 )
 
 # Research-mode disciplines: the v8.22.0 anti-hallucination output-format
-# rules (PRECISION / CITATION). Injected into the system prompt by
-# `_build_system_prompt` when the active project has `research_mode=True` —
-# research-mode chats need verbatim citations on every claim. Non-research
-# project chats (codegen, drafting, anything that USES indexed content as
-# input rather than reproducing it) do NOT receive this block; they only
-# see the soft "memory is available" variant.
+# rules (REFUSAL / PRECISION / CITATION). Injected into the system prompt
+# by `_build_system_prompt` when the active project has `research_mode=True`
+# — research-mode chats need refuse-on-empty + verbatim citations on every
+# claim. Non-research project chats (codegen, drafting, anything that USES
+# indexed content as input rather than reproducing it) do NOT receive this
+# block; they only see the soft "memory is available" variant — those chats
+# are allowed to combine retrieved facts with general knowledge.
 #
-# Topic A (retrieval discipline — query shape, refuse-on-empty) lives in
-# the `mempalace_query` per-tool description (admin → Tools settings) and
-# fires for EVERY chat that has the tool, regardless of research_mode. This
-# constant only carries Topic B (output format).
+# Topic A (retrieval discipline — query shape, search-first) lives in the
+# `mempalace_query` per-tool description (admin → Tools settings) and fires
+# for EVERY chat that has the tool, regardless of research_mode. This
+# constant only carries Topic B (audit-grade output posture).
 #
 # These rules are NOT user-editable — they are Brain behavior toggled by
 # the project's `research_mode` flag. The per-project `instructions` field
@@ -276,6 +277,19 @@ PLAN_MODE_PROMPT = (
 # AFTER this block when both are active. Editing `instructions` does not
 # replace or shadow these disciplines.
 DEFAULT_PROJECT_INSTRUCTIONS = (
+    "**REFUSAL DISCIPLINE — refuse cleanly when retrieval comes back empty**:\n"
+    "If `mempalace_query` returns 0 relevant drawers (and after you've read "
+    "the top drawers' source files in full and confirmed they don't contain "
+    "the information), the project does NOT contain it. You MUST then say "
+    "so explicitly — name what's missing, suggest the user add the relevant "
+    "document or consult another source. Try at most 2-3 query rephrasings "
+    "before refusing.\n"
+    "Do NOT substitute training-data knowledge for indexed-document knowledge "
+    "in this project. Even if you know the topic well from training data, "
+    "for compliance / policy / audit work, an answer that doesn't match an "
+    "actual document on file is a fabrication hazard. Refuse cleanly and "
+    "say what's missing.\n"
+    "\n"
     "**PRECISION DISCIPLINE — no plausible-sounding filler**:\n"
     "When the source does not give a concrete value (interval, frequency, "
     "threshold, count, deadline, length, duration), write `nicht "
