@@ -24282,7 +24282,15 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # with different tool surfaces don't share a cache entry (and so the
     # legacy None-callers keep their own cache slot).
     _atn_key = "*" if active_tool_names is None else ",".join(sorted(active_tool_names))
-    cache_key = f"{session_id}:{include_memory_summary}:{purpose}:{_atn_key}"
+    # Project + research-mode-override switch the rendered prompt (project
+    # context, mempalace_query.description's project-flow addendum,
+    # research_mode_disciplines block). Without these in the cache key,
+    # warmup (no project) and a follow-up project chat under the same
+    # session_id collide and the second call returns the warmup prompt.
+    _proj_key = getattr(_thread_local, 'project', None) or ""
+    _rmo_key = getattr(_thread_local, 'research_mode_override', None)
+    _rmo_key = "n" if _rmo_key is None else ("t" if _rmo_key else "f")
+    cache_key = f"{session_id}:{include_memory_summary}:{purpose}:{_atn_key}:{_proj_key}:{_rmo_key}"
     cached = _system_prompt_cache.get(cache_key)
     if cached and (_time.time() - cached[1]) < _SYSTEM_PROMPT_CACHE_TTL:
         return _apply_system_prompt_postprocess(

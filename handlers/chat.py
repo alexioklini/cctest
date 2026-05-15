@@ -1201,6 +1201,17 @@ class ChatHandlerMixin:
                     purpose="interactive",
                     active_tool_names=_active_tool_names,
                 )
+                # Persist for the session inspector — overwritten per turn,
+                # no history. Best-effort; persist failure must not block
+                # the chat call.
+                try:
+                    with _db_conn() as _ssp_conn:
+                        _ssp_conn.execute(
+                            "UPDATE sessions SET last_system_prompt = ? WHERE id = ?",
+                            (_system_prompt, sid))
+                        _ssp_conn.commit()
+                except Exception:
+                    pass
                 _tool_context = {
                     "session_id": sid,
                     "agent_id": session.agent_id,

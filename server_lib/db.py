@@ -596,6 +596,16 @@ class ChatDB:
                     conn.execute(f"ALTER TABLE sessions ADD COLUMN {_col} TEXT DEFAULT ''")
                 except sqlite3.OperationalError:
                     pass
+            # last_system_prompt: the verbatim system prompt that was sent to
+            # the model on the most recent turn of this session. Overwritten
+            # per turn (no history). Read by the session inspector so the UI
+            # shows the actual wire prompt instead of a freshly-rebuilt one
+            # (rebuilding always lies a little — different timestamp,
+            # different active tool set if config changed since the turn).
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN last_system_prompt TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             # ── MemPalace chat-sync cursor ──
             # Tracks which messages have already been mirrored into MemPalace,
             # per session. `last_message_id` is the highest messages.id filed so far.

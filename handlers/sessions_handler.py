@@ -130,26 +130,45 @@ class SessionsHandlerMixin:
         session = sessions.get(sid)
         msgs = ChatDB.load_messages(sid, include_compacted=True)
 
-        # Build system prompt for this session's agent
+        # Show the verbatim system prompt that was sent to the model on the
+        # session's most recent turn. Persisted into sessions.last_system_prompt
+        # by handlers/chat.py — never rebuilt here. Rebuilding always lies
+        # (different hour-rounded timestamp, different active tool set if
+        # config changed since the turn) and would surface filtered/altered
+        # text. If the session has no recorded turn yet (first send still
+        # in flight, or pre-migration session), the field is empty and
+        # we surface a placeholder.
         system_prompt = ""
         system_tokens = 0
         memory_summary = ""
         memory_tokens = 0
         if session:
             try:
-                agent_config = engine.AgentConfig(session.agent_id)
-                engine._thread_local.current_agent = agent_config
-                engine._thread_local.project = getattr(session, 'project', None)
-                engine._thread_local.note_context = getattr(session, 'note_context', None)
-                system_prompt = engine._build_system_prompt(include_memory_summary=False)
-                system_tokens = len(system_prompt) // 4  # rough estimate
+                with _db_conn() as _ssp_conn:
+                    row = _ssp_conn.execute(
+                        "SELECT last_system_prompt FROM sessions WHERE id = ?",
+                        (sid,)).fetchone()
+                if row and row[0]:
+                    system_prompt = row[0]
+                    system_tokens = len(system_prompt) // 4  # rough estimate
+                else:
+                    system_prompt = (
+                        "[no system prompt captured for this session yet — "
+                        "send a turn and re-open the inspector to see the "
+                        "verbatim prompt that was sent to the model]"
+                    )
+                    system_tokens = 0
                 # Memory summary (injected on first turn, separate from system prompt)
-                ms = engine.get_memory_summary(session.agent_id)
-                if ms:
-                    tc = agent_config.config.get("token_config") or {}
-                    cap = tc.get("memory_summary_cap", 3000)
-                    memory_summary = ms[:cap] if len(ms) > cap else ms
-                    memory_tokens = len(memory_summary) // 4
+                try:
+                    agent_config = engine.AgentConfig(session.agent_id)
+                    ms = engine.get_memory_summary(session.agent_id)
+                    if ms:
+                        tc = agent_config.config.get("token_config") or {}
+                        cap = tc.get("memory_summary_cap", 3000)
+                        memory_summary = ms[:cap] if len(ms) > cap else ms
+                        memory_tokens = len(memory_summary) // 4
+                except Exception:
+                    pass
             except Exception:
                 pass
 
