@@ -242,9 +242,19 @@ Thread-locals set in chat worker, cleaned in `finally`. **Cache key for `_build_
 
 ## Token Optimization
 
-Per-agent `token_config` in `agent.json`: `tool_groups`, `extra_tools`, `include_tools_guide`, `compact_threshold`, `mcp_tool_filter`/`mcp_tool_exclude`, `deferred_tool_groups`. System prompt cached per-session (60s TTL).
+Per-agent `token_config` in `agent.json`:
+- `tool_overrides: {<tool_name>: {enabled?, deferred?}, ...}` — per-tool tristate override of the global `tool_settings` flags. Field present = override; field absent = inherit. Empty/missing dict = no overrides.
+- `compact_threshold` — float 0–1, override of LCM's 0.60 default
+- `scheduled_task_tools` — bool, gates the tool schema in scheduled task prompts
+- `mcp_tool_filter` / `mcp_tool_exclude` — fnmatch patterns, MCP-only filtering
+
+Legacy fields **deprecated** and stripped on next save (resolver ignored them since v9.0.x):
+- `tool_groups`, `extra_tools`, `deferred_tool_groups` — replaced by per-tool `tool_overrides` + global `tool_settings.purposes`
+- `include_tools_guide` — prose injection is always-on now
 
 Per-agent `limits`: `max_tool_rounds` (soft cap, hard stop at 1.5×), `tool_result_char_limit`, `tool_results_total_tokens`, `context_safety_ratio` (default 0.95).
+
+System prompt cached per-session (60s TTL).
 
 ## Per-User Cost Quotas
 
@@ -345,12 +355,19 @@ tool name. Loaded into `engine._tool_settings` at startup; mirrored onto
 ```
 {
   enabled:      bool   # default True. Global kill switch — false hides the
-                       # tool from EVERY agent, regardless of token_config.
-                       # Server-internal callers (Brain dispatching its own
+                       # tool from EVERY agent unless the agent overrides
+                       # via tool_overrides (see hierarchy below). Server-
+                       # internal callers (Brain dispatching its own
                        # tool_*() calls) are unaffected.
-  deferred:     bool   # default False. Per-tool defer override. ORs with
-                       # the per-agent group-level deferred_tool_groups —
-                       # a tool defers when EITHER applies.
+  deferred:     bool   # default False. Hide from initial tool list; expose
+                       # via tool_search only.
+  purposes:     list[str]  # default []. Allowed call purposes for this
+                       # tool: any of `interactive`, `transform`,
+                       # `memory_summary`, `research_minimal`. Empty = all
+                       # purposes. Seeded at first startup from current
+                       # behavior (interactive for every tool;
+                       # research_minimal for tools flagged minimal=True;
+                       # memory_summary for _MEMORY_SUMMARY_TOOLS).
   description:  str    # prose injected into the system prompt when the
   when_to_use:  str    # tool is in the active set. All four sections are
   warnings:     str    # rendered under `## <tool_name> / ### <Section>`
@@ -360,21 +377,49 @@ tool name. Loaded into `engine._tool_settings` at startup; mirrored onto
 }
 ```
 
-Defaults: `enabled=true`, `deferred=false`, all prose empty. Adding a prose
-record never accidentally hides or defers the tool. The renderer skips
-records where `enabled=false` defensively, even if a stale active set
-somehow contains the tool.
+Defaults: `enabled=true`, `deferred=false`, `purposes=[]`, all prose empty.
+Adding a prose record never accidentally hides or defers the tool. The
+renderer skips records where `enabled=false` defensively, even if a stale
+active set somehow contains the tool.
+
+**Resolution hierarchy** (per LLM call, every tool):
+```
+  effective_enabled  = global.enabled
+  effective_deferred = global.deferred
+  if agent_id:
+      override = token_config.tool_overrides.<name>
+      if 'enabled'  in override: effective_enabled  = override.enabled
+      if 'deferred' in override: effective_deferred = override.deferred
+  if not effective_enabled: drop
+  if call.purpose not in global.purposes (when set): drop
+  if effective_deferred and tool not in discovered_tools: drop (surface via tool_search)
+```
+
+The purpose layer is **global-only** — agents cannot override it (the
+purpose of a call is a property of the call, not the agent).
+
+**Scheduled tasks** bypass the agent-override layer entirely. They run
+through the resolver with `agent_id=None` so only `global` + `purposes`
+apply. Wire path: `_execute_scheduled` sets `tool_resolver_agent_id=None`
+in the sidecar's `tool_context`; the proxy's `_build_tool_list` reads
+that key when present. The agent's `agent_id` still travels in
+`tool_context` for tool dispatch (audit, MemPalace wing scoping).
 
 **Endpoints**:
 - `GET /v1/tools/settings` — admin-only. Returns all 63 tools (sorted)
-  merged with their settings + reverse-indexed `group` string. Tools
-  without a record get safe defaults so the UI can render a single
-  affordance per tool.
+  merged with their settings + reverse-indexed `group` string + canonical
+  `purposes` list at the top level. Tools without a record get safe
+  defaults so the UI can render a single affordance per tool.
 - `POST /v1/tools/settings` — admin-only. Saves one tool's record
   atomically. Validates: `name` must exist in `TOOL_DISPATCH`, every
   entry in `applies_with` must be a known tool, no self-reference,
-  `enabled`/`deferred` must be bool. Persists to `config.json`. Audited
-  via `engine._audit_log` (`action_type=tool_settings_save`).
+  `enabled`/`deferred` must be bool, every entry in `purposes` must be
+  in `_VALID_PURPOSES`. Persists to `config.json`. Audited via
+  `engine._audit_log` (`action_type=tool_settings_save`).
+- `GET /v1/tools/breakdown?agent=<id>` — admin-only. Per-tool token cost
+  decomposition (name / description / schema). Surfaced in General
+  Settings → Tools tab as the "Tool definition cost" header + per-row
+  `Nt` token badge.
 
 The legacy `tools.md` file is gone — its anchored blocks were one-shot
 migrated into `tool_settings` records on first server startup post-migration
