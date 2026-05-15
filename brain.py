@@ -1688,16 +1688,31 @@ DEFAULT_TOOL_GROUPS = {"core", "memory", "context", "web", "delegation", "git", 
 
 
 TOKEN_CONFIG_DEFAULTS = {
-    "tool_groups": None,           # None = all tools, list = specific groups from TOOL_GROUPS
-    "extra_tools": None,           # Additional individual tool names beyond groups
-    "include_tools_guide": True,   # Inject per-tool prompt prose into system prompt
+    # Per-tool agent overrides — replaces the legacy tool_groups / extra_tools
+    # / deferred_tool_groups fields. Schema: {tool_name: {enabled?: bool,
+    # deferred?: bool}}. Fields present mean override; absent means inherit
+    # from global tool_settings. Empty/missing dict = no overrides at all,
+    # agent uses pure global behavior. See `_resolve_tool_enabled` and
+    # `_resolve_tool_deferred` in brain.py for the resolution layer.
+    "tool_overrides": {},
+    # ─── DEPRECATED (kept until C2 deletion pass) ───
+    # tool_groups / extra_tools / deferred_tool_groups: per-agent group-level
+    # filtering. Replaced by tool_overrides + global tool_settings.purposes.
+    # Migration in C1 translates existing values to tool_overrides; resolver
+    # change in C2 stops reading these. Until then, present-but-unused.
+    "tool_groups": None,
+    "extra_tools": None,
+    "deferred_tool_groups": ["email", "documents", "code_graph", "scheduler", "delegation"],
+    # include_tools_guide: always-on now (prose injection is global behavior).
+    # Read sites still default to True via .get(); field removed from UI in C5.
+    "include_tools_guide": True,
+    # ─── kept ───
     "include_memory_summary": False, # MemPalace migration: built-in memory summary disabled
     "memory_summary_cap": 3000,    # (unused after migration; agents query mempalace MCP directly)
     "compact_threshold": None,     # None = use default (0.60), float = override
     "scheduled_task_tools": True,  # Include full tool schema in scheduled tasks
     "mcp_tool_filter": None,       # None = all MCP tools; list of patterns (exact or fnmatch glob) to allow
     "mcp_tool_exclude": None,      # None = exclude nothing; list of patterns applied after filter
-    "deferred_tool_groups": ["email", "documents", "code_graph", "scheduler", "delegation"],  # Groups loaded on-demand via tool_search
 }
 
 
@@ -2355,30 +2370,209 @@ _TOOL_SETTING_FIELD_TITLES = {
 def empty_tool_setting() -> dict:
     """Default empty tool settings record.
 
-    Defaults: enabled=True (off-by-explicit-edit only), deferred=False
-    (per-tool override on top of group-level deferred_tool_groups).
+    Defaults: enabled=True, deferred=False, purposes=[] (= "all purposes").
+    `purposes` is the list of purposes (`interactive`, `research_minimal`,
+    `memory_summary`, `transform`) where this tool is allowed; empty list
+    means no purpose filter applies.
     """
     return ({field: "" for field in _TOOL_SETTING_FIELDS}
-            | {"applies_with": [], "enabled": True, "deferred": False})
+            | {"applies_with": [], "enabled": True, "deferred": False,
+               "purposes": []})
 
 
-def tool_is_enabled(name: str) -> bool:
-    """Whether tool `name` is globally enabled. Default true when no record
-    exists or `enabled` field is missing — adding a prose record should not
-    accidentally hide a tool, and tools that nobody has touched stay live."""
+def _global_tool_enabled(name: str) -> bool:
+    """Bare global enable flag. Default True when no record exists."""
     rec = (_tool_settings or {}).get(name)
     if rec is None:
         return True
     return bool(rec.get("enabled", True))
 
 
-def tool_is_deferred(name: str) -> bool:
-    """Per-tool defer override. Group-level `deferred_tool_groups` (per-agent)
-    is checked separately — a tool defers if EITHER applies."""
+def _global_tool_deferred(name: str) -> bool:
+    """Bare global defer flag. Default False when no record exists."""
     rec = (_tool_settings or {}).get(name)
     if rec is None:
         return False
     return bool(rec.get("deferred", False))
+
+
+def _global_tool_purposes(name: str) -> list[str]:
+    """Bare global purposes list. Default [] (= all purposes)."""
+    rec = (_tool_settings or {}).get(name)
+    if rec is None:
+        return []
+    return list(rec.get("purposes") or [])
+
+
+def _agent_tool_override(agent_id: str | None, name: str) -> dict:
+    """Return the agent's per-tool override record for `name`, or {} if none.
+
+    Walks (a) thread-local current_agent if it matches `agent_id`, otherwise
+    (b) reads `agents/<id>/agent.json` from disk. The thread-local path is
+    fast (zero I/O) and is what runtime call paths hit; the disk path lets
+    helpers / probes / endpoints work without a session context.
+    """
+    if not agent_id:
+        return {}
+    # Fast path: thread-local agent matches
+    agent = getattr(_thread_local, 'current_agent', None)
+    if agent and getattr(agent, 'agent_id', None) == agent_id:
+        cfg = agent.config.get("token_config", {})
+    else:
+        # Disk path
+        try:
+            cfg_path = os.path.join(AGENTS_DIR, agent_id, "agent.json")
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                agent_cfg = json.load(f)
+            cfg = agent_cfg.get("token_config", {}) or {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+    if not isinstance(cfg, dict):
+        return {}
+    overrides = cfg.get("tool_overrides") or {}
+    return overrides.get(name) or {}
+
+
+def resolve_tool_enabled(name: str, agent_id: str | None = None) -> bool:
+    """Resolve a tool's effective enabled flag through the layer hierarchy:
+
+      1. Global (tool_settings.<name>.enabled, default True)
+      2. Agent override (token_config.tool_overrides.<name>.enabled, optional)
+
+    Returns the bottom-most layer that has an opinion. Used by both
+    `_get_agent_tool_names` (filtering) and the prompt builder.
+    """
+    enabled = _global_tool_enabled(name)
+    override = _agent_tool_override(agent_id, name)
+    if "enabled" in override:
+        enabled = bool(override["enabled"])
+    return enabled
+
+
+def resolve_tool_deferred(name: str, agent_id: str | None = None) -> bool:
+    """Resolve a tool's effective defer flag (same hierarchy as enabled)."""
+    deferred = _global_tool_deferred(name)
+    override = _agent_tool_override(agent_id, name)
+    if "deferred" in override:
+        deferred = bool(override["deferred"])
+    return deferred
+
+
+def tool_passes_purpose(name: str, purpose: str) -> bool:
+    """A tool passes the purpose filter when:
+      - its global purposes list is empty (= all purposes), OR
+      - the call's purpose is in its purposes list.
+
+    Purpose filter is global-only — agents cannot override it (the purpose
+    of a call is a property of the call, not the agent).
+    """
+    purposes = _global_tool_purposes(name)
+    if not purposes:
+        return True
+    return purpose in purposes
+
+
+# Legacy aliases — deprecated, kept for callers that haven't migrated yet.
+# Will be removed in C2 along with the resolver consolidation.
+def tool_is_enabled(name: str) -> bool:
+    return _global_tool_enabled(name)
+
+
+def tool_is_deferred(name: str) -> bool:
+    return _global_tool_deferred(name)
+
+
+def seed_tool_settings_purposes(settings: dict) -> dict:
+    """Ensure every tool in TOOL_DISPATCH has a `purposes` field on its
+    settings record, seeded from current resolver behavior:
+      - 'interactive' (every tool — was the legacy default)
+      - 'research_minimal' if the tool has `minimal: True` in TOOL_DEFINITIONS
+      - 'memory_summary' if the tool is in _MEMORY_SUMMARY_TOOLS
+      - 'transform' is never auto-seeded (transform calls supply their own
+        prompt + tool list explicitly; per design this purpose returns [])
+
+    Idempotent: leaves any non-default value alone (admin edits via the
+    UI persist `purposes` explicitly). Returns the mutated `settings`
+    dict for chaining.
+    """
+    minimal_set = _minimal_tool_names()
+    for name in TOOL_DISPATCH.keys():
+        rec = settings.setdefault(name, empty_tool_setting())
+        # Only seed when the field is missing or empty — admin edits win.
+        if "purposes" not in rec or not rec.get("purposes"):
+            seeded: list[str] = ["interactive"]
+            if name in minimal_set:
+                seeded.append("research_minimal")
+            if name in _MEMORY_SUMMARY_TOOLS:
+                seeded.append("memory_summary")
+            rec["purposes"] = seeded
+    return settings
+
+
+def migrate_agent_tool_overrides(agent_id: str) -> bool:
+    """One-shot per-agent migration: translate legacy tool_groups /
+    extra_tools / deferred_tool_groups fields on `agent.json` into the new
+    `tool_overrides` dict. Idempotent: if the agent already has any
+    `tool_overrides` entries OR has no legacy fields set, this is a no-op.
+
+    Translation rules:
+      - tool_groups (whitelist of allowed groups): tools NOT in any allowed
+        group get `enabled: false`. Preserves the agent's curated subset.
+      - extra_tools (additional tool names beyond groups): added to the
+        allowed set before the negative filter (so they get `enabled: true`
+        implicitly via not being negative-filtered).
+      - deferred_tool_groups: every tool in those groups gets `deferred: true`.
+
+    Returns True if the agent was migrated, False if no change needed.
+    Persists the updated agent.json on success.
+    """
+    try:
+        agent_dir = os.path.join(AGENTS_DIR, agent_id)
+        cfg_path = os.path.join(agent_dir, "agent.json")
+        if not os.path.exists(cfg_path):
+            return False
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            agent_cfg = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    tcfg = (agent_cfg.get("token_config") or {}) if isinstance(agent_cfg.get("token_config"), dict) else {}
+    existing_overrides = tcfg.get("tool_overrides") or {}
+    if existing_overrides:
+        return False  # Already has overrides — admin or prior migration touched it.
+    tool_groups = tcfg.get("tool_groups")
+    extra_tools = tcfg.get("extra_tools")
+    deferred_tool_groups = tcfg.get("deferred_tool_groups")
+    if not tool_groups and not extra_tools and not deferred_tool_groups:
+        return False  # No legacy fields to migrate.
+    overrides: dict[str, dict] = {}
+    # tool_groups → negative-filter (tools not in allowed set get enabled=false)
+    if tool_groups:
+        allowed: set[str] = set()
+        for g in tool_groups:
+            allowed.update(TOOL_GROUPS.get(g, set()))
+        if extra_tools:
+            allowed.update(extra_tools)
+        for name in TOOL_DISPATCH.keys():
+            if name not in allowed:
+                overrides.setdefault(name, {})["enabled"] = False
+    # deferred_tool_groups → mark every tool in those groups deferred=true
+    if deferred_tool_groups:
+        deferred_names: set[str] = set()
+        for dg in deferred_tool_groups:
+            deferred_names.update(TOOL_GROUPS.get(dg, set()))
+        for name in deferred_names:
+            overrides.setdefault(name, {})["deferred"] = True
+    # Persist
+    if not overrides:
+        return False
+    tcfg["tool_overrides"] = overrides
+    agent_cfg["token_config"] = tcfg
+    try:
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(agent_cfg, f, indent=2)
+    except OSError:
+        return False
+    return True
 
 
 def migrate_tool_settings_from_md(tools_md_path: str) -> dict:

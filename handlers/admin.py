@@ -1734,13 +1734,16 @@ class AdminHandlerMixin:
                 "group": tool_to_group.get(name, ""),
                 "enabled": bool(rec.get("enabled", True)),
                 "deferred": bool(rec.get("deferred", False)),
+                "purposes": list(rec.get("purposes") or []),
                 "description": rec.get("description", "") or "",
                 "when_to_use": rec.get("when_to_use", "") or "",
                 "warnings": rec.get("warnings", "") or "",
                 "examples": rec.get("examples", "") or "",
                 "applies_with": list(rec.get("applies_with") or []),
             })
-        self._send_json({"tools": tools})
+        # Also surface the canonical purpose list so the UI doesn't have to
+        # hardcode it.
+        self._send_json({"tools": tools, "purposes": list(engine._VALID_PURPOSES)})
 
     def _handle_tool_settings_save(self):
         """POST /v1/tools/settings — admin-only. Save one tool's settings record.
@@ -1790,6 +1793,16 @@ class AdminHandlerMixin:
         except ValueError as e:
             self._send_json({"error": f"enabled/deferred must be boolean: {e}"}, 400)
             return
+        # purposes: list of canonical purpose names. Empty = all purposes.
+        purposes_raw = body.get("purposes") or []
+        if not isinstance(purposes_raw, list):
+            self._send_json({"error": "purposes must be a list"}, 400)
+            return
+        purposes = [str(p).strip() for p in purposes_raw if str(p).strip()]
+        for p in purposes:
+            if p not in engine._VALID_PURPOSES:
+                self._send_json({"error": f"unknown purpose: {p} (valid: {list(engine._VALID_PURPOSES)})"}, 400)
+                return
         rec = {
             "description": str(body.get("description", "") or ""),
             "when_to_use": str(body.get("when_to_use", "") or ""),
@@ -1798,6 +1811,7 @@ class AdminHandlerMixin:
             "applies_with": applies_with,
             "enabled": enabled,
             "deferred": deferred,
+            "purposes": purposes,
         }
         # Mutate in place so the dict referenced by both server_config and
         # engine._tool_settings stays in sync without re-pointing.

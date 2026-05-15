@@ -3056,26 +3056,53 @@ def main():
     # first time we see a config without the new key, then persist so admins
     # can edit via /v1/tools/settings without re-migrating.
     tool_settings_cfg = file_config.get("tool_settings")
+    persisted_during_init = False
     if tool_settings_cfg is None:
         legacy_md = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools.md")
         tool_settings_cfg = engine.migrate_tool_settings_from_md(legacy_md)
         if tool_settings_cfg:
-            try:
-                config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-                _cfg_disk = {}
-                if os.path.exists(config_path):
-                    with open(config_path) as f:
-                        _cfg_disk = json.load(f)
-                _cfg_disk["tool_settings"] = tool_settings_cfg
-                with open(config_path, "w") as f:
-                    json.dump(_cfg_disk, f, indent=2)
-                print(f"Tool settings: migrated {len(tool_settings_cfg)} entries from tools.md")
-            except Exception as e:
-                print(f"Tool settings: migration persist failed: {e}")
-    server_config["tool_settings"] = tool_settings_cfg or {}
-    # Mirror onto engine globals so brain._render_tool_descriptions sees them
-    # without an import dependency on server_config.
+            print(f"Tool settings: migrated {len(tool_settings_cfg)} entries from tools.md")
+        else:
+            tool_settings_cfg = {}
+        persisted_during_init = True  # force a write below to capture the seeded purposes
+    server_config["tool_settings"] = tool_settings_cfg
+    # Mirror onto engine globals so the resolver / renderer / migration helpers
+    # see them without an import dependency on server_config.
     engine._tool_settings = server_config["tool_settings"]
+
+    # Seed `purposes` on every TOOL_DISPATCH entry from current behavior
+    # (interactive / research_minimal / memory_summary). Idempotent — only
+    # writes records that lack a populated purposes list. Runs every boot
+    # so newly-added tools get their default purposes without admin action.
+    _ts_before = json.dumps(server_config["tool_settings"], sort_keys=True)
+    engine.seed_tool_settings_purposes(server_config["tool_settings"])
+    _ts_after = json.dumps(server_config["tool_settings"], sort_keys=True)
+    if _ts_before != _ts_after or persisted_during_init:
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            _cfg_disk = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    _cfg_disk = json.load(f)
+            _cfg_disk["tool_settings"] = server_config["tool_settings"]
+            with open(config_path, "w") as f:
+                json.dump(_cfg_disk, f, indent=2)
+            if _ts_before != _ts_after:
+                print(f"Tool settings: seeded purposes for {len(server_config['tool_settings'])} tools")
+        except Exception as e:
+            print(f"Tool settings: persist failed: {e}")
+
+    # Migrate every agent's legacy tool_groups / extra_tools /
+    # deferred_tool_groups fields into the new `tool_overrides` per-tool
+    # dict. Idempotent — agents that already have overrides OR have no
+    # legacy fields are skipped. The legacy fields stay on disk for now
+    # (resolver still reads them in C1; C2 deletes the read paths).
+    try:
+        for agent_id in engine.list_agents():
+            if engine.migrate_agent_tool_overrides(agent_id):
+                print(f"Tool settings: migrated agent '{agent_id}' to tool_overrides")
+    except Exception as e:
+        print(f"Tool settings: agent migration failed: {e}")
 
     # Initialize models config
     existing_models = file_config.get("models")
