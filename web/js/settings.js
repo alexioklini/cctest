@@ -3708,20 +3708,8 @@ async function switchAgentTab(agentId, tab, btn) {
             </div>
           </div>
 
-          <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
-            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Scheduled tasks</div>
-            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
-              <input type="checkbox" id="tok-sched-tools" ${tcfg.scheduled_task_tools !== false ? 'checked' : ''}
-                style="accent-color:var(--accent)">
-              Include full tool schema in scheduled tasks
-            </label>
-            <div style="font-size:10px;color:var(--text-400);margin-top:4px">
-              Note: scheduled tasks resolve tools by call purpose only; per-agent overrides above do NOT apply to them.
-            </div>
-          </div>
-
           <div style="display:flex;justify-content:flex-end;gap:8px">
-            <button class="btn-secondary" onclick="_clearTokenOverrides('${esc(agentId)}')" title="Reset all per-tool overrides for this agent (keeps compact_threshold + scheduled_task_tools).">Clear all overrides</button>
+            <button class="btn-secondary" onclick="_clearTokenOverrides('${esc(agentId)}')" title="Reset all per-tool overrides for this agent (keeps compact_threshold).">Clear all overrides</button>
             <button class="btn-primary" onclick="_saveTokenConfig('${esc(agentId)}')">Save Token Config</button>
           </div>
         </div>`;
@@ -3757,20 +3745,19 @@ window._saveTokenConfig = async function(agentId) {
   const tcfg = {
     tool_overrides: overrides,
     compact_threshold: threshVal ? parseInt(threshVal) / 100 : null,
-    scheduled_task_tools: document.getElementById('tok-sched-tools')?.checked ?? true,
   };
 
   try {
     const res = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
     const cfg = JSON.parse(res.content || '{}');
     cfg.token_config = Object.assign(cfg.token_config || {}, tcfg);
-    // Strip the deprecated legacy fields when we save — they're ignored by
-    // the resolver, but keeping them on disk creates confusion. Resolver
-    // change shipped in C2; this is the disk cleanup.
+    // Strip deprecated legacy fields when we save — resolver ignores them,
+    // but keeping them on disk creates confusion.
     delete cfg.token_config.tool_groups;
     delete cfg.token_config.extra_tools;
     delete cfg.token_config.deferred_tool_groups;
     delete cfg.token_config.include_tools_guide;
+    delete cfg.token_config.scheduled_task_tools;
     await API.post(`/v1/agents/${encodeURIComponent(agentId)}/file`, {
       name: 'agent.json',
       content: JSON.stringify(cfg, null, 2)

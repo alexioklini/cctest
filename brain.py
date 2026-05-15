@@ -1710,7 +1710,6 @@ TOKEN_CONFIG_DEFAULTS = {
     "include_memory_summary": False, # MemPalace migration: built-in memory summary disabled
     "memory_summary_cap": 3000,    # (unused after migration; agents query mempalace MCP directly)
     "compact_threshold": None,     # None = use default (0.60), float = override
-    "scheduled_task_tools": True,  # Include full tool schema in scheduled tasks
     "mcp_tool_filter": None,       # None = all MCP tools; list of patterns (exact or fnmatch glob) to allow
     "mcp_tool_exclude": None,      # None = exclude nothing; list of patterns applied after filter
 }
@@ -2207,8 +2206,8 @@ _VALID_PURPOSES = ("interactive", "transform", "memory_summary", "research_minim
 # (resolved to research_minimal at fire time, matching Phase A behavior).
 # `research_minimal`: harness-style lean prompt + minimal-flagged tools.
 # `interactive`: full agent surface (matches chat). Restored opt-in surface.
-# Memory-summary tasks always use the memory_summary purpose regardless of
-# this field; transform tasks (`scheduled_task_tools: False`) likewise.
+# Memory-summary tasks (name starts with `_memory_summary_`) always use the
+# memory_summary purpose regardless of this field.
 _VALID_TOOL_PROFILES = ("", "research_minimal", "interactive")
 
 
@@ -15812,41 +15811,29 @@ class Scheduler:
         # surface. active_tool_names is computed inline so the per-tool
         # prose blocks match the wire payload (KV-prefix stability).
         #
-        # Determine the purpose from the same sources used later for the
-        # sidecar call (token_config + memory_summary name prefix). Hoisted
-        # up here so the prompt and the wire tool list agree.
-        _sched_tools_pre = _get_token_config(agent_id).get("scheduled_task_tools", True)
+        # Determine the purpose for this scheduled task. Sources, in order:
+        #   1. Memory-summary tasks (Brain-internal) — name prefix forces
+        #      `memory_summary` purpose.
+        #   2. Per-schedule `tool_profile` field — empty/unset →
+        #      `research_minimal` (default), `interactive` opts into the
+        #      full chat surface.
+        # Hoisted up here so the prompt and the wire tool list agree.
         if name.startswith("_memory_summary_"):
-            _sched_tools_pre = "memory_only"
-        _sched_purpose_pre = (
-            "memory_summary" if _sched_tools_pre == "memory_only" else
-            "transform" if _sched_tools_pre is False else
-            "interactive")
-        # Phase B (PROMPT_TOOLS_UNIFICATION_PLAN.md): per-schedule
-        # `tool_profile` overrides the default purpose for non-memory,
-        # non-transform tasks. Empty/unset → research_minimal (Phase A
-        # default, validated for gemma-4-e4b on the canonical research task).
-        # 'interactive' opts back into the full agent surface (chat-like).
-        # Memory-summary and transform tasks ignore the profile.
-        if _sched_purpose_pre not in ("memory_summary", "transform"):
+            _sched_purpose_pre = "memory_summary"
+        else:
             _task_profile = (task_row.get("tool_profile") or "").strip()
-            if _task_profile == "interactive":
-                _sched_purpose_pre = "interactive"
-            else:
-                # empty / "research_minimal" → research_minimal (default).
-                _sched_purpose_pre = "research_minimal"
+            _sched_purpose_pre = "interactive" if _task_profile == "interactive" else "research_minimal"
         if _sched_purpose_pre == "transform":
             _sched_active_names: set[str] = set()
         else:
-            # Scheduled tasks resolve tools by global tool_settings + purpose
-            # filter ONLY — agent-level tool_overrides do NOT apply (per the
-            # v9.0.x design: scheduled tasks are call-purpose-driven, not
-            # agent-policy-driven). Pass agent_id=None to bypass the
-            # tool_overrides layer.
+            # Scheduled tasks go through the same single resolver hierarchy
+            # as every other LLM call: global tool_settings → agent-level
+            # tool_overrides → purpose filter. The task's owning agent
+            # supplies layer 2.
             _sched_active_names = {
                 t.get("name", "") for t in resolve_active_tools(
                     purpose=_sched_purpose_pre,
-                    agent_id=None,
+                    agent_id=agent_id,
                     discovered_tools=set(),
                     mcp_manager=None,  # MCP listing belongs in the prompt only
                     is_openai_shape=False,
@@ -15931,11 +15918,6 @@ class Scheduler:
                 sched_inf = dict(sched_inf)
                 sched_inf.pop("thinking_level", None)
                 sched_inf["thinking"] = False
-            # Memory summary tasks only need memory tools, not the full 39-tool schema
-            sched_tools = _get_token_config(agent_id).get("scheduled_task_tools", True)
-            if name.startswith("_memory_summary_"):
-                sched_tools = "memory_only"
-
             # Sidecar path. Brain resolves provider, builds the tool list +
             # sampling, dispatches tools via /v1/tools/call, and persists the
             # final reply. The agentic loop itself runs in the sidecar process.
@@ -15960,28 +15942,15 @@ class Scheduler:
                 pass  # result_text + status already set from the GDPR block above
             else:
                 _prov = resolve_provider_for_model(model)
-                # PROMPT_TOOLS_UNIFICATION_PLAN.md: scheduled tasks default
-                # to `research_minimal` (lean prompt + minimal-flagged tools).
-                # The historical 3-tool _SCHEDULED_TASK_TOOLS clamp existed
-                # because Brain's 7.5 KB system prompt + 39-tool schema made
-                # gemma-4-e4b emit <eos>; the resolver-driven lean prompt
-                # drives that model past the stall (Gate-PT-2 2/3 ✅).
-                # `tools="memory_only"` collapses to purpose='memory_summary';
-                # `tools=False` collapses to purpose='transform' (empty list).
-                # Reuse the purpose resolved up front from sched_tools +
-                # tool_profile (PROMPT_TOOLS_UNIFICATION_PLAN.md Phase B).
+                # Reuse the purpose resolved up front (memory_summary for
+                # `_memory_summary_` name prefix; otherwise per-task
+                # `tool_profile` — `interactive` for full chat surface,
+                # else research_minimal).
                 _sched_purpose = _sched_purpose_pre
 
                 _tool_context = {
                     "session_id": sched_session_id,
-                    # Tool dispatch needs the real agent_id (for thread-local
-                    # _setup, MemPalace wing scoping, audit attribution). The
-                    # _resolver_ bypasses agent overrides for scheduled tasks
-                    # (see _build_tool_list_agent_id below — set to None so
-                    # tool_overrides don't apply, only global tool_settings +
-                    # purpose filter).
                     "agent_id": agent_id,
-                    "tool_resolver_agent_id": None,
                     "user_id": (task_row.get("user_id") or ""),
                     "team_ids": [],
                     "project": "",  # schedules don't bind to a project today

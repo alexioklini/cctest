@@ -245,12 +245,12 @@ Thread-locals set in chat worker, cleaned in `finally`. **Cache key for `_build_
 Per-agent `token_config` in `agent.json`:
 - `tool_overrides: {<tool_name>: {enabled?, deferred?}, ...}` — per-tool tristate override of the global `tool_settings` flags. Field present = override; field absent = inherit. Empty/missing dict = no overrides.
 - `compact_threshold` — float 0–1, override of LCM's 0.60 default
-- `scheduled_task_tools` — bool, gates the tool schema in scheduled task prompts
 - `mcp_tool_filter` / `mcp_tool_exclude` — fnmatch patterns, MCP-only filtering
 
 Legacy fields **deprecated** and stripped on next save (resolver ignored them since v9.0.x):
 - `tool_groups`, `extra_tools`, `deferred_tool_groups` — replaced by per-tool `tool_overrides` + global `tool_settings.purposes`
 - `include_tools_guide` — prose injection is always-on now
+- `scheduled_task_tools` — scheduled tasks now follow the same single resolver hierarchy as every other LLM call (global → agent override → purpose). Per-task `tool_profile` (`""`/`"interactive"`/`"research_minimal"`) drives the call's purpose; `_memory_summary_*` name prefix routes to `memory_summary`.
 
 Per-agent `limits`: `max_tool_rounds` (soft cap, hard stop at 1.5×), `tool_result_char_limit`, `tool_results_total_tokens`, `context_safety_ratio` (default 0.95).
 
@@ -398,12 +398,11 @@ active set somehow contains the tool.
 The purpose layer is **global-only** — agents cannot override it (the
 purpose of a call is a property of the call, not the agent).
 
-**Scheduled tasks** bypass the agent-override layer entirely. They run
-through the resolver with `agent_id=None` so only `global` + `purposes`
-apply. Wire path: `_execute_scheduled` sets `tool_resolver_agent_id=None`
-in the sidecar's `tool_context`; the proxy's `_build_tool_list` reads
-that key when present. The agent's `agent_id` still travels in
-`tool_context` for tool dispatch (audit, MemPalace wing scoping).
+**Scheduled tasks** follow the same single resolver hierarchy as every
+other LLM call — global → agent override → purpose. The task's owning
+agent supplies layer 2. The call's `purpose` is decided by the task's
+`tool_profile` field (`""` → `research_minimal`, `"interactive"` →
+`interactive`) or by name prefix (`_memory_summary_*` → `memory_summary`).
 
 **Endpoints**:
 - `GET /v1/tools/settings` — admin-only. Returns all 63 tools (sorted)

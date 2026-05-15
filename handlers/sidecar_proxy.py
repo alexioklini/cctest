@@ -417,19 +417,9 @@ def run_turn(
         "api_key": api_key,
         "system": system_prompt,
         "messages": _to_anthropic_messages(messages),
-        # `tool_resolver_agent_id` is an explicit knob for callers that need
-        # tool resolution to bypass per-agent overrides while keeping the real
-        # agent_id in tool_context for tool dispatch (audit, MemPalace wing
-        # scoping, etc.). Currently used by the scheduler — scheduled tasks
-        # resolve tools by global tool_settings + purpose only, agent
-        # overrides don't apply. The KEY must be present (with value None)
-        # to opt in; absent means "use the regular agent_id". See
-        # brain._execute_scheduled.
         "tools": _build_tool_list(
             purpose=purpose,
-            agent_id=(tool_context["tool_resolver_agent_id"]
-                      if "tool_resolver_agent_id" in tool_context
-                      else (tool_context.get("agent_id") or None)),
+            agent_id=tool_context.get("agent_id") or None,
             mcp_manager=getattr(engine, "_mcp_manager", None),
         ),
         "max_tokens": int(max_tokens),
@@ -621,19 +611,9 @@ def run_turn_blocking(
         "api_key": api_key,
         "system": system_prompt,
         "messages": _to_anthropic_messages(messages),
-        # `tool_resolver_agent_id` is an explicit knob for callers that need
-        # tool resolution to bypass per-agent overrides while keeping the real
-        # agent_id in tool_context for tool dispatch (audit, MemPalace wing
-        # scoping, etc.). Currently used by the scheduler — scheduled tasks
-        # resolve tools by global tool_settings + purpose only, agent
-        # overrides don't apply. The KEY must be present (with value None)
-        # to opt in; absent means "use the regular agent_id". See
-        # brain._execute_scheduled.
         "tools": _build_tool_list(
             purpose=purpose,
-            agent_id=(tool_context["tool_resolver_agent_id"]
-                      if "tool_resolver_agent_id" in tool_context
-                      else (tool_context.get("agent_id") or None)),
+            agent_id=tool_context.get("agent_id") or None,
             mcp_manager=getattr(engine, "_mcp_manager", None),
         ),
         "max_tokens": int(max_tokens),
