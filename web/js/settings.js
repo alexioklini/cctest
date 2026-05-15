@@ -1548,6 +1548,7 @@ async function switchGeneralTab(tab, btn) {
       // Stash on window so per-tool save handlers can read the latest fetched
       // record without refetching (gets clobbered on next tab switch).
       window._toolSettingsCache = Object.fromEntries(allTools.map(t => [t.name, t]));
+      window._toolPurposesCanonical = settingsResp.purposes || null;
       window._toolConfigCache = cfg || {};
       window._toolStatusCache = status || {};
 
@@ -1983,6 +1984,18 @@ function renderToolPanelBody(toolName) {
     `<option value="${esc(n)}" ${aw.has(n)?'selected':''}>${esc(n)}</option>`
   ).join('');
 
+  // purposes — checkboxes for the canonical 4 purposes. Empty selection
+  // is rendered as "all purposes" (the resolver treats empty list as no
+  // filter). Cached canonical list comes from the GET response.
+  const allPurposes = window._toolPurposesCanonical || ['interactive', 'transform', 'memory_summary', 'research_minimal'];
+  const havePurposes = new Set(t.purposes || []);
+  const purposeChecks = allPurposes.map(p => `
+    <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px">
+      <input type="checkbox" class="ts-purpose" data-purpose="${esc(p)}"
+             id="ts-${esc(toolName)}-purpose-${esc(p)}" ${havePurposes.has(p)?'checked':''}>
+      <span style="font-family:var(--font-mono)">${esc(p)}</span>
+    </label>`).join('');
+
   // Integration knobs section (only for tools that have one in tool_config)
   let integHTML = '';
   if (cfg) {
@@ -2024,6 +2037,15 @@ function renderToolPanelBody(toolName) {
     ${txt('ts-' + toolName + '-when_to_use', 'When to use', t.when_to_use, 3)}
     ${txt('ts-' + toolName + '-warnings', 'Warnings', t.warnings, 3)}
     ${txt('ts-' + toolName + '-examples', 'Examples', t.examples, 4)}
+
+    <div style="margin-bottom:10px">
+      <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">
+        Purposes <span style="text-transform:none;font-weight:400">— call purposes where this tool is allowed. Empty (all unchecked) = available for every purpose.</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:14px;padding:6px 8px;background:var(--bg-100);border-radius:4px" id="ts-${esc(toolName)}-purposes-wrap">
+        ${purposeChecks}
+      </div>
+    </div>
 
     <div style="margin-bottom:10px">
       <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">
@@ -2103,6 +2125,11 @@ async function saveToolPromptSettings(toolName) {
   if (!t) { showToast('No cached record for ' + toolName, true); return; }
   const get = (suffix) => document.getElementById('ts-' + toolName + '-' + suffix);
   const aw = [...(get('applies_with')?.selectedOptions || [])].map(o => o.value);
+  // Purposes: read the checked checkboxes inside the wrapper.
+  const purposesWrap = document.getElementById('ts-' + toolName + '-purposes-wrap');
+  const purposes = purposesWrap
+    ? [...purposesWrap.querySelectorAll('.ts-purpose:checked')].map(cb => cb.dataset.purpose)
+    : (t.purposes || []);
   const body = {
     name: toolName,
     enabled: !!get('enabled')?.checked,
@@ -2112,6 +2139,7 @@ async function saveToolPromptSettings(toolName) {
     warnings: get('warnings')?.value || '',
     examples: get('examples')?.value || '',
     applies_with: aw,
+    purposes: purposes,
   };
   try {
     const resp = await API.post('/v1/tools/settings', body);
