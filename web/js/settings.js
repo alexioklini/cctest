@@ -3530,75 +3530,115 @@ async function switchAgentTab(agentId, tab, btn) {
 
   if (tab === 'tokens') {
     try {
-      const data = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
-      const agentCfg = JSON.parse(data.content || '{}');
+      const [agentFile, settingsResp] = await Promise.all([
+        API.get(`/v1/agents/${agentId}/file?name=agent.json`),
+        API.get('/v1/tools/settings'),
+      ]);
+      const agentCfg = JSON.parse(agentFile.content || '{}');
       const tcfg = agentCfg.token_config || {};
-      const allGroups = ['core','memory','context','web','email','documents','delegation','code_graph','git','scheduler','mcp','skills','nodes'];
-      const activeGroups = tcfg.tool_groups || null; // null = all
-      const deferredGroups = 'deferred_tool_groups' in tcfg ? (tcfg.deferred_tool_groups || []) : ['email','documents','code_graph','scheduler'];
-      const mc = state.modelsConfig?.models || {};
-      const modelOptions = enabledModelsWithCapability('chat');
+      const overrides = tcfg.tool_overrides || {};
+      const allTools = settingsResp.tools || [];
+      // Stash on window so per-tool save handlers can read the latest fetched
+      // record without refetching (gets clobbered on next tab switch).
+      window._tokTools = allTools;
+      window._tokOverrides = overrides;
+      window._tokAgentId = agentId;
+
+      // Group tools by tool group
+      const byGroup = {};
+      for (const t of allTools) {
+        const g = t.group || '(ungrouped)';
+        (byGroup[g] = byGroup[g] || []).push(t);
+      }
+      const PRIMARY_GROUPS = ['core', 'memory', 'context', 'web', 'documents'];
+      const otherGroups = Object.keys(byGroup).filter(g => !PRIMARY_GROUPS.includes(g)).sort();
+      const groupOrder = PRIMARY_GROUPS.filter(g => byGroup[g]).concat(otherGroups);
+
+      // Tristate selector — value: '' (inherit), 'true' (force on), 'false' (force off)
+      const tristate = (toolName, field, current) => {
+        const sel = current === undefined ? '' : (current ? 'true' : 'false');
+        return `<select class="tok-override" data-tool="${esc(toolName)}" data-field="${esc(field)}"
+                       style="font-size:11px;padding:2px 4px;font-family:var(--font-mono);background:var(--bg-100);border:1px solid var(--border-100);border-radius:3px;width:90px">
+          <option value="" ${sel===''?'selected':''}>inherit</option>
+          <option value="true" ${sel==='true'?'selected':''}>force on</option>
+          <option value="false" ${sel==='false'?'selected':''}>force off</option>
+        </select>`;
+      };
+
+      const toolRow = (t) => {
+        const ovr = overrides[t.name] || {};
+        const effEnabled = 'enabled' in ovr ? ovr.enabled : t.enabled;
+        const effDeferred = 'deferred' in ovr ? ovr.deferred : t.deferred;
+        // Hint badges show what global says vs what the override does
+        const enabledBadge = (() => {
+          const baseColor = t.enabled ? 'var(--success)' : 'var(--text-400)';
+          const baseLabel = t.enabled ? 'global: on' : 'global: off';
+          return `<span style="font-size:9px;color:${baseColor}">${baseLabel}</span>`;
+        })();
+        const deferredBadge = (() => {
+          const baseColor = t.deferred ? 'var(--warning,#d97706)' : 'var(--text-400)';
+          const baseLabel = t.deferred ? 'global: deferred' : 'global: live';
+          return `<span style="font-size:9px;color:${baseColor}">${baseLabel}</span>`;
+        })();
+        const effColor = effEnabled ? 'var(--success)' : 'var(--text-400)';
+        return `
+          <div style="display:grid;grid-template-columns:1fr 110px 110px;gap:8px;align-items:center;padding:5px 8px;border-bottom:1px solid var(--border-100)">
+            <div style="display:flex;flex-direction:column;gap:1px">
+              <span style="font-family:var(--font-mono);font-size:11px;color:${effColor}">${esc(t.name)}</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:2px;align-items:flex-end">
+              ${tristate(t.name, 'enabled', ovr.enabled)}
+              ${enabledBadge}
+            </div>
+            <div style="display:flex;flex-direction:column;gap:2px;align-items:flex-end">
+              ${tristate(t.name, 'deferred', ovr.deferred)}
+              ${deferredBadge}
+            </div>
+          </div>`;
+      };
+
+      const groupSection = (gName, tools) => {
+        // Auto-expand groups that have any agent override
+        const hasOverride = tools.some(t => overrides[t.name]);
+        return `
+          <div style="margin-bottom:14px">
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:4px;background:var(--bg-100)" onclick="toggleTokGroup('${esc(gName)}')">
+              <span style="font-size:14px;color:var(--text-400)" id="tok-group-chevron-${esc(gName)}">${hasOverride?'▾':'▸'}</span>
+              <span style="font-size:13px;font-weight:600;color:var(--text-100);text-transform:uppercase;letter-spacing:0.04em">${esc(gName)}</span>
+              <span style="font-size:11px;color:var(--text-400)">${tools.length} tool${tools.length===1?'':'s'}</span>
+              ${hasOverride ? `<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(245,158,11,0.12);color:var(--warning,#d97706)">override</span>` : ''}
+            </div>
+            <div id="tok-group-body-${esc(gName)}" style="display:${hasOverride?'block':'none'};padding:6px 0 0 12px">
+              <div style="display:grid;grid-template-columns:1fr 110px 110px;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border-100)">
+                <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Tool</span>
+                <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;text-align:right">Enabled</span>
+                <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;text-align:right">Deferred</span>
+              </div>
+              ${tools.map(toolRow).join('')}
+            </div>
+          </div>`;
+      };
 
       container.innerHTML = `
-        <div style="padding:16px;display:grid;gap:16px">
+        <div style="padding:16px;display:grid;gap:14px">
           <div style="font-size:16px;font-weight:600;color:var(--text-100)">Token Optimization</div>
-          <div style="font-size:11px;color:var(--text-400)">Configure per-agent settings to minimize token usage and API costs.</div>
-
-          <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
-            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Tool Groups</div>
-            <div style="font-size:11px;color:var(--text-400);margin-bottom:10px">
-              Select which tool groups are sent to the LLM. <b>Deferred</b> groups are available but only loaded when the model uses tool_search — saves tokens on every request.
-            </div>
-            <div id="tok-tool-groups" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px">
-              ${allGroups.map(g => {
-                const enabled = activeGroups ? activeGroups.includes(g) : true;
-                const deferred = deferredGroups.includes(g);
-                return `
-                <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200)">
-                  <input type="checkbox" class="tok-group-enabled" value="${g}" ${enabled ? 'checked' : ''}
-                    style="accent-color:var(--accent)" onchange="if(!this.checked){this.closest('div').querySelector('.tok-group-deferred').checked=false}">
-                  <span style="min-width:80px">${g}</span>
-                  <input type="checkbox" class="tok-group-deferred" value="${g}" ${deferred ? 'checked' : ''}
-                    style="accent-color:var(--warning,#d97706)" title="Defer: load on-demand via tool_search"
-                    onchange="if(this.checked){this.closest('div').querySelector('.tok-group-enabled').checked=true}">
-                  <span style="font-size:10px;color:${deferred ? 'var(--warning,#d97706)' : 'var(--text-400)'}">defer</span>
-                </div>`;
-              }).join('')}
-            </div>
-            <div style="margin-top:6px;font-size:10px;color:var(--text-400)">
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-                <input type="checkbox" id="tok-all-tools" ${!activeGroups ? 'checked' : ''}
-                  onchange="document.querySelectorAll('#tok-tool-groups .tok-group-enabled').forEach(i=>{i.disabled=this.checked;if(this.checked)i.checked=true})"
-                  style="accent-color:var(--accent)">
-                Send all tools (no filtering)
-              </label>
-            </div>
+          <div style="font-size:11px;color:var(--text-400)">
+            Per-tool overrides for this agent. Each tool resolves through:
+            <b>global</b> (Settings → Tools) → <b>agent override</b> → <b>purpose filter</b>.
+            "inherit" defers to the global value; "force on"/"force off" overrides for this agent only.
+            Tool definition costs and per-tool prose live in <b>General Settings → Tools</b>.
           </div>
 
-          <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <div style="font-size:13px;font-weight:600;color:var(--text-100);flex:1">Tool Definition Cost</div>
-              <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_loadToolBreakdown('${esc(agentId)}')">Measure</button>
+          <div style="border:1px solid var(--border-100);border-radius:8px;padding:12px">
+            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">
+              Tool overrides
+              <span style="font-size:11px;color:var(--text-400);font-weight:400">— ${Object.keys(overrides).length} tool${Object.keys(overrides).length===1?'':'s'} currently overridden</span>
             </div>
-            <div style="font-size:11px;color:var(--text-400);margin-bottom:8px">
-              Measures how many tokens each tool group contributes to every request. Use this to decide which groups to disable above.
-            </div>
-            <div id="tok-breakdown" style="font-size:12px;color:var(--text-300)">Click Measure to fetch.</div>
+            ${groupOrder.map(g => groupSection(g, byGroup[g])).join('')}
           </div>
 
-          <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
-            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">System Prompt</div>
-            <div style="display:grid;gap:8px">
-              <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
-                <input type="checkbox" id="tok-tools-guide" ${tcfg.include_tools_guide !== false ? 'checked' : ''}
-                  style="accent-color:var(--accent)">
-                Include tools.md guide (~400 tokens)
-              </label>
-            </div>
-          </div>
-
-          <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
-            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Context Compaction</div>
+          <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
+            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Context compaction</div>
             <div style="display:flex;align-items:center;gap:8px">
               <span style="font-size:12px;color:var(--text-300)">Compact threshold:</span>
               <input type="number" id="tok-compact-threshold" value="${tcfg.compact_threshold ? Math.round(tcfg.compact_threshold * 100) : ''}"
@@ -3608,56 +3648,81 @@ async function switchAgentTab(agentId, tab, btn) {
             </div>
           </div>
 
-          <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
-            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Scheduled Tasks</div>
+          <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
+            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Scheduled tasks</div>
             <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
               <input type="checkbox" id="tok-sched-tools" ${tcfg.scheduled_task_tools !== false ? 'checked' : ''}
                 style="accent-color:var(--accent)">
               Include full tool schema in scheduled tasks
             </label>
+            <div style="font-size:10px;color:var(--text-400);margin-top:4px">
+              Note: scheduled tasks resolve tools by call purpose only; per-agent overrides above do NOT apply to them.
+            </div>
           </div>
 
           <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="btn-secondary" onclick="_clearTokenOverrides('${esc(agentId)}')" title="Reset all per-tool overrides for this agent (keeps compact_threshold + scheduled_task_tools).">Clear all overrides</button>
             <button class="btn-primary" onclick="_saveTokenConfig('${esc(agentId)}')">Save Token Config</button>
           </div>
         </div>`;
-
-      // Disable group checkboxes if "all tools" is checked
-      if (!activeGroups) {
-        document.querySelectorAll('#tok-tool-groups .tok-group-enabled').forEach(i => i.disabled = true);
-      }
     } catch(e) {
       container.innerHTML = `<div style="padding:20px;color:var(--error)">${esc(e.message)}</div>`;
     }
   }
 }
 
-window._saveTokenConfig = async function(agentId) {
-  const allTools = document.getElementById('tok-all-tools')?.checked;
-  const groups = allTools ? null :
-    Array.from(document.querySelectorAll('#tok-tool-groups .tok-group-enabled:checked')).map(i => i.value);
-  const deferred = Array.from(document.querySelectorAll('#tok-tool-groups .tok-group-deferred:checked')).map(i => i.value);
+function toggleTokGroup(groupName) {
+  const body = document.getElementById('tok-group-body-' + groupName);
+  const chev = document.getElementById('tok-group-chevron-' + groupName);
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (chev) chev.textContent = open ? '▸' : '▾';
+}
 
-  const tcfg = {
-    tool_groups: groups,
-    deferred_tool_groups: deferred.length > 0 ? deferred : null,
-    include_tools_guide: document.getElementById('tok-tools-guide')?.checked ?? true,
-    scheduled_task_tools: document.getElementById('tok-sched-tools')?.checked ?? true,
-  };
+window._saveTokenConfig = async function(agentId) {
+  // Collect every tristate <select>; only build an override entry when at
+  // least one field is non-empty.
+  const overrides = {};
+  document.querySelectorAll('.tok-override').forEach(sel => {
+    const tool = sel.dataset.tool;
+    const field = sel.dataset.field;
+    const v = sel.value;
+    if (v === '') return;  // inherit — no override
+    overrides[tool] = overrides[tool] || {};
+    overrides[tool][field] = (v === 'true');
+  });
 
   const threshVal = document.getElementById('tok-compact-threshold')?.value;
-  tcfg.compact_threshold = threshVal ? parseInt(threshVal) / 100 : null;
+  const tcfg = {
+    tool_overrides: overrides,
+    compact_threshold: threshVal ? parseInt(threshVal) / 100 : null,
+    scheduled_task_tools: document.getElementById('tok-sched-tools')?.checked ?? true,
+  };
 
   try {
     const res = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
     const cfg = JSON.parse(res.content || '{}');
     cfg.token_config = Object.assign(cfg.token_config || {}, tcfg);
+    // Strip the deprecated legacy fields when we save — they're ignored by
+    // the resolver, but keeping them on disk creates confusion. Resolver
+    // change shipped in C2; this is the disk cleanup.
+    delete cfg.token_config.tool_groups;
+    delete cfg.token_config.extra_tools;
+    delete cfg.token_config.deferred_tool_groups;
+    delete cfg.token_config.include_tools_guide;
     await API.post(`/v1/agents/${encodeURIComponent(agentId)}/file`, {
       name: 'agent.json',
       content: JSON.stringify(cfg, null, 2)
     });
-    showToast('Token config saved');
+    showToast(`Saved (${Object.keys(overrides).length} overrides)`);
   } catch(e) { showToast('Error: ' + e.message, true); }
+};
+
+window._clearTokenOverrides = async function(agentId) {
+  if (!confirm('Clear ALL per-tool overrides for this agent? Compact threshold and scheduled task settings will be preserved.')) return;
+  document.querySelectorAll('.tok-override').forEach(sel => sel.value = '');
+  showToast('Overrides cleared (not saved — click Save to persist)');
 };
 
 window._loadToolBreakdown = async function(agentId) {
