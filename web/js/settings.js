@@ -1539,10 +1539,15 @@ async function switchGeneralTab(tab, btn) {
   /* ─── TOOLS ─── */
   if (tab === 'tools') {
     try {
-      const [cfg, status, settingsResp] = await Promise.all([
+      const [cfg, status, settingsResp, breakdown] = await Promise.all([
         API.get('/v1/tools/config'),
         API.get('/v1/tools/status'),
         API.get('/v1/tools/settings'),
+        // Cost breakdown is global (resolver bypasses agent overrides via
+        // agent='main' here, but tool token cost is the schema bytes, not
+        // agent-dependent). Agent-specific surface vs cost lives in
+        // agent Tokens tab.
+        API.get('/v1/tools/breakdown?agent=main').catch(() => ({})),
       ]);
       const allTools = settingsResp.tools || [];
       // Stash on window so per-tool save handlers can read the latest fetched
@@ -1551,6 +1556,15 @@ async function switchGeneralTab(tab, btn) {
       window._toolPurposesCanonical = settingsResp.purposes || null;
       window._toolConfigCache = cfg || {};
       window._toolStatusCache = status || {};
+
+      // Build name → tokens map from breakdown response. Each group entry
+      // has a `builtin_tools` list of {name, total_tokens, ...} records.
+      const toolTokens = {};
+      for (const grp of (breakdown.groups || [])) {
+        for (const ti of (grp.builtin_tools || [])) {
+          if (ti.name) toolTokens[ti.name] = ti.total_tokens || 0;
+        }
+      }
 
       // Group → tools (sorted by name within group). '(ungrouped)' bucket
       // surfaces tools missing from TOOL_GROUPS — server returns group=''
@@ -1587,6 +1601,10 @@ async function switchGeneralTab(tab, btn) {
         const appliesFlag = (t.applies_with && t.applies_with.length)
           ? `<span title="Renders only when ${esc(t.applies_with.join(', '))} are also active" style="font-size:10px;color:var(--text-400)">+${t.applies_with.length}</span>`
           : '';
+        const tokens = toolTokens[t.name] || 0;
+        const tokensFlag = tokens > 0
+          ? `<span title="Tool definition contributes ~${tokens} tokens to every request" style="font-size:10px;color:var(--text-400);font-family:var(--font-mono)">${tokens}t</span>`
+          : '';
         const enabledColor = t.enabled ? 'var(--success)' : 'var(--text-400)';
         const deferredColor = t.deferred ? 'var(--warning)' : 'var(--text-400)';
         return `
@@ -1595,6 +1613,7 @@ async function switchGeneralTab(tab, btn) {
               <span style="font-family:var(--font-mono);font-size:12px;color:${enabledColor};font-weight:500;flex:1">${esc(t.name)}${t.enabled ? '' : ' <span style="color:var(--text-400);font-weight:400">(disabled)</span>'}</span>
               ${proseFlag}
               ${appliesFlag}
+              ${tokensFlag}
               ${integ}
               <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(245,158,11,0.12);color:${deferredColor};display:${t.deferred?'inline':'none'}" id="defer-badge-${esc(t.name)}">deferred</span>
               <span style="font-size:14px;color:var(--text-400);transition:transform 0.1s" id="chevron-${esc(t.name)}">▸</span>
@@ -1623,10 +1642,51 @@ async function switchGeneralTab(tab, btn) {
           </div>`;
       };
 
+      // Cost totals header — sums by group + grand total
+      const tokensByGroup = {};
+      let tokensTotal = 0;
+      for (const t of allTools) {
+        const tk = toolTokens[t.name] || 0;
+        const g = t.group || '(ungrouped)';
+        tokensByGroup[g] = (tokensByGroup[g] || 0) + tk;
+        tokensTotal += tk;
+      }
+      const builtinTotal = breakdown.builtin_tokens || tokensTotal;
+      const mcpTotal = breakdown.mcp_tokens || 0;
+      const grandTotal = builtinTotal + mcpTotal;
+      const sortedGroupCosts = Object.entries(tokensByGroup)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6);
+      const costRow = (label, n, max) => {
+        const pct = max > 0 ? Math.round((n / max) * 100) : 0;
+        return `<div style="display:flex;align-items:center;gap:8px;font-size:11px;padding:2px 0">
+          <span style="font-family:var(--font-mono);min-width:120px;color:var(--text-300)">${esc(label)}</span>
+          <div style="flex:1;height:5px;background:var(--bg-200);border-radius:3px;overflow:hidden;max-width:240px">
+            <div style="height:100%;width:${pct}%;background:var(--accent-brand)"></div>
+          </div>
+          <span style="font-family:var(--font-mono);color:var(--text-400);min-width:60px;text-align:right">${n} tok</span>
+        </div>`;
+      };
+
       C.innerHTML = P(`<div>
         <div style="font-size:11px;color:var(--text-400);margin-bottom:12px">
-          ${allTools.length} tools across ${groupOrder.length} groups. Click a tool to expand and edit its enabled / defer flags, integration knobs (where applicable), and prompt prose.
+          ${allTools.length} tools across ${groupOrder.length} groups. Click a tool to expand and edit its enabled / defer flags, purposes, integration knobs (where applicable), and prompt prose. The "<span style="font-family:var(--font-mono)">Nt</span>" badge in each row shows the tool's token cost in every request.
         </div>
+
+        <div style="border:1px solid var(--border-100);border-radius:8px;padding:12px;margin-bottom:14px;background:var(--bg-100)">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
+            <div style="font-size:12px;font-weight:600;color:var(--text-100)">Tool definition cost</div>
+            <div style="font-size:11px;color:var(--text-400)">measured against agent <span style="font-family:var(--font-mono)">main</span></div>
+          </div>
+          <div style="display:flex;gap:18px;font-size:11px;margin-bottom:8px">
+            <div><span style="color:var(--text-400)">Built-in tools:</span> <b style="font-family:var(--font-mono);color:var(--text-100)">${builtinTotal} tok</b></div>
+            <div><span style="color:var(--text-400)">MCP tools:</span> <b style="font-family:var(--font-mono);color:var(--text-100)">${mcpTotal} tok</b></div>
+            <div><span style="color:var(--text-400)">Total per request:</span> <b style="font-family:var(--font-mono);color:var(--text-100)">${grandTotal} tok</b></div>
+          </div>
+          <div style="font-size:10px;color:var(--text-400);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.04em">Top groups by cost</div>
+          ${sortedGroupCosts.map(([g, n]) => costRow(g, n, sortedGroupCosts[0]?.[1] || 1)).join('')}
+        </div>
+
         ${groupOrder.map(g => groupSection(g, byGroup[g])).join('')}
       </div>`);
       return;
