@@ -1741,6 +1741,31 @@ class AdminHandlerMixin:
                 "examples": rec.get("examples", "") or "",
                 "applies_with": list(rec.get("applies_with") or []),
             })
+        # Surface integration-only pseudo-tools (entries in tool_config that
+        # have no matching TOOL_DISPATCH function — e.g. refinement, translation,
+        # text_to_speech, gmail, code_graph). They need the same per-row UI for
+        # integration knobs (model, API key, …) but have no prompt prose,
+        # purposes, or applies_with. Flagged with integration_only=True so the
+        # client can hide the prose section.
+        try:
+            tool_cfg_keys = set((engine.get_tool_config() or {}).keys())
+        except Exception:
+            tool_cfg_keys = set()
+        dispatch_set = set(all_tools)
+        for name in sorted(tool_cfg_keys - dispatch_set):
+            tools.append({
+                "name": name,
+                "group": "integrations",
+                "enabled": True,
+                "deferred": False,
+                "purposes": [],
+                "description": "",
+                "when_to_use": "",
+                "warnings": "",
+                "examples": "",
+                "applies_with": [],
+                "integration_only": True,
+            })
         # Also surface the canonical purpose list so the UI doesn't have to
         # hardcode it.
         self._send_json({"tools": tools, "purposes": list(engine._VALID_PURPOSES)})

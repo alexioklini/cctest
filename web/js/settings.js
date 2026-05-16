@@ -2183,6 +2183,17 @@ function renderToolPanelBody(toolName) {
       </div>`;
   }
 
+  // Integration-only pseudo-tools (refinement, translation, text_to_speech,
+  // gmail, code_graph): no TOOL_DISPATCH entry → no prompt prose, no purposes,
+  // no applies_with. Render the integration block alone.
+  if (t.integration_only) {
+    return `
+      <div style="font-size:11px;color:var(--text-400);margin-bottom:10px">
+        Integration-only — this entry configures a service used by the server (no agent-callable tool).
+      </div>
+      ${integHTML || '<div style="color:var(--error);font-size:11px">No integration fields registered for this entry.</div>'}`;
+  }
+
   return `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px">
       <div>
@@ -2240,6 +2251,19 @@ function renderToolIntegrationFields(name, cfg) {
     <input id="${id}" type="password" value="${esc(val||'')}" class="form-input" style="flex:1;font-family:var(--font-mono);font-size:11px" autocomplete="off">
     <button class="btn-secondary" style="font-size:10px;padding:4px 8px" onclick="const i=document.getElementById('${id}');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
   </div>`;
+  // Build a chat-capable model dropdown. If the saved value isn't currently
+  // a configured/enabled chat model, surface it as a "(legacy/missing)"
+  // option so the admin can see it instead of it silently flipping.
+  const chatModelSelect = (id, sel, placeholderLabel) => {
+    const entries = enabledModelsWithCapability('chat');
+    const ids = new Set(entries.map(([mid]) => mid));
+    let opts = `<option value="">${esc(placeholderLabel || 'Auto')}</option>`;
+    if (sel && !ids.has(sel)) {
+      opts += `<option value="${esc(sel)}" selected>${esc(sel)} (legacy/missing)</option>`;
+    }
+    opts += entries.map(([mid]) => modelOption(mid, {selected: mid === sel})).join('');
+    return `<select id="${id}" class="form-select" style="font-size:11px;width:100%">${opts}</select>`;
+  };
   switch (name) {
     case 'exa_search':
       return `${lbl('API Key')}${maskF('tool-exa-key', cfg.api_key)}
@@ -2262,12 +2286,20 @@ function renderToolIntegrationFields(name, cfg) {
       </div>`;
     case 'refinement':
       return `${lbl('Model')}
-        <input id="tool-refine-model" type="text" value="${esc(cfg.model||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px" placeholder="Auto (Haiku > Sonnet > cheapest)">`;
-    case 'read_document':
+        ${chatModelSelect('tool-refine-model', cfg.model || '', 'Auto (Haiku > Sonnet > cheapest)')}
+        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Model used by the refine button in chat and note-AI inputs.</div>`;
+    case 'read_document': {
+      const visEntries = enabledModelsWithCapability('image');
+      const visIds = new Set(visEntries.map(([mid]) => mid));
+      const visSel = cfg.vision_model || '';
+      let visOpts = `<option value="">Auto (cheapest vision model)</option>`;
+      if (visSel && !visIds.has(visSel)) visOpts += `<option value="${esc(visSel)}" selected>${esc(visSel)} (legacy/missing)</option>`;
+      visOpts += visEntries.map(([mid]) => modelOption(mid, {selected: mid === visSel})).join('');
       return `${lbl('Max File Size (MB)')}
         <input id="tool-rdoc-maxsize" type="number" min="1" max="200" value="${cfg.max_file_size_mb||50}" class="form-input" style="width:100px;font-family:var(--font-mono);font-size:11px">
         ${lbl('Vision Model (for images)')}
-        <input id="tool-rdoc-vision-model" type="text" value="${esc(cfg.vision_model||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">`;
+        <select id="tool-rdoc-vision-model" class="form-select" style="font-size:11px;width:100%">${visOpts}</select>`;
+    }
     case 'code_graph':
       return `${lbl('Exclude Directories (comma-separated)')}
         <input id="tool-cg-exclude" type="text" value="${esc(cfg.exclude_dirs||'node_modules,.git,__pycache__,venv')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
@@ -2285,7 +2317,8 @@ function renderToolIntegrationFields(name, cfg) {
         <input id="tool-tts-voice" type="text" value="${esc(cfg.voice||'en_paul_neutral')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">`;
     case 'translation':
       return `${lbl('Default Model')}
-        <input id="tool-tr-model" type="text" value="${esc(cfg.default_model||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">`;
+        ${chatModelSelect('tool-tr-model', cfg.default_model || '', 'Auto (refinement model → fallback)')}
+        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Chat-capable LLM used to translate text, documents, and audio/video segments. Separate from the transcription model (Voxtral/Whisper) and TTS.</div>`;
     default:
       return `<div style="font-size:11px;color:var(--text-400)">No integration fields for this tool.</div>`;
   }
