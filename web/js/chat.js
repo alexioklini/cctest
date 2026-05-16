@@ -386,6 +386,7 @@ function buildStreamCallbacks(chat, isActive) {
           tool_use_id: d.tool_use_id || null,
           _ts: Date.now(),
         });
+        _privacyAutoUpdate(chat, currentTurnNum(chat), 'add');
         if (isActive()) { renderMessages(); renderStreamingMessage(chat); scrollToBottom(); }
       },
       synthetic_tool_result: (d) => {
@@ -737,6 +738,7 @@ function buildStreamCallbacks(chat, isActive) {
 
         // Auto-close activity summary now that the response is finalised
         _activityAutoUpdate(chat, currentTurnNum(chat), 'response');
+        _privacyAutoUpdate(chat, currentTurnNum(chat), 'response');
 
         chat.messages.push(assistantMsg);
         chat.streaming = false;
@@ -1855,6 +1857,38 @@ function toggleActivitySummary(turnNum) {
   renderMessages();
 }
 
+// ── Privacy (Datenschutz) summary state machine ────────────────────────────
+// Mirrors _activityAutoUpdate / toggleActivitySummary but for synthetic
+// privacy rows (anonymise / anonymise_read / deanonymise_*). Stored on
+// chat._privacyStates so it's per-turn and survives re-renders within the
+// same chat. Same value vocabulary; same user-control stickiness.
+//
+// Rules:
+//   add      → 'auto-open' on first synthetic event of the turn
+//   response → 'auto-closed' on assistant response finalised
+//   user toggle → 'user-open' / 'user-closed' (never auto-overridden after)
+function _privacyAutoUpdate(chat, turnNum, event) {
+  if (!chat._privacyStates) chat._privacyStates = new Map();
+  const cur = chat._privacyStates.get(turnNum);
+  const userControlled = cur === 'user-open' || cur === 'user-closed';
+  if (userControlled) return;
+  if (event === 'add') {
+    if (!cur) chat._privacyStates.set(turnNum, 'auto-open');
+  } else if (event === 'response') {
+    chat._privacyStates.set(turnNum, 'auto-closed');
+  }
+}
+
+function togglePrivacySummary(turnNum) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  if (!chat._privacyStates) chat._privacyStates = new Map();
+  const cur = chat._privacyStates.get(turnNum);
+  const isOpen = cur === 'auto-open' || cur === 'user-open';
+  chat._privacyStates.set(turnNum, isOpen ? 'user-closed' : 'user-open');
+  renderMessages();
+}
+
 function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   // Synthetic privacy operations (anonymise / anonymise_read / deanonymise_*)
   // are NOT LLM activity — they're server-side privacy events that must be
@@ -1952,12 +1986,45 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
     }
   }
 
-  // Privacy rows: render every synthetic tool_call inline (the renderer
-  // pairs each with its tool_result internally; tool_result rows are
-  // skipped by renderToolResult). Order = original message order.
+  // Privacy rows: group all synthetic tool_call/tool_result pairs into a
+  // single "Datenschutz" disclosure. Same auto-open/auto-close lifecycle as
+  // the regular activity summary (see _privacyAutoUpdate): opens on first
+  // synthetic event of the turn, closes when the assistant response lands,
+  // sticky once the user toggles. Tool_result rows are paired inside the
+  // dispatch row by renderSyntheticGdprCall, so they collapse silently when
+  // rendered out of position.
   let syntheticHtml = '';
-  for (const item of syntheticItems) {
-    syntheticHtml += renderMessage(item.m, item.idx);
+  if (syntheticItems.length > 0) {
+    let anonCount = 0;
+    let deanonCount = 0;
+    for (const item of syntheticItems) {
+      if (item.m.role !== 'tool_call') continue; // only count dispatch rows
+      const k = item.m.kind || item.m.name || '';
+      if (k === 'anonymise' || k === 'anonymise_read') anonCount++;
+      else if (k === 'deanonymise_text' || k === 'deanonymise_file') deanonCount++;
+    }
+    const parts = [];
+    if (anonCount > 0) parts.push(anonCount === 1 ? '1 Anonymisierung' : `${anonCount} Anonymisierungen`);
+    if (deanonCount > 0) parts.push(deanonCount === 1 ? '1 De-Anonymisierung' : `${deanonCount} De-Anonymisierungen`);
+    const label = parts.length ? `Datenschutz · ${parts.join(' · ')}` : 'Datenschutz';
+
+    let inner = '';
+    for (const item of syntheticItems) {
+      inner += renderMessage(item.m, item.idx);
+    }
+
+    const privState = chat?._privacyStates?.get(turnNum); // absent = history load = closed
+    const privOpen = privState === 'auto-open' || privState === 'user-open';
+
+    syntheticHtml = `
+      <details class="activity-summary privacy-summary"${privOpen ? ' open' : ''}>
+        <summary class="activity-summary-header" onclick="event.preventDefault();togglePrivacySummary(${turnNum})">
+          <svg class="activity-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          🛡️ ${esc(label)}
+        </summary>
+        <div class="activity-summary-body">${inner}</div>
+      </details>
+    `;
   }
 
   // No activity at all — render flat
