@@ -260,148 +260,147 @@ function gdprActionModal(scan, chat, localActive) {
     // once that lands). Warn-level (or block+local) keeps "send anyway".
     const canSend = !isBlock || localActive;
     // Inject the PII modal's one-off styles once per page lifetime.
-    if (!document.getElementById('pii-modal-styles-v2')) {
+    if (!document.getElementById('pii-modal-styles-v3')) {
       document.getElementById('pii-modal-styles')?.remove();
+      document.getElementById('pii-modal-styles-v2')?.remove();
       const style = document.createElement('style');
-      style.id = 'pii-modal-styles-v2';
+      style.id = 'pii-modal-styles-v3';
       style.textContent = `
-        @keyframes pii-fade-in   { from{opacity:0} to{opacity:1} }
-        @keyframes pii-pop-in    { from{opacity:0;transform:translateY(12px) scale(.97)} to{opacity:1;transform:translateY(0) scale(1)} }
-        @keyframes pii-shield    { 0%{transform:scale(.6);opacity:0} 60%{transform:scale(1.08);opacity:1} 100%{transform:scale(1)} }
+        @keyframes pii-fade-in { from{opacity:0} to{opacity:1} }
+        @keyframes pii-pop-in  { from{opacity:0;transform:translateY(8px) scale(.985)} to{opacity:1;transform:translateY(0) scale(1)} }
         .pii-overlay {
           position:fixed; inset:0; z-index:9999;
           display:flex; align-items:center; justify-content:center;
-          background:rgba(20,18,16,.58);
-          backdrop-filter:blur(6px);
-          -webkit-backdrop-filter:blur(6px);
-          animation:pii-fade-in .18s ease-out;
+          background:rgba(20,18,16,.52);
+          backdrop-filter:blur(4px);
+          -webkit-backdrop-filter:blur(4px);
+          animation:pii-fade-in .15s ease-out;
           padding:20px;
         }
         .pii-card {
-          width:min(640px, 100%);
+          width:min(560px, 100%);
           max-height:min(82vh, 720px);
           display:flex; flex-direction:column;
           background:var(--bg-000, #faf9f7);
-          border-radius:18px;
-          box-shadow:0 24px 64px -12px rgba(31,30,29,.35), 0 0 0 1px rgba(31,30,29,.06);
+          border-radius:14px;
+          box-shadow:0 20px 50px -16px rgba(31,30,29,.32), 0 0 0 1px rgba(31,30,29,.06);
           overflow:hidden;
-          animation:pii-pop-in .22s cubic-bezier(.2,.8,.2,1);
+          animation:pii-pop-in .18s cubic-bezier(.2,.8,.2,1);
         }
-        .pii-banner {
-          position:relative;
-          padding:22px 28px 18px;
-          background:linear-gradient(135deg, #fef3c7 0%, #fde68a 55%, #fcd34d 100%);
-          color:#78350f;
-          overflow:hidden;
+        .pii-header {
+          display:flex; align-items:flex-start; gap:14px;
+          padding:20px 24px 16px;
+          border-bottom:1px solid var(--border-100);
         }
-        .pii-banner.is-block {
-          background:linear-gradient(135deg, #fee2e2 0%, #fecaca 55%, #fca5a5 100%);
-          color:#7f1d1d;
-        }
-        .pii-banner::after {
-          content:''; position:absolute; right:-40px; top:-40px;
-          width:180px; height:180px; border-radius:50%;
-          background:radial-gradient(circle, rgba(255,255,255,.55), transparent 65%);
-          pointer-events:none;
-        }
-        .pii-banner-row { display:flex; align-items:center; gap:14px; position:relative; z-index:1; }
         .pii-shield {
           flex:none;
-          width:44px; height:44px; border-radius:50%;
-          background:#b45309;
+          width:36px; height:36px; border-radius:9px;
+          background:#fef3c7; color:#b45309;
           display:flex; align-items:center; justify-content:center;
-          color:#fff; font-size:22px;
-          box-shadow:0 4px 12px rgba(180,83,9,.35);
-          animation:pii-shield .45s cubic-bezier(.2,.8,.2,1);
+          margin-top:1px;
         }
-        .pii-banner.is-block .pii-shield { background:#b91c1c; box-shadow:0 4px 12px rgba(185,28,28,.35); }
-        .pii-title { font-size:18px; font-weight:600; letter-spacing:-.01em; line-height:1.25; margin:0; }
-        .pii-subtitle { font-size:13px; margin:3px 0 0; color:#92400e; opacity:.9; }
-        .pii-banner.is-block .pii-subtitle { color:#991b1b; }
-        .pii-hero {
-          display:flex; align-items:baseline; gap:10px;
-          padding:14px 28px; background:#fff7ed;
-          border-bottom:1px solid rgba(180,83,9,.14);
+        .pii-header.is-block .pii-shield { background:#fee2e2; color:#b91c1c; }
+        .pii-header-text { flex:1; min-width:0; }
+        .pii-title { font-size:15.5px; font-weight:600; letter-spacing:-.005em; line-height:1.3; margin:0; color:var(--text-000); }
+        .pii-subtitle { font-size:12.5px; margin:3px 0 0; color:var(--text-300); line-height:1.45; }
+        .pii-stat {
+          flex:none;
+          font-size:11px; font-weight:600;
+          padding:4px 10px; border-radius:999px;
+          background:#fef3c7; color:#92400e;
+          letter-spacing:.01em;
+          white-space:nowrap;
+          margin-top:2px;
         }
-        .pii-hero.is-block { background:#fef2f2; border-bottom-color:rgba(185,28,28,.14); }
-        .pii-hero-number { font-size:32px; font-weight:600; color:#b45309; letter-spacing:-.02em; line-height:1; }
-        .pii-hero.is-block .pii-hero-number { color:#b91c1c; }
-        .pii-hero-label { font-size:13px; color:var(--text-300); }
-        .pii-body { flex:1 1 auto; overflow-y:auto; padding:16px 28px 20px; }
+        .pii-header.is-block .pii-stat { background:#fee2e2; color:#991b1b; }
+        .pii-body { flex:1 1 auto; overflow-y:auto; padding:14px 24px 16px; }
         .pii-source-card {
-          padding:12px 14px; border:1px solid var(--border-100);
-          border-radius:12px; background:var(--bg-100);
-          margin-top:12px;
+          padding:10px 12px;
+          border:1px solid var(--border-100);
+          border-radius:10px;
+          background:var(--bg-050, var(--bg-100));
+          margin-top:8px;
         }
         .pii-source-card:first-child { margin-top:0; }
-        .pii-source-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
-        .pii-source-name { font-size:13px; font-weight:600; color:var(--text-100); }
-        .pii-source-count { font-size:11px; color:var(--text-300); background:var(--bg-200); padding:2px 8px; border-radius:10px; }
+        .pii-source-head {
+          display:flex; align-items:center; justify-content:space-between;
+          gap:10px; margin-bottom:6px;
+        }
+        .pii-source-name { font-size:12px; font-weight:600; color:var(--text-100); }
+        .pii-source-count {
+          font-size:10.5px; color:var(--text-300);
+          background:var(--bg-200); padding:1px 7px; border-radius:999px;
+        }
         .pii-finding {
-          display:flex; align-items:baseline; gap:10px;
-          padding:7px 0; border-top:1px solid var(--border-100);
-          font-size:12.5px; line-height:1.5;
+          display:flex; align-items:baseline; gap:8px;
+          padding:5px 0; border-top:1px solid var(--border-050, var(--border-100));
+          font-size:12px; line-height:1.4;
         }
         .pii-finding:first-of-type { border-top:none; }
         .pii-finding-sev {
-          flex:none; width:8px; height:8px; border-radius:50%; margin-top:5px;
+          flex:none; width:6px; height:6px; border-radius:50%; margin-top:5px;
           background:#d97706;
         }
         .pii-finding-sev.is-block { background:#dc2626; }
         .pii-finding-sev.is-ignore { background:var(--text-400); }
-        .pii-finding-label { flex:none; font-weight:600; color:var(--text-100); min-width:150px; }
-        .pii-finding-cat { flex:none; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-400); }
+        .pii-finding-label { flex:none; font-weight:500; color:var(--text-100); min-width:130px; }
+        .pii-finding-cat { flex:none; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-400); }
         .pii-finding-val {
           flex:1 1 auto; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-          color:var(--text-300); word-break:break-all;
+          color:var(--text-300); word-break:break-all; font-size:11.5px;
         }
-        .pii-finding-loc { flex:none; font-size:10.5px; color:var(--text-400); white-space:nowrap; }
+        .pii-finding-loc { flex:none; font-size:10px; color:var(--text-400); white-space:nowrap; }
         .pii-footer {
           flex:none;
-          display:flex; flex-direction:column; gap:8px;
-          padding:14px 24px 16px; border-top:1px solid var(--border-100);
-          background:var(--bg-100);
+          display:flex; flex-direction:column; gap:10px;
+          padding:14px 24px 16px;
+          border-top:1px solid var(--border-100);
+          background:var(--bg-050, var(--bg-100));
         }
-        .pii-actions-grid { display:flex; flex-wrap:wrap; gap:8px; }
-        .pii-suppress { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-300); cursor:pointer; user-select:none; }
+        .pii-actions {
+          display:flex; align-items:center;
+          gap:8px;
+          flex-wrap:wrap;
+        }
+        .pii-actions-spacer { flex:1; }
+        .pii-suppress {
+          display:flex; align-items:center; gap:6px;
+          font-size:11.5px; color:var(--text-300);
+          cursor:pointer; user-select:none;
+        }
         .pii-suppress input { margin:0; }
         .pii-btn {
-          padding:8px 14px; border-radius:10px;
+          padding:7px 13px; border-radius:8px;
           font-size:12.5px; font-weight:500;
           border:1px solid transparent;
-          cursor:pointer; transition:transform .1s, box-shadow .15s;
+          cursor:pointer;
+          transition:background .12s, border-color .12s, box-shadow .12s;
+          white-space:nowrap;
         }
         .pii-btn:active { transform:translateY(1px); }
         .pii-btn[disabled] { opacity:.45; cursor:not-allowed; }
-        .pii-btn[disabled]:active { transform:none; }
-        .pii-btn-cancel {
+        .pii-btn-text {
+          background:transparent; border-color:transparent;
+          color:var(--text-300); padding:7px 8px;
+        }
+        .pii-btn-text:hover:not([disabled]) { color:var(--text-100); background:var(--bg-200); }
+        .pii-btn-secondary {
           background:var(--bg-000);
           border-color:var(--border-200);
           color:var(--text-100);
         }
-        .pii-btn-cancel:hover:not([disabled]) { background:var(--bg-200); }
-        .pii-btn-neutral {
-          background:var(--bg-000);
-          border-color:var(--border-200);
-          color:var(--text-200);
+        .pii-btn-secondary:hover:not([disabled]) { background:var(--bg-200); }
+        .pii-btn-warn {
+          background:transparent;
+          border-color:#fbbf24;
+          color:#92400e;
         }
-        .pii-btn-neutral:hover:not([disabled]) { background:var(--bg-200); }
-        .pii-btn-local {
-          background:#1d4ed8; color:#fff;
-          box-shadow:0 2px 6px rgba(29,78,216,.25);
-        }
-        .pii-btn-local:hover:not([disabled]) { background:#1e40af; box-shadow:0 4px 10px rgba(29,78,216,.32); }
-        .pii-btn-send {
-          background:#b45309; color:#fff;
-          box-shadow:0 2px 6px rgba(180,83,9,.28);
-        }
-        .pii-btn-send:hover:not([disabled]) { background:#92400e; box-shadow:0 4px 10px rgba(180,83,9,.35); }
-        .pii-btn-anon {
+        .pii-btn-warn:hover:not([disabled]) { background:#fef3c7; }
+        .pii-btn-primary {
           background:#047857; color:#fff;
-          box-shadow:0 2px 6px rgba(4,120,87,.28);
+          border-color:#047857;
         }
-        .pii-btn-anon:hover:not([disabled]) { background:#065f46; box-shadow:0 4px 10px rgba(4,120,87,.35); }
-        .pii-soon { font-size:9.5px; opacity:.7; margin-left:4px; }
+        .pii-btn-primary:hover:not([disabled]) { background:#065f46; border-color:#065f46; }
       `;
       document.head.appendChild(style);
     }
@@ -460,15 +459,15 @@ function gdprActionModal(scan, chat, localActive) {
         total = findings.length;
       }
       const sourceLabel = source === 'text'
-        ? 'Message text'
+        ? 'Nachrichtentext'
         : source === 'history'
-          ? 'Chat history (prior turns)'
-          : source.replace(/^file:/, 'Attachment · ');
+          ? 'Chat-Verlauf (frühere Turns)'
+          : source.replace(/^file:/, 'Anhang · ');
       sections.push(
         '<div class="pii-source-card">' +
           '<div class="pii-source-head">' +
             '<div class="pii-source-name">' + esc(sourceLabel) + '</div>' +
-            '<div class="pii-source-count">' + total + ' ' + (total === 1 ? 'item' : 'items') + '</div>' +
+            '<div class="pii-source-count">' + total + ' ' + (total === 1 ? 'Treffer' : 'Treffer') + '</div>' +
           '</div>' +
           rows +
         '</div>'
@@ -479,56 +478,48 @@ function gdprActionModal(scan, chat, localActive) {
     const blockCls = isBlock ? ' is-block' : '';
     const subtitle = isBlock
       ? (canSend
-          ? 'High-severity data — your selected model is local, so it would stay on-prem.'
-          : 'High-severity data — this cannot be sent to a cloud model. Choose anonymisation or a local model below.')
-      : 'Review before sending to the model — values are partially masked.';
-    const soonBtn = (id, label) =>
-      '<button class="pii-btn pii-btn-neutral" id="' + id + '" disabled title="Not yet implemented">' +
-        label + '<span class="pii-soon">soon</span></button>';
+          ? 'Hochsensible Daten erkannt — das gewählte Modell ist lokal, die Daten verlassen das System nicht.'
+          : 'Hochsensible Daten erkannt — können nicht an ein Cloud-Modell gesendet werden. Bitte Anonymisierung oder lokales Modell wählen.')
+      : 'Bitte vor dem Senden prüfen — Werte sind teilweise maskiert.';
+    const title = isBlock
+      ? 'Hochsensible personenbezogene Daten erkannt'
+      : 'Personenbezogene Daten in der Nachricht erkannt';
+    const sourcesN = Object.keys(scan.bySource).length;
+    const statBadge = total + ' Treffer · ' + sourcesN + ' Quelle' + (sourcesN === 1 ? '' : 'n');
 
-    // The transparent-anonymisation button looks like the primary cloud-send
-    // affordance (warm tone, dominant) but reroutes through the pseudonymizer
-    // server-side. Default focus per design.
-    const anonBtn =
-      '<button class="pii-btn pii-btn-anon" id="pii-anon-btn">' +
-        'Anonymise &amp; continue' +
-      '</button>';
+    // Shield SVG (same vocabulary as the inline composer badge)
+    const shieldSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.6" fill="currentColor"/></svg>';
 
+    // Footer action hierarchy:
+    //   left:  Abbrechen (text-button) + "Trotzdem senden" (warn outline, only if allowed)
+    //   right: Lokales Modell (secondary) + Anonymisieren & senden (primary, focus)
+    const sendBtn = canSend
+      ? '<button class="pii-btn pii-btn-warn" id="pii-send-btn">Trotzdem senden</button>'
+      : '';
     const modalId = 'pii-warning-modal';
     document.getElementById(modalId)?.remove();
     const html =
       '<div class="pii-overlay" id="' + modalId + '">' +
         '<div class="pii-card" role="dialog" aria-modal="true" aria-labelledby="pii-title">' +
-          '<div class="pii-banner' + blockCls + '">' +
-            '<div class="pii-banner-row">' +
-              '<div class="pii-shield" aria-hidden="true">&#9888;</div>' +
-              '<div style="flex:1;min-width:0">' +
-                '<h2 id="pii-title" class="pii-title">' +
-                  (isBlock ? 'High-severity personal data detected' : 'Personal data detected in your message') +
-                '</h2>' +
-                '<p class="pii-subtitle">' + esc(subtitle) + '</p>' +
-              '</div>' +
+          '<div class="pii-header' + blockCls + '">' +
+            '<div class="pii-shield" aria-hidden="true">' + shieldSvg + '</div>' +
+            '<div class="pii-header-text">' +
+              '<h2 id="pii-title" class="pii-title">' + esc(title) + '</h2>' +
+              '<p class="pii-subtitle">' + esc(subtitle) + '</p>' +
             '</div>' +
-          '</div>' +
-          '<div class="pii-hero' + blockCls + '">' +
-            '<span class="pii-hero-number">' + total + '</span>' +
-            '<span class="pii-hero-label">flagged fragment' + (total === 1 ? '' : 's') +
-              ' across ' + Object.keys(scan.bySource).length +
-              ' source' + (Object.keys(scan.bySource).length === 1 ? '' : 's') + '</span>' +
+            '<div class="pii-stat">' + esc(statBadge) + '</div>' +
           '</div>' +
           '<div class="pii-body">' + sections.join('') + '</div>' +
           '<div class="pii-footer">' +
-            '<div class="pii-actions-grid">' +
-              '<button class="pii-btn pii-btn-cancel" id="pii-cancel-btn">Cancel</button>' +
-              '<button class="pii-btn pii-btn-local" id="pii-local-btn">Use local model</button>' +
-              anonBtn +
-              soonBtn('pii-manualanon-btn', 'Manual anonymisation') +
-              (canSend ? '<button class="pii-btn pii-btn-send" id="pii-send-btn">Continue anyway</button>' : '') +
+            '<div class="pii-actions">' +
+              '<button class="pii-btn pii-btn-text" id="pii-cancel-btn">Abbrechen</button>' +
+              sendBtn +
+              '<div class="pii-actions-spacer"></div>' +
+              '<button class="pii-btn pii-btn-secondary" id="pii-local-btn">Lokales Modell verwenden</button>' +
+              '<button class="pii-btn pii-btn-primary" id="pii-anon-btn">Anonymisieren &amp; senden</button>' +
             '</div>' +
-            // Sticky preference: visible for every non-cancel choice. Picking
-            // 'cancel' never persists (would brick the chat). Step 6.2.
             '<label class="pii-suppress">' +
-              '<input type="checkbox" id="pii-suppress-session"> Don’t ask again for this chat' +
+              '<input type="checkbox" id="pii-suppress-session"> Für diesen Chat nicht mehr fragen' +
             '</label>' +
           '</div>' +
         '</div>' +
@@ -567,42 +558,42 @@ function gdprActionModal(scan, chat, localActive) {
  *  recovery dialog matches the original modal visually. */
 function gdprRecoveryModal(detail, chat) {
   return new Promise((resolve) => {
-    const errMsg = (detail && detail.error) ? String(detail.error).slice(0, 400) : 'Unknown error';
+    const errMsg = (detail && detail.error) ? String(detail.error).slice(0, 400) : 'Unbekannter Fehler';
     const sources = (detail && Array.isArray(detail.sources)) ? detail.sources : [];
     const sourceList = sources.length
-      ? '<ul style="margin:8px 0 0 18px; padding:0; font-size:12.5px; line-height:1.6;">' +
+      ? '<ul style="margin:6px 0 0 18px; padding:0; font-size:12px; line-height:1.6;">' +
         sources.map(s => '<li>' + esc(s) + '</li>').join('') + '</ul>'
       : '';
+    const shieldSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>';
     const modalId = 'pii-recovery-modal';
     document.getElementById(modalId)?.remove();
     const html =
       '<div class="pii-overlay" id="' + modalId + '">' +
         '<div class="pii-card" role="dialog" aria-modal="true" aria-labelledby="pii-recovery-title">' +
-          '<div class="pii-banner is-block">' +
-            '<div class="pii-banner-row">' +
-              '<div class="pii-shield" aria-hidden="true">!</div>' +
-              '<div style="flex:1;min-width:0">' +
-                '<h2 id="pii-recovery-title" class="pii-title">Anonymisation failed</h2>' +
-                '<p class="pii-subtitle">Your original content was NOT sent to the cloud. Pick how to proceed.</p>' +
-              '</div>' +
+          '<div class="pii-header is-block">' +
+            '<div class="pii-shield" aria-hidden="true">' + shieldSvg + '</div>' +
+            '<div class="pii-header-text">' +
+              '<h2 id="pii-recovery-title" class="pii-title">Anonymisierung fehlgeschlagen</h2>' +
+              '<p class="pii-subtitle">Der Originalinhalt wurde NICHT an die Cloud gesendet. Bitte Vorgehen wählen.</p>' +
             '</div>' +
           '</div>' +
           '<div class="pii-body">' +
             '<div class="pii-source-card">' +
-              '<div class="pii-source-name">Error</div>' +
-              '<div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--text-200);margin-top:6px;word-break:break-word;">' +
+              '<div class="pii-source-name">Fehler</div>' +
+              '<div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:var(--text-200);margin-top:6px;word-break:break-word;">' +
                 esc(errMsg) + '</div>' +
               (sources.length
                 ? '<div style="font-size:12px;color:var(--text-300);margin-top:10px;">' +
-                  'Affected source' + (sources.length === 1 ? '' : 's') + ':' + sourceList +
+                  'Betroffene Quelle' + (sources.length === 1 ? '' : 'n') + ':' + sourceList +
                   '</div>'
                 : '') +
             '</div>' +
           '</div>' +
           '<div class="pii-footer">' +
-            '<div class="pii-actions-grid">' +
-              '<button class="pii-btn pii-btn-cancel" id="pii-rec-cancel">Cancel turn</button>' +
-              '<button class="pii-btn pii-btn-local" id="pii-rec-local">Use local model</button>' +
+            '<div class="pii-actions">' +
+              '<button class="pii-btn pii-btn-text" id="pii-rec-cancel">Turn abbrechen</button>' +
+              '<div class="pii-actions-spacer"></div>' +
+              '<button class="pii-btn pii-btn-primary" id="pii-rec-local">Lokales Modell verwenden</button>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -646,7 +637,16 @@ function updatePIIBadge() {
   const chat = state.activeChat;
   const historyHas = !!(chat && piiHistoryHasFindings(chat));
   const draftHas = draftScan.findings.length > 0;
+
+  // Show/hide the inline composer-toolbar info button for the history-only
+  // case. Compact icon + hover popover; never blocks the composer footprint.
+  _updatePIIHistoryComposerBadge(chat, historyHas && !draftHas);
+
   if (!draftHas && !historyHas) { badge?.remove(); return; }
+  // History-only case: surface via the composer-toolbar info badge above, NOT
+  // the prominent pill. The pill is reserved for actionable (draft) findings.
+  if (!draftHas && historyHas) { badge?.remove(); return; }
+
   if (!badge) {
     badge = document.createElement('div');
     badge.id = 'pii-inline-badge';
@@ -682,44 +682,113 @@ function updatePIIBadge() {
   const blockOn = piiBlockActive(chat);
   const curLocal = chat && chat.model && isModelLocal(chat.model);
 
-  // Merge draft + history count labels for display. Draft is the source when
-  // it has findings (fresh input); otherwise show the history-derived counts.
-  let countsLabel = '';
-  if (draftHas) {
-    countsLabel = PIIScanner.formatCounts(draftScan.counts);
-  } else if (historyHas && chat._piiHistoryCounts) {
-    countsLabel = PIIScanner.formatCounts(chat._piiHistoryCounts);
-  }
-  const scopeLabel = draftHas
-    ? 'Personal data in your message'
-    : 'Personal data earlier in this chat';
+  const countsLabel = PIIScanner.formatCounts(draftScan.counts);
+  const scopeLabel = 'Personenbezogene Daten in der Nachricht';
 
   if (blockOn && !curLocal) {
     badge.innerHTML = icon +
-      '<span><b>' + esc(scopeLabel) + '</b> — select a local model to continue (no local model is available).</span>';
+      '<span><b>' + esc(scopeLabel) + '</b> — bitte lokales Modell wählen (kein lokales Modell verfügbar).</span>';
     badge.style.background = 'linear-gradient(90deg,#fee2e2,#fecaca)';
     badge.style.borderColor = '#f87171';
     badge.style.color = '#7f1d1d';
-    badge.title = 'Cloud send is blocked by GDPR scanner. Install or enable a local model, or turn off "Block requests with PII" in Settings → Server.';
+    badge.title = 'Cloud-Versand vom GDPR-Scanner blockiert. Lokales Modell installieren/aktivieren oder „Anfragen mit PII blockieren" in Einstellungen → Server deaktivieren.';
   } else if (blockOn && curLocal) {
     const localName = modelShortName(chat.model);
     const countsFrag = countsLabel ? ('<b>' + esc(countsLabel) + '</b> · ') : '';
     badge.innerHTML = icon +
-      '<span>' + countsFrag + esc(scopeLabel) + ' · routing via local model <b>' + esc(localName) + '</b>' +
-      (swapped ? ' (auto-selected)' : '') + '</span>';
+      '<span>' + countsFrag + esc(scopeLabel) + ' · läuft über lokales Modell <b>' + esc(localName) + '</b>' +
+      (swapped ? ' (automatisch gewählt)' : '') + '</span>';
     badge.style.background = 'linear-gradient(90deg,#ecfccb,#d9f99d)';
     badge.style.borderColor = '#a3e635';
     badge.style.color = '#3f6212';
-    badge.title = 'Data will not leave the local network. GDPR block is enabled; the model dropdown is filtered to local models for this chat.';
+    badge.title = 'Daten verlassen das lokale Netzwerk nicht. GDPR-Sperre aktiv; die Modellauswahl ist für diesen Chat auf lokale Modelle gefiltert.';
   } else {
     const countsFrag = countsLabel ? (' · <b>' + esc(countsLabel) + '</b>') : '';
     badge.innerHTML = icon + '<span>' + esc(scopeLabel) + countsFrag + '</span>';
     badge.style.background = 'linear-gradient(90deg,#fef3c7,#fde68a)';
     badge.style.borderColor = '#fcd34d';
     badge.style.color = '#78350f';
-    badge.title = draftHas
-      ? 'A warning will appear before sending. Values are scanned locally in your browser.'
-      : 'This chat history already contains personal data. New messages will be scanned again before sending.';
+    badge.title = 'Vor dem Senden erscheint eine Warnung. Die Prüfung erfolgt lokal im Browser.';
+  }
+}
+
+// History-PII Composer-Toolbar-Badge. Sichtbar nur wenn der Chat-Verlauf
+// PII enthält und der aktuelle Draft sauber ist. Hover öffnet einen kleinen
+// Popover mit der Treffer-Aufschlüsselung pro Kategorie.
+function _updatePIIHistoryComposerBadge(chat, shouldShow) {
+  // The composer template is cloned into three mount points
+  // (chat/welcome/project). Update each visible instance.
+  const buttons = document.querySelectorAll('[data-id="btn-pii-history"]');
+  buttons.forEach((btn) => {
+    if (!shouldShow) {
+      btn.style.display = 'none';
+      _piiHistoryHidePopover();
+      return;
+    }
+    btn.style.display = '';
+    const counts = chat?._piiHistoryCounts || {};
+    const total = Object.values(counts).reduce((a, b) => a + (b || 0), 0);
+    const fmt = PIIScanner.formatCounts(counts) || (total + ' Treffer');
+    btn.setAttribute('title', 'Personenbezogene Daten im Chat-Verlauf: ' + fmt);
+    btn.onmouseenter = () => _piiHistoryShowPopover(btn, counts);
+    btn.onmouseleave = () => _piiHistoryHidePopover();
+    btn.onfocus = () => _piiHistoryShowPopover(btn, counts);
+    btn.onblur = () => _piiHistoryHidePopover();
+  });
+}
+
+let _piiHistoryPopover = null;
+function _piiHistoryShowPopover(anchorBtn, counts) {
+  _piiHistoryHidePopover();
+  const rect = anchorBtn.getBoundingClientRect();
+  const entries = Object.entries(counts || {}).filter(([, v]) => (v || 0) > 0);
+  if (entries.length === 0) return;
+  entries.sort((a, b) => (b[1] || 0) - (a[1] || 0));
+  const pop = document.createElement('div');
+  pop.id = 'pii-history-popover';
+  pop.style.cssText = [
+    'position:fixed',
+    'left:' + Math.round(rect.left) + 'px',
+    'bottom:' + Math.round(window.innerHeight - rect.top + 8) + 'px',
+    'z-index:9000',
+    'background:var(--bg-000)',
+    'color:var(--text-100)',
+    'border:1px solid var(--border-200)',
+    'border-radius:10px',
+    'box-shadow:0 10px 28px -8px rgba(31,30,29,.25), 0 0 0 1px rgba(31,30,29,.04)',
+    'padding:10px 12px',
+    'font-size:12px',
+    'line-height:1.45',
+    'min-width:220px',
+    'max-width:320px',
+    'pointer-events:none',
+  ].join(';');
+  const total = entries.reduce((a, [, v]) => a + (v || 0), 0);
+  const rows = entries.map(([k, v]) =>
+    '<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0">' +
+      '<span style="color:var(--text-200)">' + esc(k) + '</span>' +
+      '<span style="font-weight:600;color:var(--text-100)">' + v + '</span>' +
+    '</div>'
+  ).join('');
+  pop.innerHTML =
+    '<div style="display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:6px;color:#92400e">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.6" fill="currentColor"/></svg>' +
+      'Personenbezogene Daten im Verlauf' +
+    '</div>' +
+    '<div style="color:var(--text-300);font-size:11.5px;margin-bottom:8px">' +
+      total + ' Treffer in früheren Turns dieses Chats' +
+    '</div>' +
+    rows +
+    '<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border-100);color:var(--text-400);font-size:11px">' +
+      'Neue Nachrichten werden vor dem Senden erneut geprüft.' +
+    '</div>';
+  document.body.appendChild(pop);
+  _piiHistoryPopover = pop;
+}
+function _piiHistoryHidePopover() {
+  if (_piiHistoryPopover) {
+    _piiHistoryPopover.remove();
+    _piiHistoryPopover = null;
   }
 }
 

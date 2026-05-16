@@ -1178,6 +1178,14 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <button class="composer-btn" data-id="btn-gdpr-pref" data-composer-toggle="btn-gdpr-pref" onclick="resetGdprActionPref()" title="GDPR preference active — click to reset" style="display:none;color:#047857">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z" fill="currentColor" fill-opacity="0.18"/><polyline points="9 12 11 14 15 10"/></svg>
         </button>
+        <!-- History-PII info badge — shown when the chat history already
+             contains personal data (warm-only, no immediate action). Tooltip
+             rendered as a richer popover by updatePIIBadge() in panels.js.
+             Hidden by default; revealed when history scan finds entries and
+             the current draft does NOT (draft case keeps the full pill). -->
+        <button class="composer-btn" data-id="btn-pii-history" data-composer-toggle="btn-pii-history" type="button" title="Personenbezogene Daten im Chat-Verlauf" style="display:none;color:#92400e">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z" fill="#fef3c7" fill-opacity="0.9"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.7" fill="currentColor"/></svg>
+        </button>
       </div>
       <div class="composer-footer-right">
         <span class="model-selector-btn" data-id="model-selector" onclick="toggleModelDropdown(event)">

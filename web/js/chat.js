@@ -2962,10 +2962,10 @@ function renderSyntheticGdprCall(msg, idx) {
   const result = done?.result || {};
 
   const titleMap = {
-    anonymise: 'Anonymised',
-    anonymise_read: 'Anonymised tool output',
-    deanonymise_text: 'De-anonymised reply',
-    deanonymise_file: 'De-anonymised file',
+    anonymise: 'Anonymisiert',
+    anonymise_read: 'Tool-Ausgabe anonymisiert',
+    deanonymise_text: 'Antwort wiederhergestellt',
+    deanonymise_file: 'Datei wiederhergestellt',
   };
   const title = titleMap[kind] || kind;
 
@@ -2975,22 +2975,22 @@ function renderSyntheticGdprCall(msg, idx) {
     const cats = Object.keys(result.categories || {});
     const catLabel = cats.length ? ' · ' + cats.join(', ') : '';
     const pending = Array.isArray(result.pending_on_read) ? result.pending_on_read : [];
-    const pendNote = pending.length ? ` · ${pending.length} file${pending.length === 1 ? '' : 's'} pending on read` : '';
-    const mapNote = result.mapping === 'reused' ? ' · reused session mapping' : '';
-    summary = `chat text: ${n} finding${n === 1 ? '' : 's'}${catLabel}${pendNote}${mapNote}`;
+    const pendNote = pending.length ? ` · ${pending.length} Datei${pending.length === 1 ? '' : 'en'} ausstehend` : '';
+    const mapNote = result.mapping === 'reused' ? ' · Session-Mapping wiederverwendet' : '';
+    summary = `Chat-Text: ${n} Treffer${catLabel}${pendNote}${mapNote}`;
   } else if (kind === 'anonymise' && status === 'error') {
-    summary = String(result.error || 'failed').slice(0, 200);
+    summary = String(result.error || 'fehlgeschlagen').slice(0, 200);
   } else if (kind === 'anonymise_read' && status === 'ok') {
     const n = result.findings ?? 0;
     const minted = result.tokens_minted ?? 0;
     const cats = Object.keys(result.categories || {});
     const catLabel = cats.length ? ' · ' + cats.join(', ') : '';
-    summary = `${result.source || 'tool output'}: ${n} finding${n === 1 ? '' : 's'} · ${minted} new token${minted === 1 ? '' : 's'}${catLabel}`;
+    summary = `${result.source || 'Tool-Ausgabe'}: ${n} Treffer · ${minted} neue${minted === 1 ? 's' : ''} Token${catLabel}`;
   } else if (kind === 'deanonymise_text') {
     const n = result.restored ?? 0;
-    summary = `${n} token${n === 1 ? '' : 's'} restored`;
+    summary = `${n} Token wiederhergestellt`;
   } else if (kind === 'deanonymise_file') {
-    summary = (result.file || '') + ' · ' + (result.restored ?? 0) + ' restored';
+    summary = (result.file || '') + ' · ' + (result.restored ?? 0) + ' wiederhergestellt';
   }
 
   // Status icon: green check / spinner / red x.
@@ -3010,31 +3010,31 @@ function renderSyntheticGdprCall(msg, idx) {
   // categories, sources, mapping_id; never actual values.
   const safeArgs = msg.args || {};
   const rows = [];
-  if (safeArgs.sources) rows.push(['Sources', safeArgs.sources.join(', ')]);
-  if (safeArgs.source) rows.push(['Source', String(safeArgs.source)]);
-  if (safeArgs.scope) rows.push(['Scope', String(safeArgs.scope)]);
+  if (safeArgs.sources) rows.push(['Quellen', safeArgs.sources.join(', ')]);
+  if (safeArgs.source) rows.push(['Quelle', String(safeArgs.source)]);
+  if (safeArgs.scope) rows.push(['Bereich', String(safeArgs.scope)]);
   if (Array.isArray(safeArgs.pending_on_read) && safeArgs.pending_on_read.length)
-    rows.push(['Pending on read', safeArgs.pending_on_read.join(', ')]);
-  if (result.scope) rows.push(['Scope', String(result.scope)]);
-  if (result.source) rows.push(['Source', String(result.source)]);
-  if (result.findings != null) rows.push(['Findings', String(result.findings)]);
-  if (result.restored != null) rows.push(['Restored', String(result.restored)]);
-  if (result.categories) rows.push(['Categories', Object.entries(result.categories).map(([k, v]) => `${k}=${v}`).join(', ')]);
-  if (result.tokens_minted != null) rows.push(['Tokens minted', String(result.tokens_minted)]);
+    rows.push(['Ausstehend (beim Lesen)', safeArgs.pending_on_read.join(', ')]);
+  if (result.scope) rows.push(['Bereich', String(result.scope)]);
+  if (result.source) rows.push(['Quelle', String(result.source)]);
+  if (result.findings != null) rows.push(['Treffer', String(result.findings)]);
+  if (result.restored != null) rows.push(['Wiederhergestellt', String(result.restored)]);
+  if (result.categories) rows.push(['Kategorien', Object.entries(result.categories).map(([k, v]) => `${k}=${v}`).join(', ')]);
+  if (result.tokens_minted != null) rows.push(['Neue Token', String(result.tokens_minted)]);
   if (Array.isArray(result.pending_on_read) && result.pending_on_read.length)
-    rows.push(['Pending on read', result.pending_on_read.join(', ')]);
-  if (result.mapping_id) rows.push(['Mapping ID', result.mapping_id]);
-  if (status === 'error' && result.error) rows.push(['Error', String(result.error)]);
+    rows.push(['Ausstehend (beim Lesen)', result.pending_on_read.join(', ')]);
+  if (result.mapping_id) rows.push(['Mapping-ID', result.mapping_id]);
+  if (status === 'error' && result.error) rows.push(['Fehler', String(result.error)]);
   const bodyHtml = rows.length
     ? '<table class="tool-args-table"><tbody>' +
         rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('') +
       '</tbody></table>'
-    : '<div style="font-size:12px;color:var(--text-300);">No additional details.</div>';
+    : '<div style="font-size:12px;color:var(--text-300);">Keine weiteren Details.</div>';
 
   // Shield icon as a per-row marker so users can recognise these at a glance.
-  const shieldBadge = '<span class="tool-badge-synthetic" title="Server-side privacy operation" '
+  const shieldBadge = '<span class="tool-badge-synthetic" title="Serverseitige Datenschutz-Operation" '
     + 'style="font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:8px;'
-    + 'background:rgba(4,120,87,.12);color:#047857;letter-spacing:.02em;">PRIVACY</span>';
+    + 'background:rgba(4,120,87,.12);color:#047857;letter-spacing:.02em;">DATENSCHUTZ</span>';
 
   return `
     <div class="tool-block tool-block-synthetic${done ? ' has-result' : ''}" onclick="this.classList.toggle('open')">
