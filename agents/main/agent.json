@@ -1,6 +1,6 @@
 {
   "description": "General-purpose main agent",
-  "model": "CLIProxyAPI/mistral-medium-3.5",
+  "model": "CLIProxyAPI/mistral-small-latest",
   "avatar": "captain",
   "display_name": "Main",
   "memory_summary": {
@@ -177,7 +177,7 @@
   },
   "next_prompt_suggestions": {
     "enabled": true,
-    "model": "CLIProxyAPI/mistral-medium-3.5",
+    "model": "CLIProxyAPI/mistral-small-latest",
     "max_words": 15
   }
 }

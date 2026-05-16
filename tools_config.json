@@ -27,7 +27,7 @@
   },
   "refinement": {
     "enabled": true,
-    "model": "mistral-vibe-cli-fast"
+    "model": "CLIProxyAPI/mistral-small-latest"
   },
   "read_document": {
     "enabled": true,
@@ -58,7 +58,7 @@
   },
   "translation": {
     "enabled": true,
-    "default_model": "mistral-vibe-cli-fast",
+    "default_model": "CLIProxyAPI/mistral-small-latest",
     "detection_fallback_model": "mistral-vibe-cli-fast"
   },
   "text_to_speech": {
