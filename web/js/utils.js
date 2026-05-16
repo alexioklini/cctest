@@ -422,7 +422,10 @@ const PIIScanner = {
     // Credit card moved below national IDs — a valid-Luhn 13-digit national ID
     // would otherwise be classified as a card. See below after ID block.
     { id:'iban', label:'IBAN',
-      regex:/\b[A-Z]{2}\d{2}[ ]?(?:[A-Z0-9][ ]?){11,30}\b/g,
+      // Mirror of brain.py's IBAN regex — must stay in sync. The trailing
+      // alphanumeric anchor (no optional space at the tail) keeps stray
+      // spaces out of matched values.
+      regex:/\b[A-Z]{2}\d{2}[ ]?[A-Z0-9](?:[ ]?[A-Z0-9]){10,29}\b/g,
       validate:(m)=>{
         const iban = m.replace(/\s/g,'').toUpperCase();
         if (iban.length<15 || iban.length>34) return false;
