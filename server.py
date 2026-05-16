@@ -3128,11 +3128,54 @@ def main():
     server_config["research_mode_disciplines"] = rmd_cfg
     engine._research_mode_disciplines = server_config["research_mode_disciplines"]
 
+    # Snapshot BEFORE forward-migration so any rewrite below participates in
+    # the persist gate below.
+    _ts_before = json.dumps(server_config["tool_settings"], sort_keys=True)
+    # Forward-migration: read_document + read_file routing hints (v8.6.3).
+    # Mistral Small was observed picking `read_file` on a .docx attachment
+    # because `read_document`'s prose was gated behind
+    # `applies_with: ["mempalace_query"]` — so in non-project chats neither
+    # tool had any description, leaving only the inline notice text in the
+    # user message to steer routing. Without steering in the system prompt,
+    # the model fell back to exploratory `read_file` → got ZIP garbage →
+    # then `python_exec`/`execute_command` to manually unzip.
+    #
+    # Idempotent: only rewrites when the leading hint isn't already there.
+    # Removes the `applies_with` gate on read_document so the routing prose
+    # renders for every chat that has the tool, not just project chats.
+    _ts = server_config["tool_settings"]
+    _RD_PREFIX = (
+        "**USE THIS TOOL for every binary document the user attached** — "
+        "PDF, DOCX, XLSX, PPTX, CSV, EML, MSG. It parses the format "
+        "server-side and returns clean extracted text. **Do NOT call "
+        "`read_file` on binary documents** — `read_file` returns raw "
+        "bytes (ZIP/PDF headers etc.) which are useless. **Do NOT call "
+        "`python_exec` or `execute_command` to manually unzip / open / "
+        "cat a binary attachment** — `read_document` already handles "
+        "every common format with the right parser.\n\n"
+    )
+    _RF_HINT = (
+        "**Plain-text files only** — `.txt`, `.md`, `.py`, `.json`, "
+        "`.log`, `.csv`, `.yaml`, source code. For binary documents "
+        "(PDF, DOCX, XLSX, PPTX, EML, MSG) use `read_document` instead "
+        "— `read_file` will return raw bytes which are not useful to you."
+    )
+    _rd = _ts.get("read_document")
+    if isinstance(_rd, dict):
+        if not (_rd.get("description") or "").startswith("**USE THIS TOOL"):
+            _rd["description"] = _RD_PREFIX + (_rd.get("description") or "")
+        if _rd.get("applies_with") == ["mempalace_query"]:
+            _rd["applies_with"] = []
+    _rf = _ts.get("read_file")
+    if isinstance(_rf, dict):
+        if not (_rf.get("description") or "").startswith("**Plain-text files only**"):
+            _rf["description"] = _RF_HINT + (
+                ("\n\n" + _rf["description"]) if _rf.get("description") else "")
+
     # Seed `purposes` on every TOOL_DISPATCH entry from current behavior
     # (interactive / research_minimal / memory_summary). Idempotent — only
     # writes records that lack a populated purposes list. Runs every boot
     # so newly-added tools get their default purposes without admin action.
-    _ts_before = json.dumps(server_config["tool_settings"], sort_keys=True)
     engine.seed_tool_settings_purposes(server_config["tool_settings"])
     _ts_after = json.dumps(server_config["tool_settings"], sort_keys=True)
     if _ts_before != _ts_after or persisted_during_init:
