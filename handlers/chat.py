@@ -1823,6 +1823,14 @@ class ChatHandlerMixin:
                     # is False and `nonlocal_user_content == user_content`,
                     # so both paths persist the same text — no split needed.
                     if _anon_ok and nonlocal_user_content is not user_content:
+                        # Split persistence: in-memory `session.messages`
+                        # holds the pseudonymised text (what the cloud LLM
+                        # receives on this turn), the DB row holds the
+                        # ORIGINAL (so the chat UI and reload show real
+                        # values). `metadata.wire_content` is the wire-
+                        # truth — the session inspector renders it side-
+                        # by-side with the original so an auditor can
+                        # confirm what actually left the box.
                         with session.lock:
                             _msg = {"role": "user", "content": nonlocal_user_content}
                             session.messages.append(_msg)
@@ -1834,7 +1842,10 @@ class ChatHandlerMixin:
                                     session.title = session.title[:60].rsplit(' ', 1)[0]
                         ChatDB.save_message(
                             sid, "user", user_content,
-                            metadata={"gdpr_mapping_id": _mapping.mapping_id})
+                            metadata={
+                                "gdpr_mapping_id": _mapping.mapping_id,
+                                "wire_content": nonlocal_user_content,
+                            })
                         ChatDB.save_session(
                             sid, session.agent_id, session.model, session.title,
                             session.status, session.created_at, session.last_active,
@@ -2170,6 +2181,15 @@ class ChatHandlerMixin:
                                     )
                             except Exception:
                                 pass
+                            # Capture wire-truth before we mutate `reply`.
+                            # The session inspector reads this so an auditor
+                            # can see the raw LLM output (with pseudonymised
+                            # tokens still embedded) alongside the de-
+                            # anonymised text the user actually sees in chat.
+                            # Skip the metadata bloat when no tokens needed
+                            # restoring (pre/post are byte-identical).
+                            if _restored:
+                                msg_metadata["wire_content"] = reply
                             reply = _deanon_reply
                             msg_metadata["gdpr_mapping_id"] = _gdpr_mapping_id
                             msg_metadata["gdpr_restored"] = int(_restored)

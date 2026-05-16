@@ -1085,6 +1085,14 @@ async function openInspectModal() {
         }
       } else {
         // No payload data — fallback to simple view
+        const userWireBlock = ix.user.wire_content
+          ? `<details style="margin:0 16px 8px;border:1px solid var(--border-100);border-radius:8px;overflow:hidden">
+              <summary style="padding:6px 10px;cursor:pointer;background:#ecfdf5;color:#047857;font-size:11.5px;font-weight:500">
+                Wire request (pseudonymised) — what the cloud LLM received
+              </summary>
+              <pre style="${PRE};margin:0">${esc(ix.user.wire_content)}</pre>
+            </details>`
+          : '';
         html += `<details style="border-bottom:1px solid var(--border-050)">
           <summary style="padding:10px 16px;cursor:pointer;display:flex;align-items:center;gap:8px">
             <span style="color:var(--accent-brand);font-weight:500;font-size:13px">Request</span>
@@ -1092,6 +1100,7 @@ async function openInspectModal() {
             ${a.tokens_in ? `<span style="${MONO11}">&middot; ${a.tokens_in.toLocaleString()} tok in (API)</span>` : ''}
           </summary>
           <pre style="${PRE}">${esc(ix.user.content || '')}</pre>
+          ${userWireBlock}
         </details>`;
       }
 
@@ -1134,6 +1143,20 @@ async function openInspectModal() {
           html += `</div>`;
         }
 
+        // When transparent anonymisation transformed this turn, show the
+        // wire-truth (pseudonymised reply as it came back from the cloud
+        // LLM) alongside the de-anonymised text the user actually sees.
+        // `a.gdpr_restored` is the count of tokens swapped on the reverse
+        // path — zero means no transformation happened and there's nothing
+        // worth showing twice (handler suppresses wire_content in that case).
+        if (a.wire_content) {
+          html += `<details style="margin:0 16px 8px;border:1px solid var(--border-100);border-radius:8px;overflow:hidden">
+            <summary style="padding:6px 10px;cursor:pointer;background:#ecfdf5;color:#047857;font-size:11.5px;font-weight:500">
+              Wire response (pseudonymised) — ${a.gdpr_restored||0} token${(a.gdpr_restored||0)===1?'':'s'} restored
+            </summary>
+            <pre style="${PRE};margin:0">${esc(a.wire_content)}</pre>
+          </details>`;
+        }
         html += `<pre style="${PRE}">${esc(a.content || '')}</pre>
           </div>
         </details>`;

@@ -196,19 +196,42 @@ class SessionsHandlerMixin:
                         break
                     j += 1
                 meta = (assistant_msg or {}).get("metadata", {})
+                user_meta = user_msg.get("metadata") or {}
                 content_in = user_msg.get("content", "")
                 if isinstance(content_in, list):
                     content_in = " ".join(str(b.get("text", "")) for b in content_in if isinstance(b, dict))
                 content_out = (assistant_msg or {}).get("content", "")
                 if isinstance(content_out, list):
                     content_out = " ".join(str(b.get("text", "")) for b in content_out if isinstance(b, dict))
+                # Wire-truth for transparent-anonymisation turns: when the
+                # user message was pseudonymised before reaching the cloud
+                # LLM (`metadata.wire_content` set by handlers/chat.py), or
+                # when the assistant reply was de-anonymised before being
+                # persisted (`metadata.wire_content` captured pre-restore),
+                # surface the raw on-wire text so the inspector can render
+                # "typed by user → sent to cloud" / "received from cloud →
+                # shown to user" side-by-side. Empty/missing on every other
+                # turn — chat UI semantics are unchanged.
+                def _flatten(c):
+                    if isinstance(c, list):
+                        return " ".join(str(b.get("text", "")) for b in c if isinstance(b, dict))
+                    return c or ""
+                user_wire = user_meta.get("wire_content")
+                user_wire_str = _flatten(user_wire) if user_wire is not None else ""
+                asst_wire = meta.get("wire_content")
+                asst_wire_str = _flatten(asst_wire) if asst_wire is not None else ""
                 # Extract request payloads (what was actually sent to API)
                 payloads = meta.get("request_payloads", [])
                 cum_cost = float(meta.get("cost") or 0.0) if assistant_msg else prev_cum_cost
                 turn_cost = max(0.0, cum_cost - prev_cum_cost)
                 interactions.append({
                     "turn": len(interactions) + 1,
-                    "user": {"content": content_in, "tokens_est": len(str(content_in)) // 4},
+                    "user": {
+                        "content": content_in,
+                        "tokens_est": len(str(content_in)) // 4,
+                        "wire_content": user_wire_str,
+                        "gdpr_mapping_id": user_meta.get("gdpr_mapping_id") or "",
+                    },
                     "assistant": {
                         "content": content_out,
                         "tokens_est": len(str(content_out)) // 4,
@@ -225,6 +248,9 @@ class SessionsHandlerMixin:
                         "caveman_system": int(meta.get("caveman_system") or 0),
                         "sdk": meta.get("sdk", False),
                         "request_payloads": payloads,
+                        "wire_content": asst_wire_str,
+                        "gdpr_mapping_id": meta.get("gdpr_mapping_id") or "",
+                        "gdpr_restored": int(meta.get("gdpr_restored") or 0),
                     } if assistant_msg else None,
                     "compacted": bool(m.get("compacted")),
                 })
