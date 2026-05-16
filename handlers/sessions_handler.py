@@ -74,6 +74,7 @@ class SessionsHandlerMixin:
             resp["workflow_run_id"] = getattr(session, "workflow_run_id", "") or ""
             _rmo = getattr(session, "research_mode_override", None)
             resp["research_mode_override"] = (None if _rmo is None else bool(_rmo))
+            resp["gdpr_action_pref"] = getattr(session, "gdpr_action_pref", "") or ""
         else:
             info = ChatDB.get_session_info(sid)
             if info:
@@ -86,6 +87,9 @@ class SessionsHandlerMixin:
                 _rmo_db = info.get("research_mode_override", None)
                 resp["research_mode_override"] = (None if _rmo_db is None
                                                    else bool(_rmo_db))
+                _pref_db = info.get("gdpr_action_pref", "") or ""
+                resp["gdpr_action_pref"] = (_pref_db if _pref_db in
+                    ("anonymise", "local_model", "continue") else "")
         self._send_json(resp)
 
     def _handle_next_prompt_suggestion(self, path):
@@ -252,6 +256,88 @@ class SessionsHandlerMixin:
                 "duration": round(total_duration, 2),
                 "cost": round(total_cost, 4),
             },
+        })
+
+    def _handle_session_gdpr_maps_list(self, path):
+        """GET /v1/sessions/<id>/gdpr-maps — admin-only.
+
+        Returns the list of pseudonym_maps rows persisted for this session
+        (mapping_id, turn_id, created_at). Bodies stay encrypted at rest;
+        the detail endpoint decrypts one mapping on demand. Step 6.4.
+        """
+        sid = path.split("/")[3]
+        # Admin gate. Owners do NOT see plaintext PII even on their own
+        # chats — pseudonymisation is a privacy boundary, not a UX feature.
+        user = getattr(self, '_auth_user', None)
+        if not user or (user.get("role") != "admin" and user.get("id") != "__system__"):
+            self._send_json({"error": "admin only"}, 403)
+            return
+        if self._session_access_check(sid) is None:
+            return
+        try:
+            rows = ChatDB.list_pseudonym_maps_for_session(sid)
+        except Exception as e:
+            self._send_json({"error": f"db error: {e}"}, 500)
+            return
+        # Each row: (mapping_id, turn_id, created_at)
+        out = [
+            {"mapping_id": r[0], "turn_id": r[1] or "",
+             "created_at": r[2]}
+            for r in (rows or [])
+        ]
+        self._send_json({"session_id": sid, "mappings": out})
+
+    def _handle_session_gdpr_map_detail(self, path):
+        """GET /v1/sessions/<id>/gdpr-maps/<mapping_id> — admin-only.
+
+        Decrypts the stored mapping and returns the forward (real → token)
+        pairs plus per-finding metadata so the auditor can see what was
+        sent vs. what the user typed. Step 6.4.
+        """
+        parts = path.split("/")
+        # /v1/sessions/<sid>/gdpr-maps/<mapping_id>  → parts: ['','v1','sessions',sid,'gdpr-maps',mid]
+        if len(parts) < 6:
+            self._send_json({"error": "malformed path"}, 400)
+            return
+        sid = parts[3]
+        mapping_id = parts[5]
+        user = getattr(self, '_auth_user', None)
+        if not user or (user.get("role") != "admin" and user.get("id") != "__system__"):
+            self._send_json({"error": "admin only"}, 403)
+            return
+        if self._session_access_check(sid) is None:
+            return
+        import pseudonymizer as _ps  # local import to avoid cycles at boot
+        try:
+            mapping = _ps.load_mapping(mapping_id)
+        except Exception as e:
+            # AAD mismatch, missing keyfile, or tampered ciphertext all
+            # land here. Surface the class of failure (not the trace) so
+            # the auditor knows whether to investigate.
+            self._send_json({"error": f"decrypt failed: {type(e).__name__}: {e}"}, 500)
+            return
+        if mapping is None:
+            self._send_json({"error": "mapping not found for this id"}, 404)
+            return
+        # Cross-check: the loaded mapping's id must match the URL. Defence
+        # against a future bug where load_mapping silently returns the
+        # wrong row.
+        if getattr(mapping, "mapping_id", "") != mapping_id:
+            self._send_json({"error": "mapping_id mismatch"}, 500)
+            return
+        # forward = {real_value: token}. categories = {rule_id: count}.
+        # sources = set of input labels (chat_text, attachment:<name>, …).
+        pairs = [
+            {"real": real, "token": tok}
+            for real, tok in (mapping.forward or {}).items()
+        ]
+        self._send_json({
+            "session_id": sid,
+            "mapping_id": mapping_id,
+            "pairs": pairs,
+            "categories": dict(mapping.finding_counts or {}),
+            "sources": sorted(mapping.sources or []),
+            "token_count": len(pairs),
         })
 
     def _handle_get_session_files(self, path):
@@ -611,6 +697,23 @@ class SessionsHandlerMixin:
                 s.research_mode_override = normalised
             self._send_json({"status": "ok",
                               "research_mode_override": normalised,
+                              "session_id": sid})
+        elif action == "gdpr_action_pref":
+            # Transparent-anonymisation sticky preference (step 6.2).
+            # Body: {value: ''|'anonymise'|'local_model'|'continue'} — empty
+            # clears the preference (modal asks again on next send). 'cancel'
+            # is rejected (would brick the chat). The web modal POSTs here
+            # when the user ticks "Don't ask again for this chat".
+            raw = (body.get("value") or "").strip().lower()
+            if raw not in ("", "anonymise", "local_model", "continue"):
+                self._send_json({"error": f"invalid value: {raw!r}"}, 400)
+                return
+            ChatDB.update_session_gdpr_action_pref(sid, raw)
+            s = sessions.get(sid)
+            if s:
+                s.gdpr_action_pref = raw
+            self._send_json({"status": "ok",
+                              "gdpr_action_pref": raw,
                               "session_id": sid})
         elif action == "purge_memory":
             # Remove every MemPalace drawer/closet filed from this session and

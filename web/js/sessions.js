@@ -120,6 +120,10 @@ async function openSession(sessionId, agentId) {
                                   || data.research_mode_override === undefined)
       ? null
       : !!data.research_mode_override;
+    // Sticky transparent-anonymisation preference (step 6.2). Empty string =
+    // ask each time. Other allowed values map 1:1 to body.gdpr_action.
+    chat.gdprActionPref = ['anonymise', 'local_model', 'continue']
+      .includes(data.gdpr_action_pref) ? data.gdpr_action_pref : '';
     // Sync state.currentProject to the loaded chat's project. Without this,
     // sticky values from a previous project-detail visit leak into chats
     // opened from the chats list (and vice versa) — every outgoing turn

@@ -322,6 +322,11 @@ class Session:
         # True/False = force the override for this chat. Set from the composer
         # button or session settings; persists in chats.db sessions table.
         self.research_mode_override: bool | None = None
+        # Transparent anonymisation sticky preference (step 6.2). When non-
+        # empty, the web modal is skipped on every send and this value is
+        # forwarded as body.gdpr_action. Allowed: '', 'anonymise',
+        # 'local_model', 'continue'. 'cancel' is NEVER persisted here.
+        self.gdpr_action_pref: str = ""
 
         self._streaming = False  # True while a chat turn worker is running
 
@@ -391,6 +396,9 @@ class Session:
                 _rmo = info.get("research_mode_override", None)
                 self.research_mode_override = (None if _rmo is None
                                                 else bool(_rmo))
+                _pref = info.get("gdpr_action_pref", "") or ""
+                self.gdpr_action_pref = (_pref if _pref in
+                    ("anonymise", "local_model", "continue") else "")
                 self.workflow_run_id = info.get("workflow_run_id", "") or ""
 
 
@@ -1341,6 +1349,16 @@ class BrainAgentHandler(
             self._handle_session_search()
         elif path.startswith("/v1/sessions/") and path.endswith("/inspect"):
             self._handle_session_inspect(path)
+        elif path.startswith("/v1/sessions/") and path.endswith("/gdpr-maps"):
+            # Admin-only: list every pseudonym_maps row for this session.
+            # Body returns ids + turn_ids + timestamps; the actual mapping
+            # contents stay encrypted at rest. Step 6.4.
+            self._handle_session_gdpr_maps_list(path)
+        elif path.startswith("/v1/sessions/") and "/gdpr-maps/" in path:
+            # Admin-only: decrypt one specific mapping and return the
+            # before/after pairs so an auditor can see what the user typed
+            # vs. what the cloud LLM actually received. Step 6.4.
+            self._handle_session_gdpr_map_detail(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/files"):
             self._handle_get_session_files(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/messages"):

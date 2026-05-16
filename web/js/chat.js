@@ -86,22 +86,38 @@ async function sendMessage() {
   //   'continue'   → user accepted warn-level findings; cloud send as-is.
   //   ''           → no scanner findings or feature disabled.
   let gdprAction = '';
-  if (state.piiScannerEnabled !== false && !sessionStorage.getItem('pii-suppress:' + (chat.sessionId || '_new'))) {
-    const scan = PIIScanner.scanPayload(text, state._pendingFiles);
-    if (scan.findings.length) {
-      const localActive = isModelLocal(chat.model || '');
-      const verdict = await gdprActionModal(scan, chat, localActive);
-      if (verdict === 'cancel') return;
-      if (verdict === 'local') {
-        // Server-side swap: chat worker handles model switching when it sees
-        // gdpr_action='local_model'. We forward the choice rather than
-        // mutating chat.model client-side so the audit trail (pii_local_swap)
-        // is on the server and a missing local model raises a 400.
-        gdprAction = 'local_model';
-      } else if (verdict === 'anonymise') {
-        gdprAction = 'anonymise';
-      } else if (verdict === 'send') {
-        gdprAction = 'continue';
+  if (state.piiScannerEnabled !== false) {
+    // Sticky session preference (step 6.2): if the user previously ticked
+    // "Don't ask again for this chat", skip the modal and forward the
+    // stored choice as gdpr_action. Server-side validation still runs.
+    const stickyPref = (chat.gdprActionPref || '').trim();
+    if (stickyPref && ['anonymise', 'local_model', 'continue'].includes(stickyPref)) {
+      gdprAction = stickyPref;
+    } else {
+      const scan = PIIScanner.scanPayload(text, state._pendingFiles);
+      if (scan.findings.length) {
+        const localActive = isModelLocal(chat.model || '');
+        const { verdict, persist } = await gdprActionModal(scan, chat, localActive);
+        if (verdict === 'cancel') return;
+        if (verdict === 'local') {
+          // Server-side swap: chat worker handles model switching when it sees
+          // gdpr_action='local_model'. We forward the choice rather than
+          // mutating chat.model client-side so the audit trail (pii_local_swap)
+          // is on the server and a missing local model raises a 400.
+          gdprAction = 'local_model';
+        } else if (verdict === 'anonymise') {
+          gdprAction = 'anonymise';
+        } else if (verdict === 'send') {
+          gdprAction = 'continue';
+        }
+        // Persist the choice when the user ticked "Don't ask again". 'cancel'
+        // is never persisted (would brick the chat) — already filtered above
+        // by the early return. Fire-and-forget: a persist failure shouldn't
+        // block the send.
+        if (persist && gdprAction && chat.sessionId) {
+          chat.gdprActionPref = gdprAction;
+          API.updateGdprActionPref(chat.sessionId, gdprAction).catch(() => {});
+        }
       }
     }
   }
@@ -948,6 +964,21 @@ async function openInspectModal() {
       </details>`;
     }
 
+    // --- GDPR Mappings (admin-only; step 6.4) ---
+    // Loaded lazily on first <details> open — the listing endpoint is
+    // cheap (metadata only) but the per-mapping decrypt isn't, and most
+    // sessions have zero pseudonym_maps rows. Auditor opens the section
+    // explicitly when investigating "what got sent to the cloud".
+    html += `<details id="inspect-gdpr-maps" style="margin-bottom:16px;border:1px solid var(--border-100);border-radius:10px;overflow:hidden">
+      <summary style="padding:12px 16px;cursor:pointer;background:var(--bg-100);font-weight:500;color:var(--text-000);display:flex;align-items:center;gap:8px">
+        <span style="color:#047857">GDPR Mappings</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">admin only · show what was sent</span>
+      </summary>
+      <div id="inspect-gdpr-body" style="padding:12px 16px;font-size:12.5px;color:var(--text-300)">
+        <div style="color:var(--text-400)">Open to load…</div>
+      </div>
+    </details>`;
+
     // --- Interactions ---
     html += `<div style="font-weight:600;font-size:14px;color:var(--text-000);margin-bottom:12px">Interactions</div>`;
 
@@ -1114,6 +1145,94 @@ async function openInspectModal() {
     }
 
     body.innerHTML = html;
+
+    // GDPR Mappings — lazy load on first open (step 6.4). Listing endpoint
+    // is admin-only; non-admin viewers will see a 403 here. We render the
+    // error inline rather than hiding the section so admins-via-test see
+    // the gate is wired (instead of wondering why nothing loaded).
+    const gdprDetails = document.getElementById('inspect-gdpr-maps');
+    if (gdprDetails) {
+      gdprDetails.addEventListener('toggle', async () => {
+        if (!gdprDetails.open) return;
+        if (gdprDetails.dataset.loaded === '1') return;
+        gdprDetails.dataset.loaded = '1';
+        const gbody = document.getElementById('inspect-gdpr-body');
+        gbody.innerHTML = '<div style="color:var(--text-400)">Loading mappings…</div>';
+        try {
+          const list = await API.listSessionGdprMaps(sessionId);
+          const maps = list.mappings || [];
+          if (!maps.length) {
+            gbody.innerHTML = '<div style="color:var(--text-400)">No anonymisation mappings stored for this session.</div>';
+            return;
+          }
+          let mhtml = `<div style="color:var(--text-400);margin-bottom:10px">${maps.length} mapping${maps.length === 1 ? '' : 's'} stored. Each row was an "Anonymise & continue" turn — pseudonymisation map encrypted at rest, decrypted on demand.</div>`;
+          for (const m of maps) {
+            const when = m.created_at
+              ? new Date(m.created_at * 1000).toLocaleString()
+              : '—';
+            mhtml += `<details style="margin-bottom:8px;border:1px solid var(--border-100);border-radius:8px;overflow:hidden" data-mapping-id="${esc(m.mapping_id)}">
+              <summary style="padding:8px 12px;cursor:pointer;background:var(--bg-100);display:flex;align-items:center;gap:10px;font-size:12.5px">
+                <span style="font-family:var(--font-mono);color:var(--text-200)">${esc(m.mapping_id.slice(0, 16))}…</span>
+                <span style="color:var(--text-400);margin-left:auto">${esc(when)}</span>
+              </summary>
+              <div class="gdpr-map-detail" style="padding:10px 12px;color:var(--text-400);font-size:12px">Click to load decrypted contents…</div>
+            </details>`;
+          }
+          gbody.innerHTML = mhtml;
+          // Per-mapping lazy-decrypt on row open. Each <details>.toggle
+          // fires once; the response is rendered as a before/after table
+          // with monospace value columns.
+          for (const d of gbody.querySelectorAll('details[data-mapping-id]')) {
+            d.addEventListener('toggle', async () => {
+              if (!d.open || d.dataset.loaded === '1') return;
+              d.dataset.loaded = '1';
+              const detailBox = d.querySelector('.gdpr-map-detail');
+              detailBox.innerHTML = 'Decrypting…';
+              try {
+                const mapping = await API.getSessionGdprMap(sessionId, d.dataset.mappingId);
+                const pairs = mapping.pairs || [];
+                const cats = mapping.categories || {};
+                const sources = mapping.sources || [];
+                const catLine = Object.entries(cats)
+                  .map(([k, v]) => `${esc(k)}:${v}`).join(' · ') || '—';
+                const srcLine = sources.length ? sources.map(esc).join(', ') : '—';
+                let inner = `<div style="display:grid;grid-template-columns:auto auto;gap:4px 12px;margin-bottom:10px;font-size:11.5px">
+                  <span style="color:var(--text-400)">Sources</span><span style="color:var(--text-200)">${srcLine}</span>
+                  <span style="color:var(--text-400)">Categories</span><span style="color:var(--text-200)">${catLine}</span>
+                  <span style="color:var(--text-400)">Tokens minted</span><span style="color:var(--text-200)">${mapping.token_count || 0}</span>
+                </div>`;
+                if (!pairs.length) {
+                  inner += '<div style="color:var(--text-400)">Mapping decrypted but contains no entries.</div>';
+                } else {
+                  inner += '<div style="font-size:11px;color:var(--text-400);margin-bottom:4px">Before → After (what the user wrote → what the cloud LLM received)</div>';
+                  inner += '<table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11.5px">';
+                  inner += '<thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border-100);color:var(--text-400);font-weight:500">Real value</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border-100);color:var(--text-400);font-weight:500">Token sent</th></tr></thead><tbody>';
+                  for (const p of pairs) {
+                    inner += `<tr>
+                      <td style="padding:4px 8px;color:var(--text-200);word-break:break-all;border-bottom:1px solid var(--border-100)">${esc(p.real)}</td>
+                      <td style="padding:4px 8px;color:#047857;word-break:break-all;border-bottom:1px solid var(--border-100)">${esc(p.token)}</td>
+                    </tr>`;
+                  }
+                  inner += '</tbody></table>';
+                }
+                detailBox.innerHTML = inner;
+              } catch (mErr) {
+                detailBox.innerHTML = `<div style="color:var(--error)">Decrypt failed: ${esc(mErr.message || mErr)}</div>`;
+              }
+            });
+          }
+        } catch (lErr) {
+          // 403 = non-admin viewer. Surface as a normal info row so the
+          // section's gating intent is obvious.
+          const msg = (lErr && lErr.message) ? lErr.message : String(lErr);
+          if (/403|admin/i.test(msg)) {
+            gbody.innerHTML = '<div style="color:var(--text-400)">Admin only — sign in as an admin to inspect pseudonymisation mappings.</div>';
+          } else {
+            gbody.innerHTML = `<div style="color:var(--error)">${esc(msg)}</div>`;
+          }
+        }
+      });
+    }
   } catch(e) {
     document.getElementById('inspect-body').innerHTML = `<div style="color:var(--error);padding:24px">${esc(e.message)}</div>`;
   }

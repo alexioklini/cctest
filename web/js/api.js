@@ -88,6 +88,31 @@ class API {
     return this.post('/v1/chat/gdpr-recovery', {session_id: sessionId, action});
   }
 
+  // Admin-only audit endpoints for transparent anonymisation (step 6.4).
+  // listSessionGdprMaps returns row metadata (mapping_id, turn_id,
+  // created_at) — bodies stay encrypted at rest. getSessionGdprMap
+  // decrypts one specific mapping and returns the before/after pairs so
+  // the auditor can see what was sent to the cloud vs. what the user
+  // typed. Both refuse with 403 for non-admin callers.
+  static listSessionGdprMaps(sessionId) {
+    return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/gdpr-maps`);
+  }
+  static getSessionGdprMap(sessionId, mappingId) {
+    return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/gdpr-maps/${encodeURIComponent(mappingId)}`);
+  }
+
+  // Sticky GDPR action preference (step 6.2). value ∈ {'', 'anonymise',
+  // 'local_model', 'continue'}. '' clears the preference (modal asks
+  // again on next send). 'cancel' is rejected server-side (400) — never
+  // valid as a persisted choice.
+  static updateGdprActionPref(sessionId, value) {
+    return this.post('/v1/sessions/manage', {
+      action: 'gdpr_action_pref',
+      session_id: sessionId,
+      value: value || '',
+    });
+  }
+
   // Projects
   static getProjects(agent) { return this.get(`/v1/agents/${agent}/projects`); }
   static createProject(agent, body) {

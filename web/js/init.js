@@ -193,6 +193,29 @@ function toggleToolDisplay() {
   showToast(state.showToolCalls ? 'Tool calls visible' : 'Tool calls hidden');
 }
 
+// Transparent-anonymisation sticky preference reset (step 6.3). Clicking the
+// shield-with-checkmark composer icon (only visible when chat.gdprActionPref
+// is set) calls this to clear the preference, re-enabling the PII modal on
+// the next send. Fire-and-forget toast on failure.
+async function resetGdprActionPref() {
+  const chat = state.activeChat;
+  if (!chat || !chat.sessionId) return;
+  const prev = chat.gdprActionPref || '';
+  try {
+    await API.updateGdprActionPref(chat.sessionId, '');
+    chat.gdprActionPref = '';
+    updateStatusBar();
+    const labels = {
+      'anonymise':   'auto-anonymise',
+      'local_model': 'auto-local-model',
+      'continue':    'auto-continue',
+    };
+    showToast(`PII preference reset (was: ${labels[prev] || prev}) — modal will reappear`);
+  } catch (e) {
+    showToast('Failed to reset PII preference: ' + e.message, true);
+  }
+}
+
 async function toggleSaveToMemory() {
   const chat = state.activeChat;
   if (!chat) return;

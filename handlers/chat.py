@@ -1672,6 +1672,10 @@ class ChatHandlerMixin:
                             _mapping, session_id=sid, turn_id=_anon_tool_id)
                         session._gdpr_mapping_id = _mapping.mapping_id
                         session._gdpr_streamer = StreamingDeanonymizer(_mapping)
+                        # Per-turn flag read by `_build_system_prompt` post-
+                        # process to append the verbatim-token-preservation
+                        # clamp. Cleared in the worker's finally below.
+                        engine._thread_local._gdpr_anonymising = True
                         _emit_synthetic_tool_event(
                             live=live, sid=sid, kind="anonymise",
                             tool_use_id=_anon_tool_id, phase="done",
@@ -2279,6 +2283,7 @@ class ChatHandlerMixin:
                         pass
                     session._gdpr_mapping_id = None
                     session._gdpr_streamer = None
+                engine._thread_local._gdpr_anonymising = False
                 # Clean up thread-local state
                 engine._thread_local.current_agent = None
                 engine._thread_local.mcp_manager = None

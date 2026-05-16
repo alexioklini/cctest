@@ -1,8 +1,10 @@
 # Transparent Anonymisation — Handover
 
-Status as of v8.42.0 (2026-05-16). Steps 1–5 landed; step 6 outstanding.
-This file is the single source of truth to pick the work back up — every
-file path, every invariant, every gotcha is here.
+Status as of v8.5.0 (2026-05-16). **Rollout complete — steps 1–6 all
+landed.** This file is the single source of truth for the design + every
+non-obvious invariant. Open follow-ups are limited to the items the
+"What's left" section flagged as lower-priority polish — the load-bearing
+work is done.
 
 ---
 
@@ -419,9 +421,41 @@ JS files all parse via `node -e "new Function(fs.readFileSync(...))"`.
 
 ---
 
-## What's left (step 6)
+## Step 6 — finishing touches (LANDED v8.5.0)
 
-### Step 6 — finishing touches
+All four sub-items below were shipped. Brief recap; full diff lives in
+the v8.5.0 changelog entry in `brain.py`.
+
+1. **System-prompt clamp** — `brain._GDPR_ANON_CLAMP` appended in
+   `_apply_system_prompt_postprocess` when `_thread_local._gdpr_anonymising`
+   is True. Thread-local set in the chat worker right after
+   `session._gdpr_mapping_id`, cleared in worker `finally`. KV-prefix
+   stays intact for non-anon turns (clamp is in the postprocess, not the
+   cached base prose).
+
+2. **Sticky session preference** — `sessions.gdpr_action_pref TEXT`
+   column + `Session.gdpr_action_pref` + `action: 'gdpr_action_pref'`
+   on `POST /v1/sessions/manage`. Web modal returns `{verdict, persist}`;
+   chat.js short-circuits the modal when the pref is set, persists fire-
+   and-forget on tick. `'cancel'` is never persistable (would brick the
+   chat).
+
+3. **Composer indicator** — `btn-gdpr-pref` (shield-with-checkmark);
+   `panels.updateStatusBar()` toggles visibility + per-mode title;
+   `resetGdprActionPref()` clears via the same endpoint. Folds the
+   "settings panel reset button" requirement of step 6.2 into the same
+   affordance.
+
+4. **Admin audit view** — `GET /v1/sessions/<id>/gdpr-maps` (list) +
+   `GET /v1/sessions/<id>/gdpr-maps/<mapping_id>` (decrypt one). Admin-
+   only — owners do NOT see plaintext PII even on their own chats.
+   Session inspector grows a "GDPR Mappings" lazy-loaded section.
+   Non-admins see an inline "Admin only" note (gating is discoverable).
+
+Test coverage: +8 tests for clamp + audit primitives, 64 total green in
+the rollout's combined suite.
+
+## Open follow-ups (low priority)
 
 1. **System-prompt clamp** — append a short block to `_build_system_prompt`
    when `session._gdpr_mapping_id` is set (read via thread-local). Something

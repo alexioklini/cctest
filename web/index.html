@@ -1171,6 +1171,13 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <button class="composer-btn" data-id="btn-caveman" data-composer-toggle="btn-caveman" onclick="toggleCavemanMode()" title="Caveman: off (spaceship) — click to cycle">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c3 3 5 7 5 12v3l-5-2-5 2v-3c0-5 2-9 5-12z" fill="currentColor" fill-opacity="0.15"/><circle cx="12" cy="10" r="1.5"/><path d="M7 15l-3 3v3l4-2M17 15l3 3v3l-4-2"/><path d="M10 19l2 3 2-3"/></svg>
         </button>
+        <!-- Transparent-anonymisation sticky preference (step 6.3). Hidden by
+             default; surfaced when chat.gdprActionPref is set so the user can
+             see at a glance that PII handling is automatic for this chat, and
+             reset the preference with a click. Updated by updateStatusBar(). -->
+        <button class="composer-btn" data-id="btn-gdpr-pref" data-composer-toggle="btn-gdpr-pref" onclick="resetGdprActionPref()" title="GDPR preference active — click to reset" style="display:none;color:#047857">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z" fill="currentColor" fill-opacity="0.18"/><polyline points="9 12 11 14 15 10"/></svg>
+        </button>
       </div>
       <div class="composer-footer-right">
         <span class="model-selector-btn" data-id="model-selector" onclick="toggleModelDropdown(event)">

@@ -104,6 +104,25 @@ function updateStatusBar() {
     cavBtn.style.color = '';
   }
 
+  // Transparent-anonymisation sticky preference indicator (step 6.3). Shows
+  // a shield-with-checkmark next to the composer when chat.gdprActionPref
+  // is set, so the user sees PII handling is automatic for this chat and
+  // can reset with a click. Hidden when no preference is active.
+  const gdprPref = (chat.gdprActionPref || '').trim();
+  const gdprLabel = {
+    'anonymise':   'Auto-anonymising PII before send',
+    'local_model': 'Auto-routing PII messages to local model',
+    'continue':    'Auto-continuing past PII warnings',
+  }[gdprPref] || '';
+  for (const gBtn of _composerToggleEls('btn-gdpr-pref')) {
+    if (gdprPref && gdprLabel) {
+      gBtn.style.display = '';
+      gBtn.title = `${gdprLabel} — click to reset`;
+    } else {
+      gBtn.style.display = 'none';
+    }
+  }
+
   // Warmup indicator
   let warmupEl = document.getElementById('status-warmup');
   if (!warmupEl) {
@@ -474,11 +493,11 @@ function gdprActionModal(scan, chat, localActive) {
               soonBtn('pii-manualanon-btn', 'Manual anonymisation') +
               (canSend ? '<button class="pii-btn pii-btn-send" id="pii-send-btn">Continue anyway</button>' : '') +
             '</div>' +
-            (canSend
-              ? '<label class="pii-suppress">' +
-                  '<input type="checkbox" id="pii-suppress-session"> Don’t show this again for this chat' +
-                '</label>'
-              : '') +
+            // Sticky preference: visible for every non-cancel choice. Picking
+            // 'cancel' never persists (would brick the chat). Step 6.2.
+            '<label class="pii-suppress">' +
+              '<input type="checkbox" id="pii-suppress-session"> Don’t ask again for this chat' +
+            '</label>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -487,12 +506,11 @@ function gdprActionModal(scan, chat, localActive) {
     const overlay = wrap.firstElementChild;
     document.body.appendChild(overlay);
     const cleanup = (verdict) => {
-      if (verdict === 'send' && document.getElementById('pii-suppress-session')?.checked) {
-        sessionStorage.setItem('pii-suppress:' + (chat.sessionId || '_new'), '1');
-      }
+      const persist = verdict !== 'cancel' &&
+        !!document.getElementById('pii-suppress-session')?.checked;
       document.removeEventListener('keydown', onKey);
       overlay.remove();
-      resolve(verdict);
+      resolve({ verdict, persist });
     };
     const onKey = (e) => { if (e.key === 'Escape') cleanup('cancel'); };
     document.addEventListener('keydown', onKey);

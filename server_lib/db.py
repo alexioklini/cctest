@@ -606,6 +606,16 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN last_system_prompt TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Transparent anonymisation sticky preference (step 6.2). When set,
+            # the GDPR modal is skipped and the stored choice is forwarded as
+            # body.gdpr_action on every send for this session. Empty = ask each
+            # time. Allowed values: '', 'anonymise', 'local_model', 'continue'.
+            # 'cancel' is NEVER persisted — it's a one-shot abort verdict, not
+            # a preference (would brick the chat).
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN gdpr_action_pref TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             # ── MemPalace chat-sync cursor ──
             # Tracks which messages have already been mirrored into MemPalace,
             # per session. `last_message_id` is the highest messages.id filed so far.
@@ -993,6 +1003,24 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET research_mode_override = ? WHERE id = ?",
                         (stored, session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_gdpr_action_pref(session_id, value):
+        """Transparent-anonymisation sticky preference (step 6.2).
+
+        value: ''  -> clear (ask each send)
+               'anonymise' / 'local_model' / 'continue' -> remember.
+
+        'cancel' is rejected — it would brick the chat. Unknown values are
+        coerced to ''.
+        """
+        if value not in ("anonymise", "local_model", "continue"):
+            value = ""
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET gdpr_action_pref = ? WHERE id = ?",
+                        (value, session_id))
             conn.commit()
 
     @staticmethod
