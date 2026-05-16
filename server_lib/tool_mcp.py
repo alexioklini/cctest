@@ -128,6 +128,24 @@ def _apply_context(ctx: dict) -> None:
     tl.caveman_chat = int(ctx.get("caveman_chat", 0) or 0)
     tl.caveman_system = int(ctx.get("caveman_system", 0) or 0)
 
+    # Transparent anonymisation: install the after_file_write callback on
+    # THIS thread (the tool-dispatch thread). brain._after_file_write reads
+    # it from the same thread-local. The factory lives in handlers.chat
+    # because it needs SessionManager access to resolve the session's
+    # live_stream for SSE emission.
+    _gdpr_mid = ctx.get("gdpr_mapping_id") or ""
+    if _gdpr_mid:
+        try:
+            from handlers.chat import make_gdpr_after_file_write_cb
+            tl._gdpr_after_file_write_cb = make_gdpr_after_file_write_cb(
+                mapping_id=_gdpr_mid, session_id=tl.current_session_id or "",
+                agent_id=agent_id,
+            )
+        except Exception:
+            tl._gdpr_after_file_write_cb = None
+    else:
+        tl._gdpr_after_file_write_cb = None
+
 
 def _clear_context() -> None:
     tl = engine._thread_local
@@ -136,7 +154,7 @@ def _clear_context() -> None:
         "note_context", "workflow_run_id", "plan_mode", "research_mode_override",
         "execution_overrides", "attachment_image_model", "_current_model",
         "current_agent", "memory_store", "mcp_manager", "caveman_chat",
-        "caveman_system",
+        "caveman_system", "_gdpr_after_file_write_cb",
     ):
         try:
             setattr(tl, attr, None)

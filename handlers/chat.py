@@ -145,6 +145,121 @@ class PseudonymizeError(Exception):
         self.sources = sources or []
 
 
+def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
+                                  agent_id: str):
+    """Build a `_after_file_write` callback for a session with active
+    anonymisation.
+
+    Returned closure runs on the tool-dispatch thread (where
+    `brain._after_file_write` is called from `tool_write_file` / `tool_edit_file`
+    / etc.). It de-anonymises the just-written file in place, then emits a
+    pair of synthetic tool-call rows (`deanonymise_file`) so the UI shows
+    each restore operation in chat history.
+
+    The session's `live_stream` is the live SSE channel; emitting on it is
+    thread-safe (LiveStream is shared state, fan-out happens under its own
+    lock). If the session was deleted between the LLM tool call and this
+    callback firing, we skip silently — the file just stays in
+    pseudonymised form, which is failsafe (no PII leak; the user just sees
+    tokens).
+    """
+    def _cb(path: str, action: str, _agent_id: str):
+        # No-op when the file is outside the artifact tree — only LLM-written
+        # files (tool_write_file etc.) reach the user; we don't want to
+        # rewrite arbitrary disk paths the model might touch.
+        if not engine._is_artifact_path(path):
+            return
+        ext = os.path.splitext(path)[1].lower()
+        from engine.file_pseudonymize import SUPPORTED_EXTS
+        if ext not in SUPPORTED_EXTS:
+            return  # Image / binary / unknown — nothing to restore.
+
+        mapping = pseudonymizer.get_mapping(mapping_id)
+        if mapping is None:
+            # Mapping fell out of the registry (worker `finally` already ran).
+            # Try loading the persisted copy.
+            try:
+                mapping = pseudonymizer.load_mapping(mapping_id)
+                if mapping is not None:
+                    pseudonymizer.restore_mapping_to_registry(mapping)
+            except Exception:
+                return
+            if mapping is None:
+                return
+
+        # Resolve the live session for SSE emission. `sessions` is injected
+        # by `server._inject_server_globals()` at boot.
+        session = None
+        try:
+            session = sessions.peek(session_id)  # noqa: F821
+        except Exception:
+            session = None
+        live = getattr(session, "live_stream", None) if session else None
+
+        t0 = time.time()
+        tool_use_id = f"deanon_file_{mapping_id[:8]}_{int(t0 * 1000) % 1000000}"
+        fname = os.path.basename(path)
+        if live is not None:
+            try:
+                _emit_synthetic_tool_event(
+                    live=live, sid=session_id, kind="deanonymise_file",
+                    tool_use_id=tool_use_id, phase="dispatch",
+                    args={"file": fname, "mapping_id": mapping_id},
+                )
+            except Exception:
+                pass
+
+        try:
+            restored = pseudonymizer.deanonymize_file(
+                path, path, mapping=mapping)
+            status = "ok"
+            result = {
+                "file": fname,
+                "restored": int(restored),
+                "mapping_id": mapping_id,
+            }
+            err = ""
+        except Exception as e:
+            status = "error"
+            result = {
+                "file": fname,
+                "error": f"{type(e).__name__}: {str(e)[:200]}",
+                "mapping_id": mapping_id,
+            }
+            err = result["error"]
+            restored = 0
+
+        if live is not None:
+            try:
+                _emit_synthetic_tool_event(
+                    live=live, sid=session_id, kind="deanonymise_file",
+                    tool_use_id=tool_use_id, phase="done",
+                    result=result, status=status,
+                    duration_ms=int((time.time() - t0) * 1000),
+                )
+            except Exception:
+                pass
+
+        if engine._audit_log:
+            try:
+                engine._audit_log.log_action(
+                    agent=agent_id, session_id=session_id,
+                    action_type="pii_deanonymise_file",
+                    tool_name="gdpr_scanner",
+                    args_summary=fname,
+                    result_summary=(f"restored={restored} mapping_id={mapping_id}"
+                                    if status == "ok"
+                                    else f"error={err} mapping_id={mapping_id}"),
+                    result_status=status if status == "ok" else "error",
+                    duration_ms=int((time.time() - t0) * 1000),
+                    source="chat",
+                )
+            except Exception:
+                pass
+
+    return _cb
+
+
 class StreamingDeanonymizer:
     """Per-turn helper that converts a stream of pseudonymized text deltas
     into a stream of de-anonymized text deltas, holding back partial tokens
@@ -1228,11 +1343,13 @@ class ChatHandlerMixin:
         else:
             user_content = message
 
-        # Save disk-routed files and append notice
+        # Save disk-routed files and append notice. `saved_paths` is also
+        # consumed by the worker's anonymise block — keep it defined even
+        # when no files were attached so the closure capture works.
+        saved_paths: list[str] = []
         if disk_files:
             attach_dir = os.path.join("/tmp", "brain-attachments", session.id)
             os.makedirs(attach_dir, exist_ok=True)
-            saved_paths = []
             for f in disk_files:
                 fname = f.get("name", "file")
                 safe_name = fname.replace("/", "_").replace("\\", "_")
@@ -1501,10 +1618,15 @@ class ChatHandlerMixin:
                     _mapping = pseudonymizer.new_mapping()
                     _anon_tool_id = f"anon_{_mapping.mapping_id[:12]}"
                     _t0 = time.time()
+                    # Build the source list up front so the dispatch event
+                    # reflects every input that will be pseudonymised.
+                    _anon_sources = ["chat_text"] + [
+                        f"attachment:{os.path.basename(p)}" for p in saved_paths
+                    ]
                     _emit_synthetic_tool_event(
                         live=live, sid=sid, kind="anonymise",
                         tool_use_id=_anon_tool_id, phase="dispatch",
-                        args={"sources": ["chat_text"]},
+                        args={"sources": _anon_sources},
                     )
                     _anon_ok = False
                     try:
@@ -1523,6 +1645,29 @@ class ChatHandlerMixin:
                                         _blk["text"] = _anonymised
                                         break
                             nonlocal_message = _anonymised
+                        # Walk every disk-routed attachment and rewrite it
+                        # in place. Files the LLM can read (via
+                        # read_document / read_file) MUST be pseudonymised
+                        # before the LLM ever loads them — once the tool
+                        # call lands, the cloud side already sees the raw
+                        # bytes. Unsupported types raise
+                        # FilePseudonymizeError (binary/unknown extensions);
+                        # we treat that as "block the cloud send" since we
+                        # can't anonymise what we can't parse. The recovery
+                        # modal lets the user pick local-model or cancel.
+                        from engine.file_pseudonymize import (
+                            FilePseudonymizeError, SUPPORTED_EXTS,
+                        )
+                        for _path in saved_paths:
+                            _ext = os.path.splitext(_path)[1].lower()
+                            if _ext not in SUPPORTED_EXTS:
+                                raise FilePseudonymizeError(
+                                    f"can't anonymise unsupported attachment "
+                                    f"type: {os.path.basename(_path)} ({_ext})")
+                            # In-place rewrite: src == dst. pseudonymize_file
+                            # handles the safe-write pattern internally.
+                            pseudonymizer.pseudonymize_file(
+                                _path, _path, mapping=_mapping)
                         pseudonymizer.save_mapping(
                             _mapping, session_id=sid, turn_id=_anon_tool_id)
                         session._gdpr_mapping_id = _mapping.mapping_id
@@ -1563,7 +1708,7 @@ class ChatHandlerMixin:
                             live=live, sid=sid, kind="anonymise",
                             tool_use_id=_anon_tool_id, phase="done",
                             result={"error": _err_summary,
-                                    "sources": ["chat_text"]},
+                                    "sources": _anon_sources},
                             status="error",
                             duration_ms=int((time.time() - _t0) * 1000),
                         )
@@ -1578,7 +1723,7 @@ class ChatHandlerMixin:
                                     agent=session.agent_id, session_id=sid,
                                     action_type="pii_anonymise_failed",
                                     tool_name="gdpr_scanner",
-                                    args_summary="chat_text",
+                                    args_summary=",".join(_anon_sources),
                                     result_summary=_err_summary,
                                     result_status="error",
                                     duration_ms=int((time.time() - _t0) * 1000),
@@ -1589,7 +1734,7 @@ class ChatHandlerMixin:
                         live.emit("gdpr_recovery_required", {
                             "session_id": sid,
                             "error": _err_summary,
-                            "sources": ["chat_text"],
+                            "sources": _anon_sources,
                         })
                         _event = _gdpr_recovery_register(sid)
                         _delivered = _event.wait(timeout=300)
@@ -1603,7 +1748,7 @@ class ChatHandlerMixin:
                                         agent=session.agent_id, session_id=sid,
                                         action_type="pii_anonymise_failed_cancel",
                                         tool_name="gdpr_scanner",
-                                        args_summary="chat_text",
+                                        args_summary=",".join(_anon_sources),
                                         result_summary=(
                                             "timeout" if not _delivered else "user_cancelled"),
                                         result_status="warning",
@@ -1647,7 +1792,7 @@ class ChatHandlerMixin:
                                     agent=session.agent_id, session_id=sid,
                                     action_type="pii_anonymise_failed_local_swap",
                                     tool_name="gdpr_scanner",
-                                    args_summary="chat_text",
+                                    args_summary=",".join(_anon_sources),
                                     result_summary=f"→ {_fallback}",
                                     result_status="success",
                                     duration_ms=0, source="chat",
@@ -1742,6 +1887,11 @@ class ChatHandlerMixin:
                     "attachment_image_model": getattr(engine._thread_local, "attachment_image_model", "") or "",
                     "caveman_chat": int(getattr(engine._thread_local, "caveman_chat", 0) or 0),
                     "caveman_system": int(getattr(engine._thread_local, "caveman_system", 0) or 0),
+                    # Transparent anonymisation: when set, the tool-dispatch
+                    # thread installs an _after_file_write callback that
+                    # rewrites any file the LLM produces back into real
+                    # values before the UI sees the artifact.
+                    "gdpr_mapping_id": getattr(session, "_gdpr_mapping_id", "") or "",
                 }
                 _sampling = {
                     "temperature": inf_params.get("temperature"),

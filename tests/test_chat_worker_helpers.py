@@ -275,10 +275,165 @@ class TestEmitSyntheticToolEvent(unittest.TestCase):
         )
         row = self.fake_db.rows[-1]
         self.assertEqual(row["metadata"]["status"], "error")
-        # The live event also carries the error status so the client can
-        # render the row red.
         _, data = live.events[-1]
         self.assertEqual(data["status"], "error")
+
+
+# ---------------------------------------------------------------------------
+# _after_file_write callback factory — step 5 post-LLM deanonymisation hook
+# ---------------------------------------------------------------------------
+
+
+class _FakeSession:
+    """Just enough Session shape for the callback's `sessions.peek()` lookup."""
+
+    def __init__(self, sid):
+        self.id = sid
+        self.live_stream = FakeLiveStream()
+
+
+class _FakeSessions:
+    def __init__(self):
+        self._map = {}
+
+    def add(self, sid, sess):
+        self._map[sid] = sess
+
+    def peek(self, sid):
+        return self._map.get(sid)
+
+
+class TestGdprAfterFileWriteCallback(unittest.TestCase):
+    """Exercises make_gdpr_after_file_write_cb end-to-end without a server."""
+
+    def setUp(self):
+        from handlers import chat as chat_mod
+        self.chat_mod = chat_mod
+        self.fake_db = FakeChatDB()
+        self._orig_chatdb = getattr(chat_mod, "ChatDB", None)
+        chat_mod.ChatDB = self.fake_db
+        self._orig_sessions = getattr(chat_mod, "sessions", None)
+        self.fake_sessions = _FakeSessions()
+        chat_mod.sessions = self.fake_sessions
+
+        # Stub _is_artifact_path so any path looks like an artifact (the real
+        # check pokes at filesystem paths under agents/<id>/artifacts/).
+        import brain
+        self._orig_iap = brain._is_artifact_path
+        brain._is_artifact_path = lambda _p: True
+
+        # Mapping with a single IBAN substitution so we can verify
+        # deanonymise actually fires and restores the original.
+        self.mapping = ps.new_mapping()
+        # Inject a known pair into the mapping without going through the
+        # scanner — exercising the file walker is enough; we just need
+        # forward+reverse populated.
+        token = self.mapping.next_token("iban")
+        self.mapping.record("DE89370400440532013000", token, "iban")
+        self.token = token
+
+    def tearDown(self):
+        if self._orig_chatdb is not None:
+            self.chat_mod.ChatDB = self._orig_chatdb
+        if self._orig_sessions is not None:
+            self.chat_mod.sessions = self._orig_sessions
+        import brain
+        brain._is_artifact_path = self._orig_iap
+        ps.close_mapping(self.mapping.mapping_id)
+
+    def test_callback_deanonymises_md_in_place_and_emits_pair(self):
+        sid = "sid-deanon-1"
+        sess = _FakeSession(sid)
+        self.fake_sessions.add(sid, sess)
+
+        cb = self.chat_mod.make_gdpr_after_file_write_cb(
+            mapping_id=self.mapping.mapping_id,
+            session_id=sid,
+            agent_id="main",
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "report.md")
+            with open(path, "w") as f:
+                f.write(f"Result: token = {self.token}")
+
+            cb(path, "created", "main")
+
+            with open(path) as f:
+                self.assertIn("DE89370400440532013000", f.read())
+
+        # One dispatch + one done event.
+        events = [t for (t, _) in sess.live_stream.events]
+        self.assertEqual(events, ["synthetic_tool_use", "synthetic_tool_result"])
+        # Two persisted rows.
+        roles = [r["role"] for r in self.fake_db.rows]
+        self.assertEqual(roles, ["tool_use", "tool_result"])
+        result = json.loads(self.fake_db.rows[1]["content"])["result"]
+        self.assertEqual(result["restored"], 1)
+        self.assertEqual(result["file"], "report.md")
+
+    def test_callback_skips_unsupported_extension(self):
+        sid = "sid-deanon-2"
+        sess = _FakeSession(sid)
+        self.fake_sessions.add(sid, sess)
+
+        cb = self.chat_mod.make_gdpr_after_file_write_cb(
+            mapping_id=self.mapping.mapping_id,
+            session_id=sid,
+            agent_id="main",
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "image.png")
+            with open(path, "wb") as f:
+                f.write(b"\x89PNG\r\n")
+
+            cb(path, "created", "main")
+
+        # Nothing emitted — unsupported extensions are no-ops.
+        self.assertEqual(sess.live_stream.events, [])
+        self.assertEqual(self.fake_db.rows, [])
+
+    def test_callback_skips_non_artifact_paths(self):
+        sid = "sid-deanon-3"
+        sess = _FakeSession(sid)
+        self.fake_sessions.add(sid, sess)
+        # Flip _is_artifact_path back to "no" so the callback short-circuits.
+        import brain
+        brain._is_artifact_path = lambda _p: False
+
+        cb = self.chat_mod.make_gdpr_after_file_write_cb(
+            mapping_id=self.mapping.mapping_id,
+            session_id=sid,
+            agent_id="main",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "outside.md")
+            with open(path, "w") as f:
+                f.write(f"random {self.token}")
+            cb(path, "created", "main")
+            # File unchanged (still has token).
+            with open(path) as f:
+                self.assertIn(self.token, f.read())
+        self.assertEqual(sess.live_stream.events, [])
+
+    def test_callback_handles_missing_session_gracefully(self):
+        # No session registered — callback must not crash.
+        cb = self.chat_mod.make_gdpr_after_file_write_cb(
+            mapping_id=self.mapping.mapping_id,
+            session_id="missing-sid",
+            agent_id="main",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "x.md")
+            with open(path, "w") as f:
+                f.write(f"hello {self.token}")
+            cb(path, "created", "main")
+            # File still gets de-anonymised even without a live session —
+            # the absence of `live` only suppresses SSE; the on-disk
+            # rewrite still runs.
+            with open(path) as f:
+                self.assertIn("DE89370400440532013000", f.read())
 
 
 if __name__ == "__main__":

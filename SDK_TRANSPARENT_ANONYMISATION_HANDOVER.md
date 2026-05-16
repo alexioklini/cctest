@@ -1,6 +1,6 @@
 # Transparent Anonymisation — Handover
 
-Status as of v8.41.0 (2026-05-16). Steps 1–4 landed; steps 5–6 outstanding.
+Status as of v8.42.0 (2026-05-16). Steps 1–5 landed; step 6 outstanding.
 This file is the single source of truth to pick the work back up — every
 file path, every invariant, every gotcha is here.
 
@@ -37,7 +37,7 @@ message, give the user a modal with four choices:
 
 ---
 
-## What's done (v8.41.0 — steps 1–4)
+## What's done (v8.42.0 — steps 1–5)
 
 ### Step 1 — `pseudonymizer.py` (text + persistence)
 
@@ -274,12 +274,129 @@ verbatim, check `msg.metadata.synthetic === true`. If so:
 This means reloaded synthetic rows go through the SAME `renderSyntheticGdprCall`
 path as live ones.
 
+### Step 5 — file walkers (LANDED v8.42.0)
+
+Attachments are now pseudonymised BEFORE the LLM sees them, and
+LLM-generated files in the artifact tree are de-anonymised in place
+BEFORE the UI sees them.
+
+**New module** `engine/file_pseudonymize.py`:
+
+- `SUPPORTED_EXTS = {.docx, .pptx, .xlsx, .csv, .txt, .md, .log, .html,
+  .htm, .json}`. PDF deliberately NOT included — pymupdf is AGPL (viral
+  against the Electron desktop distribution), so users must pre-convert
+  PDFs to docx upstream.
+- OOXML walker (docx + pptx): zipfile + `xml.etree.ElementTree`, walking
+  `<w:t>` / `<a:t>` runs. Cribbed byte-for-byte from
+  `server_lib/translate/document.py`'s `_translate_office_zip` — same
+  namespace handling, same `xml:space="preserve"` preservation, same
+  member-order-preserving re-zip. Target part lists cover
+  `word/document.xml` + headers/footers/footnotes/endnotes/comments AND
+  `ppt/slides/*` + `notesSlides/*` + `slideLayouts/*` + `slideMasters/*`.
+- XLSX walker: `openpyxl.iter_rows()` → `cell.value`. Skips strings
+  starting with `=` (formulas) and non-string cells (numerics).
+- CSV walker: `csv.reader` → per-cell scan → `csv.writer` so quoting
+  stays idempotent.
+- Plain-text walker (`.txt`/`.md`/`.log`/`.html`/`.htm`/`.json`): raw
+  utf-8 string substitution.
+- `MAX_RUN_CHARS = 64_000` cap per text run (regex scan latency bound).
+- Late-bound `_pii_scan_text` / `pseudonymize_text` lookup — `import
+  brain` inside functions, not at module top — to avoid an
+  `engine.*` → `brain` cycle during brain.py module init.
+- `FilePseudonymizeError` raised on unsupported extensions (forward
+  path); reverse path copy-throughs unsupported types and returns 0
+  (LLM may emit a PNG the system never sent).
+
+**Pseudonymizer dispatch** (`pseudonymizer.py`):
+
+- `pseudonymize_file(src_path, dst_path, *, mapping, source=None) → int`
+  — returns count of NEW unique values added to the mapping. Default
+  `source="attachment:<basename>"`. In-place rewrite supported
+  (src == dst is safe).
+- `deanonymize_file(src_path, dst_path, *, mapping) → int` — returns
+  count of tokens restored across all runs/cells. Unsupported types
+  copy through with 0 restored.
+- Both added to `__all__`.
+
+**Chat-worker pre-send pseudonymisation** (`handlers/chat.py`):
+
+In the worker's anonymise block, after `pseudonymize_text(...)`:
+
+```python
+from engine.file_pseudonymize import (FilePseudonymizeError, SUPPORTED_EXTS)
+for _path in saved_paths:
+    _ext = os.path.splitext(_path)[1].lower()
+    if _ext not in SUPPORTED_EXTS:
+        raise FilePseudonymizeError(
+            f"can't anonymise unsupported attachment type: "
+            f"{os.path.basename(_path)} ({_ext})")
+    pseudonymizer.pseudonymize_file(_path, _path, mapping=_mapping)
+```
+
+- `saved_paths` initialiser hoisted out of `if disk_files:` so the
+  worker's closure capture works when no attachments exist.
+- `_anon_sources = ["chat_text"] + ["attachment:<name>" per path]`
+  built before the dispatch event so the synthetic row's body shows
+  every input that will be pseudonymised. Threaded through the error
+  / cancel / local-swap audit summaries (was hardcoded `"chat_text"`).
+- Walker failure raises into the existing `gdpr_recovery_required`
+  flow → modal offers `cancel` or `local_model` only. **Never falls
+  through to cloud after a failed walk** — the hard invariant.
+
+**Post-LLM file deanonymisation hook** (`brain._after_file_write` +
+`handlers/chat.make_gdpr_after_file_write_cb` + `server_lib/tool_mcp._apply_context`):
+
+The plumbing is 3-stage to avoid coupling brain.py to SessionManager:
+
+1. **brain.py** — `_after_file_write` reads
+   `_thread_local._gdpr_after_file_write_cb` and invokes it BEFORE
+   artifact registration (so the version row's hash + the
+   `artifact_updated` SSE event both see de-anonymised content). If
+   no callback, no-op.
+
+2. **chat worker** adds `gdpr_mapping_id` to `_tool_context` (the dict
+   `sidecar_proxy.run_turn` forwards to the sidecar). `sidecar_proxy`
+   echoes the whole dict back on every `/v1/tools/call`.
+
+3. **`server_lib/tool_mcp._apply_context`** — when context carries
+   `gdpr_mapping_id`, imports
+   `handlers.chat.make_gdpr_after_file_write_cb`, installs the
+   resulting closure on `engine._thread_local._gdpr_after_file_write_cb`
+   on the request-handler thread. `_clear_context` clears it.
+
+The factory `make_gdpr_after_file_write_cb(*, mapping_id, session_id,
+agent_id)` in `handlers/chat.py`:
+
+- Bails on non-artifact paths (`engine._is_artifact_path(path) == False`).
+- Bails on unsupported extensions (images, binaries).
+- Resolves mapping: `pseudonymizer.get_mapping(id)` first; falls back to
+  `pseudonymizer.load_mapping(id)` + `restore_mapping_to_registry` for
+  late tool dispatches arriving AFTER the worker `finally` closed the
+  in-memory copy (interactive turns that wrote files via background
+  tool calls).
+- Looks up the session via `sessions.peek(session_id)` (injected by
+  `_inject_server_globals` into the handlers/ modules). Missing session
+  → file still gets restored on disk; only SSE emission is suppressed
+  (failsafe — never a PII leak, just lost UX surfacing).
+- Emits `deanonymise_file` synthetic tool-call PAIR per file (dispatch
+  + done), so each file rewrite shows in chat history on reload.
+- Audits `pii_deanonymise_file` (new action type).
+
+**Audit action types** added: `pii_deanonymise_file` (joins
+`pii_anonymised` / `pii_anonymise_failed` / `pii_anonymise_failed_*` /
+`pii_deanonymise_text` from step 3).
+
+**Web UI**: nothing changed. `renderSyntheticGdprCall` already handles
+`kind: "deanonymise_file"` with `result.file` + `result.restored`. The
+expanded source list in the anonymise dispatch row renders via the
+existing key/value table.
+
 ### Test coverage
 
-41 tests, all green. Run with:
+56 tests, all green. Run with:
 
 ```bash
-python3 -m unittest tests.test_pseudonymizer tests.test_pseudonymizer_persistence tests.test_chat_worker_helpers
+python3 -m unittest tests.test_pseudonymizer tests.test_pseudonymizer_persistence tests.test_chat_worker_helpers tests.test_pseudonymizer_files
 ```
 
 - `tests/test_pseudonymizer.py` (16) — roundtrip / shape-fakes / opaque
@@ -288,90 +405,21 @@ python3 -m unittest tests.test_pseudonymizer tests.test_pseudonymizer_persistenc
   AAD / tamper detection / save-load-deanonymise / cascade / orphan purge.
   Uses `_KEY_PATH_OVERRIDE` + `server_lib.db.CHAT_DB` monkeypatch to
   sandbox the real chats.db.
-- `tests/test_chat_worker_helpers.py` (11) — `StreamingDeanonymizer`
-  (partial token holdback) / recovery wait pattern / synthetic tool events.
+- `tests/test_chat_worker_helpers.py` (15) — `StreamingDeanonymizer`
+  (partial token holdback) / recovery wait pattern / synthetic tool
+  events / **gdpr_after_file_write callback factory** (in-place .md
+  deanonymise + synthetic pair, skip unsupported ext, skip non-artifact
+  paths, missing session graceful).
+- `tests/test_pseudonymizer_files.py` (11) — docx/pptx/xlsx/csv/txt/md/log
+  roundtrips, xlsx formula + numeric preservation, unsupported-ext error
+  on forward, copy-through on reverse, cross-file token stability,
+  default `source` label.
 
 JS files all parse via `node -e "new Function(fs.readFileSync(...))"`.
 
 ---
 
-## What's left (steps 5–6)
-
-### Step 5 — file walkers
-
-Goal: pseudonymise attachments BEFORE the LLM sees them, de-anonymise
-LLM-generated files AFTER write.
-
-**Files to touch**:
-
-- `pseudonymizer.py` — add `pseudonymize_file(path, *, session_id, turn_id,
-  mapping_id) → new_path` and `deanonymize_file(path, *, mapping_id) →
-  new_path`. Dispatch on extension. Original stays on disk; the
-  pseudonymised twin lands at `<name>.anonymised.<ext>` (or in-place — TBD).
-- Per-format walkers (probably a new `engine/file_pseudonymize.py`):
-  - **.docx** — `python-docx`. Walk `Document.paragraphs[*].runs[*]`. A
-    span split across runs needs a run-merge pre-pass (steal from Translation
-    Phase B if it has one; otherwise look at the `python-docx-replace` pkg
-    for the pattern).
-  - **.pptx** — `python-pptx`. Walk shapes → text_frame → paragraphs →
-    runs. Cover tables (`shape.table`), grouped shapes
-    (`shape.shapes` recursion), charts (`chart.plots[*].categories`).
-    GitHub issue scanny/python-pptx#335 documents a formatting-damage
-    edge case when runs split mid-word.
-  - **.xlsx** — `openpyxl`. Iterate `ws.iter_rows()` → `cell.value`. **Skip
-    formulas** (values starting `=`) unless config says otherwise — replacing
-    inside formulas usually breaks them. For shape-preserving categories
-    (iban/credit_card/phone) in cells, the existing fake generators
-    preserve formatting so cell parsers stay happy.
-  - **.pdf** — Phase B already has a PDF→docx fallback for translation.
-    Reuse it: convert PDF to docx, pseudonymise docx, send docx to LLM,
-    de-anonymise the reply. **Do not** attempt in-place PDF text
-    replacement — pymupdf docs say layout won't reflow, and pymupdf is
-    AGPL (the project distributes Electron desktop builds, so AGPL is
-    viral). Document the convert-to-docx fallback in the code.
-  - **plain text / .md / .csv** — simple string substitution via the same
-    `_pii_scan_text` + `pseudonymize_text` flow.
-
-- `handlers/chat.py`:
-  - **Pre-send file pseudonymisation**: in the worker's anonymise block,
-    after the text pseudonymise step, iterate `disk_files` (the files
-    routed to `/tmp/brain-attachments/<sid>/`). For each, call
-    `pseudonymize_file(...)` and update both the disk file AND the path
-    embedded in the user message's attachment notice (currently built at
-    line ~1146 in the `notice` string — that path is what `read_document`
-    will receive). On failure: same recovery flow (emit dispatch+error
-    synthetic row, `gdpr_recovery_required`, etc.) — **never send the
-    original file to the cloud after a failed walk**.
-  - **Post-LLM file de-anonymisation**: hook into the existing
-    `_after_file_write` callback (or wrap `write_file` tool dispatch).
-    When a file lands in `agents/<id>/artifacts/<session_folder>/` AND
-    `session._gdpr_mapping_id` is set, call `deanonymize_file(path,
-    mapping_id=...)` in place. Emit per-file `deanonymise_file` synthetic
-    tool-call pair. Audit `pii_deanonymise_file`.
-  - Update the `args` in the initial `anonymise` dispatch synthetic event
-    to include each attachment as a separate source:
-    `args={"sources": ["chat_text", "attachment:report.pdf",
-    "attachment:data.xlsx"]}`.
-
-- `web/js/chat.js` — `renderSyntheticGdprCall` already shows the source
-  list; no UI change needed. The `kind: "deanonymise_file"` branch is
-  already wired (handles `result.file` + `result.restored`).
-
-**Config knob to add** in `gdpr_scanner` section of `config.json`:
-```json
-"transparent_anonymisation": {
-  "enabled": true,
-  "persist_maps": true,
-  "shape_preserving_categories": ["iban", "credit_card", "phone"],
-  "token_format": "hybrid"
-}
-```
-(The pseudonymizer already respects `SHAPE_PRESERVING` as a constant; if
-you want this admin-tunable, wire it through `_get_gdpr_scanner_config`.)
-
-**Translation Phase B walkers to crib from**: grep for
-`tool_translate_document` in brain.py and the surrounding helpers in
-`engine/doc_convert.py`. Same in-place-rewrite pattern.
+## What's left (step 6)
 
 ### Step 6 — finishing touches
 
@@ -481,7 +529,7 @@ you want this admin-tunable, wire it through `_get_gdpr_scanner_config`.)
 
 ---
 
-## Files changed in v8.41.0
+## Files changed in v8.41.0 (steps 1–4)
 
 ```
 M handlers/chat.py        # worker integration + helpers + recovery endpoint
@@ -498,24 +546,31 @@ M web/js/sessions.js      # reload-path synthetic row remap
 M brain.py                # VERSION + CHANGELOG
 ```
 
+## Files changed in v8.42.0 (step 5)
+
+```
+?? engine/file_pseudonymize.py    # NEW — per-format walkers
+?? tests/test_pseudonymizer_files.py
+M  pseudonymizer.py               # pseudonymize_file / deanonymize_file dispatch
+M  brain.py                       # _after_file_write hook + CHANGELOG + VERSION
+M  handlers/chat.py               # pre-send file walk in worker + make_gdpr_after_file_write_cb
+M  server_lib/tool_mcp.py         # _apply_context installs callback when gdpr_mapping_id present
+M  tests/test_chat_worker_helpers.py  # +4 tests for the callback factory
+```
+
 ---
 
 ## Picking it back up
 
 1. Read this file end-to-end. Then read the relevant sections of
    `CLAUDE.md` (the GDPR scanner section + resumable streaming section).
-2. Skim `pseudonymizer.py` — it's the contract everything else builds on.
+2. Skim `pseudonymizer.py` + `engine/file_pseudonymize.py` — together
+   they're the contract everything else builds on.
 3. Re-run the test suite to confirm green:
    ```bash
-   python3 -m unittest tests.test_pseudonymizer tests.test_pseudonymizer_persistence tests.test_chat_worker_helpers
+   python3 -m unittest tests.test_pseudonymizer tests.test_pseudonymizer_persistence tests.test_chat_worker_helpers tests.test_pseudonymizer_files
    ```
-4. For step 5, start with `pseudonymize_file()` + `deanonymize_file()` in
-   `pseudonymizer.py` (text only path is the model — same scan-then-replace
-   shape, dispatched on extension). Add `tests/test_pseudonymizer_files.py`
-   alongside the existing suites. Then wire into `handlers/chat.py`'s
-   worker anonymise block. Then the `_after_file_write` hook for output
-   files.
-5. For step 6, the system-prompt clamp is the highest-value piece (small,
+4. For step 6, the system-prompt clamp is the highest-value piece (small,
    measurable quality lift). Sticky preference + composer indicator are
    polish.
 
