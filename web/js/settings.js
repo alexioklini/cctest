@@ -207,6 +207,29 @@ async function _addToTeam(teamId) {
   } catch(e) { showToast('Add failed: ' + e.message, true); }
 }
 
+async function restartSidecar(btn) {
+  if (!confirm('Hard-restart the sidecar?\n\nIn-flight chat turns will fail with a sidecar error and need to be retried.')) return;
+  const orig = btn?.textContent || 'Restart sidecar';
+  if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
+  try {
+    const r = await API.post('/v1/sidecar/restart', {});
+    if (r && r.ok) {
+      showToast('Sidecar restarting');
+    } else {
+      showToast(r?.error || 'Restart failed', true);
+    }
+  } catch (e) {
+    showToast('Restart failed: ' + (e?.message || e), true);
+  } finally {
+    // Re-render the Server tab so the new status (PID, uptime) shows up.
+    setTimeout(() => {
+      const t = document.querySelector('.modal-tab.active[onclick*="server"]');
+      if (t) switchGeneralTab('server', t);
+      else if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }, 1500);
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════
    GENERAL SETTINGS TAB SWITCHER
    ═══════════════════════════════════════════════════════════ */
@@ -228,7 +251,10 @@ async function switchGeneralTab(tab, btn) {
   /* ─── SERVER ─── */
   if (tab === 'server') {
     try {
-      const svc = await API.getServices();
+      const [svc, sc] = await Promise.all([
+        API.getServices(),
+        API.get('/v1/sidecar/status').catch(() => null),
+      ]);
       const srv = svc.server || {};
       applyGdprConfigToScanner(srv.gdpr_scanner);
       let svcRows = '';
@@ -273,6 +299,44 @@ async function switchGeneralTab(tab, btn) {
           const hasVision = modelHasCapability(defMdl, 'image');
           const hasImageModel = !!(srv.attachment_image_model);
           return (!hasVision && !hasImageModel) ? `<div style="font-size:11px;color:var(--warning, #b45309);margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--bg-200)">&#9888; Your default model does not support vision and no image description model is configured. Attached images will only return basic metadata (dimensions, format).</div>` : '';
+        })()}
+        ${SEC('Sidecar')}
+        ${(() => {
+          if (!sc) {
+            return `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">Status unavailable</span></div>`;
+          }
+          if (!sc.enabled) {
+            return `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">Supervisor disabled</span><span style="font-size:11px;color:var(--text-400)">sidecar.auto_start=false</span></div>`;
+          }
+          const running = !!sc.running;
+          const healthOk = !!sc.last_health_ok;
+          const breaker = !!sc.breaker_open;
+          const uptime = running && sc.started_at ? Math.max(0, Math.round(Date.now()/1000 - sc.started_at)) : 0;
+          const fmtAgo = (t) => !t ? 'never' : (function(s){
+            if (s<60) return s+'s ago';
+            if (s<3600) return Math.round(s/60)+'m ago';
+            return Math.round(s/3600)+'h ago';
+          })(Math.max(0, Math.round(Date.now()/1000 - t)));
+          const statusLabel = breaker ? 'breaker open' : (running ? (healthOk ? 'running' : 'unresponsive') : 'stopped');
+          const statusColor = breaker ? 'var(--error)' : (running && healthOk ? 'var(--success)' : 'var(--warning, #b45309)');
+          return `
+            <div style="${ROW}">
+              ${DOT(running && healthOk && !breaker)}
+              <span style="font-size:13px;color:var(--text-100);flex:1">${esc(sc.url||'')}</span>
+              ${running ? `<span style="${MONO}">PID ${sc.pid}</span>` : ''}
+              <span style="font-size:11px;color:${statusColor}">${esc(statusLabel)}</span>
+            </div>
+            <div style="font-size:11px;color:var(--text-400);padding:0 12px;display:grid;grid-template-columns:auto auto;gap:4px 18px">
+              ${running ? `<span>Uptime</span><span style="${MONO}">${uptime}s</span>` : ''}
+              <span>Last health probe</span><span style="${MONO}">${healthOk?'ok':'fail'} &middot; ${fmtAgo(sc.last_health_at)}</span>
+              <span>Crashes (last 60s)</span><span style="${MONO}">${sc.crash_count_60s||0} / ${sc.crash_limit||3}</span>
+              ${sc.last_exit_rc !== null && sc.last_exit_rc !== undefined ? `<span>Last exit</span><span style="${MONO}">rc=${sc.last_exit_rc} &middot; ${fmtAgo(sc.last_exit_at)}</span>` : ''}
+              ${breaker ? `<span style="color:var(--error)">Circuit breaker</span><span style="${MONO};color:var(--error)">open — auto-restart halted</span>` : ''}
+            </div>
+            <div style="display:flex;gap:8px;padding:0 12px;margin-top:6px">
+              <button class="btn-secondary" onclick="restartSidecar(this)">${breaker ? 'Restart & clear breaker' : 'Restart sidecar'}</button>
+              <span style="font-size:11px;color:var(--text-400);align-self:center">In-flight turns will fail with a sidecar error.</span>
+            </div>`;
         })()}
         ${SEC('Cost Quotas')}
         <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">

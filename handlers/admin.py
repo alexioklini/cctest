@@ -5189,6 +5189,36 @@ class AdminHandlerMixin:
         self.end_headers()
         self.wfile.write(data)
 
+    # --- Sidecar supervisor (admin) ---
+
+    def _handle_sidecar_status(self):
+        """GET /v1/sidecar/status — current sidecar process state."""
+        from server_lib.sidecar_supervisor import sidecar_supervisor
+        self._send_json(sidecar_supervisor.status())
+
+    def _handle_sidecar_restart(self):
+        """POST /v1/sidecar/restart — hard-restart the sidecar. In-flight turns die
+        with `*(Sidecar error: …)*` exactly as they would on a crash. Clears the
+        circuit breaker."""
+        from server_lib.sidecar_supervisor import sidecar_supervisor
+        user = self._get_auth_user() or {}
+        result = sidecar_supervisor.restart(
+            reason=f"manual by={user.get('username','')}")
+        try:
+            import engine as _eng
+            if _eng._audit_log:
+                _eng._audit_log.log_action(
+                    agent="main",
+                    action_type="sidecar_restart",
+                    tool_name="sidecar",
+                    args_summary=f"by={user.get('username','')}",
+                    result_status="ok" if result.get("ok") else "error",
+                )
+        except Exception:
+            pass
+        status_code = 200 if result.get("ok") else 409
+        self._send_json(result, status_code)
+
     def _serve_static(self, path):
         """Serve static files from web/ directory."""
         if path == "/":

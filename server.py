@@ -879,6 +879,8 @@ class WarmSessionPool:
 warm_pool = WarmSessionPool()
 
 
+from server_lib.sidecar_supervisor import sidecar_supervisor
+
 
 from handlers.auth import AuthHandlerMixin
 from handlers.chat import ChatHandlerMixin
@@ -1095,6 +1097,7 @@ class BrainAgentHandler(
         "/v1/services",
         "/v1/quotas/config",
         "/v1/quotas/admin/users",
+        "/v1/sidecar/status",
     }
 
     _ADMIN_POST_EXACT = {
@@ -1130,6 +1133,7 @@ class BrainAgentHandler(
         "/v1/skills/claude-code/install",
         "/v1/commands/expand",
         "/v1/nodes",
+        "/v1/sidecar/restart",
     }
     _ADMIN_POST_PATHS = _ADMIN_POST_EXACT
     _ADMIN_POST_PREFIXES = (
@@ -1438,6 +1442,8 @@ class BrainAgentHandler(
             self._send_json(engine._web_cache.stats())
         elif path == "/v1/warmup/status":
             self._handle_warmup_status()
+        elif path == "/v1/sidecar/status":
+            self._handle_sidecar_status()
         elif path == "/v1/queue/status":
             self._handle_queue_status()
         elif path == "/v1/traces" or path.startswith("/v1/traces?"):
@@ -1647,6 +1653,8 @@ class BrainAgentHandler(
             self._handle_queue_cancel()
         elif path == "/v1/warmup/trigger":
             self._handle_warmup_trigger()
+        elif path == "/v1/sidecar/restart":
+            self._handle_sidecar_restart()
         elif path == "/v1/skills/install-zip":
             self._handle_install_skill_zip()
         elif path == "/v1/schedule/cancel":
@@ -4008,84 +4016,10 @@ def main():
     threading.Thread(target=_mempalace_miner_loop, daemon=True, name="mempalace-miner").start()
 
     # --- Sidecar supervisor (Phase 2) ---
-    # Auto-start the Anthropic-SDK sidecar subprocess and keep it alive.
-    # 3 crashes within 60s → stop auto-restarting and surface an error.
-    def _start_sidecar_supervisor():
-        import shutil
-        import subprocess
-
-        cfg_sc = server_config.get("sidecar") or {}
-        if not cfg_sc.get("auto_start", False):
-            print("[sidecar] auto_start disabled in config — supervisor not starting", flush=True)
-            return
-
-        url = (cfg_sc.get("url") or "http://127.0.0.1:8421").rstrip("/")
-        # Parse port from url (we control --port via CLI)
-        try:
-            from urllib.parse import urlparse
-            sidecar_port = urlparse(url).port or 8421
-        except Exception:
-            sidecar_port = 8421
-
-        venv_python = cfg_sc.get("venv_python") or ".venv_sidecar/bin/python"
-        repo_root = os.path.dirname(os.path.abspath(__file__))
-        venv_python_abs = (venv_python if os.path.isabs(venv_python)
-                           else os.path.join(repo_root, venv_python))
-        sidecar_script = os.path.join(repo_root, "sidecar", "sidecar.py")
-
-        if not os.path.isfile(venv_python_abs):
-            print(f"[sidecar] FATAL: venv python not found at {venv_python_abs}", flush=True)
-            print(f"[sidecar]   create it:  python3 -m venv .venv_sidecar && "
-                  f".venv_sidecar/bin/pip install anthropic", flush=True)
-            return
-        if not os.path.isfile(sidecar_script):
-            print(f"[sidecar] FATAL: sidecar.py missing at {sidecar_script}", flush=True)
-            return
-
-        crash_window: list[float] = []  # rolling list of crash timestamps
-
-        def _supervisor_loop():
-            while True:
-                try:
-                    print(f"[sidecar] launching {venv_python_abs} {sidecar_script} "
-                          f"--port {sidecar_port}", flush=True)
-                    proc = subprocess.Popen(
-                        [venv_python_abs, sidecar_script, "--port", str(sidecar_port)],
-                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        cwd=repo_root, bufsize=1,
-                        universal_newlines=True,
-                    )
-
-                    def _pump_logs(p):
-                        try:
-                            for line in p.stdout:
-                                sys.stdout.write(line)
-                                sys.stdout.flush()
-                        except Exception:
-                            pass
-
-                    threading.Thread(target=_pump_logs, args=(proc,),
-                                     daemon=True, name="sidecar-log-pump").start()
-                    rc = proc.wait()
-                    now = time.time()
-                    crash_window.append(now)
-                    crash_window[:] = [t for t in crash_window if now - t < 60.0]
-                    print(f"[sidecar] subprocess exited rc={rc}  "
-                          f"recent_crashes={len(crash_window)}/3", flush=True)
-                    if len(crash_window) >= 3:
-                        print(f"[sidecar] CIRCUIT BREAKER OPEN — 3 crashes in 60s. "
-                              f"Halting auto-restart.", flush=True)
-                        return
-                    time.sleep(2.0)
-                except Exception as e:
-                    print(f"[sidecar] supervisor exception: {type(e).__name__}: {e}",
-                          flush=True)
-                    time.sleep(5.0)
-
-        threading.Thread(target=_supervisor_loop, daemon=True,
-                         name="sidecar-supervisor").start()
-
-    _start_sidecar_supervisor()
+    # Brain owns the sidecar subprocess: spawn, monitor (wait + /health probe),
+    # auto-restart with a 3-crashes-in-60s circuit breaker, manual restart via
+    # POST /v1/sidecar/restart. State exposed via GET /v1/sidecar/status.
+    sidecar_supervisor.start(server_config)
 
     def _kick_turn_recovery():
         # Phase 5 stage 1c: re-attach to in-flight sidecar turns from the prior
