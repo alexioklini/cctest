@@ -1406,10 +1406,13 @@ class ChatHandlerMixin:
                                         "\n\n---\n\n"
                                         "> ⚠️ **Hinweis zur Quellentreue**: "
                                         + "; ".join(_parts)
-                                        + ". Diese Antwort wurde vom Citation-"
-                                          "Validator markiert — bitte einzelne "
-                                          "Aussagen vor Weiterverwendung "
-                                          "gegenprüfen."
+                                        + ". Möglich ist auch, dass zu dieser "
+                                          "Frage keine passenden Informationen "
+                                          "in den Quellen vorlagen und die "
+                                          "Antwort daher ohne Belege bleiben "
+                                          "musste. Bitte einzelne Aussagen vor "
+                                          "Weiterverwendung gegen die "
+                                          "Originalquellen prüfen."
                                     )
                                     reply = reply + _warning
                                     _cv_meta["warning_appended"] = True
