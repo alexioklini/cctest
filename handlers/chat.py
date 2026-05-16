@@ -34,6 +34,12 @@ def build_chat_event_callback(session, live, sid):
         "thinking_summary": {},
         "usage_totals": {"tokens_in": 0, "tokens_out": 0, "last_tokens_in": 0},
         "request_payloads": [],
+        # Counts sidecar `empty_round_nudge` events per turn — sidecar nudges
+        # the model up to 3× when a round ends without usable text. We
+        # surface the count both live (SSE forwards as-is to the client for
+        # a composer badge) and post-turn (persisted in msg_metadata +
+        # appended as a reload-stable hint at the reply tail).
+        "nudge_count": [0],
     }
     created_files = state["created_files"]
     _stream_persist = state["stream_persist"]
@@ -43,6 +49,7 @@ def build_chat_event_callback(session, live, sid):
     _thinking_summary = state["thinking_summary"]
     _usage_totals = state["usage_totals"]
     _request_payloads = state["request_payloads"]
+    _nudge_count = state["nudge_count"]
 
     def event_callback(event_type, data):
         if event_type == "text_delta":
@@ -143,6 +150,17 @@ def build_chat_event_callback(session, live, sid):
         elif event_type == "request_payload":
             _request_payloads.append(data)
             return  # internal only, don't send to client
+        elif event_type == "empty_round_nudge":
+            # Sidecar emitted a nudge attempt. Use the attempt counter from
+            # the event (1..N) so we don't double-count if the event arrives
+            # twice. Fall through to live.emit so the client can show a
+            # composer badge during the turn.
+            try:
+                _attempt = int(data.get("attempt") or 0)
+            except Exception:
+                _attempt = 0
+            if _attempt > _nudge_count[0]:
+                _nudge_count[0] = _attempt
         live.emit(event_type, data)
 
     return event_callback, state
@@ -1064,6 +1082,7 @@ class ChatHandlerMixin:
         _thinking_summary = _cb_state["thinking_summary"]
         _usage_totals = _cb_state["usage_totals"]
         _request_payloads = _cb_state["request_payloads"]
+        _nudge_count = _cb_state["nudge_count"]
 
         handler_self = self  # capture for closure
 
@@ -1361,56 +1380,67 @@ class ChatHandlerMixin:
                                 "total_brackets": _val.get("total_brackets", 0),
                             }
 
-                            # Phase 2 — synchronous re-round on threshold violation
-                            _mp_cfg = engine._load_mempalace_config()
-                            _rr_cfg = (_mp_cfg.get("citation_reround") or {}) if isinstance(_mp_cfg, dict) else {}
-                            _rr_enabled = bool(_rr_cfg.get("enabled", False))
-                            if _rr_enabled and engine.citation_reround_needed(_val):
-                                try:
-                                    live.emit("citation_reround_start", {
-                                        "uncited_claims": _val.get("uncited_claims", 0),
-                                        "claim_total": _val.get("claim_total", 0),
-                                    })
-                                    _clean_msgs = engine.clean_messages_for_api(session.messages)
-                                    _new_reply, _retry_val = engine.run_citation_reround(
-                                        _clean_msgs, reply, _val,
-                                        model=session.model,
-                                        api_key=session.api_key,
-                                        base_url=session.base_url,
-                                        temperature=float(_rr_cfg.get("temperature", 0.2)),
-                                        top_p=float(_rr_cfg.get("top_p", 0.85)),
-                                        timeout=float(_rr_cfg.get("timeout_seconds", 180)),
+                            # Citation-Warning: instead of re-rounding (which
+                            # turned correct refusals into hallucinated
+                            # citations on refusal-bucket questions), append
+                            # a persistent warning to the reply itself so it
+                            # survives reload. Same threshold the re-round
+                            # used (>30% uncited OR ≥2 unverified quotes).
+                            if engine.citation_reround_needed(_val):
+                                _uncited = int(_val.get("uncited_claims", 0) or 0)
+                                _ctotal = int(_val.get("claim_total", 0) or 0)
+                                _unver = len(_val.get("unverified", []) or [])
+                                _parts = []
+                                if _ctotal > 0 and _uncited > 0:
+                                    _parts.append(
+                                        f"**{_uncited} von {_ctotal} Behauptungen** "
+                                        f"ohne Quellenangabe"
                                     )
-                                    if _new_reply and _new_reply != reply:
-                                        _cv_meta["reround_fired"] = True
-                                        _cv_meta["reround_original_reply"] = reply
-                                        _cv_meta["reround_retry_validation"] = {
-                                            "verified": _retry_val.get("verified", 0),
-                                            "unverified_count": len(_retry_val.get("unverified", []) or []),
-                                            "uncited_claims": _retry_val.get("uncited_claims", 0),
-                                            "claim_total": _retry_val.get("claim_total", 0),
-                                            "total_brackets": _retry_val.get("total_brackets", 0),
-                                        }
-                                        try: print(f"[citation-reround] fired: original={len(reply)}c -> corrected={len(_new_reply)}c")
-                                        except Exception: pass
-                                        reply = _new_reply
-                                    else:
-                                        _cv_meta["reround_fired"] = False
-                                        _cv_meta["reround_skipped_reason"] = "no_change_or_empty"
-                                except Exception as _e_rr:
-                                    _cv_meta["reround_fired"] = False
-                                    _cv_meta["reround_error"] = f"{type(_e_rr).__name__}: {_e_rr}"
-                                    try: print(f"[citation-reround] error: {_e_rr}")
-                                    except Exception: pass
-                                finally:
-                                    try: live.emit("citation_reround_done", {})
-                                    except Exception: pass
+                                if _unver >= 2:
+                                    _parts.append(
+                                        f"**{_unver} Zitat(e)** konnten nicht "
+                                        f"in den Quelldateien verifiziert werden"
+                                    )
+                                if _parts:
+                                    _warning = (
+                                        "\n\n---\n\n"
+                                        "> ⚠️ **Hinweis zur Quellentreue**: "
+                                        + "; ".join(_parts)
+                                        + ". Diese Antwort wurde vom Citation-"
+                                          "Validator markiert — bitte einzelne "
+                                          "Aussagen vor Weiterverwendung "
+                                          "gegenprüfen."
+                                    )
+                                    reply = reply + _warning
+                                    _cv_meta["warning_appended"] = True
 
                             msg_metadata["citation_validation"] = _cv_meta
                         except Exception as _e:
                             # Validation must never crash the response; log and continue.
                             try: print(f"[citation-validator] error: {_e}")
                             except Exception: pass
+
+                    # Sidecar empty-round nudge marker — persistent so the
+                    # user sees it after reload too, not just live via SSE.
+                    # Triggered from attempt 1 (any nudge is unusual; the
+                    # model should have answered directly).
+                    _nudges = int(_nudge_count[0] or 0)
+                    if _nudges > 0:
+                        msg_metadata["nudge_count"] = _nudges
+                        _gave_up = (reply.strip() ==
+                                    "No response was returned. Please modify "
+                                    "your request or change the model.")
+                        if _gave_up:
+                            # Give-up text is already the visible reply — don't
+                            # double up with a hint, the message itself says it.
+                            pass
+                        else:
+                            _nudge_hint = (
+                                "\n\n---\n\n"
+                                f"> ℹ️ **Hinweis**: Das Modell hat {_nudges} "
+                                f"Mal neu angesetzt, bevor eine Antwort kam."
+                            )
+                            reply = reply + _nudge_hint
                     session.add_message("assistant", reply, metadata=msg_metadata or None)
                     done_data = {
                         "text": reply,

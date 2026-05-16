@@ -219,7 +219,15 @@ function buildStreamCallbacks(chat, isActive) {
       },
       text_delta: (d) => {
         chat.streamingText += d.text || '';
-        if (isActive()) { renderStreamingMessage(chat); scrollToBottom(); }
+        if (isActive()) {
+          // Real text is flowing → clear any prior nudge label so it doesn't
+          // linger when the model finally answers.
+          const _lbl = document.getElementById('spinner-label');
+          if (_lbl && _lbl.textContent.startsWith('Modell wird neu angestoßen')) {
+            _lbl.textContent = '';
+          }
+          renderStreamingMessage(chat); scrollToBottom();
+        }
       },
       tool_call: (d) => {
         const last = chat.messages[chat.messages.length - 1];
@@ -549,6 +557,20 @@ function buildStreamCallbacks(chat, isActive) {
         if (!isActive()) return;
         const el = document.getElementById('spinner-label');
         if (el) el.textContent = '';
+      },
+      empty_round_nudge: (d) => {
+        if (!isActive()) return;
+        const el = document.getElementById('spinner-label');
+        if (el) {
+          const attempt = (d && d.attempt) || 1;
+          const max = (d && d.max) || 3;
+          el.textContent = `Modell wird neu angestoßen (${attempt}/${max})…`;
+        }
+        if (spinnerBar && !spinnerBar.classList.contains('active')) {
+          document.getElementById('spinner-model').textContent = modelShortName(chat?.model);
+          document.getElementById('spinner-elapsed').textContent = '';
+          spinnerBar.classList.add('active');
+        }
       },
       compacted: (d) => {
         // Inject a visual divider at the start of the message list so the user
