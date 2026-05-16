@@ -8,6 +8,68 @@ import time
 import brain as engine
 
 
+def _backfill_orphan_artifacts(sid: str) -> None:
+    """Safety net: register any file in this session's artifact folder that
+    has no matching `artifacts` row.
+
+    Under normal conditions every file written via `write_file` / `edit_file` /
+    `python_exec` is registered in real time by `brain._after_file_write`. If
+    that path ever silently drops a registration (as happened in v9.0.0 when
+    the sidecar tool-dispatch thread had no `event_callback`), the file lands
+    on disk but never surfaces in the artifacts panel. This pass closes the
+    gap on chat reopen: cheap diff (one DB query + one listdir), no-op on
+    healthy sessions.
+
+    Only ADDS missing rows — never touches existing artifact_versions, so
+    healthy version history is safe.
+    """
+    try:
+        existing = ChatDB.get_artifacts(sid) or []
+        registered_paths = {a.get("path") for a in existing if a.get("path")}
+        agent_id = ""
+        if existing:
+            agent_id = existing[0].get("agent_id") or ""
+        if not agent_id:
+            info = ChatDB.get_session_info(sid)
+            agent_id = (info or {}).get("agent_id") or "main"
+        artifacts_root = os.path.join(engine.AGENTS_DIR, agent_id, "artifacts")
+        if not os.path.isdir(artifacts_root):
+            return
+        # Folder name is `<YYYY-MM-DD>_<sid>`; the date is whenever the first
+        # write happened, which may not be today — scan for the `_<sid>`
+        # suffix instead of guessing today's date.
+        suffix = f"_{sid}"
+        folders = [d for d in os.listdir(artifacts_root) if d.endswith(suffix)]
+        if not folders:
+            return
+        # Run registration under the session's thread-local context so
+        # `_register_artifact_version` can resolve session_id.
+        prev_sid = getattr(engine._thread_local, "current_session_id", None)
+        engine._thread_local.current_session_id = sid
+        try:
+            for folder in folders:
+                folder_path = os.path.join(artifacts_root, folder)
+                try:
+                    entries = os.listdir(folder_path)
+                except OSError:
+                    continue
+                for name in entries:
+                    fpath = os.path.join(folder_path, name)
+                    if not os.path.isfile(fpath):
+                        continue
+                    if fpath in registered_paths:
+                        continue
+                    try:
+                        engine._register_artifact_version(
+                            fpath, "created", agent_id)
+                    except Exception:
+                        pass
+        finally:
+            engine._thread_local.current_session_id = prev_sid
+    except Exception:
+        pass
+
+
 class SessionsHandlerMixin:
 
     def _handle_list_sessions(self):
@@ -51,6 +113,7 @@ class SessionsHandlerMixin:
         sid = parts[3]
         if self._session_access_check(sid) is None:
             return
+        _backfill_orphan_artifacts(sid)
         msgs = ChatDB.load_messages(sid)
         resp = {"session_id": sid, "messages": msgs}
         session = sessions.get(sid)

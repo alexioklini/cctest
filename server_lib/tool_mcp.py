@@ -153,6 +153,22 @@ def _apply_context(ctx: dict) -> None:
     else:
         tl._gdpr_after_file_write_cb = None
 
+    # Install a minimal event_callback on the tool-dispatch thread. Without
+    # it, `brain._after_file_write` skips its `if ecb:` branch and never
+    # calls `_register_artifact_version`, so `write_file` / `edit_file` /
+    # `python_exec` produce a file on disk but no `artifacts` row and no
+    # live `artifact_updated` SSE. The callback forwards into the session's
+    # LiveStream so the UI's artifact panel updates live.
+    if tl.current_session_id:
+        try:
+            from handlers.chat import make_artifact_event_callback
+            tl.event_callback = make_artifact_event_callback(
+                tl.current_session_id)
+        except Exception:
+            tl.event_callback = None
+    else:
+        tl.event_callback = None
+
 
 def _clear_context() -> None:
     tl = engine._thread_local
@@ -162,6 +178,7 @@ def _clear_context() -> None:
         "execution_overrides", "attachment_image_model", "_current_model",
         "current_agent", "memory_store", "mcp_manager", "caveman_chat",
         "caveman_system", "_gdpr_after_file_write_cb", "_gdpr_mapping_id",
+        "event_callback",
     ):
         try:
             setattr(tl, attr, None)

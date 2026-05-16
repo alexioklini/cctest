@@ -298,6 +298,40 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
     return _cb
 
 
+def make_artifact_event_callback(session_id: str):
+    """Build a minimal `event_callback` for the tool-dispatch thread.
+
+    The chat worker installs a rich callback (accumulates partial replies,
+    tool calls, references, …) on its own thread-local. Tool dispatch
+    happens on a different thread — the sidecar POSTs to /v1/tools/call,
+    `tool_mcp._apply_context` rebuilds the per-turn thread-locals there.
+    Without an `event_callback` on that thread, `brain._after_file_write`
+    skips its artifact-registration branch entirely (the `if ecb:` gate),
+    so `write_file` / `edit_file` / `python_exec` produce a file on disk
+    but no `artifacts` row and no live `artifact_updated` SSE.
+
+    This callback's job is narrow: forward `file_created` / `artifact_updated`
+    events to the session's LiveStream so the UI's artifact panel updates
+    live. Persistence happens inside `_register_artifact_version` already,
+    so we don't need to mirror the chat-worker's accumulator state.
+    """
+    def _cb(event_type, data):
+        if event_type not in ("file_created", "artifact_updated"):
+            return
+        try:
+            sess = sessions.peek(session_id)  # noqa: F821 — injected by server
+        except Exception:
+            sess = None
+        live = getattr(sess, "live_stream", None) if sess else None
+        if live is None:
+            return
+        try:
+            live.emit(event_type, data)
+        except Exception:
+            pass
+    return _cb
+
+
 class StreamingDeanonymizer:
     """Per-turn helper that converts a stream of pseudonymized text deltas
     into a stream of de-anonymized text deltas, holding back partial tokens
