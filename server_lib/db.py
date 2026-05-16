@@ -631,6 +631,31 @@ class ChatDB:
                     started_at REAL NOT NULL DEFAULT (strftime('%s','now'))
                 )
             """)
+            # ── Pseudonym maps (transparent anonymisation) ──
+            # AES-GCM-encrypted mapping of {original PII value → pseudonym}
+            # per chat turn. Created when the user opts into "Anonymise &
+            # continue" on the GDPR modal; read by the chat worker to
+            # de-anonymise the LLM reply and any files the LLM produces.
+            # Encryption is at-rest only; the key sits next to the DB and is
+            # protected primarily by "data never leaves the machine".
+            # `session_id` lets `delete_session` cascade-drop. `turn_id` is
+            # informational (audit) — not unique, since the same map can be
+            # extended within a turn.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS pseudonym_maps (
+                    mapping_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    turn_id TEXT NOT NULL DEFAULT '',
+                    nonce BLOB NOT NULL,
+                    ciphertext BLOB NOT NULL,
+                    created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+                    updated_at REAL NOT NULL DEFAULT (strftime('%s','now'))
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pseudonym_maps_session "
+                "ON pseudonym_maps(session_id)"
+            )
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -1092,6 +1117,90 @@ class ChatDB:
             ).fetchall()
         return [tuple(r) for r in rows]
 
+    # ── Pseudonym maps (transparent anonymisation) ──
+
+    @staticmethod
+    @_db_safe(default=None)
+    def save_pseudonym_map(mapping_id, session_id, turn_id, nonce, ciphertext):
+        """Upsert an encrypted pseudonym mapping. `nonce` and `ciphertext` are
+        raw bytes from `pseudonymizer.encrypt_mapping`. On conflict the row's
+        ciphertext + updated_at are refreshed; created_at is preserved."""
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO pseudonym_maps "
+                "(mapping_id, session_id, turn_id, nonce, ciphertext, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, strftime('%s','now')) "
+                "ON CONFLICT(mapping_id) DO UPDATE SET "
+                "  nonce = excluded.nonce, "
+                "  ciphertext = excluded.ciphertext, "
+                "  turn_id = excluded.turn_id, "
+                "  updated_at = strftime('%s','now')",
+                (mapping_id, session_id, turn_id or "", nonce, ciphertext))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def load_pseudonym_map(mapping_id):
+        """Return `(nonce_bytes, ciphertext_bytes)` for `mapping_id`, or None
+        if the row is missing."""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT nonce, ciphertext FROM pseudonym_maps WHERE mapping_id = ?",
+                (mapping_id,)).fetchone()
+        if not row:
+            return None
+        return (bytes(row[0]), bytes(row[1]))
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_pseudonym_maps_for_session(session_id):
+        """Return `[(mapping_id, turn_id, created_at), ...]` — used by the
+        chat-reload path to figure out which maps to rehydrate so historical
+        messages stay de-anonymised."""
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT mapping_id, turn_id, created_at "
+                "FROM pseudonym_maps WHERE session_id = ? "
+                "ORDER BY created_at",
+                (session_id,)).fetchall()
+        return [tuple(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def delete_pseudonym_map(mapping_id):
+        """Drop a single mapping row (e.g. after a failed turn rolls back, or
+        when an admin explicitly purges history)."""
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM pseudonym_maps WHERE mapping_id = ?",
+                         (mapping_id,))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=0)
+    def purge_orphan_pseudonym_maps(max_age_seconds=None):
+        """Cleanup pass. Drops maps whose session no longer exists, and
+        (if `max_age_seconds` is set) maps older than that threshold whose
+        session is no longer active in `active_turns`.
+
+        Returns the number of rows deleted. Called from boot recovery so
+        stale maps from interrupted turns don't accumulate."""
+        with _db_conn() as conn:
+            # Sessions that have been deleted but whose maps somehow survived
+            # (shouldn't happen because delete_session cascades — defensive).
+            deleted = conn.execute(
+                "DELETE FROM pseudonym_maps WHERE session_id NOT IN "
+                "(SELECT id FROM sessions)"
+            ).rowcount or 0
+            if max_age_seconds is not None and max_age_seconds > 0:
+                cutoff = int(time.time()) - int(max_age_seconds)
+                deleted += conn.execute(
+                    "DELETE FROM pseudonym_maps "
+                    "WHERE updated_at < ? AND session_id NOT IN "
+                    "(SELECT session_id FROM active_turns)",
+                    (cutoff,)).rowcount or 0
+            conn.commit()
+        return deleted
+
     @staticmethod
     @_db_safe(default=list)
     def load_messages(session_id, include_compacted=False):
@@ -1459,6 +1568,9 @@ class ChatDB:
             conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             conn.execute("DELETE FROM chat_mempalace_sync WHERE session_id = ?", (session_id,))
+            # Transparent-anonymisation maps: drop with the session — keeping
+            # them would orphan encrypted blobs nobody can act on.
+            conn.execute("DELETE FROM pseudonym_maps WHERE session_id = ?", (session_id,))
             conn.commit()
         _purge_mempalace_session(session_id)
 

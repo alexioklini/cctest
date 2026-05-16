@@ -377,6 +377,11 @@ function gdprActionModal(scan, chat, localActive) {
           box-shadow:0 2px 6px rgba(180,83,9,.28);
         }
         .pii-btn-send:hover:not([disabled]) { background:#92400e; box-shadow:0 4px 10px rgba(180,83,9,.35); }
+        .pii-btn-anon {
+          background:#047857; color:#fff;
+          box-shadow:0 2px 6px rgba(4,120,87,.28);
+        }
+        .pii-btn-anon:hover:not([disabled]) { background:#065f46; box-shadow:0 4px 10px rgba(4,120,87,.35); }
         .pii-soon { font-size:9.5px; opacity:.7; margin-left:4px; }
       `;
       document.head.appendChild(style);
@@ -424,11 +429,19 @@ function gdprActionModal(scan, chat, localActive) {
     const subtitle = isBlock
       ? (canSend
           ? 'High-severity data — your selected model is local, so it would stay on-prem.'
-          : 'High-severity data — this cannot be sent to a cloud model. Choose a local model below.')
+          : 'High-severity data — this cannot be sent to a cloud model. Choose anonymisation or a local model below.')
       : 'Review before sending to the model — values are partially masked.';
     const soonBtn = (id, label) =>
       '<button class="pii-btn pii-btn-neutral" id="' + id + '" disabled title="Not yet implemented">' +
         label + '<span class="pii-soon">soon</span></button>';
+
+    // The transparent-anonymisation button looks like the primary cloud-send
+    // affordance (warm tone, dominant) but reroutes through the pseudonymizer
+    // server-side. Default focus per design.
+    const anonBtn =
+      '<button class="pii-btn pii-btn-anon" id="pii-anon-btn">' +
+        'Anonymise &amp; continue' +
+      '</button>';
 
     const modalId = 'pii-warning-modal';
     document.getElementById(modalId)?.remove();
@@ -455,12 +468,11 @@ function gdprActionModal(scan, chat, localActive) {
           '<div class="pii-body">' + sections.join('') + '</div>' +
           '<div class="pii-footer">' +
             '<div class="pii-actions-grid">' +
-              '<button class="pii-btn pii-btn-cancel" id="pii-cancel-btn">Cancel processing</button>' +
-              '<button class="pii-btn pii-btn-local" id="pii-local-btn">Execute via local model</button>' +
-              soonBtn('pii-autoanon-btn', 'Auto-anonymise') +
+              '<button class="pii-btn pii-btn-cancel" id="pii-cancel-btn">Cancel</button>' +
+              '<button class="pii-btn pii-btn-local" id="pii-local-btn">Use local model</button>' +
+              anonBtn +
               soonBtn('pii-manualanon-btn', 'Manual anonymisation') +
-              soonBtn('pii-anondeanon-btn', 'Auto-anonymise &amp; auto-deanonymise') +
-              (canSend ? '<button class="pii-btn pii-btn-send" id="pii-send-btn">Send anyway</button>' : '') +
+              (canSend ? '<button class="pii-btn pii-btn-send" id="pii-send-btn">Continue anyway</button>' : '') +
             '</div>' +
             (canSend
               ? '<label class="pii-suppress">' +
@@ -487,12 +499,80 @@ function gdprActionModal(scan, chat, localActive) {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup('cancel'); });
     document.getElementById('pii-cancel-btn').onclick = () => cleanup('cancel');
     document.getElementById('pii-local-btn').onclick = () => cleanup('local');
+    document.getElementById('pii-anon-btn').onclick = () => cleanup('anonymise');
     document.getElementById('pii-send-btn')?.addEventListener('click', () => cleanup('send'));
-    // Focus a safe default: Cancel for a hard block, otherwise the local-model
-    // option (never auto-focus "Send anyway").
+    // Default focus per design: Anonymise & continue. Falls back to Cancel
+    // when there's nothing safe to default to (extremely rare edge case).
     setTimeout(() => {
-      (isBlock ? document.getElementById('pii-cancel-btn') : document.getElementById('pii-local-btn'))?.focus();
+      document.getElementById('pii-anon-btn')?.focus();
     }, 50);
+  });
+}
+
+/** Modal shown when the server-side anonymisation step fails. The user
+ *  must pick a recovery action — there is intentionally no "send to cloud
+ *  anyway" path. Returns 'local_model' or 'cancel'.
+ *
+ *  Reuses the GDPR modal's stylesheet (`pii-modal-styles-v2`) so the
+ *  recovery dialog matches the original modal visually. */
+function gdprRecoveryModal(detail, chat) {
+  return new Promise((resolve) => {
+    const errMsg = (detail && detail.error) ? String(detail.error).slice(0, 400) : 'Unknown error';
+    const sources = (detail && Array.isArray(detail.sources)) ? detail.sources : [];
+    const sourceList = sources.length
+      ? '<ul style="margin:8px 0 0 18px; padding:0; font-size:12.5px; line-height:1.6;">' +
+        sources.map(s => '<li>' + esc(s) + '</li>').join('') + '</ul>'
+      : '';
+    const modalId = 'pii-recovery-modal';
+    document.getElementById(modalId)?.remove();
+    const html =
+      '<div class="pii-overlay" id="' + modalId + '">' +
+        '<div class="pii-card" role="dialog" aria-modal="true" aria-labelledby="pii-recovery-title">' +
+          '<div class="pii-banner is-block">' +
+            '<div class="pii-banner-row">' +
+              '<div class="pii-shield" aria-hidden="true">!</div>' +
+              '<div style="flex:1;min-width:0">' +
+                '<h2 id="pii-recovery-title" class="pii-title">Anonymisation failed</h2>' +
+                '<p class="pii-subtitle">Your original content was NOT sent to the cloud. Pick how to proceed.</p>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="pii-body">' +
+            '<div class="pii-source-card">' +
+              '<div class="pii-source-name">Error</div>' +
+              '<div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--text-200);margin-top:6px;word-break:break-word;">' +
+                esc(errMsg) + '</div>' +
+              (sources.length
+                ? '<div style="font-size:12px;color:var(--text-300);margin-top:10px;">' +
+                  'Affected source' + (sources.length === 1 ? '' : 's') + ':' + sourceList +
+                  '</div>'
+                : '') +
+            '</div>' +
+          '</div>' +
+          '<div class="pii-footer">' +
+            '<div class="pii-actions-grid">' +
+              '<button class="pii-btn pii-btn-cancel" id="pii-rec-cancel">Cancel turn</button>' +
+              '<button class="pii-btn pii-btn-local" id="pii-rec-local">Use local model</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    const overlay = wrap.firstElementChild;
+    document.body.appendChild(overlay);
+    const cleanup = (choice) => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      resolve(choice);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') cleanup('cancel'); };
+    document.addEventListener('keydown', onKey);
+    // Click-outside intentionally NOT mapped to cancel — recovery is too
+    // important to dismiss accidentally. The user must pick.
+    document.getElementById('pii-rec-cancel').onclick = () => cleanup('cancel');
+    document.getElementById('pii-rec-local').onclick = () => cleanup('local_model');
+    setTimeout(() => document.getElementById('pii-rec-local')?.focus(), 50);
   });
 }
 

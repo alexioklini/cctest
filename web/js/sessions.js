@@ -208,6 +208,43 @@ async function openSession(sessionId, agentId) {
         for (const tm of pendingThinking) expanded.push(tm);
         pendingThinking = [];
       }
+      // Transparent-anonymisation synthetic rows: server persists them as
+      // tool_use / tool_result with metadata.synthetic=true. Map to the
+      // client's tool_call / tool_result shape so the renderer's shield-icon
+      // branch picks them up identically on reload + live.
+      const m = msg.metadata;
+      if (m && m.synthetic) {
+        let parsed = null;
+        try {
+          parsed = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
+        } catch (e) {
+          parsed = null;
+        }
+        if (msg.role === 'tool_use') {
+          expanded.push({
+            role: 'tool_call',
+            synthetic: true,
+            kind: m.kind || (parsed && parsed.name) || '',
+            name: m.kind || (parsed && parsed.name) || '',
+            args: (parsed && parsed.args) || {},
+            tool_use_id: m.tool_use_id || (parsed && parsed.tool_use_id) || null,
+          });
+          continue;
+        }
+        if (msg.role === 'tool_result') {
+          expanded.push({
+            role: 'tool_result',
+            synthetic: true,
+            kind: m.kind || (parsed && parsed.name) || '',
+            name: m.kind || (parsed && parsed.name) || '',
+            result: (parsed && parsed.result) || {},
+            status: m.status || (parsed && parsed.status) || 'ok',
+            duration_ms: m.duration_ms || (parsed && parsed.duration_ms) || 0,
+            tool_use_id: m.tool_use_id || (parsed && parsed.tool_use_id) || null,
+          });
+          continue;
+        }
+      }
       expanded.push(msg);
     }
     // Trailing thinking rows (no assistant after them). If a turn is in

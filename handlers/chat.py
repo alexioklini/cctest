@@ -10,7 +10,213 @@ import threading
 import time
 
 import brain as engine
+import pseudonymizer
 from handlers import sidecar_proxy
+
+# ---------------------------------------------------------------------------
+# Transparent anonymisation — module-level helpers
+# ---------------------------------------------------------------------------
+#
+# The chat worker uses these to:
+#   * Persist `anonymise` / `deanonymise_*` rows as synthetic tool-call entries
+#     that show in chat history but never reach the LLM (skip session.messages,
+#     write directly via ChatDB.save_message).
+#   * Block the worker thread while the user picks a recovery action on the
+#     "anonymisation failed" modal — mirrors the AskUserQuestion pattern but
+#     pre-loop (no sidecar dispatch involved).
+
+# Pending recovery slots — `{session_id: {"event": Event, "choice": str|None}}`.
+# Keyed by session id because only one anonymisation can be in flight per
+# session at a time (one turn = one mapping). Choice is "local_model" |
+# "cancel"; default "cancel" on timeout (safe — never falls through to cloud).
+_gdpr_recovery_pending: dict[str, dict] = {}
+_gdpr_recovery_lock = threading.Lock()
+
+
+def _gdpr_recovery_register(session_id: str) -> threading.Event:
+    """Open a recovery slot. Returns the Event the worker waits on."""
+    event = threading.Event()
+    with _gdpr_recovery_lock:
+        _gdpr_recovery_pending[session_id] = {"event": event, "choice": None}
+    return event
+
+
+def _gdpr_recovery_clear(session_id: str) -> None:
+    with _gdpr_recovery_lock:
+        _gdpr_recovery_pending.pop(session_id, None)
+
+
+def deliver_gdpr_recovery_choice(session_id: str, choice: str) -> bool:
+    """Called by POST /v1/chat/gdpr-recovery. Returns True if a worker was
+    waiting on this session. `choice` is "local_model" or "cancel"."""
+    if choice not in ("local_model", "cancel"):
+        return False
+    with _gdpr_recovery_lock:
+        slot = _gdpr_recovery_pending.get(session_id)
+        if not slot:
+            return False
+        slot["choice"] = choice
+        slot["event"].set()
+    return True
+
+
+def _emit_synthetic_tool_event(
+    *,
+    live,
+    sid: str,
+    kind: str,
+    tool_use_id: str,
+    phase: str,
+    args: dict | None = None,
+    result: dict | None = None,
+    status: str = "ok",
+    duration_ms: int = 0,
+):
+    """Emit one half of a synthetic tool-call pair (`tool_use` for the
+    dispatch, `tool_result` for the done) + persist to messages.
+
+    Persisted with `metadata.synthetic=True` and `metadata.kind=<kind>` so the
+    web renderer can style them distinctly. NOT added to `session.messages`
+    (the in-memory list handed to the LLM) — the LLM must never see these.
+    The web renderer reads them from `GET /v1/sessions/<id>/messages` on
+    reload.
+    """
+    if phase == "dispatch":
+        # tool_use row: name + args. result will arrive in the matching done.
+        content_obj = {
+            "type": "anonymise_dispatch",
+            "name": kind,
+            "tool_use_id": tool_use_id,
+            "args": args or {},
+        }
+        metadata = {
+            "synthetic": True,
+            "kind": kind,
+            "tool_use_id": tool_use_id,
+            "phase": "dispatch",
+        }
+        message_id = ChatDB.save_message(
+            sid, "tool_use", json.dumps(content_obj), metadata=metadata)
+        live.emit("synthetic_tool_use", {
+            "message_id": message_id,
+            "kind": kind,
+            "tool_use_id": tool_use_id,
+            "args": args or {},
+        })
+        return message_id
+
+    # phase == "done"
+    content_obj = {
+        "type": "anonymise_done",
+        "name": kind,
+        "tool_use_id": tool_use_id,
+        "result": result or {},
+        "status": status,
+        "duration_ms": int(duration_ms),
+    }
+    metadata = {
+        "synthetic": True,
+        "kind": kind,
+        "tool_use_id": tool_use_id,
+        "phase": "done",
+        "status": status,
+        "duration_ms": int(duration_ms),
+    }
+    message_id = ChatDB.save_message(
+        sid, "tool_result", json.dumps(content_obj), metadata=metadata)
+    live.emit("synthetic_tool_result", {
+        "message_id": message_id,
+        "kind": kind,
+        "tool_use_id": tool_use_id,
+        "result": result or {},
+        "status": status,
+        "duration_ms": int(duration_ms),
+    })
+    return message_id
+
+
+class PseudonymizeError(Exception):
+    """Raised when the anonymisation walker fails (corrupted file, parser
+    crash, etc.). Caught by the chat worker which then triggers the recovery
+    modal — see `_handle_chat`."""
+
+    def __init__(self, message: str, *, sources: list[str] | None = None):
+        super().__init__(message)
+        self.sources = sources or []
+
+
+class StreamingDeanonymizer:
+    """Per-turn helper that converts a stream of pseudonymized text deltas
+    into a stream of de-anonymized text deltas, holding back partial tokens
+    so the user never sees an unfinished `<KIND_N` mid-token.
+
+    Strategy: maintain the raw cumulative buffer. On each delta:
+      1. Apply `deanonymize_text` to the full raw buffer.
+      2. Find the latest **safe emission point** — the index up to which
+         the de-anonymized text is guaranteed not to contain a half-formed
+         opaque token (an unclosed `<`).
+      3. Emit only the new safe text since the last emission.
+
+    On `flush()` (at turn end), emit whatever's left — any unclosed `<` is
+    treated as stray text.
+
+    `restored_count` accumulates total restorations across the stream for
+    the final deanonymise pseudo-tool-call event.
+    """
+
+    def __init__(self, mapping):
+        self.mapping = mapping
+        self._raw = []                # raw deltas in arrival order
+        self._emitted_len = 0         # chars of de-anonymized text already emitted
+        self.restored_count = 0       # accumulated for the final tool-call row
+
+    def feed(self, raw_delta: str) -> str:
+        """Consume one raw delta. Returns the de-anonymized chunk to emit
+        downstream (may be empty if everything is currently held back)."""
+        if not raw_delta:
+            return ""
+        self._raw.append(raw_delta)
+        full_raw = "".join(self._raw)
+        full_denon, n = pseudonymizer.deanonymize_text(full_raw, mapping=self.mapping)
+        # Replace cumulative count rather than add — deanonymize_text returns
+        # the count over the whole buffer, not a delta.
+        self.restored_count = n
+        # Safe-emission boundary: the last position before any unclosed '<'
+        # (an open angle bracket without a matching '>' afterwards may be
+        # mid-token; holding it back avoids flashing a partial `<EMAIL_1` to
+        # the user).
+        last_open = full_denon.rfind("<")
+        if last_open >= 0 and full_denon.find(">", last_open) < 0:
+            safe_end = last_open
+        else:
+            safe_end = len(full_denon)
+        if safe_end <= self._emitted_len:
+            return ""
+        chunk = full_denon[self._emitted_len:safe_end]
+        self._emitted_len = safe_end
+        return chunk
+
+    def flush(self) -> str:
+        """Emit any held-back tail. Called when the turn ends."""
+        full_raw = "".join(self._raw)
+        if not full_raw:
+            return ""
+        full_denon, n = pseudonymizer.deanonymize_text(full_raw, mapping=self.mapping)
+        self.restored_count = n
+        if len(full_denon) <= self._emitted_len:
+            return ""
+        chunk = full_denon[self._emitted_len:]
+        self._emitted_len = len(full_denon)
+        return chunk
+
+    def final_text(self) -> str:
+        """Return the fully de-anonymized cumulative text. Used after the
+        stream ends to persist the assistant message with the user-visible
+        text rather than the raw tokenized version."""
+        full_raw = "".join(self._raw)
+        full_denon, n = pseudonymizer.deanonymize_text(full_raw, mapping=self.mapping)
+        self.restored_count = n
+        return full_denon
 
 
 def build_chat_event_callback(session, live, sid):
@@ -53,7 +259,35 @@ def build_chat_event_callback(session, live, sid):
 
     def event_callback(event_type, data):
         if event_type == "text_delta":
-            _partial_reply.append(data.get("text", ""))
+            raw_delta = data.get("text", "")
+            _partial_reply.append(raw_delta)
+            # Transparent-anonymisation: if a pseudonym mapping is active for
+            # this turn, route the delta through the streaming deanonymizer.
+            # The user only ever sees de-anonymized text — tokens like
+            # `<EMAIL_1_xyz>` are converted back to the original value (or
+            # held back if mid-formation) before they reach the SSE queue.
+            # The raw token form stays in `_partial_reply` for the
+            # streaming_text persistence path (which writes the raw buffer);
+            # reload picks up the persisted assistant message (which the
+            # worker `finally` finalises with the de-anonymized text).
+            streamer = getattr(session, "_gdpr_streamer", None)
+            if streamer is not None:
+                safe_chunk = streamer.feed(raw_delta)
+                if safe_chunk:
+                    # Forward the de-anonymized chunk to subscribers; do NOT
+                    # also forward the raw delta below.
+                    live.emit("text_delta", {"text": safe_chunk})
+                # Persist the de-anonymized partial so a reload mid-stream
+                # shows real values rather than tokens.
+                _now = time.time()
+                if _now - _stream_persist["last"] > 0.4:
+                    _stream_persist["last"] = _now
+                    try:
+                        ChatDB.set_streaming_text(
+                            sid, streamer.final_text())
+                    except Exception:
+                        pass
+                return  # raw delta intentionally not re-emitted below
             # Incremental persist (throttled): so a client reopening this
             # session — or the chat surviving a server restart mid-stream —
             # can render the partial reply even with no live buffer.
@@ -183,6 +417,19 @@ def recover_active_turns_on_boot():
     Non-blocking: spawns one daemon thread per row and returns immediately.
     Boot path never blocks on this.
     """
+    # Transparent-anonymisation: drop any pseudonym_maps rows whose session
+    # was deleted between processes. Cheap (one DELETE with a NOT IN clause).
+    # We intentionally do NOT prune by age — `persist_maps=true` means users
+    # rely on these maps surviving for historical message de-anonymisation;
+    # pruning belongs in an explicit admin action, not boot.
+    try:
+        _purged = ChatDB.purge_orphan_pseudonym_maps()
+        if _purged:
+            print(f"[turn-recovery] purged {_purged} orphan pseudonym_maps row(s)",
+                  flush=True)
+    except Exception as e:
+        print(f"[turn-recovery] pseudonym_maps purge failed: {e}", flush=True)
+
     try:
         rows = ChatDB.list_active_turns()
     except Exception as e:
@@ -1016,6 +1263,62 @@ class ChatHandlerMixin:
                         block["text"] = block["text"] + notice
                         break
 
+        # ── Transparent anonymisation (pre-headers branch) ──
+        # If the client's pre-send GDPR modal returned `gdpr_action`, honor it
+        # before the user message lands in session.messages.
+        #   "local_model"  → swap session.model to the local fallback; no
+        #                    anonymisation needed (data stays on-prem). Done
+        #                    inline here — no SSE prompt needed, just a model
+        #                    swap before warmup-promotion.
+        #   "anonymise"    → defer to the worker thread (inside the SSE-open
+        #                    region), where a recovery-modal SSE event can
+        #                    actually reach the client.
+        #   "continue"     → user accepted warn-level findings; no-op.
+        gdpr_action = (body.get("gdpr_action") or "").strip().lower()
+        session._gdpr_mapping_id = None
+        session._gdpr_streamer = None
+        session._gdpr_pending_action = gdpr_action if gdpr_action == "anonymise" else ""
+
+        if gdpr_action == "local_model":
+            _fallback = (engine._get_gdpr_scanner_config().get(
+                "default_local_fallback_model") or "").strip()
+            if not _fallback:
+                self._send_json(
+                    {"error": "No default_local_fallback_model configured; "
+                              "GDPR local-model action unavailable."}, 400)
+                return
+            if _fallback != session.model:
+                provider = self._resolve_provider(_fallback)
+                with session.lock:
+                    session.model = _fallback
+                    session.api_key = provider["api_key"]
+                    session.base_url = provider["base_url"]
+                    session.max_context = engine.get_model_max_context(_fallback)
+            # Audit row — single, no synthetic tool-call (no anonymisation
+            # happened, just a model swap). Mirrors `pii_auto_fallback`.
+            try:
+                if engine._audit_log:
+                    engine._audit_log.log_action(
+                        agent=session.agent_id, session_id=sid,
+                        action_type="pii_local_swap",
+                        tool_name="gdpr_scanner",
+                        args_summary="interactive_chat",
+                        result_summary=f"→ {_fallback}",
+                        result_status="success",
+                        duration_ms=0, source="chat",
+                    )
+            except Exception:
+                pass
+
+        # gdpr_action="anonymise" runs INSIDE the worker thread (below) so the
+        # SSE response is already open + the client is listening when we emit
+        # `synthetic_tool_use` / `gdpr_recovery_required` events. Doing the
+        # work here, before send_response(200), would deadlock: live.emit()
+        # only fans into the in-memory buffer, but the client's fetch() hangs
+        # waiting for headers, so it can't fetch the recovery modal payload
+        # or POST a choice back. The worker reads
+        # session._gdpr_pending_action == 'anonymise' as its trigger.
+
         # Promote warmup session to active on first message
         if session.status == "warmup":
             session.status = "active"
@@ -1023,8 +1326,13 @@ class ChatHandlerMixin:
                                session.title, session.status, session.created_at,
                                session.last_active, session.project or "")
 
-        # Add user message (persisted to DB)
-        session.add_message("user", user_content)
+        # Add user message (persisted to DB). When gdpr_action='anonymise',
+        # we DEFER the add until the worker has pseudonymized — otherwise the
+        # DB briefly holds the raw PII text and the session.messages list
+        # would feed the original to the LLM. The worker is responsible for
+        # session.add_message("user", ...) in the anonymise branch.
+        if session._gdpr_pending_action != "anonymise":
+            session.add_message("user", user_content)
 
         # SSE streaming setup (start early so we can send compaction events)
         # Disable Nagle's algorithm for real-time SSE delivery
@@ -1179,8 +1487,191 @@ class ChatHandlerMixin:
             _req_start = time.time()
 
             try:
+                # ── Transparent anonymisation (worker-side) ──
+                # If the client requested anonymise, this is where it runs.
+                # We're inside the SSE response, so synthetic events + the
+                # recovery-prompt event reach the client immediately. On
+                # success: append the anonymised user message to
+                # session.messages and continue. On failure: emit the
+                # recovery-required event, block on the Event, branch to
+                # local-model or cancel. On cancel: emit done + return.
+                nonlocal_message = message
+                nonlocal_user_content = user_content
+                if session._gdpr_pending_action == "anonymise":
+                    _mapping = pseudonymizer.new_mapping()
+                    _anon_tool_id = f"anon_{_mapping.mapping_id[:12]}"
+                    _t0 = time.time()
+                    _emit_synthetic_tool_event(
+                        live=live, sid=sid, kind="anonymise",
+                        tool_use_id=_anon_tool_id, phase="dispatch",
+                        args={"sources": ["chat_text"]},
+                    )
+                    _anon_ok = False
+                    try:
+                        _scanner_cfg = engine._get_gdpr_scanner_config()
+                        _findings = engine._pii_scan_text(
+                            nonlocal_message, cfg=_scanner_cfg)
+                        if _findings:
+                            _anonymised = pseudonymizer.pseudonymize_text(
+                                nonlocal_message, _findings,
+                                mapping=_mapping, source="chat_text")
+                            if isinstance(nonlocal_user_content, str):
+                                nonlocal_user_content = _anonymised
+                            else:
+                                for _blk in nonlocal_user_content:
+                                    if _blk.get("type") == "text":
+                                        _blk["text"] = _anonymised
+                                        break
+                            nonlocal_message = _anonymised
+                        pseudonymizer.save_mapping(
+                            _mapping, session_id=sid, turn_id=_anon_tool_id)
+                        session._gdpr_mapping_id = _mapping.mapping_id
+                        session._gdpr_streamer = StreamingDeanonymizer(_mapping)
+                        _emit_synthetic_tool_event(
+                            live=live, sid=sid, kind="anonymise",
+                            tool_use_id=_anon_tool_id, phase="done",
+                            result={
+                                "findings": len(_findings),
+                                "tokens_minted": len(_mapping.forward),
+                                "sources": list(_mapping.sources),
+                                "categories": dict(_mapping.finding_counts),
+                                "mapping_id": _mapping.mapping_id,
+                            },
+                            status="ok",
+                            duration_ms=int((time.time() - _t0) * 1000),
+                        )
+                        if engine._audit_log:
+                            try:
+                                engine._audit_log.log_action(
+                                    agent=session.agent_id, session_id=sid,
+                                    action_type="pii_anonymised",
+                                    tool_name="gdpr_scanner",
+                                    args_summary=f"{len(_findings)} findings",
+                                    result_summary=(
+                                        f"mapping_id={_mapping.mapping_id} "
+                                        f"categories={list(_mapping.finding_counts)}"),
+                                    result_status="success",
+                                    duration_ms=int((time.time() - _t0) * 1000),
+                                    source="chat",
+                                )
+                            except Exception:
+                                pass
+                        _anon_ok = True
+                    except Exception as _e:
+                        _err_summary = f"{type(_e).__name__}: {str(_e)[:200]}"
+                        _emit_synthetic_tool_event(
+                            live=live, sid=sid, kind="anonymise",
+                            tool_use_id=_anon_tool_id, phase="done",
+                            result={"error": _err_summary,
+                                    "sources": ["chat_text"]},
+                            status="error",
+                            duration_ms=int((time.time() - _t0) * 1000),
+                        )
+                        try:
+                            pseudonymizer.delete_persisted_mapping(_mapping.mapping_id)
+                            pseudonymizer.close_mapping(_mapping.mapping_id)
+                        except Exception:
+                            pass
+                        if engine._audit_log:
+                            try:
+                                engine._audit_log.log_action(
+                                    agent=session.agent_id, session_id=sid,
+                                    action_type="pii_anonymise_failed",
+                                    tool_name="gdpr_scanner",
+                                    args_summary="chat_text",
+                                    result_summary=_err_summary,
+                                    result_status="error",
+                                    duration_ms=int((time.time() - _t0) * 1000),
+                                    source="chat",
+                                )
+                            except Exception:
+                                pass
+                        live.emit("gdpr_recovery_required", {
+                            "session_id": sid,
+                            "error": _err_summary,
+                            "sources": ["chat_text"],
+                        })
+                        _event = _gdpr_recovery_register(sid)
+                        _delivered = _event.wait(timeout=300)
+                        with _gdpr_recovery_lock:
+                            _choice = (_gdpr_recovery_pending.get(sid) or {}).get("choice")
+                        _gdpr_recovery_clear(sid)
+                        if not _delivered or _choice == "cancel":
+                            if engine._audit_log:
+                                try:
+                                    engine._audit_log.log_action(
+                                        agent=session.agent_id, session_id=sid,
+                                        action_type="pii_anonymise_failed_cancel",
+                                        tool_name="gdpr_scanner",
+                                        args_summary="chat_text",
+                                        result_summary=(
+                                            "timeout" if not _delivered else "user_cancelled"),
+                                        result_status="warning",
+                                        duration_ms=0, source="chat",
+                                    )
+                                except Exception:
+                                    pass
+                            live.emit("done", {
+                                "text": "", "tokens": 0, "model": session.model,
+                                "cancelled": True, "reason": "gdpr_anonymise_failed",
+                            })
+                            return
+                        # local_model: swap, use ORIGINAL content.
+                        _fallback = (engine._get_gdpr_scanner_config().get(
+                            "default_local_fallback_model") or "").strip()
+                        if not _fallback:
+                            live.emit("error", {
+                                "message": "Anonymisation failed and no local "
+                                           "fallback model is configured."})
+                            live.emit("done", {
+                                "text": "", "tokens": 0, "model": session.model,
+                                "cancelled": True,
+                                "reason": "gdpr_no_local_fallback",
+                            })
+                            return
+                        if _fallback != session.model:
+                            try:
+                                provider = engine.resolve_provider_for_model(_fallback)
+                                with session.lock:
+                                    session.model = _fallback
+                                    session.api_key = provider["api_key"]
+                                    session.base_url = provider["base_url"]
+                                    session.max_context = engine.get_model_max_context(_fallback)
+                                # Update thread-local model reference too.
+                                engine._thread_local._current_model = session.model
+                            except Exception:
+                                pass
+                        if engine._audit_log:
+                            try:
+                                engine._audit_log.log_action(
+                                    agent=session.agent_id, session_id=sid,
+                                    action_type="pii_anonymise_failed_local_swap",
+                                    tool_name="gdpr_scanner",
+                                    args_summary="chat_text",
+                                    result_summary=f"→ {_fallback}",
+                                    result_status="success",
+                                    duration_ms=0, source="chat",
+                                )
+                            except Exception:
+                                pass
+                        # Fall through with ORIGINAL content + new local model.
+                    # User message wasn't added pre-worker for the anonymise
+                    # path. Add it now — anonymised on success, original on
+                    # local-fallback recovery. Update the rollback snapshot
+                    # so it INCLUDES the new user msg (matches non-anonymise
+                    # path semantics: rollback strips intermediate tool msgs
+                    # but keeps the user msg in place).
+                    session.add_message("user", nonlocal_user_content)
+                    _msg_count_before = len(session.messages)
+
                 # --- Standard backend ---
-                # Use detected purpose from auto-resolve, or fall back to agent's fixed purpose
+                # Use detected purpose from auto-resolve, or fall back to agent's fixed purpose.
+                # In the anonymise branch above, `nonlocal_message` is the
+                # pseudonymised text; in every other branch it's just the
+                # original `message` we copied at function entry. Use it for
+                # purpose classification so the auto-router sees what the
+                # LLM will actually see.
+                message = nonlocal_message
                 purpose = session.agent.config.get("model_purpose")
                 if not purpose and session.agent.config.get("model") == "auto":
                     purpose = engine.classify_task_purpose(message)
@@ -1444,6 +1935,57 @@ class ChatHandlerMixin:
                                 f"Mal neu angesetzt, bevor eine Antwort kam."
                             )
                             reply = reply + _nudge_hint
+                    # ── Transparent anonymisation: deanonymize final reply ──
+                    # The text_delta path already de-anonymised live deltas;
+                    # this pass covers the final assembled reply (which may
+                    # include text the streamer held back at flush time, plus
+                    # nudge/citation hints appended above). It's also the
+                    # canonical text persisted to the messages table.
+                    _gdpr_streamer = getattr(session, "_gdpr_streamer", None)
+                    _gdpr_mapping_id = getattr(session, "_gdpr_mapping_id", None)
+                    if _gdpr_mapping_id and _gdpr_streamer is not None:
+                        # Flush any held-back streamer tail to subscribers.
+                        _tail = _gdpr_streamer.flush()
+                        if _tail:
+                            live.emit("text_delta", {"text": _tail})
+                        _mapping = pseudonymizer.get_mapping(_gdpr_mapping_id)
+                        if _mapping is not None:
+                            _deanon_reply, _restored = pseudonymizer.deanonymize_text(
+                                reply, mapping=_mapping)
+                            _t1 = time.time()
+                            _deanon_tool_id = f"deanon_{_gdpr_mapping_id[:12]}"
+                            _emit_synthetic_tool_event(
+                                live=live, sid=sid, kind="deanonymise_text",
+                                tool_use_id=_deanon_tool_id, phase="dispatch",
+                                args={"target": "assistant_reply",
+                                      "mapping_id": _gdpr_mapping_id},
+                            )
+                            _emit_synthetic_tool_event(
+                                live=live, sid=sid, kind="deanonymise_text",
+                                tool_use_id=_deanon_tool_id, phase="done",
+                                result={"restored": int(_restored),
+                                        "mapping_id": _gdpr_mapping_id},
+                                status="ok",
+                                duration_ms=int((time.time() - _t1) * 1000),
+                            )
+                            try:
+                                if engine._audit_log:
+                                    engine._audit_log.log_action(
+                                        agent=session.agent_id, session_id=sid,
+                                        action_type="pii_deanonymise_text",
+                                        tool_name="gdpr_scanner",
+                                        args_summary="assistant_reply",
+                                        result_summary=(
+                                            f"restored={_restored} "
+                                            f"mapping_id={_gdpr_mapping_id}"),
+                                        result_status="success",
+                                        duration_ms=0, source="chat",
+                                    )
+                            except Exception:
+                                pass
+                            reply = _deanon_reply
+                            msg_metadata["gdpr_mapping_id"] = _gdpr_mapping_id
+                            msg_metadata["gdpr_restored"] = int(_restored)
                     session.add_message("assistant", reply, metadata=msg_metadata or None)
                     done_data = {
                         "text": reply,
@@ -1573,6 +2115,20 @@ class ChatHandlerMixin:
                     ChatDB.set_streaming_text(sid, "")  # finalized — clear the partial
                 except Exception:
                     pass
+                # Transparent anonymisation: drop the in-memory mapping at
+                # turn end. The encrypted SQLite row stays (persist_maps=true
+                # per design), so reload paths can still de-anonymise the
+                # persisted reply if we ever surface "show what was sent"
+                # audit UI. Cancellation / error cases also flow through
+                # here, so the registry never leaks across turns.
+                _gdpr_mid = getattr(session, "_gdpr_mapping_id", None)
+                if _gdpr_mid:
+                    try:
+                        pseudonymizer.close_mapping(_gdpr_mid)
+                    except Exception:
+                        pass
+                    session._gdpr_mapping_id = None
+                    session._gdpr_streamer = None
                 # Clean up thread-local state
                 engine._thread_local.current_agent = None
                 engine._thread_local.mcp_manager = None
@@ -1720,3 +2276,34 @@ class ChatHandlerMixin:
             self._send_json({"error": "no pending question for this session"}, 404)
             return
         self._send_json({"delivered": True, "session_id": session_id})
+
+    def _handle_chat_gdpr_recovery(self):
+        """POST /v1/chat/gdpr-recovery — deliver the user's response to the
+        anonymisation-failure modal.
+
+        Body: `{session_id, action: "local_model"|"cancel"}`. Refuses any
+        other action — there is intentionally no "send to cloud anyway"
+        path; the whole point of the feature is that GDPR data never reaches
+        a cloud LLM after a failed anonymisation."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._send_json({"error": "invalid JSON body"}, 400)
+            return
+        session_id = (body.get("session_id") or "").strip()
+        action = (body.get("action") or "").strip().lower()
+        if not session_id or action not in ("local_model", "cancel"):
+            self._send_json(
+                {"error": "session_id and action ('local_model'|'cancel') required"},
+                400)
+            return
+        if self._session_access_check(session_id) is None:
+            return
+        ok = deliver_gdpr_recovery_choice(session_id, action)
+        if not ok:
+            self._send_json(
+                {"error": "no pending GDPR recovery for this session"}, 404)
+            return
+        self._send_json({"delivered": True, "session_id": session_id,
+                         "action": action})

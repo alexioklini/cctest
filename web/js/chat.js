@@ -76,6 +76,16 @@ async function sendMessage() {
   // outgoing message or its text attachments, an action modal pops up listing
   // exactly which fragments tripped which detector and asks how to proceed.
   // Skipped entirely when the feature is disabled or suppressed for this chat.
+  //
+  // `gdprAction` is the body field forwarded to POST /v1/chat. The chat
+  // worker decides what to do with it:
+  //   'anonymise'  → server pseudonymises text + (later: files) and
+  //                  de-anonymises the reply before persistence.
+  //   'local_model' → server swaps the active model to the configured local
+  //                   fallback for this turn. No anonymisation needed.
+  //   'continue'   → user accepted warn-level findings; cloud send as-is.
+  //   ''           → no scanner findings or feature disabled.
+  let gdprAction = '';
   if (state.piiScannerEnabled !== false && !sessionStorage.getItem('pii-suppress:' + (chat.sessionId || '_new'))) {
     const scan = PIIScanner.scanPayload(text, state._pendingFiles);
     if (scan.findings.length) {
@@ -83,15 +93,16 @@ async function sendMessage() {
       const verdict = await gdprActionModal(scan, chat, localActive);
       if (verdict === 'cancel') return;
       if (verdict === 'local') {
-        piiEnsureLocalModel();
-        if (!isModelLocal(chat.model || '')) {
-          showToast('No local model available — add or enable one in Settings to send this message.', true);
-          return;
-        }
-        // A local model is now selected — data stays on-prem; fall through.
+        // Server-side swap: chat worker handles model switching when it sees
+        // gdpr_action='local_model'. We forward the choice rather than
+        // mutating chat.model client-side so the audit trail (pii_local_swap)
+        // is on the server and a missing local model raises a 400.
+        gdprAction = 'local_model';
+      } else if (verdict === 'anonymise') {
+        gdprAction = 'anonymise';
+      } else if (verdict === 'send') {
+        gdprAction = 'continue';
       }
-      // 'send' falls through. The anonymisation verdicts are not wired yet
-      // (their buttons are disabled), so they can't reach this point.
     }
   }
 
@@ -146,7 +157,7 @@ async function sendMessage() {
       return;
     }
 
-    await API.streamChat(chat.sessionId, text, buildStreamCallbacks(chat, isActive), chat.model, filesToSend);
+    await API.streamChat(chat.sessionId, text, buildStreamCallbacks(chat, isActive), chat.model, filesToSend, null, gdprAction);
   } catch(e) {
     _onStreamCatch(e, chat, isActive, streamGen);
   }
@@ -290,6 +301,45 @@ function buildStreamCallbacks(chat, isActive) {
       },
       tool_output: (d) => {
         // Live tool output streaming
+      },
+      // ── Transparent anonymisation synthetic tool-call rows ──
+      // Server emits these to give the user a visible record of "your data
+      // was anonymised before sending" / "the reply was de-anonymised". They
+      // appear in chat history alongside real tool calls, but are marked
+      // synthetic: true so the renderer can style them distinctly.
+      synthetic_tool_use: (d) => {
+        chat.messages.push({
+          role: 'tool_call',
+          synthetic: true,
+          kind: d.kind,
+          name: d.kind,
+          args: d.args || {},
+          tool_use_id: d.tool_use_id || null,
+          _ts: Date.now(),
+        });
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); scrollToBottom(); }
+      },
+      synthetic_tool_result: (d) => {
+        chat.messages.push({
+          role: 'tool_result',
+          synthetic: true,
+          kind: d.kind,
+          name: d.kind,
+          result: d.result || {},
+          status: d.status || 'ok',
+          duration_ms: d.duration_ms || 0,
+          tool_use_id: d.tool_use_id || null,
+          _ts: Date.now(),
+        });
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); scrollToBottom(); }
+      },
+      gdpr_recovery_required: (d) => {
+        // Anonymisation failed mid-flight. Open the recovery modal — the
+        // user's choice goes to POST /v1/chat/gdpr-recovery, which unblocks
+        // the worker thread (server-side).
+        gdprRecoveryModal(d, chat).then((choice) => {
+          API.chatGdprRecovery(d.session_id, choice).catch(() => {});
+        });
       },
       file_created: (d) => {
         chat.files.push(d);
@@ -2504,6 +2554,12 @@ function fallbackCopy(text, cb) {
 
 function renderToolCall(msg, idx) {
   if (!state.showToolCalls) return '';
+  // Transparent-anonymisation synthetic rows render distinctly — they're not
+  // LLM tool calls, they're server-side privacy operations the user should
+  // see in their chat history. Renders shield-icon + summary; click expands.
+  if (msg.synthetic) {
+    return renderSyntheticGdprCall(msg, idx);
+  }
   // Look ahead for matching tool_result — match by tool_use_id when available,
   // fall back to name. Don't stop at sibling tool_calls (parallel batches interleave).
   const chat = state.activeChat;
@@ -2574,7 +2630,101 @@ function renderToolCall(msg, idx) {
   `;
 }
 
+function renderSyntheticGdprCall(msg, idx) {
+  // Pair this dispatch with its matching done row (look forward; same
+  // tool_use_id, or same `kind` if no id). Synthetic pairs never get a
+  // real LLM response between them, but be defensive.
+  const chat = state.activeChat;
+  let done = null;
+  if (chat) {
+    for (let j = idx + 1; j < chat.messages.length; j++) {
+      const next = chat.messages[j];
+      if (next.role === 'tool_result' && next.synthetic) {
+        const idMatch = msg.tool_use_id && next.tool_use_id && msg.tool_use_id === next.tool_use_id;
+        const kindMatch = !msg.tool_use_id && next.kind === msg.kind;
+        if (idMatch || kindMatch) { done = next; break; }
+      }
+      if (next.role === 'assistant' || next.role === 'user') break;
+    }
+  }
+  const kind = msg.kind || msg.name || 'anonymise';
+  const status = done?.status || 'pending';
+  const result = done?.result || {};
+
+  const titleMap = {
+    anonymise: 'Anonymised',
+    deanonymise_text: 'De-anonymised reply',
+    deanonymise_file: 'De-anonymised file',
+  };
+  const title = titleMap[kind] || kind;
+
+  let summary = '';
+  if (kind === 'anonymise' && status === 'ok') {
+    const n = result.findings ?? 0;
+    const cats = Object.keys(result.categories || {});
+    const catLabel = cats.length ? ' · ' + cats.join(', ') : '';
+    summary = `${n} finding${n === 1 ? '' : 's'}${catLabel}`;
+  } else if (kind === 'anonymise' && status === 'error') {
+    summary = String(result.error || 'failed').slice(0, 200);
+  } else if (kind === 'deanonymise_text') {
+    const n = result.restored ?? 0;
+    summary = `${n} token${n === 1 ? '' : 's'} restored`;
+  } else if (kind === 'deanonymise_file') {
+    summary = (result.file || '') + ' · ' + (result.restored ?? 0) + ' restored';
+  }
+
+  // Status icon: green check / spinner / red x.
+  let iconHtml;
+  if (status === 'pending') {
+    iconHtml = '<span class="tool-icon tool-icon-spin">&#9881;</span>';
+  } else if (status === 'error') {
+    iconHtml = '<span class="tool-icon" style="color:var(--danger,#dc2626)">&#10005;</span>';
+  } else {
+    iconHtml = '<span class="tool-icon" style="color:var(--success)">&#10003;</span>';
+  }
+
+  const ms = done?.duration_ms ?? 0;
+  const timing = ms ? `<span class="tool-timing">${(ms / 1000).toFixed(1)}s</span>` : '';
+
+  // Body: key/value pairs from result + args. Keeps PII out — only counts,
+  // categories, sources, mapping_id; never actual values.
+  const safeArgs = msg.args || {};
+  const rows = [];
+  if (safeArgs.sources) rows.push(['Sources', safeArgs.sources.join(', ')]);
+  if (result.findings != null) rows.push(['Findings', String(result.findings)]);
+  if (result.restored != null) rows.push(['Restored', String(result.restored)]);
+  if (result.categories) rows.push(['Categories', Object.entries(result.categories).map(([k, v]) => `${k}=${v}`).join(', ')]);
+  if (result.tokens_minted != null) rows.push(['Tokens minted', String(result.tokens_minted)]);
+  if (result.mapping_id) rows.push(['Mapping ID', result.mapping_id]);
+  if (status === 'error' && result.error) rows.push(['Error', String(result.error)]);
+  const bodyHtml = rows.length
+    ? '<table class="tool-args-table"><tbody>' +
+        rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('') +
+      '</tbody></table>'
+    : '<div style="font-size:12px;color:var(--text-300);">No additional details.</div>';
+
+  // Shield icon as a per-row marker so users can recognise these at a glance.
+  const shieldBadge = '<span class="tool-badge-synthetic" title="Server-side privacy operation" '
+    + 'style="font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:8px;'
+    + 'background:rgba(4,120,87,.12);color:#047857;letter-spacing:.02em;">PRIVACY</span>';
+
+  return `
+    <div class="tool-block tool-block-synthetic${done ? ' has-result' : ''}" onclick="this.classList.toggle('open')">
+      <div class="tool-block-header">
+        ${iconHtml}
+        <span class="tool-name">🛡️ ${esc(title)}${summary ? ': ' + esc(summary) : ''}</span>
+        ${shieldBadge}
+        ${timing}
+        <span class="tool-chevron">&#9656;</span>
+      </div>
+      <div class="tool-block-body">${bodyHtml}</div>
+    </div>
+  `;
+}
+
 function renderToolResult(msg, idx) {
+  // Synthetic results are rendered inside their dispatch row above.
+  if (msg.synthetic) return '';
   // Tool results are now rendered inside their tool_call block
   // Only render standalone if no preceding tool_call found
   if (!state.showToolCalls) return '';

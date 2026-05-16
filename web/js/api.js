@@ -80,6 +80,13 @@ class API {
   static manageSession(body) { return this.post('/v1/sessions/manage', body); }
   static inspectSession(sessionId) { return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/inspect`); }
   static cancelChat(sessionId) { return this.post('/v1/chat/cancel', {session_id: sessionId}); }
+  // Transparent anonymisation: deliver the user's choice on the
+  // anonymisation-failure recovery modal. `action` is 'local_model' | 'cancel'.
+  // There is intentionally no 'send_to_cloud_anyway' value — the server
+  // refuses any other action with 400.
+  static chatGdprRecovery(sessionId, action) {
+    return this.post('/v1/chat/gdpr-recovery', {session_id: sessionId, action});
+  }
 
   // Projects
   static getProjects(agent) { return this.get(`/v1/agents/${agent}/projects`); }
@@ -146,7 +153,7 @@ class API {
   // Memory
 
   // SSE Streaming Chat
-  static async streamChat(sessionId, message, callbacks, model, files, images) {
+  static async streamChat(sessionId, message, callbacks, model, files, images, gdprAction) {
     if (this._abortController) this._abortController.abort();
     this._abortController = new AbortController();
 
@@ -170,6 +177,10 @@ class API {
         media_type: f.type,
       }));
     }
+    // Transparent anonymisation: forwards the verdict from the pre-send
+    // GDPR modal so the chat worker can pseudonymise / model-swap / pass
+    // through. Server validates; unknown values are treated as null.
+    if (gdprAction) body.gdpr_action = gdprAction;
 
     try {
       const resp = await fetch(`${BASE_URL}/v1/chat`, {
