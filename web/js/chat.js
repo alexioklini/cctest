@@ -124,6 +124,30 @@ async function sendMessage() {
       gdprAction = stickyPref;
     } else {
       const scan = PIIScanner.scanPayload(text, state._pendingFiles);
+      // Follow-up-turn coverage: if a prior turn's persisted assistant
+      // reply (or older user message) already carries PII, the LLM may
+      // re-read disk-resident attachments OR have the PII inline in the
+      // history we're about to ship. The outgoing-only scan above misses
+      // this because the new typed text + new attachments are clean. Fold
+      // a history scan into the modal trigger so the user gets asked
+      // again on every PII-bearing follow-up.
+      let historyHas = false;
+      try { historyHas = !!piiHistoryHasFindings(chat); } catch (e) {}
+      if (historyHas) {
+        const counts = chat._piiHistoryCounts || {};
+        const histFindings = Object.entries(counts).map(([label, count]) => ({
+          rule_id: label, label, count, samples: [],
+          category: 'history', action: chat._piiHistoryWorst || 'warn', match: '',
+        }));
+        if (histFindings.length) {
+          // Inject as a synthetic "history" source so the modal lists it
+          // alongside text + attachments.
+          scan.bySource['history'] = histFindings;
+          for (const hf of histFindings) {
+            for (let i = 0; i < hf.count; i++) scan.findings.push(hf);
+          }
+        }
+      }
       if (scan.findings.length) {
         const localActive = isModelLocal(chat.model || '');
         const { verdict, persist } = await gdprActionModal(scan, chat, localActive);
@@ -2885,7 +2909,8 @@ function renderSyntheticGdprCall(msg, idx) {
     const catLabel = cats.length ? ' · ' + cats.join(', ') : '';
     const pending = Array.isArray(result.pending_on_read) ? result.pending_on_read : [];
     const pendNote = pending.length ? ` · ${pending.length} file${pending.length === 1 ? '' : 's'} pending on read` : '';
-    summary = `chat text: ${n} finding${n === 1 ? '' : 's'}${catLabel}${pendNote}`;
+    const mapNote = result.mapping === 'reused' ? ' · reused session mapping' : '';
+    summary = `chat text: ${n} finding${n === 1 ? '' : 's'}${catLabel}${pendNote}${mapNote}`;
   } else if (kind === 'anonymise' && status === 'error') {
     summary = String(result.error || 'failed').slice(0, 200);
   } else if (kind === 'anonymise_read' && status === 'ok') {

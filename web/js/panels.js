@@ -459,7 +459,11 @@ function gdprActionModal(scan, chat, localActive) {
         }).join('');
         total = findings.length;
       }
-      const sourceLabel = source === 'text' ? 'Message text' : source.replace(/^file:/, 'Attachment · ');
+      const sourceLabel = source === 'text'
+        ? 'Message text'
+        : source === 'history'
+          ? 'Chat history (prior turns)'
+          : source.replace(/^file:/, 'Attachment · ');
       sections.push(
         '<div class="pii-source-card">' +
           '<div class="pii-source-head">' +

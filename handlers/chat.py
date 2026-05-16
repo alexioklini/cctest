@@ -1653,7 +1653,29 @@ class ChatHandlerMixin:
                 nonlocal_message = message
                 nonlocal_user_content = user_content
                 if session._gdpr_pending_action == "anonymise":
-                    _mapping = pseudonymizer.new_mapping()
+                    # Reuse the session's existing mapping when one exists —
+                    # same session = same PII scope, so a value pseudonymised
+                    # in turn 1 must map to the same token in turn 2. Minting
+                    # a fresh mapping per turn would (a) break cross-turn
+                    # token stability (model sees different placeholders for
+                    # the same person), (b) re-scan + re-emit synthetic rows
+                    # for already-known values, and (c) leave a graveyard of
+                    # one-shot pseudonym_maps rows in chats.db.
+                    _mapping = None
+                    try:
+                        _prior_maps = ChatDB.list_pseudonym_maps_for_session(sid) or []
+                        if _prior_maps:
+                            _latest_mid = _prior_maps[-1][0]
+                            _mapping = pseudonymizer.get_mapping(_latest_mid)
+                            if _mapping is None:
+                                _mapping = pseudonymizer.load_mapping(_latest_mid)
+                                if _mapping is not None:
+                                    pseudonymizer.restore_mapping_to_registry(_mapping)
+                    except Exception:
+                        _mapping = None
+                    _mapping_reused = _mapping is not None
+                    if _mapping is None:
+                        _mapping = pseudonymizer.new_mapping()
                     _anon_tool_id = f"anon_{_mapping.mapping_id[:12]}"
                     _t0 = time.time()
                     # Upfront row: this step pseudonymises the typed text
@@ -1672,6 +1694,7 @@ class ChatHandlerMixin:
                         args={
                             "scope": "chat_text",
                             "pending_on_read": _pending_attachments,
+                            "mapping": "reused" if _mapping_reused else "new",
                         },
                     )
                     # Keep _anon_sources around for the error-path audit
@@ -1720,6 +1743,7 @@ class ChatHandlerMixin:
                                 "tokens_minted": len(_mapping.forward),
                                 "categories": dict(_mapping.finding_counts),
                                 "pending_on_read": _pending_attachments,
+                                "mapping": "reused" if _mapping_reused else "new",
                                 "mapping_id": _mapping.mapping_id,
                             },
                             status="ok",
@@ -2366,6 +2390,21 @@ class ChatHandlerMixin:
                 # here, so the registry never leaks across turns.
                 _gdpr_mid = getattr(session, "_gdpr_mapping_id", None)
                 if _gdpr_mid:
+                    # Persist any mid-turn additions: read-side tools
+                    # (`_gdpr_anon_tool_text`) mutate `mapping.forward` in
+                    # place when they discover new PII, but `save_mapping`
+                    # is only called once upfront BEFORE the sidecar
+                    # round. Without this second save, reload paths can't
+                    # de-anonymise persisted messages that referenced
+                    # tokens minted mid-turn. UPSERT on `mapping_id` =
+                    # safe to re-call.
+                    try:
+                        _m_inmem = pseudonymizer.get_mapping(_gdpr_mid)
+                        if _m_inmem is not None:
+                            pseudonymizer.save_mapping(
+                                _m_inmem, session_id=sid, turn_id=_gdpr_mid)
+                    except Exception:
+                        pass
                     try:
                         pseudonymizer.close_mapping(_gdpr_mid)
                     except Exception:
