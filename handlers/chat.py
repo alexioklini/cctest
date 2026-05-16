@@ -1817,13 +1817,16 @@ class ChatHandlerMixin:
                 # Use detected purpose from auto-resolve, or fall back to agent's fixed purpose.
                 # In the anonymise branch above, `nonlocal_message` is the
                 # pseudonymised text; in every other branch it's just the
-                # original `message` we copied at function entry. Use it for
-                # purpose classification so the auto-router sees what the
-                # LLM will actually see.
-                message = nonlocal_message
+                # original `message` we copied at function entry. We use
+                # `nonlocal_message` directly here — assigning back to
+                # `message` would mark `message` as a worker-local for the
+                # whole function (Python decides scope at compile-time),
+                # and the `nonlocal_message = message` snapshot at the
+                # top of the try would crash with UnboundLocalError because
+                # the outer-scope `message` is shadowed.
                 purpose = session.agent.config.get("model_purpose")
                 if not purpose and session.agent.config.get("model") == "auto":
-                    purpose = engine.classify_task_purpose(message)
+                    purpose = engine.classify_task_purpose(nonlocal_message)
                 inf_params = engine.get_inference_params(session.model, purpose)
                 # Apply thinking level from request — only when the model supports thinking.
                 _model_cfg = engine._models_config.get(session.model, {}) or {}
