@@ -1751,6 +1751,8 @@ class BrainAgentHandler(
             self._handle_chat_answer()
         elif path == "/v1/chat/gdpr-recovery":
             self._handle_chat_gdpr_recovery()
+        elif path == "/v1/attachments/scan":
+            self._handle_attachment_scan()
         elif path == "/v1/notifications/settings":
             self._handle_notifications_settings_post()
         elif path == "/v1/notifications/dismiss":

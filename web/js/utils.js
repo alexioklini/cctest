@@ -1011,6 +1011,13 @@ const PIIScanner = {
 
   // Scan a full outgoing payload: user text + all text-readable attachments.
   // Returns {findings, bySource} where bySource is {text: [...], 'file:name': [...]}.
+  //
+  // Two-source attachment coverage: text-MIME files we decode client-side
+  // and scan inline (legacy path — fast, covers .txt/.md/.json/etc.). PDFs,
+  // DOCX, XLSX etc. can't be decoded in the browser, so the server scans
+  // them on upload via POST /v1/attachments/scan and stamps the result
+  // onto `file.scan`. We merge those server-side findings into the same
+  // bySource map so the action modal can group both kinds.
   scanPayload(text, files) {
     const bySource = {};
     const all = [];
@@ -1019,6 +1026,35 @@ const PIIScanner = {
       if (fs.length) { bySource.text = fs; all.push(...fs); }
     }
     for (const f of (files || [])) {
+      // Prefer server-side aggregated `groups` (one entry per rule_id with
+      // count + samples) — collapses thousands of identical findings on big
+      // spreadsheets. Each group becomes a pseudo-finding for the modal.
+      const groups = (f.scan && f.scan.scanned && Array.isArray(f.scan.groups))
+        ? f.scan.groups : null;
+      if (groups && groups.length) {
+        const asFindings = groups.map(g => ({
+          rule_id: g.rule_id,
+          label: g.label,
+          count: g.count,
+          samples: g.samples || [],
+          // First sample as `match` so any caller that still reads `.match`
+          // (worstAction → categories) sees something representative.
+          match: (g.samples && g.samples[0]) || '',
+          category: this.ruleCategories?.[g.rule_id] || 'personal',
+          action: this.policy?.categories?.[
+            this.ruleCategories?.[g.rule_id] || 'personal'] || 'warn',
+        }));
+        bySource['file:' + f.name] = asFindings;
+        // Inflate `all` by count so `scan.findings.length` reflects the
+        // real total in the hero counter.
+        for (const af of asFindings) {
+          for (let i = 0; i < af.count; i++) all.push(af);
+        }
+        continue;
+      }
+      // Fall back to client-side scan for decodable text (covers .txt/.md
+      // even when the server scan returned 0 findings — same result either
+      // way; this is the legacy path for users running an older server).
       const decoded = this.decodeAttachmentText(f);
       if (!decoded) continue;
       const fs = this.scan(decoded);

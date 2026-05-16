@@ -60,6 +60,44 @@ def deliver_gdpr_recovery_choice(session_id: str, choice: str) -> bool:
     return True
 
 
+def emit_gdpr_tool_event_for_session(
+    session_id: str,
+    *,
+    kind: str,
+    tool_use_id: str,
+    args: dict | None = None,
+    result: dict | None = None,
+    status: str = "ok",
+    duration_ms: int = 0,
+):
+    """Public seam: callable from anywhere that has a session id but no
+    direct `live` reference. Emits a `dispatch` synthetic row immediately
+    followed by a `done` row.
+
+    Used from `brain._gdpr_anon_tool_text` (per read_document/read_file
+    pseudonymisation) and `brain._after_file_write` callback when the
+    write path needs to surface a per-tool-call privacy event. Falls back
+    to persistence-only when the session has no live SSE stream attached
+    (chat may have ended between the tool call and this emission)."""
+    try:
+        sess = sessions.peek(session_id)  # noqa: F821 — injected by server
+    except Exception:
+        sess = None
+    live = getattr(sess, "live_stream", None) if sess else None
+    if live is None:
+        # No live stream — still persist so the rows show on reload.
+        class _NullLive:
+            def emit(self, *a, **kw): pass
+        live = _NullLive()
+    _emit_synthetic_tool_event(
+        live=live, sid=session_id, kind=kind, tool_use_id=tool_use_id,
+        phase="dispatch", args=args or {})
+    _emit_synthetic_tool_event(
+        live=live, sid=session_id, kind=kind, tool_use_id=tool_use_id,
+        phase="done", result=result or {}, status=status,
+        duration_ms=duration_ms)
+
+
 def _emit_synthetic_tool_event(
     *,
     live,
@@ -1618,16 +1656,29 @@ class ChatHandlerMixin:
                     _mapping = pseudonymizer.new_mapping()
                     _anon_tool_id = f"anon_{_mapping.mapping_id[:12]}"
                     _t0 = time.time()
-                    # Build the source list up front so the dispatch event
-                    # reflects every input that will be pseudonymised.
-                    _anon_sources = ["chat_text"] + [
-                        f"attachment:{os.path.basename(p)}" for p in saved_paths
+                    # Upfront row: this step pseudonymises the typed text
+                    # and installs the per-turn mapping. Attachments are NOT
+                    # rewritten on disk anymore — `tool_read_document` /
+                    # `tool_read_file` pseudonymise extracted text on the
+                    # way back to the LLM, emitting their own
+                    # `anonymise_read` synthetic rows when findings are
+                    # added to this same mapping.
+                    _pending_attachments = [
+                        os.path.basename(p) for p in saved_paths
                     ]
                     _emit_synthetic_tool_event(
                         live=live, sid=sid, kind="anonymise",
                         tool_use_id=_anon_tool_id, phase="dispatch",
-                        args={"sources": _anon_sources},
+                        args={
+                            "scope": "chat_text",
+                            "pending_on_read": _pending_attachments,
+                        },
                     )
+                    # Keep _anon_sources around for the error-path audit
+                    # summaries below — those still want the full list.
+                    _anon_sources = ["chat_text"] + [
+                        f"attachment:{n}" for n in _pending_attachments
+                    ]
                     _anon_ok = False
                     try:
                         _scanner_cfg = engine._get_gdpr_scanner_config()
@@ -1645,29 +1696,13 @@ class ChatHandlerMixin:
                                         _blk["text"] = _anonymised
                                         break
                             nonlocal_message = _anonymised
-                        # Walk every disk-routed attachment and rewrite it
-                        # in place. Files the LLM can read (via
-                        # read_document / read_file) MUST be pseudonymised
-                        # before the LLM ever loads them — once the tool
-                        # call lands, the cloud side already sees the raw
-                        # bytes. Unsupported types raise
-                        # FilePseudonymizeError (binary/unknown extensions);
-                        # we treat that as "block the cloud send" since we
-                        # can't anonymise what we can't parse. The recovery
-                        # modal lets the user pick local-model or cancel.
-                        from engine.file_pseudonymize import (
-                            FilePseudonymizeError, SUPPORTED_EXTS,
-                        )
-                        for _path in saved_paths:
-                            _ext = os.path.splitext(_path)[1].lower()
-                            if _ext not in SUPPORTED_EXTS:
-                                raise FilePseudonymizeError(
-                                    f"can't anonymise unsupported attachment "
-                                    f"type: {os.path.basename(_path)} ({_ext})")
-                            # In-place rewrite: src == dst. pseudonymize_file
-                            # handles the safe-write pattern internally.
-                            pseudonymizer.pseudonymize_file(
-                                _path, _path, mapping=_mapping)
+                        # Eager mapping install — always persist + install on
+                        # the session, even when typed text had no findings.
+                        # Tool calls later in the turn (read_document /
+                        # read_file / read_attachment) will add to this same
+                        # mapping when they scan extracted attachment text.
+                        # The streaming deanonymizer reverses every token
+                        # before the user sees the assistant reply.
                         pseudonymizer.save_mapping(
                             _mapping, session_id=sid, turn_id=_anon_tool_id)
                         session._gdpr_mapping_id = _mapping.mapping_id
@@ -1680,10 +1715,11 @@ class ChatHandlerMixin:
                             live=live, sid=sid, kind="anonymise",
                             tool_use_id=_anon_tool_id, phase="done",
                             result={
+                                "scope": "chat_text",
                                 "findings": len(_findings),
                                 "tokens_minted": len(_mapping.forward),
-                                "sources": list(_mapping.sources),
                                 "categories": dict(_mapping.finding_counts),
+                                "pending_on_read": _pending_attachments,
                                 "mapping_id": _mapping.mapping_id,
                             },
                             status="ok",
@@ -2515,3 +2551,205 @@ class ChatHandlerMixin:
             return
         self._send_json({"delivered": True, "session_id": session_id,
                          "action": action})
+
+    def _handle_attachment_scan(self):
+        """POST /v1/attachments/scan — upload-time PII scan for one attachment.
+
+        Body: `{session_id, name, content (base64), media_type}`.
+
+        Returns:
+          {scanned: true,  attachment_id, source_name, findings: [...],
+           categories: {...}, finding_count}
+          — extracted text was scanned successfully.
+
+          {scanned: false, attachment_id, source_name, reason: "archive"|"media"
+           |"unsupported"|"too_large"|"extract_timeout"|"extract_failed"}
+          — scan was not run. `archive` / `media` are accepted gaps (treat as
+            'opaque, send if user explicitly accepts'); the rest are
+            BLOCKING — the client must refuse to send while any attachment
+            on the composer has reason in {unsupported, too_large,
+            extract_timeout, extract_failed}.
+
+        Caps: 50 MB file size, 30 s extract+scan timeout.
+        """
+        import base64 as _b64
+        import threading as _threading
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._send_json({"error": "invalid JSON body"}, 400)
+            return
+        session_id = (body.get("session_id") or "").strip()
+        name = (body.get("name") or "").strip() or "file"
+        content = body.get("content") or ""
+        encoding = body.get("encoding") or "base64"
+        # Auth still required (caller must be a known user); session may be
+        # absent because the chat hasn't been created yet (composer attach
+        # happens before the first send). Fall back to a per-user scratch
+        # directory so the temp file still lands somewhere bounded.
+        user = self._require_auth()
+        if user is None:
+            return
+        if session_id and self._session_access_check(session_id) is None:
+            return
+        if not content:
+            self._send_json({"error": "content is required"}, 400)
+            return
+
+        MAX_BYTES = 50 * 1024 * 1024
+        TIMEOUT_S = 30
+
+        attachment_id = f"{int(time.time() * 1000):x}_{hash(name) & 0xffff:04x}"
+        safe_name = name.replace("/", "_").replace("\\", "_")
+
+        # Save to the same dir read_document will look at later; for a
+        # session-less scan (composer pre-create) use a per-user scratch
+        # dir whose contents read_document would never see anyway — it's
+        # only used to feed the parser. The chat worker re-saves the file
+        # under the real session dir at send time.
+        attach_dir_key = session_id or f"_scan/{user['id']}"
+        attach_dir = os.path.join("/tmp", "brain-attachments", attach_dir_key)
+        try:
+            os.makedirs(attach_dir, exist_ok=True)
+        except Exception as _e:
+            self._send_json({"error": f"cannot create attach dir: {_e}"}, 500)
+            return
+        fpath = os.path.join(attach_dir, safe_name)
+        try:
+            if encoding == "base64":
+                raw = _b64.b64decode(content)
+            else:
+                raw = content.encode("utf-8", errors="replace")
+        except Exception as _e:
+            self._send_json({"error": f"bad content encoding: {_e}"}, 400)
+            return
+        if len(raw) > MAX_BYTES:
+            self._send_json({
+                "scanned": False,
+                "attachment_id": attachment_id,
+                "source_name": name,
+                "reason": "too_large",
+                "size": len(raw),
+                "cap": MAX_BYTES,
+            })
+            return
+        try:
+            with open(fpath, "wb") as fp:
+                fp.write(raw)
+        except Exception as _e:
+            self._send_json({"error": f"write failed: {_e}"}, 500)
+            return
+
+        # Extract + scan inside a daemon thread bounded by TIMEOUT_S.
+        result_box: dict = {}
+
+        def _worker():
+            try:
+                text, kind = engine.extract_attachment_text(fpath)
+                if kind != "text":
+                    result_box["kind"] = kind
+                    return
+                cfg = engine._get_gdpr_scanner_config()
+                # Cap raw findings at 200 — enough for category accuracy on
+                # large spreadsheets without shipping thousands of records
+                # the modal would never render anyway.
+                findings = engine._pii_scan_text(text or "",
+                                                 cfg=cfg, max_findings=200)
+                result_box["kind"] = "text"
+                result_box["findings"] = findings
+                result_box["text"] = text or ""
+            except Exception as _e:
+                result_box["error"] = f"{type(_e).__name__}: {str(_e)[:200]}"
+
+        t = _threading.Thread(target=_worker, daemon=True)
+        t.start()
+        t.join(timeout=TIMEOUT_S)
+        if t.is_alive():
+            self._send_json({
+                "scanned": False,
+                "attachment_id": attachment_id,
+                "source_name": name,
+                "reason": "extract_timeout",
+                "timeout_seconds": TIMEOUT_S,
+            })
+            return
+        if "error" in result_box:
+            self._send_json({
+                "scanned": False,
+                "attachment_id": attachment_id,
+                "source_name": name,
+                "reason": "extract_failed",
+                "error": result_box["error"],
+            })
+            return
+        kind = result_box.get("kind", "unsupported")
+        if kind in ("archive", "media"):
+            self._send_json({
+                "scanned": False,
+                "attachment_id": attachment_id,
+                "source_name": name,
+                "reason": kind,
+            })
+            return
+        if kind == "unsupported":
+            self._send_json({
+                "scanned": False,
+                "attachment_id": attachment_id,
+                "source_name": name,
+                "reason": "unsupported",
+            })
+            return
+        findings = result_box.get("findings") or []
+        full_text = result_box.get("text") or ""
+
+        def _preview(f):
+            s, e = int(f.get("start", 0)), int(f.get("end", 0))
+            if 0 <= s < e <= len(full_text):
+                return full_text[s:e][:24]
+            return ""
+
+        # Aggregate by rule_id. The modal renders one row per rule with
+        # the count + up to 3 sample previews. For a 50k-row spreadsheet
+        # this collapses what would be thousands of identical-shape
+        # findings to a single readable line.
+        groups: dict[str, dict] = {}
+        SAMPLE_CAP = 3
+        for f in findings:
+            rid = f.get("rule_id") or "unknown"
+            g = groups.get(rid)
+            if g is None:
+                g = {
+                    "rule_id": rid,
+                    "label": f.get("label") or rid,
+                    "count": 0,
+                    "samples": [],
+                }
+                groups[rid] = g
+            g["count"] += 1
+            if len(g["samples"]) < SAMPLE_CAP:
+                p = _preview(f)
+                if p and p not in g["samples"]:
+                    g["samples"].append(p)
+        # Category counts (rule_id -> count) — kept for backward compat
+        # with the old client field; mirrors `groups[rid].count`.
+        cats = {rid: g["count"] for rid, g in groups.items()}
+
+        # Sort groups by count desc so the modal shows the dominant finding
+        # type first.
+        groups_list = sorted(groups.values(), key=lambda g: -g["count"])
+
+        self._send_json({
+            "scanned": True,
+            "attachment_id": attachment_id,
+            "source_name": name,
+            # Server-side aggregation: one entry per rule_id, with the
+            # total count + up to 3 sample previews. Client modal renders
+            # straight from this — no per-finding records.
+            "groups": groups_list,
+            # Legacy fields kept for older clients that still iterate
+            # findings; safe to drop later.
+            "findings": [],
+            "categories": cats,
+            "finding_count": sum(g["count"] for g in groups_list),
+        })

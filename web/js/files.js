@@ -40,16 +40,23 @@ function handleFileSelect(event) {
         showToast(`${file.name} read truncated (${decodedLen} / ${file.size} bytes) — not attached`, true);
         return;
       }
-      state._pendingFiles.push({
+      const entry = {
         name: file.name,
         type: file.type || 'application/octet-stream',
         data: b64,
         encoding: 'base64',
         preview: isImage ? result : null,
-      });
+        // Upload-time scan state: 'pending' while in flight, 'done' with
+        // {findings, finding_count, categories} or {reason} after the
+        // /v1/attachments/scan response. Composer blocks send while any
+        // file is 'pending' OR has a blocking 'reason'.
+        scan: { state: 'pending' },
+      };
+      state._pendingFiles.push(entry);
       renderFilePreviews();
       updateSendButton();
       schedulePIIBadgeUpdate();
+      scanPendingAttachment(entry);
     };
     reader.onerror = () => {
       showToast(`${file.name} failed to read: ${reader.error?.message || 'unknown'}`, true);
@@ -57,6 +64,26 @@ function handleFileSelect(event) {
     reader.readAsDataURL(file);
   }
   event.target.value = '';
+}
+
+// Background scan: POST the just-attached file to /v1/attachments/scan and
+// mutate the entry with the response. The composer's send-button gate +
+// the PII modal both read `entry.scan` to decide what to do.
+async function scanPendingAttachment(entry) {
+  try {
+    // Empty string when no session exists yet (composer pre-create) — the
+    // server falls back to a per-user scratch dir. Server still requires
+    // auth, just not a session.
+    const sessionId = state.activeChat?.sessionId || '';
+    const res = await API.scanAttachment(sessionId, entry);
+    entry.scan = Object.assign({ state: 'done' }, res || {});
+  } catch (e) {
+    entry.scan = { state: 'done', scanned: false, reason: 'extract_failed',
+                   error: String(e && e.message || e) };
+  }
+  renderFilePreviews();
+  updateSendButton();
+  schedulePIIBadgeUpdate();
 }
 
 function renderImagePreviews() {
@@ -97,9 +124,29 @@ function renderFilePreviews() {
         const chip = document.createElement('div');
         chip.className = 'file-chip';
         chip.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;border:1px solid var(--border-200);background:var(--bg-200);font-size:12px;position:relative;height:64px;box-sizing:border-box';
+        // PII scan badge: hourglass while in flight; red ban-icon for
+        // blocking failures (unscannable); orange shield with count for
+        // findings; nothing for clean files / accepted gaps.
+        let scanBadge = '';
+        const sc = f.scan || {};
+        if (sc.state === 'pending') {
+          scanBadge = `<span title="Scanning for PII…" style="font-size:10px;color:var(--text-300)">⏳</span>`;
+        } else if (sc.scanned === false &&
+                   ['too_large','extract_timeout','extract_failed','unsupported'].includes(sc.reason)) {
+          const r = {
+            'too_large': 'too large for PII scan',
+            'extract_timeout': 'PII scan timed out',
+            'extract_failed': 'PII scan failed',
+            'unsupported': 'unsupported format — cannot scan',
+          }[sc.reason];
+          scanBadge = `<span title="${esc(r)} — remove to send" style="color:#dc2626;font-weight:bold">⛔</span>`;
+        } else if (sc.scanned && sc.finding_count > 0) {
+          scanBadge = `<span title="${sc.finding_count} PII finding(s)" style="color:#d97706;font-weight:bold">🛡️ ${sc.finding_count}</span>`;
+        }
         chip.innerHTML = `
           <span>${fileTypeIcon(f.name)}</span>
           <span style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+          ${scanBadge}
           <button class="image-preview-remove" onclick="removePendingFile(${i})">&#10005;</button>
         `;
         el.appendChild(chip);
@@ -147,10 +194,12 @@ function removePendingFile(idx) {
       if (window.electronAPI?.readDroppedFile && file.path) {
         const result = await window.electronAPI.readDroppedFile(file.path);
         if (result && !result.error) {
+          result.scan = { state: 'pending' };
           state._pendingFiles.push(result);
           renderFilePreviews();
           updateSendButton();
           schedulePIIBadgeUpdate();
+          scanPendingAttachment(result);
         }
       } else {
         // Same empty / truncated-read guards as handleFileSelect — see
@@ -177,16 +226,19 @@ function removePendingFile(idx) {
             showToast(`${file.name} read truncated (${decodedLen} / ${file.size} bytes) — not attached`, true);
             return;
           }
-          state._pendingFiles.push({
+          const entry = {
             name: file.name,
             type: file.type || 'application/octet-stream',
             data: b64,
             encoding: 'base64',
             preview: isImage ? result : null,
-          });
+            scan: { state: 'pending' },
+          };
+          state._pendingFiles.push(entry);
           renderFilePreviews();
           updateSendButton();
           schedulePIIBadgeUpdate();
+          scanPendingAttachment(entry);
         };
         reader.onerror = () => {
           showToast(`${file.name} failed to read: ${reader.error?.message || 'unknown'}`, true);

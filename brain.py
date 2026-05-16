@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.5.5"
+VERSION = "8.6.0"
 VERSION_DATE = "2026-05-16"
 CHANGELOG = [
+    ("8.6.0", "2026-05-16", "feat(transparent-anonymisation): collapse attachment pipeline to a single text-side seam + per-read synthetic rows + grouped pre-send modal. Forward file walkers retired in favour of one place that scans on the way out of `tool_read_document`/`tool_read_file`/`tool_read_attachment`. **(1) `brain._gdpr_anon_tool_text(text, source)`** — pseudonymises any read-tool output when the active session carries a mapping (`_thread_local._gdpr_mapping_id` set by `server_lib/tool_mcp._apply_context` from the sidecar's `tool_context.gdpr_mapping_id`). Findings → `pseudonymize_text` against the per-turn mapping; emits an `anonymise_read` synthetic tool-call pair via the new `handlers.chat.emit_gdpr_tool_event_for_session(session_id, ...)` seam so the chat UI shows what got pseudonymised mid-turn (rule_id × count + tokens minted + categories + source). Wired into every `_ok_and_cache` payload, the image branch's metadata text, and `tool_read_file` / `tool_read_attachment` returns. The streaming deanonymizer on the reply reverses every minted token before the user sees it. **(2) Pre-send upload scan** — new `POST /v1/attachments/scan` endpoint (`handlers/chat._handle_attachment_scan`) saves the file to `/tmp/brain-attachments/<sid|_scan/<uid>>/`, extracts text via the new `brain.extract_attachment_text(path)` helper (shared parser dispatch with `tool_read_document`), runs `_pii_scan_text` (capped 200 findings), aggregates by rule_id with up to 3 sample previews per rule. 30s timeout + 50MB cap enforced; cap exceeded → `reason: too_large|extract_timeout|extract_failed|unsupported` and the composer BLOCKS sending until the file is removed. `archive` (.zip/.epub/.msg) / `media` (images/audio/video) are accepted gaps — non-blocking, same coverage as the upfront text scanner. Auth required; session_id is optional so the composer pre-create case works. **(3) Eager mapping install** — chat worker's anonymise branch (handlers/chat.py) no longer rewrites files on disk; the upfront synthetic row's args/result now correctly report `{scope: \"chat_text\", findings: N, pending_on_read: [...]}` instead of misleadingly listing attachments as sources before they've been read. **(4) Reverse seam preserved** — `pseudonymizer.deanonymize_file` + the OOXML/xlsx/csv/plain reverse walkers stay; `make_gdpr_after_file_write_cb` still rewrites LLM-written files in place + emits `deanonymise_file` synthetic rows. **(5) Composer wiring** (web/js/files.js + chat.js + utils.js + api.js + init.js + panels.js): per-attachment scan kicks off on attach/drop; chip shows ⏳ / ⛔ (blocking) / 🛡️N (findings) badges; `sendMessage` blocks while any file's `scan.state==='pending'` or has a blocking reason. `PIIScanner.scanPayload` merges server-side `groups` array into the modal's `bySource` map so big-spreadsheet findings render as `phone × 11 — e.g. +49 30..., 123 456..., +49 171...` (one row per rule_id with samples), not thousands of per-finding lines. **(6) Modal grouped-by-source rendering** — `panels.js` detects aggregated entries (`typeof first.count === 'number'`) and renders count × samples; falls back to per-fragment for legacy text-MIME scans. **(7) Synthetic-row visibility fix** — `renderToolCall` now routes synthetic rows to `renderSyntheticGdprCall` BEFORE the `state.showToolCalls` gate (privacy ops are not LLM tool calls). `renderTurnBody` collects synthetic rows into a separate `syntheticHtml` chunk rendered OUTSIDE the activity `<details>` disclosure (which defaults closed on history-load), so privacy ops are always visible. Pre-user synthetic rows attach to the NEXT user turn instead of a phantom turn 0 (which has no header). New `anonymise_read` kind handled in `renderSyntheticGdprCall` with summary like `attachment:report.docx: 11 findings · 11 new tokens · email, iban, phone`. **(8) Cleanup** — deleted `engine/file_pseudonymize` forward walkers (`_docx_forward`/`_pptx_forward`/`_xlsx_forward`/`_csv_forward`/`_plain_forward`/`_forward_text`/`_FORWARD_DISPATCH`/`pseudonymize_file`); `pseudonymizer.pseudonymize_file` + `__all__` entry removed. `tests/test_pseudonymizer_files.py` deleted (tested removed walkers; reverse path covered by `test_chat_worker_helpers.py`). New `tests/fixtures/{kundenvertrag.docx,mitarbeiterliste.xlsx,make_test_files.py}` carry synthetic-PII attachments for manual end-to-end testing (Luhn-valid CC, MOD-97 IBANs, fake emails/phones). All 53 existing tests pass."),
     ("8.5.5", "2026-05-16", "fix(file-upload): reject empty / truncated file reads before they reach the worker. End-to-end test of the transparent-anonymisation pipeline (v8.5.4) surfaced a docx attachment arriving server-side as 22 bytes of pure ZIP EOCD record — the smallest possible 'valid empty zip'. Root cause was that `web/js/files.js:handleFileSelect` (and the drop-zone twin) pushed whatever FileReader produced into `state._pendingFiles` without validating the result, so a Blob whose underlying storage got invalidated mid-read (notably the case with automated test harnesses, but also possible with revoked object URLs or interrupted user uploads) silently became a 22-byte attachment. The `file_pseudonymize` walker downstream then failed opaquely with `Truncated file header`; the recovery flow held (no cloud-send invariant intact) but the user had no way to tell what went wrong. Three guards in `handleFileSelect` + the drop handler: (1) reject `file.size === 0` up front with a toast; (2) treat `commaIdx < 0` / empty base64 payload from FileReader as a read failure and toast instead of pushing; (3) cross-check decoded byte count (`b64.length * 3/4`) against `file.size`, reject if <50% — covers truncated reads where the FileReader produced *some* data but not all of it. Added `reader.onerror` handler with toast so silent read failures surface. Both code paths kept symmetric so drag-and-drop users see the same toast as file-picker users. Real-bytes round-trip test on the chat-attachment dir (`/tmp/brain-attachments/.../contacts.docx`, 36868 bytes) confirms the pipeline works end-to-end when the file isn't truncated. PII scanner consolidation (one implementation server-side) flagged as follow-up — out of scope for this fix."),
     ("8.5.4", "2026-05-16", "fix(pii-scanner): IBAN regex captured trailing space when followed by another word. Pattern `\\b[A-Z]{2}\\d{2}[ ]?(?:[A-Z0-9][ ]?){11,30}\\b` made the last `[ ]?` optional-trailing-space inside the body group; on input like `DE89370400440532013000 bei der Beispielbank` the match ended on the space because the next `\\b` still satisfies (space-to-letter word boundary). Result: the mapping dict held `'DE89…000 '` instead of `'DE89…000'`, the synthetic IBAN replacement got a trailing space too, and the audit/inspector view showed a stray space inside the masked value. Anchored the body to end on alphanumeric: `[A-Z0-9](?:[ ]?[A-Z0-9]){10,29}`. Mirror updated in `web/js/utils.js` per the 'two implementations must stay in sync' invariant. Sanity tests in 5 IBAN shapes (compact, grouped, German, French, trailing punctuation) all match without trailing whitespace."),
     ("8.5.3", "2026-05-16", "feat(transparent-anonymisation): inspector shows wire-truth alongside de-anonymised text. After 8.5.2 the DB row holds the de-anonymised user message (good for chat UX, sidebar titles, reload symmetry), but the session inspector — whose purpose is 'what actually left this box' — also lost the pseudonymised view. Fix is symmetric on both sides: the chat worker captures the wire-truth at the moment the wire transformation happens and stashes it in message metadata. **(1) User row** — anonymise-success branch attaches `metadata.wire_content = nonlocal_user_content` (the pseudonymised text that went on the wire) alongside the existing `gdpr_mapping_id`. The DB still stores the original `user_content` as the message body — chat UI, reload, audit trail all see real values. **(2) Assistant row** — reply-finalisation captures `msg_metadata.wire_content = reply` BEFORE the `reply = _deanon_reply` rebind, but only when `_restored > 0` (no token swaps → identical content → no metadata bloat). **(3) Inspector handler** (`handlers/sessions_handler.py`) — interaction builder reads both user/assistant metadata for `wire_content` + `gdpr_mapping_id`, flattens list-of-blocks to text, and surfaces them in the JSON shape so the UI can render them. **(4) Inspector UI** (`web/js/chat.js`) — green-tinted 'Wire request (pseudonymised)' collapsible appears under the user message when `ix.user.wire_content` is set; matching 'Wire response (pseudonymised) — N tokens restored' collapsible appears above the assistant content when `a.wire_content` is set. Both empty on non-anonymise turns — no UI noise. The with-payload render path already showed wire-truth via `p.user_message` from the sidecar's `request_payload` event, so the new fallback-path block closes the gap for turns where no payload metadata was captured."),
@@ -2799,6 +2800,153 @@ def _err(msg: str) -> str:
     return json.dumps({"error": msg}, ensure_ascii=False)
 
 
+def extract_attachment_text(path: str) -> tuple[str, str]:
+    """Extract plain text from an attachment, sharing tool_read_document's
+    parser dispatch. Returns `(text, kind)` where `kind` is one of:
+      "text"     — extracted; scan may proceed
+      "archive"  — .zip / .epub / .msg — accepted gap, do not scan
+      "media"    — image / audio / video — accepted gap, do not scan
+      "unsupported" — extension we can't extract (no scan possible)
+
+    Used by the upload-time PII scanner (POST /v1/attachments/scan).
+    Pure side-effect-free wrapper around the existing parsers — no caching,
+    no anonymisation, no thread-local reads. Caller decides what to do
+    with the text.
+    """
+    ext = os.path.splitext(path)[1].lower()
+    # Accepted gaps — same coverage as the upfront text scanner.
+    if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg",
+               ".mp3", ".wav", ".ogg", ".flac", ".m4a",
+               ".mp4", ".mov", ".webm", ".mkv", ".avi"):
+        return "", "media"
+    if ext in (".zip", ".epub", ".msg"):
+        return "", "archive"
+    try:
+        if ext == ".pdf":
+            try:
+                import fitz
+            except ImportError:
+                return "", "unsupported"
+            doc = fitz.open(path)
+            pages = [page.get_text() for page in doc]
+            doc.close()
+            return "\n\n".join(pages), "text"
+        if ext == ".docx":
+            try:
+                import docx
+            except ImportError:
+                return "", "unsupported"
+            doc = docx.Document(path)
+            parts = [p.text for p in doc.paragraphs if p.text.strip()]
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            parts.append(cell.text)
+            return "\n\n".join(parts), "text"
+        if ext in (".xlsx", ".xls"):
+            return DocumentParser.parse_xlsx(path), "text"
+        if ext == ".pptx":
+            return DocumentParser.parse_pptx(path), "text"
+        if ext in (".csv", ".tsv"):
+            return DocumentParser.parse_csv(path), "text"
+        if ext == ".eml":
+            import email
+            from email import policy
+            with open(path, "rb") as f:
+                msg = email.message_from_bytes(f.read(), policy=policy.default)
+            body_part = msg.get_body(preferencelist=("plain", "html"))
+            body = body_part.get_content() if body_part else ""
+            if body_part and body_part.get_content_type() == "text/html":
+                body = re.sub(r"<[^>]+>", " ", body)
+            headers = " ".join(
+                str(msg.get(k, "")) for k in ("From", "To", "Cc", "Subject"))
+            return headers + "\n\n" + body, "text"
+        # Plain text fallback (.txt .md .log .html .htm .json + unknown).
+        with open(path, "r", errors="replace") as f:
+            return f.read(), "text"
+    except Exception:
+        return "", "unsupported"
+
+
+def _gdpr_anon_tool_text(text: str, source: str) -> str:
+    """Pseudonymise text returned from a read-style tool, if the active
+    session has a transparent-anonymisation mapping.
+
+    Reads `_thread_local._gdpr_mapping_id` (set by `tool_mcp._apply_context`
+    on every sidecar tool-dispatch from the per-turn `tool_context.gdpr_mapping_id`).
+    No-op when no mapping is active — returns text unchanged.
+
+    Scans for PII findings, adds them to the mapping, returns pseudonymised
+    text. The same mapping is also used by `StreamingDeanonymizer` on the
+    assistant reply, so any token minted here is reversed before the user
+    sees it.
+
+    When findings are added, emits an `anonymise_read` synthetic tool-call
+    pair on the session's live stream so the chat history shows what
+    actually got pseudonymised mid-turn. Persisted with `synthetic=True`,
+    so reload picks them up.
+    """
+    if not text:
+        return text
+    try:
+        mapping_id = getattr(_thread_local, "_gdpr_mapping_id", "") or ""
+    except Exception:
+        mapping_id = ""
+    if not mapping_id:
+        return text
+    try:
+        import pseudonymizer as _ps
+        mapping = _ps.get_mapping(mapping_id)
+        if mapping is None:
+            return text
+        cfg = _get_gdpr_scanner_config()
+        findings = _pii_scan_text(text, cfg=cfg)
+        if not findings:
+            return text
+        _tokens_before = len(mapping.forward)
+        out = _ps.pseudonymize_text(text, findings, mapping=mapping,
+                                    source=source or "tool_output")
+        _tokens_added = len(mapping.forward) - _tokens_before
+        # Per-rule_id breakdown for the chat-history row.
+        _cats: dict[str, int] = {}
+        for f in findings:
+            rid = f.get("rule_id") or "unknown"
+            _cats[rid] = _cats.get(rid, 0) + 1
+        # Surface a synthetic anonymise_read row so the UI shows what
+        # happened. Best-effort — never block the tool return.
+        try:
+            sid = getattr(_thread_local, "current_session_id", "") or ""
+            if sid:
+                from handlers.chat import emit_gdpr_tool_event_for_session
+                _tuid = f"anon_read_{mapping_id[:8]}_{int(time.time()*1000) % 1_000_000}"
+                emit_gdpr_tool_event_for_session(
+                    sid,
+                    kind="anonymise_read",
+                    tool_use_id=_tuid,
+                    args={"source": source or "tool_output"},
+                    result={
+                        "findings": len(findings),
+                        "tokens_minted": _tokens_added,
+                        "categories": _cats,
+                        "source": source or "tool_output",
+                        "mapping_id": mapping_id,
+                    },
+                    status="ok",
+                    duration_ms=0,
+                )
+        except Exception:
+            pass
+        return out
+    except Exception:
+        # Fail-safe: never leak PII because of a scanner crash. On error,
+        # caller surfaces an error; here we conservatively return the
+        # original text (the only alternative — return nothing — would
+        # silently hide content). The recovery-modal path in the worker
+        # already covered the "fail-closed" stance for the user message.
+        return text
+
+
 def _route_to_node(tool_name: str, args: dict) -> str | None:
     """If args contain 'node', route to remote node via server API. Returns result string or None for local."""
     node = args.pop("node", None)
@@ -2872,7 +3020,8 @@ def tool_read_file(args: dict) -> str:
             except Exception:
                 _round = 0
             _read_doc_cache_store(path, content, tool_round=_round)
-        return _ok({"path": path, "total_lines": total, "showing": f"{start+1}-{min(end, total)}", "content": content})
+        content_anon = _gdpr_anon_tool_text(content, f"file:{os.path.basename(path)}")
+        return _ok({"path": path, "total_lines": total, "showing": f"{start+1}-{min(end, total)}", "content": content_anon})
     except Exception as e:
         return _err(f"read_file: {e}")
 
@@ -3586,6 +3735,11 @@ def tool_read_attachment(args: dict) -> str:
     media_type = att.get("media_type", "text/plain")
     ext = os.path.splitext(name)[1].lower()
 
+    _anon_src = f"attachment:{name}"
+
+    def _wrap(s):
+        return _gdpr_anon_tool_text(s, _anon_src) if isinstance(s, str) else s
+
     # --- Binary files (base64 encoded) ---
     if encoding == "base64":
         import base64 as b64_mod
@@ -3606,7 +3760,7 @@ def tool_read_attachment(args: dict) -> str:
                     if text.strip():
                         pages.append(f"--- Page {i+1} ---\n{text}")
                 doc.close()
-                return "\n\n".join(pages) if pages else "(PDF has no extractable text)"
+                return _wrap("\n\n".join(pages) if pages else "(PDF has no extractable text)")
             except ImportError:
                 return _err("Install pymupdf for PDF support: pip3 install pymupdf")
 
@@ -3615,33 +3769,33 @@ def tool_read_attachment(args: dict) -> str:
             try:
                 import docx
                 doc = docx.Document(io_mod.BytesIO(raw_bytes))
-                return DocumentParser.parse_docx.__func__(None) if False else _parse_docx_from_bytes(raw_bytes)
+                return _wrap(_parse_docx_from_bytes(raw_bytes))
             except ImportError:
                 return _err("Install python-docx for DOCX support: pip3 install python-docx")
 
         # XLSX
         if ext == ".xlsx":
             try:
-                return _parse_xlsx_from_bytes(raw_bytes, sheet=args.get("sheet"))
+                return _wrap(_parse_xlsx_from_bytes(raw_bytes, sheet=args.get("sheet")))
             except ImportError:
                 return _err("Install openpyxl for XLSX support: pip3 install openpyxl")
 
         # PPTX
         if ext == ".pptx":
             try:
-                return _parse_pptx_from_bytes(raw_bytes)
+                return _wrap(_parse_pptx_from_bytes(raw_bytes))
             except ImportError:
                 return _err("Install python-pptx for PPTX support: pip3 install python-pptx")
 
         # Images — use vision model
         if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg") or media_type.startswith("image/"):
-            return _describe_image_with_vision(content, media_type, name)
+            return _wrap(_describe_image_with_vision(content, media_type, name))
 
         # Unknown binary
         return f"(Binary file: {name}, {len(raw_bytes)} bytes, type: {media_type})"
 
     # --- Text files ---
-    return content
+    return _wrap(content)
 
 
 def _parse_docx_from_bytes(raw_bytes: bytes) -> str:
@@ -3783,12 +3937,20 @@ def tool_read_document(args: dict) -> str:
         def _ok_and_cache(payload: dict) -> str:
             # Cache only the full-file shape so subsequent paginated reads
             # always hit disk; that's what _is_paginated already gates above.
+            # Cache holds RAW text; anonymisation applies on return so future
+            # turns without an active mapping never see stale tokens.
             if not _is_paginated:
                 try:
                     _round = int(getattr(_thread_local, "tool_round", 0) or 0)
                 except Exception:
                     _round = 0
                 _read_doc_cache_store(path, str(payload.get("content", "") or ""), tool_round=_round)
+            _src = f"attachment:{os.path.basename(path)}"
+            raw = str(payload.get("content", "") or "")
+            anon = _gdpr_anon_tool_text(raw, _src)
+            if anon is not raw:
+                payload = dict(payload)
+                payload["content"] = anon
             return _ok(payload)
 
         ext = os.path.splitext(path)[1].lower()
@@ -3929,7 +4091,9 @@ def tool_read_document(args: dict) -> str:
         elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
             meta_text = DocumentParser.parse_image(path)
             vision_note = "\n\n*(For AI-powered image description, include this image directly in your chat message)*"
-            return _ok({"path": path, "format": "image", "content": meta_text + vision_note})
+            _content = _gdpr_anon_tool_text(
+                meta_text, f"attachment:{os.path.basename(path)}") + vision_note
+            return _ok({"path": path, "format": "image", "content": _content})
 
         elif ext == ".svg":
             content = DocumentParser.parse_svg(path)

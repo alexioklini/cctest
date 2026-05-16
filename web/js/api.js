@@ -88,6 +88,25 @@ class API {
     return this.post('/v1/chat/gdpr-recovery', {session_id: sessionId, action});
   }
 
+  // Upload-time PII scan for one chat attachment. The server saves the file
+  // to /tmp/brain-attachments/<sid>/, extracts text via the same parsers
+  // tool_read_document uses, runs _pii_scan_text, returns
+  // {scanned, attachment_id, source_name, findings, categories,
+  //  finding_count, reason?}. `scanned: false` with reason in
+  // {archive, media} is an accepted gap; reason in
+  // {unsupported, too_large, extract_timeout, extract_failed} is BLOCKING
+  // — the composer must refuse to send while any such attachment is
+  // pending.
+  static scanAttachment(sessionId, file) {
+    return this.post('/v1/attachments/scan', {
+      session_id: sessionId,
+      name: file.name,
+      content: file.data,
+      encoding: file.encoding || 'base64',
+      media_type: file.type || 'application/octet-stream',
+    });
+  }
+
   // Admin-only audit endpoints for transparent anonymisation (step 6.4).
   // listSessionGdprMaps returns row metadata (mapping_id, turn_id,
   // created_at) — bodies stay encrypted at rest. getSessionGdprMap

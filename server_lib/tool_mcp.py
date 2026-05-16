@@ -134,6 +134,13 @@ def _apply_context(ctx: dict) -> None:
     # because it needs SessionManager access to resolve the session's
     # live_stream for SSE emission.
     _gdpr_mid = ctx.get("gdpr_mapping_id") or ""
+    # Expose the mapping id directly on the thread-local so read-side tools
+    # (tool_read_document, tool_read_file, tool_read_attachment) can pull
+    # the active mapping from `pseudonymizer.get_mapping(...)` and
+    # pseudonymise their returned text via `_gdpr_anon_tool_text`. The
+    # streaming deanonymizer on the reply reverses these tokens before the
+    # user sees them.
+    tl._gdpr_mapping_id = _gdpr_mid or ""
     if _gdpr_mid:
         try:
             from handlers.chat import make_gdpr_after_file_write_cb
@@ -154,7 +161,7 @@ def _clear_context() -> None:
         "note_context", "workflow_run_id", "plan_mode", "research_mode_override",
         "execution_overrides", "attachment_image_model", "_current_model",
         "current_agent", "memory_store", "mcp_manager", "caveman_chat",
-        "caveman_system", "_gdpr_after_file_write_cb",
+        "caveman_system", "_gdpr_after_file_write_cb", "_gdpr_mapping_id",
     ):
         try:
             setattr(tl, attr, None)

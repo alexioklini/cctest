@@ -85,6 +85,35 @@ async function sendMessage() {
   //                   fallback for this turn. No anonymisation needed.
   //   'continue'   → user accepted warn-level findings; cloud send as-is.
   //   ''           → no scanner findings or feature disabled.
+  // Block sending while any attachment upload-scan is still in flight, or
+  // returned a "we couldn't scan it" reason. The user accepted these
+  // outcomes as blocking (option 2b spec): unscannable content has unknown
+  // PII state, so we never ship it. Images / audio / video / archives are
+  // accepted gaps — they return reason in {media, archive}, which is NOT
+  // blocking. Server-side scanner failures (timeout, too_large,
+  // unsupported, extract_failed) ARE blocking.
+  const BLOCKING_REASONS = new Set([
+    'unsupported', 'too_large', 'extract_timeout', 'extract_failed',
+  ]);
+  const pendingScan = (state._pendingFiles || []).find(
+    f => f.scan && f.scan.state === 'pending');
+  if (pendingScan) {
+    showToast('Wird gescannt: ' + pendingScan.name + ' — kurz warten …', true);
+    return;
+  }
+  const blockingFile = (state._pendingFiles || []).find(
+    f => f.scan && f.scan.scanned === false && BLOCKING_REASONS.has(f.scan.reason));
+  if (blockingFile) {
+    const reasonLabel = {
+      'too_large': 'too large (>50 MB)',
+      'extract_timeout': 'scan timed out (>30 s)',
+      'extract_failed': 'scan failed',
+      'unsupported': 'unsupported format',
+    }[blockingFile.scan.reason] || blockingFile.scan.reason;
+    showToast(`Cannot send: ${blockingFile.name} — ${reasonLabel}. Remove it to continue.`, true);
+    return;
+  }
+
   let gdprAction = '';
   if (state.piiScannerEnabled !== false) {
     // Sticky session preference (step 6.2): if the user previously ticked
@@ -1414,17 +1443,38 @@ function renderMessages() {
 
   let cur = null;
   let nextTurnNum = 1;
+  // Pre-user activity (e.g. the upfront transparent-anonymisation synthetic
+  // rows that the server persists BEFORE the user message — see
+  // `_emit_synthetic_tool_event` calls in handlers/chat.py). These belong to
+  // the next user turn, not to a phantom turn 0 (which has no header and
+  // collapses by default, hiding the privacy operations).
+  let preTurnIdxs = [];
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
     if (m.role === 'user' || m.role === 'human') {
       if (cur) turns.push(cur);
-      cur = { turnNum: nextTurnNum++, userIdx: i, userMsg: m, memberIdxs: [i] };
+      cur = {
+        turnNum: nextTurnNum++,
+        userIdx: i,
+        userMsg: m,
+        // Pre-user synthetic rows ride INTO this turn so they appear
+        // grouped with the user's send.
+        memberIdxs: [...preTurnIdxs, i],
+      };
+      preTurnIdxs = [];
+    } else if (!cur) {
+      // No user message yet — hold non-user rows for the upcoming turn.
+      preTurnIdxs.push(i);
     } else {
-      if (!cur) cur = { turnNum: 0, userIdx: -1, userMsg: null, memberIdxs: [] };
       cur.memberIdxs.push(i);
     }
   }
   if (cur) turns.push(cur);
+  // Any remaining pre-turn rows (no user message in chat at all) — emit
+  // as a header-less turn so they don't get dropped silently.
+  if (preTurnIdxs.length && !cur) {
+    turns.push({ turnNum: 0, userIdx: -1, userMsg: null, memberIdxs: preTurnIdxs });
+  }
 
   // renderTurnBody references chat.messages by index; patch the reference so
   // indices into msgs (compacted-marker stripped) are still correct.
@@ -1782,7 +1832,12 @@ function toggleActivitySummary(turnNum) {
 }
 
 function renderTurnBody(messages, memberIdxs, turnNum, chat) {
-  const isActivity = (m) => m.role === 'thinking' || m.role === 'tool_call' || m.role === 'tool_result';
+  // Synthetic privacy operations (anonymise / anonymise_read / deanonymise_*)
+  // are NOT LLM activity — they're server-side privacy events that must be
+  // visible at all times, not buried inside the "N Tool-Aufrufe" disclosure.
+  const isSynthetic = (m) => m.synthetic === true;
+  const isActivity = (m) => !isSynthetic(m) && (
+    m.role === 'thinking' || m.role === 'tool_call' || m.role === 'tool_result');
   const isResponse = (m) => m.role === 'assistant' && (typeof m.content === 'string' ? m.content.trim() : '');
 
   // Find the last assistant response with content in this turn.
@@ -1796,6 +1851,16 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   // Tool_calls without a matching thinking (tool_round=null or no thinking) form a bare round.
   const scanEnd = lastResponseMemberPos === -1 ? memberIdxs.length : lastResponseMemberPos;
   let thinkCount = 0, toolCount = 0, workerCount = 0;
+
+  // Collect synthetic privacy rows separately — rendered outside the
+  // activity disclosure so the user always sees what got pseudonymised /
+  // de-pseudonymised on this turn.
+  const syntheticItems = [];
+  for (let i = 0; i < memberIdxs.length; i++) {
+    const idx = memberIdxs[i];
+    const m = messages[idx];
+    if (isSynthetic(m)) syntheticItems.push({ idx, m });
+  }
 
   // Collect activity messages in order with their original idx
   const activityItems = [];
@@ -1863,9 +1928,17 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
     }
   }
 
+  // Privacy rows: render every synthetic tool_call inline (the renderer
+  // pairs each with its tool_result internally; tool_result rows are
+  // skipped by renderToolResult). Order = original message order.
+  let syntheticHtml = '';
+  for (const item of syntheticItems) {
+    syntheticHtml += renderMessage(item.m, item.idx);
+  }
+
   // No activity at all — render flat
   if (thinkCount === 0 && toolCount === 0 && workerCount === 0) {
-    return activityHtml + responseHtml;
+    return syntheticHtml + activityHtml + responseHtml;
   }
 
   // Determine open/closed state
@@ -1885,6 +1958,7 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
 
   if (lastResponseMemberPos === -1) {
     return `
+      ${syntheticHtml}
       <details class="activity-summary"${isOpen ? ' open' : ''}>
         ${summaryEl}
         <div class="activity-summary-body">${activityHtml}</div>
@@ -1893,6 +1967,7 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   }
 
   return `
+    ${syntheticHtml}
     <details class="activity-summary"${isOpen ? ' open' : ''}>
       ${summaryEl}
       <div class="activity-summary-body">${activityHtml}</div>
@@ -2695,13 +2770,15 @@ function fallbackCopy(text, cb) {
 }
 
 function renderToolCall(msg, idx) {
-  if (!state.showToolCalls) return '';
   // Transparent-anonymisation synthetic rows render distinctly — they're not
   // LLM tool calls, they're server-side privacy operations the user should
-  // see in their chat history. Renders shield-icon + summary; click expands.
+  // ALWAYS see in their chat history (independent of the "show tool calls"
+  // toggle, which only affects the model's tool calls). Renders shield-icon
+  // + summary; click expands.
   if (msg.synthetic) {
     return renderSyntheticGdprCall(msg, idx);
   }
+  if (!state.showToolCalls) return '';
   // Look ahead for matching tool_result — match by tool_use_id when available,
   // fall back to name. Don't stop at sibling tool_calls (parallel batches interleave).
   const chat = state.activeChat;
@@ -2795,6 +2872,7 @@ function renderSyntheticGdprCall(msg, idx) {
 
   const titleMap = {
     anonymise: 'Anonymised',
+    anonymise_read: 'Anonymised tool output',
     deanonymise_text: 'De-anonymised reply',
     deanonymise_file: 'De-anonymised file',
   };
@@ -2805,9 +2883,17 @@ function renderSyntheticGdprCall(msg, idx) {
     const n = result.findings ?? 0;
     const cats = Object.keys(result.categories || {});
     const catLabel = cats.length ? ' · ' + cats.join(', ') : '';
-    summary = `${n} finding${n === 1 ? '' : 's'}${catLabel}`;
+    const pending = Array.isArray(result.pending_on_read) ? result.pending_on_read : [];
+    const pendNote = pending.length ? ` · ${pending.length} file${pending.length === 1 ? '' : 's'} pending on read` : '';
+    summary = `chat text: ${n} finding${n === 1 ? '' : 's'}${catLabel}${pendNote}`;
   } else if (kind === 'anonymise' && status === 'error') {
     summary = String(result.error || 'failed').slice(0, 200);
+  } else if (kind === 'anonymise_read' && status === 'ok') {
+    const n = result.findings ?? 0;
+    const minted = result.tokens_minted ?? 0;
+    const cats = Object.keys(result.categories || {});
+    const catLabel = cats.length ? ' · ' + cats.join(', ') : '';
+    summary = `${result.source || 'tool output'}: ${n} finding${n === 1 ? '' : 's'} · ${minted} new token${minted === 1 ? '' : 's'}${catLabel}`;
   } else if (kind === 'deanonymise_text') {
     const n = result.restored ?? 0;
     summary = `${n} token${n === 1 ? '' : 's'} restored`;
@@ -2833,10 +2919,18 @@ function renderSyntheticGdprCall(msg, idx) {
   const safeArgs = msg.args || {};
   const rows = [];
   if (safeArgs.sources) rows.push(['Sources', safeArgs.sources.join(', ')]);
+  if (safeArgs.source) rows.push(['Source', String(safeArgs.source)]);
+  if (safeArgs.scope) rows.push(['Scope', String(safeArgs.scope)]);
+  if (Array.isArray(safeArgs.pending_on_read) && safeArgs.pending_on_read.length)
+    rows.push(['Pending on read', safeArgs.pending_on_read.join(', ')]);
+  if (result.scope) rows.push(['Scope', String(result.scope)]);
+  if (result.source) rows.push(['Source', String(result.source)]);
   if (result.findings != null) rows.push(['Findings', String(result.findings)]);
   if (result.restored != null) rows.push(['Restored', String(result.restored)]);
   if (result.categories) rows.push(['Categories', Object.entries(result.categories).map(([k, v]) => `${k}=${v}`).join(', ')]);
   if (result.tokens_minted != null) rows.push(['Tokens minted', String(result.tokens_minted)]);
+  if (Array.isArray(result.pending_on_read) && result.pending_on_read.length)
+    rows.push(['Pending on read', result.pending_on_read.join(', ')]);
   if (result.mapping_id) rows.push(['Mapping ID', result.mapping_id]);
   if (status === 'error' && result.error) rows.push(['Error', String(result.error)]);
   const bodyHtml = rows.length

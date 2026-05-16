@@ -30,6 +30,12 @@ agents/*/projects/
 agents/.trash/
 agents/test-*/
 
+# Per-agent AES-GCM key for transparent-anonymisation mapping encryption.
+# Bootstrapped on first use by pseudonymizer.py; mode 0600; refusing to commit
+# preserves cross-machine isolation + means a leaked repo can't decrypt
+# historical mappings persisted in chats.db.
+agents/*/pseudonym.key
+
 # User's local scratch — research reports, test PDFs
 AI_Development_*.md
 Mistral_AI_*.md

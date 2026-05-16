@@ -608,31 +608,16 @@ def delete_persisted_mapping(mapping_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# File walker dispatch — thin re-export of engine.file_pseudonymize so the
-# chat worker has one module to import. Walkers live there; the contract is
-# the same as `pseudonymize_text` / `deanonymize_text` but src→dst paths
-# instead of text in/out.
+# Reverse-pass file walker — thin re-export of engine.file_pseudonymize.
+#
+# Note (2026-05-16, v9.x): the forward `pseudonymize_file` walker was
+# retired. Pseudonymisation of attachment content now happens text-side,
+# inside `brain.tool_read_document` / `tool_read_file` via
+# `brain._gdpr_anon_tool_text`. The reverse walker is still needed for
+# files the LLM writes back: `brain._after_file_write` calls
+# `deanonymize_file` to restore real PII into artifacts before the user
+# sees them.
 # ---------------------------------------------------------------------------
-
-
-def pseudonymize_file(src_path: str, dst_path: str, *, mapping: Mapping,
-                      source: str | None = None) -> int:
-    """Walk a file format, write a pseudonymised copy. Returns the number
-    of NEW unique values added to the mapping (zero if the file had no PII
-    or every finding was a repeat from earlier in the session).
-
-    Supported extensions are listed in
-    `engine.file_pseudonymize.SUPPORTED_EXTS`. Unsupported types raise
-    `FilePseudonymizeError`.
-
-    `source` defaults to `"attachment:<basename>"` — matches the convention
-    used by `pseudonymize_text(source="chat_text")` so audit UIs can list
-    every input that contributed to the mapping.
-    """
-    from engine.file_pseudonymize import pseudonymize_file as _impl
-    if source is None:
-        source = f"attachment:{os.path.basename(src_path)}"
-    return _impl(src_path, dst_path, mapping=mapping, source=source)
 
 
 def deanonymize_file(src_path: str, dst_path: str, *, mapping: Mapping) -> int:
@@ -663,7 +648,7 @@ __all__ = [
     "load_mapping",
     "restore_mapping_to_registry",
     "delete_persisted_mapping",
-    # File walkers
-    "pseudonymize_file",
+    # File walkers (reverse pass only — forward pseudonymisation lives in
+    # brain.tool_read_document via _gdpr_anon_tool_text).
     "deanonymize_file",
 ]

@@ -414,24 +414,52 @@ function gdprActionModal(scan, chat, localActive) {
     };
     const sevClass = (a) => a === 'block' ? ' is-block' : (a === 'ignore' ? ' is-ignore' : '');
 
-    // Build a per-source breakdown, one row per detected fragment.
+    // Build a per-source breakdown. Entries that came from the server-side
+    // aggregated `groups` carry `count` + `samples`; render one row per
+    // rule_id with the total + up to 3 sample previews. Plain client-side
+    // findings (text or legacy file scan) still render per-fragment.
     const sections = [];
     for (const [source, findings] of Object.entries(scan.bySource)) {
-      // Stable order: by position within the source, when known.
-      const ordered = [...findings].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-      const rows = ordered.map(f => {
-        const action = f.action || 'warn';
-        const loc = Number.isFinite(f.index) ? ('char ' + f.index) : '';
-        return '<div class="pii-finding">' +
-          '<span class="pii-finding-sev' + sevClass(action) + '" title="' + esc(action) + '"></span>' +
-          '<span class="pii-finding-label">' + esc(f.label) + '</span>' +
-          '<span class="pii-finding-cat">' + esc(f.category || '') + '</span>' +
-          '<span class="pii-finding-val">' + esc(mask(f.match)) + '</span>' +
-          '<span class="pii-finding-loc">' + esc(loc) + '</span>' +
-        '</div>';
-      }).join('');
+      const isAggregated = findings.length > 0 && typeof findings[0].count === 'number';
+      let rows = '';
+      let total = 0;
+      if (isAggregated) {
+        // Dedupe — `all` was inflated by count, but bySource[] still holds
+        // one entry per rule_id.
+        const grouped = new Map();
+        for (const f of findings) {
+          if (!grouped.has(f.rule_id)) grouped.set(f.rule_id, f);
+        }
+        const ordered = [...grouped.values()].sort((a, b) => (b.count || 0) - (a.count || 0));
+        rows = ordered.map(f => {
+          const action = f.action || 'warn';
+          const samples = (f.samples || []).map(s => mask(s)).join(', ');
+          const samplesEsc = samples ? ('<span class="pii-finding-val" style="opacity:.7">e.g. ' + esc(samples) + '</span>') : '';
+          return '<div class="pii-finding">' +
+            '<span class="pii-finding-sev' + sevClass(action) + '" title="' + esc(action) + '"></span>' +
+            '<span class="pii-finding-label">' + esc(f.label) + '</span>' +
+            '<span class="pii-finding-cat">×' + f.count + '</span>' +
+            samplesEsc +
+          '</div>';
+        }).join('');
+        for (const f of grouped.values()) total += (f.count || 0);
+      } else {
+        // Stable order: by position within the source, when known.
+        const ordered = [...findings].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+        rows = ordered.map(f => {
+          const action = f.action || 'warn';
+          const loc = Number.isFinite(f.index) ? ('char ' + f.index) : '';
+          return '<div class="pii-finding">' +
+            '<span class="pii-finding-sev' + sevClass(action) + '" title="' + esc(action) + '"></span>' +
+            '<span class="pii-finding-label">' + esc(f.label) + '</span>' +
+            '<span class="pii-finding-cat">' + esc(f.category || '') + '</span>' +
+            '<span class="pii-finding-val">' + esc(mask(f.match)) + '</span>' +
+            '<span class="pii-finding-loc">' + esc(loc) + '</span>' +
+          '</div>';
+        }).join('');
+        total = findings.length;
+      }
       const sourceLabel = source === 'text' ? 'Message text' : source.replace(/^file:/, 'Attachment · ');
-      const total = findings.length;
       sections.push(
         '<div class="pii-source-card">' +
           '<div class="pii-source-head">' +

@@ -577,6 +577,10 @@ function _initComposerListeners() {
                 data: ev.target.result.split(',')[1],
                 encoding: 'base64',
                 preview: ev.target.result,
+                // Image paste — accepted PII-scan gap; mark scan as done +
+                // non-blocking so the composer's "wait for scan" gate
+                // doesn't hold the send.
+                scan: { state: 'done', scanned: false, reason: 'media' },
               });
               renderFilePreviews();
               updateSendButton();
@@ -596,6 +600,7 @@ function _initComposerListeners() {
             data: img.data,
             encoding: 'base64',
             preview: `data:image/png;base64,${img.data}`,
+            scan: { state: 'done', scanned: false, reason: 'media' },
           });
           renderFilePreviews();
           updateSendButton();
