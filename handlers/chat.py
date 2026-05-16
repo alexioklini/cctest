@@ -1810,7 +1810,37 @@ class ChatHandlerMixin:
                     # so it INCLUDES the new user msg (matches non-anonymise
                     # path semantics: rollback strips intermediate tool msgs
                     # but keeps the user msg in place).
-                    session.add_message("user", nonlocal_user_content)
+                    #
+                    # On anonymise SUCCESS: in-memory `session.messages` holds
+                    # the pseudonymised text (what goes on the wire to the
+                    # cloud LLM on this turn), but the DB row stores the
+                    # ORIGINAL text the user typed (so the session inspector,
+                    # chat reload, and audit trail show real values — same
+                    # symmetry as assistant replies, which are persisted
+                    # de-anonymised). The mapping_id rides in metadata so the
+                    # admin audit view can still link the row to the
+                    # decryption record. On local-fallback recovery `_anon_ok`
+                    # is False and `nonlocal_user_content == user_content`,
+                    # so both paths persist the same text — no split needed.
+                    if _anon_ok and nonlocal_user_content is not user_content:
+                        with session.lock:
+                            _msg = {"role": "user", "content": nonlocal_user_content}
+                            session.messages.append(_msg)
+                            session.last_active = time.time()
+                            if not session.title:
+                                _t = user_content if isinstance(user_content, str) else str(user_content)
+                                session.title = _t[:80].strip()
+                                if len(session.title) > 60:
+                                    session.title = session.title[:60].rsplit(' ', 1)[0]
+                        ChatDB.save_message(
+                            sid, "user", user_content,
+                            metadata={"gdpr_mapping_id": _mapping.mapping_id})
+                        ChatDB.save_session(
+                            sid, session.agent_id, session.model, session.title,
+                            session.status, session.created_at, session.last_active,
+                            session.project or "", user_id=session.user_id)
+                    else:
+                        session.add_message("user", nonlocal_user_content)
                     _msg_count_before = len(session.messages)
 
                 # --- Standard backend ---
