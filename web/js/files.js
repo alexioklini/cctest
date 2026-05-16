@@ -9,18 +9,50 @@ function handleFileSelect(event) {
   const files = event.target.files;
   for (const file of files) {
     const isImage = file.type.startsWith('image/');
+    // Reject empty files up front. We've seen the chat-attachment pipeline
+    // hand the server a 22-byte "empty zip" file when the underlying Blob
+    // gets invalidated mid-read (notably from automated test harnesses, but
+    // also possible with revoked object URLs or interrupted reads). Without
+    // this guard the walker downstream — file_pseudonymize for anonymise
+    // turns, or read_document for normal turns — sees a truncated file and
+    // fails opaquely; the user has no way to tell what went wrong.
+    if (file.size === 0) {
+      showToast(`${file.name} is empty — not attached`, true);
+      continue;
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
+      const result = e.target.result || '';
+      const commaIdx = result.indexOf(',');
+      const b64 = commaIdx >= 0 ? result.slice(commaIdx + 1) : '';
+      // A read that produces no payload is treated the same as a 0-byte
+      // file — silently pushing an empty `data` would let the broken
+      // attachment slip past every downstream check.
+      if (!b64) {
+        showToast(`${file.name} could not be read — not attached`, true);
+        return;
+      }
+      // base64 length × 3/4 ≈ raw size. Cross-check against the File's
+      // declared size; a >50% shortfall means the read got truncated and
+      // we should refuse rather than ship a corrupt file to the server.
+      const decodedLen = Math.floor(b64.length * 3 / 4);
+      if (decodedLen < file.size * 0.5) {
+        showToast(`${file.name} read truncated (${decodedLen} / ${file.size} bytes) — not attached`, true);
+        return;
+      }
       state._pendingFiles.push({
         name: file.name,
         type: file.type || 'application/octet-stream',
-        data: e.target.result.split(',')[1],
+        data: b64,
         encoding: 'base64',
-        preview: isImage ? e.target.result : null,
+        preview: isImage ? result : null,
       });
       renderFilePreviews();
       updateSendButton();
       schedulePIIBadgeUpdate();
+    };
+    reader.onerror = () => {
+      showToast(`${file.name} failed to read: ${reader.error?.message || 'unknown'}`, true);
     };
     reader.readAsDataURL(file);
   }
@@ -121,19 +153,43 @@ function removePendingFile(idx) {
           schedulePIIBadgeUpdate();
         }
       } else {
+        // Same empty / truncated-read guards as handleFileSelect — see
+        // the comment there for the failure mode this prevents. Keeps
+        // the drop and file-picker paths symmetric so a Brain user who
+        // drags in a corrupted file gets the same toast as one who
+        // picks it.
+        if (file.size === 0) {
+          showToast(`${file.name} is empty — not attached`, true);
+          continue;
+        }
         const isImage = file.type.startsWith('image/');
         const reader = new FileReader();
         reader.onload = (ev) => {
+          const result = ev.target.result || '';
+          const commaIdx = result.indexOf(',');
+          const b64 = commaIdx >= 0 ? result.slice(commaIdx + 1) : '';
+          if (!b64) {
+            showToast(`${file.name} could not be read — not attached`, true);
+            return;
+          }
+          const decodedLen = Math.floor(b64.length * 3 / 4);
+          if (decodedLen < file.size * 0.5) {
+            showToast(`${file.name} read truncated (${decodedLen} / ${file.size} bytes) — not attached`, true);
+            return;
+          }
           state._pendingFiles.push({
             name: file.name,
             type: file.type || 'application/octet-stream',
-            data: ev.target.result.split(',')[1],
+            data: b64,
             encoding: 'base64',
-            preview: isImage ? ev.target.result : null,
+            preview: isImage ? result : null,
           });
           renderFilePreviews();
           updateSendButton();
           schedulePIIBadgeUpdate();
+        };
+        reader.onerror = () => {
+          showToast(`${file.name} failed to read: ${reader.error?.message || 'unknown'}`, true);
         };
         reader.readAsDataURL(file);
       }
