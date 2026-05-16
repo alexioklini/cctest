@@ -174,6 +174,29 @@ def _thinking_param(model: str, thinking_level: str | None) -> dict | None:
     return {"type": "enabled", "budget_tokens": budget}
 
 
+def _chat_template_kwargs(model: str, thinking_level: str | None) -> dict | None:
+    """Decide whether to send `chat_template_kwargs.enable_thinking`.
+
+    oMLX/vLLM-style providers expose `chat_template_kwargs` so callers can
+    flip on/off chat-template features the model itself supports. For gemma-4 /
+    qwen3 / etc. the chat template emits a reasoning channel unless we pass
+    `enable_thinking: false` explicitly. This must mirror the warmup payload
+    byte-for-byte (see brain._apply_inference_to_payload), or the KV prefix
+    misses and first-turn behavior diverges from primed behavior.
+
+    Returns the dict to forward as `extra_body` on the SDK call, or None
+    when the model/provider doesn't need it.
+    """
+    model_cfg = (engine._models_config or {}).get(model, {}) or {}
+    if model_cfg.get("thinking_format") != "reasoning_field":
+        return None
+    prov_name = model_cfg.get("provider", "") or ""
+    if not engine._provider_supports_chat_template_kwargs(prov_name):
+        return None
+    want_thinking = bool(thinking_level and thinking_level not in ("off", "none"))
+    return {"enable_thinking": want_thinking}
+
+
 # ---------- Event translation ----------
 #
 # Sidecar events are tagged `anthropic.<type>` for SDK-raw events and bare
@@ -458,6 +481,9 @@ def run_turn(
     th = _thinking_param(model, thinking_level)
     if th is not None:
         payload["thinking"] = th
+    ctk = _chat_template_kwargs(model, thinking_level)
+    if ctk is not None:
+        payload["chat_template_kwargs"] = ctk
 
     url = sidecar_url() + "/turn"
     req = urllib.request.Request(
@@ -646,6 +672,9 @@ def run_turn_blocking(
     th = _thinking_param(model, thinking_level)
     if th is not None:
         payload["thinking"] = th
+    ctk = _chat_template_kwargs(model, thinking_level)
+    if ctk is not None:
+        payload["chat_template_kwargs"] = ctk
 
     url = sidecar_url() + "/turn?stream=false"
     req = urllib.request.Request(

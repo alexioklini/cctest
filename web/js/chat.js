@@ -535,6 +535,21 @@ function buildStreamCallbacks(chat, isActive) {
           spinnerBar.classList.add('active');
         }
       },
+      citation_reround_start: (d) => {
+        if (!isActive()) return;
+        const el = document.getElementById('spinner-label');
+        if (el) {
+          const ratio = (d && d.claim_total)
+            ? ` (${d.uncited_claims}/${d.claim_total} uncited)`
+            : '';
+          el.textContent = `Citations re-rounding${ratio}…`;
+        }
+      },
+      citation_reround_done: () => {
+        if (!isActive()) return;
+        const el = document.getElementById('spinner-label');
+        if (el) el.textContent = '';
+      },
       compacted: (d) => {
         // Inject a visual divider at the start of the message list so the user
         // sees where the auto-compacted history ends and the fresh tail begins.

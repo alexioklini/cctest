@@ -34,74 +34,76 @@
     "model_fallback": "mistral-vibe-cli-latest"
   },
   "token_config": {
-    "tool_groups": [
-      "core",
-      "memory",
-      "context",
-      "web",
-      "email",
-      "documents",
-      "delegation",
-      "code_graph",
-      "git",
-      "scheduler",
-      "skills",
-      "nodes"
-    ],
-    "include_tools_guide": true,
     "include_memory_summary": true,
     "memory_summary_cap": 2000,
     "compact_threshold": null,
-    "scheduled_task_tools": true,
-    "deferred_tool_groups": [
-      "email",
-      "documents",
-      "code_graph",
-      "scheduler",
-      "delegation",
-      "context",
-      "git",
-      "nodes"
-    ],
     "tool_overrides": {
-      "transcribe_audio": {
-        "enabled": false
+      "edit_document": {
+        "deferred": true
       },
-      "translate_text": {
-        "enabled": false
+      "read_document": {
+        "deferred": true
       },
-      "translate_document": {
-        "enabled": false
-      },
-      "detect_language": {
-        "enabled": false
-      },
-      "list_glossaries": {
-        "enabled": false
-      },
-      "get_glossary": {
-        "enabled": false
-      },
-      "ask_user_for_file": {
-        "enabled": false
-      },
-      "ask_llm": {
-        "enabled": false
-      },
-      "python_exec": {
-        "enabled": false
-      },
-      "memory_store": {
-        "enabled": false
-      },
-      "memory_recall": {
-        "enabled": false
+      "write_document": {
+        "deferred": true
       },
       "memory_delete": {
-        "enabled": false
+        "deferred": true
+      },
+      "memory_recall": {
+        "deferred": true
       },
       "memory_shared": {
-        "enabled": false
+        "deferred": true
+      },
+      "memory_store": {
+        "deferred": true
+      },
+      "transcribe_audio": {
+        "enabled": false,
+        "deferred": true
+      },
+      "code_graph_build": {
+        "deferred": true
+      },
+      "code_graph_enhance": {
+        "deferred": true
+      },
+      "code_graph_impact": {
+        "deferred": true
+      },
+      "code_graph_query": {
+        "deferred": true
+      },
+      "delegate_task": {
+        "deferred": true
+      },
+      "task_cancel": {
+        "deferred": true
+      },
+      "task_status": {
+        "deferred": true
+      },
+      "gmail_inbox": {
+        "deferred": true
+      },
+      "gmail_read": {
+        "deferred": true
+      },
+      "gmail_reply": {
+        "deferred": true
+      },
+      "gmail_search": {
+        "deferred": true
+      },
+      "gmail_send": {
+        "deferred": true
+      },
+      "git_command": {
+        "deferred": true
+      },
+      "github_command": {
+        "deferred": true
       },
       "mcp_connect": {
         "enabled": false
@@ -112,13 +114,37 @@
       "mcp_servers": {
         "enabled": false
       },
+      "list_nodes": {
+        "deferred": true
+      },
+      "schedule_history": {
+        "deferred": true
+      },
+      "schedule_list": {
+        "deferred": true
+      },
+      "detect_language": {
+        "enabled": false
+      },
+      "get_glossary": {
+        "enabled": false
+      },
+      "list_glossaries": {
+        "enabled": false
+      },
+      "translate_document": {
+        "enabled": false
+      },
+      "translate_text": {
+        "enabled": false
+      },
       "get_artifact_detail": {
         "enabled": false
       },
-      "worker_status": {
+      "worker_abort": {
         "enabled": false
       },
-      "worker_abort": {
+      "worker_ask_user": {
         "enabled": false
       },
       "worker_pause": {
@@ -130,80 +156,14 @@
       "worker_send": {
         "enabled": false
       },
-      "worker_ask_user": {
+      "worker_status": {
         "enabled": false
       },
-      "generate_image": {
+      "ask_llm": {
         "enabled": false
       },
-      "gmail_search": {
-        "deferred": true
-      },
-      "gmail_send": {
-        "deferred": true
-      },
-      "code_graph_query": {
-        "deferred": true
-      },
-      "schedule_list": {
-        "deferred": true
-      },
-      "context_recall": {
-        "deferred": true
-      },
-      "list_nodes": {
-        "deferred": true
-      },
-      "code_graph_enhance": {
-        "deferred": true
-      },
-      "write_document": {
-        "deferred": true
-      },
-      "context_detail": {
-        "deferred": true
-      },
-      "schedule_history": {
-        "deferred": true
-      },
-      "github_command": {
-        "deferred": true
-      },
-      "task_status": {
-        "deferred": true
-      },
-      "code_graph_impact": {
-        "deferred": true
-      },
-      "read_document": {
-        "deferred": true
-      },
-      "edit_document": {
-        "deferred": true
-      },
-      "git_command": {
-        "deferred": true
-      },
-      "gmail_read": {
-        "deferred": true
-      },
-      "code_graph_build": {
-        "deferred": true
-      },
-      "task_cancel": {
-        "deferred": true
-      },
-      "delegate_task": {
-        "deferred": true
-      },
-      "context_search": {
-        "deferred": true
-      },
-      "gmail_reply": {
-        "deferred": true
-      },
-      "gmail_inbox": {
-        "deferred": true
+      "ask_user_for_file": {
+        "enabled": false
       }
     }
   },

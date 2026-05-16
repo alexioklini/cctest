@@ -5626,8 +5626,20 @@ def main():
                 #
                 # Only re-prime models whose state is idle/cold/failed or
                 # whose configured mode changed since last prime.
+                #
+                # Load-aware backoff: if the candidate's provider has live
+                # user traffic (active non-warmup ticket, queued ticket, or
+                # a recent release within the grace window), skip this
+                # cycle. The keeper re-checks on the next interval (or on
+                # an explicit wakeup), so warmup catches up the moment the
+                # provider goes idle. This prevents the keeper from cutting
+                # in line during eval runs / multi-turn user chats where a
+                # 26B prime-fill would block the next real turn.
+                pq = engine.get_provider_queue()
+                load_grace = float(wcfg.get("load_grace_seconds", 15))
                 now = time.time()
                 candidates = []
+                deferred = []
                 for mid, _raw_cfg in list(engine._models_config.items()):
                     cfg = engine.resolve_model_settings(mid)
                     if not cfg.get("warmup"):
@@ -5649,7 +5661,16 @@ def main():
                         # Mode flipped — fall through to re-prime.
                     last = max(st.get("last_warmup_ts", 0), st.get("last_used_ts", 0))
                     age = now - last if last else 10 ** 9
+                    prov_info = engine.resolve_provider_for_model(mid) or {}
+                    pname = prov_info.get("provider_name", "")
+                    if pq.provider_busy(pname, grace_seconds=load_grace):
+                        deferred.append((mid, pname))
+                        continue
                     candidates.append((age, mid, cfg, desired_mode))
+
+                if deferred:
+                    try: print(f"[warmup-keeper] deferred (provider busy): {deferred}")
+                    except Exception: pass
 
                 # Oldest first; cap to max_concurrent per cycle
                 candidates.sort(key=lambda t: t[0], reverse=True)
@@ -5676,13 +5697,19 @@ def main():
                 # Second pass — top up the warm session pool toward target
                 # depth. Only build for models that are fully warm (weights +
                 # KV prefix primed). try_build is a no-op when the pool is
-                # already full.
+                # already full. Same load-aware backoff as the prime pass —
+                # building a pool slot fires a full chat-shaped request and
+                # would block live user traffic on the same provider.
                 for mid, _raw_cfg in list(engine._models_config.items()):
                     cfg = engine.resolve_model_settings(mid)
                     if not cfg.get("warmup") or not cfg.get("enabled", True):
                         continue
                     st = engine.get_warmup_state(mid)
                     if st.get("state") != "warm":
+                        continue
+                    prov_info = engine.resolve_provider_for_model(mid) or {}
+                    if pq.provider_busy(prov_info.get("provider_name", ""),
+                                        grace_seconds=load_grace):
                         continue
                     warm_pool.try_build(mid)
 

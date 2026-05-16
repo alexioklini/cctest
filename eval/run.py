@@ -74,7 +74,11 @@ def brain_login(base_url: str, username: str, password: str) -> str:
 
 
 def brain_create_session(base_url: str, token: str, agent: str, project: str, model: str | None) -> str:
-    body: dict = {"agent": agent, "project": project}
+    # skip_warmup=True: don't auto-fire _trigger_warmup on session create.
+    # Eval batches one session per question; the per-session prefill races
+    # the actual chat call on the same provider queue and on gemma-4-26B
+    # can truncate replies to empty after the first tool round.
+    body: dict = {"agent": agent, "project": project, "skip_warmup": True}
     if model:
         body["model"] = model
     code, resp = _http_post_json(

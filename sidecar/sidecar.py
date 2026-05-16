@@ -259,6 +259,36 @@ def dispatch_tool_via_http(endpoint: str, auth: str, name: str, args: dict,
 
 # ---------- Core loop (streaming) ----------
 
+# End-of-sequence tokens that some local models (gemma-4-e4b on oMLX, qwen3,
+# etc.) sometimes emit verbatim as plain text instead of using them as a stop
+# signal. `_visible_text` strips these and trailing whitespace so the
+# surrounding empty-round logic treats "<eos>" as no answer.
+_EOS_TOKENS = (
+    "<eos>", "<end_of_turn>", "<|endoftext|>", "<|im_end|>", "<|eot_id|>",
+    "<|end|>", "</s>",
+)
+
+
+def _visible_text(text: str) -> str:
+    """Return `text` with trailing whitespace + known EOS tokens removed.
+    Empty / EOS-only payloads collapse to '' so callers can use a simple
+    truthiness check instead of duplicating the token list."""
+    if not text:
+        return ""
+    s = text.strip()
+    changed = True
+    while changed and s:
+        changed = False
+        for tok in _EOS_TOKENS:
+            if s.endswith(tok):
+                s = s[: -len(tok)].rstrip()
+                changed = True
+            if s.startswith(tok):
+                s = s[len(tok):].lstrip()
+                changed = True
+    return s
+
+
 def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = None) -> dict:
     """Execute one turn. `emit(type, data)` writes an SSE event to the client.
 
@@ -300,6 +330,14 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
             "type": "auto",
             "disable_parallel_tool_use": True,
         }
+    # oMLX/vLLM extension: chat_template_kwargs is forwarded via `extra_body`
+    # so the SDK passes it through as a top-level JSON field on the wire. We
+    # use this to set `enable_thinking: false` on gemma-4/qwen3/etc. so the
+    # model doesn't emit its final answer into the reasoning channel. Must
+    # mirror brain._apply_inference_to_payload byte-for-byte or the warmup
+    # KV prefix won't match the chat prefix.
+    if isinstance(req.get("chat_template_kwargs"), dict):
+        sampling_kwargs["extra_body"] = {"chat_template_kwargs": req["chat_template_kwargs"]}
 
     usage_total = {"input_tokens": 0, "output_tokens": 0,
                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
@@ -308,6 +346,16 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
     tool_events: list[dict] = []
     final_text = ""
     final_stop_reason = ""
+    # Empty-reply nudges: some models (notably gemma-4 on oMLX) sometimes end
+    # a turn with no text AND no tool_use after consuming a tool_result. The
+    # surrounding system would persist that as a silent empty assistant
+    # message. Instead, append a synthetic user prompt asking for the answer
+    # and continue the loop. Capped per turn so a stuck model can't loop
+    # forever; empty rounds still count toward max_rounds.
+    empty_nudges = 0
+    EMPTY_NUDGE_MAX = 3
+    EMPTY_GIVEUP_TEXT = ("No response was returned. Please modify your "
+                         "request or change the model.")
 
     for round_idx in range(max_rounds):
         round_no = round_idx + 1
@@ -389,14 +437,25 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
 
         round_text = "\n".join(p for p in round_text_parts if p)
         round_stop_reason = getattr(final_msg, "stop_reason", "") or ""
-        if round_text:
-            # Track the most recent non-empty round text. If we ever exit
-            # without a clean "no tool_use" round (e.g. max_rounds with a
-            # final tool_use round, or a peer disconnect mid-round), this
-            # is what the caller should see as the reply rather than "".
-            final_text = round_text
+        # Only update `final_text` when this round produced something the
+        # caller can actually read. Whitespace-only payloads (gemma-4 emits
+        # `\n` placeholders before a tool_use block when it's in tool-spam
+        # mode) and bare EOS tokens (gemma-4-e4b on oMLX emits `<eos>`
+        # verbatim as text instead of as stop signal) are worse than no
+        # payload — they overwrite a real answer from an earlier round and
+        # the chat worker renders them as empty assistant text. `_visible_text`
+        # strips both classes; if it returns "", treat the round as empty.
+        round_visible = _visible_text(round_text)
+        if round_visible:
+            final_text = round_visible
 
-        # Append the assistant turn to messages (full content list, including tool_use)
+        # Append the assistant turn to messages (full content list, including tool_use).
+        # Anthropic rejects empty content blocks on subsequent rounds, so a
+        # truly empty assistant turn (no text, no tool_use, no thinking) is
+        # padded with a single space — only happens for the empty-nudge path
+        # below; the placeholder never reaches the user.
+        if not serialised_blocks:
+            serialised_blocks = [{"type": "text", "text": " "}]
         messages.append({"role": "assistant", "content": serialised_blocks})
 
         emit("round_end", {
@@ -416,8 +475,33 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
         })
 
         if not tool_uses:
-            final_text = round_text
-            final_stop_reason = round_stop_reason
+            # Same whitespace + EOS-token guard as above — don't clobber an
+            # earlier real answer with a final-round `\n` or `<eos>` placeholder.
+            if round_visible:
+                final_text = round_visible
+                final_stop_reason = round_stop_reason
+                break
+            # Empty terminating round: model ended without text and without
+            # tool_use. Nudge once and continue. If we've already nudged
+            # EMPTY_NUDGE_MAX times, give up with the predefined message.
+            if empty_nudges < EMPTY_NUDGE_MAX:
+                empty_nudges += 1
+                emit("empty_round_nudge", {
+                    "round": round_no,
+                    "attempt": empty_nudges,
+                    "max": EMPTY_NUDGE_MAX,
+                })
+                messages.append({
+                    "role": "user",
+                    "content": "Please provide your answer now based on the "
+                               "information gathered so far.",
+                })
+                # Don't break — loop continues with the nudge appended.
+                continue
+            # Out of nudges — surface the predefined give-up text so the
+            # assistant message is persisted instead of swallowed.
+            final_text = EMPTY_GIVEUP_TEXT
+            final_stop_reason = "empty_after_nudges"
             break
 
         if cancel_event is not None and cancel_event.is_set():
@@ -467,6 +551,11 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
         messages.append({"role": "user", "content": result_blocks})
     else:
         final_stop_reason = "max_rounds"
+        # If max_rounds was reached without any real text, surface the
+        # give-up text so the assistant message is persisted instead of
+        # silently empty (same invariant as the empty-nudges path).
+        if not final_text.strip():
+            final_text = EMPTY_GIVEUP_TEXT
 
     summary = {
         "final_text": final_text,

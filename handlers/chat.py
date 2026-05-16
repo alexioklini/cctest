@@ -776,8 +776,14 @@ class ChatHandlerMixin:
             "pre_warmed": claimed,
         })
 
-        # Trigger warmup in background (skip if session was claimed from pool)
-        if warmup_enabled and not claimed:
+        # Trigger warmup in background (skip if session was claimed from pool,
+        # or if the caller explicitly opted out via body.skip_warmup=true).
+        # Eval / batch runners that create one session per question opt out:
+        # the per-session prefill collides with the actual chat call on the
+        # same provider's queue, occasionally truncating gemma-4-26B replies
+        # to empty after the first tool round.
+        skip_warmup = bool(body.get("skip_warmup", False))
+        if warmup_enabled and not claimed and not skip_warmup:
             _trigger_warmup(session)
 
     def _handle_switch_agent(self):
@@ -1361,6 +1367,10 @@ class ChatHandlerMixin:
                             _rr_enabled = bool(_rr_cfg.get("enabled", False))
                             if _rr_enabled and engine.citation_reround_needed(_val):
                                 try:
+                                    live.emit("citation_reround_start", {
+                                        "uncited_claims": _val.get("uncited_claims", 0),
+                                        "claim_total": _val.get("claim_total", 0),
+                                    })
                                     _clean_msgs = engine.clean_messages_for_api(session.messages)
                                     _new_reply, _retry_val = engine.run_citation_reround(
                                         _clean_msgs, reply, _val,
@@ -1391,6 +1401,9 @@ class ChatHandlerMixin:
                                     _cv_meta["reround_fired"] = False
                                     _cv_meta["reround_error"] = f"{type(_e_rr).__name__}: {_e_rr}"
                                     try: print(f"[citation-reround] error: {_e_rr}")
+                                    except Exception: pass
+                                finally:
+                                    try: live.emit("citation_reround_done", {})
                                     except Exception: pass
 
                             msg_metadata["citation_validation"] = _cv_meta

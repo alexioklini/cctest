@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.38.0"
-VERSION_DATE = "2026-05-15"
+VERSION = "8.39.0"
+VERSION_DATE = "2026-05-16"
 CHANGELOG = [
+    ("8.39.0", "2026-05-16", "fix(sidecar): empty-round nudge loop + EOS-token strip — close the silent-empty-reply class of failures. (1) **Empty-round nudge loop** in `sidecar/sidecar.py`: when a turn's terminating round produces no `tool_use` and no usable text, the sidecar now appends a synthetic user message ('Please provide your answer now based on the information gathered so far.') and continues the loop instead of returning an empty reply. Capped at 3 nudges per turn; after exhaustion, `final_text` is set to a predefined give-up message ('No response was returned. Please modify your request or change the model.') so the assistant message is persisted normally with its intermediate tool-call metadata, instead of being silently swallowed by `handlers/chat.py:1487` rollback path. Empty rounds still count toward `max_rounds`. New SSE event `empty_round_nudge {round, attempt, max}` for client visibility. (2) **EOS-token strip** — `_visible_text()` helper + `_EOS_TOKENS` tuple (`<eos>`, `<end_of_turn>`, `<|endoftext|>`, `<|im_end|>`, `<|eot_id|>`, `<|end|>`, `</s>`). Local models on oMLX (notably `gemma-4-e4b-it-4bit`, sometimes `gemma-4-26B-A4B`) emit these tokens verbatim as plain text instead of using them as stop signals, producing `reply=5c` chats that look like real answers to the surrounding system but contain only the literal string `<eos>`. The new helper strips known tokens from both ends repeatedly until stable; if the result is empty, the round is treated as empty and the nudge loop kicks in. Both the mid-loop `final_text` update site and the terminator-block check now go through this helper. (3) **Empty-content padding** — when a round produces literally nothing (no text, no `tool_use`, no thinking), `serialised_blocks` is padded with a single-space text block before being appended to the messages list, because Anthropic's API rejects empty `content` arrays on subsequent rounds. Validated end-to-end on F1_geldwaesche refusal canary across `gemma-4-26B-A4B-it-MLX-4bit` (give-up after 3 nudges → 73c persisted reply with tool-call metadata intact) and `gemma-4-e4b-it-4bit` (real 1132c refusal answer after `<eos>`-strip exposed the empty round → nudge → recovery). Five consecutive successful gemma-4-e4b turns post-fix (180/5460/5777/1952/1132 chars) vs all-`5c` history before. No `chat.py` changes needed — the existing `if reply:` persistence branch at line 1272 now always fires because `final_text` is guaranteed non-empty when a turn ended. See [[project_sidecar_eos_token_strip]] and updated [[feedback_gemma_e4b_unsuitable_for_tools]]."),
     ("8.38.0", "2026-05-15", "feat(tool-settings): everything tool-related lives in editable config. Multi-step refactor across the C-series + D-series commits. (1) **Per-tool admin-editable settings** in `config.json → tool_settings.<name>`: `enabled`/`deferred`/`purposes` flags + 4 prose sections (description / when_to_use / warnings / examples) + `applies_with` all-of gate. Replaces the deleted `tools.md` file via one-shot startup migration. (2) **Three-layer resolver hierarchy** for every LLM call: `global tool_settings.enabled/deferred` → `agent token_config.tool_overrides.<name>` (tristate inherit/on/off) → `purposes` filter (call-purpose-driven). Scheduled tasks honor the same hierarchy via the task's owning agent. (3) **Per-agent overrides** in `agent.json → token_config.tool_overrides`: per-tool tristate. Agent Tokens tab rewritten as collapsible per-tool registry replacing the legacy per-group matrix. Legacy fields (`tool_groups`, `extra_tools`, `deferred_tool_groups`, `include_tools_guide`, `scheduled_task_tools`) deprecated and stripped from agent.json on next save. (4) **Project-flow text** (3-step retrieval, read_path how-to, KG decision rule, BINARY DOCUMENTS pipeline) moved out of `_build_system_prompt` into per-tool descriptions on `mempalace_query`/`read_document`/`mempalace_kg_search`/`mempalace_kg_query` (the latter three carry `applies_with: ['mempalace_query']` so they only render in retrieval contexts). (5) **Research-mode disciplines** (refusal/precision/citation) split into 3 admin-editable sections in `config.json → research_mode_disciplines` with dedicated `GET/POST /v1/research-mode/disciplines` endpoints + UI editor in General Settings → Tools tab. Per-section opt-out via empty string. Seeded from `RESEARCH_MODE_DISCIPLINE_DEFAULTS` constant in brain.py. (6) **Agent-posture text** (use-tools-proactively / never-narrate-intent / no-restrictions-beyond-OS) moved from prompt to `agents/main/soul.md`. (7) **Tool definition cost UI** moved from per-agent Tokens tab to General Settings → Tools (per-tool Nt token badge + cost-summary header). (8) **Inspector D6**: session inspector now shows the verbatim wire system prompt by reading `sessions.last_system_prompt` (persisted per turn) instead of rebuilding. Cache key bug fixed — `_build_system_prompt` cache now keyed on `_thread_local.project` + `research_mode_override` so warmup-then-project-chat collisions stop returning the wrong prompt. (9) **Token accounting fix**: `tokens_in` for oMLX-backed turns was 0 because oMLX reports the prompt size under `cache_creation_input_tokens` not `input_tokens`; proxy now sums all three Anthropic input counters. Brain.py's hardcoded prompt blocks shrunk dramatically; net architecture is 'soul.md is identity, tool_settings is tools, research_mode_disciplines is output posture, brain.py only emits identity preamble + project info'. New memory notes capture the resolver hierarchy and the Topic A/B split."),
     ("8.37.0", "2026-05-13", "feat(variance): variance-bisect kill-switches infrastructure + validated 4-flag default + intent-vs-action stall guard. (1) **17 kill-switches** (`brain.py:_VARIANCE_DEFAULTS`) for every variance-introducing site in the agentic loop: force_all_light routes all tools to inline path; worker_subagent disables the heavy-tool wrap; auto_isolation skips the 8 KB → worker-envelope flip; tool_result_summariser drops the LLM summariser cascade; tool_result_budget_middleware spills 50 KB+ to disk; microcompact_middleware rewrites older results every even round; compress_old_middleware truncates older results past cumulative budget; pyexec_hint_middleware nudges the model toward python_exec on file-tool runs; diminishing_returns_guard flips tools=False on low-completion streaks; max_output_recovery resumes on finish_reason=length up to 3×; truncated_tool_call_discard drops malformed-args batches; proactive_round0_compaction runs LCM at turn start; reactive_400_compaction retries on prompt-too-long 400s; parallel_tool_batching ThreadPoolExecutors safe-set tools; tool_dedup raises TaskCancelled on 2 consecutive duplicates; read_doc_cache returns 'already read in turn N' stubs; sanitize_tool_result_cap applies the 30 KB per-result truncation; intent_action_guard re-prompts when finish_reason=stop + short text + 'Now I'll write…' / 'Let me search…' pattern (NEW). Each is one if-statement at the call site; defaults preserve runtime behavior for users on existing configs. (2) **Admin UI** (`web/js/settings.js`): new 'Variance switches' tab under Diagnostics with dependency-aware locking — when a parent flag is off, its children are greyed out, disabled, force-set to false; restore-on-unlock keeps the user's pre-lock choice; fixpoint iteration handles transitive cascades. Server mirrors rules in `_variance_normalize()` so persisted config can never silently honor an impossible state. Endpoints `GET/POST /v1/variance` (admin-only, audit-logged). 10s TTL cache invalidated immediately on save. (3) **New validated defaults** (4 ON, 13 OFF): `force_all_light=true` + `compress_old_middleware=true` + `tool_dedup=true` + `read_doc_cache=true` + `intent_action_guard=true`; everything else off. Schedule task 'Mistral AI News' produced 5/6 clean runs (vs prior 2/3 stalls); policy eval 15Q brain mean 0.873 across 3 runs vs prior all-time-best 0.823 (+0.050); brain statistically tied with Opus gold (mean Δ −0.022, within Mistral judge's ±0.09 noise floor). (4) **Intent-vs-action guard**: detects 'I'll now write…/Let me search…' tail patterns on finish_reason=stop + empty tool_calls_map + visible output < 100 tokens; re-prompts once per turn with 'You announced the next action but didn't actually take it. Either call the tool now or write the final answer directly. Do not announce — execute.' Counter at `_thread_local._intent_action_recovery_count`, reset at round 0 and on max-output-exhausted. SSE event `intent_action_guard` emitted with attempt counter + stalled_text tail. Applies equally in guided execution (per-subtask) — no special-casing. (5) **Storage cap fix** committed in companion commit: scheduler `complete_execution` was hard-truncating `schedule_history.result` to 10K chars (lost run 786's 30 KB inline report mid-sentence); now stores full delegate output verbatim. Memory note `project_variance_kill_switches_2026_05_13.md` captures the full bisect history, don't-regress notes (don't re-enable microcompact alone — it rewrites tool results in place every 2 rounds which destroys citation traceability; don't re-enable auto_isolation without summariser — re-introduces 8 KB boundary stochasticity), and remaining-instability notes (F1_geldwaesche refuse-or-answer + C2/C3 citation-format judge variance are workload-fundamental, not pipeline-driven)."),
     ("8.36.0", "2026-05-12", "feat: Guided execution — granularity knob + needs_prior flag (fan-out without a DAG). Two additions to the v8.33.x guided-prompt-execution feature, both confined to brain.py + handlers/chat.py (no UI, no new endpoints, fully backward-compatible with bare-string plans). (1) Granularity knob: `run_guided_execution(..., granularity=\"coarse\"|\"fine\")`. `coarse` (default, existing behaviour) = `_GUIDED_DECOMPOSE_SYSTEM`, 2–5 self-contained subtasks. `fine` = new `_GUIDED_DECOMPOSE_SYSTEM_FINE`, up to 12 TINY ATOMIC subtasks (one tool call / lookup / transform each — the planner is told 'if you are tempted to use the word and, split it into two tasks') — for small local models that stay on track / avoid hallucination better one step at a time. handlers/chat.py picks it: per-model `guided_execution_granularity` in config.json wins; otherwise defaults `fine` when `engine.is_model_local(model)`, else `coarse`. (2) `needs_prior` flag: the planner may now emit elements as `{\"task\": str, \"needs_prior\": bool}` instead of bare strings (a bare string == `needs_prior:true` == legacy linear chain — old plans still parse). A subtask with `needs_prior:false` (and not the synthesis/last task) runs with NO 'Prior task results:' block at all — lean prompt for independent fan-out steps (e.g. 'summarise document A' / 'summarise document B' in parallel, only the final 'compare the two' needs both). The synthesis task always receives the full untruncated union regardless (existing rule, unchanged). The win is correctness + token cost on local models, not wall-clock — one local model serialises every call anyway, so this is parallel-in-intent / sequential-in-execution by design; no DAG (explicit decision — a flat list + per-task boolean covers the fan-out→fan-in case, a diamond DAG would be over-engineering). `_build_guided_prior_results_block(..., needs_prior=...)` short-circuits to '' when `not needs_prior and not is_last_task`; the parse loop in `run_guided_execution` builds parallel `tasks` (labels) + `needs_prior_flags` lists, raises the task ceiling to 12 in fine mode, and falls back cleanly (returns ('', False)) on any malformed planner output. `needs_prior` is not yet surfaced in SSE/metadata/UI — cosmetic, deferred."),
@@ -12400,6 +12401,11 @@ class _ProviderQueueSlot:
         self._lock = threading.Lock()
         self._waiters: list[_ProviderTicket] = []  # FIFO
         self._active: list[_ProviderTicket] = []
+        # Wall-clock of the last non-warmup ticket release. Read by the
+        # warmup keeper to back off when real user load just finished —
+        # prevents the keeper from snapping into the gap between two
+        # close-together user turns (e.g. mid-eval-run).
+        self.last_release_ts: float = 0.0
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -12481,6 +12487,35 @@ class LocalProviderQueue:
         return {
             "providers": {s.provider: s.snapshot() for s in slots},
         }
+
+    def provider_busy(self, provider_name: str, grace_seconds: float = 15.0) -> bool:
+        """True if the warmup keeper should defer firing on this provider.
+
+        Busy means any of:
+          - a non-warmup ticket is currently holding a slot,
+          - any ticket is waiting in the FIFO,
+          - a non-warmup ticket released within the last `grace_seconds`.
+
+        The grace window keeps the keeper from snapping into the brief gap
+        between two close-together user turns (eval runs, multi-turn chats).
+        Providers without a queue slot (cloud, max_concurrent=0) return False.
+        """
+        if not provider_name or provider_name == "default":
+            return False
+        with self._lock:
+            slot = self._slots.get(provider_name)
+        if slot is None:
+            return False
+        with slot._lock:
+            non_warmup_active = any(t.label != "warmup" for t in slot._active)
+            waiting = len(slot._waiters) > 0
+            last_release = slot.last_release_ts
+        if non_warmup_active or waiting:
+            return True
+        if grace_seconds > 0 and last_release > 0 \
+                and (time.time() - last_release) < grace_seconds:
+            return True
+        return False
 
     def cancel_ticket(self, ticket_id: str, reason: str = "") -> dict:
         """Admin action: cancel a queued or running ticket.
@@ -12659,6 +12694,11 @@ class LocalProviderQueue:
                         pass
                     waiting_count = len(slot._waiters)
                     active_count = len(slot._active)
+                    # Track when real user load (not the warmup keeper itself)
+                    # last finished on this provider, so the keeper can back
+                    # off for a short grace window afterwards.
+                    if ticket.label != "warmup":
+                        slot.last_release_ts = ticket.released_at
                 slot._sem.release()
                 self._emit(ticket, "queue_released", slot, 0,
                            waiting_count, active_count)
@@ -21319,16 +21359,18 @@ def _detect_thinking_format(model_id: str, provider: str = "") -> str:
     # id-only patterns below still cover the prefixed form for back-compat.
     if p == "cliproxyapi" and "gemini-2.5" in m:
         return "reasoning_field"
-    # oMLX provider catch-all for any reasoning-capable model served locally,
-    # even when the id doesn't carry an OMLX/ prefix. Non-reasoning models on
-    # oMLX (Gemma 3, crow) still hit the default 'none' below because none of
-    # the id patterns match them. Gemma 4 IS a reasoning model (channel-token
-    # output, enable_thinking kwarg) so it's included here.
-    if p == "omlx" and (
+    # Model-id catch-all for chat-templates that emit a reasoning channel
+    # regardless of the wire it's served on. Gemma 4 / Qwen3 / DeepSeek R1 /
+    # GLM-Zero / Magistral all ship with reasoning baked into the chat
+    # template — `enable_thinking` defaults to True if no kwarg is passed,
+    # so the model emits its answer into the reasoning channel unless we
+    # explicitly opt out. NOT gated on provider name: a user-renamed
+    # provider ("Lokal", "MyMLX", whatever) serving these models on
+    # OpenAI-shape wire still surfaces reasoning_content in the response.
+    if (
         "qwen3" in m or "qwen-3" in m
         or "deepseek-r1" in m or "deepseek/r1" in m
         or "glm-zero" in m or "glm4-zero" in m
-        or "thinking" in m
         or "magistral" in m
         or "gemma-4" in m or "gemma4" in m
     ):
@@ -21791,6 +21833,28 @@ _INFERENCE_OPENAI_KEYS = {"frequency_penalty", "presence_penalty"}
 _INFERENCE_OMLX_KEYS = {"min_p", "repetition_penalty"}
 
 
+def _provider_supports_chat_template_kwargs(provider_name: str) -> bool:
+    """Whether the upstream gateway accepts the oMLX/vLLM `chat_template_kwargs`
+    extension (used to force `enable_thinking` on reasoning-capable chat
+    templates like gemma-4 / qwen3).
+
+    Source of truth is the per-provider `supports_chat_template_kwargs`
+    boolean in config.json. The legacy provider id `omlx` is grandfathered to
+    True so installs that haven't been migrated keep working.
+    """
+    if not provider_name:
+        return False
+    if provider_name.lower() == "omlx":
+        return True
+    try:
+        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        with open(cfg_path) as f:
+            prov = json.load(f).get("providers", {}).get(provider_name, {})
+        return bool(prov.get("supports_chat_template_kwargs", False))
+    except Exception:
+        return False
+
+
 def _apply_inference_to_payload(payload: dict, params: dict, provider: str = "", scoped_model: str = "") -> None:
     """Apply resolved inference params to an OpenAI-compatible payload."""
     # Note: don't early-return when params is empty. We may still need to set
@@ -21798,7 +21862,10 @@ def _apply_inference_to_payload(payload: dict, params: dict, provider: str = "",
     # since their chat templates default thinking to ON when the kwarg is absent.
     params = params or {}
 
-    is_omlx = provider == "omlx"
+    # `chat_template_kwargs` is an oMLX/vLLM-style extension. The provider
+    # opts in via `supports_chat_template_kwargs: true` in config.json so we
+    # don't rely on provider name matching.
+    is_omlx = _provider_supports_chat_template_kwargs(provider)
 
     for key in _INFERENCE_STANDARD_KEYS:
         if key in params:
@@ -23183,21 +23250,20 @@ def citation_reround_needed(validation: dict,
                             unverified_threshold: int = 2) -> bool:
     """Decide whether the validation result warrants a re-round.
 
-    Fires when EITHER:
-      - more than `uncited_ratio_threshold` of detected bullet/claim items
-        carry no [Quelle: ...] bracket (default 30%); OR
-      - at least `unverified_threshold` quote brackets failed to verify
-        against the read source files (default 2).
+    Fires only when more than `uncited_ratio_threshold` of detected
+    bullet/claim items carry no [Quelle: ...] bracket (default 30%).
 
-    Returns False if `claim_total == 0` and no unverified — nothing actionable.
+    The unverified-quote signal is deliberately NOT a trigger: PDF→markdown
+    extraction routinely breaks byte-exact substring match (whitespace,
+    soft hyphens, smart quotes, OCR drift), producing false positives even
+    when the model cited correctly. Re-rounding on those wastes ~20s on a
+    local model and yields a cosmetically-different but equivalent reply.
+    `unverified_threshold` is kept in the signature for back-compat.
     """
     if not validation:
         return False
     claim_total = int(validation.get("claim_total") or 0)
     uncited = int(validation.get("uncited_claims") or 0)
-    unverified = len(validation.get("unverified") or [])
-    if unverified >= unverified_threshold:
-        return True
     if claim_total > 0 and (uncited / claim_total) > uncited_ratio_threshold:
         return True
     return False
