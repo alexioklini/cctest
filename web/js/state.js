@@ -26,6 +26,11 @@ const state = {
   planModeActive: false,
   thinkingLevel: localStorage.getItem('thinking-level') || 'none',
   showToolCalls: localStorage.getItem('showToolCalls') !== 'false',
+  // Privacy-first default: GDPR details + inline highlights stay hidden
+  // until the user explicitly opts in via the composer toggle. Only the
+  // Datenschutz statistics header (count of anonymisations / de-anonymisations)
+  // shows by default. Mirror of `showToolCalls` plumbing.
+  showGdprDetails: localStorage.getItem('showGdprDetails') === 'true',
   _pendingImages: [],
   _pendingFiles: [],
 

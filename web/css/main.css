@@ -2073,6 +2073,23 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 .activity-summary > summary:hover { color: var(--text-300); background: var(--bg-100); }
 .activity-summary .activity-chevron { transition: transform 0.15s; flex-shrink: 0; transform: rotate(-90deg); }
 .activity-summary[open] .activity-chevron { transform: rotate(0); }
+/* Non-disclosure variant for the Datenschutz block when the composer toggle
+   hides details — same visual rhythm as the regular summary header but no
+   chevron, no hover affordance, no cursor change. Keeps the count visible
+   so the user can still see anonymisation happened. */
+.activity-summary-header-static {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text-400);
+  border-radius: 6px;
+  user-select: none;
+  width: fit-content;
+  cursor: default;
+}
 .activity-summary-body {
   padding-top: 2px;
 }

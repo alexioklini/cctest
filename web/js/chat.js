@@ -2107,15 +2107,30 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
     const privState = chat?._privacyStates?.get(turnNum); // absent = history load = closed
     const privOpen = privState === 'auto-open' || privState === 'user-open';
 
-    syntheticHtml = `
-      <details class="activity-summary privacy-summary"${privOpen ? ' open' : ''}>
-        <summary class="activity-summary-header" onclick="event.preventDefault();togglePrivacySummary(${turnNum})">
-          <svg class="activity-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          🛡️ ${esc(label)}
-        </summary>
-        <div class="activity-summary-body">${inner}</div>
-      </details>
-    `;
+    // Composer toggle: when GDPR details are hidden, render the privacy
+    // block as a flat label (counts only, no chevron, no body). The
+    // disclosure header keeps the statistics so the user still sees that
+    // anonymisation happened — they just can't open it to inspect values.
+    if (!state.showGdprDetails) {
+      syntheticHtml = `
+        <div class="activity-summary privacy-summary privacy-summary-collapsed"
+             title="Datenschutz-Details ausgeblendet — Toggle im Composer aktivieren, um Inhalte zu sehen">
+          <div class="activity-summary-header activity-summary-header-static">
+            🛡️ ${esc(label)}
+          </div>
+        </div>
+      `;
+    } else {
+      syntheticHtml = `
+        <details class="activity-summary privacy-summary"${privOpen ? ' open' : ''}>
+          <summary class="activity-summary-header" onclick="event.preventDefault();togglePrivacySummary(${turnNum})">
+            <svg class="activity-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            🛡️ ${esc(label)}
+          </summary>
+          <div class="activity-summary-body">${inner}</div>
+        </details>
+      `;
+    }
   }
 
   // No activity at all — render flat
@@ -2284,8 +2299,13 @@ function renderUserMessage(msg, idx) {
 
 function renderAssistantMessage(msg, idx) {
   const content = typeof msg.content === 'string' ? msg.content : '';
+  // GDPR highlight overlay is gated by the composer toggle. When off
+  // (privacy-first default), the reply renders identically to a non-
+  // anonymised one — no yellow tint, no tooltip. Toggle on → restored
+  // spans get `<mark class="gdpr-restored">` with category/value tooltip.
   const gdprSpans = msg.metadata?.gdpr_restored_spans;
-  const rendered = (Array.isArray(gdprSpans) && gdprSpans.length)
+  const showGdpr = state.showGdprDetails && Array.isArray(gdprSpans) && gdprSpans.length;
+  const rendered = showGdpr
     ? renderMarkdownWithGdprHighlights(content, gdprSpans)
     : renderMarkdown(content);
 

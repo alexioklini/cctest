@@ -193,6 +193,29 @@ function toggleToolDisplay() {
   showToast(state.showToolCalls ? 'Tool calls visible' : 'Tool calls hidden');
 }
 
+// Composer toggle for GDPR detail visibility. Privacy-first default: when
+// off (initial state), every assistant reply renders with the inline yellow
+// highlight stripped out and the Datenschutz disclosure body suppressed —
+// only the header counts remain. When on, restored spans get tooltips and
+// the disclosure expands as designed. Mirror of `toggleToolDisplay` —
+// localStorage scope, immediate re-render of currently visible messages.
+function toggleGdprDetails() {
+  state.showGdprDetails = !state.showGdprDetails;
+  localStorage.setItem('showGdprDetails', state.showGdprDetails);
+
+  for (const btn of _composerToggleEls('btn-toggle-gdpr-details')) {
+    btn.style.color = state.showGdprDetails ? 'var(--warning, #d97706)' : '';
+    btn.title = state.showGdprDetails
+      ? 'Datenschutz-Details: sichtbar (Markierungen + aufklappbarer Block)'
+      : 'Datenschutz-Details: ausgeblendet (nur Statistik im Block)';
+  }
+
+  renderMessages();
+  showToast(state.showGdprDetails
+    ? 'Datenschutz-Details sichtbar'
+    : 'Datenschutz-Details ausgeblendet');
+}
+
 // Transparent-anonymisation sticky preference reset (step 6.3). Clicking the
 // shield-with-checkmark composer icon (only visible when chat.gdprActionPref
 // is set) calls this to clear the preference, re-enabling the PII modal on
@@ -2760,6 +2783,12 @@ async function init() {
   for (const toolBtn of _composerToggleEls('btn-toggle-tools')) {
     toolBtn.style.color = state.showToolCalls ? 'var(--accent-brand)' : '';
     toolBtn.title = state.showToolCalls ? 'Tool calls: visible' : 'Tool calls: hidden';
+  }
+  for (const gdprBtn of _composerToggleEls('btn-toggle-gdpr-details')) {
+    gdprBtn.style.color = state.showGdprDetails ? 'var(--warning, #d97706)' : '';
+    gdprBtn.title = state.showGdprDetails
+      ? 'Datenschutz-Details: sichtbar (Markierungen + aufklappbarer Block)'
+      : 'Datenschutz-Details: ausgeblendet (nur Statistik im Block)';
   }
   // Demote a stored thinking_level that doesn't fit the active chat's
   // model (e.g. localStorage carried 'medium' across a model switch to a
