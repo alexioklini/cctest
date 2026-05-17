@@ -303,7 +303,7 @@ async function switchGeneralTab(tab, btn) {
         ${SEC('Summaries')}
         <div style="display:flex;gap:8px;align-items:center">
           <select class="form-select" id="srv-chat-summary-model" style="flex:1">
-            <option value="">Auto (cheapest Haiku &rarr; cheapest enabled)</option>
+            <option value="">Auto (use server default model)</option>
             ${enabledModels.map(([mid])=>modelOption(mid, {selected: mid===(srv.chat_summary_model||'')})).join('')}
           </select>
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{chat_summary_model:document.getElementById('srv-chat-summary-model').value}).then(()=>showToast('Summary model updated')).catch(e=>showToast('Failed',true))">Set</button>

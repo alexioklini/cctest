@@ -10912,7 +10912,7 @@ def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_respo
         am_fallback = am_cfg.get("model_fallback", "")
         model, _ = _resolve_model_with_fallback(am_model, am_fallback)
 
-        if not model or not _delegate_api_key:
+        if not model:
             return
 
         # GDPR policy gate. The extraction prompt embeds verbatim slices
@@ -11166,9 +11166,6 @@ def _apply_discovered_relationships(agent_id: str, relationships: list[dict]):
 
 def trigger_relationship_discovery(agent_id: str):
     """Run LLM-based relationship discovery immediately in a background thread."""
-    if not _delegate_api_key:
-        logging.warning("Relationship discovery skipped: delegate API not configured")
-        return
     prompt = _build_relationship_discovery_prompt(agent_id)
     if not prompt:
         return

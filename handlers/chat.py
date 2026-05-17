@@ -507,6 +507,103 @@ class StreamingDeanonymizer:
         return full_denon
 
 
+def _generate_chat_summary(session):
+    """Generate a short LLM summary of a chat session for sidebar display.
+
+    Background thread target: produces a one-sentence synopsis used as the
+    page-title hover tooltip and the collapsible Zusammenfassung block above
+    turn 1. Fires once per chat (gated in the worker by `not session.summary`).
+    Model pick: `server_config.chat_summary_model` if set and enabled, else
+    `engine._background_model_default()`. Routes through the sidecar like
+    every other non-interactive call.
+    """
+    if len(session.messages) < 2:
+        return
+    engine._thread_local.current_agent = session.agent
+    engine._thread_local.memory_store = None
+    engine._thread_local.current_user_id = (getattr(session, "user_id", "") or "")
+    msgs = session.messages
+    sample = []
+    for m in msgs[:3]:
+        role = m.get("role", "?")
+        content = m.get("content", "")
+        if isinstance(content, list):
+            parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+            content = " ".join(parts)
+        if isinstance(content, str) and content.strip():
+            sample.append(f"[{role}] {content[:200]}")
+    if len(msgs) > 3:
+        for m in msgs[-2:]:
+            role = m.get("role", "?")
+            content = m.get("content", "")
+            if isinstance(content, list):
+                parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                content = " ".join(parts)
+            if isinstance(content, str) and content.strip():
+                sample.append(f"[{role}] {content[:200]}")
+
+    if not sample:
+        return
+
+    prompt = (
+        "Summarize this conversation in ONE short sentence (max 60 chars). "
+        "Focus on the topic/task, not greetings. Output ONLY the summary, nothing else. "
+        "Base your summary ONLY on the conversation content below.\n\n"
+        + "\n".join(sample)
+    )
+    try:
+        configured = (server_config.get("chat_summary_model") or "").strip()
+        model = ""
+        if configured:
+            mcfg = (engine._models_config or {}).get(configured) or {}
+            if mcfg.get("enabled", True):
+                model = configured
+        if not model:
+            model = engine._background_model_default()
+        if not model:
+            return
+
+        _summary_deanon = engine._identity_deanon
+        try:
+            model, _new_sample, _summary_deanon = engine.gdpr_pick_model_for_background(
+                model, sample, purpose="chat_summary")
+            if _new_sample is not sample:
+                sample = list(_new_sample)
+                prompt = (
+                    "Summarize this conversation in ONE short sentence (max 60 chars). "
+                    "Focus on the topic/task, not greetings. Output ONLY the summary, nothing else. "
+                    "Base your summary ONLY on the conversation content below.\n\n"
+                    + "\n".join(sample)
+                )
+        except engine.GDPRBlockedError:
+            return
+        except Exception:
+            pass
+
+        _res = sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            system_prompt="Output only a brief summary sentence. No quotes, no prefix.",
+            agent_id=session.agent_id,
+            session_id=session.id,
+            project=(session.project or ""),
+            max_tokens=80,
+        )
+        result = _summary_deanon(_res.get("reply") or "")
+        if result and not _res.get("error"):
+            summary = result.strip().strip('"').strip("'")[:80]
+            with session.lock:
+                session.summary = summary
+            ChatDB.save_session(session.id, session.agent_id, session.model,
+                                session.title, session.status, session.created_at,
+                                session.last_active, session.project or "", summary)
+    except Exception:
+        pass
+    finally:
+        engine._thread_local.current_agent = None
+        engine._thread_local.memory_store = None
+
+
 def build_chat_event_callback(session, live, sid):
     """Build the per-turn SSE event callback + its accumulator state.
 
