@@ -166,15 +166,30 @@ def _rewrite_chunks(runs: list[str], *,
                     progress: Callable[[int, int], None] | None = None) -> list[str]:
     """Rewrite `runs` in-place for tone, preserving count and order."""
     from handlers import sidecar_proxy as _sidecar_proxy
+    import brain as _brain
     if not runs:
         return []
     model = _resolve_rewrite_model(model)
+    # GDPR policy gate: scan every run once so the mapping is stable across
+    # every chunk of this document. Pseudonymised runs go to the wire; the
+    # deanon callback restores originals on each translated entry before we
+    # write it back. Cloud-bound runs ride to the same model the user picked
+    # (modulo admin swap policy).
+    _rewrite_deanon = _brain._identity_deanon
+    try:
+        model, _new_runs, _rewrite_deanon = _brain.gdpr_pick_model_for_background(
+            model, runs, purpose="translate_document_rewrite")
+        wire_runs = list(_new_runs)
+    except _brain.GDPRBlockedError:
+        # Treat as soft-skip — keep the originals, don't fire the rewrite.
+        return list(runs)
     system_prompt = _build_rewrite_chunk_system_prompt(lang, tone)
     out: list[str] = list(runs)
     total = len(runs)
     done = 0
-    for start in range(0, len(runs), CHUNK_RUNS):
-        chunk = runs[start:start + CHUNK_RUNS]
+    for start in range(0, len(wire_runs), CHUNK_RUNS):
+        chunk = wire_runs[start:start + CHUNK_RUNS]
+        orig_chunk = runs[start:start + CHUNK_RUNS]
         if all(not r.strip() for r in chunk):
             done += len(chunk)
             if progress:
@@ -190,10 +205,10 @@ def _rewrite_chunks(runs: list[str], *,
         if response and not _res.get("error"):
             parsed = _parse_chunk_response(response, len(chunk))
             if parsed:
-                for j, r in enumerate(chunk):
+                for j, r in enumerate(orig_chunk):
                     if not r.strip():
                         continue
-                    t = parsed[j] if j < len(parsed) else ""
+                    t = _rewrite_deanon(parsed[j] if j < len(parsed) else "")
                     lead = r[:len(r) - len(r.lstrip())]
                     trail = r[len(r.rstrip()):]
                     out[start + j] = f"{lead}{t.strip()}{trail}" if t.strip() else r
@@ -215,20 +230,36 @@ def _translate_chunks(runs: list[str], *,
     """
     from handlers import sidecar_proxy as _sidecar_proxy
     from .text import translate_text
+    import brain as _brain
 
     if not runs:
         return []
+
+    # GDPR policy gate: anonymise every run once with a single shared
+    # mapping so tokens stay consistent across chunks of the same document.
+    # Cloud calls below see pseudonymised text; the deanon callback runs on
+    # each translated entry before we write it back. Per-run fallback uses
+    # the ORIGINAL run text — translate_text has its own gate that reuses
+    # the same session mapping when current_session_id is set.
+    _xlate_deanon = _brain._identity_deanon
+    try:
+        model, _new_runs, _xlate_deanon = _brain.gdpr_pick_model_for_background(
+            model, runs, purpose="translate_document")
+        wire_runs = list(_new_runs)
+    except _brain.GDPRBlockedError as e:
+        raise RuntimeError(f"document translation blocked by GDPR policy: {e}")
 
     system_prompt = _build_chunk_system_prompt(source_lang, target_lang, glossary)
     out: list[str] = [""] * len(runs)
     total = len(runs)
     done = 0
 
-    for start in range(0, len(runs), CHUNK_RUNS):
-        chunk = runs[start:start + CHUNK_RUNS]
+    for start in range(0, len(wire_runs), CHUNK_RUNS):
+        chunk = wire_runs[start:start + CHUNK_RUNS]
+        orig_chunk = runs[start:start + CHUNK_RUNS]
         # Fast-path: chunks that are entirely empty/whitespace go through unchanged.
         if all(not r.strip() for r in chunk):
-            for j, r in enumerate(chunk):
+            for j, r in enumerate(orig_chunk):
                 out[start + j] = r
             done += len(chunk)
             if progress:
@@ -248,7 +279,9 @@ def _translate_chunks(runs: list[str], *,
 
         if parsed is None:
             # Per-run fallback so a flaky chunk never zeros out content.
-            for j, r in enumerate(chunk):
+            # Pass the ORIGINAL text — translate_text re-anonymises with the
+            # same session-scoped mapping where applicable.
+            for j, r in enumerate(orig_chunk):
                 if not r.strip():
                     out[start + j] = r
                     continue
@@ -263,12 +296,12 @@ def _translate_chunks(runs: list[str], *,
                 except Exception:
                     out[start + j] = r
         else:
-            for j, r in enumerate(chunk):
+            for j, r in enumerate(orig_chunk):
                 # Empty original → keep empty (don't let model invent text).
                 if not r.strip():
                     out[start + j] = r
                     continue
-                t = parsed[j] if j < len(parsed) else ""
+                t = _xlate_deanon(parsed[j] if j < len(parsed) else "")
                 # Preserve leading/trailing whitespace from the original — the
                 # numbered-list framing strips it on the wire.
                 lead = r[:len(r) - len(r.lstrip())]

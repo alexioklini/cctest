@@ -126,15 +126,27 @@ def translate_text(text: str, target_lang: str, *,
         translated = text
     else:
         system_prompt = build_translate_system_prompt(src, target_lang, glossary=glossary)
+        # GDPR policy gate: pseudonymise the source text, possibly swap to
+        # local model, then deanonymise the translation. Tokens like
+        # <EMAIL_1_HEX> are preserved verbatim by the translation prompt's
+        # "preserve URLs, emails verbatim" rule.
+        _xlate_deanon = brain._identity_deanon
+        _wire_text = text
+        try:
+            chosen_model, (_pii_text,), _xlate_deanon = brain.gdpr_pick_model_for_background(
+                chosen_model, [text], purpose="translate_text")
+            _wire_text = _pii_text
+        except brain.GDPRBlockedError as e:
+            raise RuntimeError(f"translation blocked by GDPR policy: {e}")
         from handlers import sidecar_proxy as _sidecar_proxy
         _res = _sidecar_proxy.background_call(
-            messages=[{"role": "user", "content": text}],
+            messages=[{"role": "user", "content": _wire_text}],
             model=chosen_model,
             system_prompt=system_prompt,
         )
         if _res.get("error"):
             raise RuntimeError(f"translation failed: {_res['error']}")
-        result = _res.get("reply") or ""
+        result = _xlate_deanon(_res.get("reply") or "")
         if not result:
             raise RuntimeError("translation returned empty result")
         translated = result.strip()
@@ -148,15 +160,29 @@ def translate_text(text: str, target_lang: str, *,
         rewrite_model = rewrite_model or chosen_model
         rewrite_lang = target_lang or src
         rewrite_prompt = build_rewrite_system_prompt(rewrite_lang, tone)
-        from handlers import sidecar_proxy as _sidecar_proxy
-        _res = _sidecar_proxy.background_call(
-            messages=[{"role": "user", "content": translated}],
-            model=rewrite_model,
-            system_prompt=rewrite_prompt,
-        )
-        rewritten = _res.get("reply") or ""
-        if rewritten and not _res.get("error"):
-            translated = rewritten.strip()
+        # GDPR policy gate for the rewrite pass — `translated` already
+        # contains real PII (whether it came from the source or was
+        # restored by the deanon callback above). Anonymise again before
+        # the rewrite call and deanon the rewritten reply.
+        _rewrite_deanon = brain._identity_deanon
+        _wire_translated = translated
+        try:
+            rewrite_model, (_pii_translated,), _rewrite_deanon = brain.gdpr_pick_model_for_background(
+                rewrite_model, [translated], purpose="translate_text_rewrite")
+            _wire_translated = _pii_translated
+        except brain.GDPRBlockedError:
+            # Treat as soft-skip: keep the translation, drop the tone pass.
+            _wire_translated = None
+        if _wire_translated is not None:
+            from handlers import sidecar_proxy as _sidecar_proxy
+            _res = _sidecar_proxy.background_call(
+                messages=[{"role": "user", "content": _wire_translated}],
+                model=rewrite_model,
+                system_prompt=rewrite_prompt,
+            )
+            rewritten = _rewrite_deanon(_res.get("reply") or "")
+            if rewritten and not _res.get("error"):
+                translated = rewritten.strip()
 
     return {
         "translation": translated,

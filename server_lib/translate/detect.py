@@ -82,14 +82,23 @@ def detect_language(text: str, *, min_confidence: float = 0.6,
 def _llm_detect(text: str, model: str) -> str:
     """Single tiny LLM call. Returns ISO 639-1 or ''."""
     try:
+        import brain as _brain
+        # GDPR policy gate: detect / pseudonymise / swap per admin policy.
+        # Reply is a 2-letter code so deanon is a no-op, but apply it
+        # uniformly so any future change to the policy keeps working.
+        try:
+            model, (_pii_text,), _deanon = _brain.gdpr_pick_model_for_background(
+                model, [text], purpose="lang_detect")
+        except _brain.GDPRBlockedError:
+            return ""
         from handlers import sidecar_proxy as _sidecar_proxy
         _res = _sidecar_proxy.background_call(
-            messages=[{"role": "user", "content": f"Detect the language of this text. Reply with only the ISO 639-1 two-letter code (e.g. 'en', 'de'). No explanation.\n\n{text}"}],
+            messages=[{"role": "user", "content": f"Detect the language of this text. Reply with only the ISO 639-1 two-letter code (e.g. 'en', 'de'). No explanation.\n\n{_pii_text}"}],
             model=model,
             system_prompt="You are a language identifier. Output a single ISO 639-1 code, lowercase, nothing else.",
             max_tokens=8,
         )
-        out = _res.get("reply") or ""
+        out = _deanon(_res.get("reply") or "")
         code = out.strip().lower()[:2]
         if code in LANG_NAMES:
             return code
