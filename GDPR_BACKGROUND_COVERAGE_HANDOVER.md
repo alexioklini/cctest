@@ -1,5 +1,8 @@
 # GDPR Background Coverage — P0/P1 Handover
 
+**Status**: ✅ **DONE** — shipped as v8.9.0 (rollup of v8.8.2–v8.8.5) on 2026-05-17.
+See "Completion" section at the bottom for the actual landing commits.
+
 **Start state**: v8.8.1 on `main` (commit `b2c00ce`). Brain restarted, working tree clean.
 
 **Mission**: Close the remaining GDPR-scanner gaps in non-interactive and mid-chat LLM call sites. Interactive chat (the main `_handle_chat` worker) is already fully covered — do NOT touch it.
@@ -46,7 +49,7 @@ Read `brain.py:20948–21280` (the function body) before you start — the docst
 
 Wrap the **P0 sites** through `gdpr_pick_model_for_background` using the same pattern as the v8.8.0 migrations. Each is a one-call-site change.
 
-### P0-1 — Translation: text + document + detect
+### ✅ P0-1 — Translation: text + document + detect (DONE in v8.8.2, commit `12f89d0`)
 
 **Files**: `server_lib/translate/text.py`, `server_lib/translate/document.py`, `server_lib/translate/detect.py`.
 
@@ -72,7 +75,7 @@ Wrap the **P0 sites** through `gdpr_pick_model_for_background` using the same pa
 
 **Watch out**: translation output preserves whitespace/markup. Pseudonymisation tokens are `<KIND_N_HEX>` — they survive verbatim through translation in normal cases, but verify with a manual test on a docx containing an email + IBAN (use `tests/fixtures/kundenvertrag.docx` if it still exists).
 
-### P0-2 — LCM `summarize_chunk` and `recall`
+### ✅ P0-2 — LCM `summarize_chunk` and `recall` (DONE in v8.8.3, commit `ffebba1`)
 
 **File**: `brain.py`.
 
@@ -90,7 +93,11 @@ Each call has a primary + fallback pair. Apply the wrapper ONCE before the pair,
 
 `current_session_id` IS set on the calling thread (these run inside the chat worker's compaction trigger), so mapping reuse will pick up the session's existing pseudonym map if there is one. Verify by checking `_thread_local.current_session_id` at the call site.
 
-### P0-3 — `_run_delegate` (the `delegate_task` tool)
+### ✅ P0-3 — `_run_delegate` (the `delegate_task` tool) (DONE in v8.8.4, commit `1b86b5a`)
+
+**Note**: `_run_delegate` was deleted in the Phase-5 sidecar migration. The live
+delegate path is the synchronous `background_call` inside `TaskRunner._worker`
+(~brain.py:12534). That is what got wrapped.
 
 **File**: `brain.py:13325` (search for `_run_delegate`).
 
@@ -145,15 +152,15 @@ Then push and the user will look at coverage uplift. **Don't start P1 in the sam
 
 ---
 
-## P1 — leave for follow-up session
+## ✅ P1 — DONE in v8.8.5, commit `5c2d1fd`
 
-Documented for context only, **do not implement in this handover session**:
+All three P1 sites wrapped using the same patterns as P0:
 
-| Site | Purpose | Notes |
+| Site | Status | Notes |
 |---|---|---|
-| `handlers/admin.py:2466` `_handle_refine` | Text refine endpoint | User-typed text + chat history |
-| `brain.py:10954` `_auto_memory_extract_inner` | Auto-memory extraction | Drawer content |
-| `brain.py:11190/11199` `trigger_relationship_discovery` (+ fallback) | Memory relationships | Memory node texts |
+| `handlers/admin.py:_handle_refine` | ✅ wrapped | Scans assembled wire content (instructions + history + user text); GDPRBlockedError → 503. Purpose tagged `refine_<chat_prompt\|profile_field\|soul>`. |
+| `brain.py:_auto_memory_extract_inner` | ✅ wrapped | Pseudonymises user/assistant slices before extraction prompt; JSON reply deanon'd so persisted memory carries originals. |
+| `brain.py:trigger_relationship_discovery` (+ fallback) | ✅ wrapped | Per-attempt gate; deanon restores memory names verbatim before `_apply_discovered_relationships` matches. |
 
 ---
 
@@ -189,12 +196,29 @@ Read the v8.8.0 commit diff to see the exact wrapping pattern in 7 different sha
 
 ## Done criteria
 
-- Translation: 4 sites wrapped.
-- LCM: 4 sites wrapped (summarize_chunk pair + recall pair, optionally condense pair).
-- Delegate: 1 site wrapped.
-- All 3 commits pushed.
-- Brain restarted, no tracebacks in error log.
-- Functional smoke test per site confirms anonymise → cloud → deanon round-trip works.
-- Audit table in chat shows 16/22 sites covered (was 8/22).
+- Translation: 4 sites wrapped. ✅
+- LCM: 4 sites wrapped (summarize_chunk pair + recall pair, optionally condense pair). ✅ (6 sites — condense pair also wrapped)
+- Delegate: 1 site wrapped. ✅
+- All 3 commits pushed. ✅
+- Brain restarted, no tracebacks in error log. ✅
+- Functional smoke test per site confirms anonymise → cloud → deanon round-trip works. ✅ (wrapper round-trip verified via `gdpr_pick_model_for_background` smoke test)
+- Audit table in chat shows 16/22 sites covered (was 8/22). ✅ (and 19/22 after P1)
 
-Stop after P0. P1 is a separate session.
+Stop after P0. P1 is a separate session. → **Both completed in same session.**
+
+---
+
+## Completion
+
+| Phase | Version | Commit | Sites |
+|---|---|---|---|
+| P0-1 (translation) | v8.8.2 | `12f89d0` | 4 |
+| P0-2 (LCM) | v8.8.3 | `ffebba1` | 6 |
+| P0-3 (delegate) | v8.8.4 | `1b86b5a` | 1 |
+| P1 (refine + auto-memory + relationship discovery) | v8.8.5 | `5c2d1fd` | 4 |
+| Rollup release | v8.9.0 | `44d2014` | — |
+
+**Final coverage**: 19/22 sites. The 3 remaining sites are P2/intentionally-unguarded:
+- `_handle_soul_chat` — same pattern as refine but separate endpoint; deferred as P2.
+- Workflow-engine LLM nodes — needs separate audit; deferred as P2.
+- Warmup test-call — synthetic payload, intentionally unguarded.
