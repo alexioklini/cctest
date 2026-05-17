@@ -3299,6 +3299,10 @@ function renderMarkdown(text) {
 // unchanged so we can post-process them back into <mark> tags.
 const GDPR_SENTINEL_OPEN = '⁣GDPR⁣';   // U+2063 INVISIBLE SEPARATOR
 const GDPR_SENTINEL_CLOSE = '⁣/GDPR⁣';
+// Internal id/value delimiter. Must NOT be `|` — markdown table cells use
+// `|` as a separator, so a literal pipe inside the open sentinel breaks
+// the sentinel when a restored value sits inside a table row.
+const GDPR_SENTINEL_DELIM = '⁣';        // U+2063 INVISIBLE SEPARATOR
 
 // Human-readable category labels for the tooltip. Falls back to the rule_id
 // itself when not mapped (covers future detectors without a UI release).
@@ -3331,35 +3335,58 @@ function renderMarkdownWithGdprHighlights(text, spans) {
   // markdown parser doesn't touch invisible separators, so spans cross
   // through marked.parse intact.
   if (!text || !spans || !spans.length) return renderMarkdown(text || '');
-  // Sort spans descending by start so splicing from the end keeps earlier
+  // Re-locate every span client-side by value. Server-side offsets come
+  // from Python (Unicode code-point indexing); JavaScript indexes by UTF-16
+  // code units, so any non-BMP character (emoji, rare CJK) in the reply
+  // shifts every downstream offset by +1 in JS land. Rather than try to
+  // re-encode, we walk the text and find each original by-value — same
+  // first-match-wins discipline the server uses, just re-anchored here.
+  // Longest-first so a longer value claims its span before any shorter
+  // substring of it gets a chance (mirrors `find_restored_spans`).
+  const byLen = spans.slice().sort((a, b) => (b.original || '').length - (a.original || '').length);
+  const claimed = []; // [start, end]
+  const overlaps = (s, e) => claimed.some(([cs, ce]) => s < ce && e > cs);
+  const located = []; // {start, end, original, fake, category}
+  for (const sp of byLen) {
+    const orig = sp.original;
+    if (!orig) continue;
+    let from = 0;
+    while (true) {
+      const i = text.indexOf(orig, from);
+      if (i < 0) break;
+      const j = i + orig.length;
+      if (!overlaps(i, j)) {
+        located.push({ start: i, end: j, original: orig, fake: sp.fake || '', category: sp.category || 'unknown' });
+        claimed.push([i, j]);
+      }
+      from = j;
+    }
+  }
+  if (!located.length) return renderMarkdown(text);
+  // Sort descending by start so splicing from the end keeps earlier
   // offsets stable.
-  const ordered = spans.slice().sort((a, b) => b.start - a.start);
+  located.sort((a, b) => b.start - a.start);
   const tooltips = [];
   let out = text;
-  for (const sp of ordered) {
-    if (typeof sp.start !== 'number' || typeof sp.end !== 'number') continue;
-    if (sp.start < 0 || sp.end > text.length || sp.start >= sp.end) continue;
-    // Verify the span still points at the value we expected. The server
-    // computes offsets against the same final reply we're rendering, so
-    // they should match; if they don't (e.g. text was mutated by a hint
-    // appended after deanon), skip rather than mis-highlight.
-    const slice = text.substring(sp.start, sp.end);
-    if (slice !== sp.original) continue;
+  for (const sp of located) {
     const id = tooltips.length;
-    tooltips.push({ original: sp.original, fake: sp.fake || '', category: sp.category || 'unknown' });
+    tooltips.push({ original: sp.original, fake: sp.fake, category: sp.category });
     out = out.substring(0, sp.start)
-        + GDPR_SENTINEL_OPEN + id + '|'
+        + GDPR_SENTINEL_OPEN + id + GDPR_SENTINEL_DELIM
         + out.substring(sp.start, sp.end)
         + GDPR_SENTINEL_CLOSE
         + out.substring(sp.end);
   }
   let html = renderMarkdown(out);
-  // Replace sentinels with <mark> tags. The id between OPEN and '|' tells
-  // us which tooltip to attach. The content between '|' and CLOSE is the
-  // (already HTML-escaped by marked) restored value.
+  // Replace sentinels with <mark> tags. The id between OPEN and the
+  // delimiter tells us which tooltip to attach. The content between the
+  // delimiter and CLOSE is the (already HTML-escaped by marked) restored
+  // value.
   const re = new RegExp(
     GDPR_SENTINEL_OPEN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      + '(\\d+)\\|([\\s\\S]*?)'
+      + '(\\d+)'
+      + GDPR_SENTINEL_DELIM.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      + '([\\s\\S]*?)'
       + GDPR_SENTINEL_CLOSE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
     'g'
   );
