@@ -529,9 +529,11 @@ def extract_triples_from_drawer(
         "%MAX_TRIPLES%", str(max_triples))
     user_content = _truncate_for_llm(content, max_drawer_chars)
 
+    _kg_deanon = cc._identity_deanon
     try:
-        resolved_model = cc.gdpr_pick_model_for_background(
+        resolved_model, (_pii_content,), _kg_deanon = cc.gdpr_pick_model_for_background(
             model, [user_content], purpose="kg_extract")
+        user_content = _pii_content
     except cc.GDPRBlockedError as e:
         return [], f"gdpr_block: {e}"
     except Exception:
@@ -554,7 +556,7 @@ def extract_triples_from_drawer(
             system_prompt=system_prompt,
             max_tokens=inference_max_tokens,
         )
-        raw = _res.get("reply") or None
+        raw = _kg_deanon(_res.get("reply") or "") or None
         _err = _res.get("error") or ""
         last_err = f"llm_error: {_err}" if _err else ""
         is_conn_refused = (

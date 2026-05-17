@@ -293,7 +293,7 @@ def call_llm(model: str, system_prompt: str, user_content: str) -> str | None:
         # Use background-pick: prefers cheap haiku/local. Pass content as the
         # PII scan target so cloud→local fallback works on PII drawers.
         try:
-            model = cc.gdpr_pick_model_for_background(
+            model, _, _ = cc.gdpr_pick_model_for_background(
                 cc.SERVER_DEFAULT_MODEL if hasattr(cc, "SERVER_DEFAULT_MODEL") else "",
                 [user_content], purpose="kg_extract_eval")
         except Exception:

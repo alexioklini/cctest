@@ -2555,13 +2555,21 @@ def _generate_chat_summary(session):
         if not model:
             return
 
-        # GDPR auto-fallback: chat content may contain PII and the summariser
-        # model is usually a cheap cloud Haiku. Reroute to the local fallback
-        # when findings exist. In hard-block mode without a local route, skip
-        # the summary — the session just keeps its existing/derived title.
+        # GDPR policy gate. Aborts the summary if the admin chose `abort`;
+        # otherwise proceeds with pseudonymised sample text and/or swapped
+        # model per policy.
+        _summary_deanon = engine._identity_deanon
         try:
-            model = engine.gdpr_pick_model_for_background(
+            model, _new_sample, _summary_deanon = engine.gdpr_pick_model_for_background(
                 model, sample, purpose="chat_summary")
+            if _new_sample is not sample:
+                sample = list(_new_sample)
+                prompt = (
+                    "Summarize this conversation in ONE short sentence (max 60 chars). "
+                    "Focus on the topic/task, not greetings. Output ONLY the summary, nothing else. "
+                    "Base your summary ONLY on the conversation content below.\n\n"
+                    + "\n".join(sample)
+                )
         except engine.GDPRBlockedError:
             return
         except Exception:
@@ -2577,7 +2585,7 @@ def _generate_chat_summary(session):
             project=(session.project or ""),
             max_tokens=80,
         )
-        result = _res.get("reply") or ""
+        result = _summary_deanon(_res.get("reply") or "")
         if result and not _res.get("error"):
             summary = result.strip().strip('"').strip("'")[:80]
             with session.lock:
@@ -2947,12 +2955,18 @@ def _user_profile_run_llm(uid: str, prior_profile: str, samples: list[str],
     if not model:
         print(f"[profile] no model available", flush=True)
         return None
-    # GDPR auto-fallback to local on PII findings; raises GDPRBlockedError
-    # in hard-block mode without a usable local route — fail closed.
+    # GDPR policy gate. Pseudonymises samples + prior profile when admin
+    # picked `anonymise` policy; reply is de-anonymised before persistence
+    # so the on-disk profile keeps real names. Aborts only on explicit
+    # `abort` policy or pseudonymise-fail + `abort` fail action.
+    _profile_deanon = engine._identity_deanon
     try:
-        model = engine.gdpr_pick_model_for_background(
-            model, samples + [prior_profile], purpose="user_profile",
-        )
+        _inputs = samples + [prior_profile]
+        model, _new_inputs, _profile_deanon = engine.gdpr_pick_model_for_background(
+            model, _inputs, purpose="user_profile")
+        if _new_inputs is not _inputs:
+            samples = list(_new_inputs[:-1])
+            prior_profile = _new_inputs[-1]
     except Exception as e:
         print(f"[profile] GDPR gate refused uid={uid}: {e}", flush=True)
         return None
@@ -2996,7 +3010,7 @@ def _user_profile_run_llm(uid: str, prior_profile: str, samples: list[str],
             user_id=uid,
             max_tokens=2000,
         )
-        result = _res.get("reply") or ""
+        result = _profile_deanon(_res.get("reply") or "")
         if not result:
             if _res.get("error"):
                 print(f"[profile] sidecar returned error: {str(_res['error'])[:200]}", flush=True)

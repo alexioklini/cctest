@@ -2562,6 +2562,18 @@ class AdminHandlerMixin:
                     "server_log": bool(server_config.get("gdpr_scanner", {}).get("server_log", True)),
                     "server_block": bool(server_config.get("gdpr_scanner", {}).get("server_block", False)),
                     "default_local_fallback_model": str(server_config.get("gdpr_scanner", {}).get("default_local_fallback_model") or ""),
+                    "background_pii_action": (
+                        server_config.get("gdpr_scanner", {}).get("background_pii_action")
+                        if server_config.get("gdpr_scanner", {}).get("background_pii_action")
+                            in ("anonymise", "swap_to_local", "abort")
+                        else "anonymise"
+                    ),
+                    "background_anonymise_fail_action": (
+                        server_config.get("gdpr_scanner", {}).get("background_anonymise_fail_action")
+                        if server_config.get("gdpr_scanner", {}).get("background_anonymise_fail_action")
+                            in ("swap_to_local", "abort")
+                        else "swap_to_local"
+                    ),
                     "categories": server_config.get("gdpr_scanner", {}).get("categories") or {
                         cat: {"action": act} for cat, act in engine.PII_DEFAULT_CATEGORY_ACTIONS.items()
                     },
@@ -2753,6 +2765,19 @@ class AdminHandlerMixin:
                         self._send_json({"error": f"default_local_fallback_model: '{mid}' is not local"}, 400)
                         return
                 gs["default_local_fallback_model"] = mid
+
+            if "background_pii_action" in gs_in:
+                v = gs_in["background_pii_action"]
+                if v not in ("anonymise", "swap_to_local", "abort"):
+                    self._send_json({"error": "background_pii_action must be one of: anonymise, swap_to_local, abort"}, 400)
+                    return
+                gs["background_pii_action"] = v
+            if "background_anonymise_fail_action" in gs_in:
+                v = gs_in["background_anonymise_fail_action"]
+                if v not in ("swap_to_local", "abort"):
+                    self._send_json({"error": "background_anonymise_fail_action must be one of: swap_to_local, abort"}, 400)
+                    return
+                gs["background_anonymise_fail_action"] = v
 
             # Category actions — only accept known categories + valid actions.
             if "categories" in gs_in:

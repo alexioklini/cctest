@@ -1589,6 +1589,29 @@ async function switchGeneralTab(tab, btn) {
           <div style="font-size:11px;color:var(--text-400);margin-top:2px">Used for background LLM calls (next-prompt, chat summary, memory classifier, worker summariser, scheduled tasks) and for composer auto-routing when a blocking finding lands on a cloud model. ${hasLocals?'':'<span style="color:var(--warning,#b45309)">No local models are configured — add one under Models first.</span>'}</div>
         </div>
 
+        ${SEC('Background / non-interactive LLM calls')}
+        <div style="font-size:11px;color:var(--text-400);margin-bottom:8px">
+          Policy for calls Brain makes without user interaction (next-prompt suggestions, chat summary, memory classifier, scheduled tasks, user-profile daemon, KG extraction). Interactive chat is unaffected — users still see the per-turn modal there.
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:12px;color:var(--text-300);min-width:200px">When PII is detected</span>
+            <select class="form-select" id="gdpr-bg-pii-action" style="flex:1">
+              <option value="anonymise"${(gs.background_pii_action||'anonymise')==='anonymise'?' selected':''}>Auto-anonymise (pseudonymise, then de-anonymise reply)</option>
+              <option value="swap_to_local"${gs.background_pii_action==='swap_to_local'?' selected':''}>Swap to local fallback model</option>
+              <option value="abort"${gs.background_pii_action==='abort'?' selected':''}>Abort the call</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:12px;color:var(--text-300);min-width:200px">If anonymisation fails</span>
+            <select class="form-select" id="gdpr-bg-fail-action" style="flex:1">
+              <option value="swap_to_local"${(gs.background_anonymise_fail_action||'swap_to_local')==='swap_to_local'?' selected':''}>Fall back to local model</option>
+              <option value="abort"${gs.background_anonymise_fail_action==='abort'?' selected':''}>Abort the call</option>
+            </select>
+          </div>
+          <div style="font-size:11px;color:var(--text-400)">Only the <i>Abort</i> options actually refuse a call. The two swap paths always proceed: if anonymisation succeeds, the call uses the configured cloud model on pseudonymised text; if no usable local fallback is configured, the call falls through to the original model with a warning in the audit log.</div>
+        </div>
+
         ${SEC('Email allowlist')}
         <div style="font-size:11px;color:var(--text-400);margin-bottom:6px">
           One entry per line. <code>user@example.com</code> matches exactly; <code>@example.com</code> matches any address at that domain. Matching emails are suppressed from findings entirely.

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.7.1"
+VERSION = "8.8.0"
 VERSION_DATE = "2026-05-17"
 CHANGELOG = [
+    ("8.8.0", "2026-05-17", "feat(gdpr-background-policy): admin-configurable PII policy for all non-interactive LLM calls + transparent anonymisation in background path. Interactive chat is unchanged (the per-turn modal still drives the user's choice). Background calls (next-prompt suggestions, chat summary, memory classifier, scheduled tasks, user-profile daemon, KG extraction) now obey two new `gdpr_scanner.*` settings: **(1) `background_pii_action`** = `anonymise` | `swap_to_local` | `abort` (default `anonymise`). When PII is detected: `anonymise` pseudonymises the inputs against a session-scoped or one-shot mapping, sends to the original cloud model, de-anonymises the reply via a caller-supplied callback; `swap_to_local` routes to `default_local_fallback_model` (legacy behaviour); `abort` raises GDPRBlockedError. **(2) `background_anonymise_fail_action`** = `swap_to_local` | `abort` (default `swap_to_local`). Governs the failure path when pseudonymisation itself fails. **Only the explicit `abort` options ever raise** — `swap_to_local` with no usable local fallback falls through to the original model with a `pii_warn_passthrough` audit row, never blocks. **Signature change**: `gdpr_pick_model_for_background(model, texts, purpose)` now returns `(model, transformed_texts, deanon_fn)`. All 7 callers updated (next-prompt, scheduled-task delegate, memory classifier, server.py chat summary, server.py user-profile daemon, engine/kg_extract.py, eval/kg_prompt_eval.py). Each caller swaps in `transformed_texts` before sending and pipes the reply through `deanon_fn`. Session-scoped mapping reuse: when `_thread_local.current_session_id` is set, the latest persisted `pseudonym_maps` row for that session is rehydrated so cross-call tokens stay stable (matches chat-worker behaviour); one-shot mappings stay in-memory only. New audit action types: `pii_anonymised`, `pii_anonymise_failed`, `pii_warn_passthrough`. **Bug fix**: `is_model_local()` was reading `prov.get(\"is_local\")` from the resolver's return dict — but `resolve_provider_for_model` only returns `{api_key, base_url, provider_name}`, so the flag was always absent → every model classified as cloud, breaking the post-8.7.1 PII gate. Now reads from a dedicated `_get_provider_config(name)` helper (30s cache, hooked into `clear_provider_cache`) that returns the full providers.<name> entry. **UI**: new \"Background / non-interactive LLM calls\" section in Settings → GDPR with two dropdowns; `collectGdprFormConfig` + the POST handler in `handlers/admin.py` extended to round-trip both keys."),
     ("8.7.1", "2026-05-17", "refactor(provider-locality): replace base_url heuristic with explicit per-provider `is_local` flag. CLIProxyAPI runs on localhost but proxies to cloud Mistral/Anthropic/Gemini, so the URL-only check in `_is_local_base_url` was wrongly classifying it as local — bypassing PII hard-block, cost quotas, and warmup-cloud-skip for cloud-bound requests. Five changes: (1) `config.json` providers carry `is_local: bool`; `Lokal` (oMLX) + `local-mlx-whisper` = true, `CLIProxyAPI` = false. (2) `brain.is_model_local()` reads `prov[\"is_local\"]` directly (default False — safer to mis-classify as cloud than vice versa). (3) Warmup `allow_cloud` gate (`brain.py:13069`) and discovery profile auto-pick (`brain.py:21685`) read the flag instead of the URL. (4) `_is_local_base_url()` deleted. (5) `handlers/providers.py` exposes `is_local` in the list endpoint; provider edit/add forms in `web/js/settings.js` get a checkbox wired through both save handlers. **Bonus fix**: `action:add` in `handlers/providers.py` now upsert-merges the incoming dict over the existing provider entry instead of full-replacing it — partial edits from the UI (which only sends base_url/default_model/is_local) no longer wipe `type`, `max_concurrent`, `supports_chat_template_kwargs`, `_comment`, etc. The legacy `_keep_key` flag becomes a no-op (api_key is preserved by the merge); dropped from the client send."),
     ("8.7.0", "2026-05-16", "fix(transparent-anonymisation): close two leak vectors for follow-up turns of an anonymising session. Chat `9741d117` showed: turn 1 anonymised the docx correctly; turn 2's user typed clean text (`welche personen kommen darin vor`), the worker only scanned the typed text (`findings: 0`), and shipped `session.messages` — which carried turn 1's de-anonymised assistant reply with real names + emails + phones — to the cloud LLM raw. Re-reads of the prior attachment also returned the cache-stub (no content), forcing the model to fall back to its memory of the un-anonymised history. Three coordinated fixes: **(1) History walk before sidecar handoff** (`handlers/chat.py`) — new `_pseudonymize_history_for_wire(messages, mapping, cfg)` walks every prior `session.messages` entry (user + assistant, text + list-of-blocks) and produces a wire-only pseudonymised copy. `session.messages` is NOT mutated; only the list handed to `sidecar_proxy.run_turn` is rewritten. Mapping-reuse short-circuits already-known tokens → one regex scan per turn, zero new mint cost on stable conversations. New tokens minted from history emit a single aggregate `anonymise_read` row with `source: \"history\"` so the chat UI shows what got pseudonymised. Newly-minted tokens persist via a mid-turn `save_mapping` so a server restart mid-turn can still de-anonymise. **(2) Session-sticky implicit anonymise** (`handlers/chat.py:_handle_chat` + `server.py:Session` + `handlers/sessions_handler.py`) — once a session has any `pseudonym_maps` row, every subsequent turn re-enters the anonymise branch automatically (server-side AND client-side), unless the user explicitly opts out via the composer shield button. The web modal becomes a one-time consent gate per session instead of firing on every PII-bearing send. The 'Don't ask again for this chat' checkbox is removed from the modal (`web/js/panels.js`) — the consent is now implicit from the user clicking Anonymise. The shield-button reset (`web/js/init.js:resetGdprActionPref`) clears both the persisted pref AND a new in-memory `Session._gdpr_skip_auto` flag (set by `handlers/sessions_handler.py:gdpr_action_pref` action on empty value) so the server's implicit-anonymise rule respects the opt-out for the rest of the in-memory session. `GET /v1/sessions/<id>/messages` now exposes `has_gdpr_mapping: bool` so the client can decide to skip the modal on follow-up turns without a round-trip. `Session.load_from_db` rehydrates `_gdpr_mapping_id` + `_gdpr_streamer` via the new `rehydrate_session_gdpr_mapping()` helper so reloaded sessions don't need a fresh send to re-install the mapping. **(3) Cache bypass when mapping is active** (`brain.py:tool_read_document` + `tool_read_file`) — when `_thread_local._gdpr_mapping_id` is set, the per-session read cache is bypassed entirely. The cache stub carries no content; without the bypass, re-reads of a prior-turn attachment returned an empty stub and the model fell back to memory of the un-anonymised text. With the bypass, every re-read goes through `_ok_and_cache` → `_gdpr_anon_tool_text`, which short-circuits on already-known forward-map entries (no new mints, no synthetic-row spam). Coverage matrix now closed: history, prior-turn attachments, and freshly-attached files all funnel through the same pseudonymise-before-wire seam. All 53 existing GDPR tests pass."),
     ("8.6.3", "2026-05-16", "fix(tool-routing): restore read_document steering for non-project chats. Session 371d591c showed Mistral Small calling `read_file` on a `.xlsx` attachment, getting binary ZIP garbage, then escalating to `python_exec`/`execute_command` to manually unzip — wasting tool rounds and previously bypassing the anonymisation seam (closed in 8.6.2, but the model still shouldn't be picking the wrong tool). Root cause: `tool_settings.read_document.applies_with` was `[\"mempalace_query\"]` since the v8.38.0 per-tool prose refactor, gating the entire description block to project chats only. In a plain attachment-with-a-question chat (no project, `mempalace_query` not in the active set), the renderer dropped read_document's description entirely AND read_file had an empty description, so the system prompt carried zero steering — the model had only the inline `[User attached files saved to disk. IMPORTANT: Use the read_document tool...]` notice in the user message, which it ignored for a terse query. Fix in `server.py:apply_config` — forward-migration block (idempotent, runs every boot) that (1) prepends a project-agnostic 'USE read_document for binary documents; do NOT use read_file/python_exec/execute_command on binaries' routing hint to `tool_settings.read_document.description`, (2) drops `applies_with` from `[\"mempalace_query\"]` to `[]` so the description renders in EVERY chat that has the tool, (3) prepends a 'plain-text files only — use read_document for PDF/DOCX/XLSX' hint to `tool_settings.read_file.description`. Idempotency via prefix-presence check. `_ts_before` snapshot moved above the migration so the persist gate writes back to config.json on first run only. The original project-flow prose ('Step 2 of project memory flow', read_path / read_path_original guidance) is preserved verbatim below the new prefix — still informational in non-project chats, still load-bearing for project chats. No other tool descriptions touched."),
@@ -10788,18 +10789,24 @@ def generate_next_prompt_suggestion(session) -> str | None:
         if not model:
             return None
 
-        # GDPR auto-fallback: if the history contains PII and the chosen model
-        # is cloud, swap to the configured local fallback. In hard-block mode
-        # with no local fallback available, skip the suggestion entirely —
-        # this call is ornamental and must not leak to cloud.
+        # GDPR policy gate: detect PII, swap model and/or pseudonymise inputs
+        # per `gdpr_scanner.background_pii_action`. Only `abort` raises; other
+        # policies always proceed (possibly on the original cloud model).
+        _deanon = _identity_deanon
         try:
             _history_blobs = []
-            for _m in clean_msgs:
+            _blob_idx = []  # which clean_msgs index each blob came from
+            for _i, _m in enumerate(clean_msgs):
                 _c = _m.get("content")
                 if isinstance(_c, str):
                     _history_blobs.append(_c)
-            model = gdpr_pick_model_for_background(model, _history_blobs,
-                                                   purpose="next_prompt_suggestion")
+                    _blob_idx.append(_i)
+            model, _new_blobs, _deanon = gdpr_pick_model_for_background(
+                model, _history_blobs, purpose="next_prompt_suggestion")
+            # Stitch pseudonymised content back into clean_msgs in place.
+            if _new_blobs is not _history_blobs:
+                for _i, _nb in zip(_blob_idx, _new_blobs):
+                    clean_msgs[_i] = {**clean_msgs[_i], "content": _nb}
         except GDPRBlockedError:
             return None
         except Exception:
@@ -10819,7 +10826,7 @@ def generate_next_prompt_suggestion(session) -> str | None:
                 user_id=(getattr(session, "user_id", "") or ""),
                 max_tokens=200,
             )
-            text = _res.get("reply") or ""
+            text = _deanon(_res.get("reply") or "")
         finally:
             _thread_local.current_user_id = _prev_uid
         try:
@@ -12505,6 +12512,7 @@ def clear_provider_cache():
         _provider_cache_time = 0
     with _key_pools_lock:
         _key_pools.clear()
+    _invalidate_providers_cache()
 
 
 # --- Warmup Registry ---
@@ -16216,16 +16224,30 @@ class Scheduler:
             # final reply. The agentic loop itself runs in the sidecar process.
             from handlers import sidecar_proxy as _sidecar_proxy
             _sidecar_blocked = False
+            _sched_deanon = _identity_deanon
             try:
-                # GDPR auto-fallback before the sidecar hits a non-local
-                # provider — same gate the native loop applied pre-Phase-2.
-                _gdpr_blobs = [system_prompt] if system_prompt else []
-                for _m in messages:
+                # GDPR policy gate. Build a flat list with system_prompt at
+                # index 0 (if any) followed by string contents in messages
+                # order; rewrite back in place after pseudonymisation.
+                _gdpr_blobs = []
+                _has_sys = bool(system_prompt)
+                if _has_sys:
+                    _gdpr_blobs.append(system_prompt)
+                _msg_idx = []
+                for _i, _m in enumerate(messages):
                     _c = _m.get("content") if isinstance(_m, dict) else None
                     if isinstance(_c, str):
                         _gdpr_blobs.append(_c)
-                model = gdpr_pick_model_for_background(
+                        _msg_idx.append(_i)
+                model, _new_blobs, _sched_deanon = gdpr_pick_model_for_background(
                     model, _gdpr_blobs, purpose="scheduled")
+                if _new_blobs is not _gdpr_blobs:
+                    _ofs = 0
+                    if _has_sys:
+                        system_prompt = _new_blobs[0]
+                        _ofs = 1
+                    for _i, _idx in enumerate(_msg_idx):
+                        messages[_idx] = {**messages[_idx], "content": _new_blobs[_ofs + _i]}
             except GDPRBlockedError as _ge:
                 result_text = f"[DELEGATION ERROR] {_ge}"
                 status = "error"
@@ -16298,7 +16320,7 @@ class Scheduler:
                     disable_parallel_tool_use=_disable_parallel,
                 )
                 _sc_err = _result.get("error")
-                _sc_reply = _result.get("reply") or ""
+                _sc_reply = _sched_deanon(_result.get("reply") or "")
                 if _sc_err and not _sc_reply:
                     result_text = f"[DELEGATION ERROR] sidecar: {str(_sc_err)[:300]}"
                     status = "error"
@@ -20788,6 +20810,10 @@ def _get_gdpr_scanner_config() -> dict:
                                          #   false → block actions downgrade to warn (back-compat)
                                          #   true  → block actions refuse unless model is local
        "default_local_fallback_model": str,
+       "background_pii_action": str,     # anonymise | swap_to_local | abort  (default anonymise)
+                                         # Policy for non-interactive LLM calls when PII is found.
+       "background_anonymise_fail_action": str,  # swap_to_local | abort  (default swap_to_local)
+                                         # What to do when pseudonymisation itself fails.
        "categories": {<cat>: {"action": "ignore|warn|block"}},
        "rule_overrides": {<rule_id>: "ignore|warn|block"},
        "email_allowlist": [str, ...]}    # full addresses or "@domain" patterns
@@ -20799,6 +20825,8 @@ def _get_gdpr_scanner_config() -> dict:
     cfg = {
         "enabled": True, "server_log": True, "server_block": False,
         "default_local_fallback_model": "",
+        "background_pii_action": "anonymise",
+        "background_anonymise_fail_action": "swap_to_local",
         "categories": {cat: {"action": act} for cat, act in PII_DEFAULT_CATEGORY_ACTIONS.items()},
         "rule_overrides": {},
         "email_allowlist": [],
@@ -20812,6 +20840,10 @@ def _get_gdpr_scanner_config() -> dict:
                 cfg[k] = bool(loaded[k])
         if "default_local_fallback_model" in loaded:
             cfg["default_local_fallback_model"] = str(loaded["default_local_fallback_model"] or "")
+        if loaded.get("background_pii_action") in ("anonymise", "swap_to_local", "abort"):
+            cfg["background_pii_action"] = loaded["background_pii_action"]
+        if loaded.get("background_anonymise_fail_action") in ("swap_to_local", "abort"):
+            cfg["background_anonymise_fail_action"] = loaded["background_anonymise_fail_action"]
         cats_in = loaded.get("categories") or {}
         if isinstance(cats_in, dict):
             for cat, entry in cats_in.items():
@@ -20877,19 +20909,58 @@ def _pii_email_allowed(email: str, allowlist: list[str]) -> bool:
 
 
 def is_model_local(model_id: str) -> bool:
-    """Return True iff the resolved provider has `is_local: true` set.
+    """Return True iff the model's provider has `is_local: true` set.
 
-    Source of truth is the provider's `is_local` flag in config.json. No URL
-    heuristic — CLIProxyAPI runs on localhost but proxies to cloud models,
-    so URL alone is unsafe for PII / quota routing decisions.
+    Source of truth is the provider's `is_local` flag in config.json
+    (`providers.<name>.is_local`). No URL heuristic — CLIProxyAPI runs on
+    localhost but proxies to cloud models, so URL alone is unsafe for PII /
+    quota routing decisions.
+
+    Note: `resolve_provider_for_model` only returns
+    `{api_key, base_url, provider_name}`, so we read the provider's
+    `is_local` directly from config.json by name. 30s cached.
     """
     if not model_id:
         return False
     try:
         prov = resolve_provider_for_model(model_id)
+        pname = (prov or {}).get("provider_name", "") if prov else ""
+        if not pname or pname == "default":
+            return False
+        prov_cfg = _get_provider_config(pname)
+        return bool(prov_cfg.get("is_local", False))
     except Exception:
         return False
-    return bool(prov.get("is_local", False)) if prov else False
+
+
+_providers_cache: dict[str, dict] | None = None
+_providers_cache_time: float = 0.0
+
+
+def _get_provider_config(name: str) -> dict:
+    """Return the providers.<name> entry from config.json. 30s cached.
+
+    Lightweight helper for callers that need provider-level flags (is_local
+    today; add more as needed) without going through the cred-resolution
+    path (which intentionally returns only api_key + base_url + name)."""
+    global _providers_cache, _providers_cache_time
+    now = time.time()
+    if _providers_cache is None or (now - _providers_cache_time) > 30:
+        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        try:
+            with open(cfg_path) as f:
+                _providers_cache = json.load(f).get("providers", {}) or {}
+        except (OSError, json.JSONDecodeError):
+            _providers_cache = {}
+        _providers_cache_time = now
+    return _providers_cache.get(name) or {}
+
+
+def _invalidate_providers_cache():
+    """Called from server.py when provider config changes."""
+    global _providers_cache, _providers_cache_time
+    _providers_cache = None
+    _providers_cache_time = 0.0
 
 
 def _invalidate_gdpr_cache():
@@ -20910,73 +20981,98 @@ class GDPRBlockedError(RuntimeError):
     """
 
 
-def gdpr_pick_model_for_background(model: str, texts, purpose: str = "") -> str:
-    """Decide which model to use for a background/worker LLM call.
+def _identity_deanon(text):
+    """No-op de-anonymise used when no anonymisation happened."""
+    return text
 
-    Behavior when the scanner is enabled AND `texts` contain PII:
-      - current model is local           → return model unchanged
-      - local fallback configured + OK   → swap to fallback (logged as pii_auto_fallback)
-      - no usable fallback, block off    → return model unchanged (warn-only)
-      - no usable fallback, block on     → raise GDPRBlockedError
 
-    Every PII detection at this layer emits a `pii_detected` audit row with
-    `source=background`, independent of whether the model is swapped.
+def gdpr_pick_model_for_background(model: str, texts, purpose: str = ""):
+    """Decide model + (optionally) pseudonymise inputs for a background call.
+
+    Returns a 3-tuple: `(model, transformed_texts, deanon_fn)`.
+      * `model`            — the model to actually call (possibly swapped).
+      * `transformed_texts` — list[str] aligned with the input order. Either
+                              the originals (no-swap / swap-only / no findings)
+                              or pseudonymised copies (anonymise policy).
+      * `deanon_fn(text)`  — applied by the caller to the reply text before
+                              persisting/returning. Identity when no
+                              pseudonymisation happened; real de-anonymiser
+                              when `background_pii_action == 'anonymise'` and
+                              pseudonymisation succeeded.
+
+    Policy (`gdpr_scanner.background_pii_action`, applied when PII is found):
+      * `anonymise`      — pseudonymise the texts in-place; reply is
+                            de-anonymised by the caller's `deanon_fn`. Mapping
+                            is session-scoped when `current_session_id` is set
+                            (reuses the latest persisted map for that session
+                            so tokens stay stable across calls), one-shot
+                            otherwise. On pseudonymise failure the
+                            `background_anonymise_fail_action` knob takes over
+                            (`swap_to_local` → existing fallback path,
+                            `abort` → raise GDPRBlockedError).
+      * `swap_to_local`  — legacy behaviour: swap to
+                            `default_local_fallback_model`, or raise/warn
+                            when no usable local route exists (governed by
+                            `server_block`).
+      * `abort`          — always raise GDPRBlockedError on findings.
 
     `texts` accepts str or iterable-of-str. Unexpected errors in scanning or
-    config access fall open (return model) — never block a background call on
-    scanner bugs.
+    config access fall open (return model + identity deanon) — never block a
+    background call on scanner bugs.
 
     Used by: next-prompt suggestions, chat summary, memory classifier,
-    sidecar background_call (delegate tool + scheduler + agent tasks).
+    sidecar background_call (delegate tool + scheduler + agent tasks),
+    user-profile daemon, KG extraction.
     """
+    # Normalise texts up-front so we always return the same shape the caller
+    # passed in (list, even when input was a bare string).
+    if isinstance(texts, str):
+        samples = [texts]
+        _input_was_str = True
+    else:
+        try:
+            samples = [t if isinstance(t, str) else "" for t in texts]
+        except TypeError:
+            return (model, [], _identity_deanon)
+        _input_was_str = False
+
     try:
         cfg = _get_gdpr_scanner_config()
     except Exception:
-        return model
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
     if not cfg.get("enabled", True):
-        return model
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
 
-    # Normalise texts up-front so we can scan regardless of fallback state.
-    if isinstance(texts, str):
-        samples = [texts]
-    else:
-        try:
-            samples = [t for t in texts if isinstance(t, str)]
-        except TypeError:
-            return model
-    if not samples:
-        return model
+    if not any(samples):
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
 
-    # Scan. Fail open on scanner errors.
+    # Full scan across all samples so anonymise has the complete finding set
+    # (the legacy short-circuit-on-first-finding only worked for the model-swap
+    # decision; pseudonymise needs every finding to mint a stable mapping).
     try:
-        findings = []
+        all_findings = []
         for s in samples:
             if not s:
                 continue
-            findings.extend(_pii_scan_text(s, max_findings=5, cfg=cfg))
-            if findings:
-                break
+            all_findings.extend(_pii_scan_text(s, max_findings=200, cfg=cfg))
     except Exception:
-        return model
-    if not findings:
-        return model
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
+    if not all_findings:
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
 
     _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
     _agent_id = _agent.agent_id if _agent else "main"
     _sid = getattr(_thread_local, 'current_session_id', None) or ""
-    _n = len(findings)
+    _n = len(all_findings)
     _log_audit = bool(cfg.get("server_log", True) and _audit_log)
-    # server_block is the master switch but the per-finding action is what
-    # decides refusal — a warn-category finding never blocks even if the master
-    # switch is on. _pii_worst_action returns "block" only if both are true.
-    _worst_action = _pii_worst_action(findings)
+    _worst_action = _pii_worst_action(all_findings)
     _server_block = (_worst_action == "block")
+    _policy = cfg.get("background_pii_action", "anonymise")
 
-    # Always record the detection at the background layer, independent of any
-    # swap decision. Best-effort.
+    # Always audit the detection.
     try:
         print(f"[gdpr] session={_sid} agent={_agent_id} purpose={purpose} "
-              f"findings={_n} (background)", flush=True)
+              f"findings={_n} policy={_policy} (background)", flush=True)
     except Exception:
         pass
     if _log_audit:
@@ -20986,7 +21082,7 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = "") -> str:
                 action_type="pii_detected",
                 tool_name="gdpr_scanner",
                 args_summary=f"{_n} findings",
-                result_summary=f"purpose={purpose or '-'} model={model}",
+                result_summary=f"purpose={purpose or '-'} model={model} policy={_policy}",
                 result_status="warning",
                 session_id=_sid or None,
                 source="background",
@@ -20994,55 +21090,79 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = "") -> str:
         except Exception:
             pass
 
-    # Already on a local model — nothing to reroute, nothing to block.
+    # Already on a local model — nothing to reroute, no need to anonymise.
     try:
         model_is_local = is_model_local(model)
     except Exception:
         model_is_local = False
     if model_is_local:
-        return model
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
 
-    # Attempt the swap. fallback == model is treated as no-swap.
-    fallback = (cfg.get("default_local_fallback_model") or "").strip()
-    swap_ok = False
-    if fallback and fallback != model:
+    def _try_swap_to_local(fail_reason: str = ""):
+        """Attempt the model-swap. Returns (model, texts, deanon) on swap
+        success. On failure (no usable local fallback) returns the ORIGINAL
+        (model, texts, identity) with a `pii_warn_passthrough` audit — never
+        raises. Aborting is reserved for the explicit `abort` policy options."""
+        fallback = (cfg.get("default_local_fallback_model") or "").strip()
+        swap_ok = False
+        if fallback and fallback != model:
+            try:
+                fcfg = (_models_config or {}).get(fallback) or {}
+                if fcfg.get("enabled") and is_model_local(fallback):
+                    swap_ok = True
+            except Exception:
+                swap_ok = False
+        if swap_ok:
+            try:
+                print(f"[gdpr] auto-fallback session={_sid} agent={_agent_id} "
+                      f"purpose={purpose} {model} -> {fallback} "
+                      f"({_n} findings{(' ' + fail_reason) if fail_reason else ''})",
+                      flush=True)
+            except Exception:
+                pass
+            if _log_audit:
+                try:
+                    _audit_log.log_action(
+                        agent=_agent_id,
+                        action_type="pii_auto_fallback",
+                        tool_name="gdpr_scanner",
+                        args_summary=f"{model} -> {fallback}",
+                        result_summary=f"purpose={purpose or '-'} findings={_n}"
+                                       f"{(' reason=' + fail_reason) if fail_reason else ''}",
+                        result_status="ok",
+                        session_id=_sid or None,
+                        source="background",
+                    )
+                except Exception:
+                    pass
+            return (fallback, samples if not _input_was_str else samples[0], _identity_deanon)
+        # No swap possible — warn-passthrough instead of raising.
         try:
-            fcfg = (_models_config or {}).get(fallback) or {}
-            if fcfg.get("enabled") and is_model_local(fallback):
-                swap_ok = True
-        except Exception:
-            swap_ok = False
-
-    if swap_ok:
-        try:
-            print(f"[gdpr] auto-fallback session={_sid} agent={_agent_id} "
-                  f"purpose={purpose} {model} -> {fallback} ({_n} findings)", flush=True)
+            print(f"[gdpr] swap UNAVAILABLE session={_sid} agent={_agent_id} "
+                  f"purpose={purpose} model={model} findings={_n} "
+                  f"fallback={fallback or '-'} → passthrough", flush=True)
         except Exception:
             pass
         if _log_audit:
             try:
                 _audit_log.log_action(
                     agent=_agent_id,
-                    action_type="pii_auto_fallback",
+                    action_type="pii_warn_passthrough",
                     tool_name="gdpr_scanner",
-                    args_summary=f"{model} -> {fallback}",
-                    result_summary=f"purpose={purpose or '-'} findings={_n}",
-                    result_status="ok",
+                    args_summary=f"model={model}",
+                    result_summary=f"purpose={purpose or '-'} findings={_n} "
+                                   f"fallback={fallback or '-'}"
+                                   f"{(' reason=' + fail_reason) if fail_reason else ''}",
+                    result_status="warning",
                     session_id=_sid or None,
                     source="background",
                 )
             except Exception:
                 pass
-        return fallback
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
 
-    # No swap possible and model is cloud.
-    if _server_block:
-        try:
-            print(f"[gdpr] BLOCK session={_sid} agent={_agent_id} purpose={purpose} "
-                  f"model={model} findings={_n} (no local fallback available)",
-                  flush=True)
-        except Exception:
-            pass
+    # --- Policy: abort (explicit admin choice — only this raises) ---
+    if _policy == "abort":
         if _log_audit:
             try:
                 _audit_log.log_action(
@@ -21050,8 +21170,7 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = "") -> str:
                     action_type="pii_blocked",
                     tool_name="gdpr_scanner",
                     args_summary=f"model={model}",
-                    result_summary=f"purpose={purpose or '-'} findings={_n} "
-                                   f"fallback={fallback or '-'}",
+                    result_summary=f"purpose={purpose or '-'} findings={_n} policy=abort",
                     result_status="blocked",
                     session_id=_sid or None,
                     source="background",
@@ -21060,14 +21179,166 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = "") -> str:
                 pass
         raise GDPRBlockedError(
             f"[GDPR block] Background call refused (purpose={purpose or '-'}): "
-            f"{_n} personal-data finding(s) in payload and no usable local "
-            f"fallback model is configured. Set "
-            f"gdpr_scanner.default_local_fallback_model in Settings, or "
-            f"disable server_block."
+            f"{_n} personal-data finding(s) in payload; "
+            f"gdpr_scanner.background_pii_action='abort'."
         )
 
-    # Warn-only mode: leave the caller to use the cloud model.
-    return model
+    # --- Policy: swap_to_local ---
+    if _policy == "swap_to_local":
+        return _try_swap_to_local()
+
+    # --- Policy: anonymise ---
+    # Attempt pseudonymisation. On failure, defer to
+    # background_anonymise_fail_action.
+    try:
+        anon_samples, deanon_fn = _anonymise_background_samples(
+            samples, all_findings, session_id=_sid, agent_id=_agent_id,
+            purpose=purpose, log_audit=_log_audit, cfg=cfg)
+    except Exception as e:
+        _fail_action = cfg.get("background_anonymise_fail_action", "swap_to_local")
+        try:
+            print(f"[gdpr] anonymise FAILED session={_sid} agent={_agent_id} "
+                  f"purpose={purpose}: {e} → action={_fail_action}", flush=True)
+        except Exception:
+            pass
+        if _log_audit:
+            try:
+                _audit_log.log_action(
+                    agent=_agent_id,
+                    action_type="pii_anonymise_failed",
+                    tool_name="gdpr_scanner",
+                    args_summary=f"findings={_n}",
+                    result_summary=f"purpose={purpose or '-'} action={_fail_action} err={str(e)[:200]}",
+                    result_status="error",
+                    session_id=_sid or None,
+                    source="background",
+                )
+            except Exception:
+                pass
+        if _fail_action == "abort":
+            if _log_audit:
+                try:
+                    _audit_log.log_action(
+                        agent=_agent_id,
+                        action_type="pii_blocked",
+                        tool_name="gdpr_scanner",
+                        args_summary=f"model={model}",
+                        result_summary=f"purpose={purpose or '-'} findings={_n} "
+                                       f"reason=anonymise_failed policy=abort",
+                        result_status="blocked",
+                        session_id=_sid or None,
+                        source="background",
+                    )
+                except Exception:
+                    pass
+            raise GDPRBlockedError(
+                f"[GDPR block] Background call refused (purpose={purpose or '-'}): "
+                f"pseudonymisation failed and "
+                f"background_anonymise_fail_action='abort'. Underlying error: {e}"
+            )
+        # swap_to_local
+        return _try_swap_to_local(fail_reason="anonymise_failed")
+
+    # Anonymise succeeded. Keep the original cloud model — pseudonymised text
+    # is safe to send. Caller uses deanon_fn on the reply.
+    if _log_audit:
+        try:
+            _audit_log.log_action(
+                agent=_agent_id,
+                action_type="pii_anonymised",
+                tool_name="gdpr_scanner",
+                args_summary=f"findings={_n}",
+                result_summary=f"purpose={purpose or '-'} model={model}",
+                result_status="ok",
+                session_id=_sid or None,
+                source="background",
+            )
+        except Exception:
+            pass
+    return (model, anon_samples if not _input_was_str else anon_samples[0], deanon_fn)
+
+
+def _anonymise_background_samples(samples, findings, *, session_id, agent_id,
+                                  purpose, log_audit, cfg):
+    """Pseudonymise a list of samples for a background LLM call.
+
+    Returns `(pseudonymised_samples, deanon_fn)`. Mapping is session-scoped
+    when `session_id` is set (latest persisted map for the session is reused
+    so tokens stay stable across calls within the same session — matches the
+    chat-worker behaviour); one-shot otherwise (no DB persistence — the
+    de-anonymiser remains valid for the lifetime of the returned closure).
+
+    Raises on pseudonymise / persistence failure. Caller decides the
+    fallback action (swap_to_local or abort).
+    """
+    import pseudonymizer as _ps
+    mapping = None
+    reused = False
+    # Try to reuse the most recent session map if we're in a real session.
+    if session_id:
+        try:
+            from server_lib.db import ChatDB as _ChatDB  # local import — keeps
+            # import-time graph free of optional deps when GDPR isn't used.
+            rows = _ChatDB.list_pseudonym_maps_for_session(session_id)
+            if rows:
+                # rows are chronological; pick the latest. Shape is
+                # (mapping_id, turn_id, created_at).
+                mid = rows[-1][0]
+                got = _ps.get_mapping(mid)
+                if got is None:
+                    loaded = _ps.load_mapping(mid)
+                    if loaded is not None:
+                        _ps.restore_mapping_to_registry(loaded)
+                        got = loaded
+                if got is not None:
+                    mapping = got
+                    reused = True
+        except Exception:
+            mapping = None
+    if mapping is None:
+        mapping = _ps.new_mapping()
+    # Pseudonymise every sample against the same mapping so cross-sample tokens
+    # stay stable (same value in two inputs → same token). `findings` arg in
+    # the param signature is the GLOBAL set scanned in the caller — but
+    # offsets are per-sample, so we re-scan each sample in isolation and pass
+    # those findings.
+    out = []
+    src_label = f"background:{purpose}" if purpose else "background"
+    for s in samples:
+        if not s:
+            out.append(s)
+            continue
+        try:
+            per_sample = _pii_scan_text(s, max_findings=200, cfg=cfg)
+        except Exception:
+            per_sample = []
+        if not per_sample:
+            out.append(s)
+            continue
+        new_text = _ps.pseudonymize_text(s, per_sample, mapping=mapping, source=src_label)
+        out.append(new_text)
+    # Persist the mapping when it's session-scoped (one-shot mappings stay in
+    # memory only — `deanon_fn` holds the reference, dropped when caller is
+    # done with the reply).
+    if session_id:
+        try:
+            _ps.save_mapping(mapping, session_id=session_id, turn_id=f"background:{purpose}")
+        except Exception:
+            pass
+    n_tokens = len(getattr(mapping, "forward", {}) or {})
+    print(f"[gdpr] anonymise OK session={session_id or '-'} agent={agent_id} "
+          f"purpose={purpose} samples={len(samples)} tokens={n_tokens} "
+          f"{'reused' if reused else 'new'}", flush=True)
+
+    def _deanon(text):
+        if not text or not isinstance(text, str):
+            return text
+        try:
+            restored, _n = _ps.deanonymize_text(text, mapping=mapping)
+            return restored
+        except Exception:
+            return text
+    return out, _deanon
 
 
 # --- Markdown rendering ---
@@ -21383,16 +21654,18 @@ def classify_chat_for_memory(user_text: str, assistant_text: str,
     before invoking us so any per-user gating downstream can find the caller.
     """
     try:
-        # GDPR auto-fallback before any cloud HTTP call. Hard-block without
-        # a local fallback skips classification; the chat pair stays unfiled.
+        # GDPR policy gate. Aborts the classify if the admin chose abort
+        # policy; otherwise proceeds with possibly-swapped model and possibly
+        # pseudonymised text. Reply is a one-word label so deanon is a no-op
+        # but applying it costs nothing.
         try:
-            model = gdpr_pick_model_for_background(
+            model, (_u_pii, _a_pii), _deanon = gdpr_pick_model_for_background(
                 model, [user_text, assistant_text], purpose="memory_classifier")
         except GDPRBlockedError:
             return None
         messages = [
             {"role": "user",
-             "content": f"User: {user_text[:2000]}\nAssistant: {assistant_text[:2000]}"},
+             "content": f"User: {_u_pii[:2000]}\nAssistant: {_a_pii[:2000]}"},
         ]
         from handlers import sidecar_proxy as _sidecar_proxy
         _res = _sidecar_proxy.background_call(
@@ -21401,7 +21674,7 @@ def classify_chat_for_memory(user_text: str, assistant_text: str,
             system_prompt=_MEMORY_CLASSIFIER_PROMPT,
             max_tokens=20,
         )
-        text = _res.get("reply") or ""
+        text = _deanon(_res.get("reply") or "")
         if not text:
             return None
         content = text.strip().strip('"').strip("'").strip().lower()

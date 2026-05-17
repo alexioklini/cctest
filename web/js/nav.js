@@ -406,6 +406,8 @@ function collectGdprFormConfig() {
   const serverLog = document.getElementById('gdpr-serverlog')?.checked !== false;
   const serverBlock = !!document.getElementById('gdpr-block')?.checked;
   const fallback = document.getElementById('gdpr-fallback')?.value || '';
+  const bgPii = document.getElementById('gdpr-bg-pii-action')?.value || 'anonymise';
+  const bgFail = document.getElementById('gdpr-bg-fail-action')?.value || 'swap_to_local';
 
   const categories = {};
   for (const sel of document.querySelectorAll('.gdpr-cat-action')) {
@@ -426,6 +428,8 @@ function collectGdprFormConfig() {
   return {
     enabled, server_log: serverLog, server_block: serverBlock,
     default_local_fallback_model: fallback,
+    background_pii_action: bgPii,
+    background_anonymise_fail_action: bgFail,
     categories, rule_overrides, email_allowlist,
   };
 }
