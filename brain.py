@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.8.3"
+VERSION = "8.8.4"
 VERSION_DATE = "2026-05-17"
 CHANGELOG = [
+    ("8.8.4", "2026-05-17", "feat(gdpr-coverage): wire delegate_task tool through background policy gate. The `TaskRunner` LLM call site (~brain.py:12534, the actual delegate execution after `tool_delegate_task` submits) now obeys `gdpr_scanner.background_pii_action`. The handover doc referenced `_run_delegate:13325`, but that function was deleted in the Phase-5 sidecar migration — the live delegate path is now the synchronous `background_call` inside `TaskRunner._worker`. Pattern follows the v8.8.0 scheduled-task reference (the only other site with `system_prompt + messages` shape): scan `[system_prompt] + [m.content for m in messages if str-content]`, stitch the pseudonymised inputs back by index, pass the wire copies into `background_call`, deanon the reply before persisting it as the task result that the caller (parent agent's tool round) reads. `GDPRBlockedError` converts to a structured `\"Delegate error: GDPR block — <msg>\"` result with `status=\"error\"`, so the parent agent sees a graceful refusal rather than an unhandled exception. Coverage uplift: mid-chat-turn delegation no longer leaks the calling agent's context to the target agent's cloud provider unguarded — the parent's GDPR scan covered the parent's model, but the delegate target (possibly a different provider) is now covered too."),
     ("8.8.3", "2026-05-17", "feat(gdpr-coverage): wire lossless context manager through background policy gate. Three `ContextManager` methods in `brain.py` now obey `gdpr_scanner.background_pii_action`: (1) `summarize_chunk` — the assembled `source_text` is verbatim chat history (names, emails, IBANs land here); pseudonymise before the cloud summariser, deanon the summary before it gets persisted into the context DAG. (2) `condense` — `combined_text` holds prior summaries already derived from chat history, so it still carries whatever PII survived the first pass; same wrap pattern. (3) `recall` — both the query AND the assembled context are scanned (the query may name a person, the context certainly carries history-PII); on `abort` policy the call returns `\"Recall blocked by GDPR policy for: …\"` instead of raising. Each method has a primary + fallback LLM call pair; the wrapper is called per attempt so the fallback model's own swap decision applies independently (extra scan per fallback is the cost of correct semantics — typical case never enters the fallback branch). `current_session_id` is already set on the calling thread (LCM runs inside the chat worker's compaction trigger or the manual ✂️ button handler), so mapping reuse picks up the session's existing pseudonym map when one exists. When the pseudonymise step fails or the policy is `abort`, the legacy truncation fallback inside each method still produces a summary — no breakage of the compaction contract. Coverage uplift: long-running chats that trigger LCM no longer ship every name in the conversation to the cloud summariser unmasked."),
     ("8.8.2", "2026-05-17", "feat(gdpr-coverage): wire translation pipeline through background policy gate. Three call sites in `server_lib/translate/` now obey `gdpr_scanner.background_pii_action`: (1) `text.py:translate_text` translate + tone-rewrite passes — each scan-and-deanon round-trips against `gdpr_pick_model_for_background`; abort-policy raises `RuntimeError(\"translation blocked by GDPR policy: …\")`, soft-skipping the tone pass when only the rewrite is blocked. (2) `document.py:_translate_chunks` + `_rewrite_chunks` — the wrapper is called ONCE per document with the full run list so the pseudonym mapping stays stable across every chunk (token IDs minted in chunk 3 are reused in chunk 9 if the same value appears). Per-chunk dispatch then operates on the pseudonymised wire list while the deanon callback runs on each parsed translation before it gets written back to the original-whitespace slot. Per-run fallback (`translate_text` re-entry on chunk-parse failure) deliberately passes the ORIGINAL run text — the inner call has its own gate and reuses the same session mapping via `current_session_id`. (3) `detect.py:_llm_detect` language-detection fallback — short-text gate; deanon is a no-op on a 2-letter ISO code but applied uniformly so future policy changes don't surprise this caller. All three sites use try/except `GDPRBlockedError` and convert to a soft return rather than propagating up to the user as an unhandled exception. No prose was added to translation system prompts — pseudonym tokens (`<EMAIL_1_HEX>`, `<IBAN_2_HEX>`) ride through unchanged because the existing 'preserve URLs, emails, and proper nouns verbatim' rule covers them. Coverage uplift: translation no longer ships raw user contracts / memos to cloud Mistral; the same anonymise-cloud-deanon round-trip the chat path uses is now active on the Translation tab too."),
     ("8.8.1", "2026-05-17", "cleanup(autodream): delete the dormant Autodream memory-consolidation system (4 LLM passes + status registry + report writer + cleanup helper + dead `get_memory_health` consumer + dead `_parse_health_report` + dead `promote_memory_to_skill`). README marked these as removed in v8.0.0 when memory moved to MemPalace; the brain.py implementations were leftovers the v8.0.0 cleanup missed. Trigger chain (`_memory_summary_*` task success → `_relationship_discovery_*` → `trigger_autodream`) had no scheduled entrypoints on any install — relationship_discovery branch left intact since it predates autodream. Net: −802 LOC in brain.py, GDPR audit table loses 6 unguarded gap rows."),
@@ -12532,18 +12533,47 @@ class TaskRunner:
                 status = "cancelled"
             else:
                 delegate_inf = get_inference_params(model, target.config.get("model_purpose"))
-                from handlers import sidecar_proxy as _sidecar_proxy
-                _res = _sidecar_proxy.background_call(
-                    messages=messages, model=model, system_prompt=system_prompt,
-                    agent_id=agent_id,
-                    max_tokens=int(delegate_inf.get("max_tokens") or 0) or None,
-                )
-                result_text = _res.get("reply") or ""
-                if cancel_flag.is_set():
-                    status = "cancelled"
-                elif _res.get("error"):
-                    result_text = f"Delegate error: {_res['error']}"
+                # GDPR policy gate: the calling agent's context (system
+                # prompt + the task payload itself) may carry PII, and the
+                # delegate target can be a different cloud provider than
+                # the parent. Scan both, swap model and/or pseudonymise
+                # per admin policy, deanon the reply before returning it
+                # up to the caller.
+                _del_deanon = _identity_deanon
+                _wire_system = system_prompt
+                _wire_messages = messages
+                try:
+                    _msg_blobs = []
+                    _msg_idx = []
+                    for _i, _m in enumerate(messages):
+                        _c = _m.get("content")
+                        if isinstance(_c, str):
+                            _msg_blobs.append(_c)
+                            _msg_idx.append(_i)
+                    _scan_inputs = [system_prompt] + _msg_blobs
+                    model, _new_blobs, _del_deanon = gdpr_pick_model_for_background(
+                        model, _scan_inputs, purpose="delegate_task")
+                    if _new_blobs is not _scan_inputs:
+                        _wire_system = _new_blobs[0]
+                        _wire_messages = list(messages)
+                        for _i, _nb in zip(_msg_idx, _new_blobs[1:]):
+                            _wire_messages[_i] = {**messages[_i], "content": _nb}
+                except GDPRBlockedError as e:
                     status = "error"
+                    result_text = f"Delegate error: GDPR block — {e}"
+                if status != "error":
+                    from handlers import sidecar_proxy as _sidecar_proxy
+                    _res = _sidecar_proxy.background_call(
+                        messages=_wire_messages, model=model, system_prompt=_wire_system,
+                        agent_id=agent_id,
+                        max_tokens=int(delegate_inf.get("max_tokens") or 0) or None,
+                    )
+                    result_text = _del_deanon(_res.get("reply") or "")
+                    if cancel_flag.is_set():
+                        status = "cancelled"
+                    elif _res.get("error"):
+                        result_text = f"Delegate error: {_res['error']}"
+                        status = "error"
         except Exception as e:
             result_text = str(e)
             status = "error"
