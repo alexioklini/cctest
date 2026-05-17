@@ -2013,10 +2013,16 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
     activityHtml += `<div class="activity-round">${roundHtml}</div>`;
   }
 
-  // Everything from lastResponseMemberPos onwards
+  // Everything from lastResponseMemberPos onwards.
+  // Synthetic privacy rows that fall AFTER the assistant response (e.g. the
+  // pre-anonymisation of the *next* user message persisted before the next
+  // user-row reaches us) get grouped into the current turn by the message
+  // walker. They belong to the Datenschutz block below — skip them here so
+  // they don't also appear bare under the assistant reply.
   let responseHtml = '';
   if (lastResponseMemberPos !== -1) {
     for (let i = lastResponseMemberPos; i < memberIdxs.length; i++) {
+      if (isSynthetic(messages[memberIdxs[i]])) continue;
       responseHtml += renderMessage(messages[memberIdxs[i]], memberIdxs[i]);
     }
   }
@@ -2030,22 +2036,66 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   // rendered out of position.
   let syntheticHtml = '';
   if (syntheticItems.length > 0) {
-    let anonCount = 0;
-    let deanonCount = 0;
+    // "Echt" = das synthetische Item hat tatsächlich PII gefunden /
+    // wiederhergestellt. Items, deren Tool-Lauf nichts ersetzt hat, werden
+    // nicht in Header oder Body einzeln aufgeführt — stattdessen erscheint
+    // pro betroffener Kategorie ein "Keine … notwendig"-Hinweis im Body.
+    //
+    // Paaren: tool_call (dispatch) → tool_result (done) via tool_use_id, mit
+    // kind-Fallback. Wir lesen findings / restored aus dem done-Row.
+    const itemIdxToDone = new Map();
+    for (let i = 0; i < syntheticItems.length; i++) {
+      const { idx: callIdx, m: callMsg } = syntheticItems[i];
+      if (callMsg.role !== 'tool_call') continue;
+      for (let j = i + 1; j < syntheticItems.length; j++) {
+        const nxt = syntheticItems[j].m;
+        if (nxt.role !== 'tool_result') continue;
+        const idMatch = callMsg.tool_use_id && nxt.tool_use_id && callMsg.tool_use_id === nxt.tool_use_id;
+        const kindMatch = !callMsg.tool_use_id && nxt.kind === callMsg.kind;
+        if (idMatch || kindMatch) { itemIdxToDone.set(callIdx, nxt); break; }
+      }
+    }
+    const isAnonKind = (k) => k === 'anonymise' || k === 'anonymise_read';
+    const isDeanonKind = (k) => k === 'deanonymise_text' || k === 'deanonymise_file';
+    const realOpsByCall = new Map();
+    let anonAttempted = 0, anonReal = 0;
+    let deanonAttempted = 0, deanonReal = 0;
     for (const item of syntheticItems) {
-      if (item.m.role !== 'tool_call') continue; // only count dispatch rows
+      if (item.m.role !== 'tool_call') continue;
       const k = item.m.kind || item.m.name || '';
-      if (k === 'anonymise' || k === 'anonymise_read') anonCount++;
-      else if (k === 'deanonymise_text' || k === 'deanonymise_file') deanonCount++;
+      const done = itemIdxToDone.get(item.idx);
+      const res = done?.result || {};
+      const findings = Number(res.findings || 0);
+      const restored = Number(res.restored || 0);
+      if (isAnonKind(k)) {
+        anonAttempted++;
+        if (findings > 0) { anonReal++; realOpsByCall.set(item.idx, true); }
+      } else if (isDeanonKind(k)) {
+        deanonAttempted++;
+        if (restored > 0) { deanonReal++; realOpsByCall.set(item.idx, true); }
+      } else {
+        // Unbekannte synthetische Operation → immer zeigen
+        realOpsByCall.set(item.idx, true);
+      }
     }
     const parts = [];
-    if (anonCount > 0) parts.push(anonCount === 1 ? '1 Anonymisierung' : `${anonCount} Anonymisierungen`);
-    if (deanonCount > 0) parts.push(deanonCount === 1 ? '1 De-Anonymisierung' : `${deanonCount} De-Anonymisierungen`);
+    if (anonReal > 0) parts.push(anonReal === 1 ? '1 Anonymisierung' : `${anonReal} Anonymisierungen`);
+    if (deanonReal > 0) parts.push(deanonReal === 1 ? '1 De-Anonymisierung' : `${deanonReal} De-Anonymisierungen`);
     const label = parts.length ? `Datenschutz · ${parts.join(' · ')}` : 'Datenschutz';
 
     let inner = '';
     for (const item of syntheticItems) {
+      // tool_result-Rows werden von renderSyntheticGdprCall paarweise mit
+      // dem dispatch-Row gerendert; standalone hier ausblenden, sonst Dopplung.
+      if (item.m.role !== 'tool_call') continue;
+      if (!realOpsByCall.has(item.idx)) continue; // leere Ops nicht einzeln zeigen
       inner += renderMessage(item.m, item.idx);
+    }
+    if (anonAttempted > 0 && anonReal === 0) {
+      inner += '<div class="privacy-empty-note">Keine Anonymisierungen notwendig</div>';
+    }
+    if (deanonAttempted > 0 && deanonReal === 0) {
+      inner += '<div class="privacy-empty-note">Keine De-Anonymisierungen notwendig</div>';
     }
 
     const privState = chat?._privacyStates?.get(turnNum); // absent = history load = closed

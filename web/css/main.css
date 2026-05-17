@@ -2055,14 +2055,21 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 .activity-summary > summary::-webkit-details-marker { display: none; }
 .activity-summary > summary:hover { color: var(--text-300); background: var(--bg-100); }
-.activity-summary .activity-chevron { transition: transform 0.15s; flex-shrink: 0; }
-.activity-summary[open] .activity-chevron { transform: rotate(180deg); }
+.activity-summary .activity-chevron { transition: transform 0.15s; flex-shrink: 0; transform: rotate(-90deg); }
+.activity-summary[open] .activity-chevron { transform: rotate(0); }
 .activity-summary-body {
   padding-top: 2px;
 }
 .activity-summary-body .msg-turn { margin: 0; padding: 2px 0; }
 .activity-summary-body .thinking-block { margin: 2px 0; }
 .activity-summary-body .tool-block { margin: 2px 0; }
+.privacy-empty-note {
+  font-size: 12px;
+  color: var(--text-300);
+  font-style: italic;
+  padding: 4px 8px;
+  margin: 2px 0;
+}
 
 /* Round grouping */
 .activity-round {
