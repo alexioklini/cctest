@@ -10932,24 +10932,11 @@ def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_respo
     )
 
     try:
-        # Use configured model, or find cheapest
-        model = None
+        # Use the agent's configured auto-memory model, or fall back to the
+        # server default. No haiku/cheapest heuristics — admin picks, we use.
         am_model = am_cfg.get("model", "")
         am_fallback = am_cfg.get("model_fallback", "")
-        if am_model:
-            model, _ = _resolve_model_with_fallback(am_model, am_fallback, "claude-haiku-4-5-20251001")
-        if not model and _models_config:
-            for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get('cost_input', 999)):
-                if cfg.get('enabled', True):
-                    ml = mid.lower()
-                    if 'haiku' in ml:
-                        model = mid
-                        break
-            if not model:
-                for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get('priority', 0)):
-                    if cfg.get('enabled', True):
-                        model = mid
-                        break
+        model, _ = _resolve_model_with_fallback(am_model, am_fallback)
 
         if not model or not _delegate_api_key:
             return
@@ -11187,8 +11174,8 @@ def trigger_relationship_discovery(agent_id: str):
             target = AgentConfig(agent_id)
             rd_cfg = _get_relationship_discovery_config(agent_id)
             primary = rd_cfg.get("model") or "mistral-small"
-            fallback = rd_cfg.get("model_fallback") or "claude-haiku-4-5-20251001"
-            model, fallback_model = _resolve_model_with_fallback(primary, fallback, "claude-haiku-4-5-20251001")
+            fallback = rd_cfg.get("model_fallback") or ""
+            model, fallback_model = _resolve_model_with_fallback(primary, fallback)
             ms = MemoryStore(agent_id)
             logging.info(f"Relationship discovery starting for {agent_id} using {model} (fallback: {fallback_model})")
             from handlers import sidecar_proxy as _sidecar_proxy
@@ -11288,8 +11275,8 @@ def ensure_relationship_discovery_schedules():
             task_prompt = _build_relationship_discovery_task_prompt(agent_id)
             # Use Crow-4B for RD scheduled task; fallback Haiku
             primary = rd_cfg.get("model") or "mistral-small"
-            fallback = rd_cfg.get("model_fallback") or "claude-haiku-4-5-20251001"
-            rd_model, _ = _resolve_model_with_fallback(primary, fallback, "claude-haiku-4-5-20251001")
+            fallback = rd_cfg.get("model_fallback") or ""
+            rd_model, _ = _resolve_model_with_fallback(primary, fallback)
 
             if sched_name in existing:
                 old = existing[sched_name]
@@ -11631,51 +11618,56 @@ def _autodream_skill_candidates(agent_id: str, ms: MemoryStore, config: dict, me
             "candidate_details": candidate_details}
 
 
-def _resolve_model_with_fallback(primary: str | None, fallback: str | None, hardcoded_default: str) -> tuple[str, str | None]:
-    """Return (primary_to_use, fallback_to_use) after validating against enabled models.
-    Falls back through the chain: configured primary → configured fallback → hardcoded default."""
-    def _is_available(mid: str) -> bool:
-        if not mid:
-            return False
-        if not _models_config:
-            return True  # can't check, assume available
-        mcfg = _models_config.get(mid, {})
-        return mcfg.get("enabled", True)
+def _is_model_available(mid: str) -> bool:
+    """Truthy when the model id is configured and enabled (or when the
+    config hasn't loaded yet — assume available so boot-time callers
+    don't get false negatives)."""
+    if not mid:
+        return False
+    if not _models_config:
+        return True
+    mcfg = _models_config.get(mid, {})
+    return mcfg.get("enabled", True)
 
-    resolved_primary = primary if _is_available(primary) else None
-    resolved_fallback = fallback if _is_available(fallback) else None
+
+def _background_model_default() -> str:
+    """The single safe fallback for any background LLM auto-pick: the
+    server's `default_model` (mirrored onto `_delegate_fallback_model` at
+    server boot). Returns "" if the default isn't usable — callers must
+    treat empty as 'no model available' and skip the work."""
+    mid = (_delegate_fallback_model or "").strip()
+    return mid if _is_model_available(mid) else ""
+
+
+def _resolve_model_with_fallback(primary: str | None, fallback: str | None, hardcoded_default: str | None = None) -> tuple[str, str | None]:
+    """Return (primary_to_use, fallback_to_use) after validating against
+    enabled models. Falls back through: configured primary → configured
+    fallback → server default. The `hardcoded_default` arg is kept for
+    callers that still pass an explicit override, but defaults to the
+    server's default_model — no more hardcoded Anthropic ids."""
+    resolved_primary = primary if _is_model_available(primary) else None
+    resolved_fallback = fallback if _is_model_available(fallback) else None
+    hd = (hardcoded_default or "").strip() or _background_model_default()
 
     if resolved_primary:
-        return resolved_primary, resolved_fallback or hardcoded_default
+        return resolved_primary, resolved_fallback or (hd or None)
     if resolved_fallback:
-        return resolved_fallback, hardcoded_default
-    return hardcoded_default, None
+        return resolved_fallback, hd or None
+    return hd, None
 
 
 def _resolve_autodream_model(config: dict) -> tuple[str, str | None]:
     """Resolve (primary, fallback) models for autodream."""
     primary = config.get("model") or "Crow-4B-Opus-4.6-Distill"
-    fallback = config.get("model_fallback") or "claude-haiku-4-5-20251001"
-    return _resolve_model_with_fallback(primary, fallback, "claude-haiku-4-5-20251001")
+    fallback = config.get("model_fallback") or ""
+    return _resolve_model_with_fallback(primary, fallback)
 
 
 def _find_cheapest_model() -> str | None:
-    """Find the cheapest available model (prefer local, then Haiku)."""
-    if not _models_config:
-        return None
-    # Prefer local models first (priority <= 30)
-    for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get('priority', 50)):
-        if cfg.get('enabled', True) and cfg.get('priority', 50) <= 30:
-            return mid
-    # Then Haiku
-    for mid, cfg in _models_config.items():
-        if cfg.get('enabled', True) and 'haiku' in mid.lower():
-            return mid
-    # Then lowest priority
-    for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get('priority', 0)):
-        if cfg.get('enabled', True):
-            return mid
-    return None
+    """Background fallback model — returns the server's default_model when
+    available. Historical 'prefer local, then Haiku, then lowest priority'
+    heuristic was removed: admin picks the install default, we use it."""
+    return _background_model_default() or None
 
 
 def promote_memory_to_skill(agent_id: str, memory_name: str) -> dict:
@@ -19503,18 +19495,9 @@ class CodeGraph:
         if not rows:
             return {"summarized": 0, "message": "All nodes already have summaries"}
 
-        # Resolve summary model
-        model = None
-        if _models_config:
-            for mid, cfg in _models_config.items():
-                if cfg.get("enabled", True) and "haiku" in mid.lower():
-                    model = mid
-                    break
-            if not model:
-                for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get("cost_input", 999)):
-                    if cfg.get("enabled", True):
-                        model = mid
-                        break
+        # Resolve summary model — server default; admin picks the install's
+        # default and we use it (no haiku/cheapest heuristics).
+        model = _background_model_default()
         if not model:
             return {"error": "No model available for summary generation"}
 
@@ -20168,8 +20151,8 @@ _CONTEXT_CONFIG_DEFAULTS = {
     "summary_target_tokens": 1000,
     "condense_threshold": 4,
     "max_depth": 5,
-    "summary_model": "gemini-2.5-flash",
-    "summary_model_fallback": "claude-haiku-4-5-20251001",
+    "summary_model": "",
+    "summary_model_fallback": "",
     "messages_per_summary": 10,
 }
 
@@ -20252,9 +20235,9 @@ class ContextManager:
     def _resolve_summary_model(self) -> tuple[str | None, str | None]:
         """Return (primary_model, fallback_model) for context summarization."""
         cfg = self.get_config()
-        primary = cfg.get("summary_model") or "gemini-2.5-flash"
-        fallback = cfg.get("summary_model_fallback") or "claude-haiku-4-5-20251001"
-        p, f = _resolve_model_with_fallback(primary, fallback, "claude-haiku-4-5-20251001")
+        primary = cfg.get("summary_model") or ""
+        fallback = cfg.get("summary_model_fallback") or ""
+        p, f = _resolve_model_with_fallback(primary, fallback)
         return p, f
 
     def _extract_message_text(self, msg: dict) -> str:

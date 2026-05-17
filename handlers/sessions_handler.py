@@ -764,13 +764,16 @@ class SessionsHandlerMixin:
             if not title:
                 self._send_json({"error": "title required"}, 400)
                 return
+            # Rename targets the primary `title` column. The LLM-generated
+            # `summary` is left untouched — it only surfaces as a hover
+            # tooltip and the collapsible block in the chat view.
             with _db_conn() as conn:
-                conn.execute("UPDATE sessions SET summary = ? WHERE id = ?", (title, sid))
+                conn.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, sid))
                 conn.commit()
             s = sessions.get(sid)
             if s:
                 with s.lock:
-                    s.summary = title
+                    s.title = title
             self._send_json({"status": "renamed", "session_id": sid, "title": title})
         elif action == "save_to_memory":
             # 0=off, 1=on, 2=auto

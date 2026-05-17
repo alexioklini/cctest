@@ -33,9 +33,9 @@ async function performGlobalSearch(query) {
   for (const [agentId, data] of Object.entries(state.agentSessions)) {
     if (!data?.sessions) continue;
     for (const s of data.sessions) {
-      const title = (s.summary || s.title || '').toLowerCase();
-      if (title.includes(query.toLowerCase())) {
-        results.push({type:'chat', title: s.summary || s.title, agentId, sessionId: s.id || s.session_id, time: s.last_active});
+      const hay = ((s.title || '') + ' ' + (s.summary || '')).toLowerCase();
+      if (hay.includes(query.toLowerCase())) {
+        results.push({type:'chat', title: s.title || s.summary || '', agentId, sessionId: s.id || s.session_id, time: s.last_active});
       }
     }
   }

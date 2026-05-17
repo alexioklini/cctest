@@ -171,14 +171,15 @@ function _updateTranslationHeaderStar(tab) {
   });
 }
 
-function updatePageHeader(title, breadcrumb, breadcrumbAgentId, favouriteOpts) {
+function updatePageHeader(title, breadcrumb, breadcrumbAgentId, favouriteOpts, tooltip) {
   const el = document.getElementById('page-header-title');
   if (breadcrumb) {
     // When breadcrumbAgentId is set, the breadcrumb is a project name and the
     // span becomes a click target that opens the project view. The listener is
     // attached programmatically (not inline) so quotes in the names can't
     // break out of the attribute and silently disable the handler.
-    el.innerHTML = `<span class="page-header-crumb"${breadcrumbAgentId ? ' data-clickable="1" style="color:var(--text-400);cursor:pointer" title="Open project"' : ' style="color:var(--text-400)"'}>${esc(breadcrumb)}</span> <span class="breadcrumb-sep">/</span> ${esc(title)}`;
+    const titleAttr = tooltip ? ` title="${esc(tooltip)}"` : '';
+    el.innerHTML = `<span class="page-header-crumb"${breadcrumbAgentId ? ' data-clickable="1" style="color:var(--text-400);cursor:pointer" title="Open project"' : ' style="color:var(--text-400)"'}>${esc(breadcrumb)}</span> <span class="breadcrumb-sep">/</span> <span${titleAttr}>${esc(title)}</span>`;
     if (breadcrumbAgentId) {
       const crumb = el.querySelector('.page-header-crumb');
       crumb.addEventListener('click', (ev) => {
@@ -188,6 +189,8 @@ function updatePageHeader(title, breadcrumb, breadcrumbAgentId, favouriteOpts) {
     }
   } else {
     el.textContent = title;
+    if (tooltip) el.title = tooltip;
+    else el.removeAttribute('title');
   }
 
   // Mount / refresh the favourite-star button + share button in the
@@ -263,16 +266,26 @@ async function loadAgentSessions(agentId) {
       loaded: true,
     };
     renderRecentChats();
-    // Sync chat title from session data if not user-edited
+    // Sync title + summary from session data. Title is primary; summary is
+    // the LLM-generated synopsis surfaced via hover + the in-chat block.
+    // Refresh both on every poll so summary updates land without the user
+    // reloading. The summary block's open/closed state is decoupled (lives
+    // on chat._summaryOpen) — a fresh summary never auto-expands.
     const chat = state.activeChat;
     if (chat?.sessionId && agentId === state.activeAgentId) {
       const sess = (data.sessions || []).find(s => (s.id || s.session_id) === chat.sessionId);
       if (sess) {
-        const serverTitle = sess.summary || sess.title || '';
-        if (serverTitle && !chat.chatTitle) {
-          chat.chatTitle = serverTitle;
-          if (state.currentView === 'chat') updateChatView();
+        let viewDirty = false;
+        if (sess.title && !chat.chatTitle) {
+          chat.chatTitle = sess.title;
+          viewDirty = true;
         }
+        const newSummary = sess.summary || '';
+        if (newSummary !== (chat.chatSummary || '')) {
+          chat.chatSummary = newSummary;
+          viewDirty = true;
+        }
+        if (viewDirty && state.currentView === 'chat') updateChatView();
         const memVal = parseInt(sess.save_to_memory) || 0;
         chat.saveToMemory = memVal === 1;
         chat.memoryMode = memVal === 1 ? 'on' : memVal === 2 ? 'auto' : 'off';
@@ -1001,10 +1014,13 @@ function renderSessionsList(container, sessions) {
     const sid = s.id || s.session_id;
     const sagent = s.agent_id || s.agent || s.agentId || state.activeAgentId;
     div.className = 'sb-session-item' + (state.activeChat?.sessionId === sid ? ' active' : '');
-    const title = s.summary || s.title || `Chat ${sid?.substring(0,6)}`;
+    // Title primary; summary is hover-only. Falls back to summary only when
+    // no title (rare — pre-first-turn rows).
+    const title = s.title || s.summary || `Chat ${sid?.substring(0,6)}`;
+    const tip = s.summary ? ` title="${esc(s.summary)}"` : '';
     div.innerHTML = `
       <span class="sb-sess-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>
-      <span class="sb-session-title">${esc(title)}</span>
+      <span class="sb-session-title"${tip}>${esc(title)}</span>
       <span class="sb-sess-actions">
         <button onclick="event.stopPropagation(); archiveSession('${sid}')" title="Archive">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 8v13H3V8M1 3h22v5H1z"/></svg>

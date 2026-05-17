@@ -2310,25 +2310,8 @@ class AdminHandlerMixin:
         if not refine_model:
             tc = engine.get_tool_config()
             refine_model = tc.get("refinement", {}).get("model", "")
-        if not refine_model and engine._models_config:
-            candidates = []
-            for mid, cfg in engine._models_config.items():
-                if not cfg.get("enabled", True):
-                    continue
-                ml = mid.lower()
-                if "haiku" in ml:
-                    score = 0
-                elif "sonnet" in ml:
-                    score = 1
-                else:
-                    score = 2 + (cfg.get("cost_input", 0) or 0)
-                candidates.append((mid, score))
-            candidates.sort(key=lambda x: x[1])
-            if candidates:
-                refine_model = candidates[0][0]
-        if not refine_model:
-            refine_model = server_config.get("default_model", "")
-
+        if not refine_model or not engine._is_model_available(refine_model):
+            refine_model = engine._background_model_default()
         if not refine_model:
             self._send_json({"error": "No model available for refinement"}, 503)
             return
@@ -2510,28 +2493,12 @@ class AdminHandlerMixin:
             self._send_json({"error": "No message provided"}, 400)
             return
 
-        # Resolve model (same logic as refine)
-        model = None
+        # Resolve model (same policy as refine): refinement-tool override →
+        # server default. No haiku/cheapest heuristics.
         tc = engine.get_tool_config()
         model = tc.get("refinement", {}).get("model", "")
-        if not model and engine._models_config:
-            candidates = []
-            for mid, cfg in engine._models_config.items():
-                if not cfg.get("enabled", True):
-                    continue
-                ml = mid.lower()
-                if "haiku" in ml:
-                    score = 0
-                elif "sonnet" in ml:
-                    score = 1
-                else:
-                    score = 2 + (cfg.get("cost_input", 0) or 0)
-                candidates.append((mid, score))
-            candidates.sort(key=lambda x: x[1])
-            if candidates:
-                model = candidates[0][0]
-        if not model:
-            model = server_config.get("default_model", "")
+        if not model or not engine._is_model_available(model):
+            model = engine._background_model_default()
         if not model:
             self._send_json({"error": "No model available"}, 503)
             return
@@ -2589,6 +2556,7 @@ class AdminHandlerMixin:
                 "default_provider": next((name for name, p in server_config.get("providers", {}).items() if p.get("default_model") == server_config.get("default_model")), ""),
                 "default_model": server_config.get("default_model", ""),
                 "attachment_image_model": server_config.get("attachment_image_model", ""),
+                "chat_summary_model": server_config.get("chat_summary_model", ""),
                 "gdpr_scanner": {
                     "enabled": bool(server_config.get("gdpr_scanner", {}).get("enabled", True)),
                     "server_log": bool(server_config.get("gdpr_scanner", {}).get("server_log", True)),
@@ -2734,6 +2702,34 @@ class AdminHandlerMixin:
                 self._send_json({"error": str(e)}, 500)
                 return
             result["attachment_image_model"] = aim
+
+        # --- Chat summary model ---
+        # Background LLM that generates the per-chat synopsis surfaced as
+        # hover tooltip + collapsible block. Empty = auto-pick (cheapest
+        # Haiku, else cheapest enabled model).
+        if "chat_summary_model" in body:
+            csm = str(body["chat_summary_model"] or "").strip()
+            if csm:
+                mcfg = (engine._models_config or {}).get(csm) or {}
+                if not mcfg.get("enabled"):
+                    self._send_json({"error": f"chat_summary_model: unknown or disabled model '{csm}'"}, 400)
+                    return
+            server_config["chat_summary_model"] = csm
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                if csm:
+                    config["chat_summary_model"] = csm
+                else:
+                    config.pop("chat_summary_model", None)
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            result["chat_summary_model"] = csm
 
         # --- GDPR/PII scanner settings ---
         if "gdpr_scanner" in body:

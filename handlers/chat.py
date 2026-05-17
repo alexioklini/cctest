@@ -2065,10 +2065,9 @@ class ChatHandlerMixin:
                             session.messages.append(_msg)
                             session.last_active = time.time()
                             if not session.title:
+                                from server import _derive_session_title
                                 _t = user_content if isinstance(user_content, str) else str(user_content)
-                                session.title = _t[:80].strip()
-                                if len(session.title) > 60:
-                                    session.title = session.title[:60].rsplit(' ', 1)[0]
+                                session.title = _derive_session_title(_t)
                         ChatDB.save_message(
                             sid, "user", user_content,
                             metadata={

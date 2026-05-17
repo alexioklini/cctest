@@ -75,6 +75,9 @@ const state = {
         saveToMemory: defMode === 1,
         memoryMode: defMode === 1 ? 'on' : defMode === 2 ? 'auto' : 'off',
         cavemanMode: 0,
+        chatTitle: '',
+        chatSummary: '',
+        _summaryOpen: false,
       };
     }
     return this.agentChats[agentId];

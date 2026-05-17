@@ -696,7 +696,7 @@ function toggleChatTitleMenu(event) {
         const agentData = state.agentSessions[state.activeAgentId];
         if (agentData?.sessions) {
           const s = agentData.sessions.find(s => (s.id || s.session_id) === chat.sessionId);
-          if (s) s.summary = newTitle;
+          if (s) s.title = newTitle;
           renderRecentChats();
         }
       } catch(e) {}

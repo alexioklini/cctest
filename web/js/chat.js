@@ -1561,7 +1561,25 @@ function renderMessages() {
       </div>`;
     } else {
       let body = renderTurnBody(chat.messages, t.memberIdxs, t.turnNum, chat);
-      html += `<div class="${cls}" data-turn="${t.turnNum}">${badge}<div class="turn-body">${body}</div></div>`;
+      // Chat summary block: rendered once, under the first turn's badge.
+      // Default collapsed; the open/closed state lives on `chat._summaryOpen`
+      // so it survives re-renders and summary refreshes never force-expand
+      // a closed block. When the user has it open and the server pushes a
+      // new summary, the content updates in place.
+      let summaryBlock = '';
+      if (t.turnNum === 1 && chat.chatSummary) {
+        const sOpen = chat._summaryOpen === true;
+        summaryBlock = `<div class="chat-summary-block">
+          <details${sOpen ? ' open' : ''} ontoggle="toggleChatSummary(this)">
+            <summary class="chat-summary-header">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>
+              <span>Zusammenfassung</span>
+            </summary>
+            <div class="chat-summary-body">${esc(chat.chatSummary)}</div>
+          </details>
+        </div>`;
+      }
+      html += `<div class="${cls}" data-turn="${t.turnNum}">${badge}${summaryBlock}<div class="turn-body">${body}</div></div>`;
     }
   }
 
@@ -1623,6 +1641,16 @@ function toggleHintExpand(turnNum) {
   if (chat._expandedHints.has(turnNum)) chat._expandedHints.delete(turnNum);
   else chat._expandedHints.add(turnNum);
   renderMessages();
+}
+
+// Chat-summary block toggle handler. Bound to the <details> ontoggle event so
+// we capture both clicks and keyboard activation. State lives on the chat
+// object so it survives re-renders without auto-expanding when the server
+// pushes summary updates.
+function toggleChatSummary(detailsEl) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  chat._summaryOpen = !!detailsEl.open;
 }
 
 function listTurns() {

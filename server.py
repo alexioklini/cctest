@@ -285,6 +285,28 @@ class LiveStream:
                 pass
 
 
+def _derive_session_title(text: str) -> str:
+    """Derive a session title from a user message, stripping any internal
+    annotations the chat handler appended to the wire payload (e.g. the
+    attachment-routing notice). The title should reflect what the user
+    typed, not Brain's bookkeeping."""
+    # Attachment notice appended in chat.py when files are routed to disk.
+    # Pattern: `\n\n[User attached files saved to disk...]\n  - <path>...`
+    cut = text.find("\n\n[User attached files")
+    if cut != -1:
+        text = text[:cut]
+    text = text.strip()
+    if not text:
+        # User sent only attachments without any prose. Fall back to a
+        # neutral placeholder so the sidebar isn't blank.
+        return "Attachment"
+    title = text[:80].strip()
+    if len(title) > 60:
+        # Cut at last word boundary
+        title = title[:60].rsplit(' ', 1)[0]
+    return title
+
+
 class Session:
     """A conversation session with an agent."""
 
@@ -358,11 +380,7 @@ class Session:
             # Auto-title from first user message
             if not self.title and role == "user":
                 text = content if isinstance(content, str) else str(content)
-                title = text[:80].strip()
-                if len(title) > 60:
-                    # Cut at last word boundary
-                    title = title[:60].rsplit(' ', 1)[0]
-                self.title = title
+                self.title = _derive_session_title(text)
         ChatDB.save_message(self.id, role, content, metadata=metadata)
         ChatDB.save_session(self.id, self.agent_id, self.model, self.title,
                            self.status, self.created_at, self.last_active, self.project or "",
@@ -2524,18 +2542,16 @@ def _generate_chat_summary(session):
         + "\n".join(sample)
     )
     try:
-        # Use cheapest model
-        model = None
-        if engine._models_config:
-            for mid, cfg in engine._models_config.items():
-                if cfg.get("enabled", True) and "haiku" in mid.lower():
-                    model = mid
-                    break
-            if not model:
-                for mid, cfg in sorted(engine._models_config.items(), key=lambda x: x[1].get("cost_input", 999)):
-                    if cfg.get("enabled", True):
-                        model = mid
-                        break
+        # Admin-configured override takes precedence. Empty / unknown /
+        # disabled falls back to the server's default_model — nothing else.
+        configured = (server_config.get("chat_summary_model") or "").strip()
+        model = ""
+        if configured:
+            mcfg = (engine._models_config or {}).get(configured) or {}
+            if mcfg.get("enabled", True):
+                model = configured
+        if not model:
+            model = engine._background_model_default()
         if not model:
             return
 
@@ -2846,28 +2862,15 @@ _PROFILE_SYSTEM_PROMPT = (
 )
 
 def _profile_pick_model() -> str:
-    """Prefer the configured refinement model (already proven to follow
-    polish-style prompts on this install), fall back to cheapest enabled.
-    GDPR auto-fallback applies on top via gdpr_pick_model_for_background."""
-    try:
-        tc = engine.get_tool_config()
-        ref = (tc.get("refinement", {}) or {}).get("model", "")
-        if ref and engine._models_config and ref in engine._models_config \
-           and engine._models_config[ref].get("enabled", True):
-            return ref
-    except Exception:
-        pass
-    if engine._models_config:
-        for mid, cfg in engine._models_config.items():
-            if cfg.get("enabled", True) and "haiku" in mid.lower():
-                return mid
-        for mid, cfg in sorted(
-            engine._models_config.items(),
-            key=lambda x: x[1].get("cost_input", 999),
-        ):
-            if cfg.get("enabled", True):
-                return mid
-    return server_config.get("default_model", "")
+    """Admin override (`chat_summary_model`, shared with per-chat synopsis)
+    wins; otherwise fall back to the server's default_model. No haiku /
+    cheapest heuristics — the admin picks the install default and we use
+    it. GDPR auto-fallback still applies on top via
+    gdpr_pick_model_for_background."""
+    configured = (server_config.get("chat_summary_model") or "").strip()
+    if configured and engine._is_model_available(configured):
+        return configured
+    return engine._background_model_default() or ""
 
 def _gather_user_chat_samples(uid: str, since_ts: float, *,
                                max_chats: int = 100,
@@ -3101,6 +3104,7 @@ def main():
     server_config["telegram_enabled"] = file_config.get("telegram", {}).get("enabled", True)
     attachments_cfg = file_config.get("attachments", {})
     server_config["attachment_image_model"] = attachments_cfg.get("image_model", "")
+    server_config["chat_summary_model"] = file_config.get("chat_summary_model", "") or ""
     server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}
     server_config["sidecar"] = file_config.get("sidecar", {}) or {}
 

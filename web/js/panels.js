@@ -20,11 +20,17 @@ function updateChatView() {
     agent_id: chat.agentId || state.activeAgentId || 'main',
     title: chatTitle || 'Untitled chat',
   } : null;
+  // LLM-generated summary surfaces only as a hover tooltip on the title —
+  // never replaces it. Falls back to summary as visible label only when
+  // there's no title yet (rare, e.g. a brand-new chat before the first
+  // user message has landed).
+  const tip = chat.chatSummary || '';
+  const visibleTitle = chatTitle || chat.chatSummary || '';
   if (state.currentProject) {
     const projAgent = chat.agentId || state._projectDetailAgent || state.activeAgentId;
-    updatePageHeader(chatTitle || agentDisplay, state.currentProject, projAgent, favOpts);
-  } else if (chatTitle) {
-    updatePageHeader(chatTitle, agentDisplay, null, favOpts);
+    updatePageHeader(visibleTitle || agentDisplay, state.currentProject, projAgent, favOpts, tip);
+  } else if (visibleTitle) {
+    updatePageHeader(visibleTitle, agentDisplay, null, favOpts, tip);
   } else {
     updatePageHeader(agentDisplay, null, null, favOpts);
   }
@@ -848,7 +854,8 @@ async function loadChatsList() {
     if (state.chatsSearchQuery) {
       const q = state.chatsSearchQuery.toLowerCase();
       allSessions = allSessions.filter(s =>
-        (s.summary || s.title || '').toLowerCase().includes(q) ||
+        (s.title || '').toLowerCase().includes(q) ||
+        (s.summary || '').toLowerCase().includes(q) ||
         (s.agentId || '').toLowerCase().includes(q)
       );
     }
@@ -856,11 +863,13 @@ async function loadChatsList() {
     container.innerHTML = '';
     for (const s of allSessions) {
       const csid = s.id || s.session_id;
-      const title = s.summary || s.title || `Chat ${csid?.substring(0,8)}`;
+      // Title primary; summary as hover tooltip only.
+      const title = s.title || s.summary || `Chat ${csid?.substring(0,8)}`;
+      const tip = s.summary ? ` title="${esc(s.summary)}"` : '';
       const div = document.createElement('div');
       div.className = 'chat-list-item';
       div.innerHTML = `
-        <div class="chat-list-item-title">${esc(title)}</div>
+        <div class="chat-list-item-title"${tip}>${esc(title)}</div>
         <div class="chat-list-item-meta">
           Last message ${relativeTime(s.last_active)}
           ${s.agentId ? ' in <span class="chat-list-item-agent">' + esc(s.agentDisplay) + '</span>' : ''}
@@ -1926,8 +1935,10 @@ async function loadProjectChats(agentId, projectName) {
       const isArchived = filter === 'archived' || s.status === 'archived';
       // Stash status flag for the menu (avoids a second fetch).
       item.dataset.archived = isArchived ? '1' : '0';
+      const pcTitle = s.title || s.summary || 'Untitled';
+      const pcTip = s.summary ? ` title="${esc(s.summary)}"` : '';
       item.innerHTML = `
-        <span class="project-chat-item-title">${esc(s.summary || s.title || 'Untitled')}</span>
+        <span class="project-chat-item-title"${pcTip}>${esc(pcTitle)}</span>
         <span class="project-chat-item-meta">${ago ? 'Last message ' + ago : ''}</span>
         <span class="project-chat-item-actions">
           <button style="color:var(--text-400);padding:4px" onclick="event.stopPropagation(); showProjectChatMenu(event, '${esc(s.id)}', ${isArchived ? 'true' : 'false'})" title="More options">

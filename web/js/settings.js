@@ -300,6 +300,15 @@ async function switchGeneralTab(tab, btn) {
           const hasImageModel = !!(srv.attachment_image_model);
           return (!hasVision && !hasImageModel) ? `<div style="font-size:11px;color:var(--warning, #b45309);margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--bg-200)">&#9888; Your default model does not support vision and no image description model is configured. Attached images will only return basic metadata (dimensions, format).</div>` : '';
         })()}
+        ${SEC('Summaries')}
+        <div style="display:flex;gap:8px;align-items:center">
+          <select class="form-select" id="srv-chat-summary-model" style="flex:1">
+            <option value="">Auto (cheapest Haiku &rarr; cheapest enabled)</option>
+            ${enabledModels.map(([mid])=>modelOption(mid, {selected: mid===(srv.chat_summary_model||'')})).join('')}
+          </select>
+          <button class="btn-secondary" onclick="API.post('/v1/services/server',{chat_summary_model:document.getElementById('srv-chat-summary-model').value}).then(()=>showToast('Summary model updated')).catch(e=>showToast('Failed',true))">Set</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Background model that generates the per-chat synopsis (hover tooltip + collapsible block) and the auto-maintained user profile. Leave on Auto unless you want a specific model.</div>
         ${SEC('Sidecar')}
         ${(() => {
           if (!sc) {

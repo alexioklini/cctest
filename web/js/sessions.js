@@ -108,7 +108,12 @@ async function openSession(sessionId, agentId) {
     const rawMessages = data.messages || [];
     if (data.model) chat.model = data.model;
     if (data.max_context) chat.maxContext = data.max_context;
-    chat.chatTitle = data.summary || data.title || '';
+    // Title is the primary label (user-typed or auto-derived from first
+    // message). Summary is the LLM-generated synopsis, shown as a hover
+    // tooltip on the header and as a collapsible block below the first
+    // turn — never overlays the title.
+    chat.chatTitle = data.title || '';
+    chat.chatSummary = data.summary || '';
     chat.cavemanMode = parseInt(data.caveman_mode) || 0;
     chat.workflowRunId = data.workflow_run_id || '';
     const memVal = parseInt(data.save_to_memory) || 0;
@@ -398,6 +403,7 @@ function newChat() {
   }
   chat.sessionId = null;
   chat.chatTitle = '';
+  chat.chatSummary = '';
   chat.workflowRunId = '';
   chat.messages = [];
   chat.totalTokens = 0;
