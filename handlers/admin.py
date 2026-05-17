@@ -2459,7 +2459,23 @@ class AdminHandlerMixin:
         # Build the wire-level messages: prepend the (possibly compressed)
         # instructions to the user's request-line, since /v1/refine doesn't
         # use _build_system_prompt — the rules HAVE to ride in the user msg.
-        messages = [{"role": "user", "content": instructions + "\n\n" + request_line}]
+        wire_content = instructions + "\n\n" + request_line
+
+        # GDPR policy gate. Both the user-typed `text` and the assembled
+        # `chat_context` (last 5 messages of the session, chat-prompt path
+        # only) flow into wire_content; profile/soul polishing paths still
+        # carry the user's own free text. Scan once over the assembled
+        # blob — the deanon callback rebuilds originals on the reply.
+        _refine_deanon = engine._identity_deanon
+        try:
+            refine_model, (_pii_content,), _refine_deanon = engine.gdpr_pick_model_for_background(
+                refine_model, [wire_content], purpose=f"refine_{purpose or 'chat_prompt'}")
+            wire_content = _pii_content
+        except engine.GDPRBlockedError as e:
+            self._send_json({"error": f"refine blocked by GDPR policy: {e}"}, 503)
+            return
+
+        messages = [{"role": "user", "content": wire_content}]
 
         try:
             from . import sidecar_proxy as _sidecar_proxy
@@ -2471,7 +2487,7 @@ class AdminHandlerMixin:
                 project=project or "",
                 provider_resolver=self._resolve_provider,
             )
-            result = _res.get("reply") or ""
+            result = _refine_deanon(_res.get("reply") or "")
             if _res.get("error") and not result:
                 self._send_json({"error": str(_res["error"])}, 500)
                 return

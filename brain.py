@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.8.4"
+VERSION = "8.8.5"
 VERSION_DATE = "2026-05-17"
 CHANGELOG = [
+    ("8.8.5", "2026-05-17", "feat(gdpr-coverage): wire remaining P1 sites through background policy gate. Three more callers now obey `gdpr_scanner.background_pii_action`: (1) `handlers/admin.py:_handle_refine` — the `/v1/refine` endpoint scans the assembled wire content (instructions + chat-history snippet + user text + profile/soul-polish body) and deanonymises the refined reply; `GDPRBlockedError` returns 503 with a structured error message instead of leaking an unhandled exception. Purpose is tagged `refine_<chat_prompt|profile_field|soul>` so audit rows distinguish the three sub-flows. (2) `brain.py:_auto_memory_extract_inner` — the auto-memory extractor pseudonymises `user_message[:500]` and `assistant_response[:500]` BEFORE building the extraction prompt, then deanons the JSON reply before parsing so the persisted memory's `content` field carries original values rather than opaque tokens; abort policy returns early (memory simply doesn't get extracted for that exchange). (3) `brain.py:trigger_relationship_discovery` (primary + fallback) — the LLM-driven relationship extractor scans the prompt built from MemoryStore contents (may include names / emails / decisions about real people). Per-attempt gate so the fallback model gets its own swap decision; deanon restores memory names verbatim before `_apply_discovered_relationships` matches them against the store. All three sites use try/except `GDPRBlockedError` with a graceful soft return — no exceptions propagate up. Audit table progress: 16/22 (P0) → 19/22 (P0+P1) sites covered. Remaining gaps (3): `_handle_soul_chat` (P2 — same pattern as refine but separate endpoint), workflow-engine LLM nodes (P2 — needs separate audit), warmup test-call (intentionally unguarded; uses synthetic payload)."),
     ("8.8.4", "2026-05-17", "feat(gdpr-coverage): wire delegate_task tool through background policy gate. The `TaskRunner` LLM call site (~brain.py:12534, the actual delegate execution after `tool_delegate_task` submits) now obeys `gdpr_scanner.background_pii_action`. The handover doc referenced `_run_delegate:13325`, but that function was deleted in the Phase-5 sidecar migration — the live delegate path is now the synchronous `background_call` inside `TaskRunner._worker`. Pattern follows the v8.8.0 scheduled-task reference (the only other site with `system_prompt + messages` shape): scan `[system_prompt] + [m.content for m in messages if str-content]`, stitch the pseudonymised inputs back by index, pass the wire copies into `background_call`, deanon the reply before persisting it as the task result that the caller (parent agent's tool round) reads. `GDPRBlockedError` converts to a structured `\"Delegate error: GDPR block — <msg>\"` result with `status=\"error\"`, so the parent agent sees a graceful refusal rather than an unhandled exception. Coverage uplift: mid-chat-turn delegation no longer leaks the calling agent's context to the target agent's cloud provider unguarded — the parent's GDPR scan covered the parent's model, but the delegate target (possibly a different provider) is now covered too."),
     ("8.8.3", "2026-05-17", "feat(gdpr-coverage): wire lossless context manager through background policy gate. Three `ContextManager` methods in `brain.py` now obey `gdpr_scanner.background_pii_action`: (1) `summarize_chunk` — the assembled `source_text` is verbatim chat history (names, emails, IBANs land here); pseudonymise before the cloud summariser, deanon the summary before it gets persisted into the context DAG. (2) `condense` — `combined_text` holds prior summaries already derived from chat history, so it still carries whatever PII survived the first pass; same wrap pattern. (3) `recall` — both the query AND the assembled context are scanned (the query may name a person, the context certainly carries history-PII); on `abort` policy the call returns `\"Recall blocked by GDPR policy for: …\"` instead of raising. Each method has a primary + fallback LLM call pair; the wrapper is called per attempt so the fallback model's own swap decision applies independently (extra scan per fallback is the cost of correct semantics — typical case never enters the fallback branch). `current_session_id` is already set on the calling thread (LCM runs inside the chat worker's compaction trigger or the manual ✂️ button handler), so mapping reuse picks up the session's existing pseudonym map when one exists. When the pseudonymise step fails or the policy is `abort`, the legacy truncation fallback inside each method still produces a summary — no breakage of the compaction contract. Coverage uplift: long-running chats that trigger LCM no longer ship every name in the conversation to the cloud summariser unmasked."),
     ("8.8.2", "2026-05-17", "feat(gdpr-coverage): wire translation pipeline through background policy gate. Three call sites in `server_lib/translate/` now obey `gdpr_scanner.background_pii_action`: (1) `text.py:translate_text` translate + tone-rewrite passes — each scan-and-deanon round-trips against `gdpr_pick_model_for_background`; abort-policy raises `RuntimeError(\"translation blocked by GDPR policy: …\")`, soft-skipping the tone pass when only the rewrite is blocked. (2) `document.py:_translate_chunks` + `_rewrite_chunks` — the wrapper is called ONCE per document with the full run list so the pseudonym mapping stays stable across every chunk (token IDs minted in chunk 3 are reused in chunk 9 if the same value appears). Per-chunk dispatch then operates on the pseudonymised wire list while the deanon callback runs on each parsed translation before it gets written back to the original-whitespace slot. Per-run fallback (`translate_text` re-entry on chunk-parse failure) deliberately passes the ORIGINAL run text — the inner call has its own gate and reuses the same session mapping via `current_session_id`. (3) `detect.py:_llm_detect` language-detection fallback — short-text gate; deanon is a no-op on a 2-letter ISO code but applied uniformly so future policy changes don't surprise this caller. All three sites use try/except `GDPRBlockedError` and convert to a soft return rather than propagating up to the user as an unhandled exception. No prose was added to translation system prompts — pseudonym tokens (`<EMAIL_1_HEX>`, `<IBAN_2_HEX>`) ride through unchanged because the existing 'preserve URLs, emails, and proper nouns verbatim' rule covers them. Coverage uplift: translation no longer ships raw user contracts / memos to cloud Mistral; the same anonymise-cloud-deanon round-trip the chat path uses is now active on the Translation tab too."),
@@ -10903,20 +10904,6 @@ def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_respo
     # Use a quick LLM call to extract and format the memory
     mem_type, trigger = memorable_patterns[0]
 
-    # Build a focused extraction prompt
-    prompt = (
-        f"Extract a concise, actionable memory from this conversation exchange.\n\n"
-        f"USER: {user_message[:500]}\n\n"
-        f"A: {assistant_response[:500]}\n\n"
-        f"Trigger: {trigger}\n"
-        f"Memory type: {mem_type}\n\n"
-        f"Rules:\n"
-        f'- Output ONLY a JSON object: {{"name": "short-title", "content": "the key fact/preference/decision", "type": "{mem_type}", "description": "one-line summary"}}\n'
-        f"- Content should be 1-3 sentences, factual, no fluff\n"
-        f'- If the exchange doesn\'t actually contain memorable info, output: {{"skip": true}}\n'
-        f"- Do NOT output anything except the JSON object"
-    )
-
     try:
         # Use the agent's configured auto-memory model, or fall back to the
         # server default. No haiku/cheapest heuristics — admin picks, we use.
@@ -10927,6 +10914,37 @@ def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_respo
         if not model or not _delegate_api_key:
             return
 
+        # GDPR policy gate. The extraction prompt embeds verbatim slices
+        # of the user message and the assistant reply — real PII can
+        # ride through. Pseudonymise both, deanon the JSON reply before
+        # parsing so the persisted memory `content` field carries the
+        # originals (not opaque tokens).
+        _mem_deanon = _identity_deanon
+        _wire_user = user_message[:500]
+        _wire_assist = assistant_response[:500]
+        try:
+            model, (_pii_user, _pii_assist), _mem_deanon = gdpr_pick_model_for_background(
+                model, [_wire_user, _wire_assist], purpose="auto_memory_extract")
+            _wire_user = _pii_user
+            _wire_assist = _pii_assist
+        except GDPRBlockedError:
+            return
+
+        # Build a focused extraction prompt — uses the pseudonymised
+        # slices so the wire payload never leaks raw PII.
+        prompt = (
+            f"Extract a concise, actionable memory from this conversation exchange.\n\n"
+            f"USER: {_wire_user}\n\n"
+            f"A: {_wire_assist}\n\n"
+            f"Trigger: {trigger}\n"
+            f"Memory type: {mem_type}\n\n"
+            f"Rules:\n"
+            f'- Output ONLY a JSON object: {{"name": "short-title", "content": "the key fact/preference/decision", "type": "{mem_type}", "description": "one-line summary"}}\n'
+            f"- Content should be 1-3 sentences, factual, no fluff\n"
+            f'- If the exchange doesn\'t actually contain memorable info, output: {{"skip": true}}\n'
+            f"- Do NOT output anything except the JSON object"
+        )
+
         ms = MemoryStore(agent_id)
         from handlers import sidecar_proxy as _sidecar_proxy
         _res = _sidecar_proxy.background_call(
@@ -10936,7 +10954,7 @@ def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_respo
             agent_id=agent_id,
             max_tokens=256,
         )
-        result = _res.get("reply") or ""
+        result = _mem_deanon(_res.get("reply") or "")
 
         if not result or 'skip' in result.lower():
             return
@@ -11164,24 +11182,52 @@ def trigger_relationship_discovery(agent_id: str):
             model, fallback_model = _resolve_model_with_fallback(primary, fallback)
             ms = MemoryStore(agent_id)
             logging.info(f"Relationship discovery starting for {agent_id} using {model} (fallback: {fallback_model})")
+            # GDPR policy gate: the prompt is built from existing memory
+            # contents, which may include names / emails / decisions
+            # mentioning real people. Pseudonymise the prompt; the JSON
+            # reply references memory names verbatim, so deanon restores
+            # them before `_apply_discovered_relationships` matches them
+            # against the memory store.
+            _rel_deanon = _identity_deanon
+            _wire_prompt = prompt
+            try:
+                model, (_pii_prompt,), _rel_deanon = gdpr_pick_model_for_background(
+                    model, [prompt], purpose="relationship_discovery")
+                _wire_prompt = _pii_prompt
+            except GDPRBlockedError:
+                logging.info(f"Relationship discovery for {agent_id}: blocked by GDPR policy")
+                return
+            _sys = "You are a relationship analysis assistant. Analyze the given memories and output ONLY a valid JSON array of relationships. No explanations, no markdown, just the JSON array."
             from handlers import sidecar_proxy as _sidecar_proxy
             _res = _sidecar_proxy.background_call(
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": _wire_prompt}],
                 model=model,
-                system_prompt="You are a relationship analysis assistant. Analyze the given memories and output ONLY a valid JSON array of relationships. No explanations, no markdown, just the JSON array.",
+                system_prompt=_sys,
                 agent_id=agent_id,
                 max_tokens=16384,
             )
             if _res.get("error") and fallback_model and fallback_model != model:
                 logging.warning(f"Primary {model} failed for relationship discovery: {_res['error']}; falling back to {fallback_model}")
+                # Re-gate so the fallback model gets its own swap decision.
+                _fb_model = fallback_model
+                _fb_deanon = _rel_deanon
+                _fb_prompt = _wire_prompt
+                try:
+                    _fb_model, (_fb_pii,), _fb_deanon = gdpr_pick_model_for_background(
+                        fallback_model, [prompt], purpose="relationship_discovery_fb")
+                    _fb_prompt = _fb_pii
+                except GDPRBlockedError:
+                    logging.info(f"Relationship discovery for {agent_id}: fallback blocked by GDPR policy")
+                    return
                 _res = _sidecar_proxy.background_call(
-                    messages=[{"role": "user", "content": prompt}],
-                    model=fallback_model,
-                    system_prompt="You are a relationship analysis assistant. Analyze the given memories and output ONLY a valid JSON array of relationships. No explanations, no markdown, just the JSON array.",
+                    messages=[{"role": "user", "content": _fb_prompt}],
+                    model=_fb_model,
+                    system_prompt=_sys,
                     agent_id=agent_id,
                     max_tokens=16384,
                 )
-            result_text = _res.get("reply") or ""
+                _rel_deanon = _fb_deanon
+            result_text = _rel_deanon(_res.get("reply") or "")
             if _res.get("error"):
                 logging.warning(f"Relationship discovery for {agent_id}: {_res['error']}")
                 return
