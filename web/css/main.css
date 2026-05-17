@@ -1197,6 +1197,22 @@ textarea { resize: none; }
   color: var(--text-100);
 }
 
+/* GDPR — restored (de-anonymised) value highlight.
+   The <mark> wraps each span where the server reversed a pseudonymisation;
+   tooltip carries category + original/fake mapping. Yellow tint sits over
+   both light and dark themes via color-mix against the bg token. */
+.msg-content mark.gdpr-restored {
+  background: color-mix(in srgb, var(--warning, #d97706) 28%, transparent);
+  color: inherit;
+  padding: 0.05em 0.2em;
+  border-radius: 3px;
+  cursor: help;
+  border-bottom: 1px dotted color-mix(in srgb, var(--warning, #d97706) 65%, transparent);
+}
+.msg-content mark.gdpr-restored:hover {
+  background: color-mix(in srgb, var(--warning, #d97706) 42%, transparent);
+}
+
 /* Tables */
 .msg-content table { border-collapse: collapse; margin: 0.5em 0; width: 100%; font-size: 14px; }
 .msg-content th, .msg-content td { border: 1px solid var(--border-200); padding: 8px 12px; text-align: left; }

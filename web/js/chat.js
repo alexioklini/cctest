@@ -733,6 +733,12 @@ function buildStreamCallbacks(chat, isActive) {
           tokens_out: tokOut || estOut,
           duration: dur,
         };
+        // GDPR restored-span payload from the worker — used by the markdown
+        // renderer to wrap each restored value in a <mark> tag with a
+        // tooltip. Persisted into metadata so reload reads it back identically.
+        if (Array.isArray(d.gdpr_restored_spans) && d.gdpr_restored_spans.length) {
+          assistantMsg.metadata.gdpr_restored_spans = d.gdpr_restored_spans;
+        }
         if (dur > 0 && estOut > 0) {
           chat._lastSpeed = Math.round(estOut / dur);
         }
@@ -2278,7 +2284,10 @@ function renderUserMessage(msg, idx) {
 
 function renderAssistantMessage(msg, idx) {
   const content = typeof msg.content === 'string' ? msg.content : '';
-  const rendered = renderMarkdown(content);
+  const gdprSpans = msg.metadata?.gdpr_restored_spans;
+  const rendered = (Array.isArray(gdprSpans) && gdprSpans.length)
+    ? renderMarkdownWithGdprHighlights(content, gdprSpans)
+    : renderMarkdown(content);
 
   let thinkingHtml = '';
   if (msg._thinking) {
@@ -3264,6 +3273,85 @@ function renderMarkdown(text) {
   } catch(e) {
     return esc(text);
   }
+}
+
+// GDPR highlight sentinels — invisible separators that survive marked.parse
+// unchanged so we can post-process them back into <mark> tags.
+const GDPR_SENTINEL_OPEN = '⁣GDPR⁣';   // U+2063 INVISIBLE SEPARATOR
+const GDPR_SENTINEL_CLOSE = '⁣/GDPR⁣';
+
+// Human-readable category labels for the tooltip. Falls back to the rule_id
+// itself when not mapped (covers future detectors without a UI release).
+const GDPR_CATEGORY_LABELS = {
+  email: 'E-Mail-Adresse',
+  iban: 'IBAN',
+  phone: 'Telefonnummer',
+  credit_card: 'Kreditkartennummer',
+  steuer_id: 'Steuer-ID',
+  steuernummer: 'Steuernummer',
+  ssn: 'Sozialversicherungsnummer',
+  passport: 'Reisepass',
+  nhs_number: 'NHS-Nummer',
+  bsn: 'BSN',
+  taj: 'TAJ',
+  cnp: 'CNP',
+  rrn: 'RRN',
+  aadhaar: 'Aadhaar',
+  pesel: 'PESEL',
+  api_key: 'API-Key',
+  ip_address: 'IP-Adresse',
+  date_of_birth: 'Geburtsdatum',
+  unknown: 'Personenbezogener Wert',
+};
+
+function renderMarkdownWithGdprHighlights(text, spans) {
+  // Pre-inject sentinels around each restored span in the raw text, then run
+  // the normal markdown pipeline, then swap sentinels for <mark> tags after.
+  // This piggy-backs on the same trick the citation extractor uses — the
+  // markdown parser doesn't touch invisible separators, so spans cross
+  // through marked.parse intact.
+  if (!text || !spans || !spans.length) return renderMarkdown(text || '');
+  // Sort spans descending by start so splicing from the end keeps earlier
+  // offsets stable.
+  const ordered = spans.slice().sort((a, b) => b.start - a.start);
+  const tooltips = [];
+  let out = text;
+  for (const sp of ordered) {
+    if (typeof sp.start !== 'number' || typeof sp.end !== 'number') continue;
+    if (sp.start < 0 || sp.end > text.length || sp.start >= sp.end) continue;
+    // Verify the span still points at the value we expected. The server
+    // computes offsets against the same final reply we're rendering, so
+    // they should match; if they don't (e.g. text was mutated by a hint
+    // appended after deanon), skip rather than mis-highlight.
+    const slice = text.substring(sp.start, sp.end);
+    if (slice !== sp.original) continue;
+    const id = tooltips.length;
+    tooltips.push({ original: sp.original, fake: sp.fake || '', category: sp.category || 'unknown' });
+    out = out.substring(0, sp.start)
+        + GDPR_SENTINEL_OPEN + id + '|'
+        + out.substring(sp.start, sp.end)
+        + GDPR_SENTINEL_CLOSE
+        + out.substring(sp.end);
+  }
+  let html = renderMarkdown(out);
+  // Replace sentinels with <mark> tags. The id between OPEN and '|' tells
+  // us which tooltip to attach. The content between '|' and CLOSE is the
+  // (already HTML-escaped by marked) restored value.
+  const re = new RegExp(
+    GDPR_SENTINEL_OPEN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      + '(\\d+)\\|([\\s\\S]*?)'
+      + GDPR_SENTINEL_CLOSE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+    'g'
+  );
+  html = html.replace(re, (_match, idStr, inner) => {
+    const t = tooltips[parseInt(idStr, 10)];
+    if (!t) return inner;
+    const label = GDPR_CATEGORY_LABELS[t.category] || t.category || 'Personenbezogener Wert';
+    // Tooltip text — line breaks via &#10; render in native title tooltips.
+    const tip = `${label} — "${t.original}" wurde mit "${t.fake}" anonymisiert`;
+    return `<mark class="gdpr-restored" data-category="${esc(t.category)}" title="${esc(tip)}">${inner}</mark>`;
+  });
+  return html;
 }
 
 // Sentinel markers — single chars unlikely to appear in normal text and

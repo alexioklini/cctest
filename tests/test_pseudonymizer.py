@@ -331,6 +331,36 @@ class TestOverlapAndStability(unittest.TestCase):
         finally:
             ps.close_mapping(mapping.mapping_id)
 
+    def test_find_restored_spans_locates_originals_with_categories(self):
+        """The UI highlight pipeline needs (start, end, original, fake,
+        category) for every restored value in the final reply. Categories
+        come from per-entry `Mapping.categories` populated on record(); a
+        legacy mapping deserialised without that field still produces spans
+        (with category='unknown'), so the renderer never crashes on old data.
+        """
+        text = "Mail an alice@example.com mit IBAN DE89370400440532013000."
+        mapping = ps.new_mapping()
+        try:
+            f = _scan(text)
+            ps.pseudonymize_text(text, f, mapping=mapping)
+            spans = ps.find_restored_spans(text, mapping=mapping)
+            self.assertEqual(len(spans), 2)
+            by_orig = {s["original"]: s for s in spans}
+            self.assertIn("alice@example.com", by_orig)
+            self.assertEqual(by_orig["alice@example.com"]["category"], "email")
+            self.assertIn("DE89370400440532013000", by_orig)
+            self.assertEqual(by_orig["DE89370400440532013000"]["category"], "iban")
+            # Offsets are correct against the original text.
+            for s in spans:
+                self.assertEqual(text[s["start"]:s["end"]], s["original"])
+            # Legacy fallback: a mapping without categories produces spans
+            # tagged 'unknown' rather than raising.
+            mapping.categories = {}
+            spans2 = ps.find_restored_spans(text, mapping=mapping)
+            self.assertTrue(all(s["category"] == "unknown" for s in spans2))
+        finally:
+            ps.close_mapping(mapping.mapping_id)
+
     def test_deanonymise_collapses_legacy_chain(self):
         """Safety net: if a chained mapping somehow exists (legacy data, or a
         future code path that bypasses the pseudonymize_text skip-known-fake

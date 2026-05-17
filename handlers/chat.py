@@ -2563,6 +2563,20 @@ class ChatHandlerMixin:
                             reply = _deanon_reply
                             msg_metadata["gdpr_mapping_id"] = _gdpr_mapping_id
                             msg_metadata["gdpr_restored"] = int(_restored)
+                            # Per-span highlight payload so the UI can mark
+                            # each restored value in the assistant reply with
+                            # a tooltip ("email — alice@… was anonymised as
+                            # <EMAIL_1_7e77>"). Offsets are against `reply`
+                            # (the de-anonymised final text). Skipped when
+                            # no tokens were restored to keep metadata lean.
+                            if _restored:
+                                try:
+                                    _spans = pseudonymizer.find_restored_spans(
+                                        reply, mapping=_mapping)
+                                except Exception:
+                                    _spans = []
+                                if _spans:
+                                    msg_metadata["gdpr_restored_spans"] = _spans
                     session.add_message("assistant", reply, metadata=msg_metadata or None)
                     done_data = {
                         "text": reply,
@@ -2576,6 +2590,13 @@ class ChatHandlerMixin:
                     }
                     if session_cost is not None:
                         done_data["cost"] = session_cost
+                    # GDPR highlight payload — UI marks each restored span
+                    # in the reply with a tooltip. Pulled from the metadata
+                    # we just attached to the persisted message; live path
+                    # picks it up here, reload reads it from msg_metadata.
+                    _gdpr_spans = msg_metadata.get("gdpr_restored_spans") if msg_metadata else None
+                    if _gdpr_spans:
+                        done_data["gdpr_restored_spans"] = _gdpr_spans
                     # Include fallback model info if a fallback was used
                     fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
                     if fb_model:

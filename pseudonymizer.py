@@ -256,6 +256,11 @@ class Mapping:
     sources: list[str] = field(default_factory=list)
     # Per-category counts for audit / UI display (no values, just totals).
     finding_counts: dict[str, int] = field(default_factory=dict)
+    # Per-entry category: original → rule_id. Used to label restored spans in
+    # the UI tooltip ("email — alice@… was anonymised as <EMAIL_1_…>").
+    # Optional — legacy mappings deserialised from disk won't have it; callers
+    # tolerate a missing entry as "unknown" category.
+    categories: dict[str, str] = field(default_factory=dict)
 
     def next_token(self, rule_id: str) -> str:
         kind = _rule_id_to_kind(rule_id)
@@ -267,6 +272,7 @@ class Mapping:
         self.forward[original] = replacement
         self.reverse[replacement] = original
         self.finding_counts[rule_id] = self.finding_counts.get(rule_id, 0) + 1
+        self.categories[original] = rule_id
 
 
 # Process-wide registry. Step 2 will mirror these to encrypted SQLite for
@@ -446,6 +452,66 @@ def deanonymize_text(text: str, *, mapping: Mapping) -> tuple[str, int]:
 
 
 # ---------------------------------------------------------------------------
+# Span locator — for UI highlighting of de-anonymised values
+# ---------------------------------------------------------------------------
+
+
+def find_restored_spans(text: str, *, mapping: Mapping) -> list[dict]:
+    """Locate every occurrence of each mapping entry's *original* value in
+    `text` (which should be the de-anonymised final text). Returns a list of
+    non-overlapping spans:
+
+        [{"start": int, "end": int, "original": str, "fake": str,
+          "category": str}, ...]
+
+    Longest originals are matched first so a longer value can't be eclipsed
+    by a shorter one that happens to be a substring (e.g. an email address
+    that contains a domain that's also tracked separately). Spans are sorted
+    ascending by start. Returns `[]` for empty text or empty mapping.
+
+    The fake field carries the mapping's forward replacement so the UI can
+    show "original was anonymised as fake" without re-querying the mapping.
+    The category is the rule_id (e.g. "email", "iban") — legacy mappings
+    without per-entry categories fall back to "unknown".
+    """
+    if not text or not mapping.forward:
+        return []
+    # Sort originals by length desc — a longer match claims its span before
+    # any shorter substring inside it gets a chance.
+    originals = sorted(mapping.forward.keys(), key=len, reverse=True)
+    claimed: list[tuple[int, int]] = []
+    spans: list[dict] = []
+
+    def _overlaps(s: int, e: int) -> bool:
+        for cs, ce in claimed:
+            if s < ce and e > cs:
+                return True
+        return False
+
+    for orig in originals:
+        if not orig:
+            continue
+        start = 0
+        while True:
+            i = text.find(orig, start)
+            if i < 0:
+                break
+            j = i + len(orig)
+            if not _overlaps(i, j):
+                spans.append({
+                    "start": i,
+                    "end": j,
+                    "original": orig,
+                    "fake": mapping.forward.get(orig, ""),
+                    "category": mapping.categories.get(orig, "unknown"),
+                })
+                claimed.append((i, j))
+            start = j
+    spans.sort(key=lambda s: s["start"])
+    return spans
+
+
+# ---------------------------------------------------------------------------
 # Convenience: one-shot scan-and-pseudonymize
 # ---------------------------------------------------------------------------
 
@@ -543,6 +609,7 @@ def _serialize_mapping(m: Mapping) -> dict:
         "counters": m.counters,
         "sources": m.sources,
         "finding_counts": m.finding_counts,
+        "categories": m.categories,
     }
 
 
@@ -553,6 +620,7 @@ def _deserialize_mapping(d: dict) -> Mapping:
     m.counters = dict(d.get("counters") or {})
     m.sources = list(d.get("sources") or [])
     m.finding_counts = dict(d.get("finding_counts") or {})
+    m.categories = dict(d.get("categories") or {})
     return m
 
 
@@ -663,6 +731,7 @@ __all__ = [
     "pseudonymize_text",
     "deanonymize_text",
     "pseudonymize_with_scanner",
+    "find_restored_spans",
     # Persistence
     "encrypt_mapping",
     "decrypt_mapping",
