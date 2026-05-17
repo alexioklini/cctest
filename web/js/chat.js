@@ -116,12 +116,17 @@ async function sendMessage() {
 
   let gdprAction = '';
   if (state.piiScannerEnabled !== false) {
-    // Sticky session preference (step 6.2): if the user previously ticked
-    // "Don't ask again for this chat", skip the modal and forward the
-    // stored choice as gdpr_action. Server-side validation still runs.
+    // Sticky session preference: if the user previously made a choice in
+    // this chat OR the session already has an anonymisation mapping (which
+    // implies the user picked Anonymise earlier), skip the modal and reuse
+    // that choice. The server applies the same rule independently — both
+    // sides agree that once a session anonymises, it keeps anonymising
+    // until the user clears the pref via the composer shield button.
     const stickyPref = (chat.gdprActionPref || '').trim();
     if (stickyPref && ['anonymise', 'local_model', 'continue'].includes(stickyPref)) {
       gdprAction = stickyPref;
+    } else if (chat.hasGdprMapping) {
+      gdprAction = 'anonymise';
     } else {
       const scan = PIIScanner.scanPayload(text, state._pendingFiles);
       // Follow-up-turn coverage: if a prior turn's persisted assistant
@@ -150,7 +155,7 @@ async function sendMessage() {
       }
       if (scan.findings.length) {
         const localActive = isModelLocal(chat.model || '');
-        const { verdict, persist } = await gdprActionModal(scan, chat, localActive);
+        const { verdict } = await gdprActionModal(scan, chat, localActive);
         if (verdict === 'cancel') return;
         if (verdict === 'local') {
           // Server-side swap: chat worker handles model switching when it sees
@@ -163,12 +168,14 @@ async function sendMessage() {
         } else if (verdict === 'send') {
           gdprAction = 'continue';
         }
-        // Persist the choice when the user ticked "Don't ask again". 'cancel'
-        // is never persisted (would brick the chat) — already filtered above
-        // by the early return. Fire-and-forget: a persist failure shouldn't
-        // block the send.
-        if (persist && gdprAction && chat.sessionId) {
+        // Always persist the choice — the modal is the consent gate, and
+        // every subsequent turn of this session continues that consent
+        // until the user explicitly clears it via the composer shield
+        // button (`btn-gdpr-pref`). 'cancel' was filtered above. Fire-and-
+        // forget: a persist failure shouldn't block the send.
+        if (gdprAction && chat.sessionId) {
           chat.gdprActionPref = gdprAction;
+          if (gdprAction === 'anonymise') chat.hasGdprMapping = true;
           API.updateGdprActionPref(chat.sessionId, gdprAction).catch(() => {});
         }
       }

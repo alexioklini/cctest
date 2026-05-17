@@ -327,6 +327,14 @@ class Session:
         # forwarded as body.gdpr_action. Allowed: '', 'anonymise',
         # 'local_model', 'continue'. 'cancel' is NEVER persisted here.
         self.gdpr_action_pref: str = ""
+        # In-memory only: set by `gdpr_action_pref` POST when the user clears
+        # a previously-set pref. While True, the chat worker skips the
+        # implicit "session has a mapping → keep anonymising" rule even when
+        # `pseudonym_maps` has rows. Reset by reload (acceptable — at restart
+        # the user can decide fresh on the next PII send).
+        self._gdpr_skip_auto: bool = False
+        self._gdpr_mapping_id: str | None = None
+        self._gdpr_streamer = None
 
         self._streaming = False  # True while a chat turn worker is running
 
@@ -400,6 +408,14 @@ class Session:
                 self.gdpr_action_pref = (_pref if _pref in
                     ("anonymise", "local_model", "continue") else "")
                 self.workflow_run_id = info.get("workflow_run_id", "") or ""
+        # Rehydrate a prior GDPR mapping so a reloaded session that ever
+        # anonymised continues to pseudonymise on the next turn without
+        # requiring the client to re-prompt the user.
+        try:
+            from handlers.chat import rehydrate_session_gdpr_mapping
+            rehydrate_session_gdpr_mapping(self)
+        except Exception:
+            pass
 
 
 class SessionManager:

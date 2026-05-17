@@ -124,6 +124,11 @@ async function openSession(sessionId, agentId) {
     // ask each time. Other allowed values map 1:1 to body.gdpr_action.
     chat.gdprActionPref = ['anonymise', 'local_model', 'continue']
       .includes(data.gdpr_action_pref) ? data.gdpr_action_pref : '';
+    // True when this session has any persisted pseudonym map. Used by
+    // sendMessage to skip the modal on follow-up turns of an
+    // already-anonymising session — once consent was given, every send
+    // continues anonymising until the user clears the pref.
+    chat.hasGdprMapping = !!data.has_gdpr_mapping;
     // Sync state.currentProject to the loaded chat's project. Without this,
     // sticky values from a previous project-detail visit leak into chats
     // opened from the chats list (and vice versa) — every outgoing turn
@@ -291,6 +296,23 @@ async function openSession(sessionId, agentId) {
   // Close artifact and references panels when switching sessions
   closeRightPanel();
 
+  // Reset the composer so the previous session's draft / attachments don't
+  // leak into the newly opened one. Without this the PII badge can stay lit
+  // from a draft typed for chat A while chat B is open. Drafts are not
+  // persisted per-session today; if/when they are, restore here from
+  // `chat._draft` after the reset instead of always clearing.
+  try {
+    const _input = _composerInputEl();
+    if (_input) {
+      _input.value = '';
+      try { autoGrow(_input); } catch (e) {}
+    }
+    state._pendingFiles = [];
+    state._pendingImages = [];
+    if (typeof renderFilePreviews === 'function') renderFilePreviews();
+    if (typeof updateSendButton === 'function') updateSendButton();
+  } catch (e) {}
+
   // Invalidate the history PII cache — new session = new content to scan.
   // updatePIIBadge() below will populate it and show the banner if needed.
   chat._piiHistoryScanLen = -1;
@@ -402,6 +424,20 @@ function newChat() {
   stopWarmupPoll(chat);
   closeRightPanel();
   navigateTo('welcome');
+  // Clear composer state — mirrors openSession() so opening a fresh chat
+  // doesn't carry over a half-typed message or attached files from whatever
+  // the user was looking at before.
+  try {
+    const _input = _composerInputEl();
+    if (_input) {
+      _input.value = '';
+      try { autoGrow(_input); } catch (e) {}
+    }
+    state._pendingFiles = [];
+    state._pendingImages = [];
+    if (typeof renderFilePreviews === 'function') renderFilePreviews();
+    if (typeof updateSendButton === 'function') updateSendButton();
+  } catch (e) {}
   schedulePIIBadgeUpdate();
   if (typeof maybeUpdateWorkflowBanner === 'function') maybeUpdateWorkflowBanner();
   // Session is created lazily on first send — pre-creating here would

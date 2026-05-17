@@ -138,6 +138,14 @@ class SessionsHandlerMixin:
             _rmo = getattr(session, "research_mode_override", None)
             resp["research_mode_override"] = (None if _rmo is None else bool(_rmo))
             resp["gdpr_action_pref"] = getattr(session, "gdpr_action_pref", "") or ""
+            resp["has_gdpr_mapping"] = bool(
+                getattr(session, "_gdpr_mapping_id", "") or "")
+            if not resp["has_gdpr_mapping"]:
+                try:
+                    resp["has_gdpr_mapping"] = bool(
+                        ChatDB.list_pseudonym_maps_for_session(sid) or [])
+                except Exception:
+                    pass
         else:
             info = ChatDB.get_session_info(sid)
             if info:
@@ -153,6 +161,11 @@ class SessionsHandlerMixin:
                 _pref_db = info.get("gdpr_action_pref", "") or ""
                 resp["gdpr_action_pref"] = (_pref_db if _pref_db in
                     ("anonymise", "local_model", "continue") else "")
+                try:
+                    resp["has_gdpr_mapping"] = bool(
+                        ChatDB.list_pseudonym_maps_for_session(sid) or [])
+                except Exception:
+                    resp["has_gdpr_mapping"] = False
         self._send_json(resp)
 
     def _handle_next_prompt_suggestion(self, path):
@@ -801,6 +814,16 @@ class SessionsHandlerMixin:
             s = sessions.get(sid)
             if s:
                 s.gdpr_action_pref = raw
+                # Empty value with a prior mapping means the user explicitly
+                # opted out of the session-sticky auto-anonymise rule.
+                # Without this flag, the chat worker would silently re-enter
+                # the anonymise branch because `pseudonym_maps` has rows.
+                if not raw:
+                    s._gdpr_skip_auto = True
+                    s._gdpr_mapping_id = None
+                    s._gdpr_streamer = None
+                else:
+                    s._gdpr_skip_auto = False
             self._send_json({"status": "ok",
                               "gdpr_action_pref": raw,
                               "session_id": sid})

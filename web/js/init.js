@@ -204,6 +204,10 @@ async function resetGdprActionPref() {
   try {
     await API.updateGdprActionPref(chat.sessionId, '');
     chat.gdprActionPref = '';
+    // Also clear the implicit "session already has a mapping" sticky so
+    // sendMessage won't silently re-anonymise. The next PII-bearing turn
+    // brings the modal back; chats without further PII proceed normally.
+    chat.hasGdprMapping = false;
     updateStatusBar();
     const labels = {
       'anonymise':   'auto-anonymise',

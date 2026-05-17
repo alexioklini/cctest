@@ -278,7 +278,7 @@ function gdprActionModal(scan, chat, localActive) {
           padding:20px;
         }
         .pii-card {
-          width:min(560px, 100%);
+          width:min(720px, 100%);
           max-height:min(82vh, 720px);
           display:flex; flex-direction:column;
           background:var(--bg-000, #faf9f7);
@@ -363,12 +363,10 @@ function gdprActionModal(scan, chat, localActive) {
           flex-wrap:wrap;
         }
         .pii-actions-spacer { flex:1; }
-        .pii-suppress {
-          display:flex; align-items:center; gap:6px;
-          font-size:11.5px; color:var(--text-300);
-          cursor:pointer; user-select:none;
+        .pii-suppress-note {
+          margin:0; font-size:11px; color:var(--text-300);
+          line-height:1.4;
         }
-        .pii-suppress input { margin:0; }
         .pii-btn {
           padding:7px 13px; border-radius:8px;
           font-size:12.5px; font-weight:500;
@@ -518,9 +516,8 @@ function gdprActionModal(scan, chat, localActive) {
               '<button class="pii-btn pii-btn-secondary" id="pii-local-btn">Lokales Modell verwenden</button>' +
               '<button class="pii-btn pii-btn-primary" id="pii-anon-btn">Anonymisieren &amp; senden</button>' +
             '</div>' +
-            '<label class="pii-suppress">' +
-              '<input type="checkbox" id="pii-suppress-session"> Für diesen Chat nicht mehr fragen' +
-            '</label>' +
+            '<p class="pii-suppress-note">Die Auswahl gilt für den Rest dieses Chats. ' +
+            'Über das Schild-Symbol unter dem Eingabefeld lässt sich die Wahl jederzeit zurücksetzen.</p>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -529,11 +526,9 @@ function gdprActionModal(scan, chat, localActive) {
     const overlay = wrap.firstElementChild;
     document.body.appendChild(overlay);
     const cleanup = (verdict) => {
-      const persist = verdict !== 'cancel' &&
-        !!document.getElementById('pii-suppress-session')?.checked;
       document.removeEventListener('keydown', onKey);
       overlay.remove();
-      resolve({ verdict, persist });
+      resolve({ verdict });
     };
     const onKey = (e) => { if (e.key === 'Escape') cleanup('cancel'); };
     document.addEventListener('keydown', onKey);
@@ -617,18 +612,16 @@ function gdprRecoveryModal(detail, chat) {
   });
 }
 
-// Live inline badge — runs on composer input + history load. Shows a pill
-// above the composer if PII is present in the current draft, attachments,
-// or the loaded conversation history.
+// Unified PII surfacing — single composer-toolbar icon for draft + history.
+// Replaces the v8.6.x split between the above-composer pill (draft) and the
+// toolbar icon (history-only). Severity escalates via icon colour; the hover
+// popover shows what's present in each scope. The pre-send modal stays the
+// actionable affordance — this badge is awareness only.
 function updatePIIBadge() {
-  const host = state.currentView === 'welcome'        ? 'welcome-composer'
-             : state.currentView === 'project-detail' ? 'project-composer'
-             : 'chat-composer';
-  const composer = document.getElementById(host);
-  if (!composer) return;
-  let badge = document.getElementById('pii-inline-badge');
+  // Drop any leftover legacy pill so a hot-reload doesn't leave one behind.
+  document.getElementById('pii-inline-badge')?.remove();
   if (state.piiScannerEnabled === false) {
-    badge?.remove();
+    _updatePIIComposerBadge(null, null, null, false);
     return;
   }
   const input = _composerInputEl();
@@ -638,112 +631,82 @@ function updatePIIBadge() {
   const historyHas = !!(chat && piiHistoryHasFindings(chat));
   const draftHas = draftScan.findings.length > 0;
 
-  // Show/hide the inline composer-toolbar info button for the history-only
-  // case. Compact icon + hover popover; never blocks the composer footprint.
-  _updatePIIHistoryComposerBadge(chat, historyHas && !draftHas);
+  // Side-effect kept from the pre-collapse code: when block-mode is active
+  // and the draft has PII, this swaps the model to the local fallback before
+  // sendMessage runs. Surfaced in the popover below.
+  if (draftHas) piiEnsureLocalModel();
 
-  if (!draftHas && !historyHas) { badge?.remove(); return; }
-  // History-only case: surface via the composer-toolbar info badge above, NOT
-  // the prominent pill. The pill is reserved for actionable (draft) findings.
-  if (!draftHas && historyHas) { badge?.remove(); return; }
-
-  if (!badge) {
-    badge = document.createElement('div');
-    badge.id = 'pii-inline-badge';
-    badge.style.cssText = [
-      'display:flex',
-      'align-items:center',
-      'gap:8px',
-      'padding:7px 14px',
-      'margin:0 8px 8px 8px',
-      'border-radius:999px',
-      'background:linear-gradient(90deg,#fef3c7,#fde68a)',
-      'border:1px solid #fcd34d',
-      'box-shadow:0 1px 3px rgba(180,83,9,.15)',
-      'font-size:12px',
-      'font-weight:500',
-      'color:#78350f',
-      'width:fit-content',
-      'max-width:calc(100% - 16px)',
-      'cursor:help',
-      'transition:transform .15s',
-    ].join(';');
-    // Hover nudge for feedback
-    badge.onmouseenter = () => { badge.style.transform = 'translateY(-1px)'; };
-    badge.onmouseleave = () => { badge.style.transform = ''; };
-    composer.parentElement?.insertBefore(badge, composer);
-  }
-  // Shield-icon SVG + formatted counts
-  const icon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.6" fill="currentColor"/></svg>';
-  // If server is configured to block PII requests, auto-swap to a local model
-  // and surface that in the badge. Otherwise fall back to the original warn
-  // phrasing so we don't regress existing behavior.
-  const swapped = piiEnsureLocalModel();
-  const blockOn = piiBlockActive(chat);
-  const curLocal = chat && chat.model && isModelLocal(chat.model);
-
-  const countsLabel = PIIScanner.formatCounts(draftScan.counts);
-  const scopeLabel = 'Personenbezogene Daten in der Nachricht';
-
-  if (blockOn && !curLocal) {
-    badge.innerHTML = icon +
-      '<span><b>' + esc(scopeLabel) + '</b> — bitte lokales Modell wählen (kein lokales Modell verfügbar).</span>';
-    badge.style.background = 'linear-gradient(90deg,#fee2e2,#fecaca)';
-    badge.style.borderColor = '#f87171';
-    badge.style.color = '#7f1d1d';
-    badge.title = 'Cloud-Versand vom GDPR-Scanner blockiert. Lokales Modell installieren/aktivieren oder „Anfragen mit PII blockieren" in Einstellungen → Server deaktivieren.';
-  } else if (blockOn && curLocal) {
-    const localName = modelShortName(chat.model);
-    const countsFrag = countsLabel ? ('<b>' + esc(countsLabel) + '</b> · ') : '';
-    badge.innerHTML = icon +
-      '<span>' + countsFrag + esc(scopeLabel) + ' · läuft über lokales Modell <b>' + esc(localName) + '</b>' +
-      (swapped ? ' (automatisch gewählt)' : '') + '</span>';
-    badge.style.background = 'linear-gradient(90deg,#ecfccb,#d9f99d)';
-    badge.style.borderColor = '#a3e635';
-    badge.style.color = '#3f6212';
-    badge.title = 'Daten verlassen das lokale Netzwerk nicht. GDPR-Sperre aktiv; die Modellauswahl ist für diesen Chat auf lokale Modelle gefiltert.';
-  } else {
-    const countsFrag = countsLabel ? (' · <b>' + esc(countsLabel) + '</b>') : '';
-    badge.innerHTML = icon + '<span>' + esc(scopeLabel) + countsFrag + '</span>';
-    badge.style.background = 'linear-gradient(90deg,#fef3c7,#fde68a)';
-    badge.style.borderColor = '#fcd34d';
-    badge.style.color = '#78350f';
-    badge.title = 'Vor dem Senden erscheint eine Warnung. Die Prüfung erfolgt lokal im Browser.';
-  }
+  _updatePIIComposerBadge(chat, draftScan, historyHas, draftHas);
 }
 
-// History-PII Composer-Toolbar-Badge. Sichtbar nur wenn der Chat-Verlauf
-// PII enthält und der aktuelle Draft sauber ist. Hover öffnet einen kleinen
-// Popover mit der Treffer-Aufschlüsselung pro Kategorie.
-function _updatePIIHistoryComposerBadge(chat, shouldShow) {
-  // The composer template is cloned into three mount points
-  // (chat/welcome/project). Update each visible instance.
+// Single composer-toolbar icon for draft + history PII. Severity:
+//   red    = block-mode active and current model is not local
+//   green  = block-mode active and current model IS local (safe routing)
+//   amber  = draft has PII (pre-send warn)
+//   amber  = history-only PII (informational)
+function _updatePIIComposerBadge(chat, draftScan, historyHas, draftHas) {
   const buttons = document.querySelectorAll('[data-id="btn-pii-history"]');
+  const show = !!(draftHas || historyHas);
   buttons.forEach((btn) => {
-    if (!shouldShow) {
+    if (!show) {
       btn.style.display = 'none';
       _piiHistoryHidePopover();
+      btn.onmouseenter = btn.onmouseleave = btn.onfocus = btn.onblur = null;
       return;
     }
     btn.style.display = '';
-    const counts = chat?._piiHistoryCounts || {};
-    const total = Object.values(counts).reduce((a, b) => a + (b || 0), 0);
-    const fmt = PIIScanner.formatCounts(counts) || (total + ' Treffer');
-    btn.setAttribute('title', 'Personenbezogene Daten im Chat-Verlauf: ' + fmt);
-    btn.onmouseenter = () => _piiHistoryShowPopover(btn, counts);
+    // Decide tone. Block-mode states only apply when the draft has PII —
+    // a history-only badge stays in info-amber regardless.
+    const blockOn = !!(draftHas && piiBlockActive(chat));
+    const curLocal = !!(chat && chat.model && isModelLocal(chat.model));
+    let color = '#92400e';        // amber (default)
+    let titleScope;
+    if (draftHas && historyHas) {
+      titleScope = 'Personenbezogene Daten im Entwurf und im Chat-Verlauf';
+    } else if (draftHas) {
+      titleScope = 'Personenbezogene Daten in der Nachricht';
+    } else {
+      titleScope = 'Personenbezogene Daten im Chat-Verlauf';
+    }
+    if (blockOn && !curLocal) color = '#b91c1c';   // red
+    else if (blockOn && curLocal) color = '#3f6212'; // green
+    btn.style.color = color;
+    btn.setAttribute('title', titleScope);
+    // Popover content depends on what's present — let the renderer read the
+    // scan + chat off the closure each hover so counts stay fresh.
+    btn.onmouseenter = () => _piiHistoryShowPopover(btn, {
+      draft: draftHas ? draftScan : null,
+      history: historyHas ? chat : null,
+      blockOn, curLocal, chat,
+    });
     btn.onmouseleave = () => _piiHistoryHidePopover();
-    btn.onfocus = () => _piiHistoryShowPopover(btn, counts);
+    btn.onfocus = () => _piiHistoryShowPopover(btn, {
+      draft: draftHas ? draftScan : null,
+      history: historyHas ? chat : null,
+      blockOn, curLocal, chat,
+    });
     btn.onblur = () => _piiHistoryHidePopover();
   });
 }
 
 let _piiHistoryPopover = null;
-function _piiHistoryShowPopover(anchorBtn, counts) {
+function _piiHistoryShowPopover(anchorBtn, payload) {
   _piiHistoryHidePopover();
+  // Backwards-compat: a plain counts object (legacy callers) is treated as
+  // history-only. Current callers pass {draft, history, blockOn, curLocal, chat}.
+  let draftScan = null, historyChat = null, blockOn = false, curLocal = false, chat = null;
+  if (payload && typeof payload === 'object' &&
+      ('draft' in payload || 'history' in payload)) {
+    draftScan = payload.draft || null;
+    historyChat = payload.history || null;
+    blockOn = !!payload.blockOn;
+    curLocal = !!payload.curLocal;
+    chat = payload.chat || null;
+  } else {
+    // Legacy shape: object of {rule_id: count}
+    historyChat = { _piiHistoryCounts: payload || {} };
+  }
   const rect = anchorBtn.getBoundingClientRect();
-  const entries = Object.entries(counts || {}).filter(([, v]) => (v || 0) > 0);
-  if (entries.length === 0) return;
-  entries.sort((a, b) => (b[1] || 0) - (a[1] || 0));
   const pop = document.createElement('div');
   pop.id = 'pii-history-popover';
   pop.style.cssText = [
@@ -759,28 +722,77 @@ function _piiHistoryShowPopover(anchorBtn, counts) {
     'padding:10px 12px',
     'font-size:12px',
     'line-height:1.45',
-    'min-width:220px',
-    'max-width:320px',
+    'min-width:240px',
+    'max-width:340px',
     'pointer-events:none',
   ].join(';');
-  const total = entries.reduce((a, [, v]) => a + (v || 0), 0);
-  const rows = entries.map(([k, v]) =>
-    '<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0">' +
-      '<span style="color:var(--text-200)">' + esc(k) + '</span>' +
-      '<span style="font-weight:600;color:var(--text-100)">' + v + '</span>' +
-    '</div>'
-  ).join('');
+  const shieldSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.6" fill="currentColor"/></svg>';
+  const headerColor =
+    blockOn && !curLocal ? '#b91c1c' :
+    blockOn && curLocal  ? '#3f6212' :
+    '#92400e';
+  const headerText =
+    (draftScan && historyChat) ? 'Personenbezogene Daten in Entwurf und Verlauf'
+    : draftScan ? 'Personenbezogene Daten in der Nachricht'
+    : 'Personenbezogene Daten im Verlauf';
+
+  const sections = [];
+
+  if (draftScan) {
+    const counts = draftScan.counts || {};
+    const entries = Object.entries(counts).filter(([, v]) => (v || 0) > 0)
+                          .sort((a, b) => (b[1] || 0) - (a[1] || 0));
+    const total = entries.reduce((a, [, v]) => a + (v || 0), 0);
+    const rows = entries.map(([k, v]) =>
+      '<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0">' +
+        '<span style="color:var(--text-200)">' + esc(k) + '</span>' +
+        '<span style="font-weight:600;color:var(--text-100)">' + v + '</span>' +
+      '</div>'
+    ).join('');
+    let statusLine = '';
+    if (blockOn && !curLocal) {
+      statusLine = '<div style="color:#b91c1c;font-size:11px;margin-top:6px">Cloud-Versand blockiert — bitte lokales Modell wählen.</div>';
+    } else if (blockOn && curLocal) {
+      const localName = chat && chat.model ? modelShortName(chat.model) : 'lokales Modell';
+      statusLine = '<div style="color:#3f6212;font-size:11px;margin-top:6px">Läuft über lokales Modell <b>' + esc(localName) + '</b> — Daten verlassen das Netzwerk nicht.</div>';
+    } else {
+      statusLine = '<div style="color:var(--text-400);font-size:11px;margin-top:6px">Vor dem Senden erscheint eine Auswahl (Anonymisieren / lokales Modell / weiter).</div>';
+    }
+    sections.push(
+      '<div style="font-weight:600;font-size:11.5px;color:var(--text-200);margin-top:4px">Entwurf · ' + total + ' Treffer</div>' +
+      rows + statusLine
+    );
+  }
+
+  if (historyChat) {
+    const counts = historyChat._piiHistoryCounts || {};
+    const entries = Object.entries(counts).filter(([, v]) => (v || 0) > 0)
+                          .sort((a, b) => (b[1] || 0) - (a[1] || 0));
+    if (entries.length > 0) {
+      const total = entries.reduce((a, [, v]) => a + (v || 0), 0);
+      const rows = entries.map(([k, v]) =>
+        '<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0">' +
+          '<span style="color:var(--text-200)">' + esc(k) + '</span>' +
+          '<span style="font-weight:600;color:var(--text-100)">' + v + '</span>' +
+        '</div>'
+      ).join('');
+      sections.push(
+        '<div style="font-weight:600;font-size:11.5px;color:var(--text-200);margin-top:' +
+          (draftScan ? '10px' : '4px') + '">Verlauf · ' + total + ' Treffer in früheren Turns</div>' +
+        rows
+      );
+    }
+  }
+
+  if (sections.length === 0) return;
+
   pop.innerHTML =
-    '<div style="display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:6px;color:#92400e">' +
-      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.6" fill="currentColor"/></svg>' +
-      'Personenbezogene Daten im Verlauf' +
+    '<div style="display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:4px;color:' + headerColor + '">' +
+      shieldSvg + esc(headerText) +
     '</div>' +
-    '<div style="color:var(--text-300);font-size:11.5px;margin-bottom:8px">' +
-      total + ' Treffer in früheren Turns dieses Chats' +
-    '</div>' +
-    rows +
+    sections.join('') +
     '<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border-100);color:var(--text-400);font-size:11px">' +
-      'Neue Nachrichten werden vor dem Senden erneut geprüft.' +
+      'Die Prüfung erfolgt lokal im Browser.' +
     '</div>';
   document.body.appendChild(pop);
   _piiHistoryPopover = pop;

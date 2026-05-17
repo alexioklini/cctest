@@ -38,15 +38,6 @@
     "memory_summary_cap": 2000,
     "compact_threshold": null,
     "tool_overrides": {
-      "edit_document": {
-        "deferred": true
-      },
-      "read_document": {
-        "deferred": true
-      },
-      "write_document": {
-        "deferred": true
-      },
       "memory_delete": {
         "deferred": true
       },

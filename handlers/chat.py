@@ -60,6 +60,107 @@ def deliver_gdpr_recovery_choice(session_id: str, choice: str) -> bool:
     return True
 
 
+def rehydrate_session_gdpr_mapping(session) -> bool:
+    """Restore `session._gdpr_mapping_id` + `_gdpr_streamer` from the
+    persisted `pseudonym_maps` rows, if any. Returns True if a mapping was
+    rehydrated. Cheap no-op when the session never anonymised.
+
+    Used by `Session.load_from_db` (reload-from-disk path) and by the chat
+    worker at turn start (so follow-up turns of an anonymise session keep
+    pseudonymising history + tool outputs without requiring the client to
+    re-send `gdpr_action=anonymise` every turn).
+    """
+    try:
+        if getattr(session, "_gdpr_mapping_id", None):
+            return True
+        prior = ChatDB.list_pseudonym_maps_for_session(session.id) or []
+        if not prior:
+            return False
+        latest_mid = prior[-1][0]
+        m = pseudonymizer.get_mapping(latest_mid)
+        if m is None:
+            m = pseudonymizer.load_mapping(latest_mid)
+            if m is not None:
+                pseudonymizer.restore_mapping_to_registry(m)
+        if m is None:
+            return False
+        session._gdpr_mapping_id = m.mapping_id
+        session._gdpr_streamer = StreamingDeanonymizer(m)
+        return True
+    except Exception:
+        return False
+
+
+def _pseudonymize_history_for_wire(messages, mapping, scanner_cfg):
+    """Walk prior `session.messages` and produce a wire-only pseudonymised
+    copy. The reused mapping's `forward` table short-circuits already-known
+    values, so cost is one scan + zero new mints for stable conversations.
+    `session.messages` itself is NOT mutated — the chat UI keeps showing real
+    values; only the list handed to the sidecar is rewritten.
+
+    Returns `(wire_messages, new_tokens, finding_counts)`.
+    """
+    new_tokens = 0
+    counts: dict[str, int] = {}
+    wire: list[dict] = []
+    if not messages:
+        return wire, 0, counts
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+        if role not in ("user", "assistant") or content is None:
+            wire.append(msg)
+            continue
+        if isinstance(content, str):
+            text = content
+            f = engine._pii_scan_text(text, cfg=scanner_cfg)
+            if not f:
+                wire.append(msg)
+                continue
+            before = len(mapping.forward)
+            new_text = pseudonymizer.pseudonymize_text(
+                text, f, mapping=mapping, source="history")
+            new_tokens += len(mapping.forward) - before
+            for x in f:
+                rid = x.get("rule_id") or "unknown"
+                counts[rid] = counts.get(rid, 0) + 1
+            new_msg = dict(msg)
+            new_msg["content"] = new_text
+            wire.append(new_msg)
+        elif isinstance(content, list):
+            new_blocks = []
+            mutated = False
+            for blk in content:
+                if not isinstance(blk, dict) or blk.get("type") != "text":
+                    new_blocks.append(blk)
+                    continue
+                text = blk.get("text") or ""
+                f = engine._pii_scan_text(text, cfg=scanner_cfg)
+                if not f:
+                    new_blocks.append(blk)
+                    continue
+                before = len(mapping.forward)
+                new_text = pseudonymizer.pseudonymize_text(
+                    text, f, mapping=mapping, source="history")
+                new_tokens += len(mapping.forward) - before
+                for x in f:
+                    rid = x.get("rule_id") or "unknown"
+                    counts[rid] = counts.get(rid, 0) + 1
+                new_blk = dict(blk)
+                new_blk["text"] = new_text
+                new_blocks.append(new_blk)
+                mutated = True
+            if mutated:
+                new_msg = dict(msg)
+                new_msg["content"] = new_blocks
+                wire.append(new_msg)
+            else:
+                wire.append(msg)
+        else:
+            wire.append(msg)
+    return wire, new_tokens, counts
+
+
 def emit_gdpr_tool_event_for_session(
     session_id: str,
     *,
@@ -1464,8 +1565,42 @@ class ChatHandlerMixin:
         #                    actually reach the client.
         #   "continue"     → user accepted warn-level findings; no-op.
         gdpr_action = (body.get("gdpr_action") or "").strip().lower()
-        session._gdpr_mapping_id = None
-        session._gdpr_streamer = None
+        # Session-sticky anonymise: once a session has anonymised once (mapping
+        # row in pseudonym_maps OR sticky pref == 'anonymise'), every
+        # subsequent turn re-enters the anonymise branch automatically — the
+        # client doesn't need to re-prompt the user on every send. The
+        # composer shield button (`btn-gdpr-pref`) explicitly clears the pref
+        # when the user wants to stop anonymising. `local_model` / `continue`
+        # prefs win over implicit stickiness (they're explicit non-anonymise
+        # choices). The modal still fires the FIRST time PII appears in a
+        # session (handled client-side via `has_gdpr_mapping`).
+        _had_prior_mapping = False
+        try:
+            _had_prior_mapping = bool(
+                ChatDB.list_pseudonym_maps_for_session(sid) or [])
+        except Exception:
+            _had_prior_mapping = False
+        _pref = (getattr(session, "gdpr_action_pref", "") or "").strip()
+        # `_gdpr_skip_auto` is set by `_handle_sessions_manage` when the user
+        # explicitly clears the pref via the composer shield. Without it, the
+        # implicit "session has a mapping → keep anonymising" rule below would
+        # ignore the user's opt-out. The flag is in-memory only — a reload
+        # resets it to False, at which point a fresh PII find re-prompts.
+        _opted_out = bool(getattr(session, "_gdpr_skip_auto", False))
+        if not gdpr_action and _pref == "anonymise":
+            gdpr_action = "anonymise"
+        elif (not gdpr_action and _had_prior_mapping and not _opted_out
+              and _pref not in ("local_model", "continue")):
+            gdpr_action = "anonymise"
+        # Clear in-memory state only when we're NOT continuing an anonymise
+        # session. When we are, rehydrate so the worker's anonymise branch
+        # finds a live mapping and the streaming deanonymiser is wired up
+        # before any text_delta lands.
+        if gdpr_action == "anonymise":
+            rehydrate_session_gdpr_mapping(session)
+        else:
+            session._gdpr_mapping_id = None
+            session._gdpr_streamer = None
         session._gdpr_pending_action = gdpr_action if gdpr_action == "anonymise" else ""
 
         if gdpr_action == "local_model":
@@ -2044,8 +2179,53 @@ class ChatHandlerMixin:
                 _max_tokens = int(inf_params.get("max_tokens", 16000) or 16000)
                 _agent_cfg = session.agent.config or {}
                 _max_rounds = int((_agent_cfg.get("limits") or {}).get("max_tool_rounds", 25) or 25)
+                # Transparent anonymisation: if a mapping is live, walk the
+                # FULL message history and produce a wire-only pseudonymised
+                # copy. Prior turns' assistant replies (persisted
+                # de-anonymised so the chat UI shows real values) carry real
+                # PII; without this pass they ship to the cloud LLM raw. The
+                # mapping-reuse short-circuit keeps token ids stable from
+                # turn 1, so a long anonymise session pays one regex scan
+                # per turn, not new mint cost.
+                _wire_messages = session.messages
+                _gmid = getattr(session, "_gdpr_mapping_id", "") or ""
+                if _gmid:
+                    _m = pseudonymizer.get_mapping(_gmid)
+                    if _m is not None:
+                        _wire_messages, _hist_new, _hist_counts = (
+                            _pseudonymize_history_for_wire(
+                                session.messages, _m,
+                                engine._get_gdpr_scanner_config()))
+                        if _hist_new > 0 or _hist_counts:
+                            try:
+                                _tuid = (f"anon_hist_{_gmid[:8]}_"
+                                         f"{int(time.time()*1000) % 1_000_000}")
+                                emit_gdpr_tool_event_for_session(
+                                    sid,
+                                    kind="anonymise_read",
+                                    tool_use_id=_tuid,
+                                    args={"source": "history"},
+                                    result={
+                                        "findings": sum(_hist_counts.values()),
+                                        "tokens_minted": _hist_new,
+                                        "categories": _hist_counts,
+                                        "source": "history",
+                                        "mapping_id": _gmid,
+                                    },
+                                    status="ok",
+                                    duration_ms=0,
+                                )
+                            except Exception:
+                                pass
+                            # Persist any newly-minted tokens so a server
+                            # restart mid-turn can still de-anonymise.
+                            try:
+                                pseudonymizer.save_mapping(
+                                    _m, session_id=sid, turn_id=_gmid)
+                            except Exception:
+                                pass
                 _result = sidecar_proxy.run_turn(
-                    messages=session.messages,
+                    messages=_wire_messages,
                     model=session.model,
                     api_key=session.api_key,
                     base_url=session.base_url,
