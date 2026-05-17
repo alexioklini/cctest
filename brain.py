@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.7.0"
-VERSION_DATE = "2026-05-16"
+VERSION = "8.7.1"
+VERSION_DATE = "2026-05-17"
 CHANGELOG = [
+    ("8.7.1", "2026-05-17", "refactor(provider-locality): replace base_url heuristic with explicit per-provider `is_local` flag. CLIProxyAPI runs on localhost but proxies to cloud Mistral/Anthropic/Gemini, so the URL-only check in `_is_local_base_url` was wrongly classifying it as local — bypassing PII hard-block, cost quotas, and warmup-cloud-skip for cloud-bound requests. Five changes: (1) `config.json` providers carry `is_local: bool`; `Lokal` (oMLX) + `local-mlx-whisper` = true, `CLIProxyAPI` = false. (2) `brain.is_model_local()` reads `prov[\"is_local\"]` directly (default False — safer to mis-classify as cloud than vice versa). (3) Warmup `allow_cloud` gate (`brain.py:13069`) and discovery profile auto-pick (`brain.py:21685`) read the flag instead of the URL. (4) `_is_local_base_url()` deleted. (5) `handlers/providers.py` exposes `is_local` in the list endpoint; provider edit/add forms in `web/js/settings.js` get a checkbox wired through both save handlers. **Bonus fix**: `action:add` in `handlers/providers.py` now upsert-merges the incoming dict over the existing provider entry instead of full-replacing it — partial edits from the UI (which only sends base_url/default_model/is_local) no longer wipe `type`, `max_concurrent`, `supports_chat_template_kwargs`, `_comment`, etc. The legacy `_keep_key` flag becomes a no-op (api_key is preserved by the merge); dropped from the client send."),
     ("8.7.0", "2026-05-16", "fix(transparent-anonymisation): close two leak vectors for follow-up turns of an anonymising session. Chat `9741d117` showed: turn 1 anonymised the docx correctly; turn 2's user typed clean text (`welche personen kommen darin vor`), the worker only scanned the typed text (`findings: 0`), and shipped `session.messages` — which carried turn 1's de-anonymised assistant reply with real names + emails + phones — to the cloud LLM raw. Re-reads of the prior attachment also returned the cache-stub (no content), forcing the model to fall back to its memory of the un-anonymised history. Three coordinated fixes: **(1) History walk before sidecar handoff** (`handlers/chat.py`) — new `_pseudonymize_history_for_wire(messages, mapping, cfg)` walks every prior `session.messages` entry (user + assistant, text + list-of-blocks) and produces a wire-only pseudonymised copy. `session.messages` is NOT mutated; only the list handed to `sidecar_proxy.run_turn` is rewritten. Mapping-reuse short-circuits already-known tokens → one regex scan per turn, zero new mint cost on stable conversations. New tokens minted from history emit a single aggregate `anonymise_read` row with `source: \"history\"` so the chat UI shows what got pseudonymised. Newly-minted tokens persist via a mid-turn `save_mapping` so a server restart mid-turn can still de-anonymise. **(2) Session-sticky implicit anonymise** (`handlers/chat.py:_handle_chat` + `server.py:Session` + `handlers/sessions_handler.py`) — once a session has any `pseudonym_maps` row, every subsequent turn re-enters the anonymise branch automatically (server-side AND client-side), unless the user explicitly opts out via the composer shield button. The web modal becomes a one-time consent gate per session instead of firing on every PII-bearing send. The 'Don't ask again for this chat' checkbox is removed from the modal (`web/js/panels.js`) — the consent is now implicit from the user clicking Anonymise. The shield-button reset (`web/js/init.js:resetGdprActionPref`) clears both the persisted pref AND a new in-memory `Session._gdpr_skip_auto` flag (set by `handlers/sessions_handler.py:gdpr_action_pref` action on empty value) so the server's implicit-anonymise rule respects the opt-out for the rest of the in-memory session. `GET /v1/sessions/<id>/messages` now exposes `has_gdpr_mapping: bool` so the client can decide to skip the modal on follow-up turns without a round-trip. `Session.load_from_db` rehydrates `_gdpr_mapping_id` + `_gdpr_streamer` via the new `rehydrate_session_gdpr_mapping()` helper so reloaded sessions don't need a fresh send to re-install the mapping. **(3) Cache bypass when mapping is active** (`brain.py:tool_read_document` + `tool_read_file`) — when `_thread_local._gdpr_mapping_id` is set, the per-session read cache is bypassed entirely. The cache stub carries no content; without the bypass, re-reads of a prior-turn attachment returned an empty stub and the model fell back to memory of the un-anonymised text. With the bypass, every re-read goes through `_ok_and_cache` → `_gdpr_anon_tool_text`, which short-circuits on already-known forward-map entries (no new mints, no synthetic-row spam). Coverage matrix now closed: history, prior-turn attachments, and freshly-attached files all funnel through the same pseudonymise-before-wire seam. All 53 existing GDPR tests pass."),
     ("8.6.3", "2026-05-16", "fix(tool-routing): restore read_document steering for non-project chats. Session 371d591c showed Mistral Small calling `read_file` on a `.xlsx` attachment, getting binary ZIP garbage, then escalating to `python_exec`/`execute_command` to manually unzip — wasting tool rounds and previously bypassing the anonymisation seam (closed in 8.6.2, but the model still shouldn't be picking the wrong tool). Root cause: `tool_settings.read_document.applies_with` was `[\"mempalace_query\"]` since the v8.38.0 per-tool prose refactor, gating the entire description block to project chats only. In a plain attachment-with-a-question chat (no project, `mempalace_query` not in the active set), the renderer dropped read_document's description entirely AND read_file had an empty description, so the system prompt carried zero steering — the model had only the inline `[User attached files saved to disk. IMPORTANT: Use the read_document tool...]` notice in the user message, which it ignored for a terse query. Fix in `server.py:apply_config` — forward-migration block (idempotent, runs every boot) that (1) prepends a project-agnostic 'USE read_document for binary documents; do NOT use read_file/python_exec/execute_command on binaries' routing hint to `tool_settings.read_document.description`, (2) drops `applies_with` from `[\"mempalace_query\"]` to `[]` so the description renders in EVERY chat that has the tool, (3) prepends a 'plain-text files only — use read_document for PDF/DOCX/XLSX' hint to `tool_settings.read_file.description`. Idempotency via prefix-presence check. `_ts_before` snapshot moved above the migration so the persist gate writes back to config.json on first run only. The original project-flow prose ('Step 2 of project memory flow', read_path / read_path_original guidance) is preserved verbatim below the new prefix — still informational in non-project chats, still load-bearing for project chats. No other tool descriptions touched."),
     ("8.6.2", "2026-05-16", "fix(transparent-anonymisation): close python_exec + execute_command bypass. The v8.6.0 redesign wrapped `tool_read_document` / `tool_read_file` / `tool_read_attachment` outputs through `_gdpr_anon_tool_text`, but assumed all attachment reads went through one of those three tools. A real chat (568de551) showed Mistral Small calling `read_file` on a `.docx` (returns binary garbage — scanner finds 0 findings, no leak there) then falling back to `python_exec` with `import zipfile; … print(extracted_text)` to manually unzip the docx and print the cleartext PII to stdout. `python_exec` and `execute_command` weren't wrapped — every byte of stdout reached the LLM raw, completely bypassing the seam. Now both `tool_python_exec` (line ~4836) and `tool_execute_command` (both streaming `_streaming_execute_command` and non-streaming paths) pseudonymise `output` through `_gdpr_anon_tool_text(output, source=\"python_exec:stdout\"|\"execute_command:stdout\")` before returning to the LLM. Same session mapping, same `anonymise_read` synthetic-row emission on findings. Disk artifacts written by the script keep their separate `_after_file_write` → `deanonymize_file` callback path (so a script that writes a file with restored values still surfaces correctly to the user). Coverage matrix now closed: every text-returning tool whose result could carry PII (read_document, read_file, read_attachment, python_exec stdout, execute_command stdout) wraps through the same seam; bypass-via-shell is no longer possible. Verified against the original 568de551 reproduction case."),
@@ -12519,31 +12520,6 @@ _warmup_state: dict[str, dict] = {}
 _warmup_state_lock = threading.Lock()
 
 
-def _is_local_base_url(base_url: str) -> bool:
-    """Return True if base_url looks like a local gateway (localhost/LAN IP)."""
-    if not base_url:
-        return False
-    u = base_url.lower()
-    if "localhost" in u or "127.0.0.1" in u or "0.0.0.0" in u:
-        return True
-    # RFC1918 private IPv4 ranges
-    import re as _re
-    m = _re.search(r"//([^/:]+)", u)
-    if not m:
-        return False
-    host = m.group(1)
-    if host.startswith("192.168.") or host.startswith("10."):
-        return True
-    if host.startswith("172."):
-        try:
-            second = int(host.split(".")[1])
-            if 16 <= second <= 31:
-                return True
-        except (ValueError, IndexError):
-            pass
-    return False
-
-
 # --- Provider Concurrency Queue ---
 #
 # Local LLM gateways (oMLX, cliproxyapi) typically cannot process multiple
@@ -13066,7 +13042,7 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
         set_warmup_state(model, state="failed", last_error=err)
         return {"ok": False, "state": "failed", "error": err, "duration_ms": 0, "mode": mode}
 
-    if not allow_cloud and not _is_local_base_url(base_url):
+    if not allow_cloud and not bool(prov.get("is_local", False)):
         set_warmup_state(model, state="skipped_cloud",
                          last_error="cloud provider (warmup.allow_cloud=false)")
         return {"ok": False, "state": "skipped_cloud",
@@ -20901,14 +20877,19 @@ def _pii_email_allowed(email: str, allowlist: list[str]) -> bool:
 
 
 def is_model_local(model_id: str) -> bool:
-    """Return True if `model_id` resolves to a local-gateway provider."""
+    """Return True iff the resolved provider has `is_local: true` set.
+
+    Source of truth is the provider's `is_local` flag in config.json. No URL
+    heuristic — CLIProxyAPI runs on localhost but proxies to cloud models,
+    so URL alone is unsafe for PII / quota routing decisions.
+    """
     if not model_id:
         return False
     try:
         prov = resolve_provider_for_model(model_id)
     except Exception:
         return False
-    return _is_local_base_url(prov.get("base_url", "") if prov else "")
+    return bool(prov.get("is_local", False)) if prov else False
 
 
 def _invalidate_gdpr_cache():
@@ -21682,7 +21663,7 @@ def init_models_config(providers: dict, existing_models: dict | None = None,
         discovered = set(models)
         # Auto-pick profile based on endpoint: local → "speed", cloud → "balanced".
         # Explicit per-model overrides survive because this only fires for new entries.
-        default_profile = "speed" if _is_local_base_url(p.get("base_url", "")) else "balanced"
+        default_profile = "speed" if bool(p.get("is_local", False)) else "balanced"
         for model_id in models:
             scoped_key = f"{name}/{model_id}"
             # Honor user deletions: if either the bare id or the provider-scoped

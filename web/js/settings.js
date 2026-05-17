@@ -590,6 +590,7 @@ async function switchGeneralTab(tab, btn) {
             <div style="${G('8px')}">
               <div><label class="form-label">Base URL</label><input class="form-input" id="${pid}-url" value="${esc(p.base_url||'')}"></div>
               <div><label class="form-label">Default Model</label><input class="form-input" id="${pid}-model" value="${esc(p.default_model||'')}"></div>
+              <div><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200);cursor:pointer"><input type="checkbox" id="${pid}-is-local"${p.is_local?' checked':''}> Local provider <span style="color:var(--text-400);font-size:11px">(inference happens on-device — bypasses PII block & cost quotas)</span></label></div>
               <div><button class="btn-primary" style="font-size:12px" onclick="saveProviderEdit('${esc(p.name)}','${pid}')">Save settings</button></div>
             </div>
           </div>
@@ -602,6 +603,7 @@ async function switchGeneralTab(tab, btn) {
           <div><label class="form-label">Base URL</label><input class="form-input" id="prov-url" placeholder="http://localhost:8081/v1"></div>
           <div><label class="form-label">API Key</label><input class="form-input" id="prov-key" placeholder="sk-..." type="password"></div>
           <div><label class="form-label">Default Model</label><input class="form-input" id="prov-model" placeholder="model-name (optional)"></div>
+          <div><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200);cursor:pointer"><input type="checkbox" id="prov-is-local"> Local provider <span style="color:var(--text-400);font-size:11px">(inference happens on-device — bypasses PII block & cost quotas)</span></label></div>
           <div style="display:flex;gap:8px">
             <button class="btn-secondary" onclick="testNewProvider()">Test Connection</button>
             <button class="btn-primary" onclick="saveNewProvider()">Add Provider</button>
@@ -2902,7 +2904,8 @@ async function syncProvider(btn, name) {
 async function saveProviderEdit(name, pid) {
   const base_url = document.getElementById(`${pid}-url`).value;
   const default_model = document.getElementById(`${pid}-model`).value;
-  const provider = { base_url, default_model, _keep_key: true };
+  const is_local = !!document.getElementById(`${pid}-is-local`)?.checked;
+  const provider = { base_url, default_model, is_local };
   try {
     await API.post('/v1/providers', { action: 'add', name, provider });
     showToast('Provider updated');
@@ -3159,6 +3162,7 @@ async function saveNewProvider() {
   const provider = {
     base_url: document.getElementById('prov-url')?.value || '',
     default_model: document.getElementById('prov-model')?.value || '',
+    is_local: !!document.getElementById('prov-is-local')?.checked,
     api_keys: rawKey ? [{ name: 'default', key: rawKey, usage: 'preferred' }] : [],
   };
   try {

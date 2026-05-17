@@ -42,6 +42,7 @@ class ProvidersHandlerMixin:
                 "type": p.get("type", "openai"),
                 "default_model": p.get("default_model", ""),
                 "use_sdk": p.get("use_sdk", True),
+                "is_local": bool(p.get("is_local", False)),
                 "models": all_models,
                 "model_count": len(all_models),
                 "enabled_count": len(enabled_models),
@@ -87,12 +88,16 @@ class ProvidersHandlerMixin:
                     with open(config_path) as f:
                         config = json.load(f)
                 existing = config.get("providers", {}).get(name, {})
-                # Preserve existing api_key when _keep_key is set
-                if provider.pop("_keep_key", False):
-                    provider["api_key"] = existing.get("api_key", "")
-                # Preserve existing api_keys list when not supplied
-                if "api_keys" not in provider and existing.get("api_keys"):
-                    provider["api_keys"] = existing["api_keys"]
+                # Upsert-merge: when the provider already exists, shallow-merge
+                # the incoming dict over it so unspecified fields (type,
+                # max_concurrent, supports_chat_template_kwargs, …) survive
+                # partial edits from clients that only know about a subset.
+                # Brand-new providers get the incoming dict verbatim.
+                provider.pop("_keep_key", False)  # legacy no-op under merge
+                if existing:
+                    merged = dict(existing)
+                    merged.update(provider)
+                    provider = merged
                 config.setdefault("providers", {})[name] = provider
                 with open(config_path, "w") as f:
                     json.dump(config, f, indent=2)
