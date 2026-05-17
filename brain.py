@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.8.2"
+VERSION = "8.8.3"
 VERSION_DATE = "2026-05-17"
 CHANGELOG = [
+    ("8.8.3", "2026-05-17", "feat(gdpr-coverage): wire lossless context manager through background policy gate. Three `ContextManager` methods in `brain.py` now obey `gdpr_scanner.background_pii_action`: (1) `summarize_chunk` — the assembled `source_text` is verbatim chat history (names, emails, IBANs land here); pseudonymise before the cloud summariser, deanon the summary before it gets persisted into the context DAG. (2) `condense` — `combined_text` holds prior summaries already derived from chat history, so it still carries whatever PII survived the first pass; same wrap pattern. (3) `recall` — both the query AND the assembled context are scanned (the query may name a person, the context certainly carries history-PII); on `abort` policy the call returns `\"Recall blocked by GDPR policy for: …\"` instead of raising. Each method has a primary + fallback LLM call pair; the wrapper is called per attempt so the fallback model's own swap decision applies independently (extra scan per fallback is the cost of correct semantics — typical case never enters the fallback branch). `current_session_id` is already set on the calling thread (LCM runs inside the chat worker's compaction trigger or the manual ✂️ button handler), so mapping reuse picks up the session's existing pseudonym map when one exists. When the pseudonymise step fails or the policy is `abort`, the legacy truncation fallback inside each method still produces a summary — no breakage of the compaction contract. Coverage uplift: long-running chats that trigger LCM no longer ship every name in the conversation to the cloud summariser unmasked."),
     ("8.8.2", "2026-05-17", "feat(gdpr-coverage): wire translation pipeline through background policy gate. Three call sites in `server_lib/translate/` now obey `gdpr_scanner.background_pii_action`: (1) `text.py:translate_text` translate + tone-rewrite passes — each scan-and-deanon round-trips against `gdpr_pick_model_for_background`; abort-policy raises `RuntimeError(\"translation blocked by GDPR policy: …\")`, soft-skipping the tone pass when only the rewrite is blocked. (2) `document.py:_translate_chunks` + `_rewrite_chunks` — the wrapper is called ONCE per document with the full run list so the pseudonym mapping stays stable across every chunk (token IDs minted in chunk 3 are reused in chunk 9 if the same value appears). Per-chunk dispatch then operates on the pseudonymised wire list while the deanon callback runs on each parsed translation before it gets written back to the original-whitespace slot. Per-run fallback (`translate_text` re-entry on chunk-parse failure) deliberately passes the ORIGINAL run text — the inner call has its own gate and reuses the same session mapping via `current_session_id`. (3) `detect.py:_llm_detect` language-detection fallback — short-text gate; deanon is a no-op on a 2-letter ISO code but applied uniformly so future policy changes don't surprise this caller. All three sites use try/except `GDPRBlockedError` and convert to a soft return rather than propagating up to the user as an unhandled exception. No prose was added to translation system prompts — pseudonym tokens (`<EMAIL_1_HEX>`, `<IBAN_2_HEX>`) ride through unchanged because the existing 'preserve URLs, emails, and proper nouns verbatim' rule covers them. Coverage uplift: translation no longer ships raw user contracts / memos to cloud Mistral; the same anonymise-cloud-deanon round-trip the chat path uses is now active on the Translation tab too."),
     ("8.8.1", "2026-05-17", "cleanup(autodream): delete the dormant Autodream memory-consolidation system (4 LLM passes + status registry + report writer + cleanup helper + dead `get_memory_health` consumer + dead `_parse_health_report` + dead `promote_memory_to_skill`). README marked these as removed in v8.0.0 when memory moved to MemPalace; the brain.py implementations were leftovers the v8.0.0 cleanup missed. Trigger chain (`_memory_summary_*` task success → `_relationship_discovery_*` → `trigger_autodream`) had no scheduled entrypoints on any install — relationship_discovery branch left intact since it predates autodream. Net: −802 LOC in brain.py, GDPR audit table loses 6 unguarded gap rows."),
     ("8.8.0", "2026-05-17", "feat(gdpr-background-policy): admin-configurable PII policy for all non-interactive LLM calls + transparent anonymisation in background path. Interactive chat is unchanged (the per-turn modal still drives the user's choice). Background calls (next-prompt suggestions, chat summary, memory classifier, scheduled tasks, user-profile daemon, KG extraction) now obey two new `gdpr_scanner.*` settings: **(1) `background_pii_action`** = `anonymise` | `swap_to_local` | `abort` (default `anonymise`). When PII is detected: `anonymise` pseudonymises the inputs against a session-scoped or one-shot mapping, sends to the original cloud model, de-anonymises the reply via a caller-supplied callback; `swap_to_local` routes to `default_local_fallback_model` (legacy behaviour); `abort` raises GDPRBlockedError. **(2) `background_anonymise_fail_action`** = `swap_to_local` | `abort` (default `swap_to_local`). Governs the failure path when pseudonymisation itself fails. **Only the explicit `abort` options ever raise** — `swap_to_local` with no usable local fallback falls through to the original model with a `pii_warn_passthrough` audit row, never blocks. **Signature change**: `gdpr_pick_model_for_background(model, texts, purpose)` now returns `(model, transformed_texts, deanon_fn)`. All 7 callers updated (next-prompt, scheduled-task delegate, memory classifier, server.py chat summary, server.py user-profile daemon, engine/kg_extract.py, eval/kg_prompt_eval.py). Each caller swaps in `transformed_texts` before sending and pipes the reply through `deanon_fn`. Session-scoped mapping reuse: when `_thread_local.current_session_id` is set, the latest persisted `pseudonym_maps` row for that session is rehydrated so cross-call tokens stay stable (matches chat-worker behaviour); one-shot mappings stay in-memory only. New audit action types: `pii_anonymised`, `pii_anonymise_failed`, `pii_warn_passthrough`. **Bug fix**: `is_model_local()` was reading `prov.get(\"is_local\")` from the resolver's return dict — but `resolve_provider_for_model` only returns `{api_key, base_url, provider_name}`, so the flag was always absent → every model classified as cloud, breaking the post-8.7.1 PII gate. Now reads from a dedicated `_get_provider_config(name)` helper (30s cache, hooked into `clear_provider_cache`) that returns the full providers.<name> entry. **UI**: new \"Background / non-interactive LLM calls\" section in Settings → GDPR with two dropdowns; `collectGdprFormConfig` + the POST handler in `handlers/admin.py` extended to round-trip both keys."),
@@ -19469,25 +19470,59 @@ class ContextManager:
 
         summary_text = None
         try:
-            from handlers import sidecar_proxy as _sidecar_proxy
-            _msg = [{"role": "user", "content": (
-                "Summarize this conversation segment concisely. Preserve: key facts, decisions, "
-                "file paths, commands run, errors encountered, and task context. "
-                "Be factual and specific, not vague. ~200-300 words.\n\n" + source_text
-            )}]
-            _sys = "You are a precise conversation summarizer. Output only the summary."
-            _res = _sidecar_proxy.background_call(
-                messages=_msg, model=model, system_prompt=_sys,
-                session_id=session_id, max_tokens=2000,
-            )
-            if _res.get("error") and fallback_model and fallback_model != model:
+            # GDPR policy gate. The summarised chunk is verbatim chat
+            # history — real names / emails / IBANs land here. Pseudonymise
+            # before sending to the cloud, deanon the summary before it
+            # gets persisted into the context DAG.
+            _sum_deanon = _identity_deanon
+            _wire_source = source_text
+            try:
+                model, (_pii_source,), _sum_deanon = gdpr_pick_model_for_background(
+                    model, [source_text], purpose="lcm_summarize")
+                _wire_source = _pii_source
+            except GDPRBlockedError:
+                # Cannot summarise this chunk under admin policy; fall
+                # through to the truncation fallback below.
+                _wire_source = None
+            if _wire_source is not None:
+                from handlers import sidecar_proxy as _sidecar_proxy
+                _msg = [{"role": "user", "content": (
+                    "Summarize this conversation segment concisely. Preserve: key facts, decisions, "
+                    "file paths, commands run, errors encountered, and task context. "
+                    "Be factual and specific, not vague. ~200-300 words.\n\n" + _wire_source
+                )}]
+                _sys = "You are a precise conversation summarizer. Output only the summary."
                 _res = _sidecar_proxy.background_call(
-                    messages=_msg, model=fallback_model, system_prompt=_sys,
+                    messages=_msg, model=model, system_prompt=_sys,
                     session_id=session_id, max_tokens=2000,
                 )
-            result = _res.get("reply") or ""
-            if result and not _res.get("error"):
-                summary_text = result.strip()
+                if _res.get("error") and fallback_model and fallback_model != model:
+                    # Re-gate so the fallback model picks up its own swap
+                    # decision (it may already be local, in which case the
+                    # gate is a no-op).
+                    _fb_model = fallback_model
+                    _fb_deanon = _sum_deanon
+                    _fb_wire = _wire_source
+                    try:
+                        _fb_model, (_fb_pii,), _fb_deanon = gdpr_pick_model_for_background(
+                            fallback_model, [source_text], purpose="lcm_summarize_fb")
+                        _fb_wire = _fb_pii
+                    except GDPRBlockedError:
+                        _fb_wire = None
+                    if _fb_wire is not None:
+                        _msg = [{"role": "user", "content": (
+                            "Summarize this conversation segment concisely. Preserve: key facts, decisions, "
+                            "file paths, commands run, errors encountered, and task context. "
+                            "Be factual and specific, not vague. ~200-300 words.\n\n" + _fb_wire
+                        )}]
+                        _res = _sidecar_proxy.background_call(
+                            messages=_msg, model=_fb_model, system_prompt=_sys,
+                            session_id=session_id, max_tokens=2000,
+                        )
+                        _sum_deanon = _fb_deanon
+                result = _sum_deanon(_res.get("reply") or "")
+                if result and not _res.get("error"):
+                    summary_text = result.strip()
         except Exception:
             pass
 
@@ -19537,24 +19572,51 @@ class ContextManager:
             condensed_text = None
             if c_model:
                 try:
-                    from handlers import sidecar_proxy as _sidecar_proxy
-                    _msg = [{"role": "user", "content": (
-                        f"Condense these {len(rows)} conversation summaries into one cohesive summary. "
-                        "Preserve all key facts, decisions, and context. ~300-500 words.\n\n" + combined_text
-                    )}]
-                    _sys = "You are a precise summarizer. Output only the condensed summary."
-                    _res = _sidecar_proxy.background_call(
-                        messages=_msg, model=c_model, system_prompt=_sys,
-                        session_id=session_id, max_tokens=3000,
-                    )
-                    if _res.get("error") and c_fallback and c_fallback != c_model:
+                    # GDPR policy gate: combined_text holds prior summaries
+                    # already derived from chat history, so it still carries
+                    # whatever PII survived the summarise step.
+                    _cd_deanon = _identity_deanon
+                    _wire_combined = combined_text
+                    try:
+                        c_model, (_pii_combined,), _cd_deanon = gdpr_pick_model_for_background(
+                            c_model, [combined_text], purpose="lcm_condense")
+                        _wire_combined = _pii_combined
+                    except GDPRBlockedError:
+                        _wire_combined = None
+                    if _wire_combined is not None:
+                        from handlers import sidecar_proxy as _sidecar_proxy
+                        _msg = [{"role": "user", "content": (
+                            f"Condense these {len(rows)} conversation summaries into one cohesive summary. "
+                            "Preserve all key facts, decisions, and context. ~300-500 words.\n\n" + _wire_combined
+                        )}]
+                        _sys = "You are a precise summarizer. Output only the condensed summary."
                         _res = _sidecar_proxy.background_call(
-                            messages=_msg, model=c_fallback, system_prompt=_sys,
+                            messages=_msg, model=c_model, system_prompt=_sys,
                             session_id=session_id, max_tokens=3000,
                         )
-                    result = _res.get("reply") or ""
-                    if result and not _res.get("error"):
-                        condensed_text = result.strip()
+                        if _res.get("error") and c_fallback and c_fallback != c_model:
+                            _fb_model = c_fallback
+                            _fb_deanon = _cd_deanon
+                            _fb_wire = _wire_combined
+                            try:
+                                _fb_model, (_fb_pii,), _fb_deanon = gdpr_pick_model_for_background(
+                                    c_fallback, [combined_text], purpose="lcm_condense_fb")
+                                _fb_wire = _fb_pii
+                            except GDPRBlockedError:
+                                _fb_wire = None
+                            if _fb_wire is not None:
+                                _msg = [{"role": "user", "content": (
+                                    f"Condense these {len(rows)} conversation summaries into one cohesive summary. "
+                                    "Preserve all key facts, decisions, and context. ~300-500 words.\n\n" + _fb_wire
+                                )}]
+                                _res = _sidecar_proxy.background_call(
+                                    messages=_msg, model=_fb_model, system_prompt=_sys,
+                                    session_id=session_id, max_tokens=3000,
+                                )
+                                _cd_deanon = _fb_deanon
+                        result = _cd_deanon(_res.get("reply") or "")
+                        if result and not _res.get("error"):
+                            condensed_text = result.strip()
                 except Exception:
                     pass
 
@@ -19816,10 +19878,23 @@ class ContextManager:
         r_model = r_model or model
 
         try:
+            # GDPR policy gate: scan both the assembled context AND the
+            # query. The query may name a person ("what did Alice say
+            # about…"); the context certainly carries history-PII.
+            _rc_deanon = _identity_deanon
+            _wire_query = query
+            _wire_ctx = context_text
+            try:
+                r_model, (_pii_query, _pii_ctx), _rc_deanon = gdpr_pick_model_for_background(
+                    r_model, [query, context_text], purpose="lcm_recall")
+                _wire_query = _pii_query
+                _wire_ctx = _pii_ctx
+            except GDPRBlockedError:
+                return f"Recall blocked by GDPR policy for: {query}"
             from handlers import sidecar_proxy as _sidecar_proxy
             _msg = [{"role": "user", "content": (
                 f"Based on this conversation history, answer the following query precisely:\n\n"
-                f"**Query:** {query}\n\n**Context:**\n{context_text}"
+                f"**Query:** {_wire_query}\n\n**Context:**\n{_wire_ctx}"
             )}]
             _sys = "Answer based only on the provided context. Be specific and cite details."
             _res = _sidecar_proxy.background_call(
@@ -19827,11 +19902,27 @@ class ContextManager:
                 session_id=session_id, max_tokens=2000,
             )
             if _res.get("error") and r_fallback and r_fallback != r_model:
+                _fb_model = r_fallback
+                _fb_deanon = _rc_deanon
+                _fb_q = _wire_query
+                _fb_ctx = _wire_ctx
+                try:
+                    _fb_model, (_fb_pq, _fb_pc), _fb_deanon = gdpr_pick_model_for_background(
+                        r_fallback, [query, context_text], purpose="lcm_recall_fb")
+                    _fb_q = _fb_pq
+                    _fb_ctx = _fb_pc
+                except GDPRBlockedError:
+                    return f"Recall blocked by GDPR policy for: {query}"
+                _msg = [{"role": "user", "content": (
+                    f"Based on this conversation history, answer the following query precisely:\n\n"
+                    f"**Query:** {_fb_q}\n\n**Context:**\n{_fb_ctx}"
+                )}]
                 _res = _sidecar_proxy.background_call(
-                    messages=_msg, model=r_fallback, system_prompt=_sys,
+                    messages=_msg, model=_fb_model, system_prompt=_sys,
                     session_id=session_id, max_tokens=2000,
                 )
-            result = _res.get("reply") or ""
+                _rc_deanon = _fb_deanon
+            result = _rc_deanon(_res.get("reply") or "")
             if result and not _res.get("error"):
                 return result.strip()
         except Exception as e:
