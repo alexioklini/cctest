@@ -296,6 +296,65 @@ class TestOverlapAndStability(unittest.TestCase):
         finally:
             ps.close_mapping(mapping.mapping_id)
 
+    def test_second_pass_does_not_re_anonymise_known_fake(self):
+        """Regression: scanning an already-anonymised buffer (e.g. the history
+        pass over `session.messages` whose user msg was anonymised seconds ago
+        in the same turn) must NOT mint a fresh fake for the synthetic IBAN
+        — that would build a chain real → fake1 → fake2 that deanonymise
+        can't always collapse in one Phase-1 sweep (sort order dependent).
+        Bug observed in session 48d97d70: a single-turn anonymise+history pass
+        produced a 2-hop mapping and left the synthetic IBAN visible in the
+        final reply."""
+        text = "Mail mich an alice@example.com zur IBAN DE89370400440532013000"
+        mapping = ps.new_mapping()
+        try:
+            # Pass 1: scan + anonymise the fresh user input.
+            f1 = _scan(text)
+            anon1 = ps.pseudonymize_text(text, f1, mapping=mapping,
+                                         source="chat_text")
+            self.assertEqual(len(mapping.forward), 2,
+                             "first pass should mint exactly real-IBAN + email")
+            # Pass 2: history walker scans the same buffer again. The synthetic
+            # IBAN is mod-97-valid so the scanner re-matches it.
+            f2 = _scan(anon1)
+            anon2 = ps.pseudonymize_text(anon1, f2, mapping=mapping,
+                                         source="history")
+            self.assertEqual(anon1, anon2,
+                             "history pass must NOT mutate already-anonymised text")
+            self.assertEqual(len(mapping.forward), 2,
+                             "no new entries should be minted on second pass")
+            # Round-trip restores the real values.
+            restored, n = ps.deanonymize_text(anon2, mapping=mapping)
+            self.assertIn("DE89370400440532013000", restored)
+            self.assertIn("alice@example.com", restored)
+            self.assertNotIn(mapping.forward["DE89370400440532013000"], restored)
+        finally:
+            ps.close_mapping(mapping.mapping_id)
+
+    def test_deanonymise_collapses_legacy_chain(self):
+        """Safety net: if a chained mapping somehow exists (legacy data, or a
+        future code path that bypasses the pseudonymize_text skip-known-fake
+        guard), deanonymise iterates Phase 1 to fixed point and collapses
+        real → fake1 → fake2 in one call."""
+        mapping = ps.new_mapping()
+        try:
+            real = "DE89370400440532013000"
+            fake1 = "DE06225596675938608799"   # synthetic mod-97-valid
+            fake2 = "DE46251298961721045062"   # second synthetic mod-97-valid
+            # Hand-craft the broken chain (would normally be prevented by the
+            # skip-known-fake guard, but we test deanonymise's resilience).
+            mapping.record(real, fake1, "iban")
+            mapping.record(fake1, fake2, "iban")
+            text = f"Bitte überweise auf {fake2}."
+            restored, n = ps.deanonymize_text(text, mapping=mapping)
+            self.assertIn(real, restored)
+            self.assertNotIn(fake1, restored)
+            self.assertNotIn(fake2, restored)
+            # Each hop counts as one restore.
+            self.assertGreaterEqual(n, 2)
+        finally:
+            ps.close_mapping(mapping.mapping_id)
+
 
 # ---------------------------------------------------------------------------
 # Helpers used by tests

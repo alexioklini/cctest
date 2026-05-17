@@ -345,6 +345,13 @@ def pseudonymize_text(
         if s < 0 or e > len(text) or s >= e:
             continue
         original = text[s:e]
+        # If this span is already a known fake in this mapping (e.g. a
+        # mod-97-valid synthetic IBAN re-matched by the scanner on a later
+        # pass over the same buffer), leave it untouched. Otherwise we'd
+        # build a chain real → fake1 → fake2 that deanonymise can only
+        # collapse one hop at a time.
+        if original in mapping.reverse:
+            continue
         rule_id = f["rule_id"]
         # Stable within a mapping: same original → same token even if it
         # appears in multiple sources.
@@ -397,12 +404,27 @@ def deanonymize_text(text: str, *, mapping: Mapping) -> tuple[str, int]:
     # Phase 1: direct token substring replacement. Sort by length desc so
     # longer tokens replace first and we don't accidentally match a prefix
     # of a longer token.
-    for token in sorted(mapping.reverse.keys(), key=len, reverse=True):
-        if token in out:
-            count = out.count(token)
-            if count:
-                out = out.replace(token, mapping.reverse[token])
-                restored += count
+    #
+    # Iterate to a fixed point — defends against chained mappings
+    # (real → fake1 → fake2) that could form if a buffer was pseudonymised
+    # twice with the same Mapping. The pseudonymize_text guard prevents
+    # chain creation at the source; this loop is a safety net so an
+    # existing chain in a persisted mapping (or a future code path that
+    # forms one) still resolves to the real value. Cap at len(reverse)+1
+    # iterations so a self-referential mapping can't infinite-loop.
+    sorted_keys = sorted(mapping.reverse.keys(), key=len, reverse=True)
+    max_passes = len(sorted_keys) + 1
+    for _ in range(max_passes):
+        changed = False
+        for token in sorted_keys:
+            if token in out:
+                count = out.count(token)
+                if count:
+                    out = out.replace(token, mapping.reverse[token])
+                    restored += count
+                    changed = True
+        if not changed:
+            break
 
     # Phase 2: tolerant — recover LLM-mangled opaque tokens.
     salt = mapping.salt
