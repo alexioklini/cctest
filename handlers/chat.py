@@ -1602,6 +1602,12 @@ class ChatHandlerMixin:
                     # Route as multimodal content block — LLM sees raw data as image_url data URI
                     data_uri = f"data:{mime};base64,{f['content']}"
                     content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
+                    # ALSO save image attachments to disk so the model can
+                    # manipulate the bytes via shell tools (magick, ffmpeg,
+                    # python_exec). The vision block lets it SEE the image;
+                    # the disk file lets it PROCESS the image.
+                    if is_base64 and mime.startswith("image/"):
+                        disk_files.append(f)
                 else:
                     # Route to disk — agent uses read_document/read_file
                     disk_files.append(f)
@@ -1635,10 +1641,17 @@ class ChatHandlerMixin:
             paths_list = "\n".join(f"  - {p}" for p in saved_paths)
             has_docs = any(os.path.splitext(p)[1].lower() in (".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".tsv")
                            for p in saved_paths)
+            has_inline_images = bool(content_blocks)
             if has_docs:
                 notice = (f"\n\n[User attached files saved to disk. "
                           f"IMPORTANT: Use the read_document tool (NOT read_file) to read these — "
                           f"read_document handles PDF, DOCX, XLSX, PPTX and other document formats:]\n{paths_list}")
+            elif has_inline_images:
+                notice = (f"\n\n[User attached image(s). You can already SEE them above as inline content — "
+                          f"do NOT call write_file/read_file to load them. The same bytes are ALSO saved to disk "
+                          f"if you need to manipulate them with shell tools (e.g. `magick`, `ffmpeg`) or python_exec. "
+                          f"Write outputs to the session artifact folder shown in the system prompt, "
+                          f"or call `execute_command` without a `cwd` (it defaults there):]\n{paths_list}")
             else:
                 notice = f"\n\n[User attached files saved to disk:]\n{paths_list}"
             message = message + notice

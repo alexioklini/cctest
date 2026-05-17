@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.0.0"
+VERSION = "9.0.2"
 VERSION_DATE = "2026-05-17"
 CHANGELOG = [
+    ("9.0.2", "2026-05-17", "feat(image-attachments + execute_command): three coordinated fixes after observing chat `cee3e604` (model invented `~/artifacts/` path and ran `convert` against an empty `input_image.jpg` it had just `write_file`-ed) and chat `9036977a` (after the first fix the model successfully ran `magick` but wrote the output to a guessed `/Users/alexander/Documents/dev/cctest/artifacts/` directory it had to `mkdir`, so the result was invisible to the Artifacts panel). **(1) Image attachments are now BOTH inlined AND saved to disk** (`handlers/chat.py`) — the multimodal branch previously routed image/* through `image_url` data URI blocks ONLY; if the model wanted to manipulate the bytes (background removal, resize, ffmpeg, etc.) it had no path on disk to feed into a shell tool. Now any base64 image attachment that passes the multimodal check is ALSO pushed onto `disk_files`, so the existing /tmp/brain-attachments/<sid>/<filename> save path runs. The attachment-notice text added by the disk branch gets a new variant when `content_blocks` is non-empty: 'You can already SEE them above as inline content — do NOT call write_file/read_file to load them. The same bytes are ALSO saved to disk if you need to manipulate them with shell tools (e.g. `magick`, `ffmpeg`) or python_exec.' Closes the cee3e604 failure mode where Mistral tried to write_file an empty input_image.jpg to get the bytes back. **(2) `execute_command` defaults its cwd to the session artifact folder** (`brain.py:tool_execute_command`) — previously `cwd=None` inherited Brain's launch cwd (the repo root), so `magick input.jpg output.png` with a relative output landed in the repo root, not the session folder, and was invisible to the Artifacts panel. Now mirrors `tool_python_exec`: when no `cwd` is passed, resolves to `agents/<agent>/artifacts/<session_folder>/` (creates if needed), falls back to Brain's cwd when there's no session (background jobs). Tool-schema description updated to advertise the new default. **(3) `execute_command` now auto-registers artifacts** (`brain.py:tool_execute_command` + new `_register_new_artifacts` helper) — snapshots the cwd before subprocess starts and diffs after; any files appearing post-exec are registered via `_after_file_write` so they auto-promote to the Artifacts panel (same pattern as `tool_python_exec`'s pre/post diff). Tool result includes `artifacts: [basename, ...]` so the model sees what got promoted. Scoping rule: registration ONLY happens when the resolved `cwd` equals (`os.path.realpath` match) the session's artifact folder — commands with an explicit `cwd=/some/other/path` don't pollute the artifact panel. Both the streaming and non-streaming branches go through the helper. Timed-out commands deliberately skip registration (partial garbage). **(4) `_build_system_prompt` discloses the per-session artifact folder** — adds `Session artifact folder: <abs path>\\n` line right after the existing `Current working directory:` / `Operating system:` block, gated on `session_id` so warmup (bare session) is byte-identical and the KV-prefix invariant holds. The cache key already includes `session_id`, so the per-session line is cache-safe. Belt-and-suspenders with (2): the model knows the absolute path explicitly AND the default cwd catches it when forgotten. **Plumbing context that triggered this**: also added a `mistral-direct` provider entry to config.json earlier in the session so `engine/tools/image_gen.py:_mistral_api_key()` can resolve a key (the existing `CLIProxyAPI` entry proxies to cloud Mistral via OAuth and doesn't expose the REST surface `/v1/agents` + `/v1/conversations` + `/v1/files` the image tool needs). End-to-end smoketest via `tool_generate_image` confirmed: 17.3s round-trip, 56KB JPEG, lands under `agents/main/artifacts/<date>_<sid>/`, `_after_file_write` registered, sidecar dispatch path (POST /v1/tools/call → engine.TOOL_DISPATCH['generate_image']) is intact post-Phase-5."),
+    ("9.0.1", "2026-05-17", "fix(gdpr-highlight): de-anonymised values in replies that contain emojis (or any non-BMP characters) AND values inside markdown tables now render with the yellow `<mark class=\"gdpr-restored\">` highlight + tooltip. Two independent bugs, same symptom. **Bug 1 — UTF-16 offset mismatch**: server-side `find_restored_spans` indexes by Python code-points; the browser's `String.prototype.substring` indexes by UTF-16 code units. Any non-BMP char (📋 = U+1F4CB = surrogate pair) earlier in the reply shifts every downstream span by +1 in JS, causing the renderer's `slice !== sp.original` verification guard to reject every span (off-by-one, slice was `' anna.becker@firma.d'` instead of `'anna.becker@firma.de'`). Replaced the strict-offset trust with a client-side re-locate: walk the reply with `text.indexOf(original)`, longest-first, claiming non-overlapping spans — same first-match-wins discipline `find_restored_spans` uses, just re-anchored against JS string indexing. **Bug 2 — pipe collision in sentinel**: the invisible-separator sentinel that survives `marked.parse` was formatted as `OPEN + id + '|' + value + CLOSE`; the literal `|` collided with markdown's table-cell separator, so any restored span sitting in a table row had its sentinel split across cells and the post-parse regex couldn't reassemble it into a `<mark>` tag. Switched the internal id/value delimiter to a second `U+2063 INVISIBLE SEPARATOR` (`GDPR_SENTINEL_DELIM`) which marked doesn't treat as structural. Verified on session `9441d8b4` reply (📋 emoji header + 5-row Mitarbeiter table, 15 spans across emails / phones / IBANs): pre-fix 0/15 rendered; post-fix all 15 render with category tooltip inside table cells."),
     ("9.0.0", "2026-05-17", "feat(gdpr-toggle): composer toggle for GDPR detail visibility. New `btn-toggle-gdpr-details` composer button (shield-with-eye icon, sits between `btn-toggle-tools` and `btn-save-to-memory`) gates two things at render time: (1) the inline yellow `<mark class=\"gdpr-restored\">` highlights with category/value tooltips in assistant replies, (2) the expandable body of the Datenschutz disclosure block. **Privacy-first default**: state lives in `state.showGdprDetails` (localStorage, default `false`) — mirrors the `showToolCalls` pattern. First-time users see the Datenschutz statistics header (e.g. \"🛡️ Datenschutz · 1 Anonymisierung · 1 De-Anonymisierung\") but no expandable contents, and assistant replies render without yellow highlighting; the model still received pseudonymised inputs and Brain still de-anonymised before persisting (those mechanics are unchanged), the UI just doesn't surface the per-value details until the user opts in. **Toggle on**: the `<details class=\"privacy-summary\">` is rendered with its full body (anonymise/deanonymise tool calls + per-category counts), and `renderMarkdownWithGdprHighlights` wraps each restored span. **Toggle off**: rendered as a flat `<div class=\"privacy-summary privacy-summary-collapsed\">` containing only the static header (no chevron, no body, cursor:default) — same visual rhythm but no affordance. Toggle flips re-render `renderMessages()` immediately so the entire visible chat reflects the new state without a reload. Icon color: amber `var(--warning)` when on, neutral when off — matches the tool-display button's accent-on-active convention. **Files**: `web/js/state.js` adds the `showGdprDetails` field with `localStorage.getItem('showGdprDetails') === 'true'` default-off coercion. `web/js/init.js` adds `toggleGdprDetails()` + init-color sync (under the same `_composerToggleEls` loop that handles `btn-toggle-tools`). `web/index.html` adds the composer button with a shield-with-eye SVG and tooltip strings in German. `web/js/chat.js` `renderAssistantMessage` gates the highlight overlay on `state.showGdprDetails && Array.isArray(gdprSpans) && gdprSpans.length`; the Datenschutz block branches on `state.showGdprDetails` between the flat-static variant and the existing `<details>` variant. `web/css/main.css` adds `.activity-summary-header-static` (no chevron, cursor:default). Verified in Chrome: toggle on → 2 marks rendered with correct `data-category` + title tooltips (`E-Mail-Adresse — \"alice@…\" wurde mit \"<EMAIL_1_…>\" anonymisiert`, `IBAN — \"DE89…\" wurde mit \"DE06…\" anonymisiert`) + expandable `<details>`; toggle off → 0 marks + `.privacy-summary-collapsed` with statistics-only header. **Major bump** because this is the first user-facing privacy-defaults change since the transparent anonymisation feature shipped in v8.x — the default UI now hides per-value details, which is a behavioral change worth flagging at the major-version boundary."),
     ("8.10.0", "2026-05-17", "feat(gdpr-highlight): mark de-anonymised values inline in assistant replies. Each restored span is now wrapped in a `<mark class=\"gdpr-restored\">` tag with a tooltip that names the PII category, the original value, and the pseudonymised token it was sent to the LLM as (e.g. `email — \"alice@example.com\" wurde mit \"<EMAIL_1_7e77>\" anonymisiert`). Yellow tint via `color-mix(in srgb, var(--warning) 28%, transparent)` on the highlight and a dotted underline + `cursor:help` for the affordance; theme-agnostic, no per-theme overrides needed. **Server side**: `pseudonymizer.Mapping` gains a `categories: dict[str, str]` field (per-entry original → rule_id), populated by `record()` and serialised/deserialised alongside the existing `forward`/`reverse`/`finding_counts`. Legacy persisted mappings without the field deserialise with `categories={}` and degrade gracefully to a generic 'Personenbezogener Wert' label in the tooltip. New `pseudonymizer.find_restored_spans(text, mapping)` locates every occurrence of each `mapping.forward` original in the final de-anonymised text, longest-first to avoid prefix shadowing, returning `[{start, end, original, fake, category}]` sorted by start. `handlers/chat.py` calls it after the final-reply deanon block and stores the result in `msg_metadata.gdpr_restored_spans` (only when restored>0, to keep metadata lean); also surfaces the same payload on the SSE `done` event under `gdpr_restored_spans` so the live render path picks it up without waiting for a reload. **Client side**: `web/js/chat.js` `done` handler copies `d.gdpr_restored_spans` onto `assistantMsg.metadata.gdpr_restored_spans` so the live path mirrors the reload path. New `renderMarkdownWithGdprHighlights(text, spans)` pre-injects invisible-separator sentinels (`U+2063` pair, same trick the citation pipeline uses) around each restored span in the raw text, runs the normal `renderMarkdown` pipeline, then post-replaces sentinels with `<mark class=\"gdpr-restored\" data-category=\"…\" title=\"…\">` tags — survives `marked.parse` cleanly without fighting the parser. Verified-slice guard: if `text.substring(start,end) !== span.original` (e.g. a hint was appended after deanon), the span is skipped rather than mis-highlighted. `GDPR_CATEGORY_LABELS` maps rule_ids to German labels (email/iban/phone/credit_card/steuer_id/ssn/passport/nhs_number/bsn/taj/cnp/rrn/aadhaar/pesel/api_key/ip_address/date_of_birth + 'unknown' fallback). `renderAssistantMessage` switches to the highlighted renderer when `msg.metadata.gdpr_restored_spans` is present, otherwise falls through to the existing `renderMarkdown` (zero overhead for non-anonymised replies). 1 regression test added (`test_find_restored_spans_locates_originals_with_categories`); 33/33 pseudonymizer tests green."),
     ("8.9.2", "2026-05-17", "fix(pseudonymizer): prevent fake-chain formation when the same buffer is pseudonymised twice in one turn. Repro from session `48d97d70`: a single chat turn ran `anonymise` (chat_text pass) → real IBAN `DE89370400440532013000` → synthetic mod-97-valid `DE06225596675938608799`, written into `session.messages`. Same worker then ran `anonymise_read` (history pass) over `session.messages` to build the wire copy. The synthetic IBAN is mod-97-valid by design — the regex re-matched it and `pseudonymize_text` minted a *second* fake `DE46251298961721045062`, producing a 2-hop mapping (`real → fake1 → fake2`). LLM echoed `fake2`. Deanonymise's Phase 1 walked `sorted(reverse.keys(), key=len, reverse=True)` and substituted each token once — sort order placed `DE06...` before `DE46...`, so the loop processed `DE06...` first (not in reply, no-op), then `DE46...` (replaced → `DE06...`), and stopped. Persisted reply showed `DE06...` instead of the real IBAN. **Fix 1 (root cause, `pseudonymize_text`)**: before minting/looking up a replacement, if `text[s:e] in mapping.reverse`, skip the span — it's already a known fake from this mapping. Chains can no longer form regardless of how many times the same buffer is scanned (covers history pass, attachment walkers, file `_after_file_write`, future code paths). Same-buffer second pass is now a strict no-op when no new real PII appeared. **Fix 2 (safety net, `deanonymize_text`)**: Phase 1 iterates to fixed point, capped at `len(reverse)+1` passes. Even if a chained mapping persists in the DB from before this patch, or a future code path bypasses Fix 1, deanonymise collapses `real → fake1 → fake2 → …` in one call. Cap prevents pathological loops if mapping ever becomes self-referential. Verified against the live broken mapping in chats.db (chain collapses correctly). 2 regression tests added: `test_second_pass_does_not_re_anonymise_known_fake` (Fix 1 property), `test_deanonymise_collapses_legacy_chain` (Fix 2 property). 32/32 pseudonymizer tests green."),
@@ -776,7 +778,7 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "The shell command to execute"},
-                "cwd": {"type": "string", "description": "Working directory for the command (default: current directory)"},
+                "cwd": {"type": "string", "description": "Working directory for the command. Default: the current session's artifact folder (files written there auto-promote to the Artifacts panel)."},
                 "timeout": {"type": "integer", "description": "Timeout in seconds (default: 120)"},
                 "node": {"type": "string", "description": "Remote node name or 'tag:NAME' to execute on a remote node instead of locally"},
             },
@@ -4723,12 +4725,43 @@ def tool_execute_command(args: dict) -> str:
     try:
         if cwd:
             cwd = os.path.expanduser(cwd)
+        else:
+            # Default cwd = session artifact folder (matches python_exec) so
+            # outputs land in the Artifacts panel without the model having to
+            # guess the path. Falls back to Brain's cwd when there's no
+            # session (background jobs, etc.).
+            session_id = getattr(_thread_local, 'current_session_id', None)
+            agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+            if session_id and agent:
+                folder = _get_artifact_session_folder(session_id)
+                cwd = os.path.join(AGENTS_DIR, agent.agent_id, "artifacts", folder)
+                os.makedirs(cwd, exist_ok=True)
+
+        # Snapshot artifact folder if cwd lands inside it — files appearing
+        # post-exec auto-register as artifacts (mirrors tool_python_exec). We
+        # only snapshot when cwd IS the artifact folder; commands run outside
+        # it shouldn't pollute the artifact panel.
+        _artifact_cwd = None
+        _pre_files: set[str] = set()
+        _session_id = getattr(_thread_local, 'current_session_id', None)
+        _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+        if cwd and _session_id and _agent:
+            _expected = os.path.join(AGENTS_DIR, _agent.agent_id, "artifacts",
+                                     _get_artifact_session_folder(_session_id))
+            if os.path.realpath(cwd) == os.path.realpath(_expected):
+                _artifact_cwd = _expected
+                try:
+                    _pre_files = set(os.listdir(_artifact_cwd))
+                except OSError:
+                    _pre_files = set()
 
         # Use streaming version if event_callback is available
         ecb = getattr(_thread_local, 'event_callback', None)
         tuid = getattr(_thread_local, 'tool_use_id', None)
         if ecb and tuid:
-            return _streaming_execute_command(command, timeout, cwd, ecb, tuid)
+            _res = _streaming_execute_command(command, timeout, cwd, ecb, tuid)
+            _register_new_artifacts(_artifact_cwd, _pre_files, _agent)
+            return _res
 
         # Force non-interactive environment
         env = os.environ.copy()
@@ -4772,9 +4805,40 @@ def tool_execute_command(args: dict) -> str:
         # could surface raw PII bytes to the LLM. Wrap stdout through the
         # same mapping that read_document uses.
         output = _gdpr_anon_tool_text(output, "execute_command:stdout")
-        return _ok({"command": command, "exit_code": proc.returncode, "output": output})
+        _new_artifacts = _register_new_artifacts(_artifact_cwd, _pre_files, _agent)
+        result = {"command": command, "exit_code": proc.returncode, "output": output}
+        if _new_artifacts:
+            result["artifacts"] = _new_artifacts
+        return _ok(result)
     except Exception as e:
         return _err(f"execute_command: {e}")
+
+
+def _register_new_artifacts(artifact_cwd: str | None, pre_files: set,
+                            agent) -> list[str]:
+    """Diff artifact_cwd against pre_files; register each new file via
+    `_after_file_write` so it shows in the Artifacts panel. Returns the list
+    of newly registered basenames (for inclusion in the tool result)."""
+    if not artifact_cwd or not agent:
+        return []
+    try:
+        post_files = set(os.listdir(artifact_cwd))
+    except OSError:
+        return []
+    new_files = sorted(post_files - pre_files)
+    if not new_files:
+        return []
+    agent_id = agent.agent_id
+    created = []
+    for fname in new_files:
+        fpath = os.path.join(artifact_cwd, fname)
+        if os.path.isfile(fpath):
+            try:
+                _after_file_write(fpath, "created", agent_id)
+                created.append(fname)
+            except Exception:
+                pass
+    return created
 
 
 def tool_python_exec(args: dict) -> str:
@@ -24303,8 +24367,17 @@ def _build_system_prompt(include_memory_summary: bool = True,
         f"You are agent '{agent_id}' in the Brain Agent system. "
         f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:00 %Z').strip()}\n"
         f"Current working directory: {cwd}\n"
-        f"Operating system: {os_name}\n\n"
+        f"Operating system: {os_name}\n"
         )
+    # Per-session artifact folder. Files written here auto-promote to the
+    # Artifacts panel. `write_file` with a relative path lands here by default;
+    # `execute_command` defaults its cwd here when none is passed.
+    if session_id:
+        _artifact_folder = os.path.join(
+            AGENTS_DIR, agent_id, "artifacts",
+            _get_artifact_session_folder(session_id))
+        system_instruction += f"Session artifact folder: {_artifact_folder}\n"
+    system_instruction += "\n"
     # Memory tool guidance is no longer hardcoded here — it lives in the
     # admin-editable `mempalace_query` per-tool description (Tools settings)
     # and gets rendered by `_render_tool_descriptions` only when the agent
