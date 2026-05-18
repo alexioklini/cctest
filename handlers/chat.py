@@ -1998,6 +1998,25 @@ class ChatHandlerMixin:
                                         _blk["text"] = _anonymised
                                         break
                             nonlocal_message = _anonymised
+                        # Locate real-PII spans in the ORIGINAL user text
+                        # so the chat UI can paint them with the same
+                        # yellow <mark> overlay it uses on assistant
+                        # replies. Done after pseudonymisation (so
+                        # _mapping.forward is populated) but BEFORE we
+                        # save the message — we attach the result both
+                        # to the persisted metadata and to the SSE
+                        # anonymise_done event below so the live render
+                        # picks it up without a reload.
+                        try:
+                            _live_user_spans = pseudonymizer.find_restored_spans(
+                                user_content if isinstance(user_content, str) else (
+                                    next((b.get("text", "") for b in (user_content or [])
+                                          if isinstance(b, dict) and b.get("type") == "text"), "")
+                                ),
+                                mapping=_mapping,
+                            )
+                        except Exception:
+                            _live_user_spans = []
                         # Eager mapping install — always persist + install on
                         # the session, even when typed text had no findings.
                         # Tool calls later in the turn (read_document /
@@ -2013,18 +2032,27 @@ class ChatHandlerMixin:
                         # process to append the verbatim-token-preservation
                         # clamp. Cleared in the worker's finally below.
                         engine._thread_local._gdpr_anonymising = True
+                        _anon_done_result = {
+                            "scope": "chat_text",
+                            "findings": len(_findings),
+                            "tokens_minted": len(_mapping.forward),
+                            "categories": dict(_mapping.finding_counts),
+                            "pending_on_read": _pending_attachments,
+                            "mapping": "reused" if _mapping_reused else "new",
+                            "mapping_id": _mapping.mapping_id,
+                        }
+                        if _live_user_spans:
+                            # Side-channel: the chat client pulls these
+                            # off the synthetic anonymise_done event and
+                            # attaches them to the just-appended user
+                            # message so the inline yellow <mark>
+                            # overlay renders on the request side too,
+                            # matching the assistant-side behavior.
+                            _anon_done_result["user_spans"] = _live_user_spans
                         _emit_synthetic_tool_event(
                             live=live, sid=sid, kind="anonymise",
                             tool_use_id=_anon_tool_id, phase="done",
-                            result={
-                                "scope": "chat_text",
-                                "findings": len(_findings),
-                                "tokens_minted": len(_mapping.forward),
-                                "categories": dict(_mapping.finding_counts),
-                                "pending_on_read": _pending_attachments,
-                                "mapping": "reused" if _mapping_reused else "new",
-                                "mapping_id": _mapping.mapping_id,
-                            },
+                            result=_anon_done_result,
                             status="ok",
                             duration_ms=int((time.time() - _t0) * 1000),
                         )
@@ -2178,12 +2206,40 @@ class ChatHandlerMixin:
                                 from server import _derive_session_title
                                 _t = user_content if isinstance(user_content, str) else str(user_content)
                                 session.title = _derive_session_title(_t)
+                        # Locate every real-PII span in the persisted user
+                        # text so the chat UI can highlight them with the
+                        # same `<mark class="gdpr-restored">` overlay it
+                        # uses on assistant replies. The persisted text
+                        # IS the original (with real values), so
+                        # find_restored_spans walks the mapping's
+                        # `forward` (real→fake) and reports where each
+                        # real value sits. For multimodal blocks we
+                        # scan the text block(s) only and emit spans
+                        # per-block; the renderer pulls them off
+                        # `metadata.gdpr_restored_spans`.
+                        try:
+                            if isinstance(user_content, str):
+                                _user_spans = pseudonymizer.find_restored_spans(
+                                    user_content, mapping=_mapping)
+                            else:
+                                _user_spans = []
+                                for _b in (user_content or []):
+                                    if isinstance(_b, dict) and _b.get("type") == "text":
+                                        _user_spans = pseudonymizer.find_restored_spans(
+                                            _b.get("text") or "", mapping=_mapping)
+                                        if _user_spans:
+                                            break
+                        except Exception:
+                            _user_spans = []
+                        _user_meta = {
+                            "gdpr_mapping_id": _mapping.mapping_id,
+                            "wire_content": nonlocal_user_content,
+                        }
+                        if _user_spans:
+                            _user_meta["gdpr_restored_spans"] = _user_spans
                         ChatDB.save_message(
                             sid, "user", user_content,
-                            metadata={
-                                "gdpr_mapping_id": _mapping.mapping_id,
-                                "wire_content": nonlocal_user_content,
-                            })
+                            metadata=_user_meta)
                         ChatDB.save_session(
                             sid, session.agent_id, session.model, session.title,
                             session.status, session.created_at, session.last_active,

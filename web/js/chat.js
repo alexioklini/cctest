@@ -408,6 +408,24 @@ function buildStreamCallbacks(chat, isActive) {
           tool_use_id: d.tool_use_id || null,
           _ts: Date.now(),
         });
+        // Anonymise-done side-channel: attach real-PII spans onto the
+        // most recent user message so the chat view paints them with the
+        // same yellow <mark> overlay the assistant reply uses. We walk
+        // backwards from the end (skipping the just-pushed synthetic
+        // tool_result row) to find the user message that triggered this
+        // anonymisation pass.
+        const spans = d.kind === 'anonymise' && Array.isArray(d.result?.user_spans)
+          ? d.result.user_spans : null;
+        if (spans && spans.length) {
+          for (let i = chat.messages.length - 1; i >= 0; i--) {
+            const m = chat.messages[i];
+            if (m && (m.role === 'user' || m.role === 'human')) {
+              m.metadata = m.metadata || {};
+              m.metadata.gdpr_restored_spans = spans;
+              break;
+            }
+          }
+        }
         if (isActive()) { renderMessages(); renderStreamingMessage(chat); scrollToBottom(); }
       },
       gdpr_recovery_required: (d) => {
@@ -2269,11 +2287,19 @@ function renderUserMessage(msg, idx) {
     }
     filesHtml += '</div>';
   }
+  // GDPR highlight overlay for the request side — mirrors the assistant
+  // path but skips the markdown pipeline since user messages render as
+  // plain escaped text. Gated by the same composer toggle.
+  const userSpans = msg.metadata?.gdpr_restored_spans;
+  const showGdpr = state.showGdprDetails && Array.isArray(userSpans) && userSpans.length;
+  const userTextHtml = showGdpr
+    ? renderPlainTextWithGdprHighlights(textContent, userSpans)
+    : esc(textContent);
   return `
     <div class="msg-turn msg-turn-user">
       ${thumbsHtml}
       ${filesHtml}
-      <div class="msg-user">${esc(textContent)}</div>
+      <div class="msg-user">${userTextHtml}</div>
       <div class="msg-actions-bar">
         <button class="msg-action-btn" onclick="toggleMsgEditMenu(event, ${idx})" title="Edit history">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
@@ -3399,6 +3425,46 @@ function renderMarkdownWithGdprHighlights(text, spans) {
     return `<mark class="gdpr-restored" data-category="${esc(t.category)}" title="${esc(tip)}">${inner}</mark>`;
   });
   return html;
+}
+
+// Non-markdown variant for the user-message bubble. User messages render
+// as plain escaped text (no markdown pipeline), so we splice the <mark>
+// tags directly. Same longest-first / claim-non-overlapping discipline as
+// the markdown variant, just without the sentinel dance.
+function renderPlainTextWithGdprHighlights(text, spans) {
+  if (!text || !spans || !spans.length) return esc(text || '');
+  const byLen = spans.slice().sort((a, b) => (b.original || '').length - (a.original || '').length);
+  const claimed = [];
+  const overlaps = (s, e) => claimed.some(([cs, ce]) => s < ce && e > cs);
+  const located = [];
+  for (const sp of byLen) {
+    const orig = sp.original;
+    if (!orig) continue;
+    let from = 0;
+    while (true) {
+      const i = text.indexOf(orig, from);
+      if (i < 0) break;
+      const j = i + orig.length;
+      if (!overlaps(i, j)) {
+        located.push({ start: i, end: j, original: orig, fake: sp.fake || '', category: sp.category || 'unknown' });
+        claimed.push([i, j]);
+      }
+      from = j;
+    }
+  }
+  if (!located.length) return esc(text);
+  located.sort((a, b) => a.start - b.start);
+  let out = '';
+  let cursor = 0;
+  for (const sp of located) {
+    out += esc(text.substring(cursor, sp.start));
+    const label = GDPR_CATEGORY_LABELS[sp.category] || sp.category || 'Personenbezogener Wert';
+    const tip = `${label} — "${sp.original}" wurde mit "${sp.fake}" anonymisiert`;
+    out += `<mark class="gdpr-restored" data-category="${esc(sp.category)}" title="${esc(tip)}">${esc(text.substring(sp.start, sp.end))}</mark>`;
+    cursor = sp.end;
+  }
+  out += esc(text.substring(cursor));
+  return out;
 }
 
 // Sentinel markers — single chars unlikely to appear in normal text and

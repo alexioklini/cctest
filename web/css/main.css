@@ -1201,7 +1201,8 @@ textarea { resize: none; }
    The <mark> wraps each span where the server reversed a pseudonymisation;
    tooltip carries category + original/fake mapping. Yellow tint sits over
    both light and dark themes via color-mix against the bg token. */
-.msg-content mark.gdpr-restored {
+.msg-content mark.gdpr-restored,
+.msg-user mark.gdpr-restored {
   background: color-mix(in srgb, var(--warning, #d97706) 28%, transparent);
   color: inherit;
   padding: 0.05em 0.2em;
@@ -1209,7 +1210,8 @@ textarea { resize: none; }
   cursor: help;
   border-bottom: 1px dotted color-mix(in srgb, var(--warning, #d97706) 65%, transparent);
 }
-.msg-content mark.gdpr-restored:hover {
+.msg-content mark.gdpr-restored:hover,
+.msg-user mark.gdpr-restored:hover {
   background: color-mix(in srgb, var(--warning, #d97706) 42%, transparent);
 }
 
