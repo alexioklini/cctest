@@ -37,13 +37,15 @@ class TranslateHandlerMixin:
             import urllib.request as _urllib
 
             cfg = brain.get_tool_config().get("text_to_speech", {}) or {}
-            model_id = cfg.get("default_model") or "mistral-experimental/voxtral-mini-tts-latest"
+            model_id = (cfg.get("default_model") or "").strip()
+            if not model_id:
+                raise RuntimeError("no TTS model configured — set text_to_speech.default_model in the Tools tab")
             prov = brain.resolve_provider_for_model(model_id)
             base_url = (prov.get("base_url") or "").rstrip("/")
             api_key = prov.get("api_key") or ""
 
             if not base_url or not api_key:
-                raise RuntimeError("TTS provider not configured")
+                raise RuntimeError(f"TTS provider for '{model_id}' not configured")
 
             all_voices = []
             seen_slugs: set = set()
@@ -97,21 +99,30 @@ class TranslateHandlerMixin:
             import urllib.request
 
             cfg = brain.get_tool_config().get("text_to_speech", {}) or {}
-            model_id = (body.get("model") or "").strip() or cfg.get("default_model") or "mistral-experimental/voxtral-mini-tts-latest"
+            # Honor the explicitly-requested model first, then the configured
+            # default. No hardcoded fallback — if neither is set, raise.
+            model_id = (body.get("model") or "").strip() or (cfg.get("default_model") or "").strip()
+            if not model_id:
+                self._send_json({"error": "no TTS model configured — set text_to_speech.default_model in the Tools tab"}, 503)
+                return
             voice = (body.get("voice") or "").strip() or cfg.get("voice") or "nova"
 
-            # Resolve provider for the TTS model.
+            # Resolve provider for the TTS model. resolve_provider_for_model
+            # uses _models_config[model_id] exactly — no fuzzy match. If the
+            # configured id isn't in the models registry, base_url/api_key
+            # come back empty and we surface that below.
             prov = brain.resolve_provider_for_model(model_id)
             base_url = (prov.get("base_url") or "").rstrip("/")
             api_key = prov.get("api_key") or ""
             if not base_url or not api_key:
-                self._send_json({"error": "TTS provider not configured — check text_to_speech.default_model in Tools Config"}, 503)
+                self._send_json({"error": f"TTS provider for '{model_id}' not configured — verify the model exists in the Models tab and its provider has a base_url + api_key"}, 503)
                 return
 
-            # Strip provider-scope prefix for the wire model id.
-            api_model_id = model_id
-            if "/" in model_id:
-                api_model_id = model_id.split("/", 1)[1]
+            # Wire model id: use the registry's base_model_id (set per-model
+            # in the Models tab) rather than blind-splitting on '/'. This is
+            # the same helper chat / transcribe use, so a saved bare id like
+            # 'voxtral-mini-tts-latest' goes through unchanged.
+            api_model_id = brain.get_api_model_id(model_id)
 
             payload = json.dumps({
                 "model": api_model_id,

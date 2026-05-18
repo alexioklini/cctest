@@ -2379,7 +2379,7 @@ async function trHistoryOpenFile(ev, url, suggestedName) {
 
 async function trHistoryDelete(id) {
   try {
-    await API.delete(`/v1/translate/history/${encodeURIComponent(id)}`);
+    await API.del(`/v1/translate/history/${encodeURIComponent(id)}`);
     _trHistoryEntries = _trHistoryEntries.filter(e => e.id !== id);
     delete _trHistoryExpanded[id];
     ['text', 'document', 'media', 'live'].forEach(_trHistoryRenderTab);
