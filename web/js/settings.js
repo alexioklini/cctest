@@ -2339,16 +2339,37 @@ function renderToolIntegrationFields(name, cfg) {
         <input id="tool-cg-exclude" type="text" value="${esc(cfg.exclude_dirs||'node_modules,.git,__pycache__,venv')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
         ${lbl('Max File Size (KB)')}
         <input id="tool-cg-maxsize" type="number" min="50" max="5000" value="${cfg.max_file_size_kb||500}" class="form-input" style="width:100px;font-family:var(--font-mono);font-size:11px">`;
-    case 'transcribe_audio':
+    case 'transcribe_audio': {
+      // Capability-filtered dropdown: only models tagged `audio` are
+      // selectable. Saved-but-missing/uncapable values surface as
+      // `(legacy/missing)` so the admin can see what's there.
+      const audioEntries = enabledModelsWithCapability('audio');
+      const audioIds = new Set(audioEntries.map(([mid]) => mid));
+      const audioSelectHtml = (id, sel) => {
+        let opts = '';
+        if (sel && !audioIds.has(sel)) opts += `<option value="${esc(sel)}" selected>${esc(sel)} (legacy/missing)</option>`;
+        opts += audioEntries.map(([mid]) => modelOption(mid, {selected: mid === sel})).join('');
+        return `<select id="${id}" class="form-select" style="font-size:11px;width:100%">${opts}</select>`;
+      };
       return `${lbl('Default Model')}
-        <input id="tool-ta-default-model" type="text" value="${esc(cfg.default_model||'mistral-experimental/voxtral-mini-latest')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
+        ${audioSelectHtml('tool-ta-default-model', cfg.default_model || '')}
         ${lbl('Fallback Model')}
-        <input id="tool-ta-fallback-model" type="text" value="${esc(cfg.fallback_model||'whisper-base')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">`;
-    case 'text_to_speech':
+        ${audioSelectHtml('tool-ta-fallback-model', cfg.fallback_model || '')}
+        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Only models tagged with the <code>audio</code> capability are listed. The tool will use the configured id exactly — fuzzy name matching has been removed.</div>`;
+    }
+    case 'text_to_speech': {
+      const ttsEntries = enabledModelsWithCapability('tts');
+      const ttsIds = new Set(ttsEntries.map(([mid]) => mid));
+      const sel = cfg.default_model || '';
+      let opts = '';
+      if (sel && !ttsIds.has(sel)) opts += `<option value="${esc(sel)}" selected>${esc(sel)} (legacy/missing)</option>`;
+      opts += ttsEntries.map(([mid]) => modelOption(mid, {selected: mid === sel})).join('');
       return `${lbl('Default Model')}
-        <input id="tool-tts-model" type="text" value="${esc(cfg.default_model||'mistral-experimental/voxtral-mini-tts-latest')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
+        <select id="tool-tts-model" class="form-select" style="font-size:11px;width:100%">${opts}</select>
         ${lbl('Voice')}
-        <input id="tool-tts-voice" type="text" value="${esc(cfg.voice||'en_paul_neutral')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">`;
+        <input id="tool-tts-voice" type="text" value="${esc(cfg.voice||'en_paul_neutral')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
+        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Only models tagged with the <code>tts</code> capability are listed. The tool will use the configured id exactly.</div>`;
+    }
     case 'translation':
       return `${lbl('Default Model')}
         ${chatModelSelect('tool-tr-model', cfg.default_model || '', 'Auto (refinement model → fallback)')}

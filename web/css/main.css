@@ -1440,17 +1440,9 @@ textarea { resize: none; }
 .right-tab-pane { display: none; flex: 1; flex-direction: column; overflow: hidden; }
 .right-tab-pane.active { display: flex; }
 
-/* Attachment grid & cards */
-.attach-grid { display: grid; grid-template-columns: repeat(auto-fill, 80px); gap: 8px; padding: 16px; overflow-y: auto; }
-.attach-card {
-  width: 80px; height: 80px; border-radius: 8px; overflow: hidden;
-  border: 1px solid var(--border-100); cursor: pointer; transition: border-color 0.15s;
-}
-.attach-card:hover { border-color: var(--accent-brand); box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-.attach-card img { width: 100%; height: 100%; object-fit: cover; }
-.attach-card-file { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px; background: var(--bg-200); }
-.attach-file-ext { font-size: 11px; font-weight: 600; color: var(--accent-brand); text-transform: uppercase; }
-.attach-file-name { font-size: 9px; color: var(--text-300); text-align: center; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-all; line-height: 1.2; }
+/* Attachment list — uses the artifact-list card shape inside (see panels.js
+   renderAttachmentsPane). The wrapper just provides a scrollable container. */
+.attach-grid { display: block; flex: 1; overflow-y: auto; }
 .attach-fullview {
   flex: 1; display: flex; flex-direction: column; align-items: stretch;
   padding: 16px 16px 0 16px; overflow: hidden; gap: 12px;

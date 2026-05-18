@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.1.0"
+VERSION = "9.2.0"
 VERSION_DATE = "2026-05-18"
 CHANGELOG = [
+    ("9.2.0", "2026-05-18", "feat(attachments-panel + tool-settings-dropdowns): two coordinated UI polish items. **(1) Attachments right-panel parity with Artifacts.** The Attachments tab now uses the same card-list layout as Artifacts (`.artifact-list` + `.artifact-list-card`) instead of the old 80×80 thumbnail grid — small image thumb in the icon slot for images, document SVG for non-images, filename + MIME + `on disk`/`inline` indicator per row. Clicking any row opens a fullview that mirrors the artifact preview switch: **image** (inline data URI or disk-saved → blob URL) renders as `<img>`; **PDF** loads as a blob URL into an `<iframe>` using the browser's native viewer; **text / code / markdown / HTML** (txt, md, json, py, js, html, yaml, csv, log, …) fetches the body via `/v1/files/download` or decodes the data URI and renders with `hljs` highlighting / `renderMarkdown` / sandboxed iframe — same paths the Artifacts tab uses. Code-mode toggle now also displays the raw body, not just metadata. Non-previewable binaries (docx/xlsx/pptx/…) get a file-card placeholder hinting Download. Fetched bodies are cached per attachment (`_attachmentBodyCache`, keyed by `path||url||name`) so flipping Code on/off doesn't re-fetch. The old `.attach-card` / `.attach-card-file` / `.attach-file-*` CSS rules are dead and removed; `.attach-grid` simplified to a flexible scroll container since the inner `.artifact-list` handles its own layout. **(2) Tool settings: capability-filtered model dropdowns + strict resolution.** `transcribe_audio` Default Model + Fallback Model and `text_to_speech` Default Model were free-text inputs — now `<select>` dropdowns filtered to models tagged with the `audio` (STT) or `tts` capability respectively. Saved-but-missing/uncapable values surface as `(legacy/missing)` so admins see them instead of a silent flip to option zero. Helper text per dropdown calls out the capability gate. **Strict resolution** — `brain.py:_transcription_resolve` previously fell back through case-insensitive + suffix matching when the configured id didn't match an entry in `_models_config` exactly; that branch is removed. After the existing one-shot legacy-id normalisation (`whisper:base` → `whisper-base`, bare `voxtral-mini-latest` → `mistral-experimental/voxtral-mini-latest`), the lookup must hit `_models_config` exactly or it raises with a list of audio-capable ids. Same behavior the TTS path already had. Empty `default_model` now raises instead of silently defaulting to `whisper-base`."),
     ("9.1.0", "2026-05-18", "feat(attachments-panel): manage chat attachments in the right panel with the same Copy / Download / Code actions as the Artifacts tab. Clicking any attachment card (image or non-image) now opens a fullview with an action bar: **Copy** — images go to the clipboard as image bytes (`navigator.clipboard.write(ClipboardItem)`), non-image attachments copy the filename (we don't always have the bytes for disk-only files without an extra round-trip — name is what's useful). **Download** — inline data URIs blob-download in-browser; disk-saved attachments go through `/v1/files/download` with the existing auth header pattern. **Code** — toggles a metadata + raw data-URI view (name, MIME, absolute disk path, head+tail of the base64). Non-image cards became clickable (previously only images opened fullview). **Plumbing**: `handlers/admin.py:_validate_file_path` extended to allow `/tmp/brain-attachments/<session_id>/` (the existing disk-save root from `handlers/chat.py`) so `/v1/files/download` can serve them. macOS `/tmp` → `/private/tmp` symlink is handled via `os.path.realpath` on both sides. `web/js/panels.js:collectChatAttachments` now records `path` (absolute disk path parsed from the `[User attached files saved to disk:]` notice block in the user message) and `data` (when available) alongside the existing `url` / `name` / `isImage` fields. New helpers `showAttachmentFullview` / `_renderAttachmentFullview` / `toggleAttachmentSource` / `copyAttachment` / `downloadAttachment` mirror the artifact-panel pattern (one render fn + per-action async handlers). CSS additions in `web/css/main.css` cover the action bar, code view (monospace pre-wrap with break-all), and a non-image fullview file card. Inline data URI for images previously sent via `body.files` is preserved so the multimodal branch (inline + disk) introduced in v9.0.2 keeps both download paths working."),
     ("9.0.2", "2026-05-17", "feat(image-attachments + execute_command): three coordinated fixes after observing chat `cee3e604` (model invented `~/artifacts/` path and ran `convert` against an empty `input_image.jpg` it had just `write_file`-ed) and chat `9036977a` (after the first fix the model successfully ran `magick` but wrote the output to a guessed `/Users/alexander/Documents/dev/cctest/artifacts/` directory it had to `mkdir`, so the result was invisible to the Artifacts panel). **(1) Image attachments are now BOTH inlined AND saved to disk** (`handlers/chat.py`) — the multimodal branch previously routed image/* through `image_url` data URI blocks ONLY; if the model wanted to manipulate the bytes (background removal, resize, ffmpeg, etc.) it had no path on disk to feed into a shell tool. Now any base64 image attachment that passes the multimodal check is ALSO pushed onto `disk_files`, so the existing /tmp/brain-attachments/<sid>/<filename> save path runs. The attachment-notice text added by the disk branch gets a new variant when `content_blocks` is non-empty: 'You can already SEE them above as inline content — do NOT call write_file/read_file to load them. The same bytes are ALSO saved to disk if you need to manipulate them with shell tools (e.g. `magick`, `ffmpeg`) or python_exec.' Closes the cee3e604 failure mode where Mistral tried to write_file an empty input_image.jpg to get the bytes back. **(2) `execute_command` defaults its cwd to the session artifact folder** (`brain.py:tool_execute_command`) — previously `cwd=None` inherited Brain's launch cwd (the repo root), so `magick input.jpg output.png` with a relative output landed in the repo root, not the session folder, and was invisible to the Artifacts panel. Now mirrors `tool_python_exec`: when no `cwd` is passed, resolves to `agents/<agent>/artifacts/<session_folder>/` (creates if needed), falls back to Brain's cwd when there's no session (background jobs). Tool-schema description updated to advertise the new default. **(3) `execute_command` now auto-registers artifacts** (`brain.py:tool_execute_command` + new `_register_new_artifacts` helper) — snapshots the cwd before subprocess starts and diffs after; any files appearing post-exec are registered via `_after_file_write` so they auto-promote to the Artifacts panel (same pattern as `tool_python_exec`'s pre/post diff). Tool result includes `artifacts: [basename, ...]` so the model sees what got promoted. Scoping rule: registration ONLY happens when the resolved `cwd` equals (`os.path.realpath` match) the session's artifact folder — commands with an explicit `cwd=/some/other/path` don't pollute the artifact panel. Both the streaming and non-streaming branches go through the helper. Timed-out commands deliberately skip registration (partial garbage). **(4) `_build_system_prompt` discloses the per-session artifact folder** — adds `Session artifact folder: <abs path>\\n` line right after the existing `Current working directory:` / `Operating system:` block, gated on `session_id` so warmup (bare session) is byte-identical and the KV-prefix invariant holds. The cache key already includes `session_id`, so the per-session line is cache-safe. Belt-and-suspenders with (2): the model knows the absolute path explicitly AND the default cwd catches it when forgotten. **Plumbing context that triggered this**: also added a `mistral-direct` provider entry to config.json earlier in the session so `engine/tools/image_gen.py:_mistral_api_key()` can resolve a key (the existing `CLIProxyAPI` entry proxies to cloud Mistral via OAuth and doesn't expose the REST surface `/v1/agents` + `/v1/conversations` + `/v1/files` the image tool needs). End-to-end smoketest via `tool_generate_image` confirmed: 17.3s round-trip, 56KB JPEG, lands under `agents/main/artifacts/<date>_<sid>/`, `_after_file_write` registered, sidecar dispatch path (POST /v1/tools/call → engine.TOOL_DISPATCH['generate_image']) is intact post-Phase-5."),
     ("9.0.1", "2026-05-17", "fix(gdpr-highlight): de-anonymised values in replies that contain emojis (or any non-BMP characters) AND values inside markdown tables now render with the yellow `<mark class=\"gdpr-restored\">` highlight + tooltip. Two independent bugs, same symptom. **Bug 1 — UTF-16 offset mismatch**: server-side `find_restored_spans` indexes by Python code-points; the browser's `String.prototype.substring` indexes by UTF-16 code units. Any non-BMP char (📋 = U+1F4CB = surrogate pair) earlier in the reply shifts every downstream span by +1 in JS, causing the renderer's `slice !== sp.original` verification guard to reject every span (off-by-one, slice was `' anna.becker@firma.d'` instead of `'anna.becker@firma.de'`). Replaced the strict-offset trust with a client-side re-locate: walk the reply with `text.indexOf(original)`, longest-first, claiming non-overlapping spans — same first-match-wins discipline `find_restored_spans` uses, just re-anchored against JS string indexing. **Bug 2 — pipe collision in sentinel**: the invisible-separator sentinel that survives `marked.parse` was formatted as `OPEN + id + '|' + value + CLOSE`; the literal `|` collided with markdown's table-cell separator, so any restored span sitting in a table row had its sentinel split across cells and the post-parse regex couldn't reassemble it into a `<mark>` tag. Switched the internal id/value delimiter to a second `U+2063 INVISIBLE SEPARATOR` (`GDPR_SENTINEL_DELIM`) which marked doesn't treat as structural. Verified on session `9441d8b4` reply (📋 emoji header + 5-row Mitarbeiter table, 15 spans across emails / phones / IBANs): pre-fix 0/15 rendered; post-fix all 15 render with category tooltip inside table cells."),
@@ -3418,36 +3419,38 @@ def _transcription_resolve(model_arg: str | None) -> tuple[str, dict]:
       - provider == 'local-mlx-whisper' → wire 'mlx_whisper' (in-process)
       - everything else → wire 'openai_audio' (multipart POST to <base_url>/audio/transcriptions)
 
-    Accepts legacy ids ('whisper:base', bare 'voxtral-mini-latest', bare sizes)
-    and normalizes them to the new ids before lookup.
+    The configured id MUST match an entry in _models_config exactly. Pre-
+    capability legacy ids ('whisper:base', bare 'voxtral-mini-latest', bare
+    sizes) are normalised once via _normalize_legacy_audio_id before lookup
+    — that's the only mapping layer. No fuzzy / case-insensitive / suffix
+    fallback: if the configured id doesn't resolve, raise so the admin
+    notices instead of silently dispatching to a near-match.
     """
     cfg = _transcription_config()
     requested = (model_arg or "").strip()
     if not requested:
-        requested = (cfg.get("default_model") or "whisper-base").strip()
+        requested = (cfg.get("default_model") or "").strip()
+    if not requested:
+        audio_ids = sorted([
+            mid for mid, c in _models_config.items()
+            if "audio" in (c.get("capabilities") or [])
+        ])
+        raise ValueError(
+            "no transcription model configured. Set transcribe_audio.default_model "
+            f"in the Tools tab. Configured (capability=audio): {', '.join(audio_ids) or '(none)'}"
+        )
     requested = _normalize_legacy_audio_id(requested)
 
     entry = _models_config.get(requested)
     if not entry:
-        # Tolerate case differences and unscoped ids that match exactly one
-        # capability=audio model.
-        lower = requested.lower()
-        candidates = [
-            (mid, cfg_) for mid, cfg_ in _models_config.items()
-            if "audio" in (cfg_.get("capabilities") or [])
-            and (mid.lower() == lower or mid.lower().endswith("/" + lower))
-        ]
-        if len(candidates) == 1:
-            requested, entry = candidates[0]
-        else:
-            audio_ids = sorted([
-                mid for mid, c in _models_config.items()
-                if "audio" in (c.get("capabilities") or [])
-            ])
-            raise ValueError(
-                f"unknown transcription model '{requested}'. "
-                f"Configured (capability=audio): {', '.join(audio_ids) or '(none)'}"
-            )
+        audio_ids = sorted([
+            mid for mid, c in _models_config.items()
+            if "audio" in (c.get("capabilities") or [])
+        ])
+        raise ValueError(
+            f"unknown transcription model '{requested}'. "
+            f"Configured (capability=audio): {', '.join(audio_ids) or '(none)'}"
+        )
 
     if "audio" not in (entry.get("capabilities") or []):
         raise ValueError(

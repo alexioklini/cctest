@@ -2882,13 +2882,32 @@ function renderAttachmentsPane() {
   }
   empty.style.display = 'none';
   grid.style.display = '';
-  grid.innerHTML = attachments.map((a, i) => {
+  // Card-list layout — same shape as the Artifacts list (`.artifact-list` +
+  // `.artifact-list-card`) so the two panes feel consistent. Image
+  // attachments show a tiny thumb in the icon slot; non-image files show
+  // the same document SVG as artifact `text`/`document` rows.
+  const docIcon = artifactTypeIcon('document');
+  const imgIcon = artifactTypeIcon('image');
+  grid.innerHTML = '<div class="artifact-list">' + attachments.map((a, i) => {
+    let iconHtml;
     if (a.isImage && a.url) {
-      return `<div class="attach-card" onclick="showAttachmentFullview(${i})"><img src="${a.url}" alt="${esc(a.name)}" loading="lazy"></div>`;
+      iconHtml = `<img src="${a.url}" alt="" loading="lazy" style="width:24px;height:24px;object-fit:cover;border-radius:4px">`;
+    } else {
+      iconHtml = a.isImage ? imgIcon : docIcon;
     }
-    const ext = a.name?.split('.').pop()?.toUpperCase() || 'FILE';
-    return `<div class="attach-card attach-card-file" title="${esc(a.name)}" onclick="showAttachmentFullview(${i})"><div class="attach-file-ext">${esc(ext)}</div><div class="attach-file-name">${esc(a.name)}</div></div>`;
-  }).join('');
+    const ext = (a.name?.split('.').pop() || '').toUpperCase();
+    const meta = [a.type || (ext ? ext.toLowerCase() : ''), a.path ? 'on disk' : 'inline']
+      .filter(Boolean).join(' · ');
+    return `
+      <div class="artifact-list-card" onclick="showAttachmentFullview(${i})">
+        <span class="alc-icon">${iconHtml}</span>
+        <div class="alc-info">
+          <div class="alc-name">${esc(a.name || 'Untitled')}</div>
+          <div class="alc-meta">${esc(meta)}</div>
+        </div>
+      </div>
+    `;
+  }).join('') + '</div>';
 }
 
 // State for the attachment fullview (mirrors the artifact panel's _raw* refs
@@ -2905,7 +2924,67 @@ function showAttachmentFullview(index) {
   _renderAttachmentFullview();
 }
 
-function _renderAttachmentFullview() {
+// Text/code MIME prefixes / extensions we render inline as syntax-highlighted
+// text. Anything else (binary docs) gets the file-card placeholder.
+const _ATTACH_TEXT_EXTS = new Set([
+  'txt', 'md', 'markdown', 'json', 'yaml', 'yml', 'toml', 'xml', 'html', 'htm',
+  'css', 'js', 'mjs', 'ts', 'tsx', 'jsx', 'py', 'rb', 'go', 'rs', 'java',
+  'c', 'cpp', 'h', 'hpp', 'cs', 'sh', 'bash', 'zsh', 'sql', 'csv', 'tsv',
+  'ini', 'cfg', 'conf', 'log', 'env',
+]);
+// Per-attachment cache: fetched preview body, keyed by the same identity
+// `_activeAttachmentIndex` uses. Avoids re-fetching when the user toggles
+// Code mode on/off.
+const _attachmentBodyCache = new Map();
+
+function _attachIdent(a) {
+  return a.path || a.url || a.name || '';
+}
+
+async function _fetchAttachmentBody(a) {
+  const key = _attachIdent(a);
+  if (_attachmentBodyCache.has(key)) return _attachmentBodyCache.get(key);
+  // Inline data URI → decode without a round-trip.
+  if (a.url && a.url.startsWith('data:')) {
+    const m = /^data:([^;]+);base64,(.+)$/.exec(a.url);
+    if (m) {
+      try {
+        const text = new TextDecoder('utf-8', {fatal: false}).decode(
+          Uint8Array.from(atob(m[2]), c => c.charCodeAt(0))
+        );
+        const res = { ok: true, text };
+        _attachmentBodyCache.set(key, res);
+        return res;
+      } catch (e) {
+        const res = { ok: false, error: e.message || String(e) };
+        _attachmentBodyCache.set(key, res);
+        return res;
+      }
+    }
+  }
+  if (a.path) {
+    try {
+      const url = `${BASE_URL}/v1/files/download?path=${encodeURIComponent(a.path)}`;
+      const resp = await fetch(url, { headers: API._headers() });
+      if (!resp.ok) {
+        const res = { ok: false, error: `HTTP ${resp.status}` };
+        _attachmentBodyCache.set(key, res);
+        return res;
+      }
+      const text = await resp.text();
+      const res = { ok: true, text };
+      _attachmentBodyCache.set(key, res);
+      return res;
+    } catch (e) {
+      const res = { ok: false, error: e.message || String(e) };
+      _attachmentBodyCache.set(key, res);
+      return res;
+    }
+  }
+  return { ok: false, error: 'no source available' };
+}
+
+async function _renderAttachmentFullview() {
   const attachments = collectChatAttachments();
   const a = attachments[_activeAttachmentIndex];
   if (!a) { renderAttachmentsPane(); return; }
@@ -2916,55 +2995,144 @@ function _renderAttachmentFullview() {
   empty.style.display = 'none';
   fullview.style.display = '';
 
-  let bodyHtml;
-  if (_attachmentSourceMode) {
-    // Code/metadata view — shows the absolute disk path (if any), MIME,
-    // and the data URI / base64 (truncated) so the user can inspect raw.
-    const lines = [];
-    lines.push(`Name: ${a.name || '(unknown)'}`);
-    if (a.type) lines.push(`Type: ${a.type}`);
-    if (a.path) lines.push(`Path: ${a.path}`);
-    if (a.url) {
-      const head = a.url.slice(0, 200);
-      const tail = a.url.length > 400 ? `\n…\n${a.url.slice(-100)}` : '';
-      lines.push(`\nData URI:\n${head}${tail}`);
-    }
-    bodyHtml = `<pre class="attach-fullview-code">${esc(lines.join('\n'))}</pre>`;
-  } else if (a.isImage && a.url) {
-    bodyHtml = `<img src="${a.url}" alt="${esc(a.name)}">`;
-  } else {
-    const ext = a.name?.split('.').pop()?.toUpperCase() || 'FILE';
-    bodyHtml = `
-      <div class="attach-fullview-file-card">
-        <div class="attach-fullview-file-ext">${esc(ext)}</div>
-        <div class="attach-fullview-file-name">${esc(a.name)}</div>
-        ${a.type ? `<div class="attach-fullview-file-meta">${esc(a.type)}</div>` : ''}
-      </div>
-    `;
-  }
-
+  const ext = (a.name?.split('.').pop() || '').toLowerCase();
+  const isText = _ATTACH_TEXT_EXTS.has(ext) || (a.type || '').startsWith('text/');
+  const isPdf = ext === 'pdf' || a.type === 'application/pdf';
   const canCopy = !!(a.url || a.name);
   const canDownload = !!(a.url || a.path);
   const sourceActive = _attachmentSourceMode ? 'active' : '';
 
-  fullview.innerHTML = `
-    <button class="attach-fullview-back" onclick="renderAttachmentsPane()">Back to all</button>
-    <div class="attach-fullview-body">${bodyHtml}</div>
-    <div class="attach-fullview-actions">
-      <button class="artifact-action-btn" onclick="copyAttachment()" ${canCopy?'':'disabled'} title="Copy">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-        Copy
-      </button>
-      <button class="artifact-action-btn" onclick="downloadAttachment()" ${canDownload?'':'disabled'} title="Download">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Download
-      </button>
-      <button class="artifact-action-btn ${sourceActive}" onclick="toggleAttachmentSource()" title="View source">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-        Code
-      </button>
+  // Shell first — we re-render the body slot once async fetch resolves.
+  const renderShell = (bodyHtml) => {
+    fullview.innerHTML = `
+      <button class="attach-fullview-back" onclick="renderAttachmentsPane()">Back to all</button>
+      <div class="attach-fullview-body" id="attach-fullview-body">${bodyHtml}</div>
+      <div class="attach-fullview-actions">
+        <button class="artifact-action-btn" onclick="copyAttachment()" ${canCopy?'':'disabled'} title="Copy">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy
+        </button>
+        <button class="artifact-action-btn" onclick="downloadAttachment()" ${canDownload?'':'disabled'} title="Download">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download
+        </button>
+        <button class="artifact-action-btn ${sourceActive}" onclick="toggleAttachmentSource()" title="View source">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          Code
+        </button>
+      </div>
+    `;
+  };
+
+  // Code/metadata view — shows path/MIME/raw body (text) or data URI head/tail.
+  if (_attachmentSourceMode) {
+    const lines = [];
+    lines.push(`Name: ${a.name || '(unknown)'}`);
+    if (a.type) lines.push(`Type: ${a.type}`);
+    if (a.path) lines.push(`Path: ${a.path}`);
+    renderShell(`<pre class="attach-fullview-code">${esc(lines.join('\n'))}\n\nLoading…</pre>`);
+    const body = await _fetchAttachmentBody(a);
+    const slot = document.getElementById('attach-fullview-body');
+    if (!slot) return;
+    let tail;
+    if (body.ok) {
+      tail = body.text;
+    } else if (a.url && a.url.startsWith('data:') && a.url.length > 300) {
+      tail = `${a.url.slice(0, 200)}\n…\n${a.url.slice(-100)}`;
+    } else {
+      tail = `(unavailable: ${body.error})`;
+    }
+    slot.innerHTML = `<pre class="attach-fullview-code">${esc(lines.join('\n'))}\n\n${esc(tail)}</pre>`;
+    return;
+  }
+
+  // Image preview
+  if (a.isImage && a.url) {
+    renderShell(`<img src="${a.url}" alt="${esc(a.name)}">`);
+    return;
+  }
+  if (a.isImage && a.path) {
+    // Disk-saved image, no inline bytes — load via /v1/files/download as a
+    // blob URL.
+    renderShell(`<div style="color:var(--text-400);font-size:12px">Loading…</div>`);
+    try {
+      const url = `${BASE_URL}/v1/files/download?path=${encodeURIComponent(a.path)}`;
+      const resp = await fetch(url, { headers: API._headers() });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const slot = document.getElementById('attach-fullview-body');
+      if (slot) slot.innerHTML = `<img src="${objUrl}" alt="${esc(a.name)}">`;
+    } catch (e) {
+      const slot = document.getElementById('attach-fullview-body');
+      if (slot) slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Preview unavailable: ${esc(e.message || e)}</div>`;
+    }
+    return;
+  }
+
+  // PDF preview — load via blob URL into an iframe (browser's native PDF viewer).
+  if (isPdf && (a.path || (a.url && a.url.startsWith('data:application/pdf')))) {
+    renderShell(`<div style="color:var(--text-400);font-size:12px">Loading…</div>`);
+    try {
+      let objUrl;
+      if (a.url && a.url.startsWith('data:')) {
+        const r = await fetch(a.url);
+        const blob = await r.blob();
+        objUrl = URL.createObjectURL(blob);
+      } else {
+        const url = `${BASE_URL}/v1/files/download?path=${encodeURIComponent(a.path)}`;
+        const resp = await fetch(url, { headers: API._headers() });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        objUrl = URL.createObjectURL(blob);
+      }
+      const slot = document.getElementById('attach-fullview-body');
+      if (slot) slot.innerHTML = `<iframe src="${objUrl}" style="width:100%;height:100%;border:none;border-radius:8px;background:#fff"></iframe>`;
+    } catch (e) {
+      const slot = document.getElementById('attach-fullview-body');
+      if (slot) slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Preview unavailable: ${esc(e.message || e)}</div>`;
+    }
+    return;
+  }
+
+  // Text / code / markdown preview — fetch body and render
+  if (isText) {
+    renderShell(`<div style="color:var(--text-400);font-size:12px">Loading…</div>`);
+    const body = await _fetchAttachmentBody(a);
+    const slot = document.getElementById('attach-fullview-body');
+    if (!slot) return;
+    if (!body.ok) {
+      slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Preview unavailable: ${esc(body.error)}</div>`;
+      return;
+    }
+    if (ext === 'md' || ext === 'markdown') {
+      slot.innerHTML = `<div class="artifact-markdown msg-content" style="width:100%;height:100%;overflow:auto;padding:8px">${renderMarkdown(body.text)}</div>`;
+      slot.querySelectorAll('pre code').forEach(el => { try { hljs.highlightElement(el); } catch(_) {} });
+    } else if (ext === 'html' || ext === 'htm') {
+      slot.innerHTML = `<iframe sandbox="allow-same-origin" srcdoc="${esc(body.text)}" style="width:100%;height:100%;border:none;background:#fff"></iframe>`;
+    } else {
+      const lang = (typeof hljs !== 'undefined' && hljs.getLanguage(ext)) ? ext : 'plaintext';
+      let highlighted;
+      try {
+        highlighted = hljs.highlight(body.text, { language: lang }).value;
+      } catch(_) {
+        highlighted = esc(body.text);
+      }
+      slot.innerHTML = `<pre class="attach-fullview-code"><code class="hljs language-${lang}">${highlighted}</code></pre>`;
+    }
+    return;
+  }
+
+  // Fallback — non-previewable binary (docx/xlsx/pptx/…): file card placeholder
+  const extLabel = (a.name?.split('.').pop() || 'FILE').toUpperCase();
+  renderShell(`
+    <div class="attach-fullview-file-card">
+      <div class="attach-fullview-file-ext">${esc(extLabel)}</div>
+      <div class="attach-fullview-file-name">${esc(a.name)}</div>
+      ${a.type ? `<div class="attach-fullview-file-meta">${esc(a.type)}</div>` : ''}
+      <div style="font-size:11px;color:var(--text-400);margin-top:8px">No inline preview — use Download to open this file</div>
     </div>
-  `;
+  `);
 }
 
 function toggleAttachmentSource() {
