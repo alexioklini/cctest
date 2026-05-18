@@ -4799,7 +4799,11 @@ class AdminHandlerMixin:
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         agents_dir = os.path.join(base, "agents")
         cwd = os.getcwd()
-        allowed = [base, agents_dir, cwd]
+        # /tmp/brain-attachments/<session_id>/ — disk-saved chat attachments
+        # (see chat.py: attach_dir). macOS resolves /tmp → /private/tmp, so
+        # realpath both ends to make the prefix-match work.
+        attach_root = os.path.realpath("/tmp/brain-attachments")
+        allowed = [base, agents_dir, cwd, attach_root]
         if any(resolved.startswith(d) for d in allowed):
             return resolved
         # Project input folders — symlink-resolved, deduped. Any project

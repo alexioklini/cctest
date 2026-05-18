@@ -2822,11 +2822,11 @@ function collectChatAttachments() {
       for (const f of msg.files) {
         const isImg = f.type?.startsWith('image/');
         if (f.preview) {
-          attachments.push({ url: f.preview, name: f.name || 'Image', isImage: true, msgIndex: i });
+          attachments.push({ url: f.preview, name: f.name || 'Image', type: f.type || '', isImage: true, msgIndex: i });
         } else if (f.data && isImg) {
-          attachments.push({ url: `data:${f.type};base64,${f.data}`, name: f.name || 'Image', isImage: true, msgIndex: i });
+          attachments.push({ url: `data:${f.type};base64,${f.data}`, name: f.name || 'Image', type: f.type || '', isImage: true, msgIndex: i, data: f.data });
         } else {
-          attachments.push({ name: f.name || 'File', type: f.type || '', isImage: false, msgIndex: i });
+          attachments.push({ name: f.name || 'File', type: f.type || '', isImage: false, msgIndex: i, data: f.data });
         }
       }
     }
@@ -2853,8 +2853,13 @@ function collectChatAttachments() {
           const fname = fpath.split('/').pop();
           const ext = fname.split('.').pop()?.toLowerCase() || '';
           const isImg = ['png','jpg','jpeg','gif','webp','svg','bmp','ico'].includes(ext);
-          if (!attachments.some(a => a.name === fname)) {
-            attachments.push({ name: fname, type: '', isImage: isImg, msgIndex: i });
+          const existing = attachments.find(a => a.name === fname);
+          if (existing) {
+            // Same name as an inline-block attachment for this turn —
+            // attach the disk path so download/copy can use it.
+            if (!existing.path) existing.path = fpath;
+          } else {
+            attachments.push({ name: fname, type: '', isImage: isImg, msgIndex: i, path: fpath });
           }
         }
       }
@@ -2882,24 +2887,168 @@ function renderAttachmentsPane() {
       return `<div class="attach-card" onclick="showAttachmentFullview(${i})"><img src="${a.url}" alt="${esc(a.name)}" loading="lazy"></div>`;
     }
     const ext = a.name?.split('.').pop()?.toUpperCase() || 'FILE';
-    return `<div class="attach-card attach-card-file" title="${esc(a.name)}"><div class="attach-file-ext">${esc(ext)}</div><div class="attach-file-name">${esc(a.name)}</div></div>`;
+    return `<div class="attach-card attach-card-file" title="${esc(a.name)}" onclick="showAttachmentFullview(${i})"><div class="attach-file-ext">${esc(ext)}</div><div class="attach-file-name">${esc(a.name)}</div></div>`;
   }).join('');
 }
+
+// State for the attachment fullview (mirrors the artifact panel's _raw* refs
+// on its content container — kept here so copy/download/code-toggle can find
+// the active attachment without re-reading from collectChatAttachments()).
+let _activeAttachmentIndex = -1;
+let _attachmentSourceMode = false;
 
 function showAttachmentFullview(index) {
   const attachments = collectChatAttachments();
   if (index < 0 || index >= attachments.length) return;
-  const a = attachments[index];
+  _activeAttachmentIndex = index;
+  _attachmentSourceMode = false;
+  _renderAttachmentFullview();
+}
+
+function _renderAttachmentFullview() {
+  const attachments = collectChatAttachments();
+  const a = attachments[_activeAttachmentIndex];
+  if (!a) { renderAttachmentsPane(); return; }
   const grid = document.getElementById('attachments-grid');
   const empty = document.getElementById('attachments-empty');
   const fullview = document.getElementById('attachment-fullview');
   grid.style.display = 'none';
   empty.style.display = 'none';
   fullview.style.display = '';
+
+  let bodyHtml;
+  if (_attachmentSourceMode) {
+    // Code/metadata view — shows the absolute disk path (if any), MIME,
+    // and the data URI / base64 (truncated) so the user can inspect raw.
+    const lines = [];
+    lines.push(`Name: ${a.name || '(unknown)'}`);
+    if (a.type) lines.push(`Type: ${a.type}`);
+    if (a.path) lines.push(`Path: ${a.path}`);
+    if (a.url) {
+      const head = a.url.slice(0, 200);
+      const tail = a.url.length > 400 ? `\n…\n${a.url.slice(-100)}` : '';
+      lines.push(`\nData URI:\n${head}${tail}`);
+    }
+    bodyHtml = `<pre class="attach-fullview-code">${esc(lines.join('\n'))}</pre>`;
+  } else if (a.isImage && a.url) {
+    bodyHtml = `<img src="${a.url}" alt="${esc(a.name)}">`;
+  } else {
+    const ext = a.name?.split('.').pop()?.toUpperCase() || 'FILE';
+    bodyHtml = `
+      <div class="attach-fullview-file-card">
+        <div class="attach-fullview-file-ext">${esc(ext)}</div>
+        <div class="attach-fullview-file-name">${esc(a.name)}</div>
+        ${a.type ? `<div class="attach-fullview-file-meta">${esc(a.type)}</div>` : ''}
+      </div>
+    `;
+  }
+
+  const canCopy = !!(a.url || a.name);
+  const canDownload = !!(a.url || a.path);
+  const sourceActive = _attachmentSourceMode ? 'active' : '';
+
   fullview.innerHTML = `
     <button class="attach-fullview-back" onclick="renderAttachmentsPane()">Back to all</button>
-    <img src="${a.url}" alt="${esc(a.name)}">
+    <div class="attach-fullview-body">${bodyHtml}</div>
+    <div class="attach-fullview-actions">
+      <button class="artifact-action-btn" onclick="copyAttachment()" ${canCopy?'':'disabled'} title="Copy">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        Copy
+      </button>
+      <button class="artifact-action-btn" onclick="downloadAttachment()" ${canDownload?'':'disabled'} title="Download">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download
+      </button>
+      <button class="artifact-action-btn ${sourceActive}" onclick="toggleAttachmentSource()" title="View source">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        Code
+      </button>
+    </div>
   `;
+}
+
+function toggleAttachmentSource() {
+  _attachmentSourceMode = !_attachmentSourceMode;
+  _renderAttachmentFullview();
+}
+
+async function copyAttachment() {
+  const attachments = collectChatAttachments();
+  const a = attachments[_activeAttachmentIndex];
+  if (!a) return;
+  try { window.focus(); } catch(_) {}
+  try {
+    // Image with inline data URI → copy bytes to clipboard as image
+    if (a.isImage && a.url && a.url.startsWith('data:')) {
+      const m = /^data:([^;]+);base64,(.+)$/.exec(a.url);
+      if (m) {
+        const mime = m[1];
+        const bin = atob(m[2]);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        await navigator.clipboard.write([new ClipboardItem({ [mime]: new Blob([bytes], { type: mime }) })]);
+        showToast('Image copied');
+        return;
+      }
+    }
+    // Fallback: copy filename (we don't have bytes for disk-only files
+    // without an extra round-trip — name is what's useful for non-images)
+    await navigator.clipboard.writeText(a.name || '');
+    showToast('Filename copied');
+  } catch (e) {
+    console.error('[attachment] copy failed', e);
+    showToast(`Copy failed: ${e.message || e}`, true);
+  }
+}
+
+async function downloadAttachment() {
+  const attachments = collectChatAttachments();
+  const a = attachments[_activeAttachmentIndex];
+  if (!a) return;
+  // Inline data URI → blob-download in the browser
+  if (a.url && a.url.startsWith('data:')) {
+    try {
+      const r = await fetch(a.url);
+      const blob = await r.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objUrl;
+      link.download = a.name || 'attachment';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+      return;
+    } catch (e) {
+      showToast(`Download failed: ${e.message || e}`, true);
+      return;
+    }
+  }
+  // Disk path → server download
+  if (a.path) {
+    try {
+      const url = `${BASE_URL}/v1/files/download?path=${encodeURIComponent(a.path)}`;
+      const resp = await fetch(url, { headers: API._headers() });
+      if (!resp.ok) {
+        const err = await resp.text().catch(() => '');
+        showToast(`Download failed (${resp.status}): ${err.slice(0, 80)}`, true);
+        return;
+      }
+      const blob = await resp.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objUrl;
+      link.download = a.name || 'attachment';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+    } catch (e) {
+      showToast(`Download failed: ${e.message || e}`, true);
+    }
+    return;
+  }
+  showToast('Nothing to download', true);
 }
 
 function _refCardHtml(ref) {
