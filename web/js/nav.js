@@ -468,6 +468,58 @@ async function _confirmResetGdprCategories() {
   resetGdprCategories();
 }
 
+/* ─── NER models pill (Settings → GDPR) ─── */
+
+function _renderGdprNerPill(languages) {
+  const host = document.getElementById('gdpr-ner-pill');
+  if (!host) return;
+  if (!languages || !languages.length) {
+    host.innerHTML = `<div style="font-size:11px;color:var(--text-400);font-style:italic">No NER models registered.</div>`;
+    return;
+  }
+  host.innerHTML = languages.map(l => {
+    const loaded = !!l.loaded;
+    const failed = !!l.failed && !loaded;
+    const statusColor = loaded ? 'var(--success,#16a34a)' : (failed ? 'var(--error,#dc2626)' : 'var(--text-400)');
+    const statusText = loaded ? 'loaded' : (failed ? 'failed to load' : 'not loaded');
+    const btnLabel = loaded ? 'Unload' : 'Load';
+    const btnAction = loaded ? 'unload' : 'load';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${statusColor};flex-shrink:0"></span>
+      <span style="font-size:12px;color:var(--text-100);min-width:90px"><b>${esc(l.display)}</b></span>
+      <code style="font-size:10px;color:var(--text-400)">${esc(l.model || '-')}</code>
+      <span style="flex:1;font-size:11px;color:${statusColor}">${statusText}</span>
+      <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="_gdprNerAction('${esc(btnAction)}','${esc(l.lang)}', this)">${btnLabel}</button>
+    </div>`;
+  }).join('');
+}
+
+async function refreshGdprNerPill() {
+  try {
+    const r = await API.get('/v1/gdpr/ner-models');
+    _renderGdprNerPill(r.languages || []);
+  } catch (e) {
+    const host = document.getElementById('gdpr-ner-pill');
+    if (host) host.innerHTML = `<div style="font-size:11px;color:var(--error)">Failed to read NER state: ${esc(e.message || e)}</div>`;
+  }
+}
+
+async function _gdprNerAction(action, lang, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = action === 'load' ? 'Loading…' : 'Unloading…'; }
+  try {
+    const r = await API.post('/v1/gdpr/ner-models', { action, lang });
+    _renderGdprNerPill(r.languages || []);
+    if (r.status === 'load_failed') {
+      showToast(`Failed to load ${lang} — check server.error.log`, true);
+    } else {
+      showToast(`NER ${lang}: ${r.status}`);
+    }
+  } catch (e) {
+    showToast('Failed: ' + (e.message || e), true);
+    refreshGdprNerPill();
+  }
+}
+
 /* ─── Quota config save + helpers ─── */
 
 async function saveQuotaConfig() {

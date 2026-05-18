@@ -1140,6 +1140,7 @@ class BrainAgentHandler(
         "/v1/quotas/config",
         "/v1/quotas/admin/users",
         "/v1/sidecar/status",
+        "/v1/gdpr/ner-models",
     }
 
     _ADMIN_POST_EXACT = {
@@ -1176,6 +1177,7 @@ class BrainAgentHandler(
         "/v1/commands/expand",
         "/v1/nodes",
         "/v1/sidecar/restart",
+        "/v1/gdpr/ner-models",
     }
     _ADMIN_POST_PATHS = _ADMIN_POST_EXACT
     _ADMIN_POST_PREFIXES = (
@@ -1486,6 +1488,8 @@ class BrainAgentHandler(
             self._handle_tool_settings_get()
         elif path == "/v1/research-mode/disciplines":
             self._handle_research_mode_disciplines_get()
+        elif path == "/v1/gdpr/ner-models":
+            self._handle_gdpr_ner_models_get()
         elif path == "/v1/quotas/admin/users":
             self._handle_quota_admin_users()
         elif path.startswith("/v1/quotas/admin/breakdown"):
@@ -1757,6 +1761,8 @@ class BrainAgentHandler(
             self._handle_tool_settings_save()
         elif path == "/v1/research-mode/disciplines":
             self._handle_research_mode_disciplines_save()
+        elif path == "/v1/gdpr/ner-models":
+            self._handle_gdpr_ner_models_post()
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})
@@ -1787,6 +1793,8 @@ class BrainAgentHandler(
             self._handle_chat_gdpr_recovery()
         elif path == "/v1/attachments/scan":
             self._handle_attachment_scan()
+        elif path == "/v1/gdpr/scan-text":
+            self._handle_gdpr_scan_text()
         elif path == "/v1/notifications/settings":
             self._handle_notifications_settings_post()
         elif path == "/v1/notifications/dismiss":
@@ -3178,6 +3186,20 @@ def main():
                 pass
     elif existing_models:
         engine._models_config = dict(existing_models)
+
+    # spaCy NER (Phase 1: German PER/LOC/ORG → name/address/organisation).
+    # Eager-load so the first chat hitting the NER path doesn't pay the
+    # ~1.5 s model-load cost. Action policy is governed by the `contact`
+    # category in gdpr_scanner — admins who don't want NER findings set
+    # `contact: ignore` (default) in Settings → GDPR. The pill in that
+    # same tab can additionally load/unload at runtime via
+    # POST /v1/gdpr/ner-models. Failures here are logged but never fatal —
+    # server boots regardless and NER becomes a no-op for the lang.
+    try:
+        from engine import pii_ner
+        pii_ner.load_models(languages=("de",))
+    except Exception as e:
+        print(f"[startup] spaCy NER skipped: {e}", flush=True)
 
     # Initialize auth system
     _auth_mod.init_auth(file_config)

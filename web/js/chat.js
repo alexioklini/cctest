@@ -129,6 +129,55 @@ async function sendMessage() {
       gdprAction = 'anonymise';
     } else {
       const scan = PIIScanner.scanPayload(text, state._pendingFiles);
+      // Server-side NER coverage: the browser scanner is regex-only, so
+      // names / addresses / organisations that only spaCy can see
+      // (German PER/LOC/ORG) never trigger the modal. Hit the
+      // server-side scan endpoint and fold its findings into the same
+      // bySource map so the modal lists them alongside regex findings.
+      // Fail-open: if the request errors or the server has the scanner
+      // disabled, we keep the client findings as-is (worst case = same
+      // gap we had before this fix). Skip the call entirely when the
+      // typed text is empty (attachment-only sends).
+      if (text && text.trim()) {
+        try {
+          const srv = await API.scanText(text, 'compose');
+          const srvGroups = Array.isArray(srv?.groups) ? srv.groups : [];
+          if (srvGroups.length) {
+            // Drop client-side dupes — if regex already found `email`, we
+            // don't want to render the same rule twice. The server scan
+            // is the superset (regex + NER), so prefer it for rule_ids
+            // present on both sides.
+            const srvRuleIds = new Set(srvGroups.map(g => g.rule_id));
+            scan.bySource['compose'] = srvGroups;
+            // Bring NER findings into scan.findings so the
+            // `scan.findings.length` check below sees them.
+            for (const g of srvGroups) {
+              const count = Math.max(1, g.count || 0);
+              for (let i = 0; i < count; i++) {
+                scan.findings.push({
+                  rule_id: g.rule_id,
+                  label: g.label || g.rule_id,
+                  category: g.category || 'personal',
+                  action: g.action || 'warn',
+                  count: g.count,
+                  samples: g.samples,
+                });
+              }
+            }
+            // Strip duplicate-rule-id entries from the original `text`
+            // bySource (regex-only) so the modal doesn't double-count.
+            if (Array.isArray(scan.bySource['text'])) {
+              scan.bySource['text'] = scan.bySource['text'].filter(
+                f => !srvRuleIds.has(f.rule_id));
+              if (!scan.bySource['text'].length) delete scan.bySource['text'];
+            }
+          }
+        } catch (e) {
+          // Server scan unreachable — keep going with client findings only.
+          console.warn('[gdpr-scan] server scan failed:', e?.message || e);
+        }
+      }
+
       // Follow-up-turn coverage: if a prior turn's persisted assistant
       // reply (or older user message) already carries PII, the LLM may
       // re-read disk-resident attachments OR have the PII inline in the
@@ -1552,13 +1601,23 @@ function renderMessages() {
            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
          </button>`
       : '';
+    // GDPR highlight overlay on the turn-header hint text. Mirrors the
+    // assistant-side behavior: when the user message was anonymised on the
+    // way out, the original PII values get the yellow <mark> overlay so the
+    // request side of every anonymised turn matches the response side. Gated
+    // by the same composer toggle (state.showGdprDetails).
+    const userSpans = t.userMsg?.metadata?.gdpr_restored_spans;
+    const showUserGdpr = state.showGdprDetails && Array.isArray(userSpans) && userSpans.length;
+    const hintInner = showUserGdpr
+      ? renderPlainTextWithGdprHighlights(fullQ, userSpans)
+      : esc(fullQ);
     const badge = t.turnNum > 0
       ? `<div class="turn-group-header">
            <span class="turn-group-badge" onclick="toggleTurnCollapse(${t.turnNum})" title="Klick zum ${isCollapsed ? 'Aufklappen' : 'Zuklappen'} dieser Anfrage">
              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
              Anfrage ${t.turnNum}
            </span>
-           <span class="${hintCls}">${esc(fullQ)}</span>
+           <span class="${hintCls}">${hintInner}</span>
            ${chevron}
          </div>`
       : '';

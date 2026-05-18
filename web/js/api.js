@@ -107,6 +107,17 @@ class API {
     });
   }
 
+  // Server-side text scan used by the pre-send composer check. Returns
+  // aggregated findings (same shape as scanAttachment) so the client's
+  // regex-only `PIIScanner` can be supplemented with spaCy NER findings
+  // before deciding whether to open the GDPR modal. Network failures
+  // resolve to `{groups: [], finding_count: 0}` — fail-open so a server
+  // hiccup never blocks a send. Callers must still respect their own
+  // client-side scanner; this is additive.
+  static scanText(text, source) {
+    return this.post('/v1/gdpr/scan-text', { text, source: source || 'compose' });
+  }
+
   // Admin-only audit endpoints for transparent anonymisation (step 6.4).
   // listSessionGdprMaps returns row metadata (mapping_id, turn_id,
   // created_at) — bodies stay encrypted at rest. getSessionGdprMap

@@ -1967,6 +1967,68 @@ class AdminHandlerMixin:
             "sections": engine.get_research_mode_disciplines(),
         })
 
+    def _handle_gdpr_ner_models_get(self):
+        """GET /v1/gdpr/ner-models — admin-only. List every spaCy NER
+        language Brain knows about plus its load state.
+
+        Response:
+          {languages: [{lang, display, model, loaded, failed}, ...]}
+        """
+        user = self._require_role("admin")
+        if not user:
+            return
+        from engine import pii_ner
+        self._send_json({"languages": pii_ner.list_loaded()})
+
+    def _handle_gdpr_ner_models_post(self):
+        """POST /v1/gdpr/ner-models — admin-only. Load or unload one
+        language's NER model synchronously.
+
+        Body: {action: 'load'|'unload', lang: str}
+        Returns the same shape as GET so the client can re-render without a
+        follow-up request.
+        """
+        user = self._require_role("admin")
+        if not user:
+            return
+        body = self._read_json() or {}
+        action = (body.get("action") or "").strip()
+        lang = (body.get("lang") or "").strip()
+        if action not in ("load", "unload"):
+            self._send_json({"error": "action must be 'load' or 'unload'"}, 400)
+            return
+        from engine import pii_ner
+        if lang not in pii_ner.KNOWN_LANGUAGES:
+            known = ", ".join(sorted(pii_ner.KNOWN_LANGUAGES.keys())) or "(none)"
+            self._send_json({
+                "error": f"unknown lang {lang!r}; known: {known}",
+            }, 400)
+            return
+        if action == "load":
+            pii_ner.load_models((lang,))
+            ok = pii_ner.is_available(lang)
+            status = "loaded" if ok else "load_failed"
+        else:
+            existed = pii_ner.unload_model(lang)
+            ok = True
+            status = "unloaded" if existed else "not_loaded"
+        try:
+            if engine._audit_log:
+                engine._audit_log.log_action(
+                    agent="main",
+                    action_type="gdpr_ner_models_change",
+                    tool_name="-",
+                    args_summary=(f"by={user.get('username','')} "
+                                  f"action={action} lang={lang} result={status}"),
+                    result_status="ok" if ok else "error",
+                )
+        except Exception:
+            pass
+        self._send_json({
+            "status": status,
+            "languages": pii_ner.list_loaded(),
+        })
+
     def _handle_quota_admin_users(self):
         """GET /v1/quotas/admin/users — admin-only. State for every user."""
         user = self._require_role("admin")

@@ -1,0 +1,20 @@
+# Brain server runtime dependencies.
+#
+# Most deps are pulled in transitively (anthropic, openai, openpyxl, etc.) and
+# already present in the dev environment. This file pins the additions that
+# Phase 1 spaCy NER needs so installs are reproducible.
+#
+#   pip install --break-system-packages -r requirements.txt
+#
+# Or on a fresh venv:
+#   python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+
+spacy>=3.8,<4.0
+# German NER model pinned to a specific release wheel. Hosted on GitHub
+# releases (stable, no runtime API dependency). The 3.8.0 wheel matches
+# the spaCy 3.8 pin above; the `_md` variant ships pre-trained word
+# vectors on top of the same tok2vec + ner pipeline as `_sm` (~45 MB on
+# disk, ~120 MB resident with parser/tagger/lemmatizer disabled).
+# Quality lift over `_sm` is most visible on casual / mixed-case text
+# where the smaller model over-fires PER on lowercase function-words.
+de_core_news_md @ https://github.com/explosion/spacy-models/releases/download/de_core_news_md-3.8.0/de_core_news_md-3.8.0-py3-none-any.whl

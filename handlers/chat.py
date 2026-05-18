@@ -3192,3 +3192,95 @@ class ChatHandlerMixin:
             "categories": cats,
             "finding_count": sum(g["count"] for g in groups_list),
         })
+
+    def _handle_gdpr_scan_text(self):
+        """POST /v1/gdpr/scan-text — server-side PII scan for the pre-send
+        composer check.
+
+        The client's `PIIScanner` is regex-only — it can't see findings from
+        the server-side spaCy NER pipeline. Without this endpoint, NER-only
+        findings (names, addresses, organisations) never trigger the pre-send
+        GDPR modal, so e.g. "Mein Name ist Alexander Klinsky" reaches a
+        cloud model unanonymised. Background calls (chat_summary, refine,
+        next_prompt) already go through `_pii_scan_text` and anonymise
+        correctly; this brings the interactive chat path to parity.
+
+        Body: `{text, source?}`. `source` is an optional label included in
+        the response groups (defaults to "compose").
+
+        Returns: `{groups: [{rule_id, label, count, samples: [...]}],
+                  categories: {rule_id: count},
+                  finding_count: int}`
+        — same shape as `/v1/attachments/scan` so the client can fold the
+        result into the same `scan.bySource` map without a separate path.
+
+        Caps: 200 KB body, 100 findings (matches `_pii_scan_text` default).
+        Auth: any authenticated user — same gate as sending a message,
+        no separate admin requirement.
+        """
+        user = self._require_auth()
+        if user is None:
+            return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            if length > 200 * 1024:
+                self._send_json({"error": "text too large (cap 200 KB)"}, 413)
+                return
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._send_json({"error": "invalid JSON body"}, 400)
+            return
+        text = body.get("text") or ""
+        source = (body.get("source") or "compose").strip() or "compose"
+        if not isinstance(text, str):
+            self._send_json({"error": "text must be a string"}, 400)
+            return
+        if not text:
+            self._send_json({
+                "groups": [], "categories": {}, "finding_count": 0,
+            })
+            return
+        cfg = engine._get_gdpr_scanner_config()
+        if not cfg.get("enabled", True):
+            self._send_json({
+                "groups": [], "categories": {}, "finding_count": 0,
+                "disabled": True,
+            })
+            return
+        try:
+            findings = engine._pii_scan_text(text, cfg=cfg, max_findings=100)
+        except Exception as e:
+            print(f"[gdpr_scan_text] failed: {e}", flush=True)
+            self._send_json({
+                "groups": [], "categories": {}, "finding_count": 0,
+                "error": "scan failed",
+            })
+            return
+
+        # Same aggregation as /v1/attachments/scan: one entry per rule_id
+        # with up to 3 sample previews. Keeps the client modal's render
+        # path identical between attachment + text sources.
+        groups: dict[str, dict] = {}
+        for f in findings:
+            rid = f.get("rule_id") or "?"
+            entry = groups.setdefault(rid, {
+                "rule_id": rid,
+                "label": f.get("label", rid),
+                "category": f.get("category", "personal"),
+                "action": f.get("action", "warn"),
+                "count": 0,
+                "samples": [],
+                "source": source,
+            })
+            entry["count"] += 1
+            if len(entry["samples"]) < 3:
+                start, end = f.get("start", 0), f.get("end", 0)
+                if 0 <= start < end <= len(text):
+                    entry["samples"].append(text[start:end])
+        cats = {rid: g["count"] for rid, g in groups.items()}
+        groups_list = sorted(groups.values(), key=lambda g: -g["count"])
+        self._send_json({
+            "groups": groups_list,
+            "categories": cats,
+            "finding_count": sum(g["count"] for g in groups_list),
+        })

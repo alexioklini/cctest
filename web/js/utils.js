@@ -298,6 +298,10 @@ const PIIScanner = {
     ipv4:'network', ipv6:'network',
     // Personal / biographical
     passport:'personal', dob:'personal',
+    // spaCy NER findings (Phase 1: German). Server-only — no client-side
+    // detector is registered for these. Grouped under `contact` alongside
+    // email/phone so the same default `ignore` action applies.
+    name:'contact', address:'contact', organisation:'contact',
     // Heuristic
     bare_identifier:'bare_id',
   },
@@ -311,7 +315,7 @@ const PIIScanner = {
     national_id:'National IDs (checksum-verified)',
     national_id_ctx:'ID-like values (context-matched)',
     financial:'Financial (IBAN, cards, accounts)',
-    contact:'Contact info (emails, phone)',
+    contact:'Contact info (emails, phone, names, addresses, organisations)',
     network:'Network addresses (IP)',
     personal:'Biographical (passport, DOB)',
     bare_id:'Bare numeric identifiers',

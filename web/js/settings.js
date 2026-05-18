@@ -1497,9 +1497,18 @@ async function switchGeneralTab(tab, btn) {
       // Sort rules within each category alphabetically for stable layout
       for (const cat of Object.keys(catMembers)) catMembers[cat].sort();
 
+      // Labels for rule_ids that have no client-side detector (server-only,
+      // e.g. spaCy NER). Listed explicitly so the admin UI is readable
+      // instead of just showing the raw rid.
+      const SERVER_ONLY_RULE_LABELS = {
+        name: 'Name (spaCy NER, German)',
+        address: 'Adresse / Ort (spaCy NER, German)',
+        organisation: 'Organisation (spaCy NER, German)',
+      };
       const ruleLabel = (rid) => {
         const r = PIIScanner.rules.find(x => x.id === rid);
-        return r ? r.label : rid;
+        if (r) return r.label;
+        return SERVER_ONLY_RULE_LABELS[rid] || rid;
       };
 
       const ACT_DESC = {
@@ -1589,6 +1598,14 @@ async function switchGeneralTab(tab, btn) {
           <div style="font-size:11px;color:var(--text-400);margin-top:2px">Used for background LLM calls (next-prompt, chat summary, memory classifier, worker summariser, scheduled tasks) and for composer auto-routing when a blocking finding lands on a cloud model. ${hasLocals?'':'<span style="color:var(--warning,#b45309)">No local models are configured — add one under Models first.</span>'}</div>
         </div>
 
+        ${SEC('NER models (Named Entity Recognition)')}
+        <div style="font-size:11px;color:var(--text-400);margin-bottom:8px">
+          spaCy detects names, addresses, and organisations alongside the regex rules. Findings sit in the <i>Contact info</i> category — set the category action to <i>warn</i> or <i>block</i> below to surface them. Loaded models stay resident (~50 MB each); unload to free memory.
+        </div>
+        <div id="gdpr-ner-pill" style="display:flex;flex-direction:column;gap:6px;min-height:32px">
+          <div style="font-size:11px;color:var(--text-400);font-style:italic">Loading…</div>
+        </div>
+
         ${SEC('Background / non-interactive LLM calls')}
         <div style="font-size:11px;color:var(--text-400);margin-bottom:8px">
           Policy for calls Brain makes without user interaction (next-prompt suggestions, chat summary, memory classifier, scheduled tasks, user-profile daemon, KG extraction). Interactive chat is unaffected — users still see the per-turn modal there.
@@ -1629,6 +1646,9 @@ async function switchGeneralTab(tab, btn) {
           <button class="btn-secondary" onclick="_confirmResetGdprCategories()">Reset categories to defaults</button>
         </div>
       </div>`);
+      // Populate the NER pill (separate request — pill lives on its own
+      // endpoint so it can be refreshed independently of saveGdprConfig).
+      refreshGdprNerPill();
     } catch(e) {
       C.innerHTML = P(`<div style="color:var(--error)">Failed to load GDPR settings: ${esc(e.message||e)}</div>`);
     }
