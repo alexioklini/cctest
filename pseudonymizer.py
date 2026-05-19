@@ -72,6 +72,15 @@ SHAPE_PRESERVING: frozenset[str] = frozenset({
     "iban",
     "credit_card",
     "phone",
+    # Soft-PII: a plausible look-alike preserves prose readability for the
+    # LLM (e.g. "Hans Müller wohnt in Wien" → "John Doe wohnt in Springfield"
+    # still parses as a sentence about a person+place; an opaque
+    # `<NAME_1_xxxx>` token can confuse smaller models on long contexts).
+    "name",
+    "address",
+    "organisation",
+    "email",
+    "date",
 })
 
 
@@ -226,10 +235,277 @@ def _re_inject_separators(template: str, digits: str) -> str:
     return "".join(out)
 
 
+# ---------------------------------------------------------------------------
+# Soft-PII shape-preserving fakes (names, addresses, orgs, emails, dates)
+# ---------------------------------------------------------------------------
+#
+# The lists are deliberately small + bland. Goal is to produce a fake that
+# REMAINS RECOGNISABLE AS PII to the LLM (so it still parses the sentence
+# structure correctly) without leaking the original. Lists are
+# English-flavoured but locale-neutral; the German-only NER scope of Phase 1
+# means inputs are German prose, so reproducing exotic German names would
+# add value but also add complexity. "John Doe wohnt in Springfield"
+# parses fine.
+
+_FIRST_NAMES = (
+    "John", "Jane", "Alex", "Maria", "Chris", "Sam", "Pat", "Robin",
+    "Taylor", "Jordan", "Casey", "Morgan", "Riley", "Quinn", "Avery",
+    "Drew", "Emerson", "Hayden", "Kerry", "Logan", "Reese", "Sage",
+    "Skyler", "Tristan", "Wren", "Blake", "Cameron", "Dakota", "Elliott",
+    "Finley",
+)
+_LAST_NAMES = (
+    "Doe", "Smith", "Brown", "Jones", "Miller", "Davis", "Wilson",
+    "Taylor", "Clark", "Lewis", "Walker", "Hall", "Allen", "Young",
+    "King", "Wright", "Scott", "Green", "Adams", "Baker", "Carter",
+    "Mitchell", "Roberts", "Turner", "Phillips", "Campbell", "Parker",
+    "Evans", "Edwards", "Collins",
+)
+_STREET_BASES = (
+    "Main", "Park", "Oak", "Elm", "Cedar", "Maple", "River", "Hill",
+    "Lake", "Forest", "Spring", "Garden", "Meadow", "Bridge", "Church",
+    "Market", "Station",
+)
+_CITIES = (
+    "Springfield", "Riverside", "Franklin", "Greenville", "Bristol",
+    "Clinton", "Fairview", "Salem", "Madison", "Georgetown", "Arlington",
+    "Ashland", "Burlington", "Manchester", "Oxford", "Newport", "Kingston",
+)
+_ORG_NAMES = (
+    "Acme", "Globex", "Initech", "Umbrella", "Stark", "Wayne",
+    "Hooli", "Pied Piper", "Soylent", "Cyberdyne", "Tyrell", "Wonka",
+    "Vandelay", "Massive Dynamic", "Oscorp", "Wernham Hogg",
+)
+_ORG_LEGAL_FORMS_DE = ("GmbH", "AG", "KG", "OHG", "UG", "e.V.", "eG")
+_ORG_LEGAL_FORMS_EN = (
+    "Ltd", "Ltd.", "Inc", "Inc.", "Corp", "Corp.", "LLC", "LLP",
+    "PLC", "Co", "Co.", "Company",
+)
+_ORG_LEGAL_FORMS_OTHER = (
+    "SARL", "SAS", "SA", "S.A.", "S.A.S.", "S.r.l.", "S.p.A.", "B.V.",
+    "N.V.", "AB", "AS", "Oy",
+)
+_ALL_LEGAL_FORMS = tuple(
+    sorted(
+        set(_ORG_LEGAL_FORMS_DE + _ORG_LEGAL_FORMS_EN + _ORG_LEGAL_FORMS_OTHER),
+        key=len,
+        reverse=True,
+    )
+)
+
+
+def _pick(seq: tuple, original: str, salt: str, *, kind: str = "") -> str:
+    """Deterministic pick from `seq` based on hash(salt:kind:original)."""
+    h = hashlib.sha256(f"{salt}:{kind}:{original}".encode("utf-8")).digest()
+    idx = int.from_bytes(h[:4], "big") % len(seq)
+    return seq[idx]
+
+
+def _fake_name(original: str, salt: str) -> str:
+    """Generate a plausible first+last name. Preserves token count when the
+    original is a single token (e.g. just a surname) — emits one name only."""
+    parts = original.split()
+    first = _pick(_FIRST_NAMES, original, salt, kind="first")
+    last = _pick(_LAST_NAMES, original, salt, kind="last")
+    if len(parts) <= 1:
+        # Single-token original — surname only is the safer assumption (NER
+        # often catches surnames in formal prose).
+        return last
+    return f"{first} {last}"
+
+
+# Number-extracting regex used by address fake to keep house numbers shaped.
+_HOUSE_NUM_RE = re.compile(r"\b(\d{1,5}[A-Za-z]?)\b")
+# Postal code patterns we care about preserving the shape of.
+_POSTAL_RE = re.compile(r"\b(\d{4,5})\b")
+
+
+def _fake_address(original: str, salt: str) -> str:
+    """Generate a plausible address. Preserves the rough structure of the
+    original — if the NER caught a multi-word LOC, we emit a street+number
+    (and optional postal+city) similar in length; if it caught just a city
+    name, we emit just a city."""
+    street_base = _pick(_STREET_BASES, original, salt, kind="street")
+    city = _pick(_CITIES, original, salt, kind="city")
+    # Single-token original is almost always a city/region name caught by NER.
+    if len(original.split()) <= 1 and not any(c.isdigit() for c in original):
+        return city
+    # Multi-word with no digits → street name + city, no number.
+    num_match = _HOUSE_NUM_RE.search(original)
+    postal_match = _POSTAL_RE.search(original)
+    # Preserve German "Straße" suffix if present (locale signal for the LLM).
+    if "straße" in original.lower() or "strasse" in original.lower():
+        street = f"{street_base}straße"
+    elif "street" in original.lower():
+        street = f"{street_base} Street"
+    elif "road" in original.lower() or original.lower().endswith(" rd"):
+        street = f"{street_base} Road"
+    else:
+        street = f"{street_base}straße"  # default to DE flavour (Phase 1)
+    parts = [street]
+    if num_match:
+        # Use a deterministic but different number.
+        seed = _seed_int(original, salt, n=4)
+        parts[0] = f"{street} {1 + (seed % 199)}"
+    if postal_match:
+        seed = _seed_int(original, salt + ":postal", n=4)
+        postal_len = len(postal_match.group(1))
+        # Range that respects the original length (4 or 5 digits).
+        low = 10 ** (postal_len - 1)
+        high = (10 ** postal_len) - 1
+        fake_postal = low + (seed % (high - low + 1))
+        parts.append(f"{fake_postal} {city}")
+    else:
+        parts.append(city)
+    return ", ".join(parts)
+
+
+def _fake_organisation(original: str, salt: str) -> str:
+    """Generate a plausible org name. Preserves legal-form suffix if present
+    (GmbH, AG, Ltd, Inc, SARL, …)."""
+    base = _pick(_ORG_NAMES, original, salt, kind="org")
+    # Try to detect a trailing legal form — longest-suffix-wins so "GmbH"
+    # doesn't shadow "Co." etc.
+    suffix = ""
+    stripped = original.strip().rstrip(".")
+    for lf in _ALL_LEGAL_FORMS:
+        lf_norm = lf.rstrip(".")
+        if stripped.lower().endswith(" " + lf_norm.lower()):
+            suffix = " " + lf  # keep original casing/punctuation
+            break
+    if suffix:
+        return base + suffix
+    # No legal form detected — default to "Corp" for plausibility.
+    return base + " Corp"
+
+
+# Email shape: local-part regex. We preserve dots and underscores in the
+# local-part to keep the shape recognisable.
+_EMAIL_RE = re.compile(r"^([^@]+)@([^@]+)$")
+
+
+def _fake_email(original: str, salt: str) -> str:
+    """Generate a plausible-looking email. Preserves:
+      - presence of a dot in the local part (firstname.lastname vs nodot)
+      - TLD (.de stays .de, .com stays .com — locale signal survives)
+      - approximate length
+    Always uses `example.<tld>` domain so the address is RFC-2606 safe and
+    can never accidentally hit a real inbox."""
+    m = _EMAIL_RE.match(original.strip())
+    if not m:
+        # Malformed — fall back to opaque digits scheme via the standard path.
+        # Returning a deterministic but obviously-fake string keeps shape.
+        first = _pick(_FIRST_NAMES, original, salt, kind="first").lower()
+        return f"{first}@example.org"
+    local, domain = m.group(1), m.group(2)
+    # TLD: last dot-separated segment of the domain, capped at 6 chars.
+    tld = domain.rsplit(".", 1)[-1] if "." in domain else "org"
+    tld = tld.lower()[:6] or "org"
+    first = _pick(_FIRST_NAMES, original, salt, kind="first").lower()
+    last = _pick(_LAST_NAMES, original, salt, kind="last").lower()
+    if "." in local:
+        local_fake = f"{first}.{last}"
+    elif "_" in local:
+        local_fake = f"{first}_{last}"
+    elif "-" in local:
+        local_fake = f"{first}-{last}"
+    elif any(c.isdigit() for c in local):
+        # local part had digits → keep digits (random 2-digit suffix)
+        seed = _seed_int(original, salt, n=2)
+        local_fake = f"{first}{seed % 100:02d}"
+    else:
+        # Plain — just first name, lowercase.
+        local_fake = first
+    return f"{local_fake}@example.{tld}"
+
+
+# Date formats we recognise. Order matters: longest/most-specific first.
+# Each entry is (compiled_regex, "format_id"). Format id drives reconstruction.
+_DATE_PATTERNS: tuple = (
+    # ISO 8601: 2026-05-19
+    (re.compile(r"^(\d{4})-(\d{2})-(\d{2})$"), "iso"),
+    # European: 19.05.2026 / 19.5.2026 / 19-05-2026
+    (re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$"), "eu_dot"),
+    (re.compile(r"^(\d{1,2})-(\d{1,2})-(\d{4})$"), "eu_dash"),
+    # US: 05/19/2026 / 5/19/2026
+    (re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$"), "us_slash"),
+    # 2-digit year variants
+    (re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{2})$"), "eu_dot_yy"),
+    (re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{2})$"), "us_slash_yy"),
+)
+
+
+def _fake_date(original: str, salt: str) -> str:
+    """Generate a fake date that preserves the original's format AND its
+    year/month (so seasonality + age-bracket stay intact). Day jitters by
+    a deterministic offset within the same month — avoids leaking exact DOB
+    while preserving "born in 1987-May" signal."""
+    raw = original.strip()
+    for pat, fmt in _DATE_PATTERNS:
+        m = pat.match(raw)
+        if not m:
+            continue
+        # Parse fields based on the format. All formats give us (year, month, day)
+        # in some order.
+        if fmt == "iso":
+            y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        elif fmt in ("eu_dot", "eu_dash"):
+            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        elif fmt == "us_slash":
+            mo, d, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        elif fmt == "eu_dot_yy":
+            d, mo, yy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            y = 2000 + yy if yy < 50 else 1900 + yy
+        elif fmt == "us_slash_yy":
+            mo, d, yy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            y = 2000 + yy if yy < 50 else 1900 + yy
+        else:  # pragma: no cover
+            continue
+        # Validate
+        if not (1 <= mo <= 12 and 1 <= d <= 31 and 1900 <= y <= 2100):
+            continue
+        # Jitter day within the same month. Days-in-month is approximate
+        # (28 covers every month); good enough — we never need to emit Feb 30.
+        seed = _seed_int(original, salt, n=4)
+        new_d = 1 + (seed % 28)
+        # Reassemble in the original format.
+        if fmt == "iso":
+            return f"{y:04d}-{mo:02d}-{new_d:02d}"
+        if fmt == "eu_dot":
+            # Preserve zero-padding choice from the original.
+            d_orig_padded = len(m.group(1)) == 2
+            mo_orig_padded = len(m.group(2)) == 2
+            d_s = f"{new_d:02d}" if d_orig_padded else str(new_d)
+            mo_s = f"{mo:02d}" if mo_orig_padded else str(mo)
+            return f"{d_s}.{mo_s}.{y:04d}"
+        if fmt == "eu_dash":
+            return f"{new_d:02d}-{mo:02d}-{y:04d}"
+        if fmt == "us_slash":
+            d_orig_padded = len(m.group(2)) == 2
+            mo_orig_padded = len(m.group(1)) == 2
+            d_s = f"{new_d:02d}" if d_orig_padded else str(new_d)
+            mo_s = f"{mo:02d}" if mo_orig_padded else str(mo)
+            return f"{mo_s}/{d_s}/{y:04d}"
+        if fmt == "eu_dot_yy":
+            return f"{new_d:02d}.{mo:02d}.{y % 100:02d}"
+        if fmt == "us_slash_yy":
+            return f"{mo:02d}/{new_d:02d}/{y % 100:02d}"
+    # Unrecognised — return the original year if we can find one.
+    yr = re.search(r"\b(19|20)\d{2}\b", raw)
+    if yr:
+        return yr.group(0)
+    return raw  # Last-resort: pass through (caller falls back to opaque token)
+
+
 _SHAPE_GENERATORS: dict[str, Callable[[str, str], str]] = {
     "iban": _fake_iban,
     "credit_card": _fake_credit_card,
     "phone": _fake_phone,
+    "name": _fake_name,
+    "address": _fake_address,
+    "organisation": _fake_organisation,
+    "email": _fake_email,
+    "date": _fake_date,
 }
 
 

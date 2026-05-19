@@ -17504,6 +17504,26 @@ def _pii_rules() -> list[dict]:
          "re": _re.compile(r"(?:\baccount[- ]?(?:number|no\.?|\#)\b|\bacct\.?[- ]?(?:no\.?|\#)?\b|\bIBAN\b|Kontonummer|numéro[- ]?de[- ]?compte|número[- ]?de[- ]?cuenta)[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-/.]{7,30}[A-Z0-9])", _re.IGNORECASE)},
         {"id": "health_insurance_ctx", "label": "Health insurance number (likely)",
          "re": _re.compile(r"(?:health[- ]?insurance|Krankenversicherungsnummer|Krankenkasse|assurance[- ]?maladie|seguridad[- ]?social|Medicare|Medicaid|\bNHS[- ]?(?:number|no\.?)?|\bAMKA\b|\bTAJ\b)[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-./]{5,19}[A-Z0-9])", _re.IGNORECASE)},
+
+        # ── Dates ─────────────────────────────────────────────────────
+        # Runs last in the rules list so every national-ID + IBAN +
+        # credit-card rule above gets first claim on their digit groups
+        # via overlap suppression (otherwise YYYY-MM-DD would steal digits
+        # from a 16-digit credit card start, dd.mm.yyyy from a Steuer-ID
+        # context, etc.). Word-bounded so dates inside larger digit blocks
+        # don't fire. Years constrained to 19xx/20xx to suppress noise
+        # from arbitrary number triplets like "10/100/2030 ratio".
+        {"id": "date", "label": "Date",
+         "re": _re.compile(
+             r"\b("
+             r"(?:19|20)\d{2}-\d{1,2}-\d{1,2}"          # ISO 2026-05-19
+             r"|\d{1,2}\.\d{1,2}\.(?:19|20)\d{2}"        # 19.05.2026
+             r"|\d{1,2}-\d{1,2}-(?:19|20)\d{2}"          # 19-05-2026
+             r"|\d{1,2}/\d{1,2}/(?:19|20)\d{2}"          # 05/19/2026
+             r"|\d{1,2}\.\d{1,2}\.\d{2}"                 # 19.05.26 (2-digit yr)
+             r"|\d{1,2}/\d{1,2}/\d{2}"                   # 05/19/26
+             r")\b"
+         )},
     ]
     return _PII_RULES
 
@@ -20252,7 +20272,7 @@ PII_RULE_CATEGORIES: dict[str, str] = {
     "ipv4": "network", "ipv6": "network",
 
     # Biographical / personal-document identifiers
-    "passport": "personal", "dob": "personal",
+    "passport": "personal", "dob": "personal", "date": "personal",
 
     # spaCy NER findings (Phase 1: German). Sit in the `contact` category
     # alongside email/phone — soft PII the user often includes deliberately

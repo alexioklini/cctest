@@ -136,6 +136,29 @@ def _build_tool_list(*, purpose: str, agent_id: str | None,
     )
 
 
+def _log_wire_tools(tools: list[dict], *, turn_id: str, purpose: str,
+                    agent_id: str | None, model: str) -> None:
+    """Diagnostic: dump the resolved tool-name list per turn to stdout.
+
+    Gated on `sidecar.tool_list_log` in config.json (default off). Used to
+    debug "did the model actually see tool X?" questions — e.g. when a chat
+    expected to call `use_skill` instead reached for `exa_search`, this lets
+    us verify whether the tool was in the wire payload at all.
+    """
+    try:
+        if not _sidecar_config().get("tool_list_log"):
+            return
+        names = sorted(t.get("name", "?") for t in tools)
+        print(
+            f"[wire-tools] turn={turn_id[:8]} agent={agent_id or '-'} "
+            f"model={model} purpose={purpose} n={len(names)} :: "
+            f"{', '.join(names)}",
+            flush=True,
+        )
+    except Exception:
+        pass  # Diagnostic must never break the turn.
+
+
 # ---------- Sampling param mapping ----------
 
 _THINKING_BUDGETS = {"off": 0, "low": 2000, "medium": 8000, "high": 16000}
@@ -450,17 +473,20 @@ def run_turn(
         except Exception:
             pass
 
+    _tools = _build_tool_list(
+        purpose=purpose,
+        agent_id=tool_context.get("agent_id") or None,
+        mcp_manager=getattr(engine, "_mcp_manager", None),
+    )
+    _log_wire_tools(_tools, turn_id=turn_id, purpose=purpose,
+                    agent_id=tool_context.get("agent_id") or None, model=model)
     payload: dict[str, Any] = {
         "model": engine.get_api_model_id(model),
         "base_url": _normalise_anthropic_base_url(base_url),
         "api_key": api_key,
         "system": system_prompt,
         "messages": _to_anthropic_messages(messages),
-        "tools": _build_tool_list(
-            purpose=purpose,
-            agent_id=tool_context.get("agent_id") or None,
-            mcp_manager=getattr(engine, "_mcp_manager", None),
-        ),
+        "tools": _tools,
         "max_tokens": int(max_tokens),
         "max_rounds": int(max_rounds),
         "tool_endpoint": tool_endpoint_internal(),
@@ -647,17 +673,20 @@ def run_turn_blocking(
     tool_context.setdefault("model", model)
     tool_context["turn_id"] = turn_id
 
+    _tools = _build_tool_list(
+        purpose=purpose,
+        agent_id=tool_context.get("agent_id") or None,
+        mcp_manager=getattr(engine, "_mcp_manager", None),
+    )
+    _log_wire_tools(_tools, turn_id=turn_id, purpose=purpose,
+                    agent_id=tool_context.get("agent_id") or None, model=model)
     payload: dict[str, Any] = {
         "model": engine.get_api_model_id(model),
         "base_url": _normalise_anthropic_base_url(base_url),
         "api_key": api_key,
         "system": system_prompt,
         "messages": _to_anthropic_messages(messages),
-        "tools": _build_tool_list(
-            purpose=purpose,
-            agent_id=tool_context.get("agent_id") or None,
-            mcp_manager=getattr(engine, "_mcp_manager", None),
-        ),
+        "tools": _tools,
         "max_tokens": int(max_tokens),
         "max_rounds": int(max_rounds),
         "tool_endpoint": tool_endpoint_internal(),
