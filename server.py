@@ -1402,6 +1402,12 @@ class BrainAgentHandler(
             self._handle_session_gdpr_map_detail(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/files"):
             self._handle_get_session_files(path)
+        elif path.startswith("/v1/sessions/") and path.endswith("/pii-history-summary"):
+            # Server-side history PII scan (regex + spaCy NER). The composer
+            # history badge in web/js/nav.js unions these counts with its
+            # local regex scan so soft-PII (name/address/organisation) that
+            # only NER detects still surfaces.
+            self._handle_session_pii_history_summary(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/messages"):
             self._handle_get_messages(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/next-prompt"):

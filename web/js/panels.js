@@ -258,13 +258,63 @@ function updateStatusBar() {
 //   'auto-anon-deanon' — (not yet implemented)
 // `localActive` = true when the currently selected model is already local
 // (so the data would stay on-prem); controls whether a hard block can proceed.
-function gdprActionModal(scan, chat, localActive) {
+function gdprActionModal(scan, chat, localActive, classifiedFiles) {
   return new Promise((resolve) => {
-    const isBlock = scan.worstAction === 'block';
-    // A hard block can only proceed if a local model is already active. Cloud +
-    // block → the user must pick "execute via local model" (or cancel/anonymise
-    // once that lands). Warn-level (or block+local) keeps "send anyway".
-    const canSend = !isBlock || localActive;
+    // ─── Classification compose ───
+    // `classifiedFiles` is an optional list of pending files whose
+    // classification scan came back with a non-trivial effective_action
+    // (warn / force_local / block). We surface them as an extra section
+    // in the same modal so the user sees PII AND classification in one
+    // place, and the button row reflects the strictest combined policy.
+    classifiedFiles = Array.isArray(classifiedFiles) ? classifiedFiles : [];
+    const _RANK = {public: 0, internal: 1, confidential: 2, strict: 3, unmarked: 1};
+    let clsWorstAction = 'ignore';      // ignore | warn | force_local | block
+    let clsWorstLevel = null;           // e.g. 'strict'
+    let clsWorstLabel = '';
+    let clsHasMismatch = false;
+    const _ACT_ORDER = {ignore: 0, warn: 1, force_local: 2, block: 3};
+    for (const cf of classifiedFiles) {
+      const c = cf.scan && cf.scan.classification;
+      if (!c) continue;
+      const act = c.effective_action || 'ignore';
+      if ((_ACT_ORDER[act] || 0) > (_ACT_ORDER[clsWorstAction] || 0)) {
+        clsWorstAction = act;
+      }
+      const lvl = c.final_level || 'unmarked';
+      if ((_RANK[lvl] || 0) > (_RANK[clsWorstLevel || 'public'] || 0)) {
+        clsWorstLevel = lvl;
+        clsWorstLabel = c.level_label_de || lvl;
+      }
+      if (c.mismatch) clsHasMismatch = true;
+    }
+    const clsActive = classifiedFiles.length > 0 && clsWorstAction !== 'ignore';
+    // Strict-level "block" is the ARL §1.11 hard veto: even a local model
+    // does not get to see the document. Only Cancel survives.
+    const clsHardVeto = clsActive && clsWorstLevel === 'strict'
+                        && clsWorstAction === 'block';
+    // force_local (or non-strict block) from classification: cloud send is
+    // forbidden, but a local model is still on the table.
+    const clsForcesLocal = clsActive && !clsHardVeto
+                           && (clsWorstAction === 'force_local'
+                               || clsWorstAction === 'block')
+                           && !localActive;
+
+    const isBlock = scan.worstAction === 'block' || clsHardVeto || clsForcesLocal;
+    // "Trotzdem senden" — cloud is allowed:
+    //   - no hard veto, AND
+    //   - PII gate doesn't block (or model is already local), AND
+    //   - classification doesn't demand local-only.
+    const canSend = !clsHardVeto
+                    && (scan.worstAction !== 'block' || localActive)
+                    && !clsForcesLocal;
+    // "Anonymisieren & senden" — auto-anon-deanon. Only meaningful if
+    // there's PII to strip; a classification veto still kills it (we
+    // can't anonymise a document's classification away).
+    const hasPiiFindings = (scan.findings && scan.findings.length > 0);
+    const canAnonymise = hasPiiFindings && !clsHardVeto && !clsForcesLocal;
+    // "Lokales Modell verwenden" — always available except under the
+    // strict hard veto.
+    const canLocal = !clsHardVeto;
     // Inject the PII modal's one-off styles once per page lifetime.
     if (!document.getElementById('pii-modal-styles-v3')) {
       document.getElementById('pii-modal-styles')?.remove();
@@ -478,27 +528,107 @@ function gdprActionModal(scan, chat, localActive) {
       );
     }
 
+    // ─── Append a classification section, when active ───
+    // Renders one card per classified file with the German level label
+    // + marker level + resulting action, mirroring the per-source-card
+    // visual style.
+    if (clsActive) {
+      const LEVEL_DE = {
+        public: 'Öffentlich',
+        internal: 'Intern',
+        confidential: 'Vertraulich',
+        strict: 'Streng vertraulich',
+        unmarked: 'Unmarkiert',
+      };
+      const ACTION_DE = {
+        ignore: 'Keine Einschränkung',
+        warn: 'Warnung — Senden möglich',
+        force_local: 'Nur lokales Modell erlaubt',
+        block: 'Senden nicht möglich',
+      };
+      const fileRows = classifiedFiles.map(cf => {
+        const c = cf.scan.classification;
+        const det = LEVEL_DE[c.final_level] || c.level_label_de || c.final_level;
+        const markerLvl = c.marker_level || null;
+        const mark = markerLvl ? (LEVEL_DE[markerLvl] || markerLvl) : 'keine Markierung im Dokument';
+        const actDE = ACTION_DE[c.effective_action] || c.effective_action || '';
+        const mismatchNote = c.mismatch
+          ? '<div class="pii-finding"><span class="pii-finding-sev is-block"></span>' +
+            '<span class="pii-finding-label">Mismatch</span>' +
+            '<span class="pii-finding-val">Inhalt deutet auf höhere Schutzstufe als die Markierung hin.</span></div>'
+          : '';
+        return '<div class="pii-finding">' +
+          '<span class="pii-finding-sev' +
+            (c.effective_action === 'block' ? ' is-block' : '') +
+          '"></span>' +
+          '<span class="pii-finding-label">' + esc(cf.name) + '</span>' +
+          '<span class="pii-finding-cat">' + esc(det) + '</span>' +
+          '<span class="pii-finding-val">Markierung: ' + esc(mark) + ' · Folge: ' + esc(actDE) + '</span>' +
+        '</div>' + mismatchNote;
+      }).join('');
+      sections.push(
+        '<div class="pii-source-card">' +
+          '<div class="pii-source-head">' +
+            '<div class="pii-source-name">Dokumentenklassifizierung</div>' +
+            '<div class="pii-source-count">' + classifiedFiles.length + ' Anhang' +
+              (classifiedFiles.length === 1 ? '' : ' / Anhänge') + '</div>' +
+          '</div>' +
+          fileRows +
+        '</div>'
+      );
+    }
+
     const total = scan.findings.length;
     const blockCls = isBlock ? ' is-block' : '';
-    const subtitle = isBlock
-      ? (canSend
-          ? 'Hochsensible Daten erkannt — das gewählte Modell ist lokal, die Daten verlassen das System nicht.'
-          : 'Hochsensible Daten erkannt — können nicht an ein Cloud-Modell gesendet werden. Bitte Anonymisierung oder lokales Modell wählen.')
-      : 'Bitte vor dem Senden prüfen — Werte sind teilweise maskiert.';
-    const title = isBlock
-      ? 'Hochsensible personenbezogene Daten erkannt'
-      : 'Personenbezogene Daten in der Nachricht erkannt';
+    // Title + subtitle now reflect PII + classification jointly.
+    // Priority order: strict-hard-veto > classification force_local >
+    // PII hard block > PII warn.
+    let title, subtitle;
+    if (clsHardVeto) {
+      title = 'Streng vertraulicher Inhalt erkannt — Versand blockiert';
+      subtitle = 'Streng vertrauliche Dokumente dürfen das System nicht an ein Modell verlassen. Bitte den Turn abbrechen und den Anhang entfernen.';
+    } else if (clsForcesLocal) {
+      title = 'Klassifizierter Inhalt erkannt';
+      subtitle = 'Klassifizierter Anhang' + (hasPiiFindings ? ' + personenbezogene Daten' : '') +
+        ' — Versand nur an ein lokales Modell möglich.';
+    } else if (scan.worstAction === 'block') {
+      title = 'Hochsensible personenbezogene Daten erkannt';
+      subtitle = canSend
+        ? 'Hochsensible Daten erkannt — das gewählte Modell ist lokal, die Daten verlassen das System nicht.'
+        : 'Hochsensible Daten erkannt — können nicht an ein Cloud-Modell gesendet werden. Bitte Anonymisierung oder lokales Modell wählen.';
+    } else if (clsActive && !hasPiiFindings) {
+      title = 'Klassifizierter Inhalt erkannt';
+      subtitle = `Anhang mit Klassifizierung „${clsWorstLabel || clsWorstLevel}" erkannt — bitte vor dem Senden prüfen.`;
+    } else if (clsActive) {
+      title = 'Personenbezogene Daten und klassifizierter Inhalt erkannt';
+      subtitle = 'Bitte vor dem Senden prüfen — die Auswahl gilt für beide Befunde.';
+    } else {
+      title = 'Personenbezogene Daten in der Nachricht erkannt';
+      subtitle = 'Bitte vor dem Senden prüfen — Werte sind teilweise maskiert.';
+    }
     const sourcesN = Object.keys(scan.bySource).length;
-    const statBadge = total + ' Treffer · ' + sourcesN + ' Quelle' + (sourcesN === 1 ? '' : 'n');
+    const statBadge = (hasPiiFindings ? total + ' Treffer · ' : '') +
+      (sourcesN ? sourcesN + ' Quelle' + (sourcesN === 1 ? '' : 'n') : '') +
+      (clsActive
+        ? (sourcesN ? ' · ' : '') + classifiedFiles.length + ' klassifiziert'
+        : '');
 
     // Shield SVG (same vocabulary as the inline composer badge)
     const shieldSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.6" fill="currentColor"/></svg>';
 
     // Footer action hierarchy:
     //   left:  Abbrechen (text-button) + "Trotzdem senden" (warn outline, only if allowed)
-    //   right: Lokales Modell (secondary) + Anonymisieren & senden (primary, focus)
+    //   right: Lokales Modell (secondary, only if allowed) + Anonymisieren & senden (primary, only if PII)
+    // The four canonical verdicts are: continue / local / anonymise / cancel.
+    // The strict hard veto reduces this to {cancel} only.
     const sendBtn = canSend
       ? '<button class="pii-btn pii-btn-warn" id="pii-send-btn">Trotzdem senden</button>'
+      : '';
+    const localBtn = canLocal
+      ? '<button class="pii-btn pii-btn-secondary" id="pii-local-btn">Lokales Modell verwenden</button>'
+      : '';
+    const anonBtn = canAnonymise
+      ? '<button class="pii-btn pii-btn-primary" id="pii-anon-btn">Anonymisieren &amp; senden</button>'
       : '';
     const modalId = 'pii-warning-modal';
     document.getElementById(modalId)?.remove();
@@ -519,8 +649,8 @@ function gdprActionModal(scan, chat, localActive) {
               '<button class="pii-btn pii-btn-text" id="pii-cancel-btn">Abbrechen</button>' +
               sendBtn +
               '<div class="pii-actions-spacer"></div>' +
-              '<button class="pii-btn pii-btn-secondary" id="pii-local-btn">Lokales Modell verwenden</button>' +
-              '<button class="pii-btn pii-btn-primary" id="pii-anon-btn">Anonymisieren &amp; senden</button>' +
+              localBtn +
+              anonBtn +
             '</div>' +
             '<p class="pii-suppress-note">Die Auswahl gilt für den Rest dieses Chats. ' +
             'Über das Schild-Symbol unter dem Eingabefeld lässt sich die Wahl jederzeit zurücksetzen.</p>' +
@@ -540,13 +670,16 @@ function gdprActionModal(scan, chat, localActive) {
     document.addEventListener('keydown', onKey);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup('cancel'); });
     document.getElementById('pii-cancel-btn').onclick = () => cleanup('cancel');
-    document.getElementById('pii-local-btn').onclick = () => cleanup('local');
-    document.getElementById('pii-anon-btn').onclick = () => cleanup('anonymise');
+    document.getElementById('pii-local-btn')?.addEventListener('click', () => cleanup('local'));
+    document.getElementById('pii-anon-btn')?.addEventListener('click', () => cleanup('anonymise'));
     document.getElementById('pii-send-btn')?.addEventListener('click', () => cleanup('send'));
-    // Default focus per design: Anonymise & continue. Falls back to Cancel
-    // when there's nothing safe to default to (extremely rare edge case).
+    // Default focus: anonymise when available, else local, else cancel.
+    // Strict hard veto collapses to cancel-only.
     setTimeout(() => {
-      document.getElementById('pii-anon-btn')?.focus();
+      const pref = document.getElementById('pii-anon-btn')
+                || document.getElementById('pii-local-btn')
+                || document.getElementById('pii-cancel-btn');
+      pref?.focus();
     }, 50);
   });
 }

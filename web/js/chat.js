@@ -115,6 +115,10 @@ async function sendMessage() {
   }
 
   let gdprAction = '';
+  // Tracks whether the unified PII+classification modal has already
+  // resolved this turn. Used by the classification fallback gate below
+  // to avoid a second modal when the user just chose in the unified one.
+  let unifiedModalRan = false;
   if (state.piiScannerEnabled !== false) {
     // Sticky session preference: if the user previously made a choice in
     // this chat OR the session already has an anonymisation mapping (which
@@ -202,9 +206,21 @@ async function sendMessage() {
           }
         }
       }
-      if (scan.findings.length) {
+      // Collect classified attachments (warn / force_local / block).
+      // These compose with PII findings in the unified modal: the same
+      // dialog now surfaces both signals and offers the strictest
+      // combined verdict set (continue / local / anonymise / cancel).
+      const classifiedFiles = (state._pendingFiles || []).filter(f => {
+        const c = f.scan && f.scan.classification;
+        if (!c || !c.effective_action) return false;
+        return c.effective_action === 'warn'
+            || c.effective_action === 'force_local'
+            || c.effective_action === 'block';
+      });
+      if (scan.findings.length || classifiedFiles.length) {
         const localActive = isModelLocal(chat.model || '');
-        const { verdict } = await gdprActionModal(scan, chat, localActive);
+        unifiedModalRan = true;
+        const { verdict } = await gdprActionModal(scan, chat, localActive, classifiedFiles);
         if (verdict === 'cancel') return;
         if (verdict === 'local') {
           // Server-side swap: chat worker handles model switching when it sees
@@ -231,28 +247,30 @@ async function sendMessage() {
     }
   }
 
-  // ─── Classification gate (Phase B) ───
-  // Runs AFTER the PII modal. If any pending attachment carries a classified
-  // marker + the current model is non-local, surface the dedicated modal:
-  //  - strict → only Cancel (per ARL §1.11)
-  //  - confidential/internal force_local → Cancel or Switch-to-local
-  // No modal if model is already local or no classified attachments are
-  // present.
-  if (state._pendingFiles && state._pendingFiles.length) {
+  // ─── Classification fallback gate (Phase B) ───
+  // The unified gdprActionModal above already folds classification into
+  // the PII dialog when fired. This block catches the cases where the
+  // unified modal was skipped — sticky PII preference, PII scanner
+  // disabled, or no PII findings AND classification was effectively
+  // ignore. We still need to gate force_local / block from
+  // classification, since those are enforcement actions independent of
+  // PII consent.
+  if (!unifiedModalRan && state._pendingFiles && state._pendingFiles.length) {
     const curLocal = isModelLocal(chat.model || '');
-    const classifiedFiles = state._pendingFiles.filter(f => {
+    const blockedOrLocalOnly = state._pendingFiles.filter(f => {
       const c = f.scan && f.scan.classification;
       if (!c || !c.effective_action) return false;
       return c.effective_action === 'block' || c.effective_action === 'force_local';
     });
-    if (classifiedFiles.length && !curLocal) {
-      const verdict = await classificationActionModal(classifiedFiles, chat);
-      if (verdict === 'cancel') return;
-      if (verdict === 'local') {
-        // Use the same client-side swap as piiEnsureLocalModel — we want
-        // the swap before the wire send so the server side sees a local
-        // model in body.model. piiEnsureLocalModel reads piiBlockActive
-        // which now also picks up classification, so it'll fire.
+    if (blockedOrLocalOnly.length && !curLocal) {
+      const verdict = await gdprActionModal(
+        { findings: [], bySource: {}, worstAction: 'warn' },
+        chat,
+        curLocal,
+        blockedOrLocalOnly,
+      );
+      if (verdict.verdict === 'cancel') return;
+      if (verdict.verdict === 'local') {
         try { piiEnsureLocalModel(); } catch (e) {}
       }
     }

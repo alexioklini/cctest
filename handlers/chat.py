@@ -91,6 +91,31 @@ def rehydrate_session_gdpr_mapping(session) -> bool:
         return False
 
 
+_ATTACH_NOTICE_PREFIXES = (
+    "\n\n[User attached files saved to disk",
+    "\n\n[User attached image(s)",
+)
+
+
+def _split_attachment_notice(text: str) -> tuple[str, str]:
+    """Split a user message into (typed_part, attachment_notice).
+
+    The notice is Brain-generated boilerplate plus literal disk paths and
+    must never be PII-scanned: NER misclassifies words like "IMPORTANT" as
+    organisation and filenames as addresses, and pseudonymising the path
+    breaks `read_document` (the model receives a fake path and can't find
+    the file). Match by stable prefix anchored at the start of the notice.
+    Returns ("", "") for the notice half when no notice is present.
+    """
+    if not isinstance(text, str) or not text:
+        return text or "", ""
+    for prefix in _ATTACH_NOTICE_PREFIXES:
+        idx = text.rfind(prefix)
+        if idx >= 0:
+            return text[:idx], text[idx:]
+    return text, ""
+
+
 def _pseudonymize_history_for_wire(messages, mapping, scanner_cfg):
     """Walk prior `session.messages` and produce a wire-only pseudonymised
     copy. The reused mapping's `forward` table short-circuits already-known
@@ -113,13 +138,15 @@ def _pseudonymize_history_for_wire(messages, mapping, scanner_cfg):
             continue
         if isinstance(content, str):
             text = content
-            f = engine._pii_scan_text(text, cfg=scanner_cfg)
+            typed, notice = _split_attachment_notice(text)
+            f = engine._pii_scan_text(typed, cfg=scanner_cfg)
             if not f:
                 wire.append(msg)
                 continue
             before = len(mapping.forward)
-            new_text = pseudonymizer.pseudonymize_text(
-                text, f, mapping=mapping, source="history")
+            new_typed = pseudonymizer.pseudonymize_text(
+                typed, f, mapping=mapping, source="history")
+            new_text = new_typed + notice
             new_tokens += len(mapping.forward) - before
             for x in f:
                 rid = x.get("rule_id") or "unknown"
@@ -135,13 +162,15 @@ def _pseudonymize_history_for_wire(messages, mapping, scanner_cfg):
                     new_blocks.append(blk)
                     continue
                 text = blk.get("text") or ""
-                f = engine._pii_scan_text(text, cfg=scanner_cfg)
+                typed, notice = _split_attachment_notice(text)
+                f = engine._pii_scan_text(typed, cfg=scanner_cfg)
                 if not f:
                     new_blocks.append(blk)
                     continue
                 before = len(mapping.forward)
-                new_text = pseudonymizer.pseudonymize_text(
-                    text, f, mapping=mapping, source="history")
+                new_typed = pseudonymizer.pseudonymize_text(
+                    typed, f, mapping=mapping, source="history")
+                new_text = new_typed + notice
                 new_tokens += len(mapping.forward) - before
                 for x in f:
                     rid = x.get("rule_id") or "unknown"
@@ -1984,12 +2013,26 @@ class ChatHandlerMixin:
                     _anon_ok = False
                     try:
                         _scanner_cfg = engine._get_gdpr_scanner_config()
+                        # Scan ONLY the user-typed slice. The trailing
+                        # attachment notice (`[User attached files saved to
+                        # disk. IMPORTANT: …]\n  - /tmp/…/<filename>`) is
+                        # Brain-generated boilerplate + literal disk paths
+                        # the LLM needs verbatim to call read_document.
+                        # spaCy NER otherwise misclassifies "IMPORTANT" as
+                        # organisation and filenames as addresses; the
+                        # resulting fake path makes read_document fail with
+                        # "file not found". Splice the notice back onto the
+                        # pseudonymised typed text so the rest of the
+                        # pipeline sees the same shape it always did.
+                        _typed, _notice = _split_attachment_notice(
+                            nonlocal_message)
                         _findings = engine._pii_scan_text(
-                            nonlocal_message, cfg=_scanner_cfg)
+                            _typed, cfg=_scanner_cfg)
                         if _findings:
-                            _anonymised = pseudonymizer.pseudonymize_text(
-                                nonlocal_message, _findings,
+                            _pseudo = pseudonymizer.pseudonymize_text(
+                                _typed, _findings,
                                 mapping=_mapping, source="chat_text")
+                            _anonymised = _pseudo + _notice
                             if isinstance(nonlocal_user_content, str):
                                 nonlocal_user_content = _anonymised
                             else:

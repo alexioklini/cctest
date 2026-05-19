@@ -127,8 +127,51 @@ function renderFilePreviews() {
         // PII scan badge: hourglass while in flight; red ban-icon for
         // blocking failures (unscannable); orange shield with count for
         // findings; nothing for clean files / accepted gaps.
+        //
+        // When the file is also classified above public OR has a
+        // mismatch, the PII tooltip is augmented with the German
+        // classification summary so the user sees both signals in a
+        // single hover without having to chase a second badge.
         let scanBadge = '';
         const sc = f.scan || {};
+        // Pre-build a classification tooltip fragment (German) — empty
+        // when classification is trivial (public + no mismatch).
+        const _cls = sc.classification || null;
+        let clsTooltipFragment = '';
+        if (_cls && _cls.final_level) {
+          const _lvlDE = {
+            public: 'Öffentlich',
+            internal: 'Intern',
+            confidential: 'Vertraulich',
+            strict: 'Streng vertraulich',
+            unmarked: 'Unmarkiert',
+          };
+          const _possDE = {
+            ignore: 'Senden ohne Einschränkung möglich.',
+            warn: 'Senden möglich — Hinweis: Inhalt ist als sensibel erkannt.',
+            force_local: 'Senden nur an ein lokales Modell möglich. Cloud-Modelle sind blockiert.',
+            block: 'Senden nicht möglich. Anhang entfernen, um fortzufahren.',
+          };
+          const _lvl = _cls.final_level;
+          const _markerLvl = _cls.marker_level || null;
+          const _interesting = (_lvl && _lvl !== 'public') || _cls.mismatch;
+          if (_interesting) {
+            const _det = _lvlDE[_lvl] || _cls.level_label_de || _lvl;
+            const _mark = _markerLvl
+              ? (_lvlDE[_markerLvl] || _markerLvl)
+              : 'keine Klassifikation im Dokument hinterlegt';
+            const _poss = _possDE[_cls.effective_action] || _cls.effective_action || '';
+            const _parts = [
+              `Erkannte Klassifikation: ${_det}`,
+              `Im File hinterlegte Klassifikation: ${_mark}`,
+            ];
+            if (_cls.mismatch) {
+              _parts.push('Hinweis: Inhalt deutet auf eine höhere Schutzstufe hin als die Markierung.');
+            }
+            if (_poss) _parts.push(`Was jetzt möglich ist: ${_poss}`);
+            clsTooltipFragment = '\n\n— Klassifikation —\n' + _parts.join('\n');
+          }
+        }
         if (sc.state === 'pending') {
           scanBadge = `<span title="Scanning for PII…" style="font-size:10px;color:var(--text-300)">⏳</span>`;
         } else if (sc.scanned === false &&
@@ -139,34 +182,98 @@ function renderFilePreviews() {
             'extract_failed': 'PII scan failed',
             'unsupported': 'unsupported format — cannot scan',
           }[sc.reason];
-          scanBadge = `<span title="${esc(r)} — remove to send" style="color:#dc2626;font-weight:bold">⛔</span>`;
+          // Append classification fragment so an unscannable + classified
+          // attachment doesn't hide the classification info behind the
+          // PII-side icon.
+          const _t = r + (clsTooltipFragment ? clsTooltipFragment : '');
+          scanBadge = `<span title="${esc(_t)} — remove to send" style="color:#dc2626;font-weight:bold;cursor:help">⛔</span>`;
         } else if (sc.scanned && sc.finding_count > 0) {
-          scanBadge = `<span title="${sc.finding_count} PII finding(s)" style="color:#d97706;font-weight:bold">🛡️ ${sc.finding_count}</span>`;
+          // PII findings present — surface the count and fold the
+          // classification summary into the same tooltip per user request
+          // (one symbol carries both signals on hover).
+          const _t = `${sc.finding_count} PII-Treffer im Anhang` + clsTooltipFragment;
+          scanBadge = `<span title="${esc(_t)}" style="color:#d97706;font-weight:bold;cursor:help">🛡️ ${sc.finding_count}</span>`;
         }
         // Classification badge — only when there's a non-trivial finding
         // (level above public or a mismatch). Phase B detector adds
-        // sc.classification = {final_level, marker_level, mismatch, effective_action, level_label_de}
+        // sc.classification = {final_level, marker_level, mismatch,
+        //   effective_action, level_label_de}.
+        // We render a single icon as the chip badge; the tooltip carries
+        // the full story in German (detected level, marker in file,
+        // resulting action). For force_local / block we also surface an
+        // extra status line under the chip so the user doesn't need to
+        // hover to see that the send is gated.
         let clsBadge = '';
+        let clsStatus = '';
         const cls = sc.classification || null;
-        if (cls && cls.final_level && cls.final_level !== 'public') {
+        if (cls && cls.final_level) {
           const lvl = cls.final_level;
-          const label = cls.level_label_de || lvl;
+          const markerLvl = cls.marker_level || null;
           const act = cls.effective_action || 'ignore';
-          const pillColor = lvl === 'strict' ? '#a02020'
-                          : lvl === 'confidential' ? '#8a5a00'
-                          : lvl === 'internal' ? '#1e4189'
-                          : '#6e5a3a';
-          const icon = act === 'block' ? '⛔'
-                     : act === 'force_local' ? '🏠'
-                     : '🔒';
-          clsBadge = `<span title="${esc(label)} — action: ${act}" style="color:${pillColor};font-weight:bold">${icon} ${esc(label)}</span>`;
+          // Only render when we have something to say: above public, an
+          // unmarked-but-policy-applied case, or a mismatch.
+          const interesting = (lvl && lvl !== 'public') || cls.mismatch;
+          if (interesting) {
+            const LEVEL_DE = {
+              public: 'Öffentlich',
+              internal: 'Intern',
+              confidential: 'Vertraulich',
+              strict: 'Streng vertraulich',
+              unmarked: 'Unmarkiert',
+            };
+            // "Was jetzt möglich ist" — one short German sentence per
+            // policy action. The phrasing focuses on what the USER can
+            // do now, not on internal action names.
+            const POSSIBILITY_DE = {
+              ignore: 'Senden ohne Einschränkung möglich.',
+              warn: 'Senden möglich — Hinweis: Inhalt ist als sensibel erkannt.',
+              force_local: 'Senden nur an ein lokales Modell möglich. Cloud-Modelle sind blockiert.',
+              block: 'Senden nicht möglich. Anhang entfernen, um fortzufahren.',
+            };
+            const detectedLabel = LEVEL_DE[lvl] || cls.level_label_de || lvl;
+            const markerLabel = markerLvl
+              ? (LEVEL_DE[markerLvl] || markerLvl)
+              : 'keine Klassifikation im Dokument hinterlegt';
+            const possibility = POSSIBILITY_DE[act] || act;
+            const pillColor = lvl === 'strict' ? '#a02020'
+                            : lvl === 'confidential' ? '#8a5a00'
+                            : lvl === 'internal' ? '#1e4189'
+                            : '#6e5a3a';
+            // Tooltip body — exactly the three lines the user asked for.
+            // Browsers render \n in title attributes as line breaks.
+            const tipLines = [
+              `Erkannte Klassifikation: ${detectedLabel}`,
+              `Im File hinterlegte Klassifikation: ${markerLabel}`,
+            ];
+            if (cls.mismatch) {
+              tipLines.push('Hinweis: Inhalt deutet auf eine höhere Schutzstufe hin als die Markierung im Dokument.');
+            }
+            tipLines.push(`Was jetzt möglich ist: ${possibility}`);
+            const tip = tipLines.join('\n');
+            // Badge text = detected level (Intern / Vertraulich /
+            // Öffentlich / Streng vertraulich). No leading symbol — the
+            // colour carries the severity, the label carries the state.
+            clsBadge = `<span title="${esc(tip)}" style="color:${pillColor};font-weight:bold;cursor:help">${esc(detectedLabel)}</span>`;
+            // Inline status line — only for the cases where the user
+            // can't send normally. Warn-only stays tooltip-only to avoid
+            // visual clutter on the common case.
+            if (act === 'block') {
+              clsStatus = `<div style="flex-basis:100%;font-size:11px;color:#a02020;margin-top:2px">Senden nicht möglich (${esc(detectedLabel)}). Anhang entfernen, um fortzufahren.</div>`;
+            } else if (act === 'force_local') {
+              clsStatus = `<div style="flex-basis:100%;font-size:11px;color:#8a5a00;margin-top:2px">Nur lokales Modell erlaubt (${esc(detectedLabel)}).</div>`;
+            }
+          }
         }
+        // flex-wrap so the inline status line lands on its own row under
+        // the icon/name/badges instead of getting squeezed inline.
+        if (clsStatus) chip.style.flexWrap = 'wrap';
         chip.innerHTML = `
           <span>${fileTypeIcon(f.name)}</span>
           <span style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
           ${scanBadge}
           ${clsBadge}
           <button class="image-preview-remove" onclick="removePendingFile(${i})">&#10005;</button>
+          ${clsStatus}
         `;
         el.appendChild(chip);
       }

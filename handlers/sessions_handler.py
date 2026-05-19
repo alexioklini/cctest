@@ -442,6 +442,97 @@ class SessionsHandlerMixin:
             "token_count": len(pairs),
         })
 
+    def _handle_session_pii_history_summary(self, path):
+        """GET /v1/sessions/<id>/pii-history-summary — server-side PII scan
+        over the session's loaded user + assistant text.
+
+        Mirrors the client-side `piiHistoryText` extraction (no tool_use /
+        tool_result, no metadata) and runs the full server scanner — regex +
+        bare-id + spaCy NER. Returns category counts the composer history
+        badge can union with its local regex scan so soft-PII (name /
+        address / organisation) that only NER detects still surfaces.
+
+        Returns: {session_id, counts: {<label>: N}, finding_count, has,
+                  worst_action: 'ignore'|'warn'|'block'}
+        """
+        sid = path.split("/")[3]
+        if self._session_access_check(sid) is None:
+            return
+        cfg = engine._get_gdpr_scanner_config()
+        # Honour the master toggle — if scanner is disabled, return an
+        # empty result rather than a 4xx so the client doesn't spam errors.
+        if not cfg.get("enabled", True):
+            self._send_json({
+                "session_id": sid, "counts": {}, "finding_count": 0,
+                "has": False, "worst_action": "ignore", "disabled": True,
+            })
+            return
+        try:
+            msgs = ChatDB.load_messages(sid, include_compacted=True)
+        except Exception as e:
+            self._send_json({"error": f"db error: {e}"}, 500)
+            return
+        # Mirror web/js/nav.js:piiHistoryText — user + assistant text only.
+        # Tool calls/results are downstream of user intent and would surface
+        # URLs / search snippets that the client deliberately skips.
+        parts: list[str] = []
+        for m in msgs or []:
+            role = m.get("role") or ""
+            if role not in ("user", "human", "assistant"):
+                continue
+            c = m.get("content")
+            if isinstance(c, str):
+                if c:
+                    parts.append(c)
+            elif isinstance(c, list):
+                for b in c:
+                    if isinstance(b, dict) and b.get("type") == "text":
+                        t = b.get("text")
+                        if isinstance(t, str) and t:
+                            parts.append(t)
+            # Attachment metadata (filenames + mime) — same as client.
+            meta = m.get("metadata") or {}
+            for f in (meta.get("files") or []):
+                if isinstance(f, dict):
+                    bits = [f.get(k) for k in ("name", "filename", "path",
+                                                "mime", "type")
+                            if f.get(k)]
+                    if bits:
+                        parts.append(" ".join(str(b) for b in bits))
+        text = "\n".join(parts)
+        if not text:
+            self._send_json({
+                "session_id": sid, "counts": {}, "finding_count": 0,
+                "has": False, "worst_action": "ignore",
+            })
+            return
+        try:
+            findings = engine._pii_scan_text(text, cfg=cfg, max_findings=200)
+        except Exception as e:
+            print(f"[pii_history_summary] scan failed: {e}", flush=True)
+            self._send_json({"error": "scan failed"}, 500)
+            return
+        # Aggregate by label (matches the client's `summarize`, which keys by
+        # human-readable label so the popover can render the same chip names
+        # for regex + NER findings interchangeably).
+        counts: dict[str, int] = {}
+        worst = "ignore"
+        for f in findings:
+            label = f.get("label") or f.get("rule_id") or "?"
+            counts[label] = counts.get(label, 0) + 1
+            a = f.get("action") or "warn"
+            if a == "block":
+                worst = "block"
+            elif a == "warn" and worst != "block":
+                worst = "warn"
+        self._send_json({
+            "session_id": sid,
+            "counts": counts,
+            "finding_count": sum(counts.values()),
+            "has": bool(counts),
+            "worst_action": worst,
+        })
+
     def _handle_get_session_files(self, path):
         """GET /v1/sessions/<id>/files — returns all files from all messages (including compacted)"""
         parts = path.split("/")

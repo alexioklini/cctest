@@ -376,23 +376,85 @@ function piiHistoryText(chat) {
 // Scan the chat's loaded history for PII and cache the worst-action result.
 // Cache key is the message count so it refreshes on every new turn; callers
 // can force a re-scan by setting `chat._piiHistoryScanLen = -1`.
+//
+// Two-layer scan:
+//   1. Local regex (sync) — covers email/IBAN/credit cards/national IDs/etc.
+//      Result is returned immediately.
+//   2. Server-side scan (async, fire-and-forget) — runs the full
+//      `_pii_scan_text` pipeline including spaCy German NER which surfaces
+//      soft-PII (name / address / organisation) the browser scanner can't
+//      see. When it returns it merges into `_piiHistoryCounts` and re-fires
+//      `updatePIIBadge()` so the composer button surfaces accordingly.
 function piiHistoryHasFindings(chat) {
   if (!chat || !Array.isArray(chat.messages)) return false;
   const len = chat.messages.length;
   if (!len) return false;
-  if (chat._piiHistoryScanLen === len) return !!chat._piiHistoryHas;
-  const text = piiHistoryText(chat);
-  let has = false, worst = 'ignore';
-  try {
-    const scan = PIIScanner.scanPayload(text, []);
-    has = scan.findings.length > 0;
-    worst = scan.worstAction || 'ignore';
-    chat._piiHistoryCounts = scan.counts || {};
-  } catch (e) { has = false; }
-  chat._piiHistoryHas = has;
-  chat._piiHistoryWorst = worst;
-  chat._piiHistoryScanLen = len;
-  return has;
+  if (chat._piiHistoryScanLen !== len) {
+    const text = piiHistoryText(chat);
+    let has = false, worst = 'ignore', counts = {};
+    try {
+      const scan = PIIScanner.scanPayload(text, []);
+      has = scan.findings.length > 0;
+      worst = scan.worstAction || 'ignore';
+      counts = scan.counts || {};
+    } catch (e) {}
+    chat._piiHistoryCountsLocal = counts;
+    chat._piiHistoryWorstLocal = worst;
+    chat._piiHistoryHasLocal = has;
+    // Re-merge with any prior server NER result so the union stays correct
+    // across turn-count refreshes. The server fetch below will overwrite
+    // _piiHistoryCountsServer once it finishes.
+    _piiHistoryMergeAndCache(chat);
+    chat._piiHistoryScanLen = len;
+    // Kick the async server scan unless one's already in flight or we've
+    // already got a fresh result for this turn count.
+    if (chat._piiHistoryServerScanLen !== len && !chat._piiHistoryServerInFlight) {
+      _piiHistoryFetchServer(chat, len);
+    }
+  }
+  return !!chat._piiHistoryHas;
+}
+
+function _piiHistoryMergeAndCache(chat) {
+  const local = chat._piiHistoryCountsLocal || {};
+  const server = chat._piiHistoryCountsServer || {};
+  // Union by label — server-side findings include the regex hits the
+  // client already saw, so prefer the server count where it exists (it's
+  // strictly >= local for shared labels).
+  const merged = Object.assign({}, local);
+  for (const [k, v] of Object.entries(server)) {
+    merged[k] = Math.max(merged[k] || 0, v || 0);
+  }
+  chat._piiHistoryCounts = merged;
+  const worstRank = (a) => a === 'block' ? 2 : a === 'warn' ? 1 : 0;
+  const lw = chat._piiHistoryWorstLocal || 'ignore';
+  const sw = chat._piiHistoryWorstServer || 'ignore';
+  chat._piiHistoryWorst = worstRank(sw) > worstRank(lw) ? sw : lw;
+  chat._piiHistoryHas = Object.keys(merged).length > 0;
+}
+
+function _piiHistoryFetchServer(chat, expectLen) {
+  // No sessionId = new chat not yet persisted. Server has no history to
+  // scan — local regex result is authoritative until the first send.
+  if (!chat || !chat.sessionId) return;
+  chat._piiHistoryServerInFlight = true;
+  API.getSessionPiiHistorySummary(chat.sessionId).then((res) => {
+    chat._piiHistoryServerInFlight = false;
+    // Stale-result guard: if more turns have landed since the fetch fired,
+    // mark this scan as not-yet-current so the next badge refresh re-fires.
+    chat._piiHistoryServerScanLen = expectLen;
+    if (!res || res.error) return;
+    chat._piiHistoryCountsServer = res.counts || {};
+    chat._piiHistoryWorstServer = res.worst_action || 'ignore';
+    _piiHistoryMergeAndCache(chat);
+    // Re-render the composer badge so a fresh NER hit (e.g. name+address)
+    // flips the button visible without waiting on the next keystroke.
+    if (state.activeChat === chat) {
+      try { updatePIIBadge(); } catch (e) {}
+    }
+  }).catch(() => {
+    chat._piiHistoryServerInFlight = false;
+  });
 }
 
 function piiHistoryWorstAction(chat) {

@@ -77,6 +77,13 @@ class API {
     return this.get(url);
   }
   static getSessionMessages(id) { return this.get(`/v1/sessions/${id}/messages`); }
+  // Server-side PII summary over the session's history (regex + spaCy NER).
+  // The composer history badge in nav.js unions these counts with its local
+  // regex scan so soft-PII (name/address/organisation) only NER detects also
+  // surfaces.
+  static getSessionPiiHistorySummary(id) {
+    return this.get(`/v1/sessions/${encodeURIComponent(id)}/pii-history-summary`);
+  }
   static manageSession(body) { return this.post('/v1/sessions/manage', body); }
   static inspectSession(sessionId) { return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/inspect`); }
   static cancelChat(sessionId) { return this.post('/v1/chat/cancel', {session_id: sessionId}); }
