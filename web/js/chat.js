@@ -307,6 +307,7 @@ async function sendMessage() {
   chat.thinkingSummary = null;
   chat.queueStatus = null;
   chat.files = [];
+  chat._msgSeq = chat._msgSeq || 0;
   const streamGen = (chat._streamGen = (chat._streamGen || 0) + 1);
   updateStreamingUI(true, chat);
 
@@ -338,6 +339,8 @@ async function sendMessage() {
  *  send (API.streamChat) and reconnecting to an in-progress turn after the chat
  *  was reopened (API.attachStream). `streamGen` is snapshotted so a stale
  *  reconnect can't clobber a newer turn. */
+function _nextSeq(chat) { chat._msgSeq = (chat._msgSeq || 0) + 1; return chat._msgSeq; }
+
 function buildStreamCallbacks(chat, isActive) {
   const streamGen = chat._streamGen;
   return {
@@ -364,6 +367,7 @@ function buildStreamCallbacks(chat, isActive) {
             role: 'thinking',
             content: trimmed,
             tool_round: d?.tool_round ?? null,
+            _seq: _nextSeq(chat),
           });
           _activityAutoUpdate(chat, currentTurnNum(chat), 'add');
           if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
@@ -414,7 +418,7 @@ function buildStreamCallbacks(chat, isActive) {
         const last = chat.messages[chat.messages.length - 1];
         const isNewToolCall = !(last && last.role === 'tool_call' && last.tool_use_id && d.tool_use_id && last.tool_use_id === d.tool_use_id);
         if (isNewToolCall) {
-          chat.messages.push({ role: 'tool_call', name: d.name, args: d.args || {}, tool_use_id: d.tool_use_id || null, tool_round: d.tool_round ?? null, _ts: Date.now() });
+          chat.messages.push({ role: 'tool_call', name: d.name, args: d.args || {}, tool_use_id: d.tool_use_id || null, tool_round: d.tool_round ?? null, _ts: Date.now(), _seq: _nextSeq(chat) });
           _activityAutoUpdate(chat, currentTurnNum(chat), 'add');
         } else {
           last.args = d.args;
@@ -445,7 +449,7 @@ function buildStreamCallbacks(chat, isActive) {
         // extractReferencesFromToolResult reads from it directly (no re-parsing).
         const toolMsg = { role: 'tool_result', name: d.name, result: d.result,
                           tool_use_id: d.tool_use_id || null,
-                          references: d.references || undefined, _ts: Date.now() };
+                          references: d.references || undefined, _ts: Date.now(), _seq: _nextSeq(chat) };
         chat.messages.push(toolMsg);
         // Live refs via the separate `references` event above — this path is
         // kept only for the legacy extractReferencesFromToolResult fallback on
@@ -486,8 +490,9 @@ function buildStreamCallbacks(chat, isActive) {
           args: d.args || {},
           tool_use_id: d.tool_use_id || null,
           _ts: Date.now(),
+          _seq: _nextSeq(chat),
         });
-        _privacyAutoUpdate(chat, currentTurnNum(chat), 'add');
+        _activityAutoUpdate(chat, currentTurnNum(chat), 'add');
         if (isActive()) { renderMessages(); renderStreamingMessage(chat); scrollToBottom(); }
       },
       synthetic_tool_result: (d) => {
@@ -501,6 +506,7 @@ function buildStreamCallbacks(chat, isActive) {
           duration_ms: d.duration_ms || 0,
           tool_use_id: d.tool_use_id || null,
           _ts: Date.now(),
+          _seq: _nextSeq(chat),
         });
         // Anonymise-done side-channel: attach real-PII spans onto the
         // most recent user message so the chat view paints them with the
@@ -863,7 +869,6 @@ function buildStreamCallbacks(chat, isActive) {
 
         // Auto-close activity summary now that the response is finalised
         _activityAutoUpdate(chat, currentTurnNum(chat), 'response');
-        _privacyAutoUpdate(chat, currentTurnNum(chat), 'response');
 
         chat.messages.push(assistantMsg);
         chat.streaming = false;
@@ -2020,42 +2025,21 @@ function toggleActivitySummary(turnNum) {
   renderMessages();
 }
 
-// ── Privacy (Datenschutz) summary state machine ────────────────────────────
-// Mirrors _activityAutoUpdate / toggleActivitySummary but for synthetic
-// privacy rows (anonymise / anonymise_read / deanonymise_*). Stored on
-// chat._privacyStates so it's per-turn and survives re-renders within the
-// same chat. Same value vocabulary; same user-control stickiness.
-//
-// Rules:
-//   add      → 'auto-open' on first synthetic event of the turn
-//   response → 'auto-closed' on assistant response finalised
-//   user toggle → 'user-open' / 'user-closed' (never auto-overridden after)
-function _privacyAutoUpdate(chat, turnNum, event) {
-  if (!chat._privacyStates) chat._privacyStates = new Map();
-  const cur = chat._privacyStates.get(turnNum);
-  const userControlled = cur === 'user-open' || cur === 'user-closed';
-  if (userControlled) return;
-  if (event === 'add') {
-    if (!cur) chat._privacyStates.set(turnNum, 'auto-open');
-  } else if (event === 'response') {
-    chat._privacyStates.set(turnNum, 'auto-closed');
-  }
-}
-
-function togglePrivacySummary(turnNum) {
-  const chat = state.activeChat;
-  if (!chat) return;
-  if (!chat._privacyStates) chat._privacyStates = new Map();
-  const cur = chat._privacyStates.get(turnNum);
-  const isOpen = cur === 'auto-open' || cur === 'user-open';
-  chat._privacyStates.set(turnNum, isOpen ? 'user-closed' : 'user-open');
-  renderMessages();
-}
+// Privacy (Datenschutz) state was previously tracked on a separate
+// chat._privacyStates map with its own _privacyAutoUpdate / togglePrivacySummary
+// helpers. Since v9.8.x synthetic anonymise/deanonymise rows live inside
+// the same merged "Aktivität" disclosure as tool calls, so the activity
+// state machine drives both.
 
 function renderTurnBody(messages, memberIdxs, turnNum, chat) {
-  // Synthetic privacy operations (anonymise / anonymise_read / deanonymise_*)
-  // are NOT LLM activity — they're server-side privacy events that must be
-  // visible at all times, not buried inside the "N Tool-Aufrufe" disclosure.
+  // Merged "Aktivität" disclosure: real tool_calls / thinking AND synthetic
+  // GDPR rows (anonymise / anonymise_read / deanonymise_*) live inside the
+  // same <details> block. Items render in their insertion order — which is
+  // also their _ts order — so the body reads chronologically.
+  //
+  // Header counters (per user spec): N Tools · M Anon · K De-Anon.
+  // Zero counters are omitted. state.showGdprDetails toggle hides the
+  // synthetic ROWS only (header counters always appear).
   const isSynthetic = (m) => m.synthetic === true;
   const isActivity = (m) => !isSynthetic(m) && (
     m.role === 'thinking' || m.role === 'tool_call' || m.role === 'tool_result');
@@ -2066,87 +2050,195 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   for (let i = memberIdxs.length - 1; i >= 0; i--) {
     if (isResponse(messages[memberIdxs[i]])) { lastResponseMemberPos = i; break; }
   }
-
-  // Group activity before the response into rounds.
-  // A round is one thinking block + all tool_calls that share its tool_round.
-  // Tool_calls without a matching thinking (tool_round=null or no thinking) form a bare round.
   const scanEnd = lastResponseMemberPos === -1 ? memberIdxs.length : lastResponseMemberPos;
-  let thinkCount = 0, toolCount = 0, workerCount = 0;
 
-  // Collect synthetic privacy rows separately — rendered outside the
-  // activity disclosure so the user always sees what got pseudonymised /
-  // de-pseudonymised on this turn.
-  const syntheticItems = [];
+  // First pass — counters and synthetic real-vs-attempted classification.
+  const isAnonKind = (k) => k === 'anonymise' || k === 'anonymise_read';
+  const isDeanonKind = (k) => k === 'deanonymise_text' || k === 'deanonymise_file';
+
+  // Pair synthetic tool_call → tool_result so we can look up findings/restored.
+  // Walk over ALL memberIdxs (synthetic rows can sit before AND after the
+  // assistant response — the pre-anonymisation of the *next* user message
+  // gets folded into this turn by the message walker).
+  const synthDone = new Map(); // call-idx -> tool_result msg
+  for (let i = 0; i < memberIdxs.length; i++) {
+    const callMsg = messages[memberIdxs[i]];
+    if (!isSynthetic(callMsg) || callMsg.role !== 'tool_call') continue;
+    for (let j = i + 1; j < memberIdxs.length; j++) {
+      const nxt = messages[memberIdxs[j]];
+      if (!isSynthetic(nxt) || nxt.role !== 'tool_result') continue;
+      const idMatch = callMsg.tool_use_id && nxt.tool_use_id && callMsg.tool_use_id === nxt.tool_use_id;
+      const kindMatch = !callMsg.tool_use_id && nxt.kind === callMsg.kind;
+      if (idMatch || kindMatch) { synthDone.set(memberIdxs[i], nxt); break; }
+    }
+  }
+
+  // Tool / anon / deanon counters; "real" set of synthetic calls that
+  // actually did something (findings>0 or restored>0).
+  const realOpsByCall = new Map();
+  let toolCount = 0;
+  let anonAttempted = 0, anonReal = 0;
+  let deanonAttempted = 0, deanonReal = 0;
   for (let i = 0; i < memberIdxs.length; i++) {
     const idx = memberIdxs[i];
     const m = messages[idx];
-    if (isSynthetic(m)) syntheticItems.push({ idx, m });
+    if (isSynthetic(m)) {
+      if (m.role !== 'tool_call') continue;
+      const k = m.kind || m.name || '';
+      const res = synthDone.get(idx)?.result || {};
+      const findings = Number(res.findings || 0);
+      const restored = Number(res.restored || 0);
+      if (isAnonKind(k)) {
+        anonAttempted++;
+        if (findings > 0) { anonReal++; realOpsByCall.set(idx, true); }
+      } else if (isDeanonKind(k)) {
+        deanonAttempted++;
+        if (restored > 0) { deanonReal++; realOpsByCall.set(idx, true); }
+      } else {
+        realOpsByCall.set(idx, true);
+      }
+      continue;
+    }
+    // Real activity — only count rows BEFORE the assistant response;
+    // post-response activity is rare but should not inflate counters.
+    if (i >= scanEnd) continue;
+    if (!isActivity(m)) continue;
+    if (m.role === 'tool_call') toolCount++;
   }
 
-  // Collect activity messages in order with their original idx
-  const activityItems = [];
-  for (let i = 0; i < scanEnd; i++) {
+  // Second pass — build a linear list of body items, then sort
+  // chronologically so anonymise/tool/deanonymise rows interleave by time
+  // regardless of where they landed in chat.messages.
+  //
+  // Ordering signal per item (in priority order):
+  //   1. _ts (set live on SSE events)
+  //   2. message.id (DB row id — monotonic across persistence, used on
+  //      page reload where _ts isn't populated by load_messages)
+  //
+  // Special case — pre-user anon rows: the server emits
+  // synthetic_tool_use/anonymise BEFORE persisting the user message, so
+  // those rows have member positions AHEAD of userIdx and (on reload)
+  // smaller message ids than the user row. Logically they belong AFTER
+  // the user-send — they're the system's reaction to it. We detect this
+  // by comparing each item's member position against the user-row's
+  // member position, and bump the sort key of pre-user synthetic rows
+  // into the post-user window so they render between the user send and
+  // the first real tool call.
+  const userMemberPos = memberIdxs.findIndex(idx => {
+    const m = messages[idx];
+    return m && (m.role === 'user' || m.role === 'human');
+  });
+  // Anchor for the bump: the lowest sort key of any post-user activity
+  // item, minus an epsilon, so pre-user synthetic rows still appear
+  // BEFORE the first real tool call but AFTER the user message. If no
+  // post-user activity exists yet, fall back to "right after user".
+  let postUserAnchor = Infinity;
+  const sortKey = (m) => m ? (Number(m._seq) || Number(m.id) || 0) : 0;
+  for (let i = 0; i < memberIdxs.length; i++) {
+    if (userMemberPos < 0 || i <= userMemberPos) continue;
+    const m = messages[memberIdxs[i]];
+    if (isSynthetic(m)) continue;
+    if (m.role !== 'thinking' && m.role !== 'tool_call') continue;
+    const k = sortKey(m);
+    if (k && k < postUserAnchor) postUserAnchor = k;
+  }
+  // Fallback anchor: user message's own key + 1 (ensures pre-user
+  // synthetic rows sort AFTER the user send).
+  const userKey = userMemberPos >= 0 ? sortKey(messages[memberIdxs[userMemberPos]]) : 0;
+  if (!Number.isFinite(postUserAnchor)) postUserAnchor = userKey + 1;
+
+  const bodyItems = []; // { kind, sortTs, ... }
+  let currentRound = null;
+  const flushRound = () => {
+    if (!currentRound) return;
+    const firstMsg = currentRound.thinking?.m || currentRound.tools[0]?.m;
+    const ts = sortKey(firstMsg);
+    bodyItems.push({ kind: 'round', sortTs: ts, round: currentRound });
+    currentRound = null;
+  };
+  for (let i = 0; i < memberIdxs.length; i++) {
     const idx = memberIdxs[i];
     const m = messages[idx];
-    if (!isActivity(m)) continue;
-    if (m.role === 'thinking') thinkCount++;
-    if (m.role === 'tool_call') {
-      // Check if worker
-      let isWorker = false;
-      for (let j = i + 1; j < memberIdxs.length; j++) {
-        const next = messages[memberIdxs[j]];
-        if (next.role === 'tool_result') {
-          const idMatch = m.tool_use_id && next.tool_use_id && m.tool_use_id === next.tool_use_id;
-          const nameMatch = !m.tool_use_id && next.name === m.name;
-          if (idMatch || nameMatch) {
-            const rs = typeof next.result === 'string' ? next.result : JSON.stringify(next.result);
-            isWorker = rs.includes('"worker": true') || rs.includes('"worker":true');
-            break;
-          }
-        }
-        if (next.role === 'assistant' || next.role === 'user') break;
+    if (isSynthetic(m)) {
+      // tool_result is rendered paired inside the tool_call by
+      // renderSyntheticGdprCall — skip standalone to avoid duplication.
+      if (m.role !== 'tool_call') continue;
+      if (!realOpsByCall.has(idx)) continue;
+      flushRound();
+      let ts = sortKey(m);
+      // Pre-user synthetic row: bump into the post-user window so it
+      // renders between the user send and the first real activity item.
+      // 0.5 keeps relative order between multiple pre-user synthetics
+      // intact (stable sort) while landing them strictly before
+      // postUserAnchor.
+      if (userMemberPos >= 0 && i < userMemberPos) {
+        ts = postUserAnchor - 0.5;
       }
-      if (isWorker) workerCount++; else toolCount++;
+      bodyItems.push({ kind: 'privacy', sortTs: ts, item: { idx, m } });
+      continue;
     }
-    activityItems.push({ idx, m });
+    // Real activity items: only those before the response.
+    if (i >= scanEnd) continue;
+    if (!isActivity(m)) continue;
+    if (m.role === 'tool_result') continue; // paired inside tool_call
+    if (m.role === 'thinking') {
+      flushRound();
+      currentRound = { thinking: { idx, m }, tools: [], toolRound: null };
+    } else if (m.role === 'tool_call') {
+      const tr = m.tool_round ?? null;
+      // Flush when the LLM round number changes (new multi-step round
+      // without a thinking block in between).
+      if (currentRound && tr !== null && currentRound.toolRound !== null && tr !== currentRound.toolRound) {
+        flushRound();
+      }
+      if (!currentRound) currentRound = { thinking: null, tools: [], toolRound: tr };
+      if (currentRound.toolRound === null && tr !== null) currentRound.toolRound = tr;
+      currentRound.tools.push({ idx, m });
+    }
+  }
+  flushRound();
+  // Stable sort by sortTs. Equal keys retain their walker-order.
+  bodyItems.sort((a, b) => a.sortTs - b.sortTs);
+
+  // Trailing per-category notes if attempts existed but nothing real fired.
+  const trailingNotes = [];
+  if (anonAttempted > 0 && anonReal === 0) {
+    trailingNotes.push('<div class="privacy-empty-note">Keine Anonymisierungen notwendig</div>');
+  }
+  if (deanonAttempted > 0 && deanonReal === 0) {
+    trailingNotes.push('<div class="privacy-empty-note">Keine De-Anonymisierungen notwendig</div>');
   }
 
-  // Build rounds: each thinking msg starts a new round; tool_calls attach to current round
-  const rounds = []; // [{thinking: item|null, tools: [item,...]}]
-  let currentRound = null;
-  for (const item of activityItems) {
-    if (item.m.role === 'tool_result') continue; // rendered inside tool_call
-    if (item.m.role === 'thinking') {
-      currentRound = { thinking: item, tools: [] };
-      rounds.push(currentRound);
-    } else if (item.m.role === 'tool_call') {
-      if (!currentRound) { currentRound = { thinking: null, tools: [] }; rounds.push(currentRound); }
-      currentRound.tools.push(item);
+  // Render body. Privacy rows respect state.showGdprDetails — when OFF,
+  // their rows are omitted from the body but counters still appear in the
+  // header.
+  let bodyHtml = '';
+  for (const entry of bodyItems) {
+    if (entry.kind === 'round') {
+      const r = entry.round;
+      let roundHtml = '';
+      if (r.thinking) {
+        roundHtml += `<div class="activity-item activity-thinking">${renderMessage(r.thinking.m, r.thinking.idx)}</div>`;
+      }
+      if (r.tools.length) {
+        const toolsHtml = r.tools.map(t =>
+          `<div class="activity-item activity-tool">${renderMessage(t.m, t.idx)}</div>`
+        ).join('');
+        roundHtml += `<div class="activity-tools-group${r.thinking ? ' activity-tools-indented' : ''}">${toolsHtml}</div>`;
+      }
+      bodyHtml += `<div class="activity-round">${roundHtml}</div>`;
+    } else if (entry.kind === 'privacy') {
+      if (!state.showGdprDetails) continue;
+      const it = entry.item;
+      bodyHtml += `<div class="activity-item activity-privacy">${renderMessage(it.m, it.idx)}</div>`;
     }
   }
+  if (state.showGdprDetails) bodyHtml += trailingNotes.join('');
 
-  // Render rounds into HTML
-  let activityHtml = '';
-  for (const round of rounds) {
-    let roundHtml = '';
-    if (round.thinking) {
-      roundHtml += `<div class="activity-item activity-thinking">${renderMessage(round.thinking.m, round.thinking.idx)}</div>`;
-    }
-    if (round.tools.length) {
-      const toolsHtml = round.tools.map(t =>
-        `<div class="activity-item activity-tool">${renderMessage(t.m, t.idx)}</div>`
-      ).join('');
-      roundHtml += `<div class="activity-tools-group${round.thinking ? ' activity-tools-indented' : ''}">${toolsHtml}</div>`;
-    }
-    activityHtml += `<div class="activity-round">${roundHtml}</div>`;
-  }
-
-  // Everything from lastResponseMemberPos onwards.
-  // Synthetic privacy rows that fall AFTER the assistant response (e.g. the
-  // pre-anonymisation of the *next* user message persisted before the next
-  // user-row reaches us) get grouped into the current turn by the message
-  // walker. They belong to the Datenschutz block below — skip them here so
-  // they don't also appear bare under the assistant reply.
+  // Everything from lastResponseMemberPos onwards = assistant reply.
+  // Trailing synthetic rows (next-turn pre-anonymisation) already counted
+  // in the header above; skip here so they don't render bare under the
+  // assistant reply.
   let responseHtml = '';
   if (lastResponseMemberPos !== -1) {
     for (let i = lastResponseMemberPos; i < memberIdxs.length; i++) {
@@ -2155,144 +2247,37 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
     }
   }
 
-  // Privacy rows: group all synthetic tool_call/tool_result pairs into a
-  // single "Datenschutz" disclosure. Same auto-open/auto-close lifecycle as
-  // the regular activity summary (see _privacyAutoUpdate): opens on first
-  // synthetic event of the turn, closes when the assistant response lands,
-  // sticky once the user toggles. Tool_result rows are paired inside the
-  // dispatch row by renderSyntheticGdprCall, so they collapse silently when
-  // rendered out of position.
-  let syntheticHtml = '';
-  if (syntheticItems.length > 0) {
-    // "Echt" = das synthetische Item hat tatsächlich PII gefunden /
-    // wiederhergestellt. Items, deren Tool-Lauf nichts ersetzt hat, werden
-    // nicht in Header oder Body einzeln aufgeführt — stattdessen erscheint
-    // pro betroffener Kategorie ein "Keine … notwendig"-Hinweis im Body.
-    //
-    // Paaren: tool_call (dispatch) → tool_result (done) via tool_use_id, mit
-    // kind-Fallback. Wir lesen findings / restored aus dem done-Row.
-    const itemIdxToDone = new Map();
-    for (let i = 0; i < syntheticItems.length; i++) {
-      const { idx: callIdx, m: callMsg } = syntheticItems[i];
-      if (callMsg.role !== 'tool_call') continue;
-      for (let j = i + 1; j < syntheticItems.length; j++) {
-        const nxt = syntheticItems[j].m;
-        if (nxt.role !== 'tool_result') continue;
-        const idMatch = callMsg.tool_use_id && nxt.tool_use_id && callMsg.tool_use_id === nxt.tool_use_id;
-        const kindMatch = !callMsg.tool_use_id && nxt.kind === callMsg.kind;
-        if (idMatch || kindMatch) { itemIdxToDone.set(callIdx, nxt); break; }
-      }
-    }
-    const isAnonKind = (k) => k === 'anonymise' || k === 'anonymise_read';
-    const isDeanonKind = (k) => k === 'deanonymise_text' || k === 'deanonymise_file';
-    const realOpsByCall = new Map();
-    let anonAttempted = 0, anonReal = 0;
-    let deanonAttempted = 0, deanonReal = 0;
-    for (const item of syntheticItems) {
-      if (item.m.role !== 'tool_call') continue;
-      const k = item.m.kind || item.m.name || '';
-      const done = itemIdxToDone.get(item.idx);
-      const res = done?.result || {};
-      const findings = Number(res.findings || 0);
-      const restored = Number(res.restored || 0);
-      if (isAnonKind(k)) {
-        anonAttempted++;
-        if (findings > 0) { anonReal++; realOpsByCall.set(item.idx, true); }
-      } else if (isDeanonKind(k)) {
-        deanonAttempted++;
-        if (restored > 0) { deanonReal++; realOpsByCall.set(item.idx, true); }
-      } else {
-        // Unbekannte synthetische Operation → immer zeigen
-        realOpsByCall.set(item.idx, true);
-      }
-    }
-    const parts = [];
-    if (anonReal > 0) parts.push(anonReal === 1 ? '1 Anonymisierung' : `${anonReal} Anonymisierungen`);
-    if (deanonReal > 0) parts.push(deanonReal === 1 ? '1 De-Anonymisierung' : `${deanonReal} De-Anonymisierungen`);
-    const label = parts.length ? `Datenschutz · ${parts.join(' · ')}` : 'Datenschutz';
-
-    let inner = '';
-    for (const item of syntheticItems) {
-      // tool_result-Rows werden von renderSyntheticGdprCall paarweise mit
-      // dem dispatch-Row gerendert; standalone hier ausblenden, sonst Dopplung.
-      if (item.m.role !== 'tool_call') continue;
-      if (!realOpsByCall.has(item.idx)) continue; // leere Ops nicht einzeln zeigen
-      inner += renderMessage(item.m, item.idx);
-    }
-    if (anonAttempted > 0 && anonReal === 0) {
-      inner += '<div class="privacy-empty-note">Keine Anonymisierungen notwendig</div>';
-    }
-    if (deanonAttempted > 0 && deanonReal === 0) {
-      inner += '<div class="privacy-empty-note">Keine De-Anonymisierungen notwendig</div>';
-    }
-
-    const privState = chat?._privacyStates?.get(turnNum); // absent = history load = closed
-    const privOpen = privState === 'auto-open' || privState === 'user-open';
-
-    // Composer toggle: when GDPR details are hidden, render the privacy
-    // block as a flat label (counts only, no chevron, no body). The
-    // disclosure header keeps the statistics so the user still sees that
-    // anonymisation happened — they just can't open it to inspect values.
-    if (!state.showGdprDetails) {
-      syntheticHtml = `
-        <div class="activity-summary privacy-summary privacy-summary-collapsed"
-             title="Datenschutz-Details ausgeblendet — Toggle im Composer aktivieren, um Inhalte zu sehen">
-          <div class="activity-summary-header activity-summary-header-static">
-            🛡️ ${esc(label)}
-          </div>
-        </div>
-      `;
-    } else {
-      syntheticHtml = `
-        <details class="activity-summary privacy-summary"${privOpen ? ' open' : ''}>
-          <summary class="activity-summary-header" onclick="event.preventDefault();togglePrivacySummary(${turnNum})">
-            <svg class="activity-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            🛡️ ${esc(label)}
-          </summary>
-          <div class="activity-summary-body">${inner}</div>
-        </details>
-      `;
-    }
+  // No activity AND no real synthetic rows — nothing to disclose.
+  if (toolCount === 0 && anonReal === 0 && deanonReal === 0 && anonAttempted === 0 && deanonAttempted === 0
+      && !bodyItems.some(e => e.kind === 'round' && e.round.thinking)) {
+    return responseHtml;
   }
 
-  // No activity at all — render flat
-  if (thinkCount === 0 && toolCount === 0 && workerCount === 0) {
-    return syntheticHtml + activityHtml + responseHtml;
-  }
-
-  // Determine open/closed state
-  const stateVal = chat?._activityStates?.get(turnNum); // absent = history load = closed
-  const isOpen = stateVal === 'auto-open' || stateVal === 'user-open';
-
+  // Header label per user spec: N Tools · M Anon · K De-Anon. Hide zeros.
   const parts = [];
-  if (thinkCount > 0) parts.push(thinkCount === 1 ? '1 mal nachgedacht' : `${thinkCount} mal nachgedacht`);
-  if (toolCount > 0) parts.push(toolCount === 1 ? '1 Tool-Aufruf' : `${toolCount} Tool-Aufrufe`);
-  if (workerCount > 0) parts.push(workerCount === 1 ? '1 Worker-Aufruf' : `${workerCount} Worker-Aufrufe`);
-  const label = parts.join(' · ');
+  if (toolCount > 0) parts.push(toolCount === 1 ? '1 Tool' : `${toolCount} Tools`);
+  if (anonReal > 0) parts.push(anonReal === 1 ? '1 Anon' : `${anonReal} Anon`);
+  if (deanonReal > 0) parts.push(deanonReal === 1 ? '1 De-Anon' : `${deanonReal} De-Anon`);
+  const label = parts.length ? `Aktivität · ${parts.join(' · ')}` : 'Aktivität';
+
+  // Determine open/closed state — single shared map for tools + privacy.
+  // Absent key = history load = closed (matches pre-merge tool-block UX).
+  const stateVal = chat?._activityStates?.get(turnNum);
+  const isOpen = stateVal === 'auto-open' || stateVal === 'user-open';
 
   const summaryEl = `<summary class="activity-summary-header" onclick="event.preventDefault();toggleActivitySummary(${turnNum})">
         <svg class="activity-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         ${esc(label)}
       </summary>`;
 
-  if (lastResponseMemberPos === -1) {
-    return `
-      ${syntheticHtml}
-      <details class="activity-summary"${isOpen ? ' open' : ''}>
-        ${summaryEl}
-        <div class="activity-summary-body">${activityHtml}</div>
-      </details>
-    `;
-  }
-
-  return `
-    ${syntheticHtml}
-    <details class="activity-summary"${isOpen ? ' open' : ''}>
+  const detailsHtml = `<details class="activity-summary"${isOpen ? ' open' : ''}>
       ${summaryEl}
-      <div class="activity-summary-body">${activityHtml}</div>
-    </details>
-    ${responseHtml}
-  `;
+      <div class="activity-summary-body">${bodyHtml}</div>
+    </details>`;
+
+  return lastResponseMemberPos === -1
+    ? detailsHtml
+    : `${detailsHtml}${responseHtml}`;
 }
 
 function renderMessage(msg, idx) {
