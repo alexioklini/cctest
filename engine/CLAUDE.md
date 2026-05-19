@@ -46,8 +46,10 @@ text deltas back over SSE.
 - **Tool-call dedup** (Brain side): session-scoped (1h TTL, 100 entries).
   1 dup = error, 2 dups = `TaskCancelled`. `reset_tool_dedup()` runs at
   turn start. Exempt: `memory_recall`, `memory_shared`, `delegate_task`,
-  `task_status`, `schedule_list`, `schedule_history`, `read_document`,
-  `read_file`.
+  `task_status`, `schedule_list`, `schedule_history`. (`read_document` /
+  `read_file` are NOT exempt — within-turn double-reads of the same file
+  hit dedup, which is the desired guard against tool-loops; the prior
+  per-session cache that exempted them was removed in v9.7.0.)
 - **Three-layer hooks**: tool pre/post (external subprocess),
   `after_file_write` (centralized). External hook: timeout 5s, fail-open
   on crash, exit 1=block, exit 2=skip chain. `allowed_tools` restriction

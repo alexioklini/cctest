@@ -636,10 +636,10 @@ Brain mechanics (3-step flow text body when ON, BINARY DOCUMENTS block, `read_pa
 
 **Sampling defaults for Mistral Small** (gitignored): `temperature: 0.2`, `top_p: 0.85`. `0` rejected by provider; `0.1` showed no improvement.
 
-### Token Optimisations (v8.23)
+### Token Optimisations
 
-- **Per-session read_document/read_file cache** (`_read_doc_cache`): keyed by `(session_id, abs_path)`. Repeat full-shape read in same chat → compact stub. Invalidation: `os.stat()` on every lookup; `_after_file_write()` explicit. Pagination args bypass entirely. TTL 1h, max 64 entries/session, LRU-by-turn eviction. `read_document`/`read_file` added to `_DEDUP_EXEMPT` — cache is the smarter dedup.
 - **Per-session project preamble**: dynamic project state moved out of `_build_system_prompt` into per-session preamble injected at round 0 first-user-message via `_project_preamble_text(agent_id, project_name)`. KV-prefix stays project-agnostic; ~1KB saved per request on no-cache providers.
+- **Cross-turn discipline**: tool_use / tool_result blocks are never persisted to `session.messages` — only user msgs + final assistant text survive across turns. A 2nd-turn re-read of the same file goes back to disk; the within-turn `tool_dedup` guard kills accidental double-reads in the same tool loop. A previous per-session `_read_doc_cache` returning stubs across turns was removed in v9.7.0 because (a) it could fire when turn-1's reply lacked the content the model now needed, leaving it answering blind, and (b) the stub's "use the previous tool_result" instruction was a lie cross-turn (the block isn't in context anymore). The citation validator's "which files did this session read" lookup is preserved via a thin `_session_read_paths[sid]: set[str]` tracker (`_record_session_read_path` from `read_file`/`read_document`); the public helper kept its old name `_read_doc_cache_session_paths` for backward compatibility.
 
 ### Project Input Folders + Sync
 

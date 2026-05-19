@@ -3094,22 +3094,6 @@ def tool_read_file(args: dict) -> str:
         path = os.path.expanduser(path)
         if not os.path.isabs(path):
             path = os.path.abspath(path)
-        # Cache hit only when caller asked for the whole file (default offset=1
-        # AND no explicit limit override — i.e. they accepted the default 400).
-        # If the model is paginating, always re-read on disk so it gets the
-        # window it asked for.
-        _full_read = (int(offset or 1) == 1 and ("limit" not in args))
-        # Bypass the cache when a GDPR mapping is active: the stub carries
-        # no content, so the LLM would fall back to whatever it remembered
-        # of the prior read — which is the pre-anonymise plain text from
-        # turn 1's assistant reply. Re-streaming the file goes through
-        # `_gdpr_anon_tool_text`, which short-circuits on already-known
-        # forward-map entries (no new mints, no synthetic row spam).
-        _gmid_active = bool(getattr(_thread_local, "_gdpr_mapping_id", "") or "")
-        if _full_read and not _gmid_active and os.path.exists(path):
-            _stub = _read_doc_cache_lookup(path)
-            if _stub is not None:
-                return _stub
         if not os.path.exists(path):
             return _err(
                 f"File not found: {path}. "
@@ -3134,12 +3118,7 @@ def tool_read_file(args: dict) -> str:
         for i, line in enumerate(selected, start=start + 1):
             numbered.append(f"{i:>6}\t{line.rstrip()}")
         content = "\n".join(numbered)
-        if _full_read and end >= total:
-            try:
-                _round = int(getattr(_thread_local, "tool_round", 0) or 0)
-            except Exception:
-                _round = 0
-            _read_doc_cache_store(path, content, tool_round=_round)
+        _record_session_read_path(path)
         content_anon = _gdpr_anon_tool_text(content, f"file:{os.path.basename(path)}")
         return _ok({"path": path, "total_lines": total, "showing": f"{start+1}-{min(end, total)}", "content": content_anon})
     except Exception as e:
@@ -4044,34 +4023,11 @@ def tool_read_document(args: dict) -> str:
                 "another path."
             )
 
-        # Per-session cache: a previous turn already read this exact file,
-        # mtime+size unchanged → return a stub instead of re-streaming all
-        # bytes back into the model's context. Skip the cache if the model
-        # is paginating (offset / limit / pages / sheet / slides) — those
-        # signal it wants a specific window, not the whole file.
-        _is_paginated = any(
-            args.get(k) for k in ("offset", "limit", "pages", "sheet", "slides")
-        )
-        # Bypass when a GDPR mapping is active — see tool_read_file for
-        # rationale. The cache stub carries no content; without the bypass
-        # the LLM falls back to pre-anonymise memory of prior turns.
-        _gmid_active = bool(getattr(_thread_local, "_gdpr_mapping_id", "") or "")
-        if not _is_paginated and not _gmid_active:
-            _stub = _read_doc_cache_lookup(path)
-            if _stub is not None:
-                return _stub
-
         def _ok_and_cache(payload: dict) -> str:
-            # Cache only the full-file shape so subsequent paginated reads
-            # always hit disk; that's what _is_paginated already gates above.
-            # Cache holds RAW text; anonymisation applies on return so future
-            # turns without an active mapping never see stale tokens.
-            if not _is_paginated:
-                try:
-                    _round = int(getattr(_thread_local, "tool_round", 0) or 0)
-                except Exception:
-                    _round = 0
-                _read_doc_cache_store(path, str(payload.get("content", "") or ""), tool_round=_round)
+            # Record path so the citation validator can grep this file for
+            # verbatim quotes. Anonymisation applies on return so the model
+            # sees pseudonymised text in cross-session reads.
+            _record_session_read_path(path)
             _src = f"attachment:{os.path.basename(path)}"
             raw = str(payload.get("content", "") or "")
             anon = _gdpr_anon_tool_text(raw, _src)
@@ -23163,12 +23119,7 @@ def _check_tool_dedup(name: str, args: dict) -> str | None:
     fresh, empty dedup set and miss every duplicate.
     """
     _DEDUP_EXEMPT = {"memory_recall", "memory_shared", "delegate_task", "task_status",
-                     "schedule_list", "schedule_history",
-                     # read_document / read_file have their own per-session
-                     # cache that returns a "already read in turn N, unchanged"
-                     # stub on duplicate calls — the bare-string dedup would
-                     # otherwise abort the loop on the second cache-hit case.
-                     "read_document", "read_file"}
+                     "schedule_list", "schedule_history"}
     if name in _DEDUP_EXEMPT:
         return None
 
@@ -23202,25 +23153,17 @@ def reset_tool_dedup():
         _dedup_gc_locked()
 
 
-# --- Per-session read_document / read_file cache (token-saver) ---
+# --- Per-session read-path tracker -------------------------------------
 #
-# Same chat session, same file, same call shape (no pagination args) → second
-# call returns a stub instead of the full content. Cuts the "model re-reads
-# the same .md companion every turn" cost which is the dominant driver of
-# token growth on policy-Q&A sessions where mempalace_query keeps returning
-# the same drawer pointing at the same source.
-#
-# Cache key: (sid, abs_path). Value: (mtime, size, turn_first_read, content_hash).
-# On hit: stat() the file, compare mtime+size. Match → emit stub. Diff → bypass
-# cache, refresh entry with new content, return fresh result. Cache is
-# invalidated explicitly by _after_file_write() when the agent writes/edits the
-# same path in-session (the inotify-style fast path; mtime check would catch it
-# anyway but explicit invalidation avoids one wasted read on the model's next
-# turn).
-_read_doc_cache_lock = threading.Lock()
-_read_doc_cache: dict[str, dict[str, dict]] = {}  # sid -> path -> entry
-_READ_DOC_CACHE_TTL = 3600  # drop sessions untouched this long
-_READ_DOC_CACHE_MAX_PER_SESSION = 64
+# Thin record of which files the model has called read_document / read_file
+# on in this session. Used by the citation validator to grep verbatim quotes
+# against the right files on disk. No content cached, no stubs, no eviction
+# beyond session-delete cleanup — within a single turn the `tool_dedup` guard
+# kills accidental double-reads; across turns the model is expected to re-read
+# (we deliberately don't carry tool_results across turns, so the model has no
+# in-context view of a prior turn's read anyway).
+_session_read_paths_lock = threading.Lock()
+_session_read_paths: dict[str, set[str]] = {}  # sid -> {abs_path, ...}
 
 # --- Cross-encoder reranker (lazy, process-wide) -------------------------
 # Loaded on first mempalace_query when reranker.enabled=true; held in memory
@@ -23287,114 +23230,49 @@ def _get_reranker_model(model_id: str, device_pref: str = "auto"):
             return None
 
 
-def _read_doc_cache_sid() -> str:
+def _session_read_paths_sid() -> str:
     sid = getattr(_thread_local, 'current_session_id', None)
     if sid:
         return sid
     return f"_thread:{threading.get_ident()}"
 
 
-def _read_doc_cache_gc_locked() -> None:
-    now = time.time()
-    stale = [k for k, v in _read_doc_cache.items() if v.get("_last_touch", 0) < now - _READ_DOC_CACHE_TTL]
-    for k in stale:
-        _read_doc_cache.pop(k, None)
+_SESSION_READ_PATHS_MAX = 256  # soft cap per session
 
 
-def _read_doc_cache_lookup(path: str) -> str | None:
-    """Return a stub tool_result if a prior turn read this exact file with the
-    same on-disk identity (mtime+size). Otherwise None — caller proceeds with
-    the real read.
-    """
-    sid = _read_doc_cache_sid()
-    try:
-        st = os.stat(path)
-    except OSError:
-        return None
-    with _read_doc_cache_lock:
-        bucket = _read_doc_cache.get(sid)
-        if not bucket:
-            return None
-        entry = bucket.get(path)
-        if not entry:
-            return None
-        if entry.get("mtime") != st.st_mtime or entry.get("size") != st.st_size:
-            # File changed since last read in this session — drop and miss.
-            bucket.pop(path, None)
-            return None
-        bucket["_last_touch"] = time.time()
-        turn = entry.get("turn", 0)
-        chash = entry.get("content_hash", "")
-    return _ok({
-        "path": path,
-        "cached": True,
-        "first_read_in_turn": turn,
-        "content_hash": chash,
-        "note": (
-            f"Bereits in Turn {turn} dieser Sitzung vollständig gelesen — "
-            "Inhalt ist seitdem unverändert (mtime+size match). Nutze den "
-            "vorigen tool_result. Falls du explizit eine andere Stelle der "
-            "Datei brauchst, rufe read_document mit offset/limit/pages auf "
-            "(seitenweises Lesen umgeht den Cache)."
-        ),
-    })
-
-
-def _read_doc_cache_store(path: str, content: str, tool_round: int = 0) -> None:
-    sid = _read_doc_cache_sid()
-    try:
-        st = os.stat(path)
-    except OSError:
-        return
-    chash = hashlib.sha256((content or "").encode("utf-8", errors="replace")).hexdigest()[:16]
-    with _read_doc_cache_lock:
-        bucket = _read_doc_cache.get(sid)
-        if bucket is None:
-            bucket = {"_last_touch": time.time()}
-            _read_doc_cache[sid] = bucket
-            _read_doc_cache_gc_locked()
-        # Bound per-session size; drop oldest by turn.
-        if len([k for k in bucket if not k.startswith("_")]) >= _READ_DOC_CACHE_MAX_PER_SESSION:
-            kept = [(k, v) for k, v in bucket.items() if not k.startswith("_")]
-            kept.sort(key=lambda kv: kv[1].get("turn", 0))
-            for k, _ in kept[:max(1, len(kept) // 4)]:
-                bucket.pop(k, None)
-        bucket[path] = {
-            "mtime": st.st_mtime,
-            "size": st.st_size,
-            "turn": tool_round,
-            "content_hash": chash,
-        }
-        bucket["_last_touch"] = time.time()
-
-
-def _read_doc_cache_invalidate(path: str) -> None:
-    """Drop one path from every session's cache. Called by _after_file_write so
-    a follow-up read in the same session always re-reads after the model
-    writes/edits the file."""
+def _record_session_read_path(path: str) -> None:
+    """Note that the current session called read_document / read_file on this
+    file. Used by the citation validator to know which on-disk sources to grep
+    quotes against."""
     try:
         abs_path = os.path.abspath(os.path.expanduser(path))
     except Exception:
         return
-    with _read_doc_cache_lock:
-        for bucket in _read_doc_cache.values():
-            bucket.pop(abs_path, None)
+    sid = _session_read_paths_sid()
+    with _session_read_paths_lock:
+        bucket = _session_read_paths.get(sid)
+        if bucket is None:
+            bucket = set()
+            _session_read_paths[sid] = bucket
+        # Sets don't preserve insertion order — when capped, the drop is
+        # arbitrary. 256 is generous for chat workloads; if we exceed it the
+        # session is probably an outlier and the validator can live with
+        # whatever subset remains.
+        if len(bucket) >= _SESSION_READ_PATHS_MAX and abs_path not in bucket:
+            return
+        bucket.add(abs_path)
 
 
 def _read_doc_cache_session_paths(session_id: str | None = None) -> list[str]:
-    """Return the list of absolute paths the given session has read via
-    `read_document` / `read_file`. Used by the citation validator to know
-    which files to grep verbatim quotes against."""
-    sid = session_id or _read_doc_cache_sid()
-    out: list[str] = []
-    with _read_doc_cache_lock:
-        bucket = _read_doc_cache.get(sid)
+    """Return absolute paths the given session has read via read_document /
+    read_file. Name kept for backward compatibility with the citation
+    validator; the underlying store is no longer a cache, just a path set."""
+    sid = session_id or _session_read_paths_sid()
+    with _session_read_paths_lock:
+        bucket = _session_read_paths.get(sid)
         if not bucket:
-            return out
-        for k in bucket:
-            if not k.startswith("_"):
-                out.append(k)
-    return out
+            return []
+        return list(bucket)
 
 
 # --- Citation Validator (Phase 1: validate + annotate, no re-round) ---
@@ -23965,10 +23843,6 @@ def _register_artifact_version(path: str, action: str, agent_id: str):
 def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
     """Centralized post-file-write pipeline. Called from tool_write_file and tool_edit_file.
     Replaces scattered _maybe_qmd_reindex(), _extract_entities(), file_created calls."""
-    # Invalidate any cached read for this file so the model's next read in this
-    # session fetches the just-written content instead of a stale stub.
-    _read_doc_cache_invalidate(path)
-
     # Transparent anonymisation: if the chat worker installed a deanonymise
     # callback on this thread, invoke it BEFORE artifact registration so the
     # UI sees the de-anonymised bytes (and the version row's hash matches the

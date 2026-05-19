@@ -285,19 +285,30 @@ def _translate_anthropic_event(ev_type: str, data: dict,
         return
 
     if ev_type == "anthropic.message_delta":
-        # Usage updates ride here; emit a synthetic `usage` event so the
-        # chat worker sees the same shape it gets from send_message today.
-        #
-        # `tokens_in` aggregates the three Anthropic input counters:
-        #   - input_tokens                  (uncached prompt bytes)
-        #   - cache_creation_input_tokens   (tokens written to cache this turn)
-        #   - cache_read_input_tokens       (tokens served from cache)
-        # The total is the actual prompt the model saw — what the user means
-        # by "tokens in." Splitting them was hiding the real number from
-        # providers that report 100% via cache_creation (e.g. oMLX
-        # /v1/messages, where input_tokens is always 0 and the prompt size
-        # lives in cache_creation_input_tokens) and undercounting on real
-        # Anthropic requests where prompt cache is in play.
+        # Streaming usage updates ride here, but they're unreliable on
+        # OpenAI-translated providers (CLIProxyAPI → Mistral was observed
+        # reporting input_tokens that excluded tool_result content in the
+        # final round). We now source usage from sidecar `round_end` events
+        # instead — those carry `stream.get_final_message().usage`, which is
+        # the SDK's authoritative final count for the round.
+        return
+
+    if ev_type == "anthropic.message_stop":
+        return  # round_end carries the authoritative usage; nothing here.
+
+    # --- Brain-overlay events ---
+
+    if ev_type == "round_start":
+        state["round_index"] = data.get("round", state.get("round_index", 0) + 1)
+        return
+
+    if ev_type == "round_end":
+        # Authoritative per-round usage from the sidecar's assembled
+        # final_message. `tokens_in` aggregates the three Anthropic input
+        # counters (input + cache_creation + cache_read) so providers that
+        # report the full prompt via cache_creation (oMLX /v1/messages
+        # always sets input_tokens=0 and puts the prompt size in
+        # cache_creation_input_tokens) aren't undercounted.
         usage = data.get("usage") or {}
         if usage:
             tokens_in = (
@@ -308,21 +319,8 @@ def _translate_anthropic_event(ev_type: str, data: dict,
             callback("usage", {
                 "tokens_in": tokens_in,
                 "tokens_out": int(usage.get("output_tokens", 0) or 0),
-                "tool_round": state.get("round_index", 0),
+                "tool_round": data.get("round", state.get("round_index", 0)),
             })
-        return
-
-    if ev_type == "anthropic.message_stop":
-        return  # round_end carries the same info; nothing to forward here.
-
-    # --- Brain-overlay events ---
-
-    if ev_type == "round_start":
-        state["round_index"] = data.get("round", state.get("round_index", 0) + 1)
-        return
-
-    if ev_type == "round_end":
-        # Per-round usage already emitted by anthropic.message_delta.
         return
 
     if ev_type == "tool_dispatch_start":
