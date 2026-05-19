@@ -262,11 +262,18 @@ class API {
           if (line.startsWith('event: ')) {
             lastEventType = line.slice(7).trim();
           } else if (line.startsWith('data: ') && lastEventType) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (callbacks[lastEventType]) callbacks[lastEventType](data);
-            } catch(e) {
+            let data = null;
+            let parsed = false;
+            try { data = JSON.parse(line.slice(6)); parsed = true; }
+            catch(e) {
               console.error('[SSE] JSON parse failed for event:', lastEventType, 'line length:', line.length, e.message);
+            }
+            if (parsed && callbacks[lastEventType]) {
+              // Callback exceptions (render bugs, marked.parse failures, etc.) must
+              // NOT unwind the SSE reader — that would silently kill the stream
+              // mid-turn and leave the UI frozen. Isolate per event.
+              try { callbacks[lastEventType](data); }
+              catch(cbErr) { console.error('[SSE] callback threw for event:', lastEventType, cbErr); }
             }
             lastEventType = null;
           } else if (line.startsWith(':')) {
@@ -281,10 +288,13 @@ class API {
           if (line.startsWith('event: ')) {
             lastEventType = line.slice(7).trim();
           } else if (line.startsWith('data: ') && lastEventType) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (callbacks[lastEventType]) callbacks[lastEventType](data);
-            } catch(e) {}
+            let data = null;
+            let parsed = false;
+            try { data = JSON.parse(line.slice(6)); parsed = true; } catch(e) {}
+            if (parsed && callbacks[lastEventType]) {
+              try { callbacks[lastEventType](data); }
+              catch(cbErr) { console.error('[SSE] callback threw for event:', lastEventType, cbErr); }
+            }
             lastEventType = null;
           }
         }
@@ -318,10 +328,14 @@ class API {
         if (line.startsWith('event: ')) {
           lastEventType = line.slice(7).trim();
         } else if (line.startsWith('data: ') && lastEventType) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (callbacks[lastEventType]) callbacks[lastEventType](data);
-          } catch(e) {}
+          let data = null;
+          let parsed = false;
+          try { data = JSON.parse(line.slice(6)); parsed = true; } catch(e) {}
+          if (parsed && callbacks[lastEventType]) {
+            // Isolate callback exceptions — see streamChat() for rationale.
+            try { callbacks[lastEventType](data); }
+            catch(cbErr) { console.error('[SSE] callback threw for event:', lastEventType, cbErr); }
+          }
           lastEventType = null;
         }
       };
