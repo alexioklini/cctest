@@ -1,0 +1,105 @@
+---
+name: Brain-Agent Guide
+description: Operator + user-help skill for this brain-agent instance. Use when the user asks how brain-agent works, how to use the web UI, where to find a feature ("how do I translate a docx?", "compare two Excels"), or wants you to actually perform an operation (create/run a schedule, list projects, inspect chats, check costs, manage memory, query DBs, tail logs). Covers the web UI manual + FAQ + recipes, HTTP API, agent tools, SQLite schemas, file layout, log paths, and internals.
+metadata:
+  type: skill
+---
+
+# Brain-Agent Operator Guide
+
+You are operating inside a running brain-agent instance. This skill makes you
+capable of **doing** brain-agent operations on the user's behalf — not just
+explaining them.
+
+## When to use this skill
+
+Load it whenever the user:
+
+- Asks "how do I…" / "where do I find…" about the **web UI** (translate a
+  document, compare two files, set up a recurring task, share a chat,
+  manage memory, fix a GDPR block, recover context-full warnings, …)
+- Asks you to **perform** an operation on their behalf: create/run/edit a
+  scheduled task, list/search chats, inspect a session, check costs,
+  query the KG, tail a log, restart a service, dump a DB table, etc.
+- Asks how brain-agent works internally (architecture, sidecar, MemPalace,
+  GDPR scanner, scheduler, …)
+- Reports a problem and you need to know where the relevant log / DB /
+  endpoint / UI control lives.
+
+## How to operate
+
+1. **Pick the right file** based on what the user wants:
+   - "How do I … (in the UI)" → `06-user-manual.md`
+   - "Do X for me" / operate the system → `04-recipes.md`
+   - Endpoint / DB / tool details → `01-api.md` / `02-tools.md` / `03-storage.md`
+   - "Why does it behave this way" → `05-internals.md`
+2. **Read the file before acting.** Source code is **not available in
+   production** — these files are your only ground truth. Do not invent
+   endpoints, column names, tool args, button names, or file paths.
+3. Prefer **tools** for actions: `execute_command` for `curl`/`sqlite3`/`tail`,
+   `read_file` for configs, `python_exec` for ad-hoc data work.
+4. The HTTP API is on `http://127.0.0.1:8420`. You are on the same host.
+   Most endpoints need auth — see `01-api.md`.
+5. When the user says "do X", **do X and report the result**. Don't dump
+   a how-to and stop. Example: "create a schedule that runs daily at 8am
+   and summarizes my unread email" → call the API, verify it landed,
+   show the user the created row, offer to run-now.
+6. When the user asks "how do I", give them the **shortest correct
+   answer** from `06-user-manual.md` — don't paste the whole section.
+7. If a fact isn't in these files, say so — don't guess. The brain-agent
+   codebase evolves; a missing detail means the skill needs updating,
+   not that you should invent one.
+
+## Reference files (read on demand)
+
+All paths are relative to this skill's directory; resolve with
+`agents/main/skills/brain-agent-guide/<file>` or just pass the filename
+to `read_file` (skill dir is the working dir when this skill is active —
+if not, use the absolute path under `agents/main/skills/brain-agent-guide/`).
+
+| File | Contents |
+|---|---|
+| `06-user-manual.md` | **User-facing manual.** Web-UI walkthrough (sidebar, composer, projects, translation, scheduled, settings), FAQ, concrete recipe walkthroughs (translate docx, compare two Excels, daily summary, project-from-PDFs), best practices, tips & tricks, "when to use what" table. Read this for any "how do I" question. |
+| `01-api.md` | Full HTTP API: every `/v1/*` endpoint, methods, auth, request/response shape, admin-only flags. |
+| `02-tools.md` | Every agent tool name + when to reach for it. Groups, purposes, the `use_skill` / `tool_search` flow, dispatch path. |
+| `03-storage.md` | Disk layout (`agents/<id>/…`, artifacts, schedules, MemPalace, projects, attachments), SQLite DB locations + schemas (chats, schedules, costs, auth, traces, audit, context, code-graph). |
+| `04-recipes.md` | Operator recipes — call the API / SQLite from inside an agent turn: list projects, create+run a schedule, inspect chats, check costs/quotas, search MemPalace, manage models/providers, restart services, debug from logs. |
+| `05-internals.md` | Architecture: sidecar loop, warm pool, provider queue, GDPR scanner, MemPalace daemons, project sync, KG extraction, scheduler internals. |
+
+## First step for every task
+
+Before acting:
+
+```
+# User asks "how do I X in the UI" / "where do I find …" / "what's the right way to …":
+read_file("agents/main/skills/brain-agent-guide/06-user-manual.md")
+
+# User wants you to DO something:
+read_file("agents/main/skills/brain-agent-guide/04-recipes.md")
+read_file("agents/main/skills/brain-agent-guide/01-api.md")     # if HTTP is involved
+
+# User asks why something behaves a certain way:
+read_file("agents/main/skills/brain-agent-guide/05-internals.md")
+```
+
+Then either answer with a tight, specific response (UI/FAQ questions), or
+`execute_command` the curl/sqlite call, parse the result, and present a
+short, concrete result (operations).
+
+## Authentication shortcut
+
+The current chat already has an authenticated user (`current_user_id`
+thread-local). For server-side calls from inside an agent turn, prefer:
+
+- **SQLite reads** — go direct, no auth needed (`sqlite3 agents/main/<db>`).
+- **HTTP API calls** — need a bearer token. Get one with the admin
+  credentials documented in `04-recipes.md` (login flow). For read-only
+  inspection of your own data, SQLite is faster.
+
+## Self-update protocol
+
+If you notice that something in these reference files is **wrong** or
+**out of date** (e.g. an endpoint moved, a column was renamed, a new
+feature was added), say so to the user and offer to update the skill
+file. The skill is read fresh from disk on every `use_skill` call — no
+restart needed.
