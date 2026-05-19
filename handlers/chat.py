@@ -3234,17 +3234,37 @@ class ChatHandlerMixin:
                     full_text, filename=name, pdf_path=pdf_path,
                 ) if full_text else None
                 if result:
-                    from engine.classification import LEVEL_LABEL_DE as _LL
-                    level = result.get("final_level") or "unmarked"
-                    action = engine._classification_effective_action(level, cfg=cfg_cls)
+                    from engine.classification import (
+                        LEVEL_LABEL_DE as _LL,
+                        LEVEL_RANK as _LR,
+                    )
+                    # Two independent signals — both reported, but the
+                    # action follows the HIGHER one so a confidential-by-
+                    # content PDF marked "public" still gets the
+                    # confidential policy. Symmetric: a strict-marked PDF
+                    # whose content looks bland still gets the strict
+                    # policy.
+                    marker_lvl = result.get("marker_level")
+                    heuristic = (result.get("content_signals") or {}).get(
+                        "heuristic_level") or "public"
+                    candidates = [lvl for lvl in (marker_lvl, heuristic) if lvl]
+                    if candidates:
+                        action_level = max(candidates, key=lambda x: _LR.get(x, 0))
+                    else:
+                        action_level = "unmarked"
+                    action = engine._classification_effective_action(
+                        action_level, cfg=cfg_cls)
                     classification_block = {
-                        "marker_level": result.get("marker_level"),
-                        "final_level": level,
+                        "marker_level": marker_lvl,
+                        "analyzed_level": heuristic,
+                        "final_level": result.get("final_level") or "unmarked",
+                        "action_level": action_level,
                         "marker_meta": result.get("marker_meta") or {},
                         "marker_evidence": result.get("marker_evidence") or [],
+                        "content_signals": result.get("content_signals") or {},
                         "mismatch": result.get("mismatch"),
                         "effective_action": action,
-                        "level_label_de": _LL.get(level, level),
+                        "level_label_de": _LL.get(action_level, action_level),
                     }
         except Exception:
             pass

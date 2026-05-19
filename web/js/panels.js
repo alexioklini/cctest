@@ -280,7 +280,15 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
       if ((_ACT_ORDER[act] || 0) > (_ACT_ORDER[clsWorstAction] || 0)) {
         clsWorstAction = act;
       }
-      const lvl = c.final_level || 'unmarked';
+      // Use the server's action_level when available (the higher of
+      // marker + heuristic). Falls back to a max() across both signals
+      // on older response shapes.
+      const heur = (c.content_signals && c.content_signals.heuristic_level) || null;
+      const candidates = [c.marker_level, heur].filter(Boolean);
+      const lvl = c.action_level
+               || (candidates.length
+                     ? candidates.reduce((a, b) => (_RANK[a] || 0) >= (_RANK[b] || 0) ? a : b)
+                     : (c.final_level || 'unmarked'));
       if ((_RANK[lvl] || 0) > (_RANK[clsWorstLevel || 'public'] || 0)) {
         clsWorstLevel = lvl;
         clsWorstLabel = c.level_label_de || lvl;
@@ -533,12 +541,15 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
     // + marker level + resulting action, mirroring the per-source-card
     // visual style.
     if (clsActive) {
+      // Two independent signals, both always surfaced:
+      //   - "Aktuelle analysierte Klassifikation" = heuristic_level
+      //   - "Im File klassifiziert als" = marker_level (or
+      //     "Nicht klassifiziert" when none).
       const LEVEL_DE = {
         public: 'Öffentlich',
         internal: 'Intern',
         confidential: 'Vertraulich',
         strict: 'Streng vertraulich',
-        unmarked: 'Unmarkiert',
       };
       const ACTION_DE = {
         ignore: 'Keine Einschränkung',
@@ -548,23 +559,23 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
       };
       const fileRows = classifiedFiles.map(cf => {
         const c = cf.scan.classification;
-        const det = LEVEL_DE[c.final_level] || c.level_label_de || c.final_level;
         const markerLvl = c.marker_level || null;
-        const mark = markerLvl ? (LEVEL_DE[markerLvl] || markerLvl) : 'keine Markierung im Dokument';
+        const heur = (c.content_signals && c.content_signals.heuristic_level) || 'public';
+        const analyzedLabel = LEVEL_DE[heur] || heur;
+        const markerLabel = markerLvl
+          ? (LEVEL_DE[markerLvl] || markerLvl)
+          : 'Nicht klassifiziert';
         const actDE = ACTION_DE[c.effective_action] || c.effective_action || '';
-        const mismatchNote = c.mismatch
-          ? '<div class="pii-finding"><span class="pii-finding-sev is-block"></span>' +
-            '<span class="pii-finding-label">Mismatch</span>' +
-            '<span class="pii-finding-val">Inhalt deutet auf höhere Schutzstufe als die Markierung hin.</span></div>'
-          : '';
         return '<div class="pii-finding">' +
           '<span class="pii-finding-sev' +
             (c.effective_action === 'block' ? ' is-block' : '') +
           '"></span>' +
           '<span class="pii-finding-label">' + esc(cf.name) + '</span>' +
-          '<span class="pii-finding-cat">' + esc(det) + '</span>' +
-          '<span class="pii-finding-val">Markierung: ' + esc(mark) + ' · Folge: ' + esc(actDE) + '</span>' +
-        '</div>' + mismatchNote;
+          '<span class="pii-finding-cat">' + esc(analyzedLabel) + '</span>' +
+          '<span class="pii-finding-val">' +
+            'Im File: ' + esc(markerLabel) + ' · Folge: ' + esc(actDE) +
+          '</span>' +
+        '</div>';
       }).join('');
       sections.push(
         '<div class="pii-source-card">' +
@@ -597,8 +608,21 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
         ? 'Hochsensible Daten erkannt — das gewählte Modell ist lokal, die Daten verlassen das System nicht.'
         : 'Hochsensible Daten erkannt — können nicht an ein Cloud-Modell gesendet werden. Bitte Anonymisierung oder lokales Modell wählen.';
     } else if (clsActive && !hasPiiFindings) {
-      title = 'Klassifizierter Inhalt erkannt';
-      subtitle = `Anhang mit Klassifizierung „${clsWorstLabel || clsWorstLevel}" erkannt — bitte vor dem Senden prüfen.`;
+      // Find the worst file's marker_level for an honest subtitle —
+      // never call something "Unmarkiert" classified.
+      let _hasMarker = false;
+      for (const cf of classifiedFiles) {
+        if (cf.scan && cf.scan.classification && cf.scan.classification.marker_level) {
+          _hasMarker = true; break;
+        }
+      }
+      if (_hasMarker) {
+        title = 'Klassifizierter Inhalt erkannt';
+        subtitle = 'Anhang mit Klassifikation erkannt — bitte vor dem Senden prüfen.';
+      } else {
+        title = 'Nicht klassifizierter Anhang';
+        subtitle = 'Der Anhang hat keine Klassifikation, der Inhalt deutet aber auf sensible Daten hin — bitte vor dem Senden prüfen.';
+      }
     } else if (clsActive) {
       title = 'Personenbezogene Daten und klassifizierter Inhalt erkannt';
       subtitle = 'Bitte vor dem Senden prüfen — die Auswahl gilt für beide Befunde.';
