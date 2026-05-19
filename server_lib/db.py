@@ -666,6 +666,30 @@ class ChatDB:
                 "CREATE INDEX IF NOT EXISTS idx_pseudonym_maps_session "
                 "ON pseudonym_maps(session_id)"
             )
+            # ── Document classification scan history ──
+            # One row per scan (upload / folder walk / project sweep). The
+            # detector itself is in engine/classification.py and is invoked
+            # via handlers/classification.py — this table only persists the
+            # results so users can revisit past scans. `summary_json` carries
+            # aggregate counts; `evidence_json` carries per-file details
+            # (marker excerpts + mismatch reasons), capped server-side at
+            # ~50KB so a runaway scan can't bloat chats.db.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS classification_scans (
+                    scan_id       TEXT PRIMARY KEY,
+                    user_id       TEXT NOT NULL DEFAULT '',
+                    created_at    REAL NOT NULL DEFAULT (strftime('%s','now')),
+                    source_kind   TEXT NOT NULL,
+                    source_label  TEXT NOT NULL DEFAULT '',
+                    file_count    INTEGER NOT NULL DEFAULT 0,
+                    summary_json  TEXT NOT NULL DEFAULT '{}',
+                    evidence_json TEXT NOT NULL DEFAULT '[]'
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_classification_scans_user "
+                "ON classification_scans(user_id, created_at DESC)"
+            )
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -1820,5 +1844,88 @@ class TranslateHistoryDB:
                 conn.execute(
                     "DELETE FROM translate_history WHERE id = ? AND user_id = ?",
                     (entry_id, user_id),
+                )
+            conn.commit()
+
+
+class ClassificationDB:
+    """Persist document-classification scan results to chats.db.
+
+    Schema in CHAT_DB → classification_scans. See engine/classification.py
+    for the detector that produces these results.
+    """
+
+    @staticmethod
+    @_db_safe(default=None)
+    def insert(*, scan_id: str, user_id: str, source_kind: str,
+               source_label: str, file_count: int,
+               summary_json: str, evidence_json: str) -> None:
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO classification_scans "
+                "(scan_id, user_id, source_kind, source_label, file_count, "
+                " summary_json, evidence_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (scan_id, user_id or "", source_kind, source_label or "",
+                 int(file_count), summary_json, evidence_json),
+            )
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_for_user(user_id: str, *, admin: bool = False,
+                       limit: int = 100) -> list:
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            if admin:
+                rows = conn.execute(
+                    "SELECT scan_id, user_id, created_at, source_kind, "
+                    "source_label, file_count, summary_json "
+                    "FROM classification_scans "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (int(limit),),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT scan_id, user_id, created_at, source_kind, "
+                    "source_label, file_count, summary_json "
+                    "FROM classification_scans "
+                    "WHERE user_id = ? "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (user_id or "", int(limit)),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get(scan_id: str, user_id: str, *, admin: bool = False):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            if admin:
+                row = conn.execute(
+                    "SELECT * FROM classification_scans WHERE scan_id = ?",
+                    (scan_id,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM classification_scans "
+                    "WHERE scan_id = ? AND user_id = ?",
+                    (scan_id, user_id or ""),
+                ).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    @_db_safe(default=None)
+    def delete(scan_id: str, user_id: str, *, admin: bool = False) -> None:
+        with _db_conn() as conn:
+            if admin:
+                conn.execute(
+                    "DELETE FROM classification_scans WHERE scan_id = ?",
+                    (scan_id,),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM classification_scans "
+                    "WHERE scan_id = ? AND user_id = ?",
+                    (scan_id, user_id or ""),
                 )
             conn.commit()

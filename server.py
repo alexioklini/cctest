@@ -933,6 +933,7 @@ from handlers.admin import AdminHandlerMixin
 from handlers.favourites import FavouritesHandlerMixin
 from handlers.translate import TranslateHandlerMixin
 from handlers.share import ShareHandlerMixin
+from handlers.classification import ClassificationHandlerMixin
 
 # Inject server-level globals into handler modules (they were originally
 # defined in the same file and relied on shared module globals).
@@ -955,6 +956,7 @@ def _inject_server_globals():
         FavouritesHandlerMixin.__module__,
         TranslateHandlerMixin.__module__,
         ShareHandlerMixin.__module__,
+        ClassificationHandlerMixin.__module__,
     ]
     # All names from server module that handlers reference as bare globals.
     # Include modules aliased as simple names (e.g. engine, _auth_mod) since
@@ -981,6 +983,7 @@ class BrainAgentHandler(
     FavouritesHandlerMixin,
     TranslateHandlerMixin,
     ShareHandlerMixin,
+    ClassificationHandlerMixin,
     BaseHTTPRequestHandler,
 ):
     """HTTP request handler for Brain Agent API."""
@@ -1141,6 +1144,7 @@ class BrainAgentHandler(
         "/v1/quotas/admin/users",
         "/v1/sidecar/status",
         "/v1/gdpr/ner-models",
+        "/v1/classification/config",
     }
 
     _ADMIN_POST_EXACT = {
@@ -1178,6 +1182,7 @@ class BrainAgentHandler(
         "/v1/nodes",
         "/v1/sidecar/restart",
         "/v1/gdpr/ner-models",
+        "/v1/classification/config",
     }
     _ADMIN_POST_PATHS = _ADMIN_POST_EXACT
     _ADMIN_POST_PREFIXES = (
@@ -1486,6 +1491,12 @@ class BrainAgentHandler(
             self._handle_quota_config_get()
         elif path == "/v1/tools/settings":
             self._handle_tool_settings_get()
+        elif path == "/v1/classification/config":
+            self._handle_classification_config_get()
+        elif path == "/v1/classification/scans":
+            self._handle_classification_scans_list()
+        elif path.startswith("/v1/classification/scans/"):
+            self._handle_classification_scan_detail(path)
         elif path == "/v1/research-mode/disciplines":
             self._handle_research_mode_disciplines_get()
         elif path == "/v1/gdpr/ner-models":
@@ -1759,6 +1770,14 @@ class BrainAgentHandler(
             self._handle_quota_config_save()
         elif path == "/v1/tools/settings":
             self._handle_tool_settings_save()
+        elif path == "/v1/classification/config":
+            self._handle_classification_config_save()
+        elif path == "/v1/classification/scan-files":
+            self._handle_classification_scan_files()
+        elif path == "/v1/classification/scan-folder":
+            self._handle_classification_scan_folder()
+        elif path == "/v1/classification/scan-project":
+            self._handle_classification_scan_project()
         elif path == "/v1/research-mode/disciplines":
             self._handle_research_mode_disciplines_save()
         elif path == "/v1/gdpr/ner-models":
@@ -1952,6 +1971,8 @@ class BrainAgentHandler(
         elif path.startswith("/v1/translate/history/"):
             entry_id = path[len("/v1/translate/history/"):]
             self._handle_translate_history_delete(entry_id)
+        elif path.startswith("/v1/classification/scans/"):
+            self._handle_classification_scan_delete(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -3028,6 +3049,8 @@ def main():
     server_config["attachment_image_model"] = attachments_cfg.get("image_model", "")
     server_config["chat_summary_model"] = file_config.get("chat_summary_model", "") or ""
     server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}
+    server_config["classification"] = file_config.get("classification", {}) or {}
+    server_config["classification_scanner"] = file_config.get("classification_scanner", {}) or {}
     server_config["sidecar"] = file_config.get("sidecar", {}) or {}
 
     # Per-tool prompt settings (admin-editable prose appended to system prompt

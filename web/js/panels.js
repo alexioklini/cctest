@@ -618,6 +618,93 @@ function gdprRecoveryModal(detail, chat) {
   });
 }
 
+// ─── Classification modal (Phase B) ───
+// Surfaces when chat.js detects classified attachments + non-local model
+// before send. Returns 'cancel' | 'local' (no anonymise path — strips
+// PII, not classification markers).
+function classificationActionModal(classifiedFiles, chat) {
+  return new Promise((resolve) => {
+    // Find the worst-level file to drive the modal tone
+    const RANK = {public: 0, internal: 1, confidential: 2, strict: 3, unmarked: 1};
+    let worstFile = classifiedFiles[0];
+    let worstRank = -1;
+    for (const f of classifiedFiles) {
+      const r = RANK[(f.scan?.classification?.final_level) || 'unmarked'] || 0;
+      if (r > worstRank) { worstRank = r; worstFile = f; }
+    }
+    const worst = worstFile.scan.classification;
+    const isStrict = worst.final_level === 'strict' && worst.effective_action === 'block';
+    const subtitle = isStrict
+      ? 'Streng vertrauliche Inhalte dürfen ohne Vorstands­zustimmung das System nicht über ein Cloud-Modell verlassen. Bitte den Turn abbrechen.'
+      : `Klassifizierter Inhalt erkannt (${worst.level_label_de || worst.final_level}). Auf ein lokales Modell wechseln, um fortzufahren — oder den Turn abbrechen.`;
+    // Reuse the existing pii-modal stylesheet (gdprActionModal injects it)
+    const ensureStyles = () => {
+      if (document.getElementById('pii-modal-styles-v3')) return;
+      // Trigger style injection by calling gdprActionModal infrastructure
+      const tmp = document.createElement('style');
+      tmp.id = 'pii-modal-styles-v3';
+      tmp.textContent = `
+        @keyframes pii-fade-in { from{opacity:0} to{opacity:1} }
+        @keyframes pii-pop-in  { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        .pii-overlay { position:fixed; inset:0; z-index:9999; display:flex; align-items:center; justify-content:center; background:rgba(20,18,16,.52); backdrop-filter:blur(4px); padding:20px; }
+        .pii-card { width:min(560px,100%); background:var(--bg-000,#faf9f7); border-radius:14px; box-shadow:0 20px 50px -16px rgba(31,30,29,.32); overflow:hidden; animation:pii-pop-in .18s ease-out; }
+        .pii-header { padding:18px 22px 14px; border-bottom:1px solid var(--border-100); }
+        .pii-title { font-size:15px; font-weight:600; margin:0; color:var(--text-000); }
+        .pii-subtitle { font-size:12.5px; margin:4px 0 0; color:var(--text-300); }
+        .pii-body { padding:14px 22px 16px; }
+        .pii-source-card { padding:10px 12px; border:1px solid var(--border-100); border-radius:8px; margin-top:6px; font-size:12.5px; }
+        .pii-footer { padding:12px 18px; border-top:1px solid var(--border-100); display:flex; gap:8px; justify-content:flex-end; }
+        .pii-btn { padding:7px 14px; font-size:12.5px; border-radius:7px; cursor:pointer; font-family:inherit; border:1px solid transparent; }
+        .pii-btn-text { background:transparent; color:var(--text-200); border-color:var(--border-200); }
+        .pii-btn-primary { background:#0d6efd; color:#fff; }
+      `;
+      document.head.appendChild(tmp);
+    };
+    ensureStyles();
+    const filesList = classifiedFiles.map(f => {
+      const c = f.scan.classification;
+      const lbl = c.level_label_de || c.final_level;
+      const act = c.effective_action;
+      return `<div class="pii-source-card">
+        <b>${esc(f.name)}</b>
+        <span style="color:var(--text-300);margin-left:6px">— ${esc(lbl)} (Aktion: ${esc(act)})</span>
+      </div>`;
+    }).join('');
+    const html = `
+      <div class="pii-overlay">
+        <div class="pii-card">
+          <div class="pii-header">
+            <h3 class="pii-title">${isStrict ? '🔒 Streng vertraulich — Versand blockiert' : '🔒 Klassifizierter Inhalt'}</h3>
+            <p class="pii-subtitle">${esc(subtitle)}</p>
+          </div>
+          <div class="pii-body">${filesList}</div>
+          <div class="pii-footer">
+            <button class="pii-btn pii-btn-text" id="cls-modal-cancel">Abbrechen</button>
+            ${isStrict ? '' : '<button class="pii-btn pii-btn-primary" id="cls-modal-local">Lokales Modell verwenden</button>'}
+          </div>
+        </div>
+      </div>`;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    const overlay = wrap.firstElementChild;
+    document.body.appendChild(overlay);
+    const cleanup = (choice) => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      resolve(choice);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') cleanup('cancel'); };
+    document.addEventListener('keydown', onKey);
+    document.getElementById('cls-modal-cancel').onclick = () => cleanup('cancel');
+    if (!isStrict) {
+      document.getElementById('cls-modal-local').onclick = () => cleanup('local');
+      setTimeout(() => document.getElementById('cls-modal-local')?.focus(), 50);
+    } else {
+      setTimeout(() => document.getElementById('cls-modal-cancel')?.focus(), 50);
+    }
+  });
+}
+
 // Unified PII surfacing — single composer-toolbar icon for draft + history.
 // Replaces the v8.6.x split between the above-composer pill (draft) and the
 // toolbar icon (history-only). Severity escalates via icon colour; the hover

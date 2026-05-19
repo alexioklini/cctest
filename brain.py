@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.5.0"
-VERSION_DATE = "2026-05-18"
+VERSION = "9.6.0"
+VERSION_DATE = "2026-05-19"
 CHANGELOG = [
+    ("9.6.0", "2026-05-19", "feat(classification): WPB ARL 20.02.02.06 document classification — Phase A (audit/Data view) + Phase B (enforcement) shipped together. **Phase A — detect-only audit surface**: New `engine/classification.py` pure detector — regex marker scan (`Dokumentenklassifizierung … <level>`, English `Classification: <level>`, TLP RED/AMBER/GREEN/WHITE, filename hints, ARL number pattern), filename hint fallback, content heuristic (PII findings + admin-editable keyword lists per sensitivity). Mismatch fires when `heuristic_rank > marker_rank` (HIGH when marker=public + PII/confidential keywords, or delta ≥ 2 levels). Unmarked is a first-class state, not auto-promoted to internal. New `handlers/classification.py` with 9 endpoints: `POST /v1/classification/scan-files` (multipart, ≤500 files), `/scan-folder` (realpath-guarded — must sit under repo root / agents/ / cwd / project input_folders, hard-deny on /etc /var /usr /bin /sbin /System /Library/Keychains), `/scan-project` (walks input_folders + ingested/); `GET /scans[/<id>[.csv]]`, `DELETE /scans/<id>`; admin-only `GET/POST /v1/classification/config` (audited as `classification_config_save`). Text extraction reuses `engine.doc_convert.convert_one()` (same Mistral-OCR + local-vision pipeline as MemPalace ingestion). New `classification_scans` table in chats.db with 50KB evidence cap (progressive trim — drops marker excerpts, then keyword hits, then keeps only per-file summary). New `ClassificationDB` class in `server_lib/db.py`. Data view UI in `#data-view` (was empty placeholder) — three input modes (Upload / Server folder / Project), filtered table (mismatch-only / unmarked-only / per-level), CSV export (client-side when not persisted; server-side `.csv` endpoint when persisted), scan history, drag-drop dropzone. Settings → Classification tab with admin-editable keywords per sensitivity (internal/confidential/strict) + extra marker regex patterns, 'Restore defaults' per group. WPB defaults seeded in `DEFAULT_KEYWORDS` (Vorstand, Aufsichtsrat, CISO, CRYPTSHARE, …). **Phase B — enforcement**: Policy config `config.json → classification_scanner` (enabled, server_block, server_log, default_local_fallback_model, per_level_action). Defaults: public=ignore, internal=warn, confidential=force_local, strict=block, unmarked=warn. Strict-always-block invariant in `_classification_effective_action()` (ARL §1.11 'ohne Zustimmung des Vorstands ausnahmslos untersagt' — coerces strict→block regardless of admin input when server_block is on). New `ClassificationBlockedError(GDPRBlockedError)` — subclass trick means every existing `except GDPRBlockedError:` (10+ background sites: next-prompt, chat summary, memory classifier, scheduled tasks, refine, delegate, KG extract, …) auto-catches classification blocks with zero per-site changes. New `classification_pick_model_for_background(model, texts, purpose)` parallels `gdpr_pick_model_for_background` (no anonymise path — stripping PII doesn't change a document's classification). Actions: ignore/warn → passthrough, force_local → swap to fallback or raise, block → raise. Audit: `classification_detected` / `classification_auto_fallback` / `classification_blocked`. Single-seam wiring: `gdpr_pick_model_for_background` calls `classification_pick_model_for_background` FIRST inside its body — every site already obeying GDPR policy now obeys classification policy. Tool-read gate `_classification_gate_tool_text` called inside `_gdpr_anon_tool_text` — when a `read_document` / `read_file` / `python_exec` / `execute_command` output is classified above the per-level threshold AND the active model is non-local, raises `ClassificationBlockedError`. The dispatcher turns the raise into a JSON tool-error the LLM sees verbatim. Fail-open on internal errors. PDF footer fallback: `engine.classification.extract_pdf_page_texts()` re-scans raw fitz-extracted per-page text for markers when markitdown's main extraction yields none (markitdown drops repeating PDF footers). Promoted marker keeps content_signals + heuristic from the primary extraction. Validated on synthetic PDFs (real WPB ARL footer is vector graphics — per-PDF tooling limit, not a detector failure). `/v1/attachments/scan` extended with `classification: {marker_level, final_level, marker_meta, marker_evidence, mismatch, effective_action, level_label_de}`. Per-file chip badges (🔒 / 🏠 / ⛔) color-coded by sensitivity. Composer modal in `web/js/panels.js: classificationActionModal` — fires after PII modal in `sendMessage()`. Strict + block → Cancel only (no swap). Confidential force_local → Cancel + 'Lokales Modell verwenden'. Skipped when model is already local. `classificationBlockActive(chat)` folded into `piiBlockActive(chat)` so the model dropdown auto-restricts to local-only when classified attachments are pending. Settings → Classification policy block (master switches, default_local_fallback_model dropdown filtered to enabled local models, per-level action dropdowns; strict row locked at block with ARL §1.11 tooltip). Regex fix during Phase B: removed too-strict `(?!\\s+\\w)` negative lookahead on `vertraulich` — was failing on normal marker followed by `Verantwortlicher: …`. The anchor keyword (Dokumentenklassifizierung/Klassifizierung) provides enough context. **Smoke-tested 2026-05-19**: server restart clean, end-to-end scan on WPB ARL PDF correctly reports `unmarked + heuristic=confidential + PII×50` (markitdown lost footer; mismatch surface caught content signals — exactly the audit value the user asked for). Policy round-trips: confidential marker → effective_action=force_local, strict marker → effective_action=block. **Phase C deferred** (see `CLASSIFICATION_PHASE_C_HANDOVER.md`): session classification taint (sticky per-session field), derived-artifact auto-marking (inject footer/header on write_file/edit_file when session taint is set, per-format dispatch: md footer / docx custom property + Heading / xlsx workbook prop / HTML meta+banner; PDF punted to audit-only), three remaining background sites not yet wrapped (`_handle_soul_chat`, workflow LLM nodes, warmup test-call — same gap as the existing GDPR coverage 19/22), composer banner for taint, Settings → Audit classification-events filter chip."),
     ("9.5.0", "2026-05-18", "feat(gdpr-ner): Phase 1.1 — quality + coverage improvements on top of 9.4.0. **(1) Recategorisation** — `name`, `address`, `organisation` rule_ids moved from `personal` to `contact` (alongside email/phone). Default category action stays `ignore` (soft PII often included deliberately in chat; admin bumps to warn/block via the existing per-category UI). `categoryLabels.contact` widened to enumerate the new rule_ids. **(2) Removed `ner_enabled` master switch** — was redundant with the category action (set `contact: ignore` and NER findings stop surfacing). Dropped from `brain.py`/`handlers/admin.py`/`server.py`/`web/js/{nav,settings}.js`. Server now unconditionally loads spaCy at startup (~120 MB resident, ~1.5 s boot — cheap enough that a kill-switch wasn't earning its UI surface). **(3) Runtime model control via Settings → GDPR pill** — new admin endpoints `GET/POST /v1/gdpr/ner-models {action: 'load'|'unload', lang}` (synchronous, audited as `gdpr_ner_models_change`) backed by `engine/pii_ner.{KNOWN_LANGUAGES, load_models, unload_model, list_loaded, is_available}`. Pill renders per-language status (green dot loaded / grey not loaded / red failed-to-load) with Load/Unload button — admin can unload to free RAM or reload after a fresh `pip install`. Phase 2 EN/RU rows will appear automatically once added to `KNOWN_LANGUAGES`. **(4) Shape gate to suppress sm/md false positives** — `engine/pii_ner._passes_shape_gate(value, rule_id)` drops three known FP modes: lowercase entities (`ich wohne`, `wien` written in casual prose) where German proper-noun casing fails, digits-only spans, and an `_ORG_ACRONYM_BLOCKLIST` (`DSGVO`, `IBAN`, `BGB`, `EU`, …) for single-token ORG mislabels of legal/technical references. Conservative bias — keeps `Hans-Peter Müller`, `Deutsche Bahn`, `BMW`, multi-word names with mixed case, all proper-cased single tokens. **(5) Model bump `sm` → `md`** — `de_core_news_md-3.8.0` (44 MB wheel, ~120 MB resident, ~+2 F1 over `_sm` on German NER). Pre-trained word vectors help on casual/mixed-case text where `_sm` over-fires PER. `requirements.txt` updated; the shape gate stays as belt-and-suspenders. **(6) Turn-header GDPR highlight fix** (chat 168fc2d0 regression) — `renderUserMessage` was never being called from the per-turn layout; the user-side of every anonymised turn rendered as plain escaped text in the `Anfrage N` badge. Replaced `<span class=\"${hintCls}\">${esc(fullQ)}</span>` in `web/js/chat.js:renderMessages` with a call to `renderPlainTextWithGdprHighlights(fullQ, userSpans)` when `state.showGdprDetails && userSpans.length`. Added `.turn-group-collapsed-hint mark.gdpr-restored` to the existing yellow-tint CSS rule. Both the one-line ellipsis hint AND the chevron-expanded full text now render the yellow `<mark>` overlay with category/value tooltip. **(7) Pre-send modal NER coverage** (session 13b37e96 regression) — root cause: `PIIScanner.scanPayload` in the browser is regex-only, so NER-only PII like `Mein Name ist Alexander Klinsky` never triggered the pre-send GDPR modal. Background calls (chat_summary, refine, next_prompt) anonymised correctly via `_pii_scan_text`; the interactive chat path didn't. Fixed by adding `POST /v1/gdpr/scan-text` (`handlers/chat.py:_handle_gdpr_scan_text`, auth required, 200 KB body cap, 100 findings cap, returns the same `{groups, categories, finding_count}` shape as `/v1/attachments/scan`) and calling it from `sendMessage` in `web/js/chat.js` BEFORE the modal decision: server-side findings get folded into `scan.bySource['compose']`, pushed into `scan.findings` so the existing `scan.findings.length` gate sees them, and duplicates from the regex-only client `'text'` source are pruned. Fail-open — server-down keeps the client scanner as-is, never blocks a send. `API.scanText(text, source)` exposes the endpoint. **Tests**: 11 new tests in `tests/test_pii_ner.py` (TestShapeGate covers lowercase PER/LOC suppression, proper-noun pass-through, acronym blocklist, digits-only filter; TestShapeGateIntegration runs the exact FP sentences from chat 168fc2d0 through scan_text). Total 27 NER tests + 56 existing PII tests = 83 green. **Documentation**: CLAUDE.md GDPR section updated to reflect the recategorisation, shape gate, md model, removed toggle, and upgrade path (`_lg` / `_trf` if FPs still annoy)."),
     ("9.4.0", "2026-05-18", "feat(gdpr-ner): server-side spaCy NER (Phase 1, German) for personal-name / address / organisation detection. Adds a third pass to `_pii_scan_text` after the regex catalog + bare-identifier heuristic so names like Maria Schmidt, cities like München, and orgs like Siemens are flagged alongside IBANs / emails / IDs and flow through the same `pseudonymize_text` → `<NAME_N_xxxx>` / `<ADDRESS_N_xxxx>` / `<ORGANISATION_N_xxxx>` token machinery (round-trips cleanly via the existing `deanonymize_text` path). **(1) `engine/pii_ner.py`** (NEW, ~180 LOC): `KNOWN_LANGUAGES` catalogue (Phase 1 = `de` only), `load_models(languages)` with per-language failure tracking (`_LOAD_FAILED` — never retried on the boot path; admins explicitly reload via the UI), `is_available(lang)` probe, `unload_model(lang)` (drops from cache, clears failure flag so a subsequent load retries fresh, returns whether anything was removed), `list_loaded()` (per-language `{lang, display, model, loaded, failed}` snapshot for the admin UI), `scan_text(text, lang='de', max_findings=N)` producing findings shaped exactly like the regex pass (`rule_id, label, category='contact', start, end, len, source='ner'`). Loads `de_core_news_sm` with parser/tagger/lemmatizer/attribute_ruler disabled — only tok2vec + ner needed, ~3× faster load and ~50 MB resident. spaCy label → Brain rule_id mapping: PER→`name`, LOC→`address`, ORG→`organisation`. Hard 50 K-char scan cap to bound regex+NER latency. 3-char minimum-entity filter to drop noise. **(2) `brain.PII_RULE_CATEGORIES`** gets three new entries (`name`, `address`, `organisation`) — all in the existing `contact` category alongside email/phone (soft PII often included deliberately in chat; admin-editable per-category action governs them uniformly, default `ignore`). No new category, no admin-UI explosion. Per-rule overrides + `_pii_effective_action` resolution work unchanged because they already key on rule_id. **No `ner_enabled` master switch** — earlier drafts had one and it was redundant: the category action already controls whether findings surface, and a separate kill-switch added a second knob to keep in sync. `categoryLabels.contact` in `web/js/utils.js` widened to enumerate the new rule_ids so the admin UI hints at what's included. **(3) `_pii_scan_text` integration**: NER pass runs AFTER regex + bare-id (so checksum-validated rules win on overlap). Inherits `max_findings` budget. Uses the same `spans`-claim machinery as regex/bare-id for overlap suppression. Resolves `action` via `_pii_effective_action` so per-rule and per-category overrides apply identically — when `contact: ignore` (default), NER findings are dropped at the action-resolution step, never reaching the modal. Wrapped in `try/except` — NER never breaks the regex pipeline, failures log to stdout and continue. **(4) Server startup** (`server.py`): right after `init_models_config`, unconditionally calls `pii_ner.load_models(('de',))` so the first chat hitting NER doesn't pay the ~1.5 s load cost. Failures are logged but never fatal — server boots regardless and NER becomes a no-op for the lang. **(5) Admin endpoints + pill UI** — runtime control over which NER languages are resident: `GET /v1/gdpr/ner-models` returns `list_loaded()` snapshot; `POST /v1/gdpr/ner-models {action: 'load'|'unload', lang}` drives `load_models` / `unload_model` synchronously (rejects unknown langs with the catalogue listed), audits via `gdpr_ner_models_change`. Settings → GDPR renders a per-language status pill below the Master switches section (`web/js/settings.js` + `web/js/nav.js`): green dot + 'loaded' or grey 'not loaded' / red 'failed to load', Load/Unload button per row, refreshes on tab open and after every action. Catalogue grows from one row to three when Phase 2 ships EN/RU — same UI. **(6) Per-rule UI** — `PIIScanner.ruleCategories` extended client-side with `name/address/organisation → contact` so the per-category rule expander auto-lists them under Contact info with per-rule override dropdowns. `SERVER_ONLY_RULE_LABELS` table in settings.js gives them human-readable labels in the admin UI (the client-side `PIIScanner.rules` array stays regex-only — these rule_ids have no browser-side detector, server-only by design). **Dependencies** — new `requirements.txt` (first time the repo has one) pins `spacy>=3.8,<4.0` + the `de_core_news_sm-3.8.0` model wheel from GitHub releases (reproducible install, no `python -m spacy download` post-step needed). Install size: ~50 MB spaCy + deps, ~15 MB model on disk. **Tests** (`tests/test_pii_ner.py`, 16 tests): TestNERLoad covers load success + unsupported-lang no-op + graceful failure-via-mocked-`spacy.load`. TestNERScan covers PER/LOC/ORG detection on canonical German sentences + short-entity filter + empty-text + findings-shape + max_findings cap. TestNERIntegration validates merge with regex (email regex + name NER coexist), `contact: ignore` default short-circuits NER findings, per-rule `name: ignore` override drops only name findings, action resolves from the contact category. TestPseudonymizerRoundtrip validates the end-to-end shape: regex+NER finding list → pseudonymize → tokens contain `NAME_` + `ORGANISATION_` → deanonymize restores verbatim. All 16 + the existing 56 PII tests (pseudonymizer / persistence / chat-worker helpers / GDPR clamp / audit) green. Tests skip cleanly when spaCy/model aren't installed so CI without the package still passes. **Phase 2 deferred** (per `SPACY_NER_PHASE1_HANDOVER.md`): English + Russian models, client-side preview-while-typing, language detection wired up. Phase 1 hard-codes `lang='de'` — only model in `KNOWN_LANGUAGES`. **Rollback**: set the Contact category to `ignore` (default) in Settings → GDPR and NER findings stop surfacing — `pseudonymize_text` doesn't care where findings come from, so disabling NER never strands persisted mappings."),
     ("9.3.0", "2026-05-18", "feat(gdpr-highlight): mark de-anonymised values inline in USER messages, matching the existing assistant-side behavior. Symmetry fix — until now only the assistant reply got the yellow `<mark class=\"gdpr-restored\">` overlay with category/value tooltip; the user's original message with the real PII it contained rendered as plain escaped text. Now both sides of every anonymised turn carry the highlight (gated by the same composer GDPR-details toggle). **(1) Server side** (`handlers/chat.py`): the worker's anonymise success branch computes `pseudonymizer.find_restored_spans(user_content, mapping=_mapping)` against the original user text right after `pseudonymize_text` populates the mapping. Spans are attached to the persisted user row as `metadata.gdpr_restored_spans` (same field name + shape the assistant reply already uses) and ALSO surfaced on the `anonymise_done` synthetic SSE event under `result.user_spans` so the live render picks them up without a reload. Multimodal user content (text+image blocks) is handled by walking blocks and scanning the first `type='text'` block — emoji / non-BMP characters in the user message are handled by the same client-side re-locate-by-value pattern the assistant path already uses. **(2) Client side** (`web/js/chat.js`): `synthetic_tool_result` handler for kind=`anonymise` reads `d.result.user_spans` (if present) and attaches it to the most recent user message in `chat.messages` (walks backwards skipping the just-pushed synthetic row). `renderUserMessage` now reads `msg.metadata?.gdpr_restored_spans` and, when present + composer toggle on, renders via the new `renderPlainTextWithGdprHighlights(text, spans)` helper — non-markdown variant of the existing `renderMarkdownWithGdprHighlights` (user messages render as plain escaped text, no marked.parse pipeline, so we splice `<mark>` tags directly while preserving the longest-first / claim-non-overlapping discipline). Reload path works through the existing `ChatDB.load_messages` → `msg.metadata` preservation (sessions.js pushes user rows verbatim into `expanded`). **(3) CSS** (`web/css/main.css`): the existing `mark.gdpr-restored` rule was scoped to `.msg-content` (assistant bubble). Added `.msg-user mark.gdpr-restored` to the same rule (background, tooltip cursor, hover state) so the request side picks up identical styling. **Limitation**: only applies to the v8.41+ transparent-anonymisation flow (anonymise verdict). Local-fallback and continue-anyway verdicts persist the user text without a mapping, so there's nothing to highlight — same boundary as the assistant side. **Out of scope** (next session, see `SPACY_NER_PHASE1_HANDOVER.md`): spaCy NER Phase 1 design + handover doc written, deferred to a fresh session — German names, addresses, and organisations via `de_core_news_sm`, reusing the existing pseudonymise pipeline, server-only, eager-load at startup, `warn` default action."),
@@ -2893,6 +2894,85 @@ def extract_attachment_text(path: str) -> tuple[str, str]:
         return "", "unsupported"
 
 
+def _classification_gate_tool_text(text: str, source: str) -> None:
+    """Classification gate for tool-read content. Raises
+    ClassificationBlockedError when the current chat's model is non-local
+    AND the detected classification level resolves to a `block` action
+    (strict, or confidential with `server_block` on and no usable local
+    fallback). Force_local is left to the chat worker's pre-flight — by
+    the time we reach this seam the model is locked, so the only options
+    here are pass-through (warn) or hard-block.
+
+    No-op when scanner disabled, content unclassified, or model is local.
+    Never raises on its own internal errors — fail-open.
+    """
+    if not text:
+        return
+    try:
+        cfg = _get_classification_config()
+        if not cfg.get("enabled", True):
+            return
+        # Resolve current model — sidecar tool dispatch sets current_session_id
+        # in thread-locals; we look up the session model from there.
+        sid = getattr(_thread_local, "current_session_id", "") or ""
+        model = ""
+        if sid:
+            try:
+                from server_lib.db import ChatDB as _ChatDB
+                info = _ChatDB.get_session_info(sid)
+                model = (info or {}).get("model") or ""
+            except Exception:
+                model = ""
+        if not model:
+            return
+        try:
+            if is_model_local(model):
+                return
+        except Exception:
+            return
+        # Derive a filename hint from `source` (e.g. "file:report.pdf" → "report.pdf")
+        fn_hint = ""
+        if isinstance(source, str) and ":" in source:
+            fn_hint = source.split(":", 1)[1]
+        result = _classification_scan_text(text, filename=fn_hint)
+        if not result:
+            return
+        level = result.get("final_level") or "unmarked"
+        action = _classification_effective_action(level, cfg=cfg)
+        if action != "block":
+            return
+        # Audit + raise
+        _agent = getattr(_thread_local, "current_agent", None) or _current_agent
+        _agent_id = _agent.agent_id if _agent else "main"
+        if cfg.get("server_log", True) and _audit_log:
+            try:
+                _audit_log.log_action(
+                    agent=_agent_id,
+                    action_type="classification_blocked",
+                    tool_name="classification_scanner",
+                    args_summary=f"source={source} level={level}",
+                    result_summary=f"model={model} reason=tool_read policy=block",
+                    result_status="blocked",
+                    session_id=sid or None,
+                    source="tool",
+                )
+            except Exception:
+                pass
+        raise ClassificationBlockedError(
+            f"[Classification block] Refusing to return '{level}' content "
+            f"to a non-local model (source={source}). "
+            f"Switch to a local model to access this document."
+        )
+    except ClassificationBlockedError:
+        raise  # re-raise — caller turns into a tool error
+    except Exception as e:
+        try:
+            print(f"[classification] gate error (fail-open): {e}", flush=True)
+        except Exception:
+            pass
+        return
+
+
 def _gdpr_anon_tool_text(text: str, source: str) -> str:
     """Pseudonymise text returned from a read-style tool, if the active
     session has a transparent-anonymisation mapping.
@@ -2910,9 +2990,18 @@ def _gdpr_anon_tool_text(text: str, source: str) -> str:
     pair on the session's live stream so the chat history shows what
     actually got pseudonymised mid-turn. Persisted with `synthetic=True`,
     so reload picks them up.
+
+    Also runs the classification gate first — if content is classified
+    above the per-level threshold AND the active model is non-local, the
+    tool read is refused with ClassificationBlockedError before PII
+    pseudonymisation runs.
     """
     if not text:
         return text
+    # Classification gate — runs BEFORE pseudonymisation. Raises
+    # ClassificationBlockedError when policy says block; tool dispatcher
+    # turns the raise into a JSON tool-error the LLM sees verbatim.
+    _classification_gate_tool_text(text, source)
     try:
         mapping_id = getattr(_thread_local, "_gdpr_mapping_id", "") or ""
     except Exception:
@@ -20537,6 +20626,27 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = ""):
             return (model, [], _identity_deanon)
         _input_was_str = False
 
+    # ─── Classification gate (Phase B) ──────────────────────────────────
+    # Run BEFORE the GDPR scan so classified content can't be silently
+    # anonymised — anonymisation strips PII but doesn't change the legal
+    # classification of the document. The classification helper raises
+    # ClassificationBlockedError on block; caller catches it as usual.
+    # Model may also be swapped (force_local action) — subsequent GDPR
+    # logic operates on the swapped model.
+    try:
+        model, samples_after_cls, _ = classification_pick_model_for_background(
+            model, samples, purpose=purpose,
+        )
+        # When force_local swapped to a local model, GDPR can skip
+        # anonymisation entirely — let the existing GDPR flow figure that
+        # out via is_model_local() rather than short-circuiting here.
+        if isinstance(samples_after_cls, list):
+            samples = samples_after_cls
+        elif isinstance(samples_after_cls, str):
+            samples = [samples_after_cls]
+    except ClassificationBlockedError:
+        raise  # propagate — caller handles soft return
+
     try:
         cfg = _get_gdpr_scanner_config()
     except Exception:
@@ -20840,6 +20950,294 @@ def _anonymise_background_samples(samples, findings, *, session_id, agent_id,
         except Exception:
             return text
     return out, _deanon
+
+
+# ─── Document Classification (ARL 20.02.02.06) — Phase B enforcement ──────
+
+class ClassificationBlockedError(GDPRBlockedError):
+    """Raised when classified content reaches a non-local model AND the
+    effective per-level action is `block` (or `force_local` with no usable
+    local fallback).
+
+    Inherits from GDPRBlockedError so every existing background caller
+    that already does `except GDPRBlockedError:` (10+ sites: next-prompt,
+    chat summary, memory classifier, delegate, scheduler, refine, etc.)
+    transparently picks up classification blocks without per-site changes.
+    Callers that need to distinguish the two can `except
+    ClassificationBlockedError:` before the GDPR catch.
+    """
+
+
+# Default policy if classification_scanner block is absent from config.json.
+# Matches the user-confirmed Phase B defaults.
+_CLASSIFICATION_DEFAULTS = {
+    "enabled": True,
+    "server_log": True,
+    "server_block": True,                # master switch for `block` action
+    "default_local_fallback_model": "",  # falls back to gdpr_scanner's value if unset
+    "per_level_action": {
+        "public":       "ignore",
+        "internal":     "warn",
+        "confidential": "force_local",
+        "strict":       "block",
+        "unmarked":     "warn",          # unmarked is its own state per Phase A
+    },
+}
+
+
+def _get_classification_config() -> dict:
+    """Merge config.json's classification_scanner block over the defaults."""
+    cfg = {}
+    try:
+        import sys as _sys
+        _srv_mod = _sys.modules.get("__main__") or _sys.modules.get("server")
+        if _srv_mod is not None:
+            _sc = getattr(_srv_mod, "server_config", None) or {}
+            cfg = _sc.get("classification_scanner") or {}
+    except Exception:
+        cfg = {}
+    out = {k: v for k, v in _CLASSIFICATION_DEFAULTS.items()}
+    if isinstance(cfg, dict):
+        for k, v in cfg.items():
+            if k == "per_level_action" and isinstance(v, dict):
+                out["per_level_action"] = {**_CLASSIFICATION_DEFAULTS["per_level_action"], **v}
+            else:
+                out[k] = v
+    # Fall back to GDPR's local fallback model when none configured.
+    if not out.get("default_local_fallback_model"):
+        try:
+            gdpr = _get_gdpr_scanner_config()
+            out["default_local_fallback_model"] = gdpr.get("default_local_fallback_model") or ""
+        except Exception:
+            pass
+    return out
+
+
+def _classification_effective_action(level: str, cfg: dict | None = None) -> str:
+    """Resolve per-level action with strict-always-block invariant.
+
+    Returns: 'ignore' | 'warn' | 'force_local' | 'block'
+
+    Invariants:
+    - strict ALWAYS resolves to 'block' regardless of admin config (ARL §1.11
+      "ohne Zustimmung des Vorstands ausnahmslos untersagt").
+    - When server_block is OFF, 'block' downgrades to 'force_local' so the
+      master switch behaves like gdpr_scanner.server_block.
+    """
+    if cfg is None:
+        cfg = _get_classification_config()
+    if not cfg.get("enabled", True):
+        return "ignore"
+    if level == "strict":
+        return "block" if cfg.get("server_block", True) else "force_local"
+    actions = cfg.get("per_level_action", {}) or {}
+    action = actions.get(level, "ignore")
+    if action == "block" and not cfg.get("server_block", True):
+        action = "force_local"
+    return action
+
+
+def _classification_scan_text(text: str, *, filename: str = "",
+                               pdf_path: str = "") -> dict | None:
+    """Run the classification detector against text.
+
+    Returns the result dict (see engine.classification.detect_classification)
+    or None if the scanner is disabled / errors. Never raises.
+    """
+    cfg = _get_classification_config()
+    if not cfg.get("enabled", True):
+        return None
+    try:
+        from engine.classification import detect_with_pii as _detect
+        # Pass the full server_config so the detector picks up the user's
+        # keyword + extra_patterns config.
+        _srv_cfg = {}
+        try:
+            import sys as _sys
+            _srv_mod = _sys.modules.get("__main__") or _sys.modules.get("server")
+            if _srv_mod is not None:
+                _srv_cfg = getattr(_srv_mod, "server_config", None) or {}
+        except Exception:
+            pass
+        return _detect(text, filename=filename, pdf_path=pdf_path,
+                       cfg=_srv_cfg)
+    except Exception as e:
+        try:
+            print(f"[classification] scan failed: {e}", flush=True)
+        except Exception:
+            pass
+        return None
+
+
+def classification_pick_model_for_background(model: str, texts,
+                                               purpose: str = "",
+                                               filenames: list[str] | None = None):
+    """Decide model for a background call based on classification detection.
+
+    Parallels gdpr_pick_model_for_background but with a different policy
+    shape: per-level action (`ignore` / `warn` / `force_local` / `block`)
+    instead of GDPR's anonymise/swap/abort. There is NO anonymise path
+    for classified content — anonymisation strips PII, not classification
+    markers, so it doesn't change the legal status of the document.
+
+    Returns: (model, texts, deanon_fn).
+      * `deanon_fn` is always `_identity_deanon` — kept for signature
+        compatibility with the GDPR helper so callers can pipe both
+        through the same scaffolding.
+
+    Caller flow (mirror gdpr_pick_model_for_background usage):
+
+        try:
+            model, texts2, _ = engine.classification_pick_model_for_background(
+                model, texts, purpose='chat_summary')
+        except engine.ClassificationBlockedError:
+            return None  # skip background call
+
+    Note: classification scanning over multiple texts treats each as an
+    independent sample; the worst per-text level wins.
+    """
+    if isinstance(texts, str):
+        samples = [texts]
+        _input_was_str = True
+    else:
+        try:
+            samples = [t if isinstance(t, str) else "" for t in texts]
+        except TypeError:
+            return (model, [], _identity_deanon)
+        _input_was_str = False
+
+    cfg = _get_classification_config()
+    if not cfg.get("enabled", True) or not any(samples):
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
+
+    filenames = list(filenames or [])
+    while len(filenames) < len(samples):
+        filenames.append("")
+
+    # Scan each sample, pick the worst level
+    worst_rank = -1
+    worst_level = None
+    worst_evidence: list[dict] = []
+    for s, fn in zip(samples, filenames):
+        if not s:
+            continue
+        try:
+            r = _classification_scan_text(s, filename=fn)
+        except Exception:
+            continue
+        if not r:
+            continue
+        lvl = r.get("final_level") or "unmarked"
+        from engine.classification import LEVEL_RANK as _LR
+        rank = _LR.get(lvl, -1) if lvl != "unmarked" else 0  # unmarked acts as 'internal'
+        if rank > worst_rank:
+            worst_rank = rank
+            worst_level = lvl
+            worst_evidence = r.get("marker_evidence", [])[:1]
+
+    if worst_level is None or worst_rank < 0:
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
+
+    action = _classification_effective_action(worst_level, cfg=cfg)
+    _agent = getattr(_thread_local, "current_agent", None) or _current_agent
+    _agent_id = _agent.agent_id if _agent else "main"
+    _sid = getattr(_thread_local, "current_session_id", None) or ""
+    _log_audit = bool(cfg.get("server_log", True) and _audit_log)
+
+    if _log_audit:
+        try:
+            _audit_log.log_action(
+                agent=_agent_id,
+                action_type="classification_detected",
+                tool_name="classification_scanner",
+                args_summary=f"level={worst_level}",
+                result_summary=f"purpose={purpose or '-'} model={model} action={action}",
+                result_status="warning",
+                session_id=_sid or None,
+                source="background",
+            )
+        except Exception:
+            pass
+
+    # ignore / warn → pass through (no-op routing)
+    if action in ("ignore", "warn"):
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
+
+    # Already on a local model — nothing to reroute regardless of action.
+    try:
+        model_is_local = is_model_local(model)
+    except Exception:
+        model_is_local = False
+    if model_is_local:
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
+
+    # block → raise (after audit)
+    if action == "block":
+        if _log_audit:
+            try:
+                _audit_log.log_action(
+                    agent=_agent_id,
+                    action_type="classification_blocked",
+                    tool_name="classification_scanner",
+                    args_summary=f"model={model} level={worst_level}",
+                    result_summary=f"purpose={purpose or '-'} policy=block",
+                    result_status="blocked",
+                    session_id=_sid or None,
+                    source="background",
+                )
+            except Exception:
+                pass
+        raise ClassificationBlockedError(
+            f"[Classification block] Background call refused (purpose={purpose or '-'}): "
+            f"content classified '{worst_level}'; policy=block."
+        )
+
+    # force_local → swap to fallback if usable, else block (NOT passthrough —
+    # for classified content we'd rather refuse than silently leak).
+    fallback = (cfg.get("default_local_fallback_model") or "").strip()
+    swap_ok = False
+    if fallback and fallback != model:
+        try:
+            fcfg = (_models_config or {}).get(fallback) or {}
+            if fcfg.get("enabled") and is_model_local(fallback):
+                swap_ok = True
+        except Exception:
+            swap_ok = False
+    if swap_ok:
+        if _log_audit:
+            try:
+                _audit_log.log_action(
+                    agent=_agent_id,
+                    action_type="classification_auto_fallback",
+                    tool_name="classification_scanner",
+                    args_summary=f"{model} -> {fallback} level={worst_level}",
+                    result_summary=f"purpose={purpose or '-'} policy=force_local",
+                    result_status="ok",
+                    session_id=_sid or None,
+                    source="background",
+                )
+            except Exception:
+                pass
+        return (fallback, samples if not _input_was_str else samples[0], _identity_deanon)
+    # No usable local fallback — block.
+    if _log_audit:
+        try:
+            _audit_log.log_action(
+                agent=_agent_id,
+                action_type="classification_blocked",
+                tool_name="classification_scanner",
+                args_summary=f"model={model} level={worst_level} fallback={fallback or '-'}",
+                result_summary=f"purpose={purpose or '-'} policy=force_local reason=no_local_fallback",
+                result_status="blocked",
+                session_id=_sid or None,
+                source="background",
+            )
+        except Exception:
+            pass
+    raise ClassificationBlockedError(
+        f"[Classification block] No usable local fallback for '{worst_level}' "
+        f"content (purpose={purpose or '-'}): fallback='{fallback or '-'}'."
+    )
 
 
 # --- Markdown rendering ---

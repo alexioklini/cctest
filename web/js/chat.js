@@ -231,6 +231,33 @@ async function sendMessage() {
     }
   }
 
+  // ─── Classification gate (Phase B) ───
+  // Runs AFTER the PII modal. If any pending attachment carries a classified
+  // marker + the current model is non-local, surface the dedicated modal:
+  //  - strict → only Cancel (per ARL §1.11)
+  //  - confidential/internal force_local → Cancel or Switch-to-local
+  // No modal if model is already local or no classified attachments are
+  // present.
+  if (state._pendingFiles && state._pendingFiles.length) {
+    const curLocal = isModelLocal(chat.model || '');
+    const classifiedFiles = state._pendingFiles.filter(f => {
+      const c = f.scan && f.scan.classification;
+      if (!c || !c.effective_action) return false;
+      return c.effective_action === 'block' || c.effective_action === 'force_local';
+    });
+    if (classifiedFiles.length && !curLocal) {
+      const verdict = await classificationActionModal(classifiedFiles, chat);
+      if (verdict === 'cancel') return;
+      if (verdict === 'local') {
+        // Use the same client-side swap as piiEnsureLocalModel — we want
+        // the swap before the wire send so the server side sees a local
+        // model in body.model. piiEnsureLocalModel reads piiBlockActive
+        // which now also picks up classification, so it'll fire.
+        try { piiEnsureLocalModel(); } catch (e) {}
+      }
+    }
+  }
+
   // Capture pending files before clearing (needed for streamChat)
   const filesToSend = state._pendingFiles.length ? [...state._pendingFiles] : null;
 

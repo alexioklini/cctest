@@ -3178,7 +3178,35 @@ class ChatHandlerMixin:
         # type first.
         groups_list = sorted(groups.values(), key=lambda g: -g["count"])
 
-        self._send_json({
+        # ─── Classification detection (Phase B) ───
+        # Reuse the same extracted full_text. Skip if scanner disabled
+        # (detector returns None on disabled state). Detector is fail-open
+        # — errors here never block the PII path.
+        classification_block: dict | None = None
+        try:
+            cfg_cls = engine._get_classification_config()
+            if cfg_cls.get("enabled", True):
+                pdf_path = fpath if fpath.lower().endswith(".pdf") else ""
+                result = engine._classification_scan_text(
+                    full_text, filename=name, pdf_path=pdf_path,
+                ) if full_text else None
+                if result:
+                    from engine.classification import LEVEL_LABEL_DE as _LL
+                    level = result.get("final_level") or "unmarked"
+                    action = engine._classification_effective_action(level, cfg=cfg_cls)
+                    classification_block = {
+                        "marker_level": result.get("marker_level"),
+                        "final_level": level,
+                        "marker_meta": result.get("marker_meta") or {},
+                        "marker_evidence": result.get("marker_evidence") or [],
+                        "mismatch": result.get("mismatch"),
+                        "effective_action": action,
+                        "level_label_de": _LL.get(level, level),
+                    }
+        except Exception:
+            pass
+
+        resp = {
             "scanned": True,
             "attachment_id": attachment_id,
             "source_name": name,
@@ -3191,7 +3219,10 @@ class ChatHandlerMixin:
             "findings": [],
             "categories": cats,
             "finding_count": sum(g["count"] for g in groups_list),
-        })
+        }
+        if classification_block is not None:
+            resp["classification"] = classification_block
+        self._send_json(resp)
 
     def _handle_gdpr_scan_text(self):
         """POST /v1/gdpr/scan-text — server-side PII scan for the pre-send

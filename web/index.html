@@ -899,8 +899,118 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     </div>
   </div>
 
-  <!-- ═══ Data View (placeholder — to be filled later) ═══ -->
-  <div id="data-view"></div>
+  <!-- ═══ Data View — Document Classification ═══ -->
+  <div id="data-view">
+    <div class="cls-view">
+      <div class="cls-header">
+        <h2 class="cls-title">Document Classification</h2>
+        <div class="cls-subtitle">Detect classification level per ARL 20.02.02.06 — Öffentlich / Intern / Vertraulich / Streng Vertraulich.</div>
+      </div>
+
+      <div class="cls-tabs">
+        <button class="cls-tab active" data-cls-tab="scan" onclick="clsSwitchTab('scan')">New Scan</button>
+        <button class="cls-tab" data-cls-tab="history" onclick="clsSwitchTab('history')">Scan History</button>
+      </div>
+
+      <!-- Scan tab -->
+      <div id="cls-tab-scan" class="cls-tab-body active">
+        <div class="cls-mode-row">
+          <label class="cls-mode-opt">
+            <input type="radio" name="cls-mode" value="upload" checked onchange="clsModeChanged()">
+            <span>Upload files</span>
+          </label>
+          <label class="cls-mode-opt">
+            <input type="radio" name="cls-mode" value="folder" onchange="clsModeChanged()">
+            <span>Server folder</span>
+          </label>
+          <label class="cls-mode-opt">
+            <input type="radio" name="cls-mode" value="project" onchange="clsModeChanged()">
+            <span>Project</span>
+          </label>
+        </div>
+
+        <div id="cls-input-upload" class="cls-input-block">
+          <div class="cls-dropzone" id="cls-dropzone">
+            <div class="cls-dropzone-icon">📄</div>
+            <div class="cls-dropzone-text">Drop files here, or click to pick</div>
+            <div class="cls-dropzone-sub">PDF, DOCX, PPTX, XLSX, TXT, MD, HTML — up to 500 files / scan</div>
+            <input type="file" id="cls-file-input" multiple style="display:none" onchange="clsFilesPicked(this.files)">
+          </div>
+          <div id="cls-file-list" class="cls-file-list"></div>
+        </div>
+
+        <div id="cls-input-folder" class="cls-input-block hidden">
+          <label class="cls-label">Server folder path</label>
+          <input type="text" id="cls-folder-path" class="cls-input" placeholder="/path/to/folder">
+          <label class="cls-checkbox-row">
+            <input type="checkbox" id="cls-folder-recursive" checked>
+            <span>Recursive (walk subdirectories)</span>
+          </label>
+        </div>
+
+        <div id="cls-input-project" class="cls-input-block hidden">
+          <label class="cls-label">Agent</label>
+          <select id="cls-project-agent" class="cls-input" onchange="clsLoadProjects()"></select>
+          <label class="cls-label">Project</label>
+          <select id="cls-project-name" class="cls-input"></select>
+        </div>
+
+        <div class="cls-action-row">
+          <button class="btn-primary" id="cls-run-btn" onclick="clsRunScan()">Run scan</button>
+          <button class="btn-secondary" onclick="clsResetScan()">Reset</button>
+          <span id="cls-scan-status" class="cls-status"></span>
+        </div>
+
+        <!-- Results -->
+        <div id="cls-results" class="cls-results hidden">
+          <div class="cls-results-header">
+            <div class="cls-summary" id="cls-summary"></div>
+            <div class="cls-filters">
+              <label class="cls-filter-chip">
+                <input type="checkbox" id="cls-flt-mismatch" onchange="clsRenderResults()">
+                <span>Mismatch only</span>
+              </label>
+              <label class="cls-filter-chip">
+                <input type="checkbox" id="cls-flt-unmarked" onchange="clsRenderResults()">
+                <span>Unmarked only</span>
+              </label>
+              <select id="cls-flt-level" class="cls-input" style="width:auto;font-size:12px" onchange="clsRenderResults()">
+                <option value="">All levels</option>
+                <option value="public">Öffentlich</option>
+                <option value="internal">Intern</option>
+                <option value="confidential">Vertraulich</option>
+                <option value="strict">Streng Vertraulich</option>
+                <option value="unmarked">Unmarked</option>
+              </select>
+              <button class="btn-secondary" onclick="clsExportCsv()" style="font-size:12px;padding:4px 10px">Export CSV</button>
+            </div>
+          </div>
+          <div class="cls-table-wrap">
+            <table class="cls-table">
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th>Marker</th>
+                  <th>Detected</th>
+                  <th>Heuristic</th>
+                  <th>Mismatch</th>
+                  <th>Signals</th>
+                </tr>
+              </thead>
+              <tbody id="cls-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- History tab -->
+      <div id="cls-tab-history" class="cls-tab-body">
+        <div id="cls-history-list" class="cls-history-list">
+          <div style="color:var(--text-400);font-size:13px">Loading…</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- ═══ Glossaries Modal ═══ -->
   <div id="tr-glossaries-modal" class="tr-modal hidden">
@@ -1223,6 +1333,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/favourites.js"></script>
 <script src="js/share.js"></script>
 <script src="js/translation.js"></script>
+<script src="js/classification.js"></script>
 <script src="js/init.js"></script>
 </body>
 </html>

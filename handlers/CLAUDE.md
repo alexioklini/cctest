@@ -12,6 +12,7 @@ Each module handles a slice of the server's route surface. Routes are registered
 | `providers.py` | `/v1/providers/*`, `/v1/models/*` — provider/model config, warmup trigger |
 | `admin.py` | `/v1/admin/*`, `/v1/agents/*`, `/v1/workflows/*`, `/v1/kg/*` — admin, agent mgmt, workflows, KG |
 | `auth.py` | `/v1/auth/*`, `/v1/users/*` — login, token refresh, user account settings, preferences |
+| `classification.py` | `/v1/classification/*` — document classification detector (ARL 20.02.02.06): scan uploads/folders/projects, scan history, admin config (keywords + extra regex). Detect-only in Phase A; enforcement seams are Phase B. See root CLAUDE.md "Data View — Document Classification". |
 
 ## Key Invariants
 

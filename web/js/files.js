@@ -143,10 +143,29 @@ function renderFilePreviews() {
         } else if (sc.scanned && sc.finding_count > 0) {
           scanBadge = `<span title="${sc.finding_count} PII finding(s)" style="color:#d97706;font-weight:bold">🛡️ ${sc.finding_count}</span>`;
         }
+        // Classification badge — only when there's a non-trivial finding
+        // (level above public or a mismatch). Phase B detector adds
+        // sc.classification = {final_level, marker_level, mismatch, effective_action, level_label_de}
+        let clsBadge = '';
+        const cls = sc.classification || null;
+        if (cls && cls.final_level && cls.final_level !== 'public') {
+          const lvl = cls.final_level;
+          const label = cls.level_label_de || lvl;
+          const act = cls.effective_action || 'ignore';
+          const pillColor = lvl === 'strict' ? '#a02020'
+                          : lvl === 'confidential' ? '#8a5a00'
+                          : lvl === 'internal' ? '#1e4189'
+                          : '#6e5a3a';
+          const icon = act === 'block' ? '⛔'
+                     : act === 'force_local' ? '🏠'
+                     : '🔒';
+          clsBadge = `<span title="${esc(label)} — action: ${act}" style="color:${pillColor};font-weight:bold">${icon} ${esc(label)}</span>`;
+        }
         chip.innerHTML = `
           <span>${fileTypeIcon(f.name)}</span>
           <span style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
           ${scanBadge}
+          ${clsBadge}
           <button class="image-preview-remove" onclick="removePendingFile(${i})">&#10005;</button>
         `;
         el.appendChild(chip);

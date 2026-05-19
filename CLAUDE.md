@@ -299,9 +299,55 @@ Opt-in via `code_exec` in `tool_groups`. Subprocess isolation (`sys.executable`)
 
 - **Auto-artifact fallback**: stdout >1K chars + no files written → saved as `output.txt`; preview shows head+tail
 
-## Data View
+## Document Classification — ARL 20.02.02.06 (Phase A audit + Phase B enforcement, v9.6.0)
 
-Sidebar entry only — the `#data-view` container is currently an empty placeholder (nav case in `web/js/nav.js`). The Data Workbench feature (DuckDB-per-session, `data_viz` tools, anonymisation, file scan, chart builder) was removed; the menu entry stays so the view can be re-populated later.
+Two-phase implementation. **Phase A** = audit/diagnostic Data view. **Phase B** = enforcement at the existing GDPR seams (read-tool gate + attachment scan + composer modal + background-call routing). Shipped together as v9.6.0.
+
+- **Detector** (`engine/classification.py`): pure function `detect_classification(text, *, filename, page_texts, cfg, pii_findings)`. Three signals, structural-first:
+  1. **Marker regex** — `Dokumentenklassifizierung … <level>` anchored, English `Classification: <level>`, TLP `RED/AMBER/GREEN/WHITE`, plus filename hints (`*vertraulich*`, ARL number `20.\d{2}\.\d{2}`). Per-page scan when `page_texts` is provided; coverage feeds a `confidence` field (high ≥80%, med if multi-hit, low otherwise).
+  2. **Filename hint** — promoted only when body has no marker (`source: filename`, confidence `low`).
+  3. **Content heuristic** (mismatch detection) — PII findings (passed in or pulled by `detect_with_pii`) plus keyword hits from `config.json → classification.keywords` → `heuristic_level`.
+  Mismatch fires when `heuristic_rank > marker_rank` — HIGH severity when marker=public + PII/confidential keywords, or delta ≥ 2 levels. Over-classification (marker > heuristic) is fine per ARL §1.5. **Unmarked is a first-class state**, not auto-promoted to internal in the UI.
+- **Endpoints** (`handlers/classification.py`): `POST /v1/classification/scan-files` (multipart), `/scan-folder`, `/scan-project`; `GET /v1/classification/scans[/<id>[.csv]]`; `DELETE /v1/classification/scans/<id>`. Admin-only: `GET/POST /v1/classification/config` (keywords + extra regex patterns; audited as `classification_config_save`).
+- **Text extraction**: reuses `engine.doc_convert.convert_one()` — same Mistral-OCR + local-vision pipeline as MemPalace ingestion. `.md / .txt / .html / .csv` read directly. Page-splitting uses form-feed or markitdown's `--- page N ---` markers.
+- **Path-traversal guard**: realpath-resolved; must sit under repo root, `agents/`, cwd, or any project `input_folders[]` the caller can see. Hard-deny on `/etc`, `/var`, `/usr`, `/bin`, `/sbin`, `/System`, `/Library/Keychains`. Cap of 500 files per scan.
+- **Persistence** (`classification_scans` in `chats.db`, `ClassificationDB` in `server_lib/db.py`): `scan_id + user_id + summary_json + evidence_json` (50KB cap with progressive trim — drops extra marker excerpts, then keyword hits, then keeps only per-file summary fields). Non-admin users see only own scans; admins see all.
+- **Derived artifacts**: per user policy, auto-marked `internal` — convention only in Phase A; Phase B will inject the marker on `write_file`/`edit_file`.
+- **UI** (`web/js/classification.js`, `#data-view` in `web/index.html`): three input modes (Upload / Server folder / Project), filtered table (mismatch-only / unmarked-only / per-level), CSV export (client-side when not persisted; server-side `.csv` endpoint otherwise), scan history list, drag-drop dropzone.
+- **Settings → Classification tab** (`web/js/settings.js`): admin-editable keyword lists per sensitivity (`internal`/`confidential`/`strict`) with "Restore defaults" per group; extra marker regex patterns. WPB-specific defaults seeded in `DEFAULT_KEYWORDS` (`Vorstand`, `Aufsichtsrat`, `CISO`, `CRYPTSHARE`, …).
+### Phase B — Enforcement (v9.6.0)
+
+- **Policy config** (`config.json → classification_scanner`):
+  ```
+  {enabled, server_block, server_log,
+   default_local_fallback_model,
+   per_level_action: {public:'ignore', internal:'warn',
+                      confidential:'force_local',
+                      strict:'block', unmarked:'warn'}}
+  ```
+  Defaults seeded by `brain._CLASSIFICATION_DEFAULTS`. `_classification_effective_action(level, cfg)` resolves with the **strict-always-block invariant** (per ARL §1.11): `strict` always returns `block` (or `force_local` when `server_block=False`) regardless of admin config.
+
+- **`brain.ClassificationBlockedError`** — subclasses `GDPRBlockedError` so every existing background caller already doing `except GDPRBlockedError:` picks it up automatically (10+ sites: next-prompt, chat summary, memory classifier, scheduled tasks, refine, etc.). No per-site changes needed.
+
+- **`classification_pick_model_for_background(model, texts, purpose)`** — parallels `gdpr_pick_model_for_background`. No anonymise path (stripping PII doesn't change a document's legal classification). Actions: `ignore`/`warn` → passthrough, `force_local` → swap to fallback or raise, `block` → raise. Audit trail: `classification_detected` / `classification_auto_fallback` / `classification_blocked`.
+
+- **Single seam wiring**: `gdpr_pick_model_for_background` calls `classification_pick_model_for_background` FIRST. Every site that already obeys GDPR policy now obeys classification policy with zero extra wrapping.
+
+- **Tool-read gate** (`_classification_gate_tool_text` called from inside `_gdpr_anon_tool_text`): when a `read_document` / `read_file` / `python_exec` / `execute_command` output is classified above the per-level threshold AND the active model is non-local, raises `ClassificationBlockedError`. The dispatcher turns the raise into a JSON tool-error the LLM sees verbatim. Fail-open on internal errors. Force_local is NOT enforced at this seam — by tool-execution time the model is locked, so only block fires here; force_local is enforced at the composer pre-flight.
+
+- **PDF footer fallback** (`engine.classification.extract_pdf_page_texts`): when markitdown's main extraction yields no marker (markitdown drops repeating PDF footers), `detect_with_pii(text, pdf_path=path)` triggers a secondary fitz-based per-page text extraction and re-scans for markers only. Recovered marker promotes the result; heuristic + content_signals stay from the primary extraction. Validated on synthetic PDFs; the WPB ARL footer is unrecoverable (vector graphics) — that's a per-PDF tooling limit, not a detector failure.
+
+- **Composer modal + block** (`web/js/panels.js: classificationActionModal`): mirrors the GDPR modal. Fires after the PII modal in `chat.js: sendMessage()`. Strict-level + block → only Cancel button (no swap path). Confidential force_local → Cancel + "Lokales Modell verwenden". Skipped when model is already local. `classificationBlockActive(chat)` is now folded into `piiBlockActive(chat)` so the model dropdown auto-restricts to local-only when classified attachments are pending.
+
+- **`/v1/attachments/scan` extended** (`handlers/chat.py`): response gains `classification: {marker_level, final_level, marker_meta, marker_evidence, mismatch, effective_action, level_label_de}`. Per-file chip badges (`web/js/files.js`): 🔒 / 🏠 / ⛔ icon + level label, color-coded by sensitivity.
+
+- **Settings → Classification policy block** (`web/js/settings.js`): admin-editable master switches (enabled, server_block, server_log), default_local_fallback_model dropdown (filtered to enabled local models), per-level action dropdowns. Strict row is locked at `block` with a tooltip referencing ARL §1.11.
+
+### Open follow-ups (Phase C, deferred)
+
+- Derived artifact auto-marking — inject `Dokumentenklassifizierung intern` footer on `write_file`/`edit_file` outputs when the chat session has any classified attachment in scope. Needs session-level taint tracking + per-format injection logic (markdown footer / docx properties / pdf metadata).
+- `_handle_soul_chat`, workflow LLM nodes, warmup test-call are not yet wrapped through `gdpr_pick_model_for_background` — same gap as the existing GDPR coverage (3 of 22 background sites). Closing one closes both.
+- Telegram frontend remains out of scope (web UI only per user decision).
 
 ## Provider Concurrency Queue
 

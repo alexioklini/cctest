@@ -93,6 +93,7 @@ function openGeneralSettings() {
 
       <div class="sidebar-group-label">Privacy &amp; Memory</div>
       <button class="modal-tab" onclick="switchGeneralTab('gdpr',this)">GDPR</button>
+      <button class="modal-tab" onclick="switchGeneralTab('classification',this)">Classification</button>
       <button class="modal-tab" onclick="switchGeneralTab('context',this)">Context</button>
       <button class="modal-tab" onclick="switchGeneralTab('mempalace',this)">MemPalace</button>
       <button class="modal-tab" onclick="switchGeneralTab('knowledge-graph',this)">Knowledge&nbsp;Graph</button>
@@ -1652,6 +1653,142 @@ async function switchGeneralTab(tab, btn) {
     } catch(e) {
       C.innerHTML = P(`<div style="color:var(--error)">Failed to load GDPR settings: ${esc(e.message||e)}</div>`);
     }
+  }
+
+  /* ─── CLASSIFICATION ─── */
+  if (tab === 'classification') {
+    try {
+      const cfg = await API.get('/v1/classification/config');
+      const kw = cfg.keywords || {};
+      const defaults = (cfg.defaults && cfg.defaults.keywords) || {};
+      const extras = cfg.extra_patterns || [];
+      const policy = cfg.policy || {};
+      const perLvl = policy.per_level_action || {};
+
+      // Local fallback model dropdown (mirrors GDPR tab pattern)
+      const mcAll = state.modelsConfig?.models || {};
+      const localModelOpts = Object.entries(mcAll)
+        .filter(([id, c]) => c.enabled && c.is_local === true)
+        .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0))
+        .map(([id]) => `<option value="${esc(id)}" ${id === policy.default_local_fallback_model ? 'selected' : ''}>${esc(id)}</option>`)
+        .join('');
+
+      const actionSelect = (level, current, strict) => {
+        if (strict) {
+          return `<select class="form-select" disabled style="width:160px;font-size:12px;opacity:.6" title="Strict always blocks per ARL §1.11">
+            <option selected>block (locked)</option>
+          </select>`;
+        }
+        return `<select class="form-select cls-policy-action" data-level="${esc(level)}" style="width:160px;font-size:12px">
+          <option value="ignore"      ${current==='ignore'?'selected':''}>ignore</option>
+          <option value="warn"        ${current==='warn'?'selected':''}>warn</option>
+          <option value="force_local" ${current==='force_local'?'selected':''}>force local</option>
+          <option value="block"       ${current==='block'?'selected':''}>block</option>
+        </select>`;
+      };
+
+      const levelRow = (level, labelDe) => `
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-100)">
+          <span style="flex:1;font-size:12.5px">${esc(labelDe)}</span>
+          ${actionSelect(level, perLvl[level] || '', level === 'strict')}
+        </div>`;
+
+      const kwBlock = (lvl, label) => `
+        <div style="margin-bottom:14px">
+          <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-200);font-weight:500;margin-bottom:4px">
+            <span>${label}</span>
+            <button class="btn-secondary" style="font-size:11px;padding:2px 8px" onclick="clsRestoreDefaultKw('${lvl}')">Restore defaults</button>
+          </label>
+          <textarea id="cls-kw-${lvl}" class="form-input" rows="4"
+            style="font-family:inherit;font-size:12px;width:100%"
+            placeholder="One keyword per line">${esc((kw[lvl]||[]).join('\n'))}</textarea>
+        </div>`;
+
+      const extraRow = (item, i) => `
+        <div class="cls-extra-row" data-i="${i}" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+          <select class="form-select cls-extra-level" style="width:140px;font-size:12px">
+            <option value="public"       ${item.level==='public'?'selected':''}>Öffentlich</option>
+            <option value="internal"     ${item.level==='internal'?'selected':''}>Intern</option>
+            <option value="confidential" ${item.level==='confidential'?'selected':''}>Vertraulich</option>
+            <option value="strict"       ${item.level==='strict'?'selected':''}>Streng Vertraulich</option>
+          </select>
+          <input type="text" class="form-input cls-extra-pattern" style="flex:1;font-family:monospace;font-size:12px"
+            placeholder="Regex pattern" value="${esc(item.pattern||'')}">
+          <button class="btn-secondary" style="font-size:11px;padding:2px 8px" onclick="this.parentElement.remove()">Remove</button>
+        </div>`;
+
+      C.innerHTML = `
+        <div style="max-width:760px">
+          <h3 style="margin:0 0 4px;font-size:16px">Document Classification</h3>
+          <div style="font-size:12px;color:var(--text-400);margin-bottom:18px">
+            Detector reuses the regex marker scan + PII signals from the GDPR scanner.
+            Phase B enforces per-level routing decisions on attachment uploads and
+            tool reads.
+          </div>
+
+          <h4 style="margin:18px 0 8px;font-size:13px">Policy</h4>
+          <div style="background:var(--bg-100);border:1px solid var(--border-100);border-radius:8px;padding:14px 16px;margin-bottom:18px">
+            <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:8px">
+              <input type="checkbox" id="cls-policy-enabled" ${policy.enabled !== false ? 'checked' : ''}>
+              <span><b>Scanner enabled</b> — when off, nothing fires (detection AND enforcement disabled)</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:8px">
+              <input type="checkbox" id="cls-policy-server-block" ${policy.server_block !== false ? 'checked' : ''}>
+              <span><b>Hard-block master switch</b> — when off, 'block' actions downgrade to 'force local'. Strict always blocks regardless.</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:14px">
+              <input type="checkbox" id="cls-policy-server-log" ${policy.server_log !== false ? 'checked' : ''}>
+              <span><b>Server audit log</b> — emit <code>classification_detected/auto_fallback/blocked</code> events</span>
+            </label>
+            <div style="margin-bottom:14px">
+              <label style="font-size:11.5px;color:var(--text-400);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:4px">
+                Default local fallback model
+              </label>
+              <select class="form-select" id="cls-policy-fallback" style="width:100%;font-size:12.5px">
+                <option value="">— inherit from GDPR scanner —</option>
+                ${localModelOpts || '<option disabled>(no local models enabled)</option>'}
+              </select>
+              <div style="font-size:11px;color:var(--text-400);margin-top:4px">
+                Used when an effective action of <code>force_local</code> needs to swap models.
+              </div>
+            </div>
+            <div style="font-size:11.5px;color:var(--text-400);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Per-level action</div>
+            ${levelRow('public', 'Öffentlich (public)')}
+            ${levelRow('internal', 'Intern (internal)')}
+            ${levelRow('confidential', 'Vertraulich (confidential)')}
+            ${levelRow('strict', 'Streng Vertraulich (strict — locked, ARL §1.11)')}
+            ${levelRow('unmarked', 'Unmarked (no marker detected)')}
+          </div>
+
+          <h4 style="margin:18px 0 8px;font-size:13px">Keywords by sensitivity</h4>
+          ${kwBlock('internal',     'Internal — presence alone is fine, but absence of marker downgrades to Intern')}
+          ${kwBlock('confidential', 'Confidential — flags mismatches if document is marked Öffentlich/Intern')}
+          ${kwBlock('strict',       'Strict — strongest signal; mismatch becomes HIGH severity')}
+
+          <h4 style="margin:24px 0 8px;font-size:13px">Extra marker patterns (regex)</h4>
+          <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">
+            Custom regex patterns to recognise organisation-specific markings on top of
+            the built-in <code>Dokumentenklassifizierung … &lt;level&gt;</code> matcher.
+          </div>
+          <div id="cls-extras-box">
+            ${extras.map(extraRow).join('') || '<div style="color:var(--text-400);font-size:12px">No extra patterns.</div>'}
+          </div>
+          <button class="btn-secondary" style="margin-top:6px;font-size:12px" onclick="clsAddExtraRow()">+ Add pattern</button>
+
+          <div style="margin-top:24px;display:flex;gap:10px">
+            <button class="btn-primary" onclick="clsSaveSettings()">Save</button>
+            <span id="cls-settings-status" style="font-size:12px;color:var(--text-400);align-self:center"></span>
+          </div>
+        </div>
+      `;
+
+      // Stash defaults on the container for the restore button
+      C.__clsDefaults = defaults;
+      C.__clsExtras = extras;
+    } catch (e) {
+      C.innerHTML = `<div style="color:var(--error,#d33);padding:20px">${esc(e.message || String(e))}</div>`;
+    }
+    return;
   }
 
   /* ─── TOOLS ─── */
@@ -5920,5 +6057,82 @@ async function saveAgentJson(agentId) {
     state.agents = agentsData.agents || agentsData || [];
   } catch(e) {
     showToast('Save failed: ' + e.message, true);
+  }
+}
+
+
+/* ─── Classification tab helpers ─── */
+
+function clsRestoreDefaultKw(level) {
+  const C = document.getElementById('general-tab-content');
+  const defs = (C && C.__clsDefaults) || {};
+  const ta = document.getElementById('cls-kw-' + level);
+  if (!ta) return;
+  ta.value = (defs[level] || []).join('\n');
+}
+
+function clsAddExtraRow() {
+  const box = document.getElementById('cls-extras-box');
+  if (!box) return;
+  // First-time: replace the "No extra patterns" placeholder
+  if (box.querySelector('.cls-extra-row') === null) box.innerHTML = '';
+  const i = box.querySelectorAll('.cls-extra-row').length;
+  const row = document.createElement('div');
+  row.className = 'cls-extra-row';
+  row.dataset.i = i;
+  row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px';
+  row.innerHTML = `
+    <select class="form-select cls-extra-level" style="width:140px;font-size:12px">
+      <option value="public">Öffentlich</option>
+      <option value="internal">Intern</option>
+      <option value="confidential" selected>Vertraulich</option>
+      <option value="strict">Streng Vertraulich</option>
+    </select>
+    <input type="text" class="form-input cls-extra-pattern" style="flex:1;font-family:monospace;font-size:12px" placeholder="Regex pattern">
+    <button class="btn-secondary" style="font-size:11px;padding:2px 8px" onclick="this.parentElement.remove()">Remove</button>`;
+  box.appendChild(row);
+}
+
+async function clsSaveSettings() {
+  const status = document.getElementById('cls-settings-status');
+  status.style.color = 'var(--text-400)';
+  status.textContent = 'Saving…';
+  try {
+    const keywords = {};
+    for (const lvl of ['internal', 'confidential', 'strict']) {
+      const ta = document.getElementById('cls-kw-' + lvl);
+      keywords[lvl] = (ta.value || '').split('\n')
+        .map(s => s.trim()).filter(Boolean);
+    }
+    const extra_patterns = [];
+    document.querySelectorAll('#cls-extras-box .cls-extra-row').forEach(row => {
+      const level = row.querySelector('.cls-extra-level').value;
+      const pattern = row.querySelector('.cls-extra-pattern').value.trim();
+      if (pattern) extra_patterns.push({level, pattern});
+    });
+    // Policy block — present only when the Phase B section is rendered
+    let policy = null;
+    const enEl = document.getElementById('cls-policy-enabled');
+    if (enEl) {
+      const per_level_action = {};
+      document.querySelectorAll('.cls-policy-action').forEach(sel => {
+        per_level_action[sel.dataset.level] = sel.value;
+      });
+      policy = {
+        enabled: enEl.checked,
+        server_block: document.getElementById('cls-policy-server-block').checked,
+        server_log: document.getElementById('cls-policy-server-log').checked,
+        default_local_fallback_model: document.getElementById('cls-policy-fallback').value || '',
+        per_level_action,
+      };
+    }
+    const body = {keywords, extra_patterns};
+    if (policy) body.policy = policy;
+    await API.post('/v1/classification/config', body);
+    status.style.color = 'var(--success,#1b6a31)';
+    status.textContent = 'Saved.';
+  } catch (e) {
+    status.style.color = 'var(--error,#d33)';
+    status.textContent = e.message || String(e);
   }
 }

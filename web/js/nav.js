@@ -127,6 +127,7 @@ function navigateTo(view, opts) {
       document.getElementById('data-view').classList.add('active');
       updatePageHeader('Data');
       document.getElementById('status-bar').style.display = 'none';
+      if (typeof clsOpenView === 'function') clsOpenView();
       break;
     }
 
@@ -661,7 +662,41 @@ function piiBlockActive(chat) {
   const text = input?.value || '';
   const draftScan = PIIScanner.scanPayload(text, state._pendingFiles || []);
   if (draftScan.worstAction === 'block') return true;
-  return piiHistoryWorstAction(chat) === 'block';
+  if (piiHistoryWorstAction(chat) === 'block') return true;
+  // Phase B: classification gate. Any attached file whose detected level
+  // has effective_action='block' or 'force_local' forces the composer
+  // into local-only mode (parallels piiBlockActive).
+  return classificationBlockActive(chat);
+}
+
+// Mirrors piiBlockActive but for ARL classification levels. Returns true
+// when any pending attachment carries an effective_action of 'block' or
+// 'force_local' — both flip the composer to local-only.
+function classificationBlockActive(chat) {
+  chat = chat || state.activeChat;
+  if (!chat) return false;
+  if (sessionStorage.getItem('cls-suppress:' + (chat.sessionId || '_new'))) return false;
+  for (const f of (state._pendingFiles || [])) {
+    const cls = (f.scan && f.scan.classification) || null;
+    if (!cls) continue;
+    const act = cls.effective_action;
+    if (act === 'block' || act === 'force_local') return true;
+  }
+  return false;
+}
+
+// True when any pending attachment is classified 'strict' AND the policy
+// is hard-block (the strict-always-block invariant). The send modal then
+// only offers Cancel, no swap-to-local.
+function classificationStrictBlockActive(chat) {
+  chat = chat || state.activeChat;
+  if (!chat) return false;
+  for (const f of (state._pendingFiles || [])) {
+    const cls = (f.scan && f.scan.classification) || null;
+    if (!cls) continue;
+    if (cls.final_level === 'strict' && cls.effective_action === 'block') return true;
+  }
+  return false;
 }
 
 // If PII is present + block is on + the current model is cloud, swap to the
