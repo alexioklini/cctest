@@ -628,6 +628,7 @@ async function switchGeneralTab(tab, btn) {
         </div>
         <div><label class="form-label">Description</label><input class="form-input" id="new-agent-desc" placeholder="What does this agent do?"></div>
         <div><label class="form-label">Model</label><select class="form-select" id="new-agent-model" style="width:100%">
+          <option value="auto" title="Automatically picks the best-fitting model for each message">✨ Auto</option>
           ${enabledModelsWithCapability('chat').map(([mid])=>modelOption(mid)).join('')}
         </select></div>
         <div><label class="form-label">Soul (system prompt)</label><textarea class="form-input" id="new-agent-soul" rows="3" placeholder="Optional initial soul.md content" style="resize:vertical"></textarea></div>
@@ -3527,7 +3528,8 @@ async function switchAgentTab(agentId, tab, btn) {
       const data = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
       const cfg = JSON.parse(data.content || '{}');
       const enabledModels = enabledModelsWithCapability('chat');
-      const modelOptions = enabledModels.map(([mid]) =>
+      const autoOption = `<option value="auto" title="Automatically picks the best-fitting model for each message"${cfg.model==='auto'?' selected':''}>✨ Auto</option>`;
+      const modelOptions = autoOption + enabledModels.map(([mid]) =>
         modelOption(mid, {selected: mid===cfg.model})
       ).join('');
       // Next-prompt suggestion config — override model drives where the
