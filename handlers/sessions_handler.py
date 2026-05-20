@@ -127,6 +127,7 @@ class SessionsHandlerMixin:
             if _st:
                 resp["streaming_text"] = _st
         if session:
+            resp["model"] = session.model or ""
             resp["max_context"] = session.max_context
             resp["total_tokens"] = engine._estimate_conversation_tokens(session.messages)
             resp["summary"] = session.summary or ""
@@ -149,6 +150,7 @@ class SessionsHandlerMixin:
         else:
             info = ChatDB.get_session_info(sid)
             if info:
+                resp["model"] = info.get("model", "") or ""
                 resp["summary"] = info.get("summary", "")
                 resp["title"] = info.get("title", "")
                 resp["caveman_mode"] = int(info.get("caveman_mode", 0) or 0)
