@@ -2544,6 +2544,24 @@ class ChatHandlerMixin:
                 else:
                     reply = _sr
                 if reply:
+                    # Log this turn's token usage to the cost ledger. The native
+                    # loop used to do this per-round; the SDK-sidecar migration
+                    # (v9.0.0) dropped the write path, so interactive chats logged
+                    # nothing and session cost read back as $0. Log once per turn
+                    # from the accumulated usage totals, keyed by the model that
+                    # actually answered (fallback model wins when one was used).
+                    _cost_model = (getattr(engine._thread_local, '_fallback_model_used', None)
+                                   or session.model)
+                    try:
+                        engine._log_call_cost(
+                            _cost_model,
+                            _usage_totals["tokens_in"],
+                            _usage_totals["tokens_out"],
+                            session_id=sid,
+                            api_key=session.api_key,
+                        )
+                    except Exception as _ce:
+                        print(f"[chat] cost log failed: {_ce}")
                     # Compute cost before saving
                     session_cost = None
                     if engine._cost_tracker:
