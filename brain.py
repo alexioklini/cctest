@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.9.10"
-VERSION_DATE = "2026-05-19"
+VERSION = "9.9.11"
+VERSION_DATE = "2026-05-20"
 CHANGELOG = [
+    ("9.9.11", "2026-05-20", "fix(artifacts): model wrote generated files (docx, etc.) into the repo root instead of the session artifact folder — recurring over several days, observed in chat `6c8dc5937f2c` (`Sprechvorlage_*.docx` saved to `/Users/.../dev/cctest/`). Root cause: `_build_system_prompt`'s interactive branch printed `Current working directory: {os.getcwd()}` = the server's launchd WorkingDirectory = the SOURCE-CODE REPO ROOT. That line was FALSE for every interactive call type — chat / project chat / scheduled task / workflow all run `python_exec` + `execute_command` (and resolve relative `write_file`) with cwd = the per-session artifact folder (`agents/<agent>/artifacts/<date>_<session_id>/`), keyed on `_thread_local.current_session_id`; repo root only applies to session-less background jobs that produce no user files. The model latched onto the advertised repo root and built absolute `doc.save('/Users/.../cctest/x.docx')` paths there — invisible to the Artifacts panel and polluting the source tree. Fix (3 parts): (1) replaced the misleading CWD line with a session-AGNOSTIC truthful statement ('Working directory: your session's artifact folder … save outputs with a RELATIVE filename … never an absolute path unless the user gave you one … exact path is in the first message'); removed the now-dead `cwd = os.getcwd()`. Verified byte-identical warmup↔real-turn (both 1042 chars) so the v9.9.9/9.9.10 KV-prefix invariant is NOT regressed. (2) sharpened `_artifact_folder_preamble_text` (the literal-path first-message preamble) to push relative filenames. (3) added a WARN-don't-redirect guard (user's explicit choice — a deliberate absolute write must not be hijacked): new `_stray_write_warning(text, artifact_dir)` + `_append_to_tool_result(json, suffix)`; `write_file` checks its resolved abs path, `python_exec`/`execute_command` scan code/command via `_ABS_PATH_RE` for abs-path literals outside the artifact folder (skips /tmp /var /usr /etc /System /Library /dev /proc and paths inside the folder → no noise on attachment reads / temp files), appending a ⚠️ warning to the tool result so the model re-saves relative. Both execute_command return branches (streaming `_res` JSON + non-streaming `result`) covered. Verified: 6 detection cases + 4 live in-process tool calls (relative→silent+registered, absolute-to-repo-root→warned across all three tools). NOTE: `_build_system_prompt`'s `task_working_dir` param is dead (never consumed in body) — CLAUDE.md's 'scheduled working_dir overrides the cwd line' claim is stale; left untouched as a separate concern."),
     ("9.9.10", "2026-05-20", "fix(warmup) + refactor: unify first-turn KV-prefix construction into ONE shared function. Final root cause of the ~20s first reply: warmup left `_thread_local._current_model` UNSET, so `_get_token_config` skipped the model-profile overlay and used TOKEN_CONFIG_DEFAULTS.deferred_tool_groups (non-empty) → the warmup system prompt grew a `DEFERRED TOOLS:` block the real turn (local gemma → `speed` profile → deferred_tool_groups=[]) omits → ~450-byte divergence → oMLX KV-prefix miss → full prefill. SECOND prefix-divergence bug today (after the 9.9.9 artifact-folder line), both because warmup + the chat worker built the prefix via two hand-synced parallel paths. Per user direction, killed the drift class: new `brain.build_first_turn_prefix(model, agent_id, *, mcp_manager, discovered_tools, is_openai_shape)` is the single source of truth (binds _current_model, resolves tools, builds system prompt; returns system_prompt, active_tools, active_tool_names). Both run_model_warmup (openai shape) and the chat worker (anthropic shape) call it; wire-shape only affects tool serialization, NOT the KV-relevant prompt/name set (verified byte-identical). Warmup finally clears _current_model so it can't leak to the next keeper-thread warmup. Verified live: warmup+turn prompts hash identically; warm prime back to ~2.4s."),
     ("9.9.9", "2026-05-20", "fix(warmup): THE actual cause of slow first replies (~20s on gemma-4-26B) — `_build_system_prompt` injected a per-session `Session artifact folder: .../<date>_<sessionid>` line. Warmup primes the KV prefix with NO session (line absent); the real first turn HAS a session (line present) → the system-prompt prefix diverged → oMLX could not reuse the primed cache → full prefill every first turn. Confirmed by direct measurement: oMLX cache reuse itself works (identical-prefix repeat reads 2048 cached tokens, 4.6s→0.5s); the warmup vs turn system prompts hashed differently (len 16555 vs 16213). Fix: removed the artifact-folder line from the system prompt (now session-agnostic) and moved it to a first-user-message preamble via new `_artifact_folder_preamble_text(agent_id, session_id)`, prepended in `handlers/chat.py` when `len(session.messages)==0`. Mirrors the existing KV-prefix invariant (per-user greeting/profile/project state already lives in the preamble, never the system prompt). The earlier 9.9.8 (warmup local-gate) + oMLX cache-clear + 0.3.8 downgrade were all real but NOT this bug. NOTE: the legacy `_*_preamble_text` builders appear to be dead in the sidecar architecture (no live callers) — separate cleanup."),
     ("9.9.8", "2026-05-20", "fix(warmup): local models were treated as cloud, so warmup was skipped unless 'Allow cloud' (warmup_allow_cloud) was manually enabled. Root cause in `run_model_warmup`: the local-vs-cloud gate read `prov.get('is_local')` where `prov = resolve_provider_for_model(model)` — but that resolver returns only `{api_key, base_url, provider_name}` and has NO is_local key, so it was ALWAYS False and every model (including gemma-4 / oMLX `Lokal` provider models) classified as cloud. Exact same bug class as the v8.8.0 `is_model_local` fix, which left this warmup site uncorrected. Fix: gate now calls the authoritative `is_model_local(model)` (which reads the provider's is_local flag from config by name via `_get_provider_config`). gemma-4-26B / e2b / e4b (provider=Lokal, is_local=True) now warm up normally without needing the 'Allow cloud' workaround. Audited the other three `is_local` reads (brain.py:20502 via _get_provider_config, brain.py:21854 + handlers/providers.py:45 both iterate the full providers dict) — all correct, this was the only site reading from the stripped resolver dict."),
@@ -3174,13 +3175,19 @@ def tool_write_file(args: dict) -> str:
     content = args.get("content", "")
     try:
         path = os.path.expanduser(path)
-        if not os.path.isabs(path):
+        # Resolve the session's artifact dir (when in a chat) so we can both
+        # default relative paths into it AND warn on an absolute path that
+        # lands outside it.
+        session_id = getattr(_thread_local, 'current_session_id', None)
+        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+        artifact_dir = ""
+        if session_id and agent:
+            folder = _get_artifact_session_folder(session_id)
+            artifact_dir = os.path.join(AGENTS_DIR, agent.agent_id, "artifacts", folder)
+        was_absolute = os.path.isabs(path)
+        if not was_absolute:
             # Default relative paths to artifacts session folder during chat
-            session_id = getattr(_thread_local, 'current_session_id', None)
-            agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-            if session_id and agent:
-                folder = _get_artifact_session_folder(session_id)
-                artifact_dir = os.path.join(AGENTS_DIR, agent.agent_id, "artifacts", folder)
+            if artifact_dir:
                 os.makedirs(artifact_dir, exist_ok=True)
                 path = os.path.join(artifact_dir, path)
             else:
@@ -3191,7 +3198,23 @@ def tool_write_file(args: dict) -> str:
         size = os.path.getsize(path)
         agent = getattr(_thread_local, 'current_agent', None) or _current_agent
         _after_file_write(path, "created", agent.agent_id if agent else "main")
-        return _ok({"path": path, "size": size, "status": "written"})
+        result = {"path": path, "size": size, "status": "written"}
+        # Warn when an ABSOLUTE path was written outside the artifact folder —
+        # it won't appear in the Artifacts panel. (Relative paths always land
+        # inside, so only the absolute case can stray.)
+        if was_absolute and artifact_dir:
+            try:
+                if not os.path.realpath(path).startswith(os.path.realpath(artifact_dir)):
+                    result["warning"] = (
+                        "Wrote to an absolute path OUTSIDE your session artifact "
+                        "folder — this file does NOT appear in the Artifacts panel "
+                        "and the user cannot see or download it. Re-save with a "
+                        "RELATIVE filename (e.g. `report.docx`) so it lands in your "
+                        "artifact folder, unless the user explicitly asked for "
+                        "this absolute path.")
+            except OSError:
+                pass
+        return _ok(result)
     except Exception as e:
         return _err(f"write_file: {e}")
 
@@ -4831,6 +4854,9 @@ def tool_execute_command(args: dict) -> str:
         if ecb and tuid:
             _res = _streaming_execute_command(command, timeout, cwd, ecb, tuid)
             _register_new_artifacts(_artifact_cwd, _pre_files, _agent)
+            _stray = _stray_write_warning(command, _artifact_cwd)
+            if _stray:
+                _res = _append_to_tool_result(_res, _stray)
             return _res
 
         # Force non-interactive environment
@@ -4879,6 +4905,9 @@ def tool_execute_command(args: dict) -> str:
         result = {"command": command, "exit_code": proc.returncode, "output": output}
         if _new_artifacts:
             result["artifacts"] = _new_artifacts
+        _stray = _stray_write_warning(command, _artifact_cwd)
+        if _stray:
+            result["output"] = (result.get("output") or "") + _stray
         return _ok(result)
     except Exception as e:
         return _err(f"execute_command: {e}")
@@ -4909,6 +4938,81 @@ def _register_new_artifacts(artifact_cwd: str | None, pre_files: set,
             except Exception:
                 pass
     return created
+
+
+# Absolute path literals in python_exec code / execute_command commands.
+# We don't redirect (the user may legitimately want an absolute write) — we
+# only WARN, so the model self-corrects on the next turn. See _stray_write_warning.
+_ABS_PATH_RE = re.compile(r"""['"`(\s=](/(?:[\w.\-+ ]+/)*[\w.\-+]+\.[\w]{1,8})\b""")
+
+
+def _stray_write_warning(text: str, artifact_dir: str | None) -> str:
+    """Return a warning string when `text` (python_exec code or a shell command)
+    references absolute file paths that point OUTSIDE the session artifact
+    folder, OR "" when there's nothing to warn about.
+
+    Rationale: python_exec / execute_command run with cwd = artifact folder and
+    only diff THAT folder for new artifacts. If the model's script does
+    `doc.save("/Users/.../repo/report.docx")` (an absolute path it invented from
+    the old, misleading "Current working directory" line), the file lands outside
+    the artifact folder, never appears in the post-exec diff, and is invisible to
+    the Artifacts panel — while the model believes it succeeded. We surface that
+    back into the tool result so the model re-saves with a relative filename.
+
+    Non-invasive by design (user chose "warn, don't redirect"): an absolute path
+    the user explicitly asked for is left alone; the warning just informs.
+    """
+    if not text or not artifact_dir:
+        return ""
+    try:
+        art_real = os.path.realpath(artifact_dir)
+    except OSError:
+        return ""
+    stray: list[str] = []
+    seen: set[str] = set()
+    for m in _ABS_PATH_RE.finditer(text):
+        p = m.group(1)
+        if p in seen:
+            continue
+        seen.add(p)
+        # Inside the artifact folder? fine. /tmp, /dev, /proc etc. are not
+        # user-facing artifact writes — skip them (avoid noise on temp files).
+        if p.startswith(("/tmp/", "/private/tmp/", "/var/", "/dev/", "/proc/",
+                         "/usr/", "/etc/", "/System/", "/Library/")):
+            continue
+        try:
+            if os.path.realpath(p).startswith(art_real):
+                continue
+        except OSError:
+            pass
+        stray.append(p)
+    if not stray:
+        return ""
+    paths = ", ".join(stray[:5])
+    return (
+        f"\n\n⚠️ WARNING: this wrote to an absolute path OUTSIDE your session "
+        f"artifact folder ({paths}). Files written there do NOT appear in the "
+        f"Artifacts panel and the user cannot see or download them. Re-save the "
+        f"output using a RELATIVE filename (just the filename, e.g. "
+        f"`report.docx`) so it lands in your artifact folder — unless the user "
+        f"explicitly asked for that absolute path."
+    )
+
+
+def _append_to_tool_result(res_json: str, suffix: str) -> str:
+    """Append `suffix` to the `output` field of a JSON tool result string
+    (as produced by `_ok`). Falls back to a raw string append if the result
+    isn't the expected JSON-object-with-output shape."""
+    if not suffix:
+        return res_json
+    try:
+        obj = json.loads(res_json)
+        if isinstance(obj, dict):
+            obj["output"] = (obj.get("output") or "") + suffix
+            return json.dumps(obj, ensure_ascii=False)
+    except (ValueError, TypeError):
+        pass
+    return res_json + suffix
 
 
 def tool_python_exec(args: dict) -> str:
@@ -5011,6 +5115,14 @@ def tool_python_exec(args: dict) -> str:
         output = _gdpr_anon_tool_text(output, "python_exec:stdout")
 
         result = {"exit_code": proc.returncode, "output": output, "script": script_name}
+
+        # Warn when the script saved to an absolute path outside the artifact
+        # folder — such files never show up in the post-exec diff below and are
+        # invisible to the Artifacts panel (the recurring "model wrote to repo
+        # root" failure). Non-invasive: we warn, we don't move the file.
+        _stray = _stray_write_warning(code, work_dir if (session_id and agent) else None)
+        if _stray:
+            result["output"] = (result.get("output") or "") + _stray
 
         # Register any new files created by the script as artifacts
         post_files = set(os.listdir(work_dir))
@@ -24777,7 +24889,6 @@ def _build_system_prompt(include_memory_summary: bool = True,
     import platform
     from datetime import datetime as _dt
 
-    cwd = os.getcwd()
     os_name = platform.system()
 
     # Load agent soul (prefer thread-local for concurrent requests). Tools
@@ -24882,16 +24993,31 @@ def _build_system_prompt(include_memory_summary: bool = True,
     system_instruction += (
         f"You are agent '{agent_id}' in the Brain Agent system. "
         f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:00 %Z').strip()}\n"
-        f"Current working directory: {cwd}\n"
+        f"Working directory: your session's artifact folder. This is where "
+        f"`python_exec` and `execute_command` run, and where relative-path "
+        f"file writes (`write_file`, or any file your code/commands create) "
+        f"land and auto-promote to the Artifacts panel. Always save output "
+        f"files there using a RELATIVE filename (e.g. `report.docx`, not an "
+        f"absolute path). Never write to an absolute path unless the user "
+        f"explicitly gave you one — the exact folder path is in the first "
+        f"message of this chat.\n"
         f"Operating system: {os_name}\n"
         )
-    # NOTE: the per-session artifact folder line used to live here, but it
-    # made the system prompt session-dependent — warmup primes with no session
-    # (line omitted) while the real turn has one (line present), so the oMLX KV
-    # prefix never matched and every first turn paid full prefill (~20s on the
-    # 26B). The line moved to the first-user-message preamble
-    # (`_artifact_folder_preamble_text`, prepended in handlers/chat.py) so the
-    # system prompt stays session-agnostic and the warm-pool prefix is reused.
+    # NOTE 1: we deliberately do NOT print `os.getcwd()` here. The Brain server's
+    # process cwd is the source-code repo root; no interactive tool call ever
+    # writes there (python_exec / execute_command / relative write_file all
+    # resolve to the per-session artifact folder). Advertising the repo root as
+    # "Current working directory" made the model save generated files into the
+    # repo with an invented absolute path — invisible to the Artifacts panel and
+    # polluting the source tree. The line above states the truth instead.
+    # NOTE 2: the per-session artifact folder line (with the literal path) used
+    # to live here, but it made the system prompt session-dependent — warmup
+    # primes with no session (line omitted) while the real turn has one (line
+    # present), so the oMLX KV prefix never matched and every first turn paid
+    # full prefill (~20s on the 26B). The literal path moved to the
+    # first-user-message preamble (`_artifact_folder_preamble_text`, prepended in
+    # handlers/chat.py); the statement above stays session-agnostic (no path) so
+    # the warm-pool prefix is reused.
     system_instruction += "\n"
     # Memory tool guidance is no longer hardcoded here — it lives in the
     # admin-editable `mempalace_query` per-tool description (Tools settings)
@@ -25321,9 +25447,12 @@ def _artifact_folder_preamble_text(agent_id: str, session_id: str) -> str:
     _folder = os.path.join(
         AGENTS_DIR, agent_id, "artifacts",
         _get_artifact_session_folder(session_id))
-    return (f"[Session artifact folder: {_folder} — files you write with a "
-            f"relative path land here and auto-promote to the Artifacts panel; "
-            f"`execute_command` defaults its cwd here.]")
+    return (f"[Session artifact folder (your working directory): {_folder} — "
+            f"this is where `python_exec` and `execute_command` run. Write every "
+            f"output file with a RELATIVE filename (e.g. `report.docx`) so it "
+            f"lands here and auto-promotes to the Artifacts panel. Do NOT write "
+            f"to an absolute path (it won't appear in the Artifacts panel) unless "
+            f"the user explicitly gave you one.]")
 
 
 def _files_in_chat_preamble_text(session_id: str) -> str:
