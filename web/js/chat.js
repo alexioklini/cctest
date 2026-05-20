@@ -1744,7 +1744,19 @@ function renderMessages() {
           </details>
         </div>`;
       }
-      html += `<div class="${cls}" data-turn="${t.turnNum}">${badge}${summaryBlock}<div class="turn-body">${body}</div></div>`;
+      // Round-0 preamble (e.g. the artifact-folder note) is prepended into the
+      // user message content for the wire, but the header hint shows only the
+      // typed text (turnQuestionFull strips it). Surface the hidden prefix as a
+      // collapsed "Preamble" disclosure under the header so it's inspectable.
+      let preambleBlock = '';
+      const _pre = t.userMsg?.metadata?.preamble;
+      if (typeof _pre === 'string' && _pre) {
+        preambleBlock = `<details class="msg-preamble">
+          <summary>Preamble</summary>
+          <div class="msg-preamble-body">${esc(_pre)}</div>
+        </details>`;
+      }
+      html += `<div class="${cls}" data-turn="${t.turnNum}">${badge}${preambleBlock}${summaryBlock}<div class="turn-body">${body}</div></div>`;
     }
   }
 
@@ -2419,22 +2431,13 @@ function renderUserMessage(msg, idx) {
     }
     filesHtml += '</div>';
   }
-  // Round-0 preamble (e.g. the artifact-folder note) is prepended into the
-  // user message content on the wire so the model sees it, but the server
-  // also stashes the exact prefix in metadata.preamble. Peel it off here so
-  // the visible bubble shows only what the user typed; render the preamble
-  // as a collapsed <details> block above it.
-  let preambleHtml = '';
+  // Round-0 preamble (metadata.preamble) is peeled off the displayed text so
+  // the bubble shows only what the user typed. The collapsible "Preamble"
+  // disclosure itself is rendered by renderMessages() under the turn header
+  // (the turn-grouped layout shows the user message there, not as a bubble).
   const preamble = msg.metadata?.preamble;
   if (typeof preamble === 'string' && preamble && textContent.startsWith(preamble)) {
-    let rest = textContent.slice(preamble.length);
-    if (rest.startsWith('\n\n')) rest = rest.slice(2);
-    textContent = rest;
-    preambleHtml = `
-      <details class="msg-preamble">
-        <summary>Preamble</summary>
-        <div class="msg-preamble-body">${esc(preamble)}</div>
-      </details>`;
+    textContent = textContent.slice(preamble.length).replace(/^\n+/, '');
   }
   // GDPR highlight overlay for the request side — mirrors the assistant
   // path but skips the markdown pipeline since user messages render as
@@ -2446,7 +2449,6 @@ function renderUserMessage(msg, idx) {
     : esc(textContent);
   return `
     <div class="msg-turn msg-turn-user">
-      ${preambleHtml}
       ${thumbsHtml}
       ${filesHtml}
       <div class="msg-user">${userTextHtml}</div>
