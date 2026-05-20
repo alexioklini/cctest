@@ -19773,7 +19773,7 @@ CONTEXT_DB = os.path.join(AGENTS_DIR, "main", "context.db")
 
 _CONTEXT_CONFIG_DEFAULTS = {
     "enabled": True,
-    "fresh_tail_count": 16,
+    "fresh_tail_count": 3,  # number of recent TURNS kept verbatim (not messages)
     "compact_threshold": 0.60,
     "summary_target_tokens": 1000,
     "condense_threshold": 4,
@@ -20072,7 +20072,8 @@ class ContextManager:
         """Assemble context: summaries + fresh tail within token budget."""
         cfg = self.get_config()
         if fresh_tail_count is None:
-            fresh_tail_count = cfg.get("fresh_tail_count", 32)
+            # Config is in TURNS; assembly works in messages (≈2 per turn).
+            fresh_tail_count = cfg.get("fresh_tail_count", 3) * 2
 
         # Ensure we don't exceed available messages
         fresh_tail_count = min(fresh_tail_count, len(messages))
@@ -20157,7 +20158,28 @@ class ContextManager:
             fresh_tail_count = 0
             old_messages = messages
         else:
-            fresh_tail_count = min(cfg.get("fresh_tail_count", 32), max(1, len(messages) // 2))
+            # Split on whole-turn boundaries. A turn starts at each user message;
+            # compressing always cuts at a turn boundary so a user+assistant pair
+            # is never split across the summary/verbatim line.
+            turn_starts = [i for i, m in enumerate(messages) if m.get("role") == "user"]
+            n_turns = len(turn_starts)
+            if n_turns <= 1:
+                # No clean turn boundary to cut on — keep one message as tail.
+                fresh_tail_count = max(1, len(messages) - 1)
+            else:
+                # fresh_tail_count is a TURN count.
+                fresh_tail_turns = cfg.get("fresh_tail_count", 16)
+                if n_turns > fresh_tail_turns:
+                    # Long chat: keep the last `fresh_tail_turns` turns verbatim,
+                    # compress everything older.
+                    compress_turns = n_turns - fresh_tail_turns
+                else:
+                    # Short chat (turns ≤ fresh_tail): 50% rule. Compress
+                    # floor(turns / 2); on an odd turn count the half falls to
+                    # the kept side — 3 turns → compress 1, keep 2.
+                    compress_turns = max(1, n_turns // 2)
+                boundary = turn_starts[compress_turns]  # first kept message
+                fresh_tail_count = len(messages) - boundary
             old_messages = messages[:-fresh_tail_count]
 
         # Find what's already summarized (by checking existing summary ranges)
@@ -20171,7 +20193,8 @@ class ContextManager:
         unsummarized_msgs = old_messages[already_summarized:]
 
         if not unsummarized_msgs:
-            return self.assemble_context(session_id, messages, system_prompt, max_tokens), True
+            return self.assemble_context(session_id, messages, system_prompt, max_tokens,
+                                         fresh_tail_count=fresh_tail_count), True
 
         # Summarize in chunks; use all unsummarized as one chunk if smaller than chunk size
         msgs_per_summary = min(cfg.get("messages_per_summary", 10), len(unsummarized_msgs))
@@ -20196,11 +20219,23 @@ class ContextManager:
         # Try condensation
         self.condense(session_id)
 
-        # Assemble final context. When force=True, drop the fresh tail entirely —
-        # the caller wants summaries only, not summaries + original messages on top.
+        # Assemble final context. Keep the recent turns verbatim (fresh tail) and
+        # only replace older turns with summaries — even when force=True. The manual
+        # ✂️ trigger reclaims budget; it shouldn't obliterate the live conversation.
         assembled = self.assemble_context(session_id, messages, system_prompt, max_tokens,
-                                          fresh_tail_count=0 if force else None)
+                                          fresh_tail_count=fresh_tail_count)
         new_estimated = _estimate_conversation_tokens(assembled, system_prompt)
+
+        # Fallback: if keeping the fresh tail still leaves us above threshold, drop
+        # the tail entirely and assemble summaries-only (the old force behavior).
+        threshold = int(max_tokens * cfg.get("compact_threshold", 0.75))
+        if new_estimated >= threshold and fresh_tail_count > 0:
+            logging.info(f"Still {int(new_estimated / max_tokens * 100)}% after tail-preserving "
+                         f"compaction; dropping fresh tail.")
+            assembled = self.assemble_context(session_id, messages, system_prompt, max_tokens,
+                                              fresh_tail_count=0)
+            new_estimated = _estimate_conversation_tokens(assembled, system_prompt)
+
         new_pct = int(new_estimated / max_tokens * 100)
         logging.info(f"Compacted: {pct}% → {new_pct}% (~{new_estimated:,} tokens)")
 
