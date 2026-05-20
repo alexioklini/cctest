@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.9.8"
+VERSION = "9.9.9"
 VERSION_DATE = "2026-05-19"
 CHANGELOG = [
+    ("9.9.9", "2026-05-20", "fix(warmup): THE actual cause of slow first replies (~20s on gemma-4-26B) — `_build_system_prompt` injected a per-session `Session artifact folder: .../<date>_<sessionid>` line. Warmup primes the KV prefix with NO session (line absent); the real first turn HAS a session (line present) → the system-prompt prefix diverged → oMLX could not reuse the primed cache → full prefill every first turn. Confirmed by direct measurement: oMLX cache reuse itself works (identical-prefix repeat reads 2048 cached tokens, 4.6s→0.5s); the warmup vs turn system prompts hashed differently (len 16555 vs 16213). Fix: removed the artifact-folder line from the system prompt (now session-agnostic) and moved it to a first-user-message preamble via new `_artifact_folder_preamble_text(agent_id, session_id)`, prepended in `handlers/chat.py` when `len(session.messages)==0`. Mirrors the existing KV-prefix invariant (per-user greeting/profile/project state already lives in the preamble, never the system prompt). The earlier 9.9.8 (warmup local-gate) + oMLX cache-clear + 0.3.8 downgrade were all real but NOT this bug. NOTE: the legacy `_*_preamble_text` builders appear to be dead in the sidecar architecture (no live callers) — separate cleanup."),
     ("9.9.8", "2026-05-20", "fix(warmup): local models were treated as cloud, so warmup was skipped unless 'Allow cloud' (warmup_allow_cloud) was manually enabled. Root cause in `run_model_warmup`: the local-vs-cloud gate read `prov.get('is_local')` where `prov = resolve_provider_for_model(model)` — but that resolver returns only `{api_key, base_url, provider_name}` and has NO is_local key, so it was ALWAYS False and every model (including gemma-4 / oMLX `Lokal` provider models) classified as cloud. Exact same bug class as the v8.8.0 `is_model_local` fix, which left this warmup site uncorrected. Fix: gate now calls the authoritative `is_model_local(model)` (which reads the provider's is_local flag from config by name via `_get_provider_config`). gemma-4-26B / e2b / e4b (provider=Lokal, is_local=True) now warm up normally without needing the 'Allow cloud' workaround. Audited the other three `is_local` reads (brain.py:20502 via _get_provider_config, brain.py:21854 + handlers/providers.py:45 both iterate the full providers dict) — all correct, this was the only site reading from the stripped resolver dict."),
     ("9.9.7", "2026-05-20", "fix(cost): interactive chat cost logging restored — was silently dead since the v9.0.0 SDK-sidecar migration. Root cause: the native loop used to write a `cost_log` row per round via `_log_call_cost`; Phase 5 deleted the native loop and `_log_call_cost` was left with ZERO callers, so no interactive chat turn logged any cost row after ~2026-05-14. The `done` path computed session cost by READING `get_session_cost(sid)` (sum of cost_log rows for the session) but nothing ever WROTE those rows — so every chat showed $0 and the composer cost pill tooltip read 'no pricing configured for this model' (that string is a UI inference from $0, not a missing-rate lookup). Fix: the chat worker now calls `engine._log_call_cost(model, tokens_in, tokens_out, session_id, api_key)` once per turn from the accumulated `_usage_totals`, keyed by the answering model (fallback model wins when one was used), immediately before reading session cost back for the done event. Thread-locals (current_agent/current_user_id) are already set in the worker so agent/user/provider resolve correctly. Combined with the 9.9.x Mistral rate fill (cost_input/cost_output for CLIProxyAPI/mistral-medium-3.5 = 1.50/7.50, mistral-small-latest = 0.10/0.30, USD per 1M), interactive chats now show real per-turn + cumulative cost. NOTE: turns that ran between the migration and this fix logged nothing and stay $0 (cost is frozen at log time, not recomputed)."),
     ("9.9.6", "2026-05-20", "fix(auto-model): composer stays on Auto after a turn finishes. The `done` SSE handler had two model-display paths: the auto-aware block correctly kept `chat.model='auto'` and set the label, but the later unconditional `if (d.model) updateModelSelectorDisplay(d.model)` (in the isActive() DOM-refresh block) then overwrote the label with the concrete picked model `d.model`. Changed it to `updateModelSelectorDisplay(chat.model)` — on Auto chat.model stays 'auto' so the label stays '✨ Auto' (picked model + reason remain in the tooltip); on a fixed model chat.model equals d.model so behavior is unchanged. A real force-local fallback (`fallback` event) still flips off Auto by design."),
@@ -24844,14 +24845,13 @@ def _build_system_prompt(include_memory_summary: bool = True,
         f"Current working directory: {cwd}\n"
         f"Operating system: {os_name}\n"
         )
-    # Per-session artifact folder. Files written here auto-promote to the
-    # Artifacts panel. `write_file` with a relative path lands here by default;
-    # `execute_command` defaults its cwd here when none is passed.
-    if session_id:
-        _artifact_folder = os.path.join(
-            AGENTS_DIR, agent_id, "artifacts",
-            _get_artifact_session_folder(session_id))
-        system_instruction += f"Session artifact folder: {_artifact_folder}\n"
+    # NOTE: the per-session artifact folder line used to live here, but it
+    # made the system prompt session-dependent — warmup primes with no session
+    # (line omitted) while the real turn has one (line present), so the oMLX KV
+    # prefix never matched and every first turn paid full prefill (~20s on the
+    # 26B). The line moved to the first-user-message preamble
+    # (`_artifact_folder_preamble_text`, prepended in handlers/chat.py) so the
+    # system prompt stays session-agnostic and the warm-pool prefix is reused.
     system_instruction += "\n"
     # Memory tool guidance is no longer hardcoded here — it lives in the
     # admin-editable `mempalace_query` per-tool description (Tools settings)
@@ -25265,6 +25265,25 @@ def _workflow_run_preamble_text(execution_id: str) -> str:
     if err:
         parts.append(f"Error: {err}")
     return "\n\n".join(parts) + "]"
+
+
+def _artifact_folder_preamble_text(agent_id: str, session_id: str) -> str:
+    """One-line per-session artifact-folder pointer for the first user message.
+
+    Moved out of `_build_system_prompt` (v9.9.9) so the system prompt stays
+    session-agnostic — warmup primes without a session, the real turn has one,
+    and having this line in the system prompt broke the oMLX KV-prefix match
+    (full prefill every first turn). Lives in the preamble where per-session
+    context belongs. Returns "" when there's no session.
+    """
+    if not session_id:
+        return ""
+    _folder = os.path.join(
+        AGENTS_DIR, agent_id, "artifacts",
+        _get_artifact_session_folder(session_id))
+    return (f"[Session artifact folder: {_folder} — files you write with a "
+            f"relative path land here and auto-promote to the Artifacts panel; "
+            f"`execute_command` defaults its cwd here.]")
 
 
 def _files_in_chat_preamble_text(session_id: str) -> str:

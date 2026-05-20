@@ -1725,6 +1725,17 @@ class ChatHandlerMixin:
                     # Route to disk — agent uses read_document/read_file
                     disk_files.append(f)
 
+        # First-turn preamble: the per-session artifact-folder pointer. It used
+        # to live in the system prompt, but that made the prompt session-
+        # dependent and broke the oMLX warm-pool KV-prefix match (warmup has no
+        # session → no line; the real turn has one → full prefill, ~20s on the
+        # 26B). Prepended here to the first user message instead, so the system
+        # prompt stays session-agnostic and the warm prefix is reused.
+        if len(session.messages) == 0:
+            _art_pre = engine._artifact_folder_preamble_text(session.agent_id, session.id)
+            if _art_pre:
+                message = f"{_art_pre}\n\n{message}"
+
         # Build user_content with any multimodal blocks
         if content_blocks:
             content_blocks.append({"type": "text", "text": message})
@@ -1763,7 +1774,7 @@ class ChatHandlerMixin:
                 notice = (f"\n\n[User attached image(s). You can already SEE them above as inline content — "
                           f"do NOT call write_file/read_file to load them. The same bytes are ALSO saved to disk "
                           f"if you need to manipulate them with shell tools (e.g. `magick`, `ffmpeg`) or python_exec. "
-                          f"Write outputs to the session artifact folder shown in the system prompt, "
+                          f"Write outputs to the session artifact folder, "
                           f"or call `execute_command` without a `cwd` (it defaults there):]\n{paths_list}")
             else:
                 notice = f"\n\n[User attached files saved to disk:]\n{paths_list}"
