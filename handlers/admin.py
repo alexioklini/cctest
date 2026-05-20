@@ -4027,12 +4027,18 @@ class AdminHandlerMixin:
                             "UPDATE messages SET compacted = 1 WHERE session_id = ? AND (compacted = 0 OR compacted IS NULL)",
                             (session_id,)
                         )
-                        # Insert the new compacted message set (summaries + fresh tail)
+                        # Insert the new compacted message set (summaries + fresh tail).
+                        # Tag every inserted row `lcm_inserted` so uncompact can delete
+                        # exactly the LCM-produced rows — across multiple compaction
+                        # rounds — without mistaking a prior round's synthetic block or
+                        # re-rendered tail for an original message.
                         for msg in session.messages:
                             role = msg.get("role", "user")
                             content = msg.get("content", "")
                             c = json.dumps(content) if not isinstance(content, str) else content
-                            meta = json.dumps(msg.get("metadata", {})) if msg.get("metadata") else ""
+                            md = dict(msg.get("metadata") or {})
+                            md["lcm_inserted"] = True
+                            meta = json.dumps(md)
                             conn.execute(
                                 "INSERT INTO messages (session_id, role, content, metadata, compacted) VALUES (?, ?, ?, ?, 0)",
                                 (session_id, role, c, meta)
@@ -4064,22 +4070,43 @@ class AdminHandlerMixin:
             return
         try:
             with _db_conn() as conn:
-                # Originals are rows with compacted=1. Find the highest original id —
-                # everything above it was inserted by LCM and must be deleted.
-                row = conn.execute(
-                    "SELECT MAX(id) FROM messages WHERE session_id = ? AND compacted = 1",
+                # LCM-inserted rows (synthetic summary blocks + re-rendered tails,
+                # possibly from multiple compaction rounds) carry
+                # metadata.lcm_inserted=True. Delete exactly those — never an
+                # original — then restore every remaining row to compacted=0.
+                # Legacy fallback: rows from before the tag existed have no marker,
+                # so on a session with NO tagged rows fall back to the old
+                # "delete ids above the highest compacted=1 id" heuristic.
+                tagged = conn.execute(
+                    "SELECT COUNT(*) FROM messages WHERE session_id = ? "
+                    "AND metadata LIKE '%\"lcm_inserted\": true%'",
                     (session_id,)
-                ).fetchone()
-                max_orig_id = row[0] if row and row[0] else None
-                if max_orig_id is None:
+                ).fetchone()[0]
+                has_originals = conn.execute(
+                    "SELECT COUNT(*) FROM messages WHERE session_id = ? AND compacted = 1",
+                    (session_id,)
+                ).fetchone()[0]
+                if not has_originals:
                     self._send_json({"status": "no_originals"})
                     return
-                # Delete LCM-inserted rows (id > max original id)
-                conn.execute(
-                    "DELETE FROM messages WHERE session_id = ? AND id > ?",
-                    (session_id, max_orig_id)
-                )
-                # Restore originals
+                if tagged:
+                    conn.execute(
+                        "DELETE FROM messages WHERE session_id = ? "
+                        "AND metadata LIKE '%\"lcm_inserted\": true%'",
+                        (session_id,)
+                    )
+                else:
+                    # Legacy heuristic for sessions compacted before the tag existed.
+                    row = conn.execute(
+                        "SELECT MAX(id) FROM messages WHERE session_id = ? AND compacted = 1",
+                        (session_id,)
+                    ).fetchone()
+                    max_orig_id = row[0] if row and row[0] else 0
+                    conn.execute(
+                        "DELETE FROM messages WHERE session_id = ? AND id > ?",
+                        (session_id, max_orig_id)
+                    )
+                # Restore remaining rows as live originals
                 conn.execute(
                     "UPDATE messages SET compacted = 0 WHERE session_id = ? AND compacted = 1",
                     (session_id,)
