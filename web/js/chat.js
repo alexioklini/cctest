@@ -763,6 +763,19 @@ function buildStreamCallbacks(chat, isActive) {
           }
         }
       },
+      // Auto routing — the server picked a concrete model for this turn. Keep
+      // the composer on "Auto", but show the working model on the spinner and
+      // the reason in the Auto tooltip.
+      auto_route: (d) => {
+        if (!d || !d.model) return;
+        chat.autoPicked = d.model;
+        chat.autoReason = d.reason || '';
+        if (isActive()) {
+          const sm = document.getElementById('spinner-model');
+          if (sm) sm.textContent = modelShortName(d.model);
+          if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay('auto');
+        }
+      },
       warmup: (d) => {
         if (d.status === 'waiting') {
           if (isActive()) document.getElementById('spinner-label').textContent = 'Waiting for warmup...';
@@ -783,7 +796,7 @@ function buildStreamCallbacks(chat, isActive) {
         const el = document.getElementById('spinner-label');
         if (el) el.textContent = `Compacting context${d.pct ? ` (${d.pct}% full)` : ''}…`;
         if (spinnerBar && !spinnerBar.classList.contains('active')) {
-          document.getElementById('spinner-model').textContent = modelShortName(chat?.model);
+          document.getElementById('spinner-model').textContent = spinnerModelName(chat);
           document.getElementById('spinner-elapsed').textContent = '';
           spinnerBar.classList.add('active');
         }
@@ -812,7 +825,7 @@ function buildStreamCallbacks(chat, isActive) {
           el.textContent = `Modell wird neu angestoßen (${attempt}/${max})…`;
         }
         if (spinnerBar && !spinnerBar.classList.contains('active')) {
-          document.getElementById('spinner-model').textContent = modelShortName(chat?.model);
+          document.getElementById('spinner-model').textContent = spinnerModelName(chat);
           document.getElementById('spinner-elapsed').textContent = '';
           spinnerBar.classList.add('active');
         }
@@ -835,7 +848,16 @@ function buildStreamCallbacks(chat, isActive) {
         };
         if (d.tokens) chat.totalTokens = d.tokens;
         if (d.max_context) chat.maxContext = d.max_context;
-        if (d.model) chat.model = d.model;
+        // Auto routing: keep the composer on "Auto" (the user re-routes every
+        // turn) but remember which model was picked + why, for the label and
+        // tooltip. Otherwise adopt the server's resolved model as usual.
+        if (d.auto_route && chat.model === 'auto') {
+          chat.autoPicked = d.auto_route.model;
+          chat.autoReason = d.auto_route.reason || '';
+          if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay('auto');
+        } else if (d.model) {
+          chat.model = d.model;
+        }
         const tokIn = d.tokens_in || 0;
         const lastTokIn = d.last_tokens_in || tokIn;
         const tokOut = d.tokens_out || 0;
@@ -979,7 +1001,7 @@ async function triggerLCM() {
   const btn = document.getElementById('status-lcm-btn');
   if (btn) btn.disabled = true;
   const spinnerBar = document.getElementById('spinner-bar');
-  document.getElementById('spinner-model').textContent = modelShortName(chat?.model);
+  document.getElementById('spinner-model').textContent = spinnerModelName(chat);
   document.getElementById('spinner-label').textContent = 'Compacting context…';
   document.getElementById('spinner-elapsed').textContent = '';
   spinnerBar.classList.add('active');
@@ -1535,6 +1557,13 @@ async function stopGeneration() {
   } catch(e) {}
 }
 
+// The spinner always shows the model actually doing the work. On "Auto" that
+// is the per-turn picked model (chat.autoPicked), not the literal "auto".
+function spinnerModelName(chat) {
+  if (chat?.model === 'auto' && chat?.autoPicked) return modelShortName(chat.autoPicked);
+  return modelShortName(chat?.model);
+}
+
 function updateStreamingUI(isStreaming, chat) {
   const spinnerBar = document.getElementById('spinner-bar');
   const sendBtn = document.getElementById('chat-send-btn');
@@ -1546,7 +1575,7 @@ function updateStreamingUI(isStreaming, chat) {
     spinnerBar.classList.add('active');
     sendBtn.classList.add('hidden');
     stopBtn.classList.remove('hidden');
-    document.getElementById('spinner-model').textContent = modelShortName(targetChat?.model);
+    document.getElementById('spinner-model').textContent = spinnerModelName(targetChat);
     document.getElementById('spinner-label').textContent = 'Thinking...';
     document.getElementById('spinner-elapsed').textContent = '';
   } else {

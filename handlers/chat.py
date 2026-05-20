@@ -13,6 +13,41 @@ import brain as engine
 import pseudonymizer
 from handlers import sidecar_proxy
 
+
+# Human-readable purpose labels for the Auto-routing tooltip.
+_AUTO_PURPOSE_LABEL = {
+    "fast": "quick task",
+    "coding": "coding task",
+    "analysis": "analysis task",
+    "creative": "creative task",
+    "agentic": "tool/agent task",
+}
+
+
+def _auto_route_reason(purpose, attachment_mimes, model: str) -> str:
+    """Build a short 'why this model' explanation for the Auto picker tooltip.
+
+    Mirrors the tier logic in brain._resolve_auto_model_tiered so the reason
+    matches the actual decision: attachments win, then purpose tier, then the
+    picked model's own traits (local / reasoning).
+    """
+    name = engine.get_model_info(model).get("display_name") \
+        or engine.get_model_info(model).get("shortname") or model
+    mimes = [m for m in (attachment_mimes or []) if m]
+    if mimes:
+        vision = any(engine._mime_matches(m, engine.get_model_raw_formats(model)) for m in mimes)
+        if vision:
+            return f"Attachment can be read natively → {name}"
+    label = _AUTO_PURPOSE_LABEL.get(purpose or "")
+    if purpose in ("coding", "analysis"):
+        return f"Detected {label} → reasoning model {name}"
+    if purpose == "fast":
+        where = "local" if engine.is_model_local(model) else "fastest available"
+        return f"Detected {label} → {where} model {name}"
+    if label:
+        return f"Detected {label} → {name}"
+    return f"Best general-purpose model → {name}"
+
 # ---------------------------------------------------------------------------
 # Transparent anonymisation — module-level helpers
 # ---------------------------------------------------------------------------
@@ -1523,6 +1558,14 @@ class ChatHandlerMixin:
         # ACL: only owner/team-member/admin can post to the session
         if sid and self._session_access_check(sid) is None:
             return
+        # "auto" is a routing directive, not a concrete model — the router
+        # picks (and ACL-filters) the real model later. Treat it as a per-turn
+        # auto request and drop it from the override path so we don't try to
+        # resolve a provider for the literal string "auto".
+        want_auto = (model_override == "auto")
+        if want_auto:
+            model_override = None
+
         # ACL: model override must be permitted
         if model_override:
             user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
@@ -1558,18 +1601,6 @@ class ChatHandlerMixin:
                 session.model = model_override
                 session.api_key = provider["api_key"]
                 session.base_url = provider["base_url"]
-
-        # Auto model selection: if agent uses model="auto", re-resolve per message
-        agent_cfg = session.agent.config
-        if not model_override and agent_cfg.get("model") == "auto":
-            auto_model, auto_purpose = engine.resolve_auto_model_for_task(agent_cfg, message)
-            if auto_model and auto_model != session.model:
-                provider = self._resolve_provider(auto_model)
-                with session.lock:
-                    session.model = auto_model
-                    session.api_key = provider["api_key"]
-                    session.base_url = provider["base_url"]
-                    session.max_context = engine.get_model_max_context(auto_model)
 
         # Reset cancel token + open a fresh live-event buffer for this turn.
         # The worker thread (below) emits every SSE event into `live`; the HTTP
@@ -1609,6 +1640,51 @@ class ChatHandlerMixin:
                 "encoding": f.get("encoding", "base64"),
                 "media_type": f.get("media_type") or f.get("type") or _guess_mime(f.get("name", "file")),
             })
+
+        # Auto model selection. Two triggers:
+        #   1. Agent config model="auto" — fires ONCE on the session's first
+        #      turn (per-session scope keeps the warm-pool KV prefix stable and
+        #      the conversation model-consistent).
+        #   2. User picked "Auto" in the composer this turn (`want_auto`) —
+        #      an explicit per-turn request, honored whenever it's sent.
+        # Runs after attachment collection so the pick can honor a turn's files
+        # (vision/raw-format capability wins). Skipped when an explicit concrete
+        # model override is present.
+        # When the user picked "Auto", we re-route EVERY turn (the user expects
+        # the best-fitting model per message) and report back the picked model
+        # + reason. `auto_route` is captured by the worker for the done event.
+        auto_route = None
+        agent_cfg = session.agent.config
+        auto_by_agent = (agent_cfg.get("model") == "auto" and len(session.messages) == 0)
+        if not model_override and (want_auto or auto_by_agent):
+            attach_mimes = [a["media_type"] for a in all_attachments]
+            # ACL-scope the candidate pool to models the caller may use.
+            _user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+            allowed = None
+            if _user and _user.get("role") != "admin" and _user.get("id") != "__system__":
+                allowed = _auth_mod.AuthDB.get_user_allowed_models(_user["id"])
+            # Force the agent_config branch of the resolver regardless of the
+            # session agent's own model field, so a user-picked "Auto" routes
+            # even when the agent is pinned to a concrete model.
+            auto_model, auto_purpose = engine.resolve_auto_model_for_task(
+                {"model": "auto"}, message,
+                attachment_mimes=attach_mimes, allowed_models=allowed)
+            if auto_model:
+                auto_route = {
+                    "model": auto_model,
+                    "reason": _auto_route_reason(auto_purpose, attach_mimes, auto_model),
+                }
+            if auto_model and auto_model != session.model:
+                provider = self._resolve_provider(auto_model)
+                with session.lock:
+                    session.model = auto_model
+                    session.api_key = provider["api_key"]
+                    session.base_url = provider["base_url"]
+                    session.max_context = engine.get_model_max_context(auto_model)
+            # Emit the pick at turn start so the spinner shows the model that's
+            # actually doing the work (the composer label stays "Auto").
+            if auto_route:
+                live.emit("auto_route", auto_route)
 
         content_blocks = []
         disk_files = []
@@ -2714,6 +2790,11 @@ class ChatHandlerMixin:
                     if fb_model:
                         done_data["fallback_model"] = fb_model
                         done_data["original_model"] = session.model
+                    # Auto-routing: tell the client which model Auto picked and
+                    # why, so the composer can show "Auto (Model)" + tooltip
+                    # without dropping the user's "auto" selection.
+                    if auto_route:
+                        done_data["auto_route"] = auto_route
                     # Include file attachments
                     if created_files:
                         done_data["files"] = created_files

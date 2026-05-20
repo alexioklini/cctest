@@ -143,6 +143,7 @@ function relativeTime(ts) {
 
 function modelShortName(modelId, withProvider = true) {
   if (!modelId) return '';
+  if (modelId === 'auto') return '✨ Auto';
   const cfg = state.modelsConfig?.models?.[modelId];
   let name = '';
   // Check display_name first (user-configurable), then shortname
@@ -179,6 +180,7 @@ function modelShortName(modelId, withProvider = true) {
 // Falls back to provider-qualified short name when empty.
 function modelDescription(modelId) {
   if (!modelId) return '';
+  if (modelId === 'auto') return 'Automatically picks the best-fitting model for each message';
   const cfg = state.modelsConfig?.models?.[modelId];
   const desc = (cfg?.description || '').trim();
   if (desc) return desc;

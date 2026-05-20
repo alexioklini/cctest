@@ -308,7 +308,13 @@ async function loadAgentProjects(agentId) {
    ═══════════════════════════════════════════════════════════ */
 function updateModelSelectorDisplay(modelId) {
   const name = modelShortName(modelId);
-  const tip = modelDescription(modelId);
+  let tip = modelDescription(modelId);
+  // On Auto, the composer label stays "✨ Auto"; the per-turn pick + the
+  // reason behind it surface only in the tooltip.
+  if (modelId === 'auto') {
+    const chat = state.activeChat;
+    if (chat?.autoReason) tip = chat.autoReason;
+  }
   for (const id of ['model-selector-name', 'welcome-model-name', 'chat-model-name', 'project-model-name']) {
     const el = document.getElementById(id);
     if (el) {
@@ -833,6 +839,20 @@ function toggleModelDropdown(event) {
     dd.appendChild(hdr);
   }
 
+  // "Auto" — let the server pick the best-fitting model for each turn.
+  // Hidden under a GDPR local-only block (auto can't guarantee a local pick).
+  if (!localOnly) {
+    const autoItem = document.createElement('div');
+    autoItem.className = 'dropdown-item' + (currentModel === 'auto' ? ' active' : '');
+    autoItem.title = 'Automatically pick the best-fitting model for each message';
+    autoItem.innerHTML = `
+      <span class="dd-check">${currentModel === 'auto' ? '&#10003;' : ''}</span>
+      <span class="dd-label">&#10024; Auto</span>
+    `;
+    autoItem.onclick = () => { selectModel('auto'); closeAllDropdowns(); };
+    dd.appendChild(autoItem);
+  }
+
   for (const [mid, cfg] of enabledModels) {
     const item = document.createElement('div');
     item.className = 'dropdown-item' + (mid === currentModel ? ' active' : '');
@@ -842,42 +862,43 @@ function toggleModelDropdown(event) {
       <span class="dd-check">${mid === currentModel ? '&#10003;' : ''}</span>
       <span class="dd-label">${esc(label)}</span>
     `;
-    item.onclick = () => {
-      if (state.activeChat) {
-        const chat = state.activeChat;  // capture by value for async callbacks
-        const oldModel = chat.model;
-        chat.model = mid;
-        updateModelSelectorDisplay(mid);
-        // New model may have a different thinking_format — demote the
-        // composer's saved thinking_level when it's no longer valid and
-        // refresh the icon (color/disabled state).
-        try { _ensureValidThinkingLevel(); } catch(_) {}
-        refreshThinkingButton();
-  if (typeof refreshResearchModeButton === 'function') refreshResearchModeButton();
-        if (mid !== oldModel) {
-          stopWarmupPoll(chat);
-          updateStatusBar();
-          if (chat.messages.length === 0) {
-            // Drop stale session-id; let the next send create one. No
-            // pre-create — orphans stack up otherwise.
-            chat.sessionId = null;
-          } else if (chat.sessionId) {
-            // Trigger warmup on existing session with new model
-            API.post(`/v1/sessions/${chat.sessionId}/warmup`, {model: mid}).then(data => {
-              if (data.warmup) {
-                startWarmupPoll(chat);
-              }
-            }).catch(() => {});
-          }
-        }
-      }
-      closeAllDropdowns();
-    };
+    item.onclick = () => { selectModel(mid); closeAllDropdowns(); };
     dd.appendChild(item);
   }
 
   document.body.appendChild(dd);
   document.addEventListener('click', closeAllDropdowns, {once: true});
+}
+
+// Apply a model selection to the active chat. `mid` may be a concrete model id
+// or the synthetic "auto" directive (server picks per turn). Warmup is skipped
+// for "auto" since there's no concrete model to pre-load.
+function selectModel(mid) {
+  if (!state.activeChat) return;
+  const chat = state.activeChat;  // capture by value for async callbacks
+  const oldModel = chat.model;
+  chat.model = mid;
+  // Drop any stale Auto pick when leaving Auto (or re-selecting it fresh).
+  if (mid !== 'auto') { chat.autoPicked = null; chat.autoReason = ''; }
+  updateModelSelectorDisplay(mid);
+  // New model may have a different thinking_format — demote the composer's
+  // saved thinking_level when it's no longer valid and refresh the icon.
+  try { _ensureValidThinkingLevel(); } catch(_) {}
+  refreshThinkingButton();
+  if (typeof refreshResearchModeButton === 'function') refreshResearchModeButton();
+  if (mid === oldModel) return;
+  stopWarmupPoll(chat);
+  updateStatusBar();
+  if (chat.messages.length === 0) {
+    // Drop stale session-id; let the next send create one. No pre-create —
+    // orphans stack up otherwise.
+    chat.sessionId = null;
+  } else if (chat.sessionId && mid !== 'auto') {
+    // Trigger warmup on existing session with new concrete model.
+    API.post(`/v1/sessions/${chat.sessionId}/warmup`, {model: mid}).then(data => {
+      if (data.warmup) startWarmupPoll(chat);
+    }).catch(() => {});
+  }
 }
 
 function toggleAgentDropdown(event) {

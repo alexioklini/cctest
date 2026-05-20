@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.8.0"
+VERSION = "9.9.1"
 VERSION_DATE = "2026-05-19"
 CHANGELOG = [
+    ("9.9.1", "2026-05-20", "feat(auto-model-ux): composer/spinner refinements on top of 9.9.0. Composer dropdown label stays exactly `✨ Auto` (chosen model NOT appended) — the per-turn pick + routing reason surface only in the Auto tooltip. The streaming spinner always shows the model actually performing the task via `spinnerModelName(chat)` (returns `chat.autoPicked` on Auto, else `chat.model`), driven by a new `auto_route` SSE event emitted at turn start (buffered+replayed by the LiveStream so reconnects don't miss it). `chat.model` stays 'auto' so every turn re-routes."),
+    ("9.9.0", "2026-05-20", "feat(auto-model): user-selectable per-turn auto model routing in the composer. **Root cause fixed** — the pre-existing `model:\"auto\"` agent mechanism (`resolve_auto_model_for_task` + `classify_task_purpose`) was a silent no-op: `_resolve_auto_model(purpose)` filtered models by `purpose in capabilities`, but no model declares coding/analysis/creative/agentic/fast as a capability (the capabilities vocabulary is chat/image/audio/tts only), so it always fell through to the highest-priority model regardless of the task. **New tiered resolver** (`brain._resolve_auto_model_tiered`) routes on fields that actually exist: a `_PURPOSE_TIER` map sends fast→cheapest/local model, coding/analysis→first reasoning model (thinking_format != none), creative/agentic/none→highest-priority. Attachment capability wins first — when a turn carries files, candidates are restricted to models whose `raw_formats` match the attachment MIMEs (falls back to the full enabled set when none match, so the existing per-file describe pipeline still handles e.g. PDF with no regression). Always returns a concrete model id (top-priority fallback), never empty. `allowed_models` param ACL-scopes the candidate pool to the caller's permitted set (empty intersection → full enabled set, never starves an admin). **Composer UI** — `web/js/nav.js` `toggleModelDropdown` prepends a `✨ Auto` item (hidden under a GDPR local-only block since auto can't guarantee a local pick); selecting it sets `chat.model = 'auto'`. Inline per-item click handler refactored into a shared `selectModel(mid)` (warmup skipped for the synthetic 'auto'). `modelShortName`/`modelDescription` special-case 'auto'. **Per-turn routing** (user decision) — when the composer model is 'auto' the frontend sends `body.model='auto'` every turn; `handlers/chat.py` normalizes a `want_auto` flag (ACL short-circuits 'auto', skips provider-resolve for the literal string) and re-routes EACH turn (the agent-config `model:auto` trigger keeps its first-turn-only gate to preserve the warm-pool KV prefix; user-picked Auto is explicit so it re-routes per message). The auto-block runs AFTER attachment collection so the pick honors the turn's files, and ACL-scopes via `AuthDB.get_user_allowed_models`. **Reason surfacing** — `handlers/chat._auto_route_reason(purpose, mimes, model)` builds a short German-free 'why this model' string mirroring the tier logic; threaded into the `done` SSE event as `auto_route:{model, reason}`. Frontend `done` handler keeps `chat.model='auto'` (no longer clobbered by `d.model`), stashes `chat.autoPicked`/`chat.autoReason`; `updateModelSelectorDisplay` renders `✨ Auto (Model)` with the reason as tooltip. Stale pick cleared on switching away from Auto. **Deliberately out of scope**: no LLM classifier (heuristics only, Rule-5 compliant); GDPR/classification/quota gates still run downstream and override the router's pick on force-local — the router only picks among enabled+allowed models, it does not pick within the policy-allowed set up front (flagged for a future pass). The 86-model capabilities vocabulary was not touched (routing keys on thinking_format/is_local/priority instead of tagging every model). **Composer/spinner UX (final)**: the composer dropdown label stays exactly `✨ Auto` — the chosen model is NOT appended to the label; it surfaces only in the Auto tooltip alongside the routing reason (`updateModelSelectorDisplay` sets the tooltip to `chat.autoReason`). The streaming spinner ALWAYS shows the model actually performing the task: new `spinnerModelName(chat)` helper returns the per-turn pick (`chat.autoPicked`) when on Auto, else `chat.model`, wired into all spinner-model sites (`updateStreamingUI`, compacting, empty_round_nudge, triggerLCM). Backend emits a new `auto_route` SSE event at turn start (`live.emit('auto_route', {model, reason})` right after the pick, before the worker thread starts — buffered + replayed by the LiveStream so reconnects don't miss it); the client `auto_route` callback updates the spinner to the working model immediately and stashes the reason for the tooltip, without ever overwriting `chat.model` (stays 'auto' so the next turn re-routes)."),
     ("9.8.0", "2026-05-19", "feat(classification-action-level): enforcement action now follows the HIGHER of in-file marker and content heuristic, no longer just the marker. **Why** — chip + tooltip showed two independent signals (Aktuelle analysierte Klassifikation = content heuristic, Im File klassifiziert als = marker), but the actual gate/policy resolution only consulted `final_level` which was `marker_level || 'unmarked'`. A confidential-by-content PDF marked 'public' got the public policy (ignore) — a real bypass. Symmetric inverse mattered too: a strict-marked PDF whose content reads bland must still get the strict policy. New helper `brain._classification_action_level(result)` returns max(marker_level, heuristic_level) by LEVEL_RANK, defaulting to 'unmarked' only when both are missing. Wired into both the tool-read gate (`_classification_gate_tool_text`, brain.py ~2941) and the background-model picker (`classification_pick_model_for_background`, brain.py ~21087) — every site that previously used `result.get('final_level')` for the action lookup now uses the helper. `/v1/attachments/scan` response gains `analyzed_level` (= heuristic), `action_level` (= max), and `content_signals` (full block) so the UI can show both signals honestly without recomputing. The legacy `final_level` field is preserved for backward compat. **UI** (`web/js/files.js`, `web/js/panels.js`) — chip badge text = `Aktuelle analysierte Klassifikation` (heuristic), tooltip lines are fixed: `Aktuelle analysierte Klassifikation: <Öffentlich|Intern|Vertraulich|Streng vertraulich>` / `Im File klassifiziert als: <Nicht klassifiziert|...>` / `Was jetzt möglich ist: <Folge>`. Modal data-row mirrors the same vocabulary. Modal header worst-level computation switched from `final_level` to `action_level` (with a max(marker, heuristic) fallback for old response shapes). **Behaviour change**: an unmarked PDF with confidential-content keywords + PII now triggers `force_local` everywhere, not just in the audit chip — read_document tool-output is gated, background calls swap to local fallback or refuse per the configured policy. Strict-always-block invariant (ARL §1.11) still wins over admin config when the strict signal comes from EITHER side."),
     ("9.7.0", "2026-05-19", "feat(classification-ui): unify the PII + classification pre-send experience and clarify the attachment chip. **(1) Chip badge rewrite** (`web/js/files.js`) — the classification chip now shows the **detected level only** as its text (`Intern` / `Vertraulich` / `Öffentlich` / `Streng vertraulich` / `Unmarkiert`); the leading icon is gone, colour conveys severity (rot=strict, gelb=vertraulich, blau=intern, grau=unmarkiert). The tooltip is exactly the three lines the user specified, in German: `Erkannte Klassifikation: <level>` / `Im File hinterlegte Klassifikation: <marker level or \"keine Klassifikation im Dokument hinterlegt\">` / `Was jetzt möglich ist: <one-sentence consequence — ohne Einschränkung / Senden möglich mit Hinweis / nur lokales Modell / nicht möglich>`. Optional mismatch line surfaces between marker and consequence when content heuristic outranks the in-file marker. For `force_local` / `block` actions the chip also renders an inline status line under the row so the user doesn't need to hover to see that the send is gated. **(2) PII badge tooltip merge** — when both PII findings AND a non-trivial classification exist, the `🛡️` PII badge's tooltip is augmented with a `— Klassifikation —` block carrying the same three lines, so a single hover surfaces both signals. Same applies to the red `⛔` badge for unscannable + classified attachments. **(3) Unified pre-send modal** (`web/js/panels.js:gdprActionModal`) — the dialog now accepts an optional `classifiedFiles` parameter and renders a `Dokumentenklassifizierung` section listing each classified file with detected level, in-file marker, and resulting action (German labels throughout). Title / subtitle / stat-badge branch off the joint state of PII findings and classification (`PII only` / `classification only` / `both`). The four canonical verdicts — **continue / local / anonymise / cancel** — are now gated by combined policy: strict-level + block → only Cancel (per ARL §1.11); force_local (or non-strict block, cloud model) → Cancel + Lokales Modell verwenden; anonymise only when there are actual PII findings (stripping PII can't change a document's classification, so the auto-anon/deanon round-trip is hidden when the only signal is classification). Default focus falls through anonymise → local → cancel based on what's available. **(4) Trigger rewrite** (`web/js/chat.js:sendMessage`) — the modal now fires when EITHER PII findings exist OR pending attachments carry warn/force_local/block classification. The separate `classificationActionModal` call after the PII block is replaced by a fallback gate that only fires when the unified modal was skipped (sticky PII pref, scanner disabled, or classification-only without crossing the PII path). New `unifiedModalRan` boolean prevents double-prompting. **Behaviour change**: a confidential PDF with no PII used to surface only the per-file chip + the inline classification modal; it now surfaces the same unified pre-send dialog the PII path uses, with the four canonical buttons exposed wherever policy permits. Strict-confidential PDFs still collapse to Cancel-only as before."),
     ("9.6.0", "2026-05-19", "feat(classification): WPB ARL 20.02.02.06 document classification — Phase A (audit/Data view) + Phase B (enforcement) shipped together. **Phase A — detect-only audit surface**: New `engine/classification.py` pure detector — regex marker scan (`Dokumentenklassifizierung … <level>`, English `Classification: <level>`, TLP RED/AMBER/GREEN/WHITE, filename hints, ARL number pattern), filename hint fallback, content heuristic (PII findings + admin-editable keyword lists per sensitivity). Mismatch fires when `heuristic_rank > marker_rank` (HIGH when marker=public + PII/confidential keywords, or delta ≥ 2 levels). Unmarked is a first-class state, not auto-promoted to internal. New `handlers/classification.py` with 9 endpoints: `POST /v1/classification/scan-files` (multipart, ≤500 files), `/scan-folder` (realpath-guarded — must sit under repo root / agents/ / cwd / project input_folders, hard-deny on /etc /var /usr /bin /sbin /System /Library/Keychains), `/scan-project` (walks input_folders + ingested/); `GET /scans[/<id>[.csv]]`, `DELETE /scans/<id>`; admin-only `GET/POST /v1/classification/config` (audited as `classification_config_save`). Text extraction reuses `engine.doc_convert.convert_one()` (same Mistral-OCR + local-vision pipeline as MemPalace ingestion). New `classification_scans` table in chats.db with 50KB evidence cap (progressive trim — drops marker excerpts, then keyword hits, then keeps only per-file summary). New `ClassificationDB` class in `server_lib/db.py`. Data view UI in `#data-view` (was empty placeholder) — three input modes (Upload / Server folder / Project), filtered table (mismatch-only / unmarked-only / per-level), CSV export (client-side when not persisted; server-side `.csv` endpoint when persisted), scan history, drag-drop dropzone. Settings → Classification tab with admin-editable keywords per sensitivity (internal/confidential/strict) + extra marker regex patterns, 'Restore defaults' per group. WPB defaults seeded in `DEFAULT_KEYWORDS` (Vorstand, Aufsichtsrat, CISO, CRYPTSHARE, …). **Phase B — enforcement**: Policy config `config.json → classification_scanner` (enabled, server_block, server_log, default_local_fallback_model, per_level_action). Defaults: public=ignore, internal=warn, confidential=force_local, strict=block, unmarked=warn. Strict-always-block invariant in `_classification_effective_action()` (ARL §1.11 'ohne Zustimmung des Vorstands ausnahmslos untersagt' — coerces strict→block regardless of admin input when server_block is on). New `ClassificationBlockedError(GDPRBlockedError)` — subclass trick means every existing `except GDPRBlockedError:` (10+ background sites: next-prompt, chat summary, memory classifier, scheduled tasks, refine, delegate, KG extract, …) auto-catches classification blocks with zero per-site changes. New `classification_pick_model_for_background(model, texts, purpose)` parallels `gdpr_pick_model_for_background` (no anonymise path — stripping PII doesn't change a document's classification). Actions: ignore/warn → passthrough, force_local → swap to fallback or raise, block → raise. Audit: `classification_detected` / `classification_auto_fallback` / `classification_blocked`. Single-seam wiring: `gdpr_pick_model_for_background` calls `classification_pick_model_for_background` FIRST inside its body — every site already obeying GDPR policy now obeys classification policy. Tool-read gate `_classification_gate_tool_text` called inside `_gdpr_anon_tool_text` — when a `read_document` / `read_file` / `python_exec` / `execute_command` output is classified above the per-level threshold AND the active model is non-local, raises `ClassificationBlockedError`. The dispatcher turns the raise into a JSON tool-error the LLM sees verbatim. Fail-open on internal errors. PDF footer fallback: `engine.classification.extract_pdf_page_texts()` re-scans raw fitz-extracted per-page text for markers when markitdown's main extraction yields none (markitdown drops repeating PDF footers). Promoted marker keeps content_signals + heuristic from the primary extraction. Validated on synthetic PDFs (real WPB ARL footer is vector graphics — per-PDF tooling limit, not a detector failure). `/v1/attachments/scan` extended with `classification: {marker_level, final_level, marker_meta, marker_evidence, mismatch, effective_action, level_label_de}`. Per-file chip badges (🔒 / 🏠 / ⛔) color-coded by sensitivity. Composer modal in `web/js/panels.js: classificationActionModal` — fires after PII modal in `sendMessage()`. Strict + block → Cancel only (no swap). Confidential force_local → Cancel + 'Lokales Modell verwenden'. Skipped when model is already local. `classificationBlockActive(chat)` folded into `piiBlockActive(chat)` so the model dropdown auto-restricts to local-only when classified attachments are pending. Settings → Classification policy block (master switches, default_local_fallback_model dropdown filtered to enabled local models, per-level action dropdowns; strict row locked at block with ARL §1.11 tooltip). Regex fix during Phase B: removed too-strict `(?!\\s+\\w)` negative lookahead on `vertraulich` — was failing on normal marker followed by `Verantwortlicher: …`. The anchor keyword (Dokumentenklassifizierung/Klassifizierung) provides enough context. **Smoke-tested 2026-05-19**: server restart clean, end-to-end scan on WPB ARL PDF correctly reports `unmarked + heuristic=confidential + PII×50` (markitdown lost footer; mismatch surface caught content signals — exactly the audit value the user asked for). Policy round-trips: confidential marker → effective_action=force_local, strict marker → effective_action=block. **Phase C deferred** (see `CLASSIFICATION_PHASE_C_HANDOVER.md`): session classification taint (sticky per-session field), derived-artifact auto-marking (inject footer/header on write_file/edit_file when session taint is set, per-format dispatch: md footer / docx custom property + Heading / xlsx workbook prop / HTML meta+banner; PDF punted to audit-only), three remaining background sites not yet wrapped (`_handle_soul_chat`, workflow LLM nodes, warmup test-call — same gap as the existing GDPR coverage 19/22), composer banner for taint, Settings → Audit classification-events filter chip."),
@@ -22067,11 +22069,84 @@ def classify_task_purpose(message: str) -> str | None:
     return best_purpose
 
 
-def resolve_auto_model_for_task(agent_config: dict, message: str) -> tuple[str, str | None]:
+# Map a classified task purpose to a routing tier. The tier is resolved
+# against fields every model actually has (thinking_format, is_local,
+# priority) — unlike the legacy `purpose in capabilities` filter, which
+# never matched because no model declares coding/analysis/etc. as a
+# capability (capabilities vocabulary is chat/image/audio/tts only).
+_PURPOSE_TIER: dict[str, str] = {
+    "fast": "fast",          # quick/format/translate → cheapest, prefer local
+    "coding": "reasoning",   # needs strong reasoning model
+    "analysis": "reasoning",
+    "creative": "default",
+    "agentic": "default",
+}
+
+
+def _resolve_auto_model_tiered(purpose: str | None,
+                               *, attachment_mimes: list[str] | None = None,
+                               allowed_models: set[str] | None = None) -> str:
+    """Pick the best enabled model for a task, by tier + attachment capability.
+
+    Selection order:
+      1. If the turn carries attachments, restrict to vision/raw-format-capable
+         models whose `raw_formats` match the attachment MIMEs. Falls back to
+         the full enabled set when none match (the per-file describe pipeline
+         then handles the mismatch — no regression).
+      2. Apply the purpose tier within the candidate set:
+         - "reasoning" → first model with thinking_format != "none"
+         - "fast"      → first local model, else cheapest by priority
+         - "default"   → highest-priority model
+      3. Always returns a concrete model id (top-priority fallback) — never "".
+
+    `allowed_models`, when set, restricts the candidate pool to models the
+    caller may use (ACL). Empty intersection falls back to the full enabled
+    set so an unrestricted/admin caller is never starved.
+    """
+    enabled = get_enabled_models()  # priority-desc
+    if allowed_models:
+        scoped = [m for m in enabled if m in allowed_models]
+        if scoped:
+            enabled = scoped
+    if not enabled:
+        return ""
+
+    candidates = enabled
+    mimes = [m for m in (attachment_mimes or []) if m]
+    if mimes:
+        vision = [mid for mid in enabled
+                  if any(_mime_matches(m, get_model_raw_formats(mid)) for m in mimes)]
+        if vision:
+            candidates = vision  # attachment capability wins
+
+    tier = _PURPOSE_TIER.get(purpose or "", "default")
+
+    if tier == "reasoning":
+        for mid in candidates:
+            if _models_config.get(mid, {}).get("thinking_format", "none") != "none":
+                return mid
+    elif tier == "fast":
+        for mid in candidates:
+            if is_model_local(mid):
+                return mid
+        # No local model available — cheapest enabled (lowest priority value)
+        return min(candidates, key=lambda mid: _models_config.get(mid, {}).get("priority", 0))
+
+    # default tier, or no tier-specific match found
+    return candidates[0]
+
+
+def resolve_auto_model_for_task(agent_config: dict, message: str,
+                                attachment_mimes: list[str] | None = None,
+                                allowed_models: set[str] | None = None
+                                ) -> tuple[str, str | None]:
     """For agents with model="auto", analyze the task and pick the best model.
 
     Returns (resolved_model_id, detected_purpose).
     If agent has a fixed model_purpose, uses that instead of classifying.
+    `attachment_mimes` (when the turn carries files) constrains the pick to a
+    model that can natively handle those MIME types.
+    `allowed_models` (when set) restricts the pick to the caller's ACL set.
     """
     raw_model = agent_config.get("model", "")
     if raw_model != "auto":
@@ -22079,11 +22154,13 @@ def resolve_auto_model_for_task(agent_config: dict, message: str) -> tuple[str, 
 
     fixed_purpose = agent_config.get("model_purpose")
     if fixed_purpose:
-        return _resolve_auto_model(fixed_purpose), fixed_purpose
+        return _resolve_auto_model_tiered(fixed_purpose, attachment_mimes=attachment_mimes,
+                                          allowed_models=allowed_models), fixed_purpose
 
     # Classify task from message
     detected = classify_task_purpose(message)
-    resolved = _resolve_auto_model(detected)
+    resolved = _resolve_auto_model_tiered(detected, attachment_mimes=attachment_mimes,
+                                          allowed_models=allowed_models)
     return resolved, detected
 
 
