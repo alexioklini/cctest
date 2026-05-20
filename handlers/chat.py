@@ -1731,9 +1731,11 @@ class ChatHandlerMixin:
         # session → no line; the real turn has one → full prefill, ~20s on the
         # 26B). Prepended here to the first user message instead, so the system
         # prompt stays session-agnostic and the warm prefix is reused.
+        preamble_text = ""
         if len(session.messages) == 0:
             _art_pre = engine._artifact_folder_preamble_text(session.agent_id, session.id)
             if _art_pre:
+                preamble_text = _art_pre
                 message = f"{_art_pre}\n\n{message}"
 
         # Build user_content with any multimodal blocks
@@ -1890,7 +1892,13 @@ class ChatHandlerMixin:
         # would feed the original to the LLM. The worker is responsible for
         # session.add_message("user", ...) in the anonymise branch.
         if session._gdpr_pending_action != "anonymise":
-            session.add_message("user", user_content)
+            # `metadata.preamble` carries the round-0 artifact-folder note that
+            # was prepended into `content` above. It stays in `content` so the
+            # model still sees it on the wire (the sidecar reads content, not
+            # metadata), but the UI uses this field to peel the prefix off and
+            # render it as a collapsed "Preamble" block instead of inline text.
+            _umeta = {"preamble": preamble_text} if preamble_text else None
+            session.add_message("user", user_content, metadata=_umeta)
 
         # SSE streaming setup (start early so we can send compaction events)
         # Disable Nagle's algorithm for real-time SSE delivery
@@ -2375,6 +2383,8 @@ class ChatHandlerMixin:
                         }
                         if _user_spans:
                             _user_meta["gdpr_restored_spans"] = _user_spans
+                        if preamble_text:
+                            _user_meta["preamble"] = preamble_text
                         ChatDB.save_message(
                             sid, "user", user_content,
                             metadata=_user_meta)
@@ -2383,7 +2393,10 @@ class ChatHandlerMixin:
                             session.status, session.created_at, session.last_active,
                             session.project or "", user_id=session.user_id)
                     else:
-                        session.add_message("user", nonlocal_user_content)
+                        session.add_message(
+                            "user", nonlocal_user_content,
+                            metadata=({"preamble": preamble_text}
+                                      if preamble_text else None))
                     _msg_count_before = len(session.messages)
 
                 # --- Standard backend ---

@@ -2408,6 +2408,23 @@ function renderUserMessage(msg, idx) {
     }
     filesHtml += '</div>';
   }
+  // Round-0 preamble (e.g. the artifact-folder note) is prepended into the
+  // user message content on the wire so the model sees it, but the server
+  // also stashes the exact prefix in metadata.preamble. Peel it off here so
+  // the visible bubble shows only what the user typed; render the preamble
+  // as a collapsed <details> block above it.
+  let preambleHtml = '';
+  const preamble = msg.metadata?.preamble;
+  if (typeof preamble === 'string' && preamble && textContent.startsWith(preamble)) {
+    let rest = textContent.slice(preamble.length);
+    if (rest.startsWith('\n\n')) rest = rest.slice(2);
+    textContent = rest;
+    preambleHtml = `
+      <details class="msg-preamble">
+        <summary>Preamble</summary>
+        <div class="msg-preamble-body">${esc(preamble)}</div>
+      </details>`;
+  }
   // GDPR highlight overlay for the request side — mirrors the assistant
   // path but skips the markdown pipeline since user messages render as
   // plain escaped text. Gated by the same composer toggle.
@@ -2418,6 +2435,7 @@ function renderUserMessage(msg, idx) {
     : esc(textContent);
   return `
     <div class="msg-turn msg-turn-user">
+      ${preambleHtml}
       ${thumbsHtml}
       ${filesHtml}
       <div class="msg-user">${userTextHtml}</div>
