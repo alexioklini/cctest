@@ -912,7 +912,10 @@ function buildStreamCallbacks(chat, isActive) {
 
         // Only update DOM if this chat is still visible
         if (isActive()) {
-          if (d.model) updateModelSelectorDisplay(d.model);
+          // Use chat.model, not d.model: on Auto chat.model stays "auto" (the
+          // block above kept it), so the composer label stays "✨ Auto" while
+          // d.model (the concrete pick) would wrongly overwrite it.
+          updateModelSelectorDisplay(chat.model);
           renderMessages();
           scrollToBottom();
           updateStreamingUI(false);
