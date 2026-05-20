@@ -254,6 +254,20 @@ class SessionsHandlerMixin:
             except Exception:
                 pass
 
+        # Round-0 preamble (artifact-folder note): prepended into the first
+        # user message's content for the wire, stashed verbatim in that row's
+        # metadata.preamble. Surface it as its own inspector card (like the
+        # system prompt) rather than in the chat view — it's plumbing, not
+        # conversation. Empty when the session never got one.
+        preamble = ""
+        for _m in msgs:
+            if _m.get("role") == "user":
+                _pre = (_m.get("metadata") or {}).get("preamble")
+                if isinstance(_pre, str) and _pre:
+                    preamble = _pre
+                break  # only the first user message can carry it
+        preamble_tokens = len(preamble) // 4 if preamble else 0
+
         # Build interaction pairs: user message + assistant response.
         # metadata.cost stored on each assistant message is the *cumulative* session
         # cost as of that turn (snapshot of get_session_cost), so per-turn cost is
@@ -278,6 +292,13 @@ class SessionsHandlerMixin:
                 content_in = user_msg.get("content", "")
                 if isinstance(content_in, list):
                     content_in = " ".join(str(b.get("text", "")) for b in content_in if isinstance(b, dict))
+                # Peel the round-0 preamble off the displayed turn text — it has
+                # its own inspector card. (It stays in the wire content; this is
+                # display-only.)
+                _u_pre = user_meta.get("preamble")
+                if (isinstance(_u_pre, str) and _u_pre and isinstance(content_in, str)
+                        and content_in.startswith(_u_pre)):
+                    content_in = content_in[len(_u_pre):].lstrip("\n")
                 content_out = (assistant_msg or {}).get("content", "")
                 if isinstance(content_out, list):
                     content_out = " ".join(str(b.get("text", "")) for b in content_out if isinstance(b, dict))
@@ -351,6 +372,7 @@ class SessionsHandlerMixin:
             "model": session.model if session else "",
             "max_context": session.max_context if session else 0,
             "system_prompt": {"content": system_prompt, "tokens_est": system_tokens},
+            "preamble": {"content": preamble, "tokens_est": preamble_tokens},
             "memory_summary": {"content": memory_summary, "tokens_est": memory_tokens},
             "interactions": interactions,
             "totals": {

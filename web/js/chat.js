@@ -1160,6 +1160,21 @@ async function openInspectModal() {
       <pre style="margin:0;padding:16px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;background:var(--bg-200);color:var(--text-200);font-family:var(--font-mono)">${esc(spContent || '(not available)')}</pre>
     </details>`;
 
+    // --- Round-0 Preamble (once; only when the session got one) ---
+    // The artifact-folder note prepended into the first user message for the
+    // wire. Shown here, not in chat view, because it's plumbing not dialogue.
+    const preContent = data.preamble?.content || '';
+    const preTokens = data.preamble?.tokens_est || 0;
+    if (preContent) {
+      html += `<details style="margin-bottom:8px;border:1px solid var(--border-100);border-radius:10px;overflow:hidden">
+        <summary style="padding:12px 16px;cursor:pointer;background:var(--bg-100);font-weight:500;color:var(--text-000);display:flex;align-items:center;gap:8px">
+          <span style="color:#0891b2">Preamble</span>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">round 0 · first user message · ~${preTokens.toLocaleString()} tokens</span>
+        </summary>
+        <pre style="margin:0;padding:16px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;background:var(--bg-200);color:var(--text-200);font-family:var(--font-mono)">${esc(preContent)}</pre>
+      </details>`;
+    }
+
 
     // --- Tool Definitions (once) ---
     if (toolsCount > 0) {
@@ -1744,19 +1759,10 @@ function renderMessages() {
           </details>
         </div>`;
       }
-      // Round-0 preamble (e.g. the artifact-folder note) is prepended into the
-      // user message content for the wire, but the header hint shows only the
-      // typed text (turnQuestionFull strips it). Surface the hidden prefix as a
-      // collapsed "Preamble" disclosure under the header so it's inspectable.
-      let preambleBlock = '';
-      const _pre = t.userMsg?.metadata?.preamble;
-      if (typeof _pre === 'string' && _pre) {
-        preambleBlock = `<details class="msg-preamble">
-          <summary>Preamble</summary>
-          <div class="msg-preamble-body">${esc(_pre)}</div>
-        </details>`;
-      }
-      html += `<div class="${cls}" data-turn="${t.turnNum}">${badge}${preambleBlock}${summaryBlock}<div class="turn-body">${body}</div></div>`;
+      // The round-0 preamble (artifact-folder note) is intentionally NOT shown
+      // in chat view — it's plumbing, surfaced in the session inspector as its
+      // own card. turnQuestionFull already strips it from the header hint.
+      html += `<div class="${cls}" data-turn="${t.turnNum}">${badge}${summaryBlock}<div class="turn-body">${body}</div></div>`;
     }
   }
 
