@@ -1777,6 +1777,17 @@ function renderMessages() {
 }
 
 // --- Turn collapse/nav helpers ---
+// Strip the round-0 preamble (metadata.preamble) off a user message's text
+// so turn headers, breadcrumb titles, and previews show only what the user
+// typed — not the artifact-folder note prepended into content for the wire.
+function _stripPreamble(msg, txt) {
+  const pre = msg?.metadata?.preamble;
+  if (typeof pre === 'string' && pre && txt.startsWith(pre)) {
+    return txt.slice(pre.length).replace(/^\n+/, '');
+  }
+  return txt;
+}
+
 function turnQuestionPreview(msg, maxChars) {
   if (!msg) return '';
   let txt = '';
@@ -1784,7 +1795,7 @@ function turnQuestionPreview(msg, maxChars) {
   else if (Array.isArray(msg.content)) {
     for (const b of msg.content) if (b?.type === 'text') txt += (b.text || '');
   }
-  txt = txt.replace(/\s+/g, ' ').trim();
+  txt = _stripPreamble(msg, txt).replace(/\s+/g, ' ').trim();
   if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '…';
   return txt;
 }
@@ -1796,7 +1807,7 @@ function turnQuestionFull(msg) {
   else if (Array.isArray(msg.content)) {
     for (const b of msg.content) if (b?.type === 'text') txt += (b.text || '');
   }
-  return txt.trim();
+  return _stripPreamble(msg, txt).trim();
 }
 
 function toggleHintExpand(turnNum) {
