@@ -1,6 +1,6 @@
 {
   "description": "General-purpose main agent",
-  "model": "CLIProxyAPI/mistral-small-latest",
+  "model": "auto",
   "avatar": "captain",
   "display_name": "Main",
   "memory_summary": {
