@@ -377,9 +377,15 @@ class Session:
         with self.lock:
             self.messages.append(msg)
             self.last_active = time.time()
-            # Auto-title from first user message
+            # Auto-title from first user message. Strip the round-0 preamble
+            # (e.g. the artifact-folder note) — it's prepended into `content`
+            # for the wire but is not what the user typed, so titling on it
+            # would name the chat "[Session artifact folder ...".
             if not self.title and role == "user":
                 text = content if isinstance(content, str) else str(content)
+                _pre = (metadata or {}).get("preamble") if metadata else None
+                if _pre and isinstance(text, str) and text.startswith(_pre):
+                    text = text[len(_pre):].lstrip("\n")
                 self.title = _derive_session_title(text)
         ChatDB.save_message(self.id, role, content, metadata=metadata)
         ChatDB.save_session(self.id, self.agent_id, self.model, self.title,

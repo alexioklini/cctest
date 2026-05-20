@@ -5378,7 +5378,11 @@ class AdminHandlerMixin:
         self.send_header("Content-Type", ct)
         self.send_header("Content-Length", len(data))
         if ext in ("html", "css", "js"):
-            self.send_header("Cache-Control", "no-cache, must-revalidate")
+            # `no-store` (not just `no-cache`): this handler sends no ETag /
+            # Last-Modified, so a browser can't revalidate and may serve a
+            # stale cached body on soft reload — which silently shipped old
+            # chat.js/main.css after a deploy. Force a fresh fetch every load.
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         elif ext in ("woff2", "woff", "ttf"):
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         self.end_headers()
