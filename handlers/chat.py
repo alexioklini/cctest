@@ -1357,15 +1357,21 @@ class ChatHandlerMixin:
         body = self._read_json()
         model = body.get("model", server_config["default_model"])
         agent_req = body.get("agent", "main")
+        # "auto" is a routing directive — keep it on the session so each turn
+        # re-routes, but resolve a concrete model for the initial provider
+        # creds + warm-pool/context lookups below. ACL on 'auto' itself is a
+        # no-op; the per-turn router only ever picks ACL-allowed models.
+        want_auto = (model == "auto")
+        resolved_model = engine.resolve_model("auto") if want_auto else model
         # ACL gate: caller must have access to both the agent and the model
         user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
         if not _auth_mod.can_access_agent(user, agent_req):
             self._send_json({"error": f"Access to agent '{agent_req}' not permitted"}, 403)
             return
-        if not _auth_mod.can_access_model(user, model):
+        if not want_auto and not _auth_mod.can_access_model(user, model):
             self._send_json({"error": f"Access to model '{model}' not permitted"}, 403)
             return
-        provider = self._resolve_provider(model)
+        provider = self._resolve_provider(resolved_model)
         project_req = body.get("project", "")
         custom_status_req = body.get("status", "")
         note_req = body.get("note_context", "")
@@ -1374,12 +1380,14 @@ class ChatHandlerMixin:
         # the pooled shape exactly: agent=main, no project, no custom status,
         # no note context. Any of those change the system prompt / behavior
         # and would make a pre-primed KV prefix invalid.
-        model_cfg_claim = engine._models_config.get(model, {})
+        # Warm pool keys on a concrete model; "auto" never claims a pooled
+        # session (its model would be wrong for the per-turn pick anyway).
+        model_cfg_claim = engine._models_config.get(resolved_model, {})
         pooled = None
-        if (model_cfg_claim.get("warmup")
+        if (not want_auto and model_cfg_claim.get("warmup")
                 and agent_req == WarmSessionPool.POOL_AGENT
                 and not project_req and not custom_status_req and not note_req):
-            pooled = warm_pool.claim(model)
+            pooled = warm_pool.claim(resolved_model)
         if pooled is not None:
             session = pooled
             # Promote from warm_pool status to active (visible in sidebar)
@@ -1402,7 +1410,7 @@ class ChatHandlerMixin:
                 model=model,
                 api_key=provider["api_key"],
                 base_url=provider["base_url"],
-                max_context=body.get("max_context") or engine.get_model_max_context(model),
+                max_context=body.get("max_context") or engine.get_model_max_context(resolved_model),
             )
         # Stamp user ownership (for MemPalace wing scoping)
         auth_user = getattr(self, '_auth_user', None)
@@ -2902,6 +2910,22 @@ class ChatHandlerMixin:
                     session._streaming = False
                     if session.live_stream is live:
                         session.live_stream = None
+                # Auto mode: the per-turn router swapped session.model to the
+                # concrete pick (load-bearing during the turn). Restore "auto"
+                # as the persisted session model so reopening the chat shows
+                # Auto in the composer, not the last working model. The model
+                # that actually answered is recorded in the assistant message
+                # metadata, so nothing is lost.
+                if auto_route:
+                    with session.lock:
+                        session.model = "auto"
+                    try:
+                        ChatDB.save_session(session.id, session.agent_id, "auto",
+                                            session.title, session.status,
+                                            session.created_at, session.last_active,
+                                            session.project or "", user_id=session.user_id)
+                    except Exception:
+                        pass
                 try:
                     ChatDB.set_streaming_text(sid, "")  # finalized — clear the partial
                 except Exception:

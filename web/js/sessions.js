@@ -87,6 +87,13 @@ async function openSession(sessionId, agentId) {
   const chat = state.ensureAgentChat(agentId);
   chat.sessionId = sessionId;
   chat.messages = [];
+  // Clear per-session fields up front so the prior chat's values can't render
+  // during the async load window. All four are repopulated from `data` below
+  // (summary/title/gdpr pref restored from the opened session's own state).
+  chat.chatSummary = '';
+  chat.chatTitle = '';
+  chat.gdprActionPref = '';
+  chat.hasGdprMapping = false;
   chat.streamingText = '';
   chat.thinkingText = '';
   chat.files = [];
@@ -106,7 +113,13 @@ async function openSession(sessionId, agentId) {
   try {
     const data = await API.getSessionMessages(sessionId);
     const rawMessages = data.messages || [];
-    if (data.model) chat.model = data.model;
+    if (data.model) {
+      chat.model = data.model;
+      // Reflect the restored model in the composer — a session that ran on
+      // Auto persists model="auto", so this keeps the composer on "✨ Auto"
+      // instead of the last concrete model that answered.
+      if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay(chat.model);
+    }
     if (data.max_context) chat.maxContext = data.max_context;
     // Title is the primary label (user-typed or auto-derived from first
     // message). Summary is the LLM-generated synopsis, shown as a hover
@@ -405,6 +418,10 @@ function newChat() {
   chat.chatTitle = '';
   chat.chatSummary = '';
   chat.workflowRunId = '';
+  // Sticky PII consent ("auto-continue past warnings") is per-session — a
+  // fresh chat must re-prompt, never inherit the prior chat's consent.
+  chat.gdprActionPref = '';
+  chat.hasGdprMapping = false;
   chat.messages = [];
   chat.totalTokens = 0;
   chat.maxContext = 0;
