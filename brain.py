@@ -20253,8 +20253,10 @@ class ContextManager:
                                  summary_model, api_key, base_url,
                                  fallback_model=summary_model_fallback)
 
-        # Try condensation
-        self.condense(session_id)
+        # No condensation: each compaction's summary block stays a separate,
+        # chronologically-ordered block (SUMMARY 1-7, then SUMMARY 8-17, …) so
+        # the rendered history reads as distinct eras rather than collapsing into
+        # one merged summary. (condense() is retained but no longer invoked.)
 
         # Assemble final context. Keep the recent turns verbatim (fresh tail) and
         # only replace older turns with summaries — even when force=True. The manual
