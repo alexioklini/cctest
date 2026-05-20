@@ -19822,6 +19822,30 @@ def _context_init_db():
     conn.commit()
 
 
+# Sentinels for the synthetic summary block assemble_context() prepends.
+# Kept in sync with the literals written in ContextManager.assemble_context.
+_SYNTH_SUMMARY_USER_PREFIX = "[Conversation Context]"
+_SYNTH_SUMMARY_ASSISTANT_PREFIX = "I have the context from our earlier conversation."
+
+
+def _count_synthetic_summary_prefix(messages: list[dict]) -> int:
+    """Number of leading messages that form synthetic summary pairs from a prior
+    compaction. Matches (user '[Conversation Context]…' + assistant ack) pairs at
+    the head of the list; stops at the first real message. Returns an even count."""
+    n = 0
+    while n + 1 < len(messages):
+        u, a = messages[n], messages[n + 1]
+        u_txt = u.get("content") if isinstance(u.get("content"), str) else ""
+        a_txt = a.get("content") if isinstance(a.get("content"), str) else ""
+        if (u.get("role") == "user" and u_txt.startswith(_SYNTH_SUMMARY_USER_PREFIX)
+                and a.get("role") == "assistant"
+                and a_txt.startswith(_SYNTH_SUMMARY_ASSISTANT_PREFIX)):
+            n += 2
+        else:
+            break
+    return n
+
+
 class ContextManager:
     """Lossless context management with DAG-based hierarchical summarization."""
 
@@ -20152,20 +20176,30 @@ class ContextManager:
         if not messages:
             return messages, False
 
-        # With only 1 message, summarize it entirely (no tail to keep).
-        # With 2+, keep half as fresh tail.
-        if len(messages) == 1:
+        # On re-compaction, session.messages begins with the synthetic summary
+        # block from the previous run (a "[Conversation Context]" user message +
+        # its assistant ack). Those are a *render* of context.db summary rows,
+        # not real turns — strip them so they're neither re-summarized nor counted
+        # as turns. assemble_context rebuilds the rendered block from the DB rows
+        # (old + new), so keeping the old summaries is automatic ("append new,
+        # keep old" → stacked summary blocks).
+        prefix = _count_synthetic_summary_prefix(messages)
+        real_msgs = messages[prefix:]
+
+        # With only 1 real message, summarize it entirely (no tail to keep).
+        if len(real_msgs) <= 1:
             fresh_tail_count = 0
-            old_messages = messages
+            to_compress = real_msgs
         else:
             # Split on whole-turn boundaries. A turn starts at each user message;
             # compressing always cuts at a turn boundary so a user+assistant pair
             # is never split across the summary/verbatim line.
-            turn_starts = [i for i, m in enumerate(messages) if m.get("role") == "user"]
+            turn_starts = [i for i, m in enumerate(real_msgs) if m.get("role") == "user"]
             n_turns = len(turn_starts)
             if n_turns <= 1:
                 # No clean turn boundary to cut on — keep one message as tail.
-                fresh_tail_count = max(1, len(messages) - 1)
+                fresh_tail_count = max(1, len(real_msgs) - 1)
+                to_compress = real_msgs[:-fresh_tail_count]
             else:
                 # fresh_tail_count is a TURN count.
                 fresh_tail_turns = cfg.get("fresh_tail_count", 16)
@@ -20179,25 +20213,28 @@ class ContextManager:
                     # the kept side — 3 turns → compress 1, keep 2.
                     compress_turns = max(1, n_turns // 2)
                 boundary = turn_starts[compress_turns]  # first kept message
-                fresh_tail_count = len(messages) - boundary
-            old_messages = messages[:-fresh_tail_count]
+                fresh_tail_count = len(real_msgs) - boundary
+                to_compress = real_msgs[:boundary]
 
-        # Find what's already summarized (by checking existing summary ranges)
+        if not to_compress:
+            # Nothing new to compress (e.g. all real turns fit in the fresh tail).
+            # Re-render existing summaries + the current tail.
+            return self.assemble_context(session_id, messages, system_prompt, max_tokens,
+                                         fresh_tail_count=fresh_tail_count), True
+
+        # New summary rows are numbered AFTER any existing rows so assemble_context
+        # (sorted by message_range_start) renders them in chronological order:
+        # SUMMARY(turns 1-7) then SUMMARY(turns 8-17). The range numbers only drive
+        # sort order + get_detail's best-effort lookup; they need not align with
+        # live message indices (the live list was replaced by the prior compaction).
         conn = _context_conn()
         existing = conn.execute(
             "SELECT MAX(message_range_end) FROM summaries WHERE session_id = ?",
             (session_id,)
         ).fetchone()
-        already_summarized = existing[0] if existing and existing[0] else 0
+        range_base = existing[0] if existing and existing[0] else 0
 
-        unsummarized_msgs = old_messages[already_summarized:]
-
-        if not unsummarized_msgs:
-            return self.assemble_context(session_id, messages, system_prompt, max_tokens,
-                                         fresh_tail_count=fresh_tail_count), True
-
-        # Summarize in chunks; use all unsummarized as one chunk if smaller than chunk size
-        msgs_per_summary = min(cfg.get("messages_per_summary", 10), len(unsummarized_msgs))
+        msgs_per_summary = min(cfg.get("messages_per_summary", 10), len(to_compress))
 
         # Use summary model (Gemini Flash default, Haiku fallback)
         summary_model, summary_model_fallback = self._resolve_summary_model()
@@ -20208,10 +20245,10 @@ class ContextManager:
         logging.info(f"Context {pct}% full (~{estimated:,} tokens), creating hierarchical summaries...")
 
         # Create leaf summaries in chunks
-        for i in range(0, len(unsummarized_msgs), msgs_per_summary):
-            chunk = unsummarized_msgs[i:i + msgs_per_summary]
-            range_start = already_summarized + i
-            range_end = already_summarized + i + len(chunk)
+        for i in range(0, len(to_compress), msgs_per_summary):
+            chunk = to_compress[i:i + msgs_per_summary]
+            range_start = range_base + i
+            range_end = range_base + i + len(chunk)
             self.summarize_chunk(chunk, session_id, range_start, range_end,
                                  summary_model, api_key, base_url,
                                  fallback_model=summary_model_fallback)
