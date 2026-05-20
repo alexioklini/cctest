@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.9.9"
+VERSION = "9.9.10"
 VERSION_DATE = "2026-05-19"
 CHANGELOG = [
+    ("9.9.10", "2026-05-20", "fix(warmup) + refactor: unify first-turn KV-prefix construction into ONE shared function. Final root cause of the ~20s first reply: warmup left `_thread_local._current_model` UNSET, so `_get_token_config` skipped the model-profile overlay and used TOKEN_CONFIG_DEFAULTS.deferred_tool_groups (non-empty) → the warmup system prompt grew a `DEFERRED TOOLS:` block the real turn (local gemma → `speed` profile → deferred_tool_groups=[]) omits → ~450-byte divergence → oMLX KV-prefix miss → full prefill. SECOND prefix-divergence bug today (after the 9.9.9 artifact-folder line), both because warmup + the chat worker built the prefix via two hand-synced parallel paths. Per user direction, killed the drift class: new `brain.build_first_turn_prefix(model, agent_id, *, mcp_manager, discovered_tools, is_openai_shape)` is the single source of truth (binds _current_model, resolves tools, builds system prompt; returns system_prompt, active_tools, active_tool_names). Both run_model_warmup (openai shape) and the chat worker (anthropic shape) call it; wire-shape only affects tool serialization, NOT the KV-relevant prompt/name set (verified byte-identical). Warmup finally clears _current_model so it can't leak to the next keeper-thread warmup. Verified live: warmup+turn prompts hash identically; warm prime back to ~2.4s."),
     ("9.9.9", "2026-05-20", "fix(warmup): THE actual cause of slow first replies (~20s on gemma-4-26B) — `_build_system_prompt` injected a per-session `Session artifact folder: .../<date>_<sessionid>` line. Warmup primes the KV prefix with NO session (line absent); the real first turn HAS a session (line present) → the system-prompt prefix diverged → oMLX could not reuse the primed cache → full prefill every first turn. Confirmed by direct measurement: oMLX cache reuse itself works (identical-prefix repeat reads 2048 cached tokens, 4.6s→0.5s); the warmup vs turn system prompts hashed differently (len 16555 vs 16213). Fix: removed the artifact-folder line from the system prompt (now session-agnostic) and moved it to a first-user-message preamble via new `_artifact_folder_preamble_text(agent_id, session_id)`, prepended in `handlers/chat.py` when `len(session.messages)==0`. Mirrors the existing KV-prefix invariant (per-user greeting/profile/project state already lives in the preamble, never the system prompt). The earlier 9.9.8 (warmup local-gate) + oMLX cache-clear + 0.3.8 downgrade were all real but NOT this bug. NOTE: the legacy `_*_preamble_text` builders appear to be dead in the sidecar architecture (no live callers) — separate cleanup."),
     ("9.9.8", "2026-05-20", "fix(warmup): local models were treated as cloud, so warmup was skipped unless 'Allow cloud' (warmup_allow_cloud) was manually enabled. Root cause in `run_model_warmup`: the local-vs-cloud gate read `prov.get('is_local')` where `prov = resolve_provider_for_model(model)` — but that resolver returns only `{api_key, base_url, provider_name}` and has NO is_local key, so it was ALWAYS False and every model (including gemma-4 / oMLX `Lokal` provider models) classified as cloud. Exact same bug class as the v8.8.0 `is_model_local` fix, which left this warmup site uncorrected. Fix: gate now calls the authoritative `is_model_local(model)` (which reads the provider's is_local flag from config by name via `_get_provider_config`). gemma-4-26B / e2b / e4b (provider=Lokal, is_local=True) now warm up normally without needing the 'Allow cloud' workaround. Audited the other three `is_local` reads (brain.py:20502 via _get_provider_config, brain.py:21854 + handlers/providers.py:45 both iterate the full providers dict) — all correct, this was the only site reading from the stripped resolver dict."),
     ("9.9.7", "2026-05-20", "fix(cost): interactive chat cost logging restored — was silently dead since the v9.0.0 SDK-sidecar migration. Root cause: the native loop used to write a `cost_log` row per round via `_log_call_cost`; Phase 5 deleted the native loop and `_log_call_cost` was left with ZERO callers, so no interactive chat turn logged any cost row after ~2026-05-14. The `done` path computed session cost by READING `get_session_cost(sid)` (sum of cost_log rows for the session) but nothing ever WROTE those rows — so every chat showed $0 and the composer cost pill tooltip read 'no pricing configured for this model' (that string is a UI inference from $0, not a missing-rate lookup). Fix: the chat worker now calls `engine._log_call_cost(model, tokens_in, tokens_out, session_id, api_key)` once per turn from the accumulated `_usage_totals`, keyed by the answering model (fallback model wins when one was used), immediately before reading session cost back for the done event. Thread-locals (current_agent/current_user_id) are already set in the worker so agent/user/provider resolve correctly. Combined with the 9.9.x Mistral rate fill (cost_input/cost_output for CLIProxyAPI/mistral-medium-3.5 = 1.50/7.50, mistral-small-latest = 0.10/0.30, USD per 1M), interactive chats now show real per-turn + cumulative cost. NOTE: turns that ran between the migration and this fix logged nothing and stay $0 (cost is frozen at log time, not recomputed)."),
@@ -12416,6 +12417,49 @@ def maybe_reprime_for_thinking(model: str, thinking: bool, agent_id: str = "main
     return True
 
 
+def build_first_turn_prefix(model: str, agent_id: str, *,
+                            mcp_manager=None,
+                            discovered_tools: set | None = None,
+                            is_openai_shape: bool = False):
+    """SINGLE source of truth for the first-turn KV prefix (system prompt +
+    active tools). Both the warm-pool prime (`run_model_warmup`) and the live
+    chat worker call this so their prefixes are byte-identical — the entire
+    point of warmup. Any input that one caller sets and the other doesn't is a
+    silent cache-miss; centralising the recipe here makes that impossible.
+
+    Binds `_thread_local._current_model = model` so `_get_token_config`
+    resolves the SAME model-profile overlay (deferred_tool_groups, etc.) in
+    both paths. Caller is responsible for the thread-context (`current_agent`,
+    mcp_manager) being set, and for restoring/clearing `_current_model`.
+
+    `is_openai_shape` affects only the tool serialization shape, NOT the tool
+    names or the system-prompt text — so it's safe for the two callers to
+    differ there (warmup hits oMLX's OpenAI endpoint; the turn goes through the
+    Anthropic-shape sidecar). The KV-prefix-relevant outputs (system_prompt +
+    active_tool_names) are shape-independent.
+
+    Returns (system_prompt, active_tools, active_tool_names).
+    """
+    _thread_local._current_model = model
+    active_tools = resolve_active_tools(
+        purpose="interactive",
+        agent_id=agent_id,
+        discovered_tools=discovered_tools if discovered_tools is not None else set(),
+        mcp_manager=mcp_manager,
+        is_openai_shape=is_openai_shape,
+    )
+    active_tool_names = {
+        (t.get("function", {}) or {}).get("name", "") or t.get("name", "")
+        for t in active_tools
+    }
+    system_prompt = _build_system_prompt(
+        include_memory_summary=True,
+        purpose="interactive",
+        active_tool_names=active_tool_names,
+    )
+    return system_prompt, active_tools, active_tool_names
+
+
 def run_model_warmup(model: str, allow_cloud: bool = False,
                      agent_id: str = "main", timeout: int = 30,
                      mode: str = "full", thinking: bool = False) -> dict:
@@ -12480,28 +12524,18 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
         init_thread_context(_warmup_ctx, agent_config=agent_config)
 
         if mode == "full":
-            # Mirror send_message's first-turn payload byte-for-byte. Both
-            # paths now go through resolve_active_tools (single source of
-            # truth, PROMPT_TOOLS_UNIFICATION_PLAN.md). discovered_tools is
-            # empty on turn 0 in both cases — deferred groups stay deferred.
-            # System prompt and tool list MUST agree on active_tool_names so
-            # the per-tool prose blocks rendered by `_render_tool_descriptions`
-            # are byte-identical between warmup and the live request (KV-prefix
-            # stability).
-            all_tools = resolve_active_tools(
-                purpose="interactive",
-                agent_id=agent_id,
-                discovered_tools=set(),
+            # Build the prefix through the SHARED helper so it is byte-identical
+            # to the live chat worker's first-turn prefix (the chat worker calls
+            # the same build_first_turn_prefix). discovered_tools=set() matches
+            # turn 0 (nothing discovered yet); mcp_manager + model binding are
+            # handled inside the helper. Tool wire-shape (openai) differs from
+            # the sidecar's anthropic shape but does NOT affect the KV-relevant
+            # system_prompt / tool-name set.
+            system_prompt, all_tools, _ = build_first_turn_prefix(
+                model, agent_id,
                 mcp_manager=mcp_mgr,
+                discovered_tools=set(),
                 is_openai_shape=True,
-            )
-            _warmup_active_names = {
-                (t.get("function", {}) or {}).get("name", "") for t in all_tools
-            }
-            system_prompt = _build_system_prompt(
-                include_memory_summary=True,
-                purpose="interactive",
-                active_tool_names=_warmup_active_names,
             )
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -12577,6 +12611,12 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
                 "duration_ms": int((time.time() - t0) * 1000), "mode": mode}
     finally:
         clear_thread_context()
+        # Don't let the warmed model leak to the next warmup on the keeper
+        # thread (it would resolve the wrong profile for a different model).
+        try:
+            _thread_local._current_model = None
+        except Exception:
+            pass
 
 
 # --- Background Task Runner ---

@@ -2429,18 +2429,17 @@ class ChatHandlerMixin:
                 # translates sidecar SSE → Brain's LiveStream vocabulary, so
                 # persistence, references, citation validation all stay on
                 # this thread unchanged.
-                _active_tools = engine.resolve_active_tools(
-                    purpose="interactive",
-                    agent_id=session.agent_id,
-                    discovered_tools=getattr(engine._thread_local, "_discovered_tools", set()) or set(),
+                # SHARED prefix builder — same function the warm-pool prime
+                # (run_model_warmup) calls, so the first-turn system prompt +
+                # tool set are byte-identical and oMLX reuses the warm KV prefix.
+                # On turn 0 _discovered_tools is empty (matches warmup); the
+                # anthropic wire-shape (is_openai_shape=False) only changes tool
+                # serialization, not the KV-relevant prompt/name set.
+                _system_prompt, _active_tools, _active_tool_names = engine.build_first_turn_prefix(
+                    session.model, session.agent_id,
                     mcp_manager=getattr(engine, "_mcp_manager", None),
+                    discovered_tools=getattr(engine._thread_local, "_discovered_tools", set()) or set(),
                     is_openai_shape=False,
-                )
-                _active_tool_names = {t.get("name", "") for t in _active_tools}
-                _system_prompt = engine._build_system_prompt(
-                    include_memory_summary=True,
-                    purpose="interactive",
-                    active_tool_names=_active_tool_names,
                 )
                 # Persist for the session inspector — overwritten per turn,
                 # no history. Best-effort; persist failure must not block
