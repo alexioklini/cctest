@@ -171,6 +171,30 @@ const BUDDY_SPECIES = {
 
 const BUDDY_IDS = Object.keys(BUDDY_SPECIES);
 
+// Build the comic thought-bubble cloud as an encoded SVG data-URL, with the
+// stroke (the buddy's colour) and fill (the live theme's page background, so
+// the pet doesn't show through the text) baked in — a background SVG can't read
+// CSS vars or currentColor. viewBox 0..78 x 0..40: cloud body = overlapping
+// circles giving the scalloped outline; two shrinking dots trail bottom-left
+// toward the pet. Returns a `url("…")` string ready for a CSS custom property.
+function buddyCloudSvg(stroke) {
+  const fill = (getComputedStyle(document.documentElement)
+    .getPropertyValue('--bg-page') || '#ffffff').trim() || '#ffffff';
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 78 40' fill='${fill}' stroke='${stroke}' stroke-width='1.2'>` +
+    `<g>` +
+    `<circle cx='17' cy='15' r='9'/><circle cx='30' cy='10' r='9'/>` +
+    `<circle cx='44' cy='9' r='9'/><circle cx='58' cy='12' r='9'/>` +
+    `<circle cx='64' cy='19' r='8'/><circle cx='55' cy='24' r='9'/>` +
+    `<circle cx='40' cy='25' r='10'/><circle cx='25' cy='24' r='9'/>` +
+    `<circle cx='14' cy='21' r='8'/>` +
+    `<rect x='18' y='10' width='44' height='15' rx='6' stroke='none'/>` +
+    `</g>` +
+    `<circle cx='12' cy='32' r='4'/><circle cx='7' cy='38' r='2.2'/>` +
+    `</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
 // Deterministic species pick from a user id — mulberry-ish: a cheap string
 // hash mod the species count. Same id always lands on the same species.
 function buddyDefaultSpecies(userId) {
@@ -211,13 +235,16 @@ const BUDDY_TYPING_HOLD_MS = 2500;   // typing reverts to idle after this much q
 // entry and re-rolled every few seconds while the phase holds. The `typing`
 // pool is "buddy watching you compose" flavour, distinct from the busy phases.
 const BUDDY_PHASES = {
+  // Words are kept short (≤8 chars) so they fit inside the fixed-width cloud
+  // thought-bubble drawn in main.css (.composer-buddy-bubble). Longer words get
+  // clipped by the cloud — trim here, not by widening the cloud.
   idle:       { pose: null,        speed: 700, op: BUDDY_OP_DEEP_IDLE, motion: '',           words: [] },
-  typing:     { pose: 'typing',    speed: 380, op: 0.45,               motion: 'buddy-perk',  words: ['Listening', 'Watching', 'Reading along', 'All ears', 'Go on', 'Tell me more', 'Mm-hmm'] },
-  thinking:   { pose: 'thinking',  speed: 520, op: 0.9,                motion: 'buddy-bob',   words: ['Pondering', 'Cogitating', 'Ruminating', 'Musing', 'Noodling', 'Mulling'] },
-  tool:       { pose: 'tool',      speed: 300, op: 0.9,                motion: 'buddy-shake', words: ['Rummaging', 'Fetching', 'Tinkering', 'Digging', 'Foraging', 'Wrangling'] },
-  writing:    { pose: 'writing',   speed: 340, op: 0.9,                motion: 'buddy-bob',   words: ['Scribbling', 'Composing', 'Penning', 'Drafting', 'Inkling'] },
-  warmup:     { pose: 'warmup',    speed: 600, op: 0.9,                motion: 'buddy-stretch', words: ['Stretching', 'Warming up', 'Limbering', 'Booting up'] },
-  compacting: { pose: 'compacting',speed: 420, op: 0.9,                motion: 'buddy-squish', words: ['Tidying', 'Squishing', 'Condensing', 'Folding', 'Decluttering'] },
+  typing:     { pose: 'typing',    speed: 380, op: 0.45,               motion: 'buddy-perk',  words: ['Listening', 'Watching', 'All ears', 'Go on', 'Mm-hmm'] },
+  thinking:   { pose: 'thinking',  speed: 520, op: 0.9,                motion: 'buddy-bob',   words: ['Pondering', 'Musing', 'Noodling', 'Mulling', 'Hmm'] },
+  tool:       { pose: 'tool',      speed: 300, op: 0.9,                motion: 'buddy-shake', words: ['Fetching', 'Tinkering', 'Digging', 'Foraging'] },
+  writing:    { pose: 'writing',   speed: 340, op: 0.9,                motion: 'buddy-bob',   words: ['Composing', 'Penning', 'Drafting', 'Inkling'] },
+  warmup:     { pose: 'warmup',    speed: 600, op: 0.9,                motion: 'buddy-stretch', words: ['Warming', 'Limbering', 'Booting'] },
+  compacting: { pose: 'compacting',speed: 420, op: 0.9,                motion: 'buddy-squish', words: ['Tidying', 'Folding', 'Squishing'] },
 };
 const BUDDY_MOTION_CLASSES = ['buddy-perk','buddy-bob','buddy-shake','buddy-stretch','buddy-squish'];
 
@@ -246,13 +273,27 @@ class FloatingBuddy {
     const txt = lines.join('\n');
     this._els().forEach(el => { el.textContent = txt; });
   }
-  _setOp(v)   { this._els().forEach(el => el.style.setProperty('--buddy-op', String(v))); }
+  // Drive opacity on BOTH the pet and its bubble so the cloud fades in lockstep
+  // with the buddy (custom props set inline on the pet don't cascade to the
+  // sibling bubble, so it must be set on both).
+  _setOp(v)   {
+    this._els().forEach(el => el.style.setProperty('--buddy-op', String(v)));
+    this._bubbles().forEach(b => b.style.setProperty('--buddy-op', String(v)));
+  }
   // Per-species accent color, applied to both the pet and its bubble so the
   // whole companion reads as one themed unit. Falls back to the brand accent.
+  // The thought-bubble cloud is an SVG *background-image* — CSS currentColor
+  // does NOT reach a background SVG's stroke, so the stroke (buddy colour) and
+  // fill (theme page-bg) are baked into the data-URL here and set as
+  // --buddy-cloud on each bubble. main.css just references var(--buddy-cloud).
   _setColor(c) {
     const col = c || 'var(--accent-brand)';
     this._els().forEach(el => el.style.setProperty('--buddy-color', col));
-    this._bubbles().forEach(b => b.style.setProperty('--buddy-color', col));
+    const cloud = buddyCloudSvg(col || '#888');
+    this._bubbles().forEach(b => {
+      b.style.setProperty('--buddy-color', col);
+      b.style.setProperty('--buddy-cloud', cloud);
+    });
   }
   _show(on)   { this._els().forEach(el => { el.style.display = on ? '' : 'none'; }); }
   _setMotion(cls) {
