@@ -4542,20 +4542,20 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 @keyframes buddyStretch { 0%,100% { transform: scaleY(1); } 50% { transform: scaleY(1.18); } }
 @keyframes buddySquish  { 0%,100% { transform: scaleX(1); } 50% { transform: scaleX(0.8) scaleY(1.1); } }
 
-/* Whimsical status text, floating just above the pet. Claude-Code-CLI flavour
-   ("Pondering…", "Musing…"). Bare monospace text in the buddy's own colour — no
-   bubble, no box — sitting close above the pet. Opacity tracks the busy pet via
+/* Whimsical status text, floating at the pet's top-right. Claude-Code-CLI
+   flavour ("Pondering…", "Musing…"). Bare monospace text in the buddy's own
+   colour — no bubble, no box — anchored at the top-right of the pet (where the
+   bubble used to sit), close above it. Opacity tracks the busy pet via
    var(--buddy-op) so it fades in lockstep. Shown only while busy. */
 .composer-buddy-bubble {
   position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-bottom: 1px;
+  bottom: 92%;
+  left: 55%;
+  margin: 0;
   padding: 0;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.1px;
   line-height: 1;
@@ -4566,7 +4566,7 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 /* Pop-in animates transform only (a tiny rise) — NOT opacity, which is owned by
    var(--buddy-op) so the text fades in lockstep with the pet. */
-@keyframes buddyBubbleIn { from { transform: translateX(-50%) translateY(3px); } to { transform: translateX(-50%) translateY(0); } }
+@keyframes buddyBubbleIn { from { transform: translateY(3px); } to { transform: translateY(0); } }
 .spinner-bar .spinner-elapsed { margin-left: auto; font-family: var(--font-mono); font-size: 11px; }
 
 /* Footer bar */
