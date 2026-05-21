@@ -24199,8 +24199,12 @@ def _register_artifact_version(path: str, action: str, agent_id: str):
             ChatDB.create_artifact(artifact_id, session_id, agent_id, name, path, artifact_type, artifact_role)
             next_version = 1
 
-        ChatDB.add_artifact_version(artifact_id, next_version, content, size, None, action)
-        return (artifact_id, next_version, artifact_type)
+        # Anchor this version to the producing turn (latest user message's
+        # array position) so the UI can group artifacts by turn in the right
+        # panel. None when no user message exists yet (background writes).
+        msg_idx = ChatDB.artifact_message_idx(session_id)
+        ChatDB.add_artifact_version(artifact_id, next_version, content, size, msg_idx, action)
+        return (artifact_id, next_version, artifact_type, msg_idx)
     except Exception as e:
         print(f"  [WARN] artifact registration: {e}", flush=True)
         return None
@@ -24237,7 +24241,7 @@ def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
             if is_artifact:
                 art_result = _register_artifact_version(path, action, agent_id)
                 if art_result:
-                    art_id, art_ver, art_type = art_result
+                    art_id, art_ver, art_type, art_msg_idx = art_result
                     _name = os.path.basename(path)
                     _ext = _name.rsplit(".", 1)[-1].lower() if "." in _name else ""
                     _role = "intermediate" if _ext in _ARTIFACT_INTERMEDIATE_EXTS else "output"
@@ -24250,6 +24254,7 @@ def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
                         "artifact_version": art_ver,
                         "artifact_type": art_type,
                         "artifact_role": _role,
+                        "message_idx": art_msg_idx,
                     })
                 else:
                     # Fallback to regular file event if artifact registration failed

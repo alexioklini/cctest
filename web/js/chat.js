@@ -445,7 +445,10 @@ function buildStreamCallbacks(chat, isActive) {
         for (const ref of refs) {
           if (!allLinks.has(ref.link)) { cache.searched.push(ref); allLinks.add(ref.link); added = true; }
         }
-        if (added && isActive()) { openRightPanel('references'); updateRightPanelBadges(); }
+        if (added && isActive()) {
+          if (!state.userClosedRightPanel) openRightPanel('references');
+          updateRightPanelBadges();
+        }
       },
       tool_result: (d) => {
         // d.references is pre-extracted server-side; attach to the message so
@@ -467,7 +470,7 @@ function buildStreamCallbacks(chat, isActive) {
             if (!allLinks.has(ref.link)) { cache.searched.push(ref); allLinks.add(ref.link); newRefAdded = true; }
           }
           if (newRefAdded && isActive()) {
-            openRightPanel('references');
+            if (!state.userClosedRightPanel) openRightPanel('references');
             updateRightPanelBadges();
           }
         }
@@ -556,7 +559,7 @@ function buildStreamCallbacks(chat, isActive) {
             sel.value = d.artifact_version;
           }
           loadArtifactVersion(d.artifact_version);
-        } else if (d.artifact_role !== 'intermediate') {
+        } else if (d.artifact_role !== 'intermediate' && !state.userClosedRightPanel) {
           openArtifactPanel(d.artifact_id, d.artifact_version);
         }
         updateRightPanelBadges();
@@ -1801,6 +1804,9 @@ function renderMessages() {
 
   // Update right panel badges (attachment/reference/artifact counts)
   if (typeof updateRightPanelBadges === 'function') updateRightPanelBadges();
+  // Re-attach the scroll-sync observer to the rebuilt turn DOM so scrolling
+  // a turn into view drives the right panel's per-turn focus.
+  if (typeof initTurnScrollSync === 'function') initTurnScrollSync();
 }
 
 // --- Turn collapse/nav helpers ---

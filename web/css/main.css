@@ -1832,6 +1832,40 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   gap: 8px;
 }
 
+/* Per-turn grouping in the right panel (references / attachments / artifacts).
+   Reuses the .refs-section disclosure chrome; adds a turn hint + empty marker. */
+.panel-turn-section { margin-bottom: 4px; scroll-margin-top: 8px; }
+.panel-turn-section > .refs-section-header { gap: 6px; }
+.panel-turn-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-400);
+}
+/* The active (scrolled-into-view) turn gets a subtle accent rail. */
+.panel-turn-section.panel-turn-active > .refs-section-header {
+  box-shadow: inset 2px 0 0 var(--accent-brand);
+}
+.panel-turn-empty {
+  padding: 4px 12px 8px;
+  font-size: 12px;
+  color: var(--text-400);
+}
+.refs-subgroup-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-400);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 4px 0 2px;
+}
+
 /* Thinking block */
 .thinking-block {
   margin: 8px 0;

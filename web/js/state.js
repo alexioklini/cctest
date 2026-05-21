@@ -49,6 +49,10 @@ const state = {
   // Right panel (unified: attachments, references, artifacts)
   rightPanelOpen: false,
   rightPanelTab: 'attachments',
+  // Set true when the user deliberately closes the right panel. Suppresses
+  // auto-open on new references/artifacts for the rest of the page session
+  // (reset only on reload). User-initiated opens still work.
+  userClosedRightPanel: false,
   get artifactPanelOpen() { return this.rightPanelOpen && this.rightPanelTab === 'artifacts'; },
   get referencesPanelOpen() { return this.rightPanelOpen && this.rightPanelTab === 'references'; },
   chatReferences: {},  // sessionId -> [{title, link, snippet, domain, favicon}]

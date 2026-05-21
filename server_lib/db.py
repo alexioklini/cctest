@@ -728,11 +728,15 @@ class ChatDB:
             results = []
             for r in rows:
                 d = dict(r)
-                # Fetch version metadata (no content)
+                # Fetch version metadata (no content). message_idx anchors each
+                # version to the turn that produced it (latest user message's
+                # array position at write time) so the UI groups by turn.
                 vers = conn.execute(
-                    "SELECT version, size, action, created_at FROM artifact_versions WHERE artifact_id = ? ORDER BY version",
+                    "SELECT version, size, action, created_at, message_idx FROM artifact_versions WHERE artifact_id = ? ORDER BY version",
                     (d["id"],)).fetchall()
-                d["versions"] = [{"version": v[0], "size": v[1], "action": v[2], "created_at": v[3]} for v in vers]
+                d["versions"] = [{"version": v[0], "size": v[1], "action": v[2], "created_at": v[3], "message_idx": v[4]} for v in vers]
+                # Artifact-level anchor: the creating turn (first version).
+                d["message_idx"] = d["versions"][0]["message_idx"] if d["versions"] else None
                 results.append(d)
             return results
 
@@ -1654,6 +1658,33 @@ class ChatDB:
                 conn.commit()
                 return True
         return False
+
+    @staticmethod
+    @_db_safe(default=None)
+    def artifact_message_idx(session_id):
+        """0-based array position of the most recent user message in this
+        session — the anchor of the turn currently producing artifacts.
+
+        Artifacts are written mid-turn, before the assistant reply is
+        persisted, so the latest user message already on disk is the
+        producing turn's opening message. The client builds its message
+        array ordered by id, so this position maps to a turn via
+        `turnNumForMessageIdx`. Returns None when no user message exists
+        yet (the caller stores NULL, the client falls back to 'ungrouped').
+        """
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM messages WHERE session_id = ? AND role IN ('user','human') "
+                "ORDER BY id DESC LIMIT 1",
+                (session_id,)
+            ).fetchone()
+            if not row:
+                return None
+            pos = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ? AND id <= ?",
+                (session_id, row[0])
+            ).fetchone()
+            return (int(pos[0]) - 1) if pos and pos[0] else None
 
     @staticmethod
     @_db_safe(default=None)

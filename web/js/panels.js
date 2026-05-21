@@ -2987,13 +2987,15 @@ function openRightPanel(tab) {
   if (!panel) return;
   panel.classList.add('open');
   state.rightPanelOpen = true;
+  // Any explicit open re-arms auto-open for subsequent new refs/artifacts.
+  state.userClosedRightPanel = false;
   switchRightTab(tab || state.rightPanelTab || 'attachments');
   initRightPanelResize();
   syncRightPanelToggle();
 }
 
 function toggleRightPanel() {
-  if (state.rightPanelOpen) closeRightPanel();
+  if (state.rightPanelOpen) closeRightPanel(true);
   else openRightPanel();
 }
 
@@ -3002,10 +3004,13 @@ function syncRightPanelToggle() {
   if (btn) btn.classList.toggle('active', state.rightPanelOpen);
 }
 
-function closeRightPanel() {
+function closeRightPanel(userInitiated = false) {
   const panel = document.getElementById('right-panel');
   if (panel) panel.classList.remove('open');
   state.rightPanelOpen = false;
+  // A deliberate user close suppresses auto-open until reload. Programmatic
+  // closes (e.g. switching sessions) leave the flag untouched.
+  if (userInitiated) state.userClosedRightPanel = true;
   state.activeArtifactId = null;
   state.activeArtifactVersion = null;
   state.artifactSourceMode = false;
@@ -3027,6 +3032,81 @@ function switchRightTab(tabName) {
   if (tabName === 'references') renderReferencesPane();
   if (tabName === 'artifacts' && !state.activeArtifactId) showArtifactList();
   updateRightPanelBadges();
+  // Re-apply the active-turn focus to the freshly rendered pane.
+  if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);
+}
+
+/* ───────────────────────────────────────────────────────────
+   Scroll-sync: the turn scrolled into view in the message list drives
+   which per-turn section is expanded in the right panel (when open).
+   ─────────────────────────────────────────────────────────── */
+let _turnScrollObserver = null;
+let _turnVisibility = new Map();   // turnNum -> intersectionRatio
+let _activePanelTurn = null;
+
+// (Re)attach the IntersectionObserver to the current .turn-group elements.
+// Called after every renderMessages() since the turn DOM is rebuilt.
+function initTurnScrollSync() {
+  const root = document.getElementById('messages-scroll');
+  if (!root) return;
+  if (_turnScrollObserver) _turnScrollObserver.disconnect();
+  _turnVisibility = new Map();
+  _turnScrollObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      const tn = parseInt(e.target.getAttribute('data-turn'), 10);
+      if (Number.isNaN(tn)) continue;
+      if (e.isIntersecting && e.intersectionRatio > 0) _turnVisibility.set(tn, e.intersectionRatio);
+      else _turnVisibility.delete(tn);
+    }
+    _recomputeActiveTurn();
+  }, { root, threshold: [0, 0.25, 0.5, 1] });
+  // Only real turn groups drive focus — LCM compaction blocks have a
+  // data-turn but no corresponding per-turn panel section.
+  root.querySelectorAll('.turn-group[data-turn]')
+    .forEach(el => _turnScrollObserver.observe(el));
+}
+
+// Pick the topmost visible turn (smallest turnNum in view) as the active one
+// — that's the one the user is reading down into.
+function _recomputeActiveTurn() {
+  if (!_turnVisibility.size) return;
+  let best = null;
+  for (const tn of _turnVisibility.keys()) {
+    if (best == null || tn < best) best = tn;
+  }
+  if (best === _activePanelTurn) return;
+  _activePanelTurn = best;
+  if (state.rightPanelOpen) syncRightPanelToActiveTurn(best);
+}
+
+// Expand the active turn's section in the current tab, collapse the rest,
+// and scroll it into the panel's view. Auto-driven and authoritative:
+// it persists the open/closed decision into the per-pane open-map so a
+// re-render keeps the same focus. A manual toggle wins transiently until
+// the next scroll re-drives focus.
+function syncRightPanelToActiveTurn(turnNum) {
+  if (turnNum == null) return;
+  const pane = state.rightPanelTab;
+  const containerId = pane === 'references' ? 'refs-content'
+    : pane === 'attachments' ? 'attachments-grid'
+    : 'artifact-turn-groups';
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const chat = state.activeChat;
+  const openMap = chat ? ((chat._panelOpenTurns = chat._panelOpenTurns || {})[pane]
+    = (chat._panelOpenTurns[pane] || {})) : null;
+  let target = null;
+  container.querySelectorAll('.panel-turn-section').forEach(sec => {
+    const tn = parseInt(sec.getAttribute('data-turn'), 10);
+    const isActive = (tn === turnNum);
+    if (sec.open !== isActive) sec.open = isActive;   // fires ontoggle → openMap
+    if (openMap) openMap[tn] = isActive;              // also set directly (no-op change won't fire)
+    sec.classList.toggle('panel-turn-active', isActive);
+    if (isActive) target = sec;
+  });
+  if (target && typeof target.scrollIntoView === 'function') {
+    target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 }
 
 function updateRightPanelBadges() {
@@ -3045,6 +3125,92 @@ function updateRightPanelBadges() {
   const artifactCount = sessionId ? (state.artifacts[sessionId] || []).length : 0;
   const artBadge = document.getElementById('tab-badge-artifacts');
   if (artBadge) artBadge.textContent = artifactCount || '0';
+}
+
+/* ───────────────────────────────────────────────────────────
+   Per-turn grouping for the right panel (references / attachments /
+   artifacts). All three panes share the same shape: every turn in the
+   chat gets a collapsible <details> section (empty turns marked), plus
+   an optional "ungrouped" section for items with no turn anchor (legacy
+   artifacts written before message_idx existed). Scroll-tracking
+   (syncRightPanelToActiveTurn) auto-expands the turn scrolled into view.
+   ─────────────────────────────────────────────────────────── */
+
+// Short label for a turn header, derived from the opening user message.
+function _turnLabel(turn) {
+  const q = (typeof turnQuestionFull === 'function' ? turnQuestionFull(turn.userMsg) : '') || '';
+  const trimmed = q.replace(/\s+/g, ' ').trim();
+  if (!trimmed) return `Anfrage ${turn.turnNum}`;
+  return trimmed.length > 60 ? trimmed.slice(0, 57) + '…' : trimmed;
+}
+
+// Render the active tab's content as per-turn collapsible sections.
+//   pane:      'references' | 'attachments' | 'artifacts'
+//   itemsFor:  (turnNum) => HTML string for that turn's items ('' = empty)
+//   countFor:  (turnNum) => number of items in that turn
+//   ungrouped: { html, count } for items with no turn anchor (or null)
+//   emptyAll:  HTML shown when there are no turns AND no items at all
+function renderTurnGroupedPane(container, pane, { itemsFor, countFor, ungrouped, emptyAll }) {
+  if (!container) return;
+  const turns = (typeof listTurns === 'function' ? listTurns() : []);
+  const chat = state.activeChat;
+  if (!chat) { container.innerHTML = emptyAll || ''; return; }
+  if (!chat._panelOpenTurns) chat._panelOpenTurns = {};
+  const openMap = (chat._panelOpenTurns[pane] = chat._panelOpenTurns[pane] || {});
+
+  const totalItems = turns.reduce((s, t) => s + (countFor(t.turnNum) || 0), 0)
+    + (ungrouped ? (ungrouped.count || 0) : 0);
+  if (!turns.length && !totalItems) { container.innerHTML = emptyAll || ''; return; }
+
+  // Default open state: only turns that have items, and never auto-open more
+  // than the latest non-empty turn so the pane isn't a wall of expanded
+  // sections. The user's manual toggles (openMap) win once set.
+  let lastNonEmpty = 0;
+  for (const t of turns) if ((countFor(t.turnNum) || 0) > 0) lastNonEmpty = t.turnNum;
+
+  let html = '';
+  for (const t of turns) {
+    const count = countFor(t.turnNum) || 0;
+    const body = count ? itemsFor(t.turnNum) : '<div class="panel-turn-empty">—</div>';
+    const userSet = Object.prototype.hasOwnProperty.call(openMap, t.turnNum);
+    const open = (userSet ? openMap[t.turnNum] : (t.turnNum === lastNonEmpty && count > 0)) ? 'open' : '';
+    html += `
+      <details class="refs-section panel-turn-section" data-turn="${t.turnNum}" ${open}
+               ontoggle="onPanelTurnToggle('${pane}', ${t.turnNum}, this.open)">
+        <summary class="refs-section-header">
+          <span class="refs-section-disclosure">▸</span>
+          <span class="refs-section-label" style="text-transform:none;letter-spacing:0">Anfrage ${t.turnNum}</span>
+          <span class="panel-turn-hint">${esc(_turnLabel(t))}</span>
+          <span class="refs-section-count">${count}</span>
+        </summary>
+        <div class="refs-section-body">${body}</div>
+      </details>`;
+  }
+  if (ungrouped && ungrouped.count) {
+    const userSet = Object.prototype.hasOwnProperty.call(openMap, 0);
+    const open = (userSet ? openMap[0] : false) ? 'open' : '';
+    html += `
+      <details class="refs-section panel-turn-section" data-turn="0" ${open}
+               ontoggle="onPanelTurnToggle('${pane}', 0, this.open)">
+        <summary class="refs-section-header">
+          <span class="refs-section-disclosure">▸</span>
+          <span class="refs-section-label">Ohne Zuordnung</span>
+          <span class="refs-section-count">${ungrouped.count}</span>
+        </summary>
+        <div class="refs-section-body">${ungrouped.html}</div>
+      </details>`;
+  }
+  container.innerHTML = html;
+}
+
+// Remember the user's manual open/close so a re-render (or scroll-sync)
+// doesn't fight their choice.
+function onPanelTurnToggle(pane, turnNum, isOpen) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  if (!chat._panelOpenTurns) chat._panelOpenTurns = {};
+  const openMap = (chat._panelOpenTurns[pane] = chat._panelOpenTurns[pane] || {});
+  openMap[turnNum] = isOpen;
 }
 
 function collectChatAttachments() {
@@ -3127,12 +3293,13 @@ function renderAttachmentsPane() {
   empty.style.display = 'none';
   grid.style.display = '';
   // Card-list layout — same shape as the Artifacts list (`.artifact-list` +
-  // `.artifact-list-card`) so the two panes feel consistent. Image
-  // attachments show a tiny thumb in the icon slot; non-image files show
-  // the same document SVG as artifact `text`/`document` rows.
+  // `.artifact-list-card`) so the panes feel consistent. Grouped into
+  // collapsible per-turn sections via the global attachment-index `i`
+  // (kept stable so showAttachmentFullview still works), mapped to a turn
+  // by each attachment's `msgIndex`.
   const docIcon = artifactTypeIcon('document');
   const imgIcon = artifactTypeIcon('image');
-  grid.innerHTML = '<div class="artifact-list">' + attachments.map((a, i) => {
+  const cardHtml = (a, i) => {
     let iconHtml;
     if (a.isImage && a.url) {
       iconHtml = `<img src="${a.url}" alt="" loading="lazy" style="width:24px;height:24px;object-fit:cover;border-radius:4px">`;
@@ -3149,9 +3316,24 @@ function renderAttachmentsPane() {
           <div class="alc-name">${esc(a.name || 'Untitled')}</div>
           <div class="alc-meta">${esc(meta)}</div>
         </div>
-      </div>
-    `;
-  }).join('') + '</div>';
+      </div>`;
+  };
+  // Bucket attachment indices by turn.
+  const byTurn = {};
+  attachments.forEach((a, i) => {
+    const tn = turnNumForMessageIdx(a.msgIndex == null ? -1 : a.msgIndex) || 0;
+    (byTurn[tn] = byTurn[tn] || []).push(i);
+  });
+  renderTurnGroupedPane(grid, 'attachments', {
+    countFor: (tn) => (byTurn[tn] || []).length,
+    itemsFor: (tn) => '<div class="artifact-list">'
+      + (byTurn[tn] || []).map(i => cardHtml(attachments[i], i)).join('') + '</div>',
+    ungrouped: byTurn[0] ? {
+      count: byTurn[0].length,
+      html: '<div class="artifact-list">' + byTurn[0].map(i => cardHtml(attachments[i], i)).join('') + '</div>',
+    } : null,
+    emptyAll: '',
+  });
 }
 
 // State for the attachment fullview (mirrors the artifact panel's _raw* refs
@@ -3498,45 +3680,64 @@ function _refCardHtml(ref) {
   `;
 }
 
+// References attributed per turn. Walks messages once; every ref-bearing
+// row (live tool_result, or an assistant's metadata.tools[] after reload)
+// is attributed to the turn it sits in. Cited vs searched uses the same
+// basename-match-against-assistant-text rule as collectChatReferences.
+function _referencesByTurn() {
+  const chat = state.activeChat;
+  const out = {};  // turnNum -> { cited: [], searched: [], seen: Set }
+  if (!chat?.messages) return out;
+  const citedBasenames = new Set();
+  for (const msg of chat.messages) {
+    if (msg.role === 'assistant' && msg.content) {
+      for (const k of extractCitedBasenamesFromText(msg.content)) citedBasenames.add(k);
+    }
+  }
+  let turnNum = 0;
+  for (const msg of chat.messages) {
+    if (msg.role === 'user' || msg.role === 'human') turnNum++;
+    const candidates = [];
+    if (msg.role === 'tool_result') candidates.push(msg);
+    if (msg.role === 'assistant' && msg.metadata && Array.isArray(msg.metadata.tools)) {
+      for (const t of msg.metadata.tools) {
+        if (t && t.name) candidates.push({ role: 'tool_result', name: t.name, result: t.result });
+      }
+    }
+    if (!candidates.length) continue;
+    const bucket = out[turnNum] || (out[turnNum] = { cited: [], searched: [], seen: new Set() });
+    for (const c of candidates) {
+      for (const ref of extractReferencesFromToolResult(c)) {
+        if (bucket.seen.has(ref.link)) continue;
+        bucket.seen.add(ref.link);
+        (citedBasenames.has(refBasenameKey(ref)) ? bucket.cited : bucket.searched).push(ref);
+      }
+    }
+  }
+  return out;
+}
+
 function renderReferencesPane() {
-  const { cited, searched } = collectChatReferences();
   const container = document.getElementById('refs-content');
   if (!container) return;
-  if (!cited.length && !searched.length) {
-    container.innerHTML = '<div class="attach-empty">No sources in this chat</div>';
-    return;
-  }
-  let html = '';
-  if (cited.length) {
-    html += `
-      <div class="refs-section">
-        <div class="refs-section-header">
-          <span class="refs-section-label">Zitiert</span>
-          <span class="refs-section-count">${cited.length}</span>
-        </div>
-        <div class="refs-section-body">
-          ${cited.map(_refCardHtml).join('')}
-        </div>
-      </div>`;
-  }
-  if (searched.length) {
-    // Default-collapsed via <details>. If there are NO cited refs (e.g.
-    // a refusal / no-source answer), open the searched section by default
-    // so the user isn't staring at an empty pane.
-    const open = cited.length === 0 ? 'open' : '';
-    html += `
-      <details class="refs-section refs-section-searched" ${open}>
-        <summary class="refs-section-header">
-          <span class="refs-section-disclosure">▸</span>
-          <span class="refs-section-label">Durchsucht</span>
-          <span class="refs-section-count">${searched.length}</span>
-        </summary>
-        <div class="refs-section-body">
-          ${searched.map(_refCardHtml).join('')}
-        </div>
-      </details>`;
-  }
-  container.innerHTML = html;
+  const byTurn = _referencesByTurn();
+  const turnRefs = (tn) => byTurn[tn] || { cited: [], searched: [] };
+  renderTurnGroupedPane(container, 'references', {
+    countFor: (tn) => { const r = turnRefs(tn); return r.cited.length + r.searched.length; },
+    itemsFor: (tn) => {
+      const r = turnRefs(tn);
+      let h = '';
+      if (r.cited.length) {
+        h += `<div class="refs-subgroup-label">Zitiert</div>${r.cited.map(_refCardHtml).join('')}`;
+      }
+      if (r.searched.length) {
+        h += `<div class="refs-subgroup-label">Durchsucht</div>${r.searched.map(_refCardHtml).join('')}`;
+      }
+      return h;
+    },
+    ungrouped: null,
+    emptyAll: '<div class="attach-empty">No sources in this chat</div>',
+  });
 }
 
 // Open a project document (PDF/DOCX/PPTX/XLSX/EML/.md/...) in a new tab.
@@ -3710,7 +3911,7 @@ function renderArtifactContent(content, type, name, encoding) {
 }
 
 function closeArtifactPanel() {
-  closeRightPanel();
+  closeRightPanel(true);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -4501,16 +4702,20 @@ function showArtifactList() {
     ? artifacts.filter(a => (a.role || 'output') === 'output')
     : artifacts;
 
-  let html = '';
+  // Role-filter chips are chrome (not per-turn) so they live in a fixed
+  // header above the turn-grouped sections, which render into a child
+  // container that renderTurnGroupedPane owns.
+  let filterBar = '';
   if (hasIntermediate) {
     const outActive = _artifactListRoleFilter === 'output';
-    html += `<div style="display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--border-100)">
+    filterBar = `<div style="display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--border-100)">
       <button onclick="setArtifactListRoleFilter('output')" style="padding:3px 10px;border-radius:5px;font-size:11px;background:${outActive?'var(--bg-300)':'transparent'};color:${outActive?'var(--text-000)':'var(--text-300)'};border:1px solid var(--border-100)">Outputs</button>
       <button onclick="setArtifactListRoleFilter('all')" style="padding:3px 10px;border-radius:5px;font-size:11px;background:${!outActive?'var(--bg-300)':'transparent'};color:${!outActive?'var(--text-000)':'var(--text-300)'};border:1px solid var(--border-100)">All (+${intermediateCount} working files)</button>
     </div>`;
   }
-  html += '<div class="artifact-list">';
-  for (const a of filtered) {
+  container.innerHTML = filterBar + '<div id="artifact-turn-groups"></div>';
+
+  const cardHtml = (a) => {
     const verCount = a.versions?.length || 0;
     const latestVer = verCount > 0 ? a.versions[verCount - 1] : null;
     const meta = latestVer ? (latestVer.action === 'created' ? 'Created' : 'Modified') : '';
@@ -4518,7 +4723,7 @@ function showArtifactList() {
     const roleBadge = isInter
       ? `<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(120,120,120,0.15);color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-left:4px" title="Helper/working file produced during execution">working</span>`
       : '';
-    html += `
+    return `
       <div class="artifact-list-card" onclick="openArtifactPanel('${esc(a.id)}')">
         <span class="alc-icon">${artifactTypeIcon(a.type)}</span>
         <div class="alc-info">
@@ -4526,11 +4731,27 @@ function showArtifactList() {
           <div class="alc-meta">${esc(a.type)} ${meta ? '· ' + meta : ''}</div>
         </div>
         <span class="alc-versions">v${verCount}</span>
-      </div>
-    `;
+      </div>`;
+  };
+  // Bucket by producing turn. message_idx==null → ungrouped (turn 0).
+  // Server's message_idx is an index into the persisted message list; the
+  // client unshifts a synthetic `compacted` divider at index 0 after an LCM
+  // compaction, so shift by +1 to realign before mapping to a turn.
+  const idxShift = (chat.messages && chat.messages[0]?.role === 'compacted') ? 1 : 0;
+  const byTurn = {};
+  for (const a of filtered) {
+    const tn = (a.message_idx == null) ? 0 : (turnNumForMessageIdx(a.message_idx + idxShift) || 0);
+    (byTurn[tn] = byTurn[tn] || []).push(a);
   }
-  html += '</div>';
-  container.innerHTML = html;
+  renderTurnGroupedPane(document.getElementById('artifact-turn-groups'), 'artifacts', {
+    countFor: (tn) => (byTurn[tn] || []).length,
+    itemsFor: (tn) => '<div class="artifact-list">' + (byTurn[tn] || []).map(cardHtml).join('') + '</div>',
+    ungrouped: byTurn[0] ? {
+      count: byTurn[0].length,
+      html: '<div class="artifact-list">' + byTurn[0].map(cardHtml).join('') + '</div>',
+    } : null,
+    emptyAll: '',
+  });
 }
 
 async function copyArtifact() {
@@ -4622,6 +4843,9 @@ function updateArtifactRegistry(sessionId, eventData) {
   if (!state.artifacts[sessionId]) state.artifacts[sessionId] = [];
   const artifacts = state.artifacts[sessionId];
   const existing = artifacts.find(a => a.id === eventData.artifact_id);
+  // message_idx anchors the artifact to the producing turn (right-panel
+  // grouping). May be undefined on legacy events; falls back to 'ungrouped'.
+  const msgIdx = (eventData.message_idx == null) ? null : eventData.message_idx;
   if (existing) {
     // Add new version
     if (!existing.versions) existing.versions = [];
@@ -4630,6 +4854,7 @@ function updateArtifactRegistry(sessionId, eventData) {
       size: eventData.size,
       action: eventData.action,
       created_at: Date.now() / 1000,
+      message_idx: msgIdx,
     });
   } else {
     // New artifact
@@ -4638,11 +4863,13 @@ function updateArtifactRegistry(sessionId, eventData) {
       name: eventData.name,
       path: eventData.path,
       type: eventData.artifact_type,
+      message_idx: msgIdx,
       versions: [{
         version: eventData.artifact_version,
         size: eventData.size,
         action: eventData.action,
         created_at: Date.now() / 1000,
+        message_idx: msgIdx,
       }],
     });
   }
