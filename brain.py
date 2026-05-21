@@ -2889,9 +2889,13 @@ def extract_attachment_text(path: str) -> tuple[str, str]:
                             parts.append(cell.text)
             return "\n\n".join(parts), "text"
         if ext in (".xlsx", ".xls"):
-            return DocumentParser.parse_xlsx(path), "text"
+            from engine.doc_convert import _extract_xlsx
+            text, _err = _extract_xlsx(path, caps=False)
+            return text, "text"
         if ext == ".pptx":
-            return DocumentParser.parse_pptx(path), "text"
+            from engine.doc_convert import _extract_pptx
+            text, _err = _extract_pptx(path)
+            return text, "text"
         if ext in (".csv", ".tsv"):
             return DocumentParser.parse_csv(path), "text"
         if ext == ".eml":
@@ -3895,43 +3899,45 @@ def tool_read_attachment(args: dict) -> str:
         except Exception as e:
             return _err(f"Failed to decode attachment: {e}")
 
-        # PDF
-        if ext == ".pdf" or "pdf" in media_type.lower():
+        # PDF / DOCX / PPTX / XLSX — route through the unified doc_convert
+        # pipeline (markitdown-first → per-format fallback), the same path
+        # read_document and project mining use. The pipeline is path-based,
+        # so spill the in-memory bytes to a temp file with the correct
+        # extension, extract, then clean up. caps=False = full fidelity.
+        norm_ext = ext
+        if (ext == ".pdf") or (not ext and "pdf" in media_type.lower()):
+            norm_ext = ".pdf"
+        if norm_ext in (".pdf", ".docx", ".pptx", ".xlsx"):
+            from engine.doc_convert import _do_extract
+            kwargs: dict = {"caps": False}
+            if norm_ext == ".xlsx":
+                kwargs["sheet"] = args.get("sheet")
+            elif norm_ext == ".pptx":
+                kwargs["slides"] = args.get("slides")
+            elif norm_ext == ".pdf":
+                kwargs["pages"] = args.get("pages", "") or None
+                kwargs["include_tables"] = bool(args.get("include_tables"))
+                kwargs["emit_meta"] = True
+                kwargs["page_marker"] = "--- Page"
+            import tempfile
+            tmp_path = ""
             try:
-                import fitz  # pymupdf
-                doc = fitz.open(stream=raw_bytes, filetype="pdf")
-                pages = []
-                for i, page in enumerate(doc):
-                    text = page.get_text()
-                    if text.strip():
-                        pages.append(f"--- Page {i+1} ---\n{text}")
-                doc.close()
-                return _wrap("\n\n".join(pages) if pages else "(PDF has no extractable text)")
-            except ImportError:
-                return _err("Install pymupdf for PDF support: pip3 install pymupdf")
-
-        # DOCX
-        if ext == ".docx":
-            try:
-                import docx
-                doc = docx.Document(io_mod.BytesIO(raw_bytes))
-                return _wrap(_parse_docx_from_bytes(raw_bytes))
-            except ImportError:
-                return _err("Install python-docx for DOCX support: pip3 install python-docx")
-
-        # XLSX
-        if ext == ".xlsx":
-            try:
-                return _wrap(_parse_xlsx_from_bytes(raw_bytes, sheet=args.get("sheet")))
-            except ImportError:
-                return _err("Install openpyxl for XLSX support: pip3 install openpyxl")
-
-        # PPTX
-        if ext == ".pptx":
-            try:
-                return _wrap(_parse_pptx_from_bytes(raw_bytes))
-            except ImportError:
-                return _err("Install python-pptx for PPTX support: pip3 install python-pptx")
+                with tempfile.NamedTemporaryFile(
+                        suffix=norm_ext, delete=False) as tf:
+                    tf.write(raw_bytes)
+                    tmp_path = tf.name
+                text, _backend, err = _do_extract(tmp_path, **kwargs)
+            finally:
+                if tmp_path:
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+            if err:
+                return _err(f"read_attachment: {err}")
+            if not text:
+                return _wrap(f"({norm_ext.lstrip('.')} has no extractable text)")
+            return _wrap(text)
 
         # Images — use vision model
         if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg") or media_type.startswith("image/"):
@@ -3942,91 +3948,6 @@ def tool_read_attachment(args: dict) -> str:
 
     # --- Text files ---
     return _wrap(content)
-
-
-def _parse_docx_from_bytes(raw_bytes: bytes) -> str:
-    """Parse DOCX from in-memory bytes."""
-    import io, docx
-    doc = docx.Document(io.BytesIO(raw_bytes))
-    paragraphs = []
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if text:
-            if para.style and para.style.name and para.style.name.startswith("Heading"):
-                level = 1
-                try:
-                    level = int(para.style.name.replace("Heading", "").strip()) or 1
-                except ValueError:
-                    pass
-                text = "#" * level + " " + text
-            paragraphs.append(text)
-    # Tables
-    for table in doc.tables:
-        rows = []
-        for row in table.rows:
-            cells = [cell.text.strip() for cell in row.cells]
-            rows.append("| " + " | ".join(cells) + " |")
-        if rows:
-            # Add header separator after first row
-            header_sep = "| " + " | ".join(["---"] * len(table.rows[0].cells)) + " |"
-            rows.insert(1, header_sep)
-            paragraphs.append("\n".join(rows))
-    return "\n\n".join(paragraphs)
-
-
-def _parse_xlsx_from_bytes(raw_bytes: bytes, sheet: str | None = None) -> str:
-    """Parse XLSX from in-memory bytes."""
-    import io, openpyxl
-    wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), read_only=True, data_only=True)
-    sheets = [wb[sheet]] if sheet and sheet in wb.sheetnames else wb.worksheets
-    parts = []
-    for ws in sheets:
-        rows = list(ws.iter_rows(values_only=True))
-        if not rows:
-            continue
-        # Build markdown table
-        header = rows[0]
-        cols = [str(c) if c is not None else "" for c in header]
-        lines = [f"**Sheet: {ws.title}**"]
-        lines.append("| " + " | ".join(cols) + " |")
-        lines.append("| " + " | ".join(["---"] * len(cols)) + " |")
-        for row in rows[1:200]:  # Cap at 200 rows
-            cells = [str(c) if c is not None else "" for c in row]
-            lines.append("| " + " | ".join(cells) + " |")
-        if len(rows) > 201:
-            lines.append(f"*... ({len(rows) - 201} more rows)*")
-        parts.append("\n".join(lines))
-    wb.close()
-    return "\n\n".join(parts) if parts else "(Empty spreadsheet)"
-
-
-def _parse_pptx_from_bytes(raw_bytes: bytes) -> str:
-    """Parse PPTX from in-memory bytes."""
-    import io
-    from pptx import Presentation
-    prs = Presentation(io.BytesIO(raw_bytes))
-    slides = []
-    for i, slide in enumerate(prs.slides, 1):
-        texts = []
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                for para in shape.text_frame.paragraphs:
-                    text = para.text.strip()
-                    if text:
-                        texts.append(text)
-            if shape.has_table:
-                for row in shape.table.rows:
-                    cells = [cell.text.strip() for cell in row.cells]
-                    texts.append("| " + " | ".join(cells) + " |")
-        if texts:
-            slides.append(f"--- Slide {i} ---\n" + "\n".join(texts))
-    # Notes
-    for i, slide in enumerate(prs.slides, 1):
-        if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
-            notes = slide.notes_slide.notes_text_frame.text.strip()
-            if notes:
-                slides.append(f"[Slide {i} notes] {notes}")
-    return "\n\n".join(slides) if slides else "(Empty presentation)"
 
 
 def tool_read_document(args: dict) -> str:
@@ -4082,134 +4003,38 @@ def tool_read_document(args: dict) -> str:
 
         ext = os.path.splitext(path)[1].lower()
 
-        if ext == ".pdf":
-            try:
-                import fitz
-            except ImportError:
-                return _err("Install pymupdf: pip3 install pymupdf")
-            doc = fitz.open(path)
-            meta = {
-                "title": doc.metadata.get("title", ""),
-                "author": doc.metadata.get("author", ""),
-                "page_count": doc.page_count,
-            }
-            pages_param = args.get("pages", "")
-            page_indices = None
-            if pages_param:
-                page_indices = set()
-                for part in pages_param.split(","):
-                    part = part.strip()
-                    if "-" in part:
-                        a, b = part.split("-", 1)
-                        for i in range(int(a), int(b) + 1):
-                            page_indices.add(i)
-                    else:
-                        page_indices.add(int(part))
-            page_texts = []
-            for i, page in enumerate(doc, 1):
-                if page_indices and i not in page_indices:
-                    continue
-                page_texts.append(f"--- Page {i} ---\n{page.get_text()}")
-            doc.close()
+        # Office/PDF formats route through the unified doc_convert pipeline
+        # (markitdown-first → per-format fallback), shared with project mining
+        # and tool_read_attachment. read_document passes caps=False (full
+        # fidelity) + the selection/meta knobs each format supports.
+        if ext in (".pdf", ".docx", ".pptx", ".xlsx"):
+            from engine.doc_convert import _do_extract
+            kwargs: dict = {"caps": False}
+            if ext == ".xlsx":
+                kwargs["sheet"] = args.get("sheet")
+            elif ext == ".pptx":
+                kwargs["slides"] = args.get("slides")
+            elif ext == ".pdf":
+                kwargs["pages"] = args.get("pages", "") or None
+                kwargs["include_tables"] = bool(args.get("include_tables"))
+                kwargs["emit_meta"] = True
+                kwargs["page_marker"] = "--- Page"
+            text, _backend, err = _do_extract(path, **kwargs)
+            if err:
+                return _err(f"read_document: {err}")
+            return _ok_and_cache({"path": path, "format": ext.lstrip("."),
+                                  "content": text})
 
-            include_tables = bool(args.get("include_tables"))
-            tables_by_page: dict[int, list[str]] = {}
-            tables_note = ""
-            if include_tables:
-                try:
-                    import pdfplumber
-                    with pdfplumber.open(path) as plumb:
-                        for i, page in enumerate(plumb.pages, 1):
-                            if page_indices and i not in page_indices:
-                                continue
-                            found = page.extract_tables()
-                            if not found:
-                                continue
-                            rendered = []
-                            for t in found:
-                                rows = [[(c or "").replace("|", "\\|").replace("\n", " ").strip() for c in row] for row in t]
-                                if not rows:
-                                    continue
-                                width = max(len(r) for r in rows)
-                                for r in rows:
-                                    r.extend([""] * (width - len(r)))
-                                header = "| " + " | ".join(rows[0]) + " |"
-                                sep = "| " + " | ".join("---" for _ in range(width)) + " |"
-                                body = "\n".join("| " + " | ".join(r) + " |" for r in rows[1:])
-                                rendered.append(header + "\n" + sep + ("\n" + body if body else ""))
-                            if rendered:
-                                tables_by_page[i] = rendered
-                except ImportError:
-                    tables_note = "\n\n*(pdfplumber not installed — install with: pip3 install pdfplumber)*"
-
-            if tables_by_page:
-                merged = []
-                for block in page_texts:
-                    first = block.split("\n", 1)[0]
-                    page_num = None
-                    if first.startswith("--- Page ") and first.endswith(" ---"):
-                        try:
-                            page_num = int(first[9:-4])
-                        except ValueError:
-                            pass
-                    merged.append(block)
-                    if page_num is not None and page_num in tables_by_page:
-                        for j, md in enumerate(tables_by_page[page_num], 1):
-                            merged.append(f"### Table (page {page_num}, #{j})\n{md}")
-                content = "\n\n".join(merged)
-            else:
-                content = "\n\n".join(page_texts) + tables_note
-
-            meta_str = "\n".join(f"**{k}:** {v}" for k, v in meta.items() if v)
-            return _ok_and_cache({"path": path, "format": "pdf", "metadata": meta_str, "content": content})
-
-        elif ext == ".docx":
-            try:
-                import docx
-            except ImportError:
-                return _err("Install python-docx: pip3 install python-docx")
-            doc = docx.Document(path)
-            paragraphs = []
-            for para in doc.paragraphs:
-                text = para.text.strip()
-                if text:
-                    if para.style and para.style.name and para.style.name.startswith("Heading"):
-                        level = 1
-                        try:
-                            level = int(para.style.name.replace("Heading", "").strip()) or 1
-                        except ValueError:
-                            pass
-                        text = "#" * level + " " + text
-                    paragraphs.append(text)
-            # Extract tables
-            for table in doc.tables:
-                rows = []
-                for row in table.rows:
-                    cells = [cell.text.strip() for cell in row.cells]
-                    rows.append(cells)
-                if rows:
-                    max_cols = max(len(r) for r in rows)
-                    for r in rows:
-                        while len(r) < max_cols:
-                            r.append("")
-                    header = "| " + " | ".join(rows[0]) + " |"
-                    sep = "| " + " | ".join("---" for _ in range(max_cols)) + " |"
-                    table_lines = [header, sep]
-                    for r in rows[1:]:
-                        table_lines.append("| " + " | ".join(r) + " |")
-                    paragraphs.append("\n".join(table_lines))
-            content = "\n\n".join(paragraphs)
-            return _ok_and_cache({"path": path, "format": "docx", "content": content})
-
-        elif ext in (".xlsx", ".xls"):
-            sheet = args.get("sheet")
-            content = DocumentParser.parse_xlsx(path, sheet=sheet)
+        elif ext == ".xls":
+            # Legacy .xls isn't in doc_convert's extension map (and true .xls
+            # isn't openpyxl-readable anyway — this only ever worked for
+            # mislabeled .xlsx). Call the shared xlsx fallback directly,
+            # matching the prior DocumentParser.parse_xlsx behavior.
+            from engine.doc_convert import _extract_xlsx
+            content, err = _extract_xlsx(path, caps=False, sheet=args.get("sheet"))
+            if err:
+                return _err(f"read_document: {err}")
             return _ok_and_cache({"path": path, "format": "xlsx", "content": content})
-
-        elif ext == ".pptx":
-            slides = args.get("slides")
-            content = DocumentParser.parse_pptx(path, slides=slides)
-            return _ok_and_cache({"path": path, "format": "pptx", "content": content})
 
         elif ext in (".csv", ".tsv"):
             content = DocumentParser.parse_csv(path)
@@ -9285,26 +9110,15 @@ class DocumentParser:
 
     @staticmethod
     def parse_docx(path: str) -> str:
-        """Parse DOCX to text using python-docx."""
-        try:
-            import docx
-        except ImportError:
-            raise ImportError("Install python-docx for DOCX support: pip3 install python-docx")
-        doc = docx.Document(path)
-        paragraphs = []
-        for para in doc.paragraphs:
-            text = para.text.strip()
-            if text:
-                # Preserve heading structure
-                if para.style and para.style.name and para.style.name.startswith("Heading"):
-                    level = 1
-                    try:
-                        level = int(para.style.name.replace("Heading", "").strip()) or 1
-                    except ValueError:
-                        pass
-                    text = "#" * level + " " + text
-                paragraphs.append(text)
-        return "\n\n".join(paragraphs)
+        """Parse DOCX to markdown. Thin shim over the unified doc_convert
+        pipeline (markitdown-first → _extract_docx fallback) so there is a
+        single DOCX implementation shared with read_document, read_attachment,
+        and project mining."""
+        from engine.doc_convert import _do_extract
+        text, _backend, err = _do_extract(path)
+        if err:
+            raise RuntimeError(err)
+        return text
 
     @staticmethod
     def parse_txt(path: str) -> str:
@@ -9361,111 +9175,27 @@ class DocumentParser:
 
     @staticmethod
     def parse_xlsx(path: str, sheet: str | None = None) -> str:
-        """Parse XLSX/XLS to markdown tables using openpyxl."""
-        try:
-            import openpyxl
-        except ImportError:
-            raise ImportError("Install openpyxl for XLSX support: pip3 install openpyxl")
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=False)
-        parts = []
-        sheet_names = wb.sheetnames
-        parts.append(f"**Sheets:** {', '.join(sheet_names)}\n")
-        target_sheets = [sheet] if sheet and sheet in sheet_names else sheet_names
-        for sname in target_sheets:
-            ws = wb[sname]
-            parts.append(f"## Sheet: {sname}\n")
-            rows = []
-            for row in ws.iter_rows(values_only=False):
-                cells = []
-                for cell in row:
-                    val = cell.value
-                    if val is None:
-                        cells.append("")
-                    elif isinstance(val, str) and val.startswith("="):
-                        # Show formula
-                        cells.append(f"{val}")
-                    else:
-                        cells.append(str(val))
-                rows.append(cells)
-            if not rows:
-                parts.append("*(empty sheet)*\n")
-                continue
-            # Build markdown table
-            max_cols = max(len(r) for r in rows) if rows else 0
-            # Pad rows to same length
-            for r in rows:
-                while len(r) < max_cols:
-                    r.append("")
-            # Header row
-            header = "| " + " | ".join(rows[0]) + " |"
-            sep = "| " + " | ".join("---" for _ in range(max_cols)) + " |"
-            table_lines = [header, sep]
-            for r in rows[1:]:
-                table_lines.append("| " + " | ".join(r) + " |")
-            parts.append("\n".join(table_lines) + "\n")
-        wb.close()
-        return "\n".join(parts)
+        """Parse XLSX to markdown tables. Thin shim over the unified
+        doc_convert pipeline (markitdown-first → _extract_xlsx fallback) —
+        single XLSX implementation shared with read_document, read_attachment,
+        and project mining. caps=False = full fidelity (no row cap)."""
+        from engine.doc_convert import _do_extract
+        text, _backend, err = _do_extract(path, caps=False, sheet=sheet)
+        if err:
+            raise RuntimeError(err)
+        return text
 
     @staticmethod
     def parse_pptx(path: str, slides: str | None = None) -> str:
-        """Parse PPTX to text using python-pptx."""
-        try:
-            from pptx import Presentation
-        except ImportError:
-            raise ImportError("Install python-pptx for PPTX support: pip3 install python-pptx")
-        prs = Presentation(path)
-        total_slides = len(prs.slides)
-        parts = [f"**Slides:** {total_slides}\n"]
-        # Parse slide range
-        slide_indices = None
-        if slides:
-            slide_indices = set()
-            for part in slides.split(","):
-                part = part.strip()
-                if "-" in part:
-                    a, b = part.split("-", 1)
-                    for i in range(int(a), int(b) + 1):
-                        slide_indices.add(i)
-                else:
-                    slide_indices.add(int(part))
-        for idx, slide in enumerate(prs.slides, 1):
-            if slide_indices and idx not in slide_indices:
-                continue
-            parts.append(f"## Slide {idx}")
-            # Title
-            if slide.shapes.title:
-                parts.append(f"**Title:** {slide.shapes.title.text}")
-            # Body text
-            for shape in slide.shapes:
-                if shape.has_text_frame:
-                    for para in shape.text_frame.paragraphs:
-                        text = para.text.strip()
-                        if text:
-                            parts.append(text)
-                if shape.has_table:
-                    table = shape.table
-                    rows = []
-                    for row in table.rows:
-                        cells = [cell.text.strip() for cell in row.cells]
-                        rows.append(cells)
-                    if rows:
-                        max_cols = max(len(r) for r in rows)
-                        for r in rows:
-                            while len(r) < max_cols:
-                                r.append("")
-                        header = "| " + " | ".join(rows[0]) + " |"
-                        sep = "| " + " | ".join("---" for _ in range(max_cols)) + " |"
-                        table_lines = [header, sep]
-                        for r in rows[1:]:
-                            table_lines.append("| " + " | ".join(r) + " |")
-                        parts.append("\n".join(table_lines))
-            # Speaker notes
-            if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
-                notes = slide.notes_slide.notes_text_frame.text.strip()
-                if notes:
-                    parts.append(f"*Speaker Notes:* {notes}")
-            parts.append("")
-        return "\n".join(parts)
+        """Parse PPTX to markdown. Thin shim over the unified doc_convert
+        pipeline (markitdown-first → _extract_pptx fallback) — single PPTX
+        implementation shared with read_document, read_attachment, and
+        project mining."""
+        from engine.doc_convert import _do_extract
+        text, _backend, err = _do_extract(path, slides=slides)
+        if err:
+            raise RuntimeError(err)
+        return text
 
     @staticmethod
     def parse_csv(path: str) -> str:

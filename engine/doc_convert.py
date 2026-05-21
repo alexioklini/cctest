@@ -522,10 +522,86 @@ def _extract_with_markitdown(path: str) -> tuple[str, str | None]:
 
 # ── Per-format extractors ────────────────────────────────────────────────────
 
-def _extract_pdf(path: str) -> tuple[str, str | None]:
+def _parse_index_selection(spec: str | None) -> set[int] | None:
+    """Parse a 1-based selection string like "1,3,5-7" into a set of ints.
+    None/empty → None (meaning "all", no filtering). Malformed parts are
+    skipped silently rather than raising — a bad selection should degrade to
+    fewer pages, never crash the read."""
+    if not spec or not str(spec).strip():
+        return None
+    out: set[int] = set()
+    for part in str(spec).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            if "-" in part:
+                a, b = part.split("-", 1)
+                for i in range(int(a), int(b) + 1):
+                    out.add(i)
+            else:
+                out.add(int(part))
+        except ValueError:
+            continue
+    return out or None
+
+
+def _render_pdf_tables(path: str, page_sel: set[int] | None) -> dict[int, list[str]]:
+    """Per-page pdfplumber table reconstruction → {page_num: [markdown, ...]}.
+    Empty dict when pdfplumber is unavailable or no tables found. Ported from
+    read_document's inline include_tables path so the unified pipeline keeps
+    table fidelity for table-heavy PDFs."""
+    tables_by_page: dict[int, list[str]] = {}
+    try:
+        import pdfplumber  # type: ignore
+    except ImportError:
+        return tables_by_page
+    try:
+        with pdfplumber.open(path) as plumb:
+            for i, page in enumerate(plumb.pages, 1):
+                if page_sel is not None and i not in page_sel:
+                    continue
+                found = page.extract_tables()
+                if not found:
+                    continue
+                rendered = []
+                for t in found:
+                    rows = [[(c or "").replace("|", "\\|").replace("\n", " ").strip()
+                             for c in row] for row in t]
+                    if not rows:
+                        continue
+                    width = max(len(r) for r in rows)
+                    for r in rows:
+                        r.extend([""] * (width - len(r)))
+                    header = "| " + " | ".join(rows[0]) + " |"
+                    sep = "| " + " | ".join("---" for _ in range(width)) + " |"
+                    body = "\n".join("| " + " | ".join(r) + " |" for r in rows[1:])
+                    rendered.append(header + "\n" + sep + ("\n" + body if body else ""))
+                if rendered:
+                    tables_by_page[i] = rendered
+    except Exception:
+        # pdfplumber is best-effort enrichment — never let it fail the read.
+        return {}
+    return tables_by_page
+
+
+def _extract_pdf(path: str, *, pages: str | None = None,
+                 include_tables: bool = False, emit_meta: bool = False,
+                 page_marker: str = "## Page") -> tuple[str, str | None]:
     """Returns (markdown_text, error_msg or None). Empty text + None means
     the PDF had no extractable text (likely scanned image). Empty text +
-    error means a real failure."""
+    error means a real failure.
+
+    Mining calls with defaults → byte-stable legacy output (`# title` +
+    `## Page N` headings, no metadata, no tables). read_document/
+    read_attachment pass:
+      * pages          — 1-based selection "1,3,5-7" (None = all)
+      * include_tables — opt-in pdfplumber per-page table reconstruction
+      * emit_meta      — prepend a **title/author/page_count** metadata block
+      * page_marker    — heading prefix per page ("--- Page" for the
+                         read_document `--- Page N ---` format the citation/
+                         page logic parses)
+    """
     try:
         import fitz  # type: ignore
     except ImportError:
@@ -534,20 +610,46 @@ def _extract_pdf(path: str) -> tuple[str, str | None]:
         doc = fitz.open(path)
     except Exception as e:
         return "", f"open failed: {type(e).__name__}: {e}"
+    page_sel = _parse_index_selection(pages)
     parts = []
-    title = (doc.metadata or {}).get("title") or os.path.splitext(os.path.basename(path))[0]
-    parts.append(f"# {title}\n")
+    meta = doc.metadata or {}
+    title = meta.get("title") or os.path.splitext(os.path.basename(path))[0]
+    page_count = doc.page_count
+    if emit_meta:
+        meta_lines = [f"**title:** {title}"]
+        if meta.get("author"):
+            meta_lines.append(f"**author:** {meta.get('author')}")
+        meta_lines.append(f"**page_count:** {page_count}")
+        parts.append("\n".join(meta_lines) + "\n")
+    else:
+        parts.append(f"# {title}\n")
+    # `--- Page N ---` is a flat marker on its own line; `## Page N` is a
+    # markdown heading. Match the two historical formats exactly.
+    flat_marker = page_marker.strip().startswith("---")
     try:
         for i, page in enumerate(doc, 1):
+            if page_sel is not None and i not in page_sel:
+                continue
             t = page.get_text("text") or ""
             t = t.strip()
             if t:
-                parts.append(f"\n\n## Page {i}\n\n{t}\n")
+                if flat_marker:
+                    parts.append(f"\n\n{page_marker} {i} ---\n\n{t}\n")
+                else:
+                    parts.append(f"\n\n{page_marker} {i}\n\n{t}\n")
     finally:
         doc.close()
+
+    if include_tables:
+        tables_by_page = _render_pdf_tables(path, page_sel)
+        if tables_by_page:
+            for pnum in sorted(tables_by_page):
+                for j, md in enumerate(tables_by_page[pnum], 1):
+                    parts.append(f"### Table (page {pnum}, #{j})\n{md}")
+
     text = "\n".join(parts).strip()
     if len(text.splitlines()) <= 1:
-        # Only the title line — likely scanned PDF or empty.
+        # Only the title/meta line — likely scanned PDF or empty.
         return "", None
     return text + "\n", None
 
@@ -585,7 +687,11 @@ def _extract_docx(path: str) -> tuple[str, str | None]:
     return text + "\n", None
 
 
-def _extract_pptx(path: str) -> tuple[str, str | None]:
+def _extract_pptx(path: str, *, slides: str | None = None
+                  ) -> tuple[str, str | None]:
+    """`slides` (default None = all slides, mining behavior) is a 1-based
+    selection string like "1,3,5-7" — read_document/read_attachment `slides=`
+    selection. Slides outside the set are skipped."""
     try:
         from pptx import Presentation  # type: ignore
     except ImportError:
@@ -594,10 +700,13 @@ def _extract_pptx(path: str) -> tuple[str, str | None]:
         prs = Presentation(path)
     except Exception as e:
         return "", f"open failed: {type(e).__name__}: {e}"
+    slide_sel = _parse_index_selection(slides)
     title = os.path.splitext(os.path.basename(path))[0]
     parts = [f"# {title}\n"]
     slide_count = 0
     for i, slide in enumerate(prs.slides, 1):
+        if slide_sel is not None and i not in slide_sel:
+            continue
         slide_count += 1
         # Try to surface the slide title from its title placeholder when
         # present; fall back to "Slide N".
@@ -641,7 +750,8 @@ def _extract_pptx(path: str) -> tuple[str, str | None]:
     return text + "\n", None
 
 
-def _extract_xlsx(path: str) -> tuple[str, str | None]:
+def _extract_xlsx(path: str, *, caps: bool = True,
+                  sheet: str | None = None) -> tuple[str, str | None]:
     """Render every sheet's header + first N rows as a markdown table.
 
     Spreadsheets are mostly numeric/tabular and don't fit the drawer model
@@ -650,6 +760,13 @@ def _extract_xlsx(path: str) -> tuple[str, str | None]:
     schedules, role matrices, threshold tables — and stop. Users who need
     full-fidelity row-by-row analysis should call read_document on the
     original .xlsx rather than relying on the converted markdown.
+
+    `caps` (default True, mining behavior) applies the per-sheet row cap and
+    per-cell char cap. read_document/read_attachment pass caps=False for
+    full-fidelity row-by-row output. `sheet` restricts output to a single
+    named sheet (read_document/read_attachment `sheet=` selection); unknown
+    or None name = all sheets. Pipe-escaping, blank-row skipping, and
+    per-sheet error isolation apply regardless of caps.
     """
     try:
         import openpyxl  # type: ignore
@@ -663,18 +780,25 @@ def _extract_xlsx(path: str) -> tuple[str, str | None]:
         return "", f"open failed: {type(e).__name__}: {e}"
     title = os.path.splitext(os.path.basename(path))[0]
     parts = [f"# {title}\n"]
+    cell_cap = XLSX_CELL_MAX_CHARS if caps else None
+    row_cap = XLSX_MAX_ROWS_PER_SHEET if caps else None
 
     def _cell(v):
         if v is None:
             return ""
         s = str(v)
-        if len(s) > XLSX_CELL_MAX_CHARS:
-            s = s[:XLSX_CELL_MAX_CHARS] + "…"
+        if cell_cap is not None and len(s) > cell_cap:
+            s = s[:cell_cap] + "…"
         # Markdown table separator + escape pipes inside cells.
         return s.replace("|", "\\|").replace("\n", " ").strip()
 
+    if sheet and sheet in wb.sheetnames:
+        target_sheets = [wb[sheet]]
+    else:
+        target_sheets = wb.worksheets
+
     sheet_count = 0
-    for sheet in wb.worksheets:
+    for sheet in target_sheets:
         try:
             rows = sheet.iter_rows(values_only=True)
             header = next(rows, None)
@@ -696,9 +820,9 @@ def _extract_xlsx(path: str) -> tuple[str, str | None]:
             shown = 0
             warned = False
             for r in rows:
-                if shown >= XLSX_MAX_ROWS_PER_SHEET:
+                if row_cap is not None and shown >= row_cap:
                     parts.append(
-                        f"\n_(truncated at {XLSX_MAX_ROWS_PER_SHEET:,} "
+                        f"\n_(truncated at {row_cap:,} "
                         f"rows — use read_document on the original .xlsx "
                         f"for the rest)_\n")
                     break
@@ -850,12 +974,23 @@ def _adhoc_cache_path(src: str, mtime: int, size: int) -> str:
     return os.path.join(ADHOC_CACHE_DIR, hashlib.sha256(key).hexdigest() + ".md")
 
 
-def _do_extract(src: str, *, use_markitdown: bool = True
+def _do_extract(src: str, *, use_markitdown: bool = True,
+                caps: bool = True, sheet: str | None = None,
+                slides: str | None = None, pages: str | None = None,
+                include_tables: bool = False, emit_meta: bool = False,
+                page_marker: str = "## Page"
                 ) -> tuple[str, str, str | None]:
     """Run markitdown (when enabled+supported) then per-format fallback,
     then OCR if both came back empty for PDFs.
     Returns (text, backend, error). Empty text + None error = no extractable
-    content even after OCR — caller writes a marker file."""
+    content even after OCR — caller writes a marker file.
+
+    Mining calls with all defaults (caps=True, no selection, no meta) → the
+    fallback extractors produce byte-stable legacy output. read_document /
+    read_attachment pass caps=False + the relevant selection/meta knobs.
+    These knobs ONLY affect the per-format fallback — when markitdown
+    succeeds (the common case for clean office files) its output is returned
+    verbatim and the knobs are inert."""
     ext = os.path.splitext(src)[1].lower()
     extractor = _EXTRACTORS.get(ext)
     if extractor is None:
@@ -866,8 +1001,18 @@ def _do_extract(src: str, *, use_markitdown: bool = True
         text, err = _extract_with_markitdown(src)
         if not err and text:
             return text, "markitdown", None
+    # Per-format fallback. Pass only the knobs each extractor accepts so a
+    # default mining call stays byte-stable.
+    extractor_kwargs: dict = {}
+    if ext == ".xlsx":
+        extractor_kwargs = {"caps": caps, "sheet": sheet}
+    elif ext == ".pptx":
+        extractor_kwargs = {"slides": slides}
+    elif ext == ".pdf":
+        extractor_kwargs = {"pages": pages, "include_tables": include_tables,
+                            "emit_meta": emit_meta, "page_marker": page_marker}
     try:
-        text, err = extractor(src)
+        text, err = extractor(src, **extractor_kwargs)
     except Exception as e:
         return "", "", f"{type(e).__name__}: {e}"
     if err:
