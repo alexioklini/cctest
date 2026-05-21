@@ -117,12 +117,13 @@ def _extract_text(src: str) -> tuple[str, list[str], str | None]:
         return "", [], f"not a file: {src}"
     ext = os.path.splitext(src)[1].lower()
     try:
-        if ext in (".md", ".markdown", ".txt", ".html", ".htm", ".csv"):
+        if ext in (".md", ".markdown", ".txt", ".html", ".htm"):
             with open(src, "r", encoding="utf-8", errors="replace") as f:
                 text = f.read(_MAX_TEXT_BYTES + 1)
             pages = _split_pages(text)
             return text[:_MAX_TEXT_BYTES], pages, None
-        # Binary types via doc_convert
+        # Binary/tabular types via doc_convert (csv now flows through
+        # _extract_csv for one consistent table rendering).
         from engine.doc_convert import convert_one, SUPPORTED_EXTS
         if ext not in SUPPORTED_EXTS:
             return "", [], f"unsupported extension: {ext}"

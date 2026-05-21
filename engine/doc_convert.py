@@ -37,7 +37,8 @@ from typing import Iterable
 
 EXTRACT_SUBDIR = ".brain-extracted"
 
-SUPPORTED_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".eml", ".msg"}
+SUPPORTED_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".csv", ".tsv",
+                  ".eml", ".msg", ".epub", ".zip"}
 
 # Ad-hoc cache for files outside any project input folder (chat attachments,
 # arbitrary paths the agent reads via read_document). Each entry is a
@@ -170,7 +171,7 @@ import subprocess
 
 _MARKITDOWN_BIN = shutil.which("markitdown")
 _MARKITDOWN_TIMEOUT_SECS = 120
-_MARKITDOWN_EXTS = {".pdf", ".docx", ".pptx", ".xlsx"}
+_MARKITDOWN_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".msg", ".epub", ".zip"}
 
 # ── OCR fallback for scanned PDFs ────────────────────────────────────────────
 #
@@ -898,6 +899,58 @@ def _extract_msg(path: str) -> tuple[str, str | None]:
     return text + "\n", None
 
 
+def _extract_csv(path: str, *, caps: bool = True) -> tuple[str, str | None]:
+    """CSV/TSV → one markdown table. Pipe-escaping + newline-strip mirror
+    _extract_xlsx so a cell containing `|` or a newline can't corrupt the
+    table. `caps` (default True, mining behavior) bounds rows/cells; read
+    paths pass caps=False for full fidelity."""
+    import csv as _csv
+    delimiter = "\t" if path.lower().endswith(".tsv") else ","
+    cell_cap = XLSX_CELL_MAX_CHARS if caps else None
+    row_cap = XLSX_MAX_ROWS_PER_SHEET if caps else None
+    try:
+        with open(path, "r", newline="", errors="replace") as f:
+            rows = list(_csv.reader(f, delimiter=delimiter))
+    except Exception as e:
+        return "", f"open failed: {type(e).__name__}: {e}"
+    if not rows:
+        return "", None
+
+    def _cell(v: str) -> str:
+        s = "" if v is None else str(v)
+        if cell_cap is not None and len(s) > cell_cap:
+            s = s[:cell_cap] + "…"
+        return s.replace("|", "\\|").replace("\n", " ").strip()
+
+    n_cols = max(len(r) for r in rows)
+    header = [_cell(c) for c in rows[0]]
+    while len(header) < n_cols:
+        header.append("")
+    parts = ["| " + " | ".join(header) + " |",
+             "|" + "|".join(["---"] * n_cols) + "|"]
+    for r in rows[1:]:
+        if row_cap is not None and len(parts) - 2 >= row_cap:
+            parts.append(f"\n_(truncated at {row_cap:,} rows)_\n")
+            break
+        rc = [_cell(c) for c in r[:n_cols]]
+        while len(rc) < n_cols:
+            rc.append("")
+        parts.append("| " + " | ".join(rc) + " |")
+    return "\n".join(parts) + "\n", None
+
+
+def _extract_markitdown_only(path: str) -> tuple[str, str | None]:
+    """Fallback for formats that have no native extractor (.epub, .zip).
+    By the time _do_extract calls this, markitdown has already been tried
+    (these exts are in _MARKITDOWN_EXTS), so reaching here means markitdown
+    was absent or failed — return a helpful error, not silent empty."""
+    ext = os.path.splitext(path)[1].lower()
+    if not _MARKITDOWN_BIN:
+        return "", (f"Reading {ext} requires the markitdown package "
+                    "(pip3 install 'markitdown[outlook]').")
+    return "", f"markitdown could not extract {ext}"
+
+
 def _email_to_markdown(msg) -> str:
     """Shared rendering for both .eml (parsed via stdlib email) and any
     other future `email.message.Message` source."""
@@ -943,8 +996,13 @@ _EXTRACTORS = {
     ".docx": _extract_docx,
     ".pptx": _extract_pptx,
     ".xlsx": _extract_xlsx,
+    ".xls": _extract_xlsx,   # legacy alias; true .xls isn't openpyxl-readable
+    ".csv": _extract_csv,
+    ".tsv": _extract_csv,
     ".eml": _extract_eml,
     ".msg": _extract_msg,
+    ".epub": _extract_markitdown_only,
+    ".zip": _extract_markitdown_only,
 }
 
 
@@ -1004,8 +1062,10 @@ def _do_extract(src: str, *, use_markitdown: bool = True,
     # Per-format fallback. Pass only the knobs each extractor accepts so a
     # default mining call stays byte-stable.
     extractor_kwargs: dict = {}
-    if ext == ".xlsx":
+    if ext in (".xlsx", ".xls"):
         extractor_kwargs = {"caps": caps, "sheet": sheet}
+    elif ext in (".csv", ".tsv"):
+        extractor_kwargs = {"caps": caps}
     elif ext == ".pptx":
         extractor_kwargs = {"slides": slides}
     elif ext == ".pdf":

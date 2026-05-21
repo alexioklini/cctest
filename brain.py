@@ -2866,50 +2866,20 @@ def extract_attachment_text(path: str) -> tuple[str, str]:
     if ext in (".zip", ".epub", ".msg"):
         return "", "archive"
     try:
-        if ext == ".pdf":
-            try:
-                import fitz
-            except ImportError:
+        # Binary/tabular doc types share the one unified extractor
+        # (markitdown-first → per-format fallback). caps=False = full text so
+        # the scanner sees every cell/row. (.msg/.epub/.zip are archive-
+        # skipped above, so they never reach here.)
+        from engine.doc_convert import _do_extract, SUPPORTED_EXTS
+        if ext in SUPPORTED_EXTS:
+            kwargs: dict = {"caps": False}
+            if ext == ".pdf":
+                kwargs["emit_meta"] = True
+                kwargs["page_marker"] = "--- Page"
+            text, _backend, err = _do_extract(path, **kwargs)
+            if err:
                 return "", "unsupported"
-            doc = fitz.open(path)
-            pages = [page.get_text() for page in doc]
-            doc.close()
-            return "\n\n".join(pages), "text"
-        if ext == ".docx":
-            try:
-                import docx
-            except ImportError:
-                return "", "unsupported"
-            doc = docx.Document(path)
-            parts = [p.text for p in doc.paragraphs if p.text.strip()]
-            for table in doc.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        if cell.text.strip():
-                            parts.append(cell.text)
-            return "\n\n".join(parts), "text"
-        if ext in (".xlsx", ".xls"):
-            from engine.doc_convert import _extract_xlsx
-            text, _err = _extract_xlsx(path, caps=False)
             return text, "text"
-        if ext == ".pptx":
-            from engine.doc_convert import _extract_pptx
-            text, _err = _extract_pptx(path)
-            return text, "text"
-        if ext in (".csv", ".tsv"):
-            return DocumentParser.parse_csv(path), "text"
-        if ext == ".eml":
-            import email
-            from email import policy
-            with open(path, "rb") as f:
-                msg = email.message_from_bytes(f.read(), policy=policy.default)
-            body_part = msg.get_body(preferencelist=("plain", "html"))
-            body = body_part.get_content() if body_part else ""
-            if body_part and body_part.get_content_type() == "text/html":
-                body = re.sub(r"<[^>]+>", " ", body)
-            headers = " ".join(
-                str(msg.get(k, "")) for k in ("From", "To", "Cc", "Subject"))
-            return headers + "\n\n" + body, "text"
         # Plain text fallback (.txt .md .log .html .htm .json + unknown).
         with open(path, "r", errors="replace") as f:
             return f.read(), "text"
@@ -3920,10 +3890,17 @@ def tool_read_document(args: dict) -> str:
         # (markitdown-first → per-format fallback), shared with project mining.
         # read_document passes caps=False (full fidelity) + the selection/meta
         # knobs each format supports.
-        if ext in (".pdf", ".docx", ".pptx", ".xlsx"):
+        # All doc_convert-supported binary/tabular formats route through the
+        # one unified pipeline (markitdown-first → per-format fallback), shared
+        # with project mining + classification scan. read_document passes
+        # caps=False (full fidelity) + the selection/meta knobs each format
+        # supports. .xls aliases to the xlsx extractor; .msg/.epub/.zip are
+        # markitdown-first (no inline MarkItDown() call here anymore).
+        if ext in (".pdf", ".docx", ".pptx", ".xlsx", ".xls",
+                   ".csv", ".tsv", ".eml", ".msg", ".epub", ".zip"):
             from engine.doc_convert import _do_extract
             kwargs: dict = {"caps": False}
-            if ext == ".xlsx":
+            if ext in (".xlsx", ".xls"):
                 kwargs["sheet"] = args.get("sheet")
             elif ext == ".pptx":
                 kwargs["slides"] = args.get("slides")
@@ -3935,23 +3912,9 @@ def tool_read_document(args: dict) -> str:
             text, _backend, err = _do_extract(path, **kwargs)
             if err:
                 return _err(f"read_document: {err}")
-            return _ok_and_cache({"path": path, "format": ext.lstrip("."),
-                                  "content": text})
-
-        elif ext == ".xls":
-            # Legacy .xls isn't in doc_convert's extension map (and true .xls
-            # isn't openpyxl-readable anyway — this only ever worked for
-            # mislabeled .xlsx). Call the shared xlsx fallback directly,
-            # matching the prior DocumentParser.parse_xlsx behavior.
-            from engine.doc_convert import _extract_xlsx
-            content, err = _extract_xlsx(path, caps=False, sheet=args.get("sheet"))
-            if err:
-                return _err(f"read_document: {err}")
-            return _ok_and_cache({"path": path, "format": "xlsx", "content": content})
-
-        elif ext in (".csv", ".tsv"):
-            content = DocumentParser.parse_csv(path)
-            return _ok_and_cache({"path": path, "format": "csv", "content": content})
+            # Normalise the reported format for the aliases.
+            fmt = {".xls": "xlsx", ".tsv": "csv"}.get(ext, ext.lstrip("."))
+            return _ok_and_cache({"path": path, "format": fmt, "content": text})
 
         elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
             meta_text = DocumentParser.parse_image(path)
@@ -3963,43 +3926,6 @@ def tool_read_document(args: dict) -> str:
         elif ext == ".svg":
             content = DocumentParser.parse_svg(path)
             return _ok_and_cache({"path": path, "format": "svg", "content": content})
-
-        elif ext == ".eml":
-            import email
-            from email import policy
-            with open(path, "rb") as f:
-                msg = email.message_from_bytes(f.read(), policy=policy.default)
-            headers = {
-                "from": str(msg.get("From", "")),
-                "to": str(msg.get("To", "")),
-                "cc": str(msg.get("Cc", "")),
-                "subject": str(msg.get("Subject", "")),
-                "date": str(msg.get("Date", "")),
-            }
-            body_part = msg.get_body(preferencelist=("plain", "html"))
-            body = body_part.get_content() if body_part else ""
-            if body_part and body_part.get_content_type() == "text/html":
-                body = re.sub(r"<[^>]+>", " ", body)
-                body = re.sub(r"\s+", " ", body).strip()
-            attachments = [p.get_filename() for p in msg.iter_attachments() if p.get_filename()]
-            meta_str = "\n".join(f"**{k}:** {v}" for k, v in headers.items() if v)
-            if attachments:
-                meta_str += f"\n**attachments:** {', '.join(attachments)}"
-            return _ok_and_cache({"path": path, "format": "eml", "content": f"{meta_str}\n\n{body}"})
-
-        elif ext in (".msg", ".epub", ".zip"):
-            try:
-                from markitdown import MarkItDown
-            except ImportError:
-                return _err(
-                    f"Reading {ext} files requires the markitdown package, which is not "
-                    "included in airgapped installer builds. On dev machines with internet: "
-                    "pip3 install 'markitdown[outlook]'."
-                )
-            md = MarkItDown()
-            result = md.convert(path)
-            fmt = ext.lstrip(".")
-            return _ok_and_cache({"path": path, "format": fmt, "content": result.text_content})
 
         else:
             # Plain-text / markdown / unknown-extension read. Honor explicit
