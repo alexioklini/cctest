@@ -3910,12 +3910,16 @@ def tool_read_document(args: dict) -> str:
                 kwargs["include_tables"] = bool(args.get("include_tables"))
                 kwargs["emit_meta"] = True
                 kwargs["page_marker"] = "--- Page"
-            text, _backend, err = _do_extract(path, **kwargs)
+            text, backend, err = _do_extract(path, **kwargs)
             if err:
                 return _err(f"read_document: {err}")
             # Normalise the reported format for the aliases.
             fmt = {".xls": "xlsx", ".tsv": "csv"}.get(ext, ext.lstrip("."))
-            return _ok_and_cache({"path": path, "format": fmt, "content": text})
+            # `backend` ("markitdown" / "fitz/legacy" / "mistral-ocr (Np)" / …)
+            # records which of the two extraction surfaces produced this text.
+            # Surfaced in the chat tool-block + persisted via metadata.tools.
+            return _ok_and_cache({"path": path, "format": fmt,
+                                  "backend": backend, "content": text})
 
         elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
             meta_text = DocumentParser.parse_image(path)

@@ -3232,6 +3232,24 @@ function renderToolCall(msg, idx) {
     if (wf) bodyHtml = renderWorkerFlow(wf) + bodyHtml;
   }
   const workerBadge = (isWorker || isRunningWorker) ? '<span class="tool-badge-worker" title="Executed via worker subagent">Hintergrund</span>' : '';
+  // Extraction-backend badge for read_document: which of the two surfaces
+  // produced the text — markitdown (tried first) or our own fallback
+  // (_extract_*), or OCR for scanned PDFs. Reads the `backend` field the
+  // tool result carries; only present on read_document.
+  let backendBadge = '';
+  if (resultStrForFlow) {
+    try {
+      const rj = JSON.parse(resultStrForFlow);
+      if (rj && rj.backend) {
+        const b = String(rj.backend);
+        let label, title;
+        if (b.startsWith('markitdown')) { label = 'markitdown'; title = 'Extrahiert via markitdown (Primärpfad)'; }
+        else if (b.includes('ocr') || b.includes('vision')) { label = 'OCR'; title = `Extrahiert via OCR (${b})`; }
+        else { label = 'fallback'; title = `Extrahiert via interner Fallback (${b})`; }
+        backendBadge = `<span class="tool-badge-backend" title="${title}">${label}</span>`;
+      }
+    } catch(e) {}
+  }
   // Parallel badge: shown when 2+ tool_calls share the same tool_round
   const toolRound = msg.tool_round;
   const isParallel = toolRound != null && chat && chat.messages.filter(
@@ -3244,7 +3262,7 @@ function renderToolCall(msg, idx) {
       <div class="tool-block-header">
         ${icon}
         <span class="tool-name">${desc}</span>
-        ${workerBadge}${parallelBadge}
+        ${workerBadge}${parallelBadge}${backendBadge}
         ${timing}
         <span class="tool-chevron">&#9656;</span>
       </div>
