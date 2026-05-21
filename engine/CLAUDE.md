@@ -10,7 +10,7 @@ Non-obvious invariants for this package. Root CLAUDE.md has the full architectur
 |------|------|-----------|
 | `tools/image_gen.py` | Image generation via Mistral Conversations API (only live tool extraction) | `brain.py` TOOL_DISPATCH (line ~21845) |
 | `kg_extract.py` | LLM-driven triple extraction over project input folders | `handlers/admin.py`, `handlers/projects.py`, `server.py` |
-| `doc_convert.py` | binary → `.md` companion conversion | `server.py`, brain.py via lazy import |
+| `doc_convert.py` | the single document-extraction pipeline (markitdown→fallback) for ALL reads + companion `.md` conversion — see "Document Extraction Pipeline" below | `server.py`, `handlers/classification.py`, brain.py via lazy import |
 | `sync_log.py` | Sync run log table + helpers | `handlers/projects.py`, `server.py` |
 
 Anything else under `engine/` is dead. brain.py owns the live equivalent.
@@ -95,6 +95,62 @@ this queue — production rounds bypass `LocalProviderQueue` entirely.
 Each run = immutable `schedule_history` row + synthetic `session_id=sched-<run_id>`. Due tasks fire in **parallel**. Per-task `working_dir` overrides system prompt cwd; `python_exec` stays pinned to artifact folder by design — file-write tracking depends on it.
 
 `_validate_thinking_level_for_model` rejects format-mismatched levels at fire time. `caveman_system` deliberately NOT exposed per task (per-model knob, would invalidate warmup KV prefix).
+
+## Document Extraction Pipeline (doc_convert.py) — single choke point
+
+Every document read in Brain funnels through **one** dispatcher,
+`engine.doc_convert._do_extract(src, *, use_markitdown, caps, sheet, slides,
+pages, include_tables, emit_meta, page_marker)`. Four consumers, one path:
+
+- chat read — `brain.tool_read_document` → `_do_extract(caps=False, …)`
+- project mining — `convert_one` → `_do_extract(caps=True)` (defaults)
+- PII pre-send scan — `brain.extract_attachment_text` → `_do_extract(caps=False)`
+- ARL classification scan — `handlers/classification` → `convert_one`
+
+A fix in any extractor reaches all four at once. Do NOT add a per-consumer
+parser — that's the duplication this design removed (v9.10.0; previously 4
+independent xlsx readers).
+
+**Two — and only two — tuning surfaces per format**:
+1. **markitdown** (subprocess, tried first) — gated by `_MARKITDOWN_EXTS`.
+2. **`_extract_*` fallbacks** (your Python) — `_extract_pdf` (fitz +
+   pdfplumber for tables), `_extract_xlsx`, `_extract_csv`, `_extract_docx`,
+   `_extract_pptx`, `_extract_eml` (stdlib), `_extract_msg`,
+   `_extract_markitdown_only` (epub/zip).
+
+**Reorder/disable is per-format and one line**: to force a format onto your
+own code (markitdown loses), **remove its ext from `_MARKITDOWN_EXTS`** — it
+then never calls markitdown. True fallback *inversion* (own-code-first, then
+markitdown) is NOT wired — `_do_extract` is hardcoded markitdown-first →
+fallback; the disable-via-set path covers the "markitdown is worse" case
+without a logic change. (Empirically: markitdown handles `.eml` but worse
+than the stdlib `_extract_eml` — leaks MIME headers — which is why `.eml` is
+deliberately NOT in `_MARKITDOWN_EXTS`. `.txt/.md/.html/.json` likewise skip
+markitdown — already text.)
+
+**caps invariant**: the `caps`/`sheet`/`slides`/`pages`/`emit_meta`/
+`page_marker` knobs all default to mining's prior behavior so the daemon's
+companion-`.md` output stays **byte-stable** (changing it would re-embed
+every project doc). caps + the knobs only bite on the **fallback** — when
+markitdown succeeds, its output is returned verbatim and the knobs are inert.
+read paths pass `caps=False` (no row/cell cap); mining/classification keep
+`caps=True` (100k rows/sheet, 200 chars/cell).
+
+**Concurrency note**: markitdown runs as `subprocess.run` per call (120s
+timeout), with **no concurrency cap** (unlike `LocalProviderQueue`). Under
+multi-user document load the likely failure mode is markitdown
+process-pressure / timeout, NOT extraction-logic bugs — the fix there is a
+concurrency gate, a third lever distinct from the two content surfaces.
+Tempfiles (`read_attachment`-style byte spills) use unique names; the ad-hoc
+`.md` cache is keyed by `(abs_path, mtime, size)` — concurrent reads of the
+same file are safe.
+
+`DocumentParser.parse_{docx,xlsx,pptx}` in brain.py are **thin shims** over
+`_do_extract` (kept so `DocumentParser.parse()` + admin file-preview
+endpoints work unchanged). `tool_read_attachment` was deleted in v9.10.0
+(unreachable — never in TOOL_DISPATCH/DEFINITIONS/GROUPS, store never
+populated). Don't reintroduce a bytes-based reader; spill to a tempfile and
+use `_do_extract`.
 
 ## Knowledge Graph (kg_extract.py / doc_convert.py)
 
