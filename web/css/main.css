@@ -4477,12 +4477,12 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
    top. flex/line-height kept tight so it never grows the footer height. */
 .composer-buddy {
   margin: 0;
-  font-size: 8px;
-  line-height: 0.95;
-  color: var(--accent-brand);
+  font-size: 9px;
+  line-height: 0.9;
+  color: var(--buddy-color, var(--accent-brand));
   pointer-events: none;
   opacity: var(--buddy-op, 0.08);
-  transition: opacity 1.2s ease;
+  transition: opacity 1.2s ease, color 0.4s ease;
   animation: buddyFloat 4s ease-in-out infinite;
 }
 @keyframes buddyFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
@@ -4516,7 +4516,7 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   font-family: var(--font-mono);
   font-size: 9px;
   line-height: 1.2;
-  color: var(--accent-brand);
+  color: var(--buddy-color, var(--accent-brand));
   background: transparent;
   pointer-events: none;
   opacity: 0.92;
