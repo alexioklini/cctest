@@ -1330,7 +1330,7 @@ async function openUserSettings(initialTab) {
   // Pull a fresh /v1/auth/me so the modal reflects server state, not stale state.authUser
   try {
     const r = await API.get('/v1/auth/me');
-    if (r && r.user) state.authUser = r.user;
+    if (r && r.user) { state.authUser = r.user; if (typeof buddyInit === 'function') buddyInit(); }
   } catch(e) {}
   const startTab = initialTab || 'profile';
   const startEl = modal.querySelector(`.modal-tab[data-tab="${startTab}"]`);
@@ -1465,6 +1465,20 @@ async function refineProfileField(textareaId, fieldLabel) {
   }
 }
 
+// Buddy dropdown options. Labels come from buddy.js's BUDDY_SPECIES; the ""
+// (auto) and "off" sentinels match the server-side validation in auth.py.
+function _buddySpeciesOpts() {
+  const opts = [
+    {value: '', label: 'Surprise me (auto-pick)'},
+    {value: 'off', label: 'Off — no buddy'},
+  ];
+  const species = (typeof BUDDY_SPECIES !== 'undefined') ? BUDDY_SPECIES : {};
+  for (const id of Object.keys(species)) {
+    opts.push({value: id, label: species[id].label || id});
+  }
+  return opts;
+}
+
 function renderUserSettingsProfile(body) {
   const u = state.authUser || {};
   const prefs = u.preferences || {};
@@ -1495,6 +1509,13 @@ function renderUserSettingsProfile(body) {
         'Like soul.md but for you — tone, style, formatting, what to avoid, recurring context the agent should always know. Up to ~4000 characters.',
         'I prefer direct, technical answers. Skip the preamble. Use code blocks for code, markdown sparingly. Don\'t hedge with "it depends" — pick one and explain.\n\nWhen I ask about architecture, default to discussing tradeoffs. When I ask for code, default to small focused diffs.',
         {rows: 12, maxlength: 4000, minHeight: '220px', refinable: true, fieldLabel: 'Communication preferences'})}
+      <hr style="border:none;border-top:1px solid var(--border-light);margin:18px 0">
+      <h3 style="margin:0 0 4px 0;font-size:15px">Companion</h3>
+      <div style="font-size:12px;color:var(--text-400);margin-bottom:12px">
+        A little ASCII buddy that floats in the bottom-right corner. It fades to nearly invisible when you're idle and brightens on a keystroke or while a reply is generating. Cosmetic only.
+      </div>
+      ${_us_select('Buddy', 'us-buddy-species', prefs.buddy_species || '', _buddySpeciesOpts(),
+        'Pick a species, or turn it off. "Surprise me" picks one for you based on your account.')}
       <div style="display:flex;gap:8px;margin-top:18px">
         <button class="btn-primary" onclick="saveUserSettingsProfile()">Save profile</button>
         <span id="us-profile-msg" style="align-self:center;font-size:12px;color:var(--text-400)"></span>
@@ -1511,17 +1532,20 @@ async function saveUserSettingsProfile() {
   // newlines are kept as-is so users can structure their soul.md-style block.
   const communication_preferences = (document.getElementById('us-comm-prefs')?.value || '')
     .replace(/^\s+|\s+$/g, '');
+  const buddy_species = document.getElementById('us-buddy-species')?.value || '';
   const msg = document.getElementById('us-profile-msg');
   if (msg) { msg.textContent = 'Saving…'; msg.style.color = 'var(--text-400)'; }
   try {
     const r1 = await API.post('/v1/auth/profile', {display_name, email});
     if (r1.error) throw new Error(r1.error);
     const r2 = await API.post('/v1/auth/preferences', {preferences: {
-      greeting_name, job_description, communication_preferences,
+      greeting_name, job_description, communication_preferences, buddy_species,
     }});
     if (r2.error) throw new Error(r2.error);
     if (r2.user) state.authUser = r2.user;
     renderUserMenu();
+    // Buddy species/toggle may have changed — re-resolve from the fresh prefs.
+    if (typeof buddyInit === 'function') buddyInit();
     if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--success, #16a34a)'; }
   } catch (e) {
     if (msg) { msg.textContent = 'Failed: ' + (e.message || e); msg.style.color = 'var(--error, #dc2626)'; }
@@ -1722,6 +1746,7 @@ async function saveUserSettingsMemory() {
     const r = await API.post('/v1/auth/preferences', {preferences: prefs});
     if (r.error) throw new Error(r.error);
     if (r.user) state.authUser = r.user;
+    if (typeof buddyInit === 'function') buddyInit();
     if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--success, #16a34a)'; }
   } catch (e) {
     if (msg) { msg.textContent = 'Failed: ' + (e.message || e); msg.style.color = 'var(--error, #dc2626)'; }
@@ -2799,6 +2824,9 @@ async function init() {
 
   // Start on welcome view
   navigateTo('welcome');
+
+  // Spin up the floating ASCII companion (reads buddy_species from prefs).
+  if (typeof buddyInit === 'function') buddyInit();
 
   // Start connection health monitor
   ConnectionMonitor._connected = state.connected;

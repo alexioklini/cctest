@@ -350,6 +350,7 @@ function buildStreamCallbacks(chat, isActive) {
         // renderMessages() first so any tool_calls from the completed prior round
         // render into the turn-body before the new thinking bubble is appended.
         chat.thinkingText = '';
+        if (isActive() && typeof buddyPhase === 'function') buddyPhase('thinking');
         if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
       },
       thinking_delta: (d) => {
@@ -404,6 +405,7 @@ function buildStreamCallbacks(chat, isActive) {
       },
       text_delta: (d) => {
         chat.streamingText += d.text || '';
+        if (isActive() && typeof buddyPhase === 'function') buddyPhase('writing');
         if (isActive()) {
           // Real text is flowing → clear any prior nudge label so it doesn't
           // linger when the model finally answers.
@@ -415,6 +417,7 @@ function buildStreamCallbacks(chat, isActive) {
         }
       },
       tool_call: (d) => {
+        if (isActive() && typeof buddyPhase === 'function') buddyPhase('tool');
         const last = chat.messages[chat.messages.length - 1];
         const isNewToolCall = !(last && last.role === 'tool_call' && last.tool_use_id && d.tool_use_id && last.tool_use_id === d.tool_use_id);
         if (isNewToolCall) {
@@ -778,6 +781,7 @@ function buildStreamCallbacks(chat, isActive) {
       },
       warmup: (d) => {
         if (d.status === 'waiting') {
+          if (isActive() && typeof buddyPhase === 'function') buddyPhase('warmup');
           if (isActive()) document.getElementById('spinner-label').textContent = 'Waiting for warmup...';
         } else if (d.status === 'ready') {
           stopWarmupPoll(chat);
@@ -792,6 +796,7 @@ function buildStreamCallbacks(chat, isActive) {
         }
       },
       compacting: (d) => {
+        if (typeof buddyPhase === 'function') buddyPhase('compacting');
         const spinnerBar = document.getElementById('spinner-bar');
         const el = document.getElementById('spinner-label');
         if (el) el.textContent = `Compacting context${d.pct ? ` (${d.pct}% full)` : ''}…`;
@@ -1008,6 +1013,7 @@ async function triggerLCM() {
   document.getElementById('spinner-label').textContent = 'Compacting context…';
   document.getElementById('spinner-elapsed').textContent = '';
   spinnerBar.classList.add('active');
+  if (typeof buddyPhase === 'function') buddyPhase('compacting');
   try {
     const result = await API.post('/v1/context/compact', { session_id: sessionId });
     if (result.status === 'no_change') {
@@ -1043,6 +1049,7 @@ async function triggerLCM() {
   } finally {
     if (btn) btn.disabled = false;
     spinnerBar.classList.remove('active');
+    if (typeof buddyTurnEnd === 'function') buddyTurnEnd();
   }
 }
 
@@ -1596,10 +1603,12 @@ function updateStreamingUI(isStreaming, chat) {
     document.getElementById('spinner-model').textContent = spinnerModelName(targetChat);
     document.getElementById('spinner-label').textContent = 'Thinking...';
     document.getElementById('spinner-elapsed').textContent = '';
+    if (typeof buddyTurnStart === 'function') buddyTurnStart();
   } else {
     spinnerBar.classList.remove('active');
     sendBtn.classList.remove('hidden');
     stopBtn.classList.add('hidden');
+    if (typeof buddyTurnEnd === 'function') buddyTurnEnd();
   }
 }
 

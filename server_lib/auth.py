@@ -77,8 +77,20 @@ PREFERENCE_DEFAULTS = {
     "memory_sched_default": None,
     "daily_summary_enabled": False,
     "daily_summary_hour_local": 6,
+    # Cosmetic ASCII companion shown in the chat spinner + welcome screen.
+    # Purely client-side — the server only stores/validates the choice.
+    #   ""           — default-on: client auto-picks a species (deterministic
+    #                  from the user id, so each user reliably gets "theirs")
+    #   "off"        — disabled, classic wave-bar spinner only
+    #   <species id> — a specific species from BUDDY_SPECIES
+    "buddy_species": "",
 }
 PREFERENCE_KEYS = tuple(PREFERENCE_DEFAULTS.keys())
+
+# Allowed buddy species ids. Mirrors BUDDY_SPECIES in web/js/buddy.js — keep
+# the two in sync. Validated server-side so a bad client can't store junk that
+# the renderer would then have to defend against.
+BUDDY_SPECIES = ("duck", "cat", "dragon", "octopus", "penguin", "fox", "owl", "crab")
 
 
 def _coerce_pref(key: str, value):
@@ -116,6 +128,11 @@ def _coerce_pref(key: str, value):
         if iv not in (0, 1, 2):
             raise ValueError(f"{key} must be 0|1|2|null")
         return iv
+    if key == "buddy_species":
+        s = (value or "").strip().lower() if isinstance(value, str) else ""
+        if s and s != "off" and s not in BUDDY_SPECIES:
+            raise ValueError(f"buddy_species must be ''|'off'|{'|'.join(BUDDY_SPECIES)}")
+        return s
     if key == "daily_summary_enabled":
         return bool(value)
     if key == "daily_summary_hour_local":
