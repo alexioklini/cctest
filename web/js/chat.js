@@ -3238,17 +3238,17 @@ function renderToolCall(msg, idx) {
   // tool result carries; only present on read_document.
   let backendBadge = '';
   if (resultStrForFlow) {
-    try {
-      const rj = JSON.parse(resultStrForFlow);
-      if (rj && rj.backend) {
-        const b = String(rj.backend);
-        let label, title;
-        if (b.startsWith('markitdown')) { label = 'markitdown'; title = 'Extrahiert via markitdown (Primärpfad)'; }
-        else if (b.includes('ocr') || b.includes('vision')) { label = 'OCR'; title = `Extrahiert via OCR (${b})`; }
-        else { label = 'fallback'; title = `Extrahiert via interner Fallback (${b})`; }
-        backendBadge = `<span class="tool-badge-backend" title="${title}">${label}</span>`;
-      }
-    } catch(e) {}
+    // Cheap regex extract of the short `backend` field — avoids a full
+    // JSON.parse of the (up to 50KB) result string on every render.
+    const bm = resultStrForFlow.match(/"backend"\s*:\s*"([^"]+)"/);
+    if (bm) {
+      const b = bm[1];
+      let label, title;
+      if (b.startsWith('markitdown')) { label = 'markitdown'; title = 'Extrahiert via markitdown (Primärpfad)'; }
+      else if (b.includes('ocr') || b.includes('vision')) { label = 'OCR'; title = `Extrahiert via OCR (${b})`; }
+      else { label = 'fallback'; title = `Extrahiert via interner Fallback (${b})`; }
+      backendBadge = `<span class="tool-badge-backend" title="${title}">${label}</span>`;
+    }
   }
   // Parallel badge: shown when 2+ tool_calls share the same tool_round
   const toolRound = msg.tool_round;
