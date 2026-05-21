@@ -1696,7 +1696,15 @@ function renderMessages() {
   const _savedMessages = chat.messages;
   if (lcmDividerHtml) chat.messages = msgs;
 
-  let html = lcmDividerHtml;
+  // Incremental render (Ebene 3): instead of blowing away the whole container
+  // and re-highlighting every prior turn on each SSE event, build an ordered
+  // list of keyed blocks and reconcile them against the existing DOM. Each
+  // block carries a content hash; an unchanged block keeps its DOM node (and
+  // its already-applied syntax highlighting) untouched. Only changed/new blocks
+  // are re-rendered + re-highlighted. The active turn is the usual hot block
+  // during streaming; completed turns above it are skipped entirely.
+  const blocks = []; // { key, html, hash }
+  if (lcmDividerHtml) blocks.push({ key: 'lcm-divider', html: lcmDividerHtml, hash: lcmDividerHtml });
   for (const t of turns) {
     const isCollapsed = chat._collapsedTurns.has(t.turnNum);
     const cls = isCollapsed ? 'turn-group collapsed' : 'turn-group';
@@ -1743,7 +1751,7 @@ function renderMessages() {
       const isOpen = !chat._collapsedTurns.has(t.turnNum);
       const toggleFn = `toggleTurnCollapse(${t.turnNum})`;
       const sessionId = chat.sessionId || '';
-      html += `<div class="lcm-summary-block" data-turn="${t.turnNum}">
+      const lcmHtml = `<div class="lcm-summary-block" data-turn="${t.turnNum}">
         <div class="lcm-summary-header" onclick="${toggleFn}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;transition:transform .2s;transform:rotate(${isOpen?'0':'-90'}deg)"><polyline points="6 9 12 15 18 9"/></svg>
           <span style="flex:1">Context compacted</span>
@@ -1751,6 +1759,7 @@ function renderMessages() {
         </div>
         ${isOpen ? `<div class="lcm-summary-body">${marked.parse(summaryRaw)}</div>` : ''}
       </div>`;
+      blocks.push({ key: 'lcm-' + t.turnNum, html: lcmHtml, hash: lcmHtml });
     } else {
       let body = renderTurnBody(chat.messages, t.memberIdxs, t.turnNum, chat);
       // Chat summary block: rendered once, under the first turn's badge.
@@ -1774,39 +1783,104 @@ function renderMessages() {
       // The round-0 preamble (artifact-folder note) is intentionally NOT shown
       // in chat view — it's plumbing, surfaced in the session inspector as its
       // own card. turnQuestionFull already strips it from the header hint.
-      html += `<div class="${cls}" data-turn="${t.turnNum}">${badge}${summaryBlock}<div class="turn-body">${body}</div></div>`;
+      const turnHtml = `<div class="${cls}" data-turn="${t.turnNum}">${badge}${summaryBlock}<div class="turn-body">${body}</div></div>`;
+      blocks.push({ key: 'turn-' + t.turnNum, html: turnHtml, hash: turnHtml });
     }
   }
 
   if (lcmDividerHtml) chat.messages = _savedMessages;
 
-  container.innerHTML = html;
+  // Reconcile the ordered block list against the container's children, keyed by
+  // a `data-render-key` we stamp on each block's root element. Unchanged blocks
+  // (same key + same hash) are left in place — their DOM and syntax highlighting
+  // survive. Changed blocks are replaced, new blocks inserted, stale removed.
+  // `changedRoots` collects the elements we actually (re)wrote so post-render
+  // work (highlight, chevron-fit) runs only on them, not the whole tree.
+  const changedRoots = _reconcileMessageBlocks(container, blocks);
 
   // Hide hint-toggle chevron when the question fits without ellipsis.
   // Expanded hints always show the chevron (so the user can collapse).
-  container.querySelectorAll('.turn-group-header').forEach(hdr => {
-    const hint = hdr.querySelector('.turn-group-collapsed-hint');
-    const toggle = hdr.querySelector('.turn-group-hint-toggle');
-    if (!hint || !toggle) return;
-    if (hint.classList.contains('expanded')) {
-      toggle.style.display = '';
-      return;
-    }
-    if (hint.clientWidth === 0) return; // not laid out yet — leave default
-    const truncated = hint.scrollWidth > hint.clientWidth + 1;
-    toggle.style.display = truncated ? '' : 'none';
-  });
+  // Only the freshly-written blocks can have changed layout; skip the rest.
+  for (const root of changedRoots) {
+    root.querySelectorAll('.turn-group-header').forEach(hdr => {
+      const hint = hdr.querySelector('.turn-group-collapsed-hint');
+      const toggle = hdr.querySelector('.turn-group-hint-toggle');
+      if (!hint || !toggle) return;
+      if (hint.classList.contains('expanded')) {
+        toggle.style.display = '';
+        return;
+      }
+      if (hint.clientWidth === 0) return; // not laid out yet — leave default
+      const truncated = hint.scrollWidth > hint.clientWidth + 1;
+      toggle.style.display = truncated ? '' : 'none';
+    });
 
-  // Syntax highlight code blocks (skip tool-result blocks — pre-highlighted inline)
-  container.querySelectorAll('pre:not(.tool-result-pre) code').forEach(block => {
-    try { hljs.highlightElement(block); } catch(e) {}
-  });
+    // Syntax highlight code blocks (skip tool-result blocks — pre-highlighted inline)
+    root.querySelectorAll('pre:not(.tool-result-pre) code').forEach(block => {
+      try { hljs.highlightElement(block); } catch(e) {}
+    });
+  }
 
   // Update right panel badges (attachment/reference/artifact counts)
   if (typeof updateRightPanelBadges === 'function') updateRightPanelBadges();
-  // Re-attach the scroll-sync observer to the rebuilt turn DOM so scrolling
-  // a turn into view drives the right panel's per-turn focus.
-  if (typeof initTurnScrollSync === 'function') initTurnScrollSync();
+  // Re-attach the scroll-sync observer to the (possibly) rebuilt turn DOM so
+  // scrolling a turn into view drives the right panel's per-turn focus. Cheap +
+  // idempotent (disconnects then re-observes), so run it whenever anything moved.
+  if (changedRoots.length && typeof initTurnScrollSync === 'function') initTurnScrollSync();
+}
+
+// Reconcile an ordered list of {key, html, hash} blocks against `container`'s
+// direct children. Returns the array of element roots that were newly inserted
+// or replaced (i.e. need post-render highlighting). Children are matched by the
+// `data-render-key` attribute we stamp; a block whose key AND hash both match
+// the existing element in the right position is left completely untouched.
+function _reconcileMessageBlocks(container, blocks) {
+  const changed = [];
+  // Fast path: empty target.
+  if (!blocks.length) { container.innerHTML = ''; return changed; }
+
+  // Build a node from an HTML string (each block is a single root element).
+  const makeNode = (b) => {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = b.html.trim();
+    const el = tpl.content.firstElementChild;
+    if (el) { el.setAttribute('data-render-key', b.key); el._renderHash = b.hash; }
+    return el;
+  };
+
+  // Index existing children by render-key for O(1) reuse lookups.
+  const existing = new Map();
+  for (const child of Array.from(container.children)) {
+    const k = child.getAttribute && child.getAttribute('data-render-key');
+    if (k != null) existing.set(k, child);
+    else child.remove(); // stray node without our key — drop it
+  }
+
+  let cursor = container.firstElementChild;
+  for (const b of blocks) {
+    const prior = existing.get(b.key);
+    if (prior && prior._renderHash === b.hash) {
+      // Unchanged: ensure it sits at the cursor position, then advance past it.
+      if (prior !== cursor) container.insertBefore(prior, cursor);
+      else cursor = cursor.nextElementSibling;
+      existing.delete(b.key);
+      continue;
+    }
+    const node = makeNode(b);
+    if (!node) continue;
+    if (prior) {
+      container.replaceChild(node, prior);
+      existing.delete(b.key);
+      cursor = node.nextElementSibling;
+    } else {
+      container.insertBefore(node, cursor);
+    }
+    changed.push(node);
+  }
+
+  // Remove any leftover nodes whose keys no longer appear.
+  for (const stale of existing.values()) stale.remove();
+  return changed;
 }
 
 // --- Turn collapse/nav helpers ---
