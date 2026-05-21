@@ -881,7 +881,7 @@ class AdminHandlerMixin:
 
     # Tools whose path arguments produce reference files (read-only inputs).
     _WF_INPUT_TOOLS = frozenset({
-        "read_file", "read_document", "read_attachment",
+        "read_file", "read_document",
         "transcribe_audio", "parse_pdf", "parse_docx",
         "ask_user_for_file",
     })

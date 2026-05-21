@@ -3862,93 +3862,6 @@ def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: 
         return f"(Image: {filename} — vision error: {e})"
 
 
-def tool_read_attachment(args: dict) -> str:
-    """Read a user-attached file from the session attachment store."""
-    name = args.get("name", "")
-    if not name:
-        return _err("read_attachment: 'name' is required")
-    attachments = getattr(_thread_local, 'attachments', None) or {}
-    if name not in attachments:
-        # Try case-insensitive match
-        for k in attachments:
-            if k.lower() == name.lower():
-                name = k
-                break
-        else:
-            available = list(attachments.keys())
-            if available:
-                return _err(f"Attachment '{name}' not found. Available: {', '.join(available)}")
-            return _err("No attachments in this session.")
-    att = attachments[name]
-    content = att.get("content", "")
-    encoding = att.get("encoding", "text")
-    media_type = att.get("media_type", "text/plain")
-    ext = os.path.splitext(name)[1].lower()
-
-    _anon_src = f"attachment:{name}"
-
-    def _wrap(s):
-        return _gdpr_anon_tool_text(s, _anon_src) if isinstance(s, str) else s
-
-    # --- Binary files (base64 encoded) ---
-    if encoding == "base64":
-        import base64 as b64_mod
-        import io as io_mod
-        try:
-            raw_bytes = b64_mod.b64decode(content)
-        except Exception as e:
-            return _err(f"Failed to decode attachment: {e}")
-
-        # PDF / DOCX / PPTX / XLSX — route through the unified doc_convert
-        # pipeline (markitdown-first → per-format fallback), the same path
-        # read_document and project mining use. The pipeline is path-based,
-        # so spill the in-memory bytes to a temp file with the correct
-        # extension, extract, then clean up. caps=False = full fidelity.
-        norm_ext = ext
-        if (ext == ".pdf") or (not ext and "pdf" in media_type.lower()):
-            norm_ext = ".pdf"
-        if norm_ext in (".pdf", ".docx", ".pptx", ".xlsx"):
-            from engine.doc_convert import _do_extract
-            kwargs: dict = {"caps": False}
-            if norm_ext == ".xlsx":
-                kwargs["sheet"] = args.get("sheet")
-            elif norm_ext == ".pptx":
-                kwargs["slides"] = args.get("slides")
-            elif norm_ext == ".pdf":
-                kwargs["pages"] = args.get("pages", "") or None
-                kwargs["include_tables"] = bool(args.get("include_tables"))
-                kwargs["emit_meta"] = True
-                kwargs["page_marker"] = "--- Page"
-            import tempfile
-            tmp_path = ""
-            try:
-                with tempfile.NamedTemporaryFile(
-                        suffix=norm_ext, delete=False) as tf:
-                    tf.write(raw_bytes)
-                    tmp_path = tf.name
-                text, _backend, err = _do_extract(tmp_path, **kwargs)
-            finally:
-                if tmp_path:
-                    try:
-                        os.remove(tmp_path)
-                    except OSError:
-                        pass
-            if err:
-                return _err(f"read_attachment: {err}")
-            if not text:
-                return _wrap(f"({norm_ext.lstrip('.')} has no extractable text)")
-            return _wrap(text)
-
-        # Images — use vision model
-        if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg") or media_type.startswith("image/"):
-            return _wrap(_describe_image_with_vision(content, media_type, name))
-
-        # Unknown binary
-        return f"(Binary file: {name}, {len(raw_bytes)} bytes, type: {media_type})"
-
-    # --- Text files ---
-    return _wrap(content)
-
 
 def tool_read_document(args: dict) -> str:
     """Format-aware document reader."""
@@ -4004,9 +3917,9 @@ def tool_read_document(args: dict) -> str:
         ext = os.path.splitext(path)[1].lower()
 
         # Office/PDF formats route through the unified doc_convert pipeline
-        # (markitdown-first → per-format fallback), shared with project mining
-        # and tool_read_attachment. read_document passes caps=False (full
-        # fidelity) + the selection/meta knobs each format supports.
+        # (markitdown-first → per-format fallback), shared with project mining.
+        # read_document passes caps=False (full fidelity) + the selection/meta
+        # knobs each format supports.
         if ext in (".pdf", ".docx", ".pptx", ".xlsx"):
             from engine.doc_convert import _do_extract
             kwargs: dict = {"caps": False}
@@ -9112,8 +9025,8 @@ class DocumentParser:
     def parse_docx(path: str) -> str:
         """Parse DOCX to markdown. Thin shim over the unified doc_convert
         pipeline (markitdown-first → _extract_docx fallback) so there is a
-        single DOCX implementation shared with read_document, read_attachment,
-        and project mining."""
+        single DOCX implementation shared with read_document and project
+        mining."""
         from engine.doc_convert import _do_extract
         text, _backend, err = _do_extract(path)
         if err:
@@ -9177,8 +9090,8 @@ class DocumentParser:
     def parse_xlsx(path: str, sheet: str | None = None) -> str:
         """Parse XLSX to markdown tables. Thin shim over the unified
         doc_convert pipeline (markitdown-first → _extract_xlsx fallback) —
-        single XLSX implementation shared with read_document, read_attachment,
-        and project mining. caps=False = full fidelity (no row cap)."""
+        single XLSX implementation shared with read_document and project
+        mining. caps=False = full fidelity (no row cap)."""
         from engine.doc_convert import _do_extract
         text, _backend, err = _do_extract(path, caps=False, sheet=sheet)
         if err:
@@ -9189,8 +9102,7 @@ class DocumentParser:
     def parse_pptx(path: str, slides: str | None = None) -> str:
         """Parse PPTX to markdown. Thin shim over the unified doc_convert
         pipeline (markitdown-first → _extract_pptx fallback) — single PPTX
-        implementation shared with read_document, read_attachment, and
-        project mining."""
+        implementation shared with read_document and project mining."""
         from engine.doc_convert import _do_extract
         text, _backend, err = _do_extract(path, slides=slides)
         if err:
