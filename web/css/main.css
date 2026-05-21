@@ -4542,27 +4542,17 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 @keyframes buddyStretch { 0%,100% { transform: scaleY(1); } 50% { transform: scaleY(1.18); } }
 @keyframes buddySquish  { 0%,100% { transform: scaleX(1); } 50% { transform: scaleX(0.8) scaleY(1.1); } }
 
-/* Whimsical status text, floating at the pet's top-right. Claude-Code-CLI
-   flavour ("Pondering…", "Musing…"). Drawn as a classic comic THOUGHT bubble:
-   a puffy scalloped cloud (SVG, drawn in the buddy's own colour via
-   currentColor) sits behind the word, with a trail of two shrinking circles
-   descending toward the pet. The cloud SVG is a fixed-size background so the
-   scallops stay organic — the words are kept short (see BUDDY_PHASES in
-   buddy.js) so they fit inside it. Shown only while busy. */
+/* Whimsical status text, floating just above the pet. Claude-Code-CLI flavour
+   ("Pondering…", "Musing…"). Bare monospace text in the buddy's own colour — no
+   bubble, no box — sitting close above the pet. Opacity tracks the busy pet via
+   var(--buddy-op) so it fades in lockstep. Shown only while busy. */
 .composer-buddy-bubble {
   position: absolute;
-  bottom: 78%;
-  left: 62%;
-  margin: 0;
-  /* Fixed cloud footprint; padding centres the short word in the puffy body. */
-  width: 78px;
-  height: 40px;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 1px;
   padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* nudge the text up into the cloud body, off the lower scallops + tail */
-  padding-bottom: 8px;
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: 8px;
@@ -4570,29 +4560,13 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   letter-spacing: 0.1px;
   line-height: 1;
   color: var(--buddy-color, var(--accent-brand));
-  /* Puffy cloud + two trailing dots, one coherent SVG. fill = page bg (opaque
-     so the pet doesn't show through), stroke = the buddy colour (baked in by
-     buddy.js). Held at the same opacity as the busy pet (--buddy-op) so the
-     cloud's outline reads at the same weight as the buddy, not darker. */
-  background-image: var(--buddy-cloud);
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 100% 100%;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.18));
   pointer-events: none;
   opacity: var(--buddy-op, 0.9);
   animation: buddyBubbleIn 0.25s ease;
 }
-/* --buddy-cloud (the scalloped cloud SVG, with stroke=buddy-colour and
-   fill=theme page-bg baked in) is set per-element by buddy.js:_setColor →
-   buddyCloudSvg(). A background SVG can't read CSS vars/currentColor, so it
-   must be generated in JS. No static fallback here — the bubble only renders
-   while buddy.js is driving it, and JS always sets the var first. */
-/* Pop-in only animates transform (a tiny rise + scale) — NOT opacity. Opacity
-   is owned entirely by var(--buddy-op) so the cloud always fades in lockstep
-   with the pet; animating opacity here used to leave the bubble parked at the
-   0% keyframe (opacity:0) when it was shown from display:none mid-animation. */
-@keyframes buddyBubbleIn { from { transform: translateY(3px) scale(0.9); } to { transform: translateY(0) scale(1); } }
+/* Pop-in animates transform only (a tiny rise) — NOT opacity, which is owned by
+   var(--buddy-op) so the text fades in lockstep with the pet. */
+@keyframes buddyBubbleIn { from { transform: translateX(-50%) translateY(3px); } to { transform: translateX(-50%) translateY(0); } }
 .spinner-bar .spinner-elapsed { margin-left: auto; font-family: var(--font-mono); font-size: 11px; }
 
 /* Footer bar */

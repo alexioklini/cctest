@@ -171,30 +171,6 @@ const BUDDY_SPECIES = {
 
 const BUDDY_IDS = Object.keys(BUDDY_SPECIES);
 
-// Build the comic thought-bubble cloud as an encoded SVG data-URL, with the
-// stroke (the buddy's colour) and fill (the live theme's page background, so
-// the pet doesn't show through the text) baked in — a background SVG can't read
-// CSS vars or currentColor. viewBox 0..78 x 0..40: cloud body = overlapping
-// circles giving the scalloped outline; two shrinking dots trail bottom-left
-// toward the pet. Returns a `url("…")` string ready for a CSS custom property.
-function buddyCloudSvg(stroke) {
-  const fill = (getComputedStyle(document.documentElement)
-    .getPropertyValue('--bg-page') || '#ffffff').trim() || '#ffffff';
-  const svg =
-    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 78 40' fill='${fill}' stroke='${stroke}' stroke-width='1.2'>` +
-    `<g>` +
-    `<circle cx='17' cy='15' r='9'/><circle cx='30' cy='10' r='9'/>` +
-    `<circle cx='44' cy='9' r='9'/><circle cx='58' cy='12' r='9'/>` +
-    `<circle cx='64' cy='19' r='8'/><circle cx='55' cy='24' r='9'/>` +
-    `<circle cx='40' cy='25' r='10'/><circle cx='25' cy='24' r='9'/>` +
-    `<circle cx='14' cy='21' r='8'/>` +
-    `<rect x='18' y='10' width='44' height='15' rx='6' stroke='none'/>` +
-    `</g>` +
-    `<circle cx='12' cy='32' r='4'/><circle cx='7' cy='38' r='2.2'/>` +
-    `</svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
-}
-
 // Deterministic species pick from a user id — mulberry-ish: a cheap string
 // hash mod the species count. Same id always lands on the same species.
 function buddyDefaultSpecies(userId) {
@@ -280,20 +256,12 @@ class FloatingBuddy {
     this._els().forEach(el => el.style.setProperty('--buddy-op', String(v)));
     this._bubbles().forEach(b => b.style.setProperty('--buddy-op', String(v)));
   }
-  // Per-species accent color, applied to both the pet and its bubble so the
-  // whole companion reads as one themed unit. Falls back to the brand accent.
-  // The thought-bubble cloud is an SVG *background-image* — CSS currentColor
-  // does NOT reach a background SVG's stroke, so the stroke (buddy colour) and
-  // fill (theme page-bg) are baked into the data-URL here and set as
-  // --buddy-cloud on each bubble. main.css just references var(--buddy-cloud).
+  // Per-species accent color, applied to both the pet and its status text so
+  // the whole companion reads as one themed unit. Falls back to the brand accent.
   _setColor(c) {
     const col = c || 'var(--accent-brand)';
     this._els().forEach(el => el.style.setProperty('--buddy-color', col));
-    const cloud = buddyCloudSvg(col || '#888');
-    this._bubbles().forEach(b => {
-      b.style.setProperty('--buddy-color', col);
-      b.style.setProperty('--buddy-cloud', cloud);
-    });
+    this._bubbles().forEach(b => b.style.setProperty('--buddy-color', col));
   }
   _show(on)   { this._els().forEach(el => { el.style.display = on ? '' : 'none'; }); }
   _setMotion(cls) {
