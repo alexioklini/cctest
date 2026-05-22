@@ -4522,8 +4522,8 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 /* The cartoon itself. Sized small to sit in the footer; scales crisply. */
 .composer-buddy .b-svg {
   display: block;
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   overflow: visible;
 }
 @keyframes buddyFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
