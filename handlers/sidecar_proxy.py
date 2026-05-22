@@ -346,6 +346,15 @@ def _translate_anthropic_event(ev_type: str, data: dict,
         result_payload = state.get("tool_results", {}).pop(result_key, None)
         callback("tool_result", {
             "name": data.get("name", ""),
+            # Forward the tool_use_id so the client can pair this result with its
+            # tool_call row by stable id. The `tool_call` event carries the id; if
+            # `tool_result` omits it, the client's id-match fails AND its
+            # name-fallback is disabled (it only fires when the call row has no
+            # id), so the result never attaches to the call — spinner stays,
+            # output hidden until reload (where rows are rebuilt id-less from
+            # metadata and the name-fallback works). See web/js/chat.js
+            # renderToolCall lookahead.
+            "tool_use_id": data.get("tool_use_id", ""),
             "result": result_payload or "",
             "tool_round": data.get("round", state.get("round_index", 0)),
             "elapsed_ms": data.get("elapsed_ms", 0),
