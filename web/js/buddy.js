@@ -1,8 +1,8 @@
-// buddy.js — cosmetic ASCII companion that lives inline in the composer footer.
+// buddy.js — cosmetic comic companion that lives inline in the composer footer.
 // Inspired by github.com/1270011/claude-buddy, reduced to the part that fits
-// Brain's web UI: a little animated pet, picked per-user, that reacts to what
-// the agent is doing — typing, thinking, running a tool, writing, warming up,
-// compacting — each with its own pose, motion and whimsical status bubble.
+// Brain's web UI: a little flat-comic animal, picked per-user, that reacts to
+// what the agent is doing — typing, thinking, running a tool, writing, warming
+// up, compacting — each with its own motion and whimsical status word.
 //
 // Purely client-side. The only server state is the `buddy_species` preference
 // (see PREFERENCE_DEFAULTS / BUDDY_SPECIES in server_lib/auth.py — keep the id
@@ -10,162 +10,99 @@
 // "" (the default) → a species deterministically derived from the user id so
 // each user reliably gets "their" buddy.
 //
-// Each species has three idle frames + one blink + a `poses` map (one pose per
-// active phase). Every frame of a species is the same line count and width
-// (rendered in a monospace <pre>, so columns must line up).
+// Each species is a hand-drawn inline-SVG cartoon. Line-work uses currentColor
+// (the element's `color`, set to the buddy's --buddy-color), so each buddy
+// recolours cleanly. Per-phase expression (blink, wide eyes, busy mouth, zzz)
+// is done by toggling a `phase-*` CSS class on the buddy element (see main.css)
+// — no per-frame redraw. viewBox is a shared 0 0 40 40 so they line up.
+//
+// All buddies share a base template (round head, two eyes, a mouth) and vary
+// by ears/snout + colour. `face()` draws the common eyes+mouth+blink+zzz layers
+// so each species body only adds its silhouette. Eyes are <circle>s the CSS
+// targets by class for the phase expressions.
 
+// Common face layer: pupils (blink/wide via CSS), mouth, a 'zzz' for idle, and
+// a 'spark' the busy phases show. cx/cy let species nudge the face if needed.
+function buddyFace(opts = {}) {
+  const ex = opts.eyeDx ?? 6;     // half-distance between eyes
+  const cx = opts.cx ?? 20, cy = opts.cy ?? 19;
+  return (
+    `<g class="b-face">` +
+    // eyes: outer is the open eye, the .b-lid line is shown on blink by CSS
+    `<circle class="b-eye" cx="${cx - ex}" cy="${cy}" r="2.4"/>` +
+    `<circle class="b-eye" cx="${cx + ex}" cy="${cy}" r="2.4"/>` +
+    `<line class="b-lid" x1="${cx - ex - 2.6}" y1="${cy}" x2="${cx - ex + 2.6}" y2="${cy}"/>` +
+    `<line class="b-lid" x1="${cx + ex - 2.6}" y1="${cy}" x2="${cx + ex + 2.6}" y2="${cy}"/>` +
+    // mouth: a small smile; .b-mouth-o (busy) swaps to an 'o' via CSS opacity
+    `<path class="b-mouth" d="M ${cx - 3} ${cy + 5.5} Q ${cx} ${cy + 8} ${cx + 3} ${cy + 5.5}" fill="none"/>` +
+    `<circle class="b-mouth-o" cx="${cx}" cy="${cy + 6.5}" r="1.8"/>` +
+    // idle 'zzz' (top-right), shown only in idle by CSS
+    `<text class="b-zzz" x="33" y="9" font-size="6" font-family="var(--font-mono)">z</text>` +
+    // busy spark (top-right), shown by CSS in tool/thinking/etc.
+    `<g class="b-spark"><path d="M33 6 l1.4 3 3 1.4 -3 1.4 -1.4 3 -1.4 -3 -3 -1.4 3 -1.4 z"/></g>` +
+    `</g>`
+  );
+}
+
+// Each `body` is the species silhouette; buddyFace() overlays the shared face.
+// stroke-width/stroke/fill are set on the host <svg> in CSS (currentColor).
 const BUDDY_SPECIES = {
-  duck: {
-    label: 'Duck',
-    color: '#e3a008',
-    frames: [
-      ['   ___   ', '  (o ,>  ', ' (   )___', ' /     / ', '  ^^^^^  '],
-      ['   ___   ', '  (o ,>  ', ' (   )___', '  /    / ', '  ^^^^^  '],
-      ['   ___   ', '  (o ,>  ', ' (   )___', ' /     / ', '   ^^^^^ '],
-    ],
-    blink:
-      ['   ___   ', '  (- ,>  ', ' (   )___', ' /     / ', '  ^^^^^  '],
-    poses: {
-      typing: [['   ___   ', '  (O ,>  ', ' (   )___', ' /     / ', '  ^^^^^  '], ['   ___   ', '  (O ,>  ', ' (   )___', '  /    / ', '  ^^^^^  ']],
-      thinking: [['   ___ ? ', '  (o ,>  ', ' (   )___', ' /     / ', '  ^^^^^  '], ['   ___?  ', '  (- ,>  ', ' (   )___', ' /     / ', '  ^^^^^  ']],
-      tool: [['   ___   ', '  (o ,>  ', ' (   )-=#', ' /     / ', '  ^^^^^  '], ['   ___   ', '  (o ,>  ', ' (   )-=*', ' /     / ', '  ^^^^^  ']],
-      writing: [['   ___   ', '  (o ,>  ', ' (   )__/', ' /     /~', '  ^^^^^  '], ['   ___   ', '  (o ,>  ', ' (   )__/', ' /     /-', '  ^^^^^  ']],
-      warmup: [['   ___   ', '  (o ,>  ', ' (   )___', ' /     / ', ' ~^^^^^~ '], ['   ___   ', '  (o ,>  ', ' (   )___', ' /     / ', '  ^^^^^  ']],
-      compacting: [['   ___   ', '  (o ,>  ', ' (   )_><', ' /     / ', '  ^^^^^  '], ['   ___   ', '  (o ,>  ', ' (  )><__', ' /    /  ', '  ^^^^   ']],
-    },
-  },
   cat: {
-    label: 'Cat',
-    color: '#9ca3af',
-    frames: [
-      [' /\\___/\\ ', '(  o o  )', ' )  ^  ( ', '(  )=(  )', ' (__)(__)'],
-      [' /\\___/\\ ', '(  o o  )', ' )  ^  ( ', '(  )=(  )', ' (__)(__)'],
-      [' /\\___/\\ ', '(  o o  )', ' )  ^  (~', '(  )=(  )', ' (__)(__)'],
-    ],
-    blink:
-      [' /\\___/\\ ', '(  - -  )', ' )  ^  ( ', '(  )=(  )', ' (__)(__)'],
-    poses: {
-      typing: [[' /\\___/\\ ', '(  O O  )', ' )  ^  ( ', '(  )=(  )', ' (__)(__)'], [' /\\___/\\ ', '(  O O  )', ' )  -  ( ', '(  )=(  )', ' (__)(__)']],
-      thinking: [[' /\\___/\\ ', '(  o -  )', ' )  ^  ( ', '(  )=(  )', ' (__)(__)'], [' /\\___/\\ ', '(  - o  )', ' )  ^  ( ', '(  )=(  )', ' (__)(__)']],
-      tool: [[' /\\___/\\ ', '(  o o  )', ' )  ^  ( ', '(  )#(  )', ' (__)(__)'], [' /\\___/\\ ', '(  o o  )', ' )  ^  ( ', '(  )*(  )', ' (__)(__)']],
-      writing: [[' /\\___/\\ ', '(  o o  )', ' )  ^  (~', '(  )=(  )', ' (__)(__)'], [' /\\___/\\ ', '(  o o  )', ' )  ^  (-', '(  )=(  )', ' (__)(__)']],
-      warmup: [[' /\\___/\\ ', '(  o o  )', ' )  ^  ( ', '(  )=(  )', '~(__)(__)'], [' /\\___/\\ ', '(  o o  )', ' )  ^  ( ', '(  )=(  )', ' (__)(__)']],
-      compacting: [[' /\\___/\\ ', '(  o o  )', ' ) >^< ( ', '(  )=(  )', ' (__)(__)'], [' /\\___/\\ ', '(  o o  )', ' ) <^> ( ', '(  )=(  )', ' (__)(__)']],
-    },
-  },
-  dragon: {
-    label: 'Dragon',
-    color: '#16a34a',
-    frames: [
-      ['    __<>   ', '  _/ o \\_  ', ' / \\___/ \\ ', ' \\_/   \\_/ ', '   "" ""   '],
-      ['    __<>   ', '  _/ o \\_  ', ' / \\___/ \\ ', ' \\_/   \\_/ ', '   "" ""   '],
-      ['    __<>   ', '  _/ o \\_  ', ' / \\___/ \\~', ' \\_/   \\_/ ', '   "" ""   '],
-    ],
-    blink:
-      ['    __<>   ', '  _/ - \\_  ', ' / \\___/ \\ ', ' \\_/   \\_/ ', '   "" ""   '],
-    poses: {
-      typing: [['    __<>   ', '  _/ O \\_  ', ' / \\___/ \\ ', ' \\_/   \\_/ ', '   "" ""   '], ['    __<>   ', '  _/ O \\_  ', ' / \\___/ \\ ', ' \\_/   \\_/ ', '  "" ""    ']],
-      thinking: [['    __<> ? ', '  _/ o \\_  ', ' / \\___/ \\ ', ' \\_/   \\_/ ', '   "" ""   '], ['    __<>?  ', '  _/ - \\_  ', ' / \\___/ \\ ', ' \\_/   \\_/ ', '   "" ""   ']],
-      tool: [['    __<>   ', '  _/ o \\_  ', ' / \\___/=# ', ' \\_/   \\_/ ', '   "" ""   '], ['    __<>   ', '  _/ o \\_  ', ' / \\___/=* ', ' \\_/   \\_/ ', '   "" ""   ']],
-      writing: [['    __<>   ', '  _/ o \\_  ', ' / \\___/ \\~', ' \\_/   \\_/ ', '   "" ""   '], ['    __<>   ', '  _/ o \\_  ', ' / \\___/ \\-', ' \\_/   \\_/ ', '   "" ""   ']],
-      warmup: [['    __<>   ', '  _/ o \\_  ', ' / \\___/ \\ ', ' \\_/   \\_/ ', '  ~"" ""~  '], ['    __<>   ', '  _/ o \\_  ', ' / \\___/ \\ ', ' \\_/   \\_/ ', '   "" ""   ']],
-      compacting: [['    __<>   ', '  _/ o \\_  ', ' / \\_><_/  ', ' \\_/   \\_/ ', '   "" ""   '], ['    __<>   ', '  _/ o \\_  ', ' / >\\_/< \\ ', ' \\_/   \\_/ ', '   "" ""   ']],
-    },
-  },
-  octopus: {
-    label: 'Octopus',
-    color: '#9333ea',
-    frames: [
-      ['   _____  ', '  / o o \\ ', ' |   ^   |', '  \\_____/ ', ' (/(/ \\)\\)'],
-      ['   _____  ', '  / o o \\ ', ' |   ^   |', '  \\_____/ ', ' )\\)\\ (/(/'],
-      ['   _____  ', '  / o o \\ ', ' |   ^   |', '  \\_____/ ', ' (/)\\ (/)\\'],
-    ],
-    blink:
-      ['   _____  ', '  / - - \\ ', ' |   ^   |', '  \\_____/ ', ' (/(/ \\)\\)'],
-    poses: {
-      typing: [['   _____  ', '  / O O \\ ', ' |   ^   |', '  \\_____/ ', ' (/(/ \\)\\)'], ['   _____  ', '  / O O \\ ', ' |   ^   |', '  \\_____/ ', ' )\\)\\ (/(/']],
-      thinking: [['   _____ ?', '  / o - \\ ', ' |   ^   |', '  \\_____/ ', ' (/(/ \\)\\)'], ['   _____? ', '  / - o \\ ', ' |   ^   |', '  \\_____/ ', ' (/(/ \\)\\)']],
-      tool: [['   _____  ', '  / o o \\ ', ' |   ^   |', '  \\_____/ ', ' (/#/ \\#\\)'], ['   _____  ', '  / o o \\ ', ' |   ^   |', '  \\_____/ ', ' )*)* (*(*']],
-      writing: [['   _____  ', '  / o o \\ ', ' |   ^   |', '  \\_____/ ', ' (/(/ \\)~)'], ['   _____  ', '  / o o \\ ', ' |   ^   |', '  \\_____/ ', ' (~(/ \\)\\)']],
-      warmup: [['   _____  ', '  / o o \\ ', ' |   ^   |', '  \\_____/ ', '\\)\\)\\(/(/('], ['   _____  ', '  / o o \\ ', ' |   ^   |', '  \\_____/ ', ' (/(/ \\)\\)']],
-      compacting: [['   _____  ', '  / o o \\ ', ' |  >^<  |', '  \\_____/ ', ' (/(/ \\)\\)'], ['   _____  ', '  / o o \\ ', ' |  <^>  |', '  \\_____/ ', ' (/(/ \\)\\)']],
-    },
-  },
-  penguin: {
-    label: 'Penguin',
-    color: '#475569',
-    frames: [
-      ['  .----.  ', ' / o  o \\ ', ' |  <>  | ', ' \\  ww  / ', '  ^^  ^^  '],
-      ['  .----.  ', ' / o  o \\ ', ' |  <>  | ', ' \\  ww  / ', '  ^^  ^^  '],
-      ['  .----.  ', ' / o  o \\ ', ' |  <>  | ', ' \\  ww  / ', '   ^^^^   '],
-    ],
-    blink:
-      ['  .----.  ', ' / -  - \\ ', ' |  <>  | ', ' \\  ww  / ', '  ^^  ^^  '],
-    poses: {
-      typing: [['  .----.  ', ' / O  O \\ ', ' |  <>  | ', ' \\  ww  / ', '  ^^  ^^  '], ['  .----.  ', ' / O  O \\ ', ' |  <>  | ', ' \\  ww  / ', '   ^^^^   ']],
-      thinking: [['  .----. ?', ' / o  - \\ ', ' |  <>  | ', ' \\  ww  / ', '  ^^  ^^  '], ['  .----.? ', ' / -  o \\ ', ' |  <>  | ', ' \\  ww  / ', '  ^^  ^^  ']],
-      tool: [['  .----.  ', ' / o  o \\ ', ' |  <>  | ', ' \\# ww #/ ', '  ^^  ^^  '], ['  .----.  ', ' / o  o \\ ', ' |  <>  | ', ' \\* ww *# ', '  ^^  ^^  ']],
-      writing: [['  .----.  ', ' / o  o \\ ', ' |  <>  | ', ' \\  ww  /~', '  ^^  ^^  '], ['  .----.  ', ' / o  o \\ ', ' |  <>  | ', ' \\  ww  /-', '  ^^  ^^  ']],
-      warmup: [['  .----.  ', ' / o  o \\ ', ' |  <>  | ', ' \\  ww  / ', ' ^^    ^^ '], ['  .----.  ', ' / o  o \\ ', ' |  <>  | ', ' \\  ww  / ', '   ^^^^   ']],
-      compacting: [['  .----.  ', ' / o  o \\ ', ' |  <>  | ', ' \\ >ww< / ', '  ^^  ^^  '], ['  .----.  ', ' / o  o \\ ', ' |  <>  | ', ' \\ <ww> / ', '  ^^  ^^  ']],
-    },
+    label: 'Cat', color: '#9ca3af',
+    body:
+      `<path d="M9 16 L7 7 L14 12 M31 16 L33 7 L26 12"/>` +          // ears
+      `<circle cx="20" cy="21" r="13"/>` +                            // head
+      `<path d="M14 24 h-5 M14 26 h-5 M26 24 h5 M26 26 h5"/>`,        // whiskers
   },
   fox: {
-    label: 'Fox',
-    color: '#ea580c',
-    frames: [
-      [' /\\    /\\  ', '/  \\__/  \\ ', '\\  o  o  / ', ' \\  ww  /  ', '  \\_vv_/   '],
-      [' /\\    /\\  ', '/  \\__/  \\ ', '\\  o  o  / ', ' \\  ww  /  ', '  \\_vv_/   '],
-      [' /\\    /\\  ', '/  \\__/  \\ ', '\\  o  o  / ', ' \\  ww  /~ ', '  \\_vv_/   '],
-    ],
-    blink:
-      [' /\\    /\\  ', '/  \\__/  \\ ', '\\  -  -  / ', ' \\  ww  /  ', '  \\_vv_/   '],
-    poses: {
-      typing: [[' /\\    /\\  ', '/  \\__/  \\ ', '\\  O  O  / ', ' \\  ww  /  ', '  \\_vv_/   '], [' /\\    /\\  ', '/  \\__/  \\ ', '\\  O  O  / ', ' \\  --  /  ', '  \\_vv_/   ']],
-      thinking: [[' /\\    /\\ ?', '/  \\__/  \\ ', '\\  o  -  / ', ' \\  ww  /  ', '  \\_vv_/   '], [' /\\    /\\? ', '/  \\__/  \\ ', '\\  -  o  / ', ' \\  ww  /  ', '  \\_vv_/   ']],
-      tool: [[' /\\    /\\  ', '/  \\__/  \\ ', '\\  o  o  / ', ' \\# ww #/  ', '  \\_vv_/   '], [' /\\    /\\  ', '/  \\__/  \\ ', '\\  o  o  / ', ' \\* ww */  ', '  \\_vv_/   ']],
-      writing: [[' /\\    /\\  ', '/  \\__/  \\ ', '\\  o  o  / ', ' \\  ww  /~ ', '  \\_vv_/   '], [' /\\    /\\  ', '/  \\__/  \\ ', '\\  o  o  / ', ' \\  ww  /- ', '  \\_vv_/   ']],
-      warmup: [['/\\     /\\  ', '/  \\__/  \\ ', '\\  o  o  / ', ' \\  ww  /  ', '  \\_vv_/   '], [' /\\    /\\  ', '/  \\__/  \\ ', '\\  o  o  / ', ' \\  ww  /  ', '  \\_vv_/   ']],
-      compacting: [[' /\\    /\\  ', '/  \\__/  \\ ', '\\  o  o  / ', ' \\ >ww< /  ', '  \\_vv_/   '], [' /\\    /\\  ', '/  \\__/  \\ ', '\\  o  o  / ', ' \\ <ww> /  ', '  \\_vv_/   ']],
-    },
+    label: 'Fox', color: '#ea580c',
+    body:
+      `<path d="M8 14 L5 4 L15 11 M32 14 L35 4 L25 11"/>` +           // big ears
+      `<path d="M7 17 Q20 9 33 17 Q34 28 20 35 Q6 28 7 17 Z"/>`,      // angular head
+  },
+  dog: {
+    label: 'Dog', color: '#a16207',
+    body:
+      `<path d="M9 13 Q3 14 5 24 Q9 24 11 19 M31 13 Q37 14 35 24 Q31 24 29 19"/>` + // floppy ears
+      `<circle cx="20" cy="22" r="12"/>` +                            // head
+      `<circle class="b-nose" cx="20" cy="25" r="1.6"/>`,             // nose
+  },
+  bear: {
+    label: 'Bear', color: '#7c5e3c',
+    body:
+      `<circle cx="9" cy="11" r="4"/><circle cx="31" cy="11" r="4"/>` + // round ears
+      `<circle cx="20" cy="22" r="13"/>` +                             // head
+      `<ellipse cx="20" cy="26" rx="5" ry="3.5"/>`,                    // snout
+  },
+  panda: {
+    label: 'Panda', color: '#475569',
+    body:
+      `<circle cx="9" cy="11" r="4" fill="currentColor"/>` +           // filled ears
+      `<circle cx="31" cy="11" r="4" fill="currentColor"/>` +
+      `<circle cx="20" cy="22" r="13"/>` +
+      `<ellipse class="b-patch" cx="14" cy="20" rx="3.2" ry="4"/>` +   // eye patches
+      `<ellipse class="b-patch" cx="26" cy="20" rx="3.2" ry="4"/>`,
+  },
+  frog: {
+    label: 'Frog', color: '#16a34a',
+    body:
+      `<circle cx="12" cy="11" r="5"/><circle cx="28" cy="11" r="5"/>` + // eye bulges
+      `<path d="M6 18 Q20 12 34 18 Q34 32 20 33 Q6 32 6 18 Z"/>`,        // wide head
   },
   owl: {
-    label: 'Owl',
-    color: '#a16207',
-    frames: [
-      ['  ,___,  ', ' {o,o}   ', ' /)___)\\ ', ' "  v  " ', '  ^   ^  '],
-      ['  ,___,  ', ' {o,o}   ', ' /)___)\\ ', ' "  v  " ', '  ^   ^  '],
-      ['  ,___,  ', ' {o,o}   ', ' (\\___(\\ ', ' "  v  " ', '  ^   ^  '],
-    ],
-    blink:
-      ['  ,___,  ', ' {-,-}   ', ' /)___)\\ ', ' "  v  " ', '  ^   ^  '],
-    poses: {
-      typing: [['  ,___,  ', ' {O,O}   ', ' /)___)\\ ', ' "  v  " ', '  ^   ^  '], ['  ,___,  ', ' {O,O}   ', ' (\\___(\\ ', ' "  v  " ', '  ^   ^  ']],
-      thinking: [['  ,___, ?', ' {o,-}   ', ' /)___)\\ ', ' "  v  " ', '  ^   ^  '], ['  ,___,? ', ' {-,o}   ', ' /)___)\\ ', ' "  v  " ', '  ^   ^  ']],
-      tool: [['  ,___,  ', ' {o,o}   ', ' /#___#\\ ', ' "  v  " ', '  ^   ^  '], ['  ,___,  ', ' {o,o}   ', ' /*___*\\ ', ' "  v  " ', '  ^   ^  ']],
-      writing: [['  ,___,  ', ' {o,o}   ', ' /)___)\\~', ' "  v  " ', '  ^   ^  '], ['  ,___,  ', ' {o,o}   ', ' /)___)\\-', ' "  v  " ', '  ^   ^  ']],
-      warmup: [['  ,___,  ', ' {o,o}   ', ' /)___)\\ ', ' "  v  " ', ' ^     ^ '], ['  ,___,  ', ' {o,o}   ', ' /)___)\\ ', ' "  v  " ', '  ^   ^  ']],
-      compacting: [['  ,___,  ', ' {o,o}   ', ' /)___)\\ ', ' " >v< " ', '  ^   ^  '], ['  ,___,  ', ' {o,o}   ', ' /)___)\\ ', ' " <v> " ', '  ^   ^  ']],
-    },
+    label: 'Owl', color: '#7c3aed',
+    body:
+      `<path d="M9 9 L13 15 M31 9 L27 15"/>` +                         // ear tufts
+      `<path d="M8 14 Q20 6 32 14 Q34 30 20 35 Q6 30 8 14 Z"/>` +      // body
+      `<circle cx="14" cy="19" r="4.5"/><circle cx="26" cy="19" r="4.5"/>` + // big eye rings
+      `<path d="M20 22 l-2 3 h4 z" fill="currentColor"/>`,             // beak
   },
-  crab: {
-    label: 'Crab',
-    color: '#dc2626',
-    frames: [
-      ['  (\\/) (\\/)  ', '   \\____/    ', '  (o    o)   ', ' (   ww   )  ', '  /\\    /\\   '],
-      ['  (\\/) (\\/)  ', '   \\____/    ', '  (o    o)   ', ' (   ww   )  ', '  /\\    /\\   '],
-      ['  (\\/) (\\/)  ', '   \\____/    ', '  (o    o)   ', ' (   ww   )  ', ' </\\    /\\>  '],
-    ],
-    blink:
-      ['  (\\/) (\\/)  ', '   \\____/    ', '  (-    -)   ', ' (   ww   )  ', '  /\\    /\\   '],
-    poses: {
-      typing: [['  (\\/) (\\/)  ', '   \\____/    ', '  (O    O)   ', ' (   ww   )  ', '  /\\    /\\   '], ['  (\\/) (\\/)  ', '   \\____/    ', '  (O    O)   ', ' (   --   )  ', '  /\\    /\\   ']],
-      thinking: [['  (\\/) (\\/) ?', '   \\____/    ', '  (o    -)   ', ' (   ww   )  ', '  /\\    /\\   '], ['  (\\/) (\\/)? ', '   \\____/    ', '  (-    o)   ', ' (   ww   )  ', '  /\\    /\\   ']],
-      tool: [['  (\\/) (\\/)  ', '   \\____/    ', '  (o    o)   ', '#(   ww   )# ', '  /\\    /\\   '], ['  (\\/) (\\/)  ', '   \\____/    ', '  (o    o)   ', '*(   ww   )* ', '  /\\    /\\   ']],
-      writing: [['  (\\/) (\\/)  ', '   \\____/    ', '  (o    o)   ', ' (   ww   )~ ', '  /\\    /\\   '], ['  (\\/) (\\/)  ', '   \\____/    ', '  (o    o)   ', ' (   ww   )- ', '  /\\    /\\   ']],
-      warmup: [[' (\\/)  (\\/)  ', '   \\____/    ', '  (o    o)   ', ' (   ww   )  ', '  /\\    /\\   '], ['  (\\/) (\\/)  ', '   \\____/    ', '  (o    o)   ', ' (   ww   )  ', '  /\\    /\\   ']],
-      compacting: [['  (\\/) (\\/)  ', '   \\____/    ', '  (o    o)   ', ' ( >ww< )    ', '  /\\    /\\   '], ['  (\\/) (\\/)  ', '   \\____/    ', '  (o    o)   ', ' ( <ww> )    ', '  /\\    /\\   ']],
-    },
+  penguin: {
+    label: 'Penguin', color: '#0369a1',
+    body:
+      `<path d="M10 13 Q20 4 30 13 Q33 28 20 36 Q7 28 10 13 Z"/>` +    // body
+      `<path class="b-belly" d="M14 18 Q20 14 26 18 Q27 28 20 32 Q13 28 14 18 Z"/>` + // belly
+      `<path d="M20 24 l-2 2 4 0 z" fill="currentColor"/>`,            // beak
   },
 };
 
@@ -203,25 +140,23 @@ const BUDDY_OP_DEEP_IDLE = 0.08;
 const BUDDY_IDLE_FADE_MS  = 60000;   // no-keystroke delay before fading to deep-idle
 const BUDDY_TYPING_HOLD_MS = 2500;   // typing reverts to idle after this much quiet
 
-// Per-phase config. `pose` names the BUDDY_SPECIES.poses key (null = use the
-// idle frames + blink). `speed` is ms per frame. `op` is the opacity target.
-// `motion` is a CSS class toggled on the elements for a phase-specific wiggle.
-// `words` is the rotating whimsical bubble pool (Claude-Code-CLI flavour);
-// empty means no bubble (only idle stays quiet). One word is picked at phase
-// entry and re-rolled every few seconds while the phase holds. The `typing`
-// pool is "buddy watching you compose" flavour, distinct from the busy phases.
+// Per-phase config. `op` is the opacity target. `motion` is a CSS class toggled
+// for a phase-specific wiggle. The phase name also becomes a `phase-<name>`
+// class on the SVG host, which main.css uses to drive the facial expression
+// (blink, wide eyes, busy 'o' mouth, idle zzz, busy spark) — no JS frame loop.
+// `words` is the rotating whimsical status pool (Claude-Code-CLI flavour); empty
+// means no word (only idle stays quiet). The `typing` pool is "buddy watching
+// you compose" flavour, distinct from the busy phases.
 const BUDDY_PHASES = {
-  // Words are kept short (≤8 chars) so they fit inside the fixed-width cloud
-  // thought-bubble drawn in main.css (.composer-buddy-bubble). Longer words get
-  // clipped by the cloud — trim here, not by widening the cloud.
-  idle:       { pose: null,        speed: 700, op: BUDDY_OP_DEEP_IDLE, motion: '',           words: [] },
-  typing:     { pose: 'typing',    speed: 380, op: 0.45,               motion: 'buddy-perk',  words: ['Listening', 'Watching', 'All ears', 'Go on', 'Mm-hmm'] },
-  thinking:   { pose: 'thinking',  speed: 520, op: 0.9,                motion: 'buddy-bob',   words: ['Pondering', 'Musing', 'Noodling', 'Mulling', 'Hmm'] },
-  tool:       { pose: 'tool',      speed: 300, op: 0.9,                motion: 'buddy-shake', words: ['Fetching', 'Tinkering', 'Digging', 'Foraging'] },
-  writing:    { pose: 'writing',   speed: 340, op: 0.9,                motion: 'buddy-bob',   words: ['Composing', 'Penning', 'Drafting', 'Inkling'] },
-  warmup:     { pose: 'warmup',    speed: 600, op: 0.9,                motion: 'buddy-stretch', words: ['Warming', 'Limbering', 'Booting'] },
-  compacting: { pose: 'compacting',speed: 420, op: 0.9,                motion: 'buddy-squish', words: ['Tidying', 'Folding', 'Squishing'] },
+  idle:       { op: BUDDY_OP_DEEP_IDLE, motion: '',            words: [] },
+  typing:     { op: 0.45,               motion: 'buddy-perk',  words: ['Listening', 'Watching', 'All ears', 'Go on', 'Mm-hmm'] },
+  thinking:   { op: 0.9,                motion: 'buddy-bob',   words: ['Pondering', 'Musing', 'Noodling', 'Mulling', 'Hmm'] },
+  tool:       { op: 0.9,                motion: 'buddy-shake', words: ['Fetching', 'Tinkering', 'Digging', 'Foraging'] },
+  writing:    { op: 0.9,                motion: 'buddy-bob',   words: ['Composing', 'Penning', 'Drafting', 'Inkling'] },
+  warmup:     { op: 0.9,                motion: 'buddy-stretch', words: ['Warming', 'Limbering', 'Booting'] },
+  compacting: { op: 0.9,                motion: 'buddy-squish', words: ['Tidying', 'Folding', 'Squishing'] },
 };
+const BUDDY_PHASE_CLASSES = Object.keys(BUDDY_PHASES).map(p => 'phase-' + p);
 const BUDDY_MOTION_CLASSES = ['buddy-perk','buddy-bob','buddy-shake','buddy-stretch','buddy-squish'];
 
 // The companion lives inline in the composer footer. The composer template is
@@ -237,17 +172,35 @@ class FloatingBuddy {
   constructor() {
     this.species = null;
     this.phase = 'idle';
-    this.frame = 0;
-    this.frameTimer = null;
     this.idleTimer = null;     // deep-idle opacity fade
-    this.wordTimer = null;     // bubble word rotation
+    this.wordTimer = null;     // status-word rotation
     this.typingTimer = null;   // typing → idle revert
   }
   _els()    { return document.querySelectorAll('.composer-buddy'); }
   _bubbles(){ return document.querySelectorAll('.composer-buddy-bubble'); }
-  _draw(lines) {
-    const txt = lines.join('\n');
-    this._els().forEach(el => { el.textContent = txt; });
+  // Render the species' comic SVG into every buddy slot (once per species, not
+  // per frame). Body silhouette + the shared face layer; line-work inherits
+  // currentColor so --buddy-color tints it. Animation (blink, expression, bob)
+  // is all CSS, driven by the phase-* class.
+  _draw(species) {
+    const sp = BUDDY_SPECIES[species];
+    if (!sp) return;
+    const svg =
+      `<svg class="b-svg" viewBox="0 0 40 40" fill="none" ` +
+      `stroke="currentColor" stroke-width="2" stroke-linecap="round" ` +
+      `stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">` +
+      sp.body + buddyFace(sp.face || {}) +
+      `</svg>`;
+    this._els().forEach(el => { el.innerHTML = svg; });
+  }
+  // Toggle the phase-<name> class on each buddy host so CSS shows the right
+  // expression for the current phase.
+  _setPhaseClass(phase) {
+    const cls = 'phase-' + (BUDDY_PHASES[phase] ? phase : 'idle');
+    this._els().forEach(el => {
+      el.classList.remove(...BUDDY_PHASE_CLASSES);
+      el.classList.add(cls);
+    });
   }
   // Drive opacity on BOTH the pet and its bubble so the cloud fades in lockstep
   // with the buddy (custom props set inline on the pet don't cascade to the
@@ -276,26 +229,6 @@ class FloatingBuddy {
       b.style.display = text ? '' : 'none';
     });
   }
-  // Pick the frame list for the current phase: the phase's pose, or the idle
-  // frames as a fallback. Idle also slips in an occasional blink.
-  _phaseFrames() {
-    const sp = BUDDY_SPECIES[this.species];
-    const cfg = BUDDY_PHASES[this.phase] || BUDDY_PHASES.idle;
-    if (cfg.pose && sp.poses && sp.poses[cfg.pose]) return sp.poses[cfg.pose];
-    return sp.frames;
-  }
-  _tick() {
-    const sp = BUDDY_SPECIES[this.species];
-    if (!sp) return;
-    if (this.phase === 'idle' && Math.random() < 0.16) { this._draw(sp.blink); return; }
-    const frames = this._phaseFrames();
-    this.frame = (this.frame + 1) % frames.length;
-    this._draw(frames[this.frame]);
-  }
-  _restartFrameTimer(ms) {
-    if (this.frameTimer) clearInterval(this.frameTimer);
-    this.frameTimer = setInterval(() => this._tick(), ms);
-  }
   _armIdleFade() {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = setTimeout(() => {
@@ -319,11 +252,9 @@ class FloatingBuddy {
     if (phase === this.phase) return;
     this.phase = phase;
     const cfg = BUDDY_PHASES[phase];
-    this.frame = 0;
     this._setOp(cfg.op);
     this._setMotion(cfg.motion);
-    this._draw(this._phaseFrames()[0]);
-    this._restartFrameTimer(cfg.speed);
+    this._setPhaseClass(phase);
     this._startWords(cfg.words);
     if (phase === 'idle') this._armIdleFade();
   }
@@ -332,10 +263,9 @@ class FloatingBuddy {
   refresh() {
     const species = buddyResolveSpecies();
     if (!species) {                          // "off" → hide every copy, stop timers
-      [this.frameTimer, this.idleTimer, this.wordTimer, this.typingTimer]
+      [this.idleTimer, this.wordTimer, this.typingTimer]
         .forEach(t => t && clearTimeout(t));
-      if (this.frameTimer) clearInterval(this.frameTimer);
-      this.frameTimer = this.idleTimer = this.wordTimer = this.typingTimer = null;
+      this.idleTimer = this.wordTimer = this.typingTimer = null;
       this.species = null;
       this._show(false);
       this._setBubble('');
@@ -343,13 +273,12 @@ class FloatingBuddy {
     }
     this.species = species;
     this.phase = 'idle';
-    this.frame = 0;
     this._show(true);
     this._setMotion('');
     this._setBubble('');
     this._setColor(BUDDY_SPECIES[species].color);
-    this._draw(BUDDY_SPECIES[species].frames[0]);
-    this._restartFrameTimer(BUDDY_PHASES.idle.speed);
+    this._draw(species);
+    this._setPhaseClass('idle');
     // Briefly surface the (possibly just-changed) buddy so a species switch in
     // settings is actually visible — at deep-idle 0.08 the change is invisible.
     // Pulse to visible, then ease back to deep-idle after a couple seconds

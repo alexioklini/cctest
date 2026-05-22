@@ -4483,12 +4483,10 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 .spinner-bar.active { display: flex; }
 .spinner-bar .spinner-model { font-weight: 500; color: var(--accent-brand); }
 
-/* ASCII companion (buddy.js) — floating monospace pet */
+/* Comic companion (buddy.js) — floating inline-SVG cartoon animal */
 .buddy {
   margin: 0;
-  font-family: var(--font-mono);
-  line-height: 1.05;
-  white-space: pre;
+  line-height: 0;
   color: var(--accent-brand);
   user-select: none;
 }
@@ -4507,27 +4505,74 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   min-width: 1px;
 }
 
-/* The pet. Opacity is driven by buddy.js via --buddy-op (smooth fade). A slow
-   idle bob keeps it alive; per-phase motion classes layer a livelier wiggle on
-   top. flex/line-height kept tight so it never grows the footer height.
-   Bolder weight + a coloured glow (built from --buddy-color) give it weight and
-   depth against the footer instead of reading as a faint flat doodle. */
+/* The pet host. Opacity is driven by buddy.js via --buddy-op (smooth fade). A
+   slow idle float keeps it alive; per-phase motion classes layer a livelier
+   wiggle on top. `color` is the buddy colour — the inline SVG strokes inherit
+   it via currentColor. A soft coloured drop-shadow gives the line-art depth. */
 .composer-buddy {
   margin: 0;
-  font-size: 11px;
-  line-height: 0.9;
-  font-weight: 700;
-  letter-spacing: -0.3px;
+  line-height: 0;
   color: var(--buddy-color, var(--accent-brand));
   pointer-events: none;
   opacity: var(--buddy-op, 0.08);
-  text-shadow:
-    0 0 6px color-mix(in srgb, var(--buddy-color, var(--accent-brand)) 55%, transparent),
-    0 1px 1px rgba(0, 0, 0, 0.35);
-  transition: opacity 1.2s ease, color 0.4s ease, text-shadow 0.4s ease;
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.28));
+  transition: opacity 1.2s ease, color 0.4s ease;
   animation: buddyFloat 4s ease-in-out infinite;
 }
+/* The cartoon itself. Sized small to sit in the footer; scales crisply. */
+.composer-buddy .b-svg {
+  display: block;
+  width: 26px;
+  height: 26px;
+  overflow: visible;
+}
 @keyframes buddyFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+
+/* --- Facial expression per phase (driven by the phase-* class on .composer-buddy) --- */
+/* Eyes: open by default; the flat lid line is hidden until a blink. */
+.composer-buddy .b-eye  { fill: currentColor; stroke: none; }
+.composer-buddy .b-lid  { display: none; }
+.composer-buddy .b-mouth-o { display: none; }
+.composer-buddy .b-spark   { display: none; }
+.composer-buddy .b-zzz     { display: none; fill: currentColor; stroke: none; }
+.composer-buddy .b-nose,
+.composer-buddy .b-patch   { fill: currentColor; stroke: none; }
+.composer-buddy .b-belly   { opacity: 0.0; }
+
+/* Idle: occasional blink (eyes → lid lines) + a faint floating 'z'. */
+.composer-buddy.phase-idle .b-eye { animation: buddyBlink 5.5s steps(1) infinite; }
+.composer-buddy.phase-idle .b-lid {
+  display: block; animation: buddyBlinkLid 5.5s steps(1) infinite;
+}
+.composer-buddy.phase-idle .b-zzz { display: block; animation: buddyZzz 3s ease-in-out infinite; }
+@keyframes buddyBlink    { 0%,94%,100% { opacity: 1; } 96% { opacity: 0; } }
+@keyframes buddyBlinkLid { 0%,94%,100% { opacity: 0; } 96% { opacity: 1; } }
+@keyframes buddyZzz      { 0%,100% { opacity: 0; transform: translateY(2px); } 50% { opacity: 0.8; transform: translateY(-1px); } }
+
+/* Typing: wide, attentive eyes (slightly enlarged pupils). */
+.composer-buddy.phase-typing .b-eye { transform: scale(1.25); transform-origin: center; transform-box: fill-box; }
+
+/* Busy phases (thinking/tool/writing/warmup/compacting): an 'o' mouth + a
+   twinkling spark; the smile mouth is hidden. */
+.composer-buddy.phase-thinking .b-mouth,
+.composer-buddy.phase-tool .b-mouth,
+.composer-buddy.phase-writing .b-mouth,
+.composer-buddy.phase-warmup .b-mouth,
+.composer-buddy.phase-compacting .b-mouth { display: none; }
+.composer-buddy.phase-thinking .b-mouth-o,
+.composer-buddy.phase-tool .b-mouth-o,
+.composer-buddy.phase-writing .b-mouth-o,
+.composer-buddy.phase-warmup .b-mouth-o,
+.composer-buddy.phase-compacting .b-mouth-o { display: block; }
+.composer-buddy.phase-thinking .b-spark,
+.composer-buddy.phase-tool .b-spark,
+.composer-buddy.phase-writing .b-spark,
+.composer-buddy.phase-compacting .b-spark {
+  display: block; fill: currentColor; stroke: none;
+  transform-origin: center; transform-box: fill-box;
+  animation: buddySpark 1.2s ease-in-out infinite;
+}
+@keyframes buddySpark { 0%,100% { opacity: 0.3; transform: scale(0.7) rotate(0deg); } 50% { opacity: 1; transform: scale(1.1) rotate(20deg); } }
 
 /* Per-phase motion — each replaces the idle float with a phase-flavoured one.
    Kept subtle (tiny px) so it reads as "liveliness", not jitter. */
