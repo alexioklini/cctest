@@ -611,8 +611,10 @@ def _generate_chat_summary(session):
         return
 
     prompt = (
-        "Summarize what the user is asking about in ONE short sentence (max 60 chars). "
-        "Focus on the topic/task, not greetings. Output ONLY the summary, nothing else. "
+        "Summarize the topics the user has asked about across this conversation "
+        "in one short line (max 100 chars). If several distinct topics came up, "
+        "cover them briefly rather than only the latest. Focus on the topics/tasks, "
+        "not greetings. Output ONLY the summary, nothing else. "
         "Base your summary ONLY on the user questions below.\n\n"
         + "\n".join(sample)
     )
@@ -635,8 +637,10 @@ def _generate_chat_summary(session):
             if _new_sample is not sample:
                 sample = list(_new_sample)
                 prompt = (
-                    "Summarize what the user is asking about in ONE short sentence (max 60 chars). "
-                    "Focus on the topic/task, not greetings. Output ONLY the summary, nothing else. "
+                    "Summarize the topics the user has asked about across this conversation "
+                    "in one short line (max 100 chars). If several distinct topics came up, "
+                    "cover them briefly rather than only the latest. Focus on the topics/tasks, "
+                    "not greetings. Output ONLY the summary, nothing else. "
                     "Base your summary ONLY on the user questions below.\n\n"
                     + "\n".join(sample)
                 )
@@ -652,11 +656,11 @@ def _generate_chat_summary(session):
             agent_id=session.agent_id,
             session_id=session.id,
             project=(session.project or ""),
-            max_tokens=80,
+            max_tokens=120,
         )
         result = _summary_deanon(_res.get("reply") or "")
         if result and not _res.get("error"):
-            summary = result.strip().strip('"').strip("'")[:80]
+            summary = result.strip().strip('"').strip("'")[:120]
             with session.lock:
                 session.summary = summary
             ChatDB.save_session(session.id, session.agent_id, session.model,
