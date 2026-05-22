@@ -219,7 +219,12 @@ function enabledModelsWithCapability(cap) {
 
 function autoResizeInput(el) {
   el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  const full = el.scrollHeight;
+  el.style.height = Math.min(full, 200) + 'px';
+  // Only enable the inner scrollbar once the field is capped at max-height.
+  // Below that the CSS keeps overflow hidden + zero-width WebKit scrollbar,
+  // which kills Safari's phantom scrollbar on an empty / single-line field.
+  el.classList.toggle('is-scrolling', full > 200);
 }
 
 // Returns the textarea for the currently active composer view. The project-

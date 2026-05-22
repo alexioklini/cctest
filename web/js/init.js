@@ -2750,6 +2750,9 @@ async function init() {
   // Init artifact panel resize
   initArtifactResize();
 
+  // Wire chat scroll-to-top / scroll-to-bottom anchor arrows
+  initScrollAnchors();
+
   // Set greeting (auth-aware; re-runs after /v1/auth/me lands)
   refreshWelcomeGreeting();
 

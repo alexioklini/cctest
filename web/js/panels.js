@@ -1066,8 +1066,55 @@ function scrollToBottom() {
   if (el) {
     requestAnimationFrame(() => {
       el.scrollTop = el.scrollHeight;
+      updateScrollAnchors();
     });
   }
+}
+
+function scrollToTop() {
+  const el = document.getElementById('messages-scroll');
+  if (el) el.scrollTop = 0;
+}
+
+// Show the top arrow only when scrolled away from the top, the bottom arrow
+// only when scrolled away from the bottom. The arrows are position:fixed, so
+// we anchor them to the message area's current viewport rect each call
+// (centered horizontally, just inside the top / bottom edge of the scroll
+// area — the bottom edge already sits above the composer).
+function updateScrollAnchors() {
+  const el = document.getElementById('messages-scroll');
+  const topBtn = document.getElementById('scroll-to-top');
+  const botBtn = document.getElementById('scroll-to-bottom');
+  if (!el || !topBtn || !botBtn) return;
+  const PAD = 24; // px slack so the arrow hides when "basically" at the edge
+  const scrollable = el.scrollHeight - el.clientHeight;
+  const atTop = el.scrollTop <= PAD;
+  const atBottom = scrollable - el.scrollTop <= PAD;
+  const r = el.getBoundingClientRect();
+  // Clamp so the fixed buttons never poke past the viewport edge — at
+  // fractional browser zoom (110%, 125%, …) sub-pixel rounding otherwise
+  // lets a 1px sliver extend the document and spawn root scrollbars.
+  const BTN = 34, HALF = BTN / 2;
+  const vw = document.documentElement.clientWidth;
+  const vh = document.documentElement.clientHeight;
+  const cx = Math.round(Math.min(Math.max(r.left + r.width / 2, HALF + 1), vw - HALF - 1));
+  const topY = Math.round(Math.min(Math.max(r.top + 12, 1), vh - BTN - 1));
+  const botY = Math.round(Math.min(Math.max(r.bottom - 46, 1), vh - BTN - 1));
+  topBtn.style.left = cx + 'px';
+  topBtn.style.top = topY + 'px';
+  botBtn.style.left = cx + 'px';
+  botBtn.style.top = botY + 'px';
+  topBtn.classList.toggle('visible', !atTop && r.height > 0);
+  botBtn.classList.toggle('visible', !atBottom && r.height > 0);
+}
+
+function initScrollAnchors() {
+  const el = document.getElementById('messages-scroll');
+  if (!el || el._scrollAnchorsWired) return;
+  el._scrollAnchorsWired = true;
+  el.addEventListener('scroll', updateScrollAnchors, { passive: true });
+  window.addEventListener('resize', updateScrollAnchors, { passive: true });
+  updateScrollAnchors();
 }
 
 /* ═══════════════════════════════════════════════════════════

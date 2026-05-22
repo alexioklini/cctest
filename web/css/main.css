@@ -596,9 +596,20 @@ textarea { resize: none; }
   padding: 16px 20px 8px;
   min-height: 48px;
   max-height: 200px;
-  overflow-y: auto;
+  /* hidden by default so an empty single-line field can't show phantom
+     scrollbars (Safari/WebKit renders a phantom bar when scrollHeight
+     rounds 1px over the one-line content box); autoResizeInput flips
+     overflow-y to auto only once content exceeds max-height. overflow-x
+     stays hidden — the textarea wraps, it never scrolls sideways. */
+  overflow-y: hidden;
+  overflow-x: hidden;
   width: 100%;
 }
+/* Suppress the phantom WebKit scrollbar track on the input until it's
+   actually scrolling (.is-scrolling, toggled by autoResizeInput past 200px). */
+.composer-input::-webkit-scrollbar { width: 0; height: 0; }
+.composer-input.is-scrolling { overflow-y: auto; }
+.composer-input.is-scrolling::-webkit-scrollbar { width: 6px; }
 .composer-input::placeholder { color: var(--text-400); }
 .composer-input.has-suggestion::placeholder {
   color: var(--text-300);
@@ -779,6 +790,38 @@ textarea { resize: none; }
   overflow: hidden;
 }
 #chat-view.active { display: flex; }
+
+/* Scroll anchors — centered overlay arrows, Claude-desktop style.
+   position:fixed so they're fully out of flow (no scrollbars, no layout
+   impact on the composer); JS positions them over the message area each
+   scroll/resize. Hidden unless the matching end is off-screen (.visible,
+   toggled in updateScrollAnchors). */
+.scroll-anchor {
+  position: fixed;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border-100, #e5e7eb);
+  border-radius: 50%;
+  background: var(--bg-card, #fff);
+  color: var(--text-300, #6b7280);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) scale(0.9);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.scroll-anchor.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) scale(1);
+}
+.scroll-anchor:hover { color: var(--text-100, #111); border-color: var(--border-200, #d1d5db); }
 
 /* Messages area */
 .messages-scroll {
