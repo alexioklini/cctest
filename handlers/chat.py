@@ -600,7 +600,14 @@ def _generate_chat_summary(session):
             parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
             content = " ".join(parts)
         if isinstance(content, str) and content.strip():
-            user_msgs.append(content[:200])
+            # Strip the round-0 artifact-folder preamble that rides in the
+            # first user message's content — it's plumbing, not what the user
+            # asked (mirrors add_message's auto-title strip).
+            _pre = (m.get("metadata") or {}).get("preamble")
+            if _pre and content.startswith(_pre):
+                content = content[len(_pre):].lstrip("\n")
+            if content.strip():
+                user_msgs.append(content[:200])
     # Keep the first question (sets the topic) plus the most recent ones.
     if len(user_msgs) > 4:
         sample = user_msgs[:1] + user_msgs[-3:]
