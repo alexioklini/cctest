@@ -90,7 +90,7 @@ PREFERENCE_KEYS = tuple(PREFERENCE_DEFAULTS.keys())
 # Allowed buddy species ids. Mirrors BUDDY_SPECIES in web/js/buddy.js — keep
 # the two in sync. Validated server-side so a bad client can't store junk that
 # the renderer would then have to defend against.
-BUDDY_SPECIES = ("cat", "fox", "dog", "bear", "panda", "frog", "owl", "penguin")
+BUDDY_SPECIES = ("cat", "fox", "dog", "bear", "panda", "frog", "owl", "penguin", "dragon", "crab")
 
 
 def _coerce_pref(key: str, value):

@@ -530,6 +530,22 @@ def run_turn(
     error_msg: str | None = None
     cancel_thread: threading.Thread | None = None
 
+    # Local-provider concurrency gate. Pre-sidecar, the native loop wrapped
+    # its /chat/completions call in _provider_queue.acquire_if so two local
+    # chats (or a chat + the warmup keeper) couldn't hit oMLX/CLIProxyAPI's
+    # serialised wire at once. The SDK migration (fdcb655) moved the loop into
+    # the sidecar and dropped that gate — only run_model_warmup still acquired,
+    # so live chat went ungated and contended with warmup. Re-acquire here.
+    # No-op for cloud (max_concurrent<=0). Whole-turn scope: held across all
+    # the sidecar's rounds incl. tool execution — coarser than the old
+    # per-wire release, but the sidecar gives Brain no per-round wire markers,
+    # and on max_concurrent=1 serialising whole turns is the safe default.
+    try:
+        _prov = engine.resolve_provider_for_model(model) or {}
+        _provider_name = _prov.get("provider_name", "") or "default"
+    except Exception:
+        _provider_name = "default"
+
     def _watch_cancel(resp_obj):
         # Polls the cancel_token; on cancel, POST /cancel/<turn_id> and close
         # the response so the read loop exits promptly.
@@ -555,6 +571,13 @@ def run_turn(
             time.sleep(0.5)
 
     try:
+      with engine.get_provider_queue().acquire_if(
+              _provider_name, label=purpose or "interactive",
+              session_id=sid or None,
+              agent_id=tool_context.get("agent_id") or None,
+              user_id=tool_context.get("user_id") or None,
+              model=model, event_callback=event_callback,
+              cancel_token=cancel_token, timeout=timeout_s):
         resp = urllib.request.urlopen(req, timeout=timeout_s)
         cancel_thread = threading.Thread(
             target=_watch_cancel, args=(resp,), daemon=True,
@@ -597,6 +620,16 @@ def run_turn(
                             final_text = data.get("final_text", "") or ""
                         elif ev_type == "error":
                             error_msg = data.get("message", "sidecar error")
+                            # The sidecar sends a traceback alongside the
+                            # message; log it so a sidecar-side crash is
+                            # diagnosable from prod logs (the message alone —
+                            # e.g. "IndexError: list index out of range" — is
+                            # not enough to locate the failing line).
+                            _tb = data.get("traceback")
+                            if _tb:
+                                print(f"[sidecar-proxy] turn={turn_id[:8]} "
+                                      f"sidecar error traceback:\n{_tb}",
+                                      flush=True)
                         elif ev_type == "cancelled":
                             cancelled = True
                 continue
@@ -605,6 +638,12 @@ def run_turn(
             elif line.startswith("data:"):
                 buf += line[5:]
 
+    except engine.TaskCancelled:
+        # Cancelled while waiting in the provider queue (Stop button or admin
+        # queue-cancel) — never reached the sidecar. Treat as a cancel, not an
+        # error, so the worker's rollback path runs instead of surfacing a
+        # "(Sidecar error)" reply.
+        cancelled = True
     except urllib.error.HTTPError as e:
         error_msg = f"sidecar HTTP {e.code}: {e.reason}"
         try:

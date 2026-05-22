@@ -289,6 +289,89 @@ def _visible_text(text: str) -> str:
     return s
 
 
+class _AccumulatedBlock:
+    """A single content block assembled from raw stream events.
+
+    Exposes the subset of the SDK block attributes the loop reads:
+    `.type`, `.text`, `.thinking`, `.signature`, `.id`, `.name`, `.input`."""
+    __slots__ = ("type", "text", "thinking", "signature", "id", "name",
+                 "_json_buf", "input")
+
+    def __init__(self, content_block: dict):
+        self.type = content_block.get("type", "")
+        self.text = content_block.get("text", "") or ""
+        self.thinking = content_block.get("thinking", "") or ""
+        self.signature = content_block.get("signature", "") or ""
+        self.id = content_block.get("id", "") or ""
+        self.name = content_block.get("name", "") or ""
+        self._json_buf = ""
+        # tool_use input may arrive whole in content_block_start or piecemeal
+        # via input_json_delta; default to whatever start carried.
+        self.input = content_block.get("input", {}) or {}
+
+    def finalise(self) -> None:
+        if self.type == "tool_use" and self._json_buf:
+            try:
+                self.input = json.loads(self._json_buf)
+            except Exception:
+                # Leave the start-provided input; better than crashing the turn.
+                pass
+
+
+class _AccumulatedMessage:
+    """Mimics the SDK's final message for the loop's downstream use, but built
+    from the RAW event stream (`client.messages.create(stream=True)`) so a
+    non-contiguous `content_block_start` index sequence can't crash us.
+
+    oMLX's Anthropic endpoint skips block indices (observed: thinking @0 then
+    tool_use @2, with index 1 never opened); the SDK's `.stream()` accumulator
+    does `snapshot.content[event.index]` and raises IndexError. Keying blocks by
+    their own `index` in an insertion-ordered dict tolerates the gap."""
+
+    def __init__(self):
+        self._blocks: "dict[int, _AccumulatedBlock]" = {}
+        self.usage: dict = {}
+        self.stop_reason: str = ""
+
+    def feed(self, etype: str, payload: dict) -> None:
+        if etype == "message_start":
+            self.usage = dict((payload.get("message") or {}).get("usage") or {})
+        elif etype == "content_block_start":
+            idx = payload.get("index", 0)
+            self._blocks[idx] = _AccumulatedBlock(payload.get("content_block") or {})
+        elif etype == "content_block_delta":
+            blk = self._blocks.get(payload.get("index", 0))
+            if blk is None:
+                return  # delta for an unopened block — skip rather than crash
+            delta = payload.get("delta") or {}
+            dt = delta.get("type", "")
+            if dt == "text_delta":
+                blk.text += delta.get("text", "") or ""
+            elif dt == "thinking_delta":
+                blk.thinking += delta.get("thinking", "") or ""
+            elif dt == "signature_delta":
+                blk.signature = delta.get("signature", "") or blk.signature
+            elif dt == "input_json_delta":
+                blk._json_buf += delta.get("partial_json", "") or ""
+        elif etype == "content_block_stop":
+            blk = self._blocks.get(payload.get("index", 0))
+            if blk is not None:
+                blk.finalise()
+        elif etype == "message_delta":
+            d = payload.get("delta") or {}
+            if d.get("stop_reason"):
+                self.stop_reason = d["stop_reason"]
+            u = payload.get("usage") or {}
+            for k, v in u.items():  # message_delta carries cumulative output_tokens
+                self.usage[k] = v
+
+    @property
+    def content(self) -> "list[_AccumulatedBlock]":
+        # Insertion order == arrival order of content_block_start; index gaps
+        # collapse harmlessly.
+        return list(self._blocks.values())
+
+
 def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = None) -> dict:
     """Execute one turn. `emit(type, data)` writes an SSE event to the client.
 
@@ -372,31 +455,38 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
         round_usage: dict[str, Any] = {}
         round_stop_reason = ""
 
+        # Use the RAW event stream (create(stream=True)) rather than the SDK's
+        # `.stream()` helper. The helper's accumulator does
+        # `snapshot.content[event.index]`, which raises IndexError when a
+        # provider skips a block index — oMLX's Anthropic endpoint emits
+        # thinking @0 then tool_use @2 with index 1 never opened. We forward
+        # every event verbatim (Brain's translator + replay stay identical) and
+        # assemble the final message in `_AccumulatedMessage`, which keys blocks
+        # by their own index and tolerates gaps.
         try:
-            with client.messages.stream(
+            raw_stream = client.messages.create(
                 model=req["model"],
                 max_tokens=max_tokens,
                 system=system,
                 messages=messages,
                 tools=tools,
+                stream=True,
                 **sampling_kwargs,
-            ) as stream:
-                # The SDK emits typed events; we forward each as
-                # `anthropic.<event_type>` with its raw shape in `data`.
-                for ev in stream:
-                    etype = getattr(ev, "type", "") or ""
-                    # Pull a serialisable payload. Anthropic events are pydantic
-                    # models with `.model_dump()` in 0.101.x. Fall back to dict().
+            )
+            final_msg = _AccumulatedMessage()
+            for ev in raw_stream:
+                etype = getattr(ev, "type", "") or ""
+                # Pull a serialisable payload. Anthropic events are pydantic
+                # models with `.model_dump()` in 0.101.x. Fall back to dict().
+                try:
+                    payload = ev.model_dump(mode="json")
+                except Exception:
                     try:
-                        payload = ev.model_dump(mode="json")
+                        payload = dict(ev)  # type: ignore[arg-type]
                     except Exception:
-                        try:
-                            payload = dict(ev)  # type: ignore[arg-type]
-                        except Exception:
-                            payload = {"_repr": repr(ev)[:500]}
-                    emit(f"anthropic.{etype}", payload)
-                # After draining the stream, accumulate the final message
-                final_msg = stream.get_final_message()
+                        payload = {"_repr": repr(ev)[:500]}
+                emit(f"anthropic.{etype}", payload)
+                final_msg.feed(etype, payload)
         except anthropic.APIError as e:
             emit("error", {"message": f"APIError: {e}",
                             "round": round_no,
@@ -405,11 +495,11 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
             break
 
         # Usage from the assembled final message
-        u = getattr(final_msg, "usage", None)
-        if u is not None:
+        u = final_msg.usage
+        if u:
             for k in ("input_tokens", "output_tokens",
                       "cache_creation_input_tokens", "cache_read_input_tokens"):
-                v = getattr(u, k, None) or 0
+                v = u.get(k, 0) or 0
                 usage_total[k] = usage_total.get(k, 0) + int(v)
                 round_usage[k] = int(v)
 

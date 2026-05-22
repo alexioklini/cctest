@@ -49,10 +49,13 @@ function buddyFace(opts = {}) {
 const BUDDY_SPECIES = {
   cat: {
     label: 'Cat', color: '#9ca3af',
+    face: { cy: 15, eyeDx: 5 },
     body:
-      `<path d="M9 16 L7 7 L14 12 M31 16 L33 7 L26 12"/>` +          // ears
-      `<circle cx="20" cy="21" r="13"/>` +                            // head
-      `<path d="M14 24 h-5 M14 26 h-5 M26 24 h5 M26 26 h5"/>`,        // whiskers
+      `<path d="M11 8 L13 1 L19 6 M29 8 L27 1 L21 6"/>` +             // small pointed ears
+      `<circle cx="20" cy="14" r="10"/>` +                            // round head
+      `<path d="M13 16 h-6 M13 18 h-6 M27 16 h6 M27 18 h6"/>` +       // whiskers
+      `<path d="M11 23 Q9 32 13 37 Q20 40 27 37 Q31 32 29 23"/>` +    // sitting body
+      `<path d="M29 30 Q38 30 37 22 Q36 18 32 19"/>`,                 // curled tail
   },
   fox: {
     label: 'Fox', color: '#ea580c',
@@ -91,11 +94,14 @@ const BUDDY_SPECIES = {
   },
   owl: {
     label: 'Owl', color: '#7c3aed',
+    face: { cx: 20, cy: 16, eyeDx: 6 },
     body:
-      `<path d="M9 9 L13 15 M31 9 L27 15"/>` +                         // ear tufts
-      `<path d="M8 14 Q20 6 32 14 Q34 30 20 35 Q6 30 8 14 Z"/>` +      // body
-      `<circle cx="14" cy="19" r="4.5"/><circle cx="26" cy="19" r="4.5"/>` + // big eye rings
-      `<path d="M20 22 l-2 3 h4 z" fill="currentColor"/>`,             // beak
+      `<path d="M9 12 Q7 5 13 7 Q11 9 12 12 M31 12 Q33 5 27 7 Q29 9 28 12"/>` + // feathered ear tufts
+      `<path d="M8 15 Q8 6 20 6 Q32 6 32 15 Q33 28 20 34 Q7 28 8 15 Z"/>` +     // body
+      `<circle cx="14" cy="16" r="5"/><circle cx="26" cy="16" r="5"/>` +        // big eye rings
+      `<path d="M20 19 l-2 3 h4 z" fill="currentColor"/>` +                     // beak
+      `<path d="M14 25 q2 2 4 0 q2 2 4 0 q2 2 4 0 M15 29 q2.5 2 5 0 q2.5 2 5 0"/>` + // belly scallops
+      `<path d="M4 35 h32 M17 34 l0 2 M23 34 l0 2"/>`,                          // branch + feet
   },
   penguin: {
     label: 'Penguin', color: '#0369a1',
@@ -103,6 +109,28 @@ const BUDDY_SPECIES = {
       `<path d="M10 13 Q20 4 30 13 Q33 28 20 36 Q7 28 10 13 Z"/>` +    // body
       `<path class="b-belly" d="M14 18 Q20 14 26 18 Q27 28 20 32 Q13 28 14 18 Z"/>` + // belly
       `<path d="M20 24 l-2 2 4 0 z" fill="currentColor"/>`,            // beak
+  },
+  dragon: {
+    label: 'Dragon', color: '#16a34a',
+    face: { cy: 15, eyeDx: 5 },
+    body:
+      `<path d="M12 7 Q8 2 12 0 M28 7 Q32 2 28 0"/>` +                 // curved horns
+      `<path d="M11 15 Q2 11 1 19 Q5 18 6 21 Q8 19 11 21"/>` +        // left wing
+      `<path d="M29 15 Q38 11 39 19 Q35 18 34 21 Q32 19 29 21"/>` +   // right wing
+      `<circle cx="20" cy="16" r="11"/>` +                            // head
+      `<ellipse cx="20" cy="25" rx="4" ry="2.6"/>` +                  // snout
+      `<circle class="b-nose" cx="18.7" cy="24.4" r="0.6"/>` +        // nostrils
+      `<circle class="b-nose" cx="21.3" cy="24.4" r="0.6"/>`,
+  },
+  crab: {
+    label: 'Crab', color: '#ef4444',
+    face: { cy: 11, eyeDx: 6, cx: 20 },
+    body:
+      `<path d="M8 24 Q8 16 20 16 Q32 16 32 24 Q32 30 20 30 Q8 30 8 24 Z"/>` + // shell
+      `<path d="M15 16 L14 13 M25 16 L26 13"/>` +                     // eye stalks
+      `<path d="M8 22 Q3 20 3 15 Q3 12 6 12 M3 15 Q1 13 2 11"/>` +    // left claw
+      `<path d="M32 22 Q37 20 37 15 Q37 12 34 12 M37 15 Q39 13 38 11"/>` + // right claw
+      `<path d="M11 29 l-2 4 M15 30 l-1 4 M25 30 l1 4 M29 29 l2 4"/>`, // legs
   },
 };
 
