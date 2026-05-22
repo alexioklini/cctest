@@ -576,7 +576,9 @@ def _generate_chat_summary(session):
 
     Background thread target: produces a one-sentence synopsis used as the
     page-title hover tooltip and the collapsible Zusammenfassung block above
-    turn 1. Fires once per chat (gated in the worker by `not session.summary`).
+    turn 1. Regenerated every turn (no `not session.summary` gate) so it
+    tracks the latest questions. Summarizes only the user's questions, not the
+    assistant's answers.
     Model pick: `server_config.chat_summary_model` if set and enabled, else
     `engine._background_model_default()`. Routes through the sidecar like
     every other non-interactive call.
@@ -587,32 +589,31 @@ def _generate_chat_summary(session):
     engine._thread_local.memory_store = None
     engine._thread_local.current_user_id = (getattr(session, "user_id", "") or "")
     msgs = session.messages
-    sample = []
-    for m in msgs[:3]:
-        role = m.get("role", "?")
+    # Only the user's questions feed the summary — the assistant's answers are
+    # excluded by design (sidebar synopsis should reflect what was asked).
+    user_msgs = []
+    for m in msgs:
+        if m.get("role") != "user":
+            continue
         content = m.get("content", "")
         if isinstance(content, list):
             parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
             content = " ".join(parts)
         if isinstance(content, str) and content.strip():
-            sample.append(f"[{role}] {content[:200]}")
-    if len(msgs) > 3:
-        for m in msgs[-2:]:
-            role = m.get("role", "?")
-            content = m.get("content", "")
-            if isinstance(content, list):
-                parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
-                content = " ".join(parts)
-            if isinstance(content, str) and content.strip():
-                sample.append(f"[{role}] {content[:200]}")
+            user_msgs.append(content[:200])
+    # Keep the first question (sets the topic) plus the most recent ones.
+    if len(user_msgs) > 4:
+        sample = user_msgs[:1] + user_msgs[-3:]
+    else:
+        sample = user_msgs
 
     if not sample:
         return
 
     prompt = (
-        "Summarize this conversation in ONE short sentence (max 60 chars). "
+        "Summarize what the user is asking about in ONE short sentence (max 60 chars). "
         "Focus on the topic/task, not greetings. Output ONLY the summary, nothing else. "
-        "Base your summary ONLY on the conversation content below.\n\n"
+        "Base your summary ONLY on the user questions below.\n\n"
         + "\n".join(sample)
     )
     try:
@@ -634,9 +635,9 @@ def _generate_chat_summary(session):
             if _new_sample is not sample:
                 sample = list(_new_sample)
                 prompt = (
-                    "Summarize this conversation in ONE short sentence (max 60 chars). "
+                    "Summarize what the user is asking about in ONE short sentence (max 60 chars). "
                     "Focus on the topic/task, not greetings. Output ONLY the summary, nothing else. "
-                    "Base your summary ONLY on the conversation content below.\n\n"
+                    "Base your summary ONLY on the user questions below.\n\n"
                     + "\n".join(sample)
                 )
         except engine.GDPRBlockedError:
@@ -2874,9 +2875,11 @@ class ChatHandlerMixin:
                     except Exception:
                         pass
 
-                    # Generate chat summary (background, for sidebar display)
+                    # Generate chat summary (background, for sidebar display).
+                    # Regenerated every turn so the synopsis tracks the latest
+                    # questions, not just the opening one.
                     try:
-                        if len(session.messages) >= 2 and not session.summary:
+                        if len(session.messages) >= 2:
                             threading.Thread(
                                 target=_generate_chat_summary,
                                 args=(session,),
