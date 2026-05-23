@@ -138,20 +138,20 @@ Every functional domain the full refactor touches is listed here from day one �
 |---|---|---|---|---|---|
 | file/shell/python/doc tool bodies (10 tools) | scattered ~3,400–4,700 | `engine/tools/file_tools.py` | E1 | ⬜ planned | ⚠️ chars-test first; `_after_file_write`/GDPR coupling via lazy `_brain.` |
 | `TOOL_DEFINITIONS` schema data (+OPENAI/index) | 560–1,772 | `engine/tool_schemas.py` | E2 | ✅ done | commit `8d45315`; −1,220 LOC; warmup byte-identical (tool_names sha b80c9c46, 59 tools, identity True); DISPATCH/GROUPS stayed |
-| document/ingest pipeline (4 classes) | 7,884–8,650 | `engine/ingest.py` | E3 | ⬜ planned | new scope (audit-surfaced); not in original map |
+| document/ingest pipeline (4 classes) | 7,884–8,650 | `engine/ingest.py` | E3 | ✅ done | commit `fe8a0e6`; −697 LOC; 4 classes single-identity; `_ingest_watcher` singleton stayed (server.py assigns it); warmup byte-identical |
 | remaining tool bodies (web/translate/delegation/context/skills/nodes/MCP/ask_*/worker, ~28 tools) | scattered | `engine/tools/{web,translate,delegation,context_tools,skill_node,mcp_tools}.py` + fold memory tools into `mempalace_glue.py` | E4 | ⬜ planned | per-group; ask_* couples to `_pending_answers` blocking path |
 
 ---
 
 ### Running totals
-- Extractions completed: **21** (D2, A1–A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5, B4, admin-full, chat-splits+U3, server_daemons, C1, C2, C3, **E2**) — Phases 1–4 done; **Tier E in progress (E2 ✅)**
+- Extractions completed: **22** (…, C1, C2, C3, **E2, E3**) — Phases 1–4 done; **Tier E in progress (E2 ✅ E3 ✅)**
 - Reverts: **0**
-- `brain.py` line count: **25,182** (baseline) → _current: **15,730** (−9,452, −37.5%)
+- `brain.py` line count: **25,182** (baseline) → _current: **15,033** (−10,149, −40.3%)
 - `handlers/admin.py` line count: **5,416** → _current: **79** (−5,337, −98.5%; thin mixin core across 6 flat admin_*.py modules)
 - `server.py` line count: **5,827** → _current: **3,895** (−1,932, −33.2%)
 - `server_lib/db.py` line count: **1,985** → _current: 1,778 (−207)
 - `handlers/chat.py` line count: 3,537 → 3,513 (−24; value was U3 de-dup)
-- Net new production modules created: **25** — `engine/` (12): workflow, code_graph, context, scheduler, quotas, tools/git_tools, tools/gmail_tools, model_select, prompt_build (C1), tool_exec (C2), mempalace_glue (C3), **tool_schemas (E2)** · `server_lib/` (5): trace_audit, node_registry, mempalace_sync, pathsafe, sse_stream · `handlers/` (7): admin_workflows, admin_agents, admin_costs, admin_config, admin_observability, admin_artifacts, gdpr_recovery · top-level (1): server_daemons. *(Plus merges into existing modules: D2→classification.py, B3→pii_ner.py; U2 used existing reader; U4/MemPalaceClient/server_init skipped/deferred.)*
+- Net new production modules created: **26** — `engine/` (13): workflow, code_graph, context, scheduler, quotas, tools/git_tools, tools/gmail_tools, model_select, prompt_build (C1), tool_exec (C2), mempalace_glue (C3), **tool_schemas (E2), ingest (E3)** · `server_lib/` (5): trace_audit, node_registry, mempalace_sync, pathsafe, sse_stream · `handlers/` (7): admin_workflows, admin_agents, admin_costs, admin_config, admin_observability, admin_artifacts, gdpr_recovery · top-level (1): server_daemons. *(Plus merges into existing modules: D2→classification.py, B3→pii_ner.py; U2 used existing reader; U4/MemPalaceClient/server_init skipped/deferred.)*
 - Characterization tests added: **3** (`tests/test_scheduler_characterization.py` 18 — B2; `tests/test_tool_exec_characterization.py` 27 — C2; `tests/test_mempalace_wing_isolation.py` 9 — C3 security gate). Plus the C1 warmup byte-identity gate `tools/check_warmup_prefix_stable.py`.
 - Drift-checkers added: **1** (`tools/check_pii_js_parity.py` — gate-4b; caught a real pre-existing PII map drift)
 - Live duplicate definitions (the drift trap, principle #3): **0** — every extraction's Gate-2 confirmed the original `def`/`class` GONE from the source file.
@@ -180,6 +180,18 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 23 E3 document/ingest pipeline → engine/ingest.py — DONE
+- **Commit:** `fe8a0e6`  ·  **Date:** 2026-05-23  ·  **Phase:** 5 (Tier E — E3)
+- **Symbol(s):** `DocumentParser`, `DocumentChunker`, `IngestManager`, `IngestWatcher`
+- **Moved FROM:** brain.py:7,884–8,650 (the document parse → chunk → ingest → watch cluster)
+- **Moved TO:** engine/ingest.py (758, NEW)
+- **Old code deleted?** YES — Gate-2: no `class` def of any of the 4 in brain.py; re-export only.
+- **Callers re-pointed:** 0 — `brain.DocumentParser.parse_image/parse_svg` (brain:2526/2533), handlers (projects ×10, admin_artifacts ×4, admin_workflows ×4 via `engine.` alias), server.py (`DocumentChunker.chunk`, `IngestWatcher()` instantiation) all resolve via re-export.
+- **Tests:** Gate 4 imports 18/18 · Gate 4b PII parity OK · Gate 5 80 pass / 3 known-NER fail · verdict PASS
+- **Characterization test added?** n/a — cohesive class relocation; warmup byte-identity is the regression guard. (No existing tests on these classes; behavior unchanged via inheritance/identity.)
+- **brain.py delta:** 15,730 → 15,033 (−697)
+- **Notes:** Audit-surfaced new scope (NOT in the original Master map — flagged in the source-vs-report audit). `engine.doc_convert._do_extract` imported directly (already in engine/); brain runtime (`AGENTS_DIR`, `_qmd_debounced_embed`, `_yaml_escape`, `_parse_frontmatter`) via lazy `import brain as _brain` (grep count of top-level `import brain` = 0, one-way DAG). **`_ingest_watcher` singleton correctly STAYED** in brain — `server.py:3320` does `engine._ingest_watcher = engine.IngestWatcher()`, setting the brain-module attr; a re-exported binding wouldn't receive that. All 4 classes identity-True across brain↔engine. Warmup byte-identical.
 
 ### 22 E2 TOOL_DEFINITIONS schema data → engine/tool_schemas.py — DONE
 - **Commit:** `8d45315`  ·  **Date:** 2026-05-23  ·  **Phase:** 5 (Tier E — E2)
