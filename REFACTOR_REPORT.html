@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:34 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:46 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -46,7 +46,7 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <tr><td>Gmail tools</td><td>4,770–5,086</td><td><code>engine/tools/gmail_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>f8f3a1e</code>; 5 tools, 4-site reg verified, all dispatch-identity True</td></tr>
 <tr><td>Trace manager + audit trail</td><td>15,043–15,437</td><td><code>server_lib/trace_audit.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>fa146c3</code>; both DB pools moved; 58 <code>_audit_log</code> sites resolve via re-export; server.py rebind verified</td></tr>
 <tr><td><code>_thread_local</code> + execution context</td><td>brain.py:10,878</td><td><code>engine/context.py</code></td><td>2 (B1)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>5e56783</code>; relocated only (not DI); instance identity verified True across 291 sites</td></tr>
-<tr><td>Scheduler + task runner</td><td>~14,000–15,641</td><td><code>engine/scheduler.py</code></td><td>3 (B2)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td><span class="badge warn" title="attention">⚠️</span> characterization test first; coupled to <code>_thread_local</code></td></tr>
+<tr><td>Scheduler + task runner</td><td>12,950–15,641</td><td><code>engine/scheduler.py</code></td><td>3 (B2)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>2ba75be</code> (test <code>b09c5dd</code> first); 1407-LOC module; _thread_local via engine.context (3-way identity True); invariant #5 preserved; 18/18 chars-tests pass</td></tr>
 <tr><td>GDPR/PII scanner (<code>_pii_rules</code>/<code>_pii_scan_*</code>)</td><td>16,771–17,477</td><td><code>engine/pii_scan.py</code> (merge into <code>engine/pii_ner.py</code>)</td><td>3 (B3)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>fixes incoherent split (logic in brain, loader in engine) + web/index.html sync via U5</td></tr>
 <tr><td>Quotas / cost / rate-limit (<code>QuotaManager</code>/<code>CostTracker</code>/<code>RateLimiter</code>)</td><td>scattered</td><td><code>engine/quotas.py</code>, <code>engine/cost.py</code></td><td>3 (B4)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>each owns a DB pool</td></tr>
 <tr><td>Model selection + system-prompt assembly (<code>_build_system_prompt</code>, <code>MODEL_PROFILES</code>)</td><td>~21,844–24,482</td><td><code>engine/prompt_build.py</code>, <code>engine/model_select.py</code></td><td>4 (C1)</td><td><span class="badge gated" title="gated">⛔</span> gated</td><td>KV-cache sensitive; eval + warmup byte-stability gate</td></tr>
@@ -98,11 +98,12 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <blockquote><strong>Coverage promise:</strong> every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.</blockquote>
 <h3>Running totals</h3>
 <ul>
-<li>Extractions completed: <strong>11</strong> (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2) — <strong>Phases 1 &amp; 2 DONE</strong></li>
-<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 21,689_ (−3,493, −13.9%)</li>
+<li>Extractions completed: <strong>12</strong> (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2) — Phases 1 &amp; 2 DONE; Phase 3 in progress</li>
+<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 20,386_ (−4,796, −19.0%)</li>
 <li><code>server_lib/db.py</code> line count: <strong>1,985</strong> → _current: 1,778_ (−207)</li>
 <li><code>handlers/admin.py</code> line count: <strong>5,416</strong> → _current: 4,503_ (−913)</li>
-<li>Net new modules created: <strong>10</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>, <code>engine/tools/git_tools.py</code>, <code>engine/tools/gmail_tools.py</code>, <code>server_lib/trace_audit.py</code>, <code>server_lib/node_registry.py</code>, <code>server_lib/mempalace_sync.py</code>, <code>handlers/admin_workflows.py</code>, <code>engine/context.py</code>, <code>server_lib/pathsafe.py</code>; D2 merged into existing engine/classification.py; U2 used existing reader; U4 skipped)</li>
+<li>Net new modules created: <strong>11</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>, <code>engine/tools/git_tools.py</code>, <code>engine/tools/gmail_tools.py</code>, <code>server_lib/trace_audit.py</code>, <code>server_lib/node_registry.py</code>, <code>server_lib/mempalace_sync.py</code>, <code>handlers/admin_workflows.py</code>, <code>engine/context.py</code>, <code>server_lib/pathsafe.py</code>, <code>engine/scheduler.py</code>; D2 merged into existing engine/classification.py; U2 used existing reader; U4 skipped)</li>
+<li>Characterization tests added: <strong>1</strong> (<code>tests/test_scheduler_characterization.py</code>, 18 tests — B2 prereq)</li>
 <li>Reverts: <strong>0</strong>. Skips/already-satisfied (principled, documented): U4 (not-applicable), U2 (already centralized).</li>
 <li>Live duplicate definitions (brain.py ∩ engine/): <strong>0</strong> — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean</li>
 </ul>
@@ -126,6 +127,19 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 </ul>
 <p>```</p>
 <hr>
+<h3>13 B2 scheduler + task runner — DONE  *(prereq: chars-test <code>b09c5dd</code>)*</h3>
+<ul>
+<li><strong>Commit:</strong> <code>2ba75be</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 3 (B2 — <span class="badge warn" title="attention">⚠️</span> core path)</li>
+<li><strong>Symbol(s):</strong> <code>class Scheduler</code> (full: CRUD + <code>get_due_tasks</code> atomic claim + <code>_execute_scheduled</code> + <code>_run_loop</code> poll), <code>_calc_next_run</code>/<code>_calc_next_from_last</code>, <code>_validate_thinking_level_for_model</code>, <code>tool_schedule_list</code>/<code>history</code>, DB pool <code>SCHEDULER_DB</code>/<code>_sched_db_pool</code>/<code>_sched_conn</code></li>
+<li><strong>Moved FROM:</strong> brain.py:12,950–15,641 (scheduler + task-runner cluster)</li>
+<li><strong>Moved TO:</strong> engine/scheduler.py (1407 lines, NEW)</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2: no <code>class Scheduler</code>/<code>_execute_scheduled</code>/<code>_calc_next_run</code> def in brain.py; alias + instantiation + method-call refs only.</li>
+<li><strong>Callers re-pointed:</strong> 0 repointed — <code>Scheduler()</code> instantiation (server.py:3254) + poll-thread start STAYED; class resolves via alias. The workflow-history subsystem + schedule-sharing helpers that piggyback on scheduler.db stay in brain, reach <code>_sched_conn</code>/<code>SCHEDULER_DB</code> via re-export.</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · <strong>18/18 scheduler-characterization tests pass post-extraction</strong> · verdict PASS</li>
+<li><strong>Characterization test added?</strong> YES — <code>tests/test_scheduler_characterization.py</code> (commit <code>b09c5dd</code>, the B2 prerequisite per plan §1.5): 18 tests pinning <code>_calc_next_run</code> interval math, thinking-level gate, tool_profile→purpose. Gate blind spots (DB CRUD, atomic-claim races, <code>_execute_scheduled</code> delegate) remain — covered by live schedule eval, not the gate.</li>
+<li><strong>brain.py delta:</strong> 21,689 → 20,386 (−1,303)</li>
+<li><strong>Notes:</strong> Hardest seam = <code>_thread_local</code> + invariant #5. Resolved <code>_thread_local</code> via clean <code>from engine.context import _thread_local</code> (context.py is below scheduler in the DAG — no cycle); 3-way instance identity verified True (brain≡context≡scheduler). <strong>Invariant #5 byte-identical:</strong> <code>_execute_scheduled</code> builds <code>ExecutionContext</code> + calls <code>init_thread_context(..., agent_config=target)</code> BEFORE the sidecar delegate, same vars/order. All other brain-runtime via a lazy <code>_LazyBrain</code> proxy (<code>import brain</code> on <code>__getattr__</code>); sidecar + ChatDB kept lazy in-method. 4-site tool reg + dispatch-identity True. <code>_VALID_PURPOSES</code>/<code>_VALID_TOOL_PROFILES</code> correctly LEFT in brain (tool-resolver region, not scheduler).</li>
+</ul>
 <h3>12 U4 repo-root constant — SKIP (not-applicable)</h3>
 <ul>
 <li><strong>Commit:</strong> — (no change)  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 2</li>
