@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 17:17 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 17:38 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -125,7 +125,7 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <p><strong>Execution:</strong> same protocol as Tiers A–D — subagent-per-extraction, gate-2 (old def GONE), commit per green step, update + publish this report each time, flip the E-rows below. Resume by reading this report first.</p>
 <h3>Master domain map — Tier E rows (planned)</h3>
 <table><thead><tr><th>Domain</th><th>Source (brain.py)</th><th>→ Target</th><th>Step</th><th>Status</th><th>Note</th></tr></thead><tbody>
-<tr><td>file/shell/python/doc tool bodies (10 tools)</td><td>scattered ~3,400–4,700</td><td><code>engine/tools/file_tools.py</code></td><td>E1</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td><span class="badge warn" title="attention">⚠️</span> chars-test first; <code>_after_file_write</code>/GDPR coupling via lazy <code>_brain.</code></td></tr>
+<tr><td>file/shell/python/doc tool bodies (10 tools)</td><td>scattered ~3,400–4,700</td><td><code>engine/tools/file_tools.py</code></td><td>E1</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>c3fbc70</code> (chars-test <code>5ad37da</code> 13 cases first); −1,098 LOC; 10/10 dispatch-identity; eval brain 0.77→0.70 (Δ−0.07, within gate); warmup byte-identical</td></tr>
 <tr><td><code>TOOL_DEFINITIONS</code> schema data (+OPENAI/index)</td><td>560–1,772</td><td><code>engine/tool_schemas.py</code></td><td>E2</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>8d45315</code>; −1,220 LOC; warmup byte-identical (tool_names sha b80c9c46, 59 tools, identity True); DISPATCH/GROUPS stayed</td></tr>
 <tr><td>document/ingest pipeline (4 classes)</td><td>7,884–8,650</td><td><code>engine/ingest.py</code></td><td>E3</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>fe8a0e6</code>; −697 LOC; 4 classes single-identity; <code>_ingest_watcher</code> singleton stayed (server.py assigns it); warmup byte-identical</td></tr>
 <tr><td>remaining tool bodies (web/translate/delegation/context/skills/nodes/MCP/ask_*/worker, ~28 tools)</td><td>scattered</td><td><code>engine/tools/{web,translate,delegation,context_tools,skill_node,mcp_tools}.py</code> + fold memory tools into <code>mempalace_glue.py</code></td><td>E4</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>per-group; ask_* couples to <code>_pending_answers</code> blocking path</td></tr>
@@ -133,15 +133,15 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <hr>
 <h3>Running totals</h3>
 <ul>
-<li>Extractions completed: <strong>22</strong> (…, C1, C2, C3, <strong>E2, E3</strong>) — Phases 1–4 done; <strong>Tier E in progress (E2 <span class="badge done" title="done">✅</span> E3 <span class="badge done" title="done">✅</span>)</strong></li>
+<li>Extractions completed: <strong>23</strong> (…, C1, C2, C3, <strong>E1, E2, E3</strong>) — Phases 1–4 done; <strong>Tier E in progress (E1 <span class="badge done" title="done">✅</span> E2 <span class="badge done" title="done">✅</span> E3 <span class="badge done" title="done">✅</span>; E4 next)</strong></li>
 <li>Reverts: <strong>0</strong></li>
-<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: <strong>15,033</strong> (−10,149, −40.3%)</li>
+<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: <strong>13,935</strong> (−11,247, −44.7%)</li>
 <li><code>handlers/admin.py</code> line count: <strong>5,416</strong> → _current: <strong>79</strong> (−5,337, −98.5%; thin mixin core across 6 flat admin_*.py modules)</li>
 <li><code>server.py</code> line count: <strong>5,827</strong> → _current: <strong>3,895</strong> (−1,932, −33.2%)</li>
 <li><code>server_lib/db.py</code> line count: <strong>1,985</strong> → _current: 1,778 (−207)</li>
 <li><code>handlers/chat.py</code> line count: 3,537 → 3,513 (−24; value was U3 de-dup)</li>
-<li>Net new production modules created: <strong>26</strong> — <code>engine/</code> (13): workflow, code_graph, context, scheduler, quotas, tools/git_tools, tools/gmail_tools, model_select, prompt_build (C1), tool_exec (C2), mempalace_glue (C3), <strong>tool_schemas (E2), ingest (E3)</strong> · <code>server_lib/</code> (5): trace_audit, node_registry, mempalace_sync, pathsafe, sse_stream · <code>handlers/</code> (7): admin_workflows, admin_agents, admin_costs, admin_config, admin_observability, admin_artifacts, gdpr_recovery · top-level (1): server_daemons. *(Plus merges into existing modules: D2→classification.py, B3→pii_ner.py; U2 used existing reader; U4/MemPalaceClient/server_init skipped/deferred.)*</li>
-<li>Characterization tests added: <strong>3</strong> (<code>tests/test_scheduler_characterization.py</code> 18 — B2; <code>tests/test_tool_exec_characterization.py</code> 27 — C2; <code>tests/test_mempalace_wing_isolation.py</code> 9 — C3 security gate). Plus the C1 warmup byte-identity gate <code>tools/check_warmup_prefix_stable.py</code>.</li>
+<li>Net new production modules created: <strong>27</strong> — <code>engine/</code> (14): workflow, code_graph, context, scheduler, quotas, tools/git_tools, tools/gmail_tools, model_select, prompt_build (C1), tool_exec (C2), mempalace_glue (C3), <strong>tool_schemas (E2), ingest (E3), tools/file_tools (E1)</strong> · <code>server_lib/</code> (5): trace_audit, node_registry, mempalace_sync, pathsafe, sse_stream · <code>handlers/</code> (7): admin_workflows, admin_agents, admin_costs, admin_config, admin_observability, admin_artifacts, gdpr_recovery · top-level (1): server_daemons. *(Plus merges into existing modules: D2→classification.py, B3→pii_ner.py; U2 used existing reader; U4/MemPalaceClient/server_init skipped/deferred.)*</li>
+<li>Characterization tests added: <strong>4</strong> (<code>tests/test_scheduler_characterization.py</code> 18 — B2; <code>tests/test_tool_exec_characterization.py</code> 27 — C2; <code>tests/test_mempalace_wing_isolation.py</code> 9 — C3 security gate; <code>tests/test_file_tools_characterization.py</code> 13 — E1). Plus the C1 warmup byte-identity gate <code>tools/check_warmup_prefix_stable.py</code>.</li>
 <li>Drift-checkers added: <strong>1</strong> (<code>tools/check_pii_js_parity.py</code> — gate-4b; caught a real pre-existing PII map drift)</li>
 <li>Live duplicate definitions (the drift trap, principle #3): <strong>0</strong> — every extraction's Gate-2 confirmed the original <code>def</code>/<code>class</code> GONE from the source file.</li>
 <li>Reverts: <strong>0</strong>. Skips/already-satisfied (principled, documented): U4 (not-applicable), U2 (already centralized).</li>
@@ -167,6 +167,22 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 </ul>
 <p>```</p>
 <hr>
+<h3>24 E1 file/shell/python/doc tools → engine/tools/file_tools.py — DONE  *(<span class="badge warn" title="attention">⚠️</span> highest-coupling Tier E; chars-test prereq <code>5ad37da</code>)*</h3>
+<ul>
+<li><strong>Commit:</strong> <code>c3fbc70</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 5 (Tier E — E1)</li>
+<li><strong>Symbol(s):</strong> <code>tool_read_file</code>/<code>write_file</code>/<code>edit_file</code>/<code>list_directory</code>/<code>search_files</code>/<code>execute_command</code>/<code>python_exec</code>/<code>read_document</code>/<code>write_document</code>/<code>edit_document</code> (10) + 8 cluster-private helpers (<code>_streaming_execute_command</code>, <code>_register_new_artifacts</code>, <code>_stray_write_warning</code>, <code>_strip_ansi</code>, <code>_build_shell_command</code>, <code>_write_md_table_to_sheet</code>, <code>_ABS_PATH_RE</code>, <code>_append_to_tool_result</code>)</li>
+<li><strong>Moved FROM:</strong> brain.py (scattered ~3,400–4,700, the file/shell/python/doc tool cluster)</li>
+<li><strong>Moved TO:</strong> engine/tools/file_tools.py (1,184, NEW)</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2: no <code>def</code> of the 10 tools in brain.py; re-export + dispatch refs only.</li>
+<li><strong>Callers re-pointed:</strong> 0 — brain re-imports all 10 before TOOL_DISPATCH; the 10 dispatch entries + <code>server_lib/translate/document.py</code>'s <code>brain.tool_write_document</code> resolve via re-export.</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 · Gate 4b PII parity OK · Gate 5 150 tests, 3 known-NER fail (incl. the new 13-case file-tools chars-test, all green) · verdict PASS</li>
+<li><strong>Characterization test added?</strong> YES (prereq, committed first as <code>5ad37da</code>) — <code>tests/test_file_tools_characterization.py</code>, 13 cases pinning read/edit/write_file, list/search, execute_command (TERM=dumb), python_exec (script_N pattern), read_document. Values PROBED from live tools (caught the bare-string-<code>current_agent</code> crash contract). <strong>13/13 pass post-extraction.</strong></li>
+<li><strong>4-EDIT-SITE rule:</strong> verified 10/10 dispatch-identity (<code>brain.TOOL_DISPATCH[k] is engine.tools.file_tools.tool_*</code>) + 10/10 re-export identity. TOOL_DEFINITIONS (now tool_schemas) + GROUPS + DISPATCH dict entries STAYED; only fn bodies moved.</li>
+<li><strong>EVAL GATE:</strong> brain mean 0.77 → <strong>0.70 (Δ −0.07)</strong> — within Δ&lt;0.10. Two big drops (F1 −, C1_ki −) both produced substantive answers (3,812 / 831 chars, no empty/error) — the documented F-bucket + citation judge-variance, not a tool break.</li>
+<li><strong>Warmup prefix:</strong> byte-identical (these tools aren't in the system prompt).</li>
+<li><strong>brain.py delta:</strong> 15,033 → 13,935 (−1,098)</li>
+<li><strong>Notes:</strong> Shared runtime STAYS in brain, reached via lazy <code>import brain as _brain</code>: <code>_after_file_write</code>, <code>_gdpr_anon_tool_text</code>, <code>_route_to_node</code>, <code>get_tool_config</code>, <code>AGENTS_DIR</code>, <code>_current_agent</code>, <code>DocumentParser</code>. From engine direct: <code>_ok</code>/<code>_err</code>/<code>_get_artifact_session_folder</code>/<code>_record_session_read_path</code> (tool_exec), <code>_thread_local</code> (context), <code>_do_extract</code> (doc_convert lazy). <code>grep import brain</code> in file_tools.py = 0 (one-way DAG). <code>_maybe_qmd_reindex</code> (adjacent to read_file but a .md-reindex hook, not cluster code) correctly stayed.</li>
+</ul>
 <h3>23 E3 document/ingest pipeline → engine/ingest.py — DONE</h3>
 <ul>
 <li><strong>Commit:</strong> <code>fe8a0e6</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 5 (Tier E — E3)</li>
