@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 14:19 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 14:37 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -388,4 +388,12 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <li>Imports: <strong>18/18 clean</strong> on <code>/opt/homebrew/bin/python3</code>.</li>
 <li>Tests: <strong>80 pass / 3 fail</strong>; the 3 are <code>test_contact_warn_promotes_ner_findings</code>, <code>test_name_roundtrip</code>, <code>test_ner_findings_merge_with_regex</code> (all NER-env, not code). Gate rule = no NEW failures beyond these.</li>
 <li><code>./refactor_gate.sh</code> → <strong>GATE PASS ✓</strong> at clean HEAD <code>4bad7e4</code>.</li>
+</ul>
+<h2>Tier C eval baseline (the Δ&lt;0.10 reference for C1/C2/C3)</h2>
+<ul>
+<li><strong>Run:</strong> <code>eval/results/20260523T142852_disc-none_tierC-baseline-v2/</code> · HEAD <code>3f87889</code> (post C2-chars-test, pre any Tier C extraction) · 2026-05-23.</li>
+<li><strong>Reused gold</strong> from <code>20260515T175221_disc-none_gemma26b-loadaware-v2</code> (Opus gold is static — never re-run, per user rule). Brain side fresh on current config (Mistral Medium 3.5 via CLIProxyAPI); Mistral judge.</li>
+<li><strong>Brain mean = 0.77</strong> (gold 0.93, Δ_brain−gold −0.17). Wins: gold 14 / brain 1.</li>
+<li><strong>Gate rule for each Tier C sub-step:</strong> re-run eval (same <code>--skip-gold --reuse-results</code> source), brain mean must stay <strong>≥ 0.67</strong> (Δ &lt; 0.10 below baseline). A drop ≥0.10 ⇒ revert that sub-step + log BLOCKED + surface. Mind the ±0.09 Mistral run-to-run variance — a borderline single point near 0.67 warrants a confirm re-run, not an instant revert.</li>
+<li>Per-sub-step extra gate: <strong>C1</strong> warmup system-prompt byte-identical (<code>_build_system_prompt</code> hash stable) ; <strong>C3</strong> project-wing isolation (<code>project__*</code> no leak).</li>
 </ul></body></html>
