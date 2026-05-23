@@ -3136,8 +3136,7 @@ class ChatHandlerMixin:
           {session_id, answers: {"<question>": "<answer>", ...}}  # batch
         """
         try:
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length) or b"{}")
+            body = self._read_json()
         except Exception:
             self._send_json({"error": "invalid JSON body"}, 400)
             return
@@ -3172,8 +3171,7 @@ class ChatHandlerMixin:
         path; the whole point of the feature is that GDPR data never reaches
         a cloud LLM after a failed anonymisation."""
         try:
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length) or b"{}")
+            body = self._read_json()
         except Exception:
             self._send_json({"error": "invalid JSON body"}, 400)
             return
@@ -3217,8 +3215,7 @@ class ChatHandlerMixin:
         import base64 as _b64
         import threading as _threading
         try:
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length) or b"{}")
+            body = self._read_json()
         except Exception:
             self._send_json({"error": "invalid JSON body"}, 400)
             return
