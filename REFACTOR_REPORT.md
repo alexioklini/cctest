@@ -377,3 +377,10 @@ One block per extraction, newest first. Every block answers the four questions: 
 - Imports: **18/18 clean** on `/opt/homebrew/bin/python3`.
 - Tests: **80 pass / 3 fail**; the 3 are `test_contact_warn_promotes_ner_findings`, `test_name_roundtrip`, `test_ner_findings_merge_with_regex` (all NER-env, not code). Gate rule = no NEW failures beyond these.
 - `./refactor_gate.sh` → **GATE PASS ✓** at clean HEAD `4bad7e4`.
+
+## Tier C eval baseline (the Δ<0.10 reference for C1/C2/C3)
+- **Run:** `eval/results/20260523T142852_disc-none_tierC-baseline-v2/` · HEAD `3f87889` (post C2-chars-test, pre any Tier C extraction) · 2026-05-23.
+- **Reused gold** from `20260515T175221_disc-none_gemma26b-loadaware-v2` (Opus gold is static — never re-run, per user rule). Brain side fresh on current config (Mistral Medium 3.5 via CLIProxyAPI); Mistral judge.
+- **Brain mean = 0.77** (gold 0.93, Δ_brain−gold −0.17). Wins: gold 14 / brain 1.
+- **Gate rule for each Tier C sub-step:** re-run eval (same `--skip-gold --reuse-results` source), brain mean must stay **≥ 0.67** (Δ < 0.10 below baseline). A drop ≥0.10 ⇒ revert that sub-step + log BLOCKED + surface. Mind the ±0.09 Mistral run-to-run variance — a borderline single point near 0.67 warrants a confirm re-run, not an instant revert.
+- Per-sub-step extra gate: **C1** warmup system-prompt byte-identical (`_build_system_prompt` hash stable) ; **C3** project-wing isolation (`project__*` no leak).
