@@ -126,6 +126,22 @@ input-folders/sync — large; may sub-split), `panels_right.js` (right panel + r
 streaming core — the smoke test's send-flow + console-error assertion is the key guard here.
 Gate after.
 
+## Phase 5 — Final source-validation (REQUIRED close-out, like the Python audit)
+
+Mirrors the post-Tier-C/E audit the user asked for: **verify the report against actual source —
+don't trust the report.** Do NOT skip; this is the acceptance gate for the whole tier.
+1. **Every claimed split file exists** at its claimed size (`wc -l web/js/*.js`).
+2. **No function defined twice** — `no-redeclare` clean across ALL files (a split that copied
+   instead of moved would show here). Independently grep each "moved" function: exactly one
+   `^function NAME`/`^async function NAME` across web/js.
+3. **Net globals unchanged** vs the Phase-0 baseline count (relocated, not added/dropped).
+4. **No monster file remains** — none of settings/panels/chat over ~2,000 LOC; original
+   `settings.js`/`panels.js`/`chat.js` either gone or reduced to a thin shim (state which).
+5. **index.html load order** — every new `<script>` present, in a valid order (defined-before-
+   caller), no dangling reference to a deleted file.
+6. **Full gate green** + a real browser pass (not just headless smoke) of the core flows.
+7. Mark any inconsistency in `JS_REFACTOR_REPORT.md` and fix (or revert) before declaring done.
+
 ---
 
 ## The safe-split rule (load-order contract — analysis §3)
@@ -152,9 +168,14 @@ console-error check together enforce this mechanically.
 - Subagent-per-split (bulky reads die with it); main thread holds only pass/fail + what moved.
 - One split = one commit, directly to main. Gate green before commit. `JS_REFACTOR_REPORT.md`
   updated in the same commit (Master file-map flipped ⬜→✅, per-split record block).
+- **Publish the HTML report on every update** (remote viewing, like the Python refactor): run
+  `./refactor_publish.sh "<msg>" JS_REFACTOR_REPORT.md` — the converter + publish script were
+  parameterized (2026-05-23) to take a report filename, so they regenerate `JS_REFACTOR_REPORT.html`
+  and push. **HTML is a generated VIEW — never hand-edited; only the `.md` is source of truth.**
 - Stop + report on any gate failure or genuine ambiguity the plan doesn't answer.
 - Restart not needed (static files; just reload the browser) — but run the server-up smoke
   before declaring a phase done.
+- **Phase 5 (final source-validation) is mandatory before declaring the tier complete.**
 
 ## Open question to settle at Phase 0
 - **Where does the smoke test get a clean logged-in state?** admin/admin against the live dev

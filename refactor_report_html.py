@@ -11,10 +11,14 @@ Run:  /opt/homebrew/bin/python3 refactor_report_html.py
 """
 from __future__ import annotations
 import html, re, sys, datetime
+import sys
 from pathlib import Path
 
-SRC = Path(__file__).with_name("REFACTOR_REPORT.md")
-OUT = Path(__file__).with_name("REFACTOR_REPORT.html")
+# Optional argv[1] = report markdown filename (default REFACTOR_REPORT.md), so the
+# same converter renders REFACTOR_REPORT.md AND JS_REFACTOR_REPORT.md (Tier F).
+_REPORT = sys.argv[1] if len(sys.argv) > 1 else "REFACTOR_REPORT.md"
+SRC = Path(__file__).with_name(_REPORT)
+OUT = SRC.with_suffix(".html")
 
 BADGE = {  # emoji -> (label, css class)
     "✅": ("done", "done"), "⬜": ("planned", "planned"),
@@ -103,7 +107,7 @@ def main() -> int:
     doc = (f"<!doctype html><html lang=en><head><meta charset=utf-8>"
            f"<meta name=viewport content='width=device-width,initial-scale=1'>"
            f"<title>Refactor Progress Report</title><style>{CSS}</style></head><body>"
-           f"<p class=meta>Generated from REFACTOR_REPORT.md · {ts} · "
+           f"<p class=meta>Generated from {SRC.name} · {ts} · "
            f"this HTML is a view; the .md is the source of truth.</p>"
            f"{body}</body></html>")
     OUT.write_text(doc, encoding="utf-8")
