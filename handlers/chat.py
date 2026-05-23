@@ -12,6 +12,8 @@ import time
 import brain as engine
 import pseudonymizer
 from handlers import sidecar_proxy
+# Generic SSE wire formatting (re-exported for callers/tests).
+from server_lib.sse_stream import KEEPALIVE, encode_sse, format_sse  # noqa: F401
 
 
 # Human-readable purpose labels for the Auto-routing tooltip.
@@ -60,39 +62,16 @@ def _auto_route_reason(purpose, attachment_mimes, model: str) -> str:
 #     "anonymisation failed" modal — mirrors the AskUserQuestion pattern but
 #     pre-loop (no sidecar dispatch involved).
 
-# Pending recovery slots — `{session_id: {"event": Event, "choice": str|None}}`.
-# Keyed by session id because only one anonymisation can be in flight per
-# session at a time (one turn = one mapping). Choice is "local_model" |
-# "cancel"; default "cancel" on timeout (safe — never falls through to cloud).
-_gdpr_recovery_pending: dict[str, dict] = {}
-_gdpr_recovery_lock = threading.Lock()
-
-
-def _gdpr_recovery_register(session_id: str) -> threading.Event:
-    """Open a recovery slot. Returns the Event the worker waits on."""
-    event = threading.Event()
-    with _gdpr_recovery_lock:
-        _gdpr_recovery_pending[session_id] = {"event": event, "choice": None}
-    return event
-
-
-def _gdpr_recovery_clear(session_id: str) -> None:
-    with _gdpr_recovery_lock:
-        _gdpr_recovery_pending.pop(session_id, None)
-
-
-def deliver_gdpr_recovery_choice(session_id: str, choice: str) -> bool:
-    """Called by POST /v1/chat/gdpr-recovery. Returns True if a worker was
-    waiting on this session. `choice` is "local_model" or "cancel"."""
-    if choice not in ("local_model", "cancel"):
-        return False
-    with _gdpr_recovery_lock:
-        slot = _gdpr_recovery_pending.get(session_id)
-        if not slot:
-            return False
-        slot["choice"] = choice
-        slot["event"].set()
-    return True
+# GDPR anonymisation-failure recovery state machine — extracted to
+# handlers/gdpr_recovery.py. Re-exported here so the chat worker, the
+# POST /v1/chat/gdpr-recovery handler, and tests keep resolving these names.
+from handlers.gdpr_recovery import (  # noqa: E402,F401
+    _gdpr_recovery_clear,
+    _gdpr_recovery_lock,
+    _gdpr_recovery_pending,
+    _gdpr_recovery_register,
+    deliver_gdpr_recovery_choice,
+)
 
 
 def rehydrate_session_gdpr_mapping(session) -> bool:
@@ -3043,8 +3022,7 @@ class ChatHandlerMixin:
         sub, replay, already_done = live.attach()
         try:
             for event_type, data in replay:
-                sse_line = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-                self.wfile.write(sse_line.encode("utf-8")); self.wfile.flush()
+                self.wfile.write(encode_sse(event_type, data)); self.wfile.flush()
             if already_done:
                 return
             while True:
@@ -3055,19 +3033,17 @@ class ChatHandlerMixin:
                         break
                     if worker_thread is not None and not worker_thread.is_alive():
                         try:
-                            sse_err = f'event: error\ndata: {json.dumps({"message": "Server worker terminated unexpectedly"})}\n\n'
-                            self.wfile.write(sse_err.encode("utf-8")); self.wfile.flush()
+                            self.wfile.write(encode_sse("error", {"message": "Server worker terminated unexpectedly"})); self.wfile.flush()
                         except (BrokenPipeError, ConnectionResetError, OSError):
                             pass
                         break
                     try:
-                        self.wfile.write(b": keepalive\n\n"); self.wfile.flush()
+                        self.wfile.write(KEEPALIVE); self.wfile.flush()
                     except (BrokenPipeError, ConnectionResetError, OSError):
                         break
                     continue
                 event_type, data = event
-                sse_line = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-                self.wfile.write(sse_line.encode("utf-8")); self.wfile.flush()
+                self.wfile.write(encode_sse(event_type, data)); self.wfile.flush()
                 if event_type in ("done", "error"):
                     break
         except (BrokenPipeError, ConnectionResetError, OSError):
@@ -3110,7 +3086,7 @@ class ChatHandlerMixin:
         live = getattr(session, "live_stream", None) if session else None
         if live is None:
             try:
-                self.wfile.write(b"event: idle\ndata: {}\n\n"); self.wfile.flush()
+                self.wfile.write(encode_sse("idle", {})); self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             return
