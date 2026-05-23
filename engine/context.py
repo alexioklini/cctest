@@ -128,44 +128,11 @@ def _active_ctx() -> RequestContext:
         return rc
 
 
-class _RequestContextShim:
-    """Back-compat proxy for the historical `_thread_local` name.
-
-    All attribute access funnels to the active RequestContext (declared fields)
-    or its `_dynamic` dict (everything else). The shim is a module-level
-    singleton: every importer of `_thread_local` shares it, and it always reads
-    the per-context state — so the old name and the new accessors see the SAME
-    storage. Removed in Phase 4.
-    """
-
-    __slots__ = ()
-
-    def __getattr__(self, name):
-        rc = _active_ctx()
-        if name in _RC_FIELDS:
-            return getattr(rc, name)
-        try:
-            return rc._dynamic[name]
-        except KeyError:
-            raise AttributeError(name)
-
-    def __setattr__(self, name, value):
-        rc = _active_ctx()
-        if name in _RC_FIELDS:
-            object.__setattr__(rc, name, value)
-        else:
-            rc._dynamic[name] = value
-
-    def __delattr__(self, name):
-        rc = _active_ctx()
-        if name in _RC_FIELDS:
-            # Reset to the dataclass default.
-            object.__setattr__(rc, name, getattr(RequestContext(), name))
-        else:
-            rc._dynamic.pop(name, None)
-
-
-_thread_local = _RequestContextShim()
+# The `_thread_local` compatibility shim (a proxy object whose attribute access
+# funnelled to the active RequestContext) was removed in Phase 4 of the Tier-G
+# refactor once every call site moved to `get_request_context()` /
+# `request_context(...)`. There is no longer a `_thread_local` name — request
+# state is reached ONLY through the accessor + the context-manager below.
 
 
 # --- typed accessor + the one context-manager --------------------------------
@@ -250,33 +217,42 @@ class ExecutionContext:
 
 
 def init_thread_context(ctx: ExecutionContext, agent_config=None) -> None:
-    """Set thread-locals from an ExecutionContext.
+    """Set request-context fields from an ExecutionContext, into the active
+    RequestContext (via `get_request_context()`).
 
+    Callers wrap this in `with request_context():` so teardown is automatic.
     agent_config: AgentConfig instance for the agent (optional; omit when the
-    caller has already set _thread_local.current_agent before calling this).
+    caller has already set current_agent before calling this).
     """
+    rc = get_request_context()
     if agent_config is not None:
-        _thread_local.current_agent = agent_config
-    _thread_local.current_session_id = ctx.session_id
-    _thread_local.session_id = ctx.session_id
-    _thread_local.current_user_id = ctx.user_id
-    _thread_local.current_team_ids = ctx.team_ids
-    _thread_local.delegate_agent_id = ctx.agent_id
+        rc.current_agent = agent_config
+    rc.current_session_id = ctx.session_id
+    rc.session_id = ctx.session_id
+    rc.current_user_id = ctx.user_id
+    rc.current_team_ids = ctx.team_ids
+    rc.delegate_agent_id = ctx.agent_id
     if ctx.memory_store is not None:
-        _thread_local.memory_store = ctx.memory_store
+        rc.memory_store = ctx.memory_store
     if ctx.mcp_manager is not None:
-        _thread_local.mcp_manager = ctx.mcp_manager
+        rc.mcp_manager = ctx.mcp_manager
     if ctx.project is not None:
-        _thread_local.project = ctx.project
+        rc.project = ctx.project
 
 
 def clear_thread_context() -> None:
-    """Reset all context thread-locals to safe defaults after a request."""
-    _thread_local.current_agent = None
-    _thread_local.memory_store = None
-    _thread_local.delegate_agent_id = None
-    _thread_local.current_session_id = None
-    _thread_local.session_id = None
-    _thread_local.current_user_id = ""
-    _thread_local.current_team_ids = []
-    _thread_local.trace_id = None
+    """Reset the core request-context fields to safe defaults.
+
+    Mostly superseded by `request_context()`'s automatic token-reset teardown;
+    retained for the diagnostic warmup-prefix script + any caller that resets
+    in place rather than via the context-manager.
+    """
+    rc = get_request_context()
+    rc.current_agent = None
+    rc.memory_store = None
+    rc.delegate_agent_id = None
+    rc.current_session_id = None
+    rc.session_id = None
+    rc.current_user_id = ""
+    rc.current_team_ids = []
+    rc.trace_id = None

@@ -5976,7 +5976,6 @@ def get_graph_stats(agent_id: str) -> dict:
 # engine._thread_local / bare _thread_local all resolve to the SAME instance.
 # Instance identity is load-bearing — see engine/context.py.
 from engine.context import (  # noqa: E402
-    _thread_local,
     ExecutionContext,
     init_thread_context,
     clear_thread_context,

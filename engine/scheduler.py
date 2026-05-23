@@ -43,10 +43,9 @@ import traceback
 import urllib.error
 
 from engine.context import (
-    _thread_local,
     ExecutionContext,
     init_thread_context,
-    clear_thread_context,
+    request_context,
 )
 
 

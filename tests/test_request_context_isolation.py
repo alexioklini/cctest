@@ -18,7 +18,7 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from engine.context import _thread_local, request_context, get_request_context, RequestContext
+from engine.context import request_context, get_request_context, RequestContext
 
 
 # The core request-identity fields exercised by the bleed test. (A representative
@@ -27,24 +27,30 @@ _FIELDS = ("current_user_id", "current_session_id", "current_agent", "project")
 
 
 def _set_ctx(values: dict):
+    ctx = get_request_context()
     for k, v in values.items():
-        setattr(_thread_local, k, v)
+        setattr(ctx, k, v)
 
 
 def _teardown_ctx():
-    """Mirror the production manual teardown (the pattern Tier-G replaces)."""
-    _thread_local.current_user_id = ""
-    _thread_local.current_session_id = None
-    _thread_local.current_agent = None
-    _thread_local.project = None
+    """Reset the request-identity fields to defaults — mirrors what the
+    context-manager's token-reset does at top level. Used by the tests that
+    deliberately exercise teardown WITHOUT the context-manager (the residue +
+    negative-control tests) to prove the bleed property directly."""
+    ctx = get_request_context()
+    ctx.current_user_id = ""
+    ctx.current_session_id = None
+    ctx.current_agent = None
+    ctx.project = None
 
 
 def _read_ctx() -> dict:
+    ctx = get_request_context()
     return {
-        "current_user_id": getattr(_thread_local, "current_user_id", ""),
-        "current_session_id": getattr(_thread_local, "current_session_id", None),
-        "current_agent": getattr(_thread_local, "current_agent", None),
-        "project": getattr(_thread_local, "project", None),
+        "current_user_id": ctx.current_user_id,
+        "current_session_id": ctx.current_session_id,
+        "current_agent": ctx.current_agent,
+        "project": ctx.project,
     }
 
 
@@ -152,45 +158,44 @@ class TestRequestContextIsolation(unittest.TestCase):
         _teardown_ctx()
 
 
-class TestRequestContextShim(unittest.TestCase):
-    """Locks in the Phase-1 ContextVar-backed shim contract: the old
-    `_thread_local` name and the new accessors share the SAME storage, declared
-    fields read their typed default when unset, dynamic keys route to a bucket,
-    and `request_context(...)` nests + restores."""
+class TestRequestContextAccessor(unittest.TestCase):
+    """Locks in the ContextVar-backed accessor contract (post-shim-removal):
+    `get_request_context()` returns the active RequestContext, declared fields
+    read their typed default when unset, the `_dynamic` bucket holds arbitrary
+    keys (the `_artifact_folder_*` pattern), and `request_context(...)` nests +
+    restores. (Replaces the Phase-1 shim test once the `_thread_local` shim is
+    gone.)"""
 
     def setUp(self):
         # Start each test from a clean top-level context.
-        from engine import context as ec
-        ec.clear_thread_context()
+        self.enterContext(request_context())
 
-    def test_shim_and_accessor_share_storage(self):
-        _thread_local.current_user_id = "shared-U"
+    def test_accessor_returns_active_context(self):
+        get_request_context().current_user_id = "shared-U"
         self.assertEqual(get_request_context().current_user_id, "shared-U")
 
     def test_unset_field_returns_typed_default(self):
-        self.assertIs(getattr(_thread_local, "plan_mode"), False)
-        self.assertEqual(getattr(_thread_local, "caveman_system"), 0)
-        self.assertEqual(getattr(_thread_local, "audit_source"), "chat")
+        ctx = get_request_context()
+        self.assertIs(ctx.plan_mode, False)
+        self.assertEqual(ctx.caveman_system, 0)
+        self.assertEqual(ctx.audit_source, "chat")
 
-    def test_dynamic_key_escape_hatch(self):
-        setattr(_thread_local, "_artifact_folder_sX", "2026-05-23_sX")
-        self.assertEqual(getattr(_thread_local, "_artifact_folder_sX", None), "2026-05-23_sX")
-        self.assertIsNone(getattr(_thread_local, "_artifact_folder_other", None))
-
-    def test_unknown_attr_raises_so_getattr_default_applies(self):
-        with self.assertRaises(AttributeError):
-            _thread_local.no_such_attr_zzz
+    def test_dynamic_key_bucket(self):
+        get_request_context()._dynamic["_artifact_folder_sX"] = "2026-05-23_sX"
+        self.assertEqual(
+            get_request_context()._dynamic.get("_artifact_folder_sX"), "2026-05-23_sX")
+        self.assertIsNone(get_request_context()._dynamic.get("_artifact_folder_other"))
 
     def test_context_manager_nests_and_restores(self):
-        _thread_local.project = "outer"
+        get_request_context().project = "outer"
         with request_context(project="inner", current_user_id="U-in"):
-            self.assertEqual(_thread_local.project, "inner")
-            self.assertEqual(_thread_local.current_user_id, "U-in")
+            self.assertEqual(get_request_context().project, "inner")
+            self.assertEqual(get_request_context().current_user_id, "U-in")
             # nested again
             with request_context(project="innermost"):
-                self.assertEqual(_thread_local.project, "innermost")
-            self.assertEqual(_thread_local.project, "inner")
-        self.assertEqual(_thread_local.project, "outer")
+                self.assertEqual(get_request_context().project, "innermost")
+            self.assertEqual(get_request_context().project, "inner")
+        self.assertEqual(get_request_context().project, "outer")
 
 
 if __name__ == "__main__":

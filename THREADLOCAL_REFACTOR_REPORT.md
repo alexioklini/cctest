@@ -18,14 +18,13 @@ single context-manager (no scattered `=None` teardown); a new concurrency/bleed 
 | 1 | RequestContext + ContextVar + compat shim (no call-site changes) | ✅ done |
 | 2 | Migrate enter/exit sites to `request_context(...)` ctx-manager | ✅ done |
 | 3 | Migrate reads to typed accessors (kill raw getattr) | ✅ done |
-| 4 | Remove the shim | ⬜ |
+| 4 | Remove the shim | ✅ done |
 | 5 | Final source-validation | ⬜ |
 
-**RESUME POINT:** Phase 4 — remove the `_thread_local` compat shim. All reads/writes now go through
-`get_request_context()` (tlgrep clean for all 38 attrs). What remains using the shim NAME: the
-back-compat `from engine.context import _thread_local` import in `brain.py` (re-export) + the shim
-definition in `engine/context.py`. Phase 4 decides whether to delete the shim or keep a thin
-deprecated alias (check Telegram / any external path first), then re-run tlgrep over all attrs.
+**RESUME POINT:** Phase 5 — final source-validation (the mandatory close-out audit). Verify the
+report against actual source: dataclass covers every claimed attr; tlgrep clean over all 39; no
+surviving teardown / shim; imports resolve; bleed test + server-up smoke; coverage-promise check.
+HARD STOP after Phase 5 for user review before declaring the tier complete.
 
 ---
 
@@ -152,6 +151,30 @@ mentions (docstrings/changelog). Phase 4 removes the shim.
   independently of the broad `unittest discover`).
 - Full `./refactor_gate.sh` GREEN: 18/18 imports, PII parity OK, no new unittest fails beyond the 3
   known spaCy ones, Gate 5b OK.
+
+### Phase 4 — remove the shim ✅ (commit: this)
+All call sites now use `get_request_context()` / `request_context(...)`, so the back-compat
+`_thread_local` shim is dead surface — removed:
+- **Deleted `_RequestContextShim` + the `_thread_local = _RequestContextShim()` instance** from
+  `engine/context.py` (replaced with a tombstone comment). Request state is now reachable ONLY through
+  `get_request_context()` + `request_context(...)`.
+- **`init_thread_context` / `clear_thread_context` rewritten** to write via `get_request_context()`
+  instead of the shim (they're internal helpers; `init_thread_context` is still called by warmup /
+  TaskRunner / scheduler inside `with request_context()`; `clear_thread_context` is now used only by
+  the diagnostic warmup-prefix script).
+- **Dropped the `_thread_local` re-export** from `brain.py`'s `from engine.context import (...)` and
+  from `engine/scheduler.py`'s import. Verified `_thread_local` no longer resolves on `engine.context`
+  OR `brain` (`hasattr` → False both).
+- **Rewrote the bleed test** (`test_request_context_isolation.py`): `_set_ctx`/`_read_ctx`/
+  `_teardown_ctx` helpers + the `TestRequestContextAccessor` class (renamed from
+  `…Shim`) now exercise the REAL accessor/context-manager (no shim). The 3 production test fixtures
+  were already migrated in 3b. All 7 isolation tests pass against the real mechanism.
+- **Latent bug caught + fixed:** `engine/scheduler.py` used `request_context()` at line ~1024 but
+  never IMPORTED it (a gap the Phase-2b subagent left — invisible to the gate because the import-check
+  only *imports* the module; `_execute_scheduled` would have raised `NameError` at fire time). Added
+  `request_context` to scheduler's import. Swept all bare-`request_context(` users — all now import it
+  or use the `engine.`/`brain.` prefix.
+- Full `./refactor_gate.sh` GREEN (Gate 5b now tests the real accessor).
 
 ### Phase 3c — SECOND gate blind spot: prefix-form accesses + tlgrep hardening ✅ (commit: this)
 A second blind spot: the `tlgrep` regex matched bare `_thread_local` + `engine._thread_local` but
