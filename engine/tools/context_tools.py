@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from engine.context import _thread_local
+from engine.context import get_request_context
 from engine.tool_exec import _ok, _err
 
 
@@ -27,7 +27,7 @@ def tool_context_search(args: dict) -> str:
     import brain as _brain
     if not _brain._context_manager:
         return _err("Context manager not initialized")
-    session_id = getattr(_thread_local, 'current_session_id', None) or ""
+    session_id = get_request_context().current_session_id or ""
     if not session_id:
         return _err("No active session")
     query = args.get("query", "")
@@ -55,14 +55,14 @@ def tool_context_recall(args: dict) -> str:
     import brain as _brain
     if not _brain._context_manager:
         return _err("Context manager not initialized")
-    session_id = getattr(_thread_local, 'current_session_id', None) or ""
+    session_id = get_request_context().current_session_id or ""
     if not session_id:
         return _err("No active session")
     query = args.get("query", "")
     if not query:
         return _err("Missing query")
     # Get API credentials from thread local or delegate globals
-    model = getattr(_thread_local, 'current_model', None) or _brain._delegate_fallback_model or ""
+    model = get_request_context().current_model or _brain._delegate_fallback_model or ""
     api_key = _brain._delegate_api_key or ""
     base_url = _brain._delegate_base_url or ""
     result = _brain._context_manager.recall(session_id, query, model, api_key, base_url)

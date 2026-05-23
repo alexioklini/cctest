@@ -17,7 +17,7 @@ single context-manager (no scattered `=None` teardown); a new concurrency/bleed 
 | 0 | Build the gate (bleed test + tlgrep mode) + inventory | ✅ done |
 | 1 | RequestContext + ContextVar + compat shim (no call-site changes) | ✅ done |
 | 2 | Migrate enter/exit sites to `request_context(...)` ctx-manager | ✅ done |
-| 3 | Migrate reads to typed accessors (kill raw getattr) | ⬜ |
+| 3 | Migrate reads to typed accessors (kill raw getattr) | 🔄 in progress |
 | 4 | Remove the shim | ⬜ |
 | 5 | Final source-validation | ⬜ |
 
@@ -135,6 +135,17 @@ statuses; it never appends. A genuinely new attribute = scope change to flag to 
   independently of the broad `unittest discover`).
 - Full `./refactor_gate.sh` GREEN: 18/18 imports, PII parity OK, no new unittest fails beyond the 3
   known spaCy ones, Gate 5b OK.
+
+### Phase 3 — migrate reads to typed accessors (in progress)
+**Accessor pattern (decided + piloted):** `from engine.context import get_request_context`; replace
+`getattr(_thread_local, 'X', DEF)` → `get_request_context().X` and `_thread_local.X = v` →
+`get_request_context().X = v` (or fold into `request_context(...)` kwargs at `with`-entry sites). The
+getattr-default is baked into the `RequestContext` field default (verified falsy-equivalent for the
+mixed-default attrs `current_session_id`/`project`/`session_id`), so the `or ...` tails still hold.
+Single accessor (attribute access on the context object) — no 37 per-attr getter funcs.
+- **Pilot: `engine/tools/context_tools.py`** ✅ — 3 reads (`current_session_id`×2, `current_model`)
+  migrated; import swapped `_thread_local`→`get_request_context`; gate + `tlgrep` clean. Validates the
+  recipe before parallelizing the remaining 17 files (~217 refs).
 
 ### Phase 2d — brain.py init/clear pairs + workflow + handler/server save-restore sites ✅ (commit: this)
 Closes out Phase 2: every enter/exit site now uses `request_context(...)`; **zero
