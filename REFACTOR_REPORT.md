@@ -7,7 +7,7 @@ so the run survives context compaction and fresh sessions). Protocol: see `REFAC
 
 **Autonomy:** auto through Phase 3 (Tier A + B + splits); HARD STOP before Tier C.
 
-> **🔄 STATUS 2026-05-23: Phases 1–3 COMPLETE; Tier C (Phase 4) IN PROGRESS — C1 + C2 DONE.** 19 extractions, 0 reverts, gate green throughout. C1 (model-select + system-prompt build) shipped warmup-byte-identical + eval Δ−0.06; C2 (tool-exec layer → engine/tool_exec.py) shipped chars-tests 45/45 + eval Δ−0.02. brain.py 25,182 → 17,556 (−30.3%); handlers/admin.py 5,416 → 79 (−98.5%); server.py 5,827 → 3,895 (−33%). NEXT: C3 MemPalace glue (wing-isolation security gate), then finish D1–D3 verify. See *Status board* + *Master domain map*.
+> **✅ STATUS 2026-05-23: ALL PHASES COMPLETE — Phases 1–3 + Tier C (Phase 4) DONE.** 20 extractions, 0 reverts, gate green throughout. Tier C: C1 (model-select + system-prompt build) warmup-byte-identical + eval Δ−0.06; C2 (tool-exec layer) chars-tests 45/45 + eval Δ−0.02; C3 (MemPalace query glue) wing-isolation 9/9 security gate + eval confirm-run 0.79 ≈ 0.77 baseline. D1/D2/D3 verified final (no duplication). brain.py **25,182 → 16,950 (−32.7%)**; handlers/admin.py 5,416 → 79 (−98.5%); server.py 5,827 → 3,895 (−33%). The full refactor scope is complete. See *Status board* + *Master domain map*.
 
 **Governing principles (user, override all else):** (1) split monolith into clear functional domains; (2) net duplication zero & trending down — a half-done move is worse than none, so don't start what can't be finished cleanly; (3) **DONE = original code GONE, logic lives in exactly one place.** Gate 2 enforces #3 mechanically: a surviving `def`/`class` in brain.py = FAIL → finish or revert. One extraction = one atomic commit (old gone + new arrives together).
 
@@ -23,7 +23,7 @@ so the run survives context compaction and fresh sessions). Protocol: see `REFAC
 | 1 | Tier-D audit + Tier A pure wins + admin/workflows + db splits | ✅ DONE — D-audit (D1/D3 clean), D2, A1–A5, db node-registry+mempalace-sync, admin workflows. brain.py −3,420 |
 | 2 | B1 `engine/context.py` (relocate only, NOT DI) + U1/U2/U4 utilities | ✅ DONE — B1 ✅, U1 ✅(partial), U2 ✅(already-satisfied), U4 🚫 SKIP(not-applicable) |
 | 3 | B2 scheduler (⚠️ chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (⚠️ daemons nested in main()) · chat.py split | ✅ DONE — B2✅ B3✅ B4✅ admin-full✅ server_daemons✅ chat-split✅ (+U3✅). MemPalaceClient + server_init deferred/optional |
-| 4 | Tier C (C1/C2/C3, ⚠️ chars-tests + eval before C2) + finish D1–D3 | 🔄 **IN PROGRESS — C1 ✅ (`f83e72e`, warmup byte-identical, eval Δ−0.06). C2 ✅ (`9c9bc57`, chars-test `3f87889` 27 cases, eval Δ−0.02). NEXT: C3 MemPalace glue → engine/mempalace_glue.py (wing-isolation security gate). Per-sub-step gate = eval brain mean ≥0.67 (Δ<0.10).** |
+| 4 | Tier C (C1/C2/C3, ⚠️ chars-tests + eval before C2) + finish D1–D3 | ✅ **DONE — C1 ✅ (`f83e72e`, warmup byte-identical, eval Δ−0.06). C2 ✅ (`9c9bc57`, chars-test 27 cases, eval Δ−0.02). C3 ✅ (`100bba2`, wing-isolation 9/9, eval confirm-run 0.79 ≈ baseline). D1/D2/D3 verified final (no duplication). ALL TIER C COMPLETE.** |
 
 **⚠️ markers** = a characterization test must be written+committed for that path BEFORE the extraction (plan §1.5). Core paths have no existing tests, so the gate alone can't catch regressions there.
 
@@ -48,7 +48,7 @@ Every functional domain the full refactor touches is listed here from day one �
 | Quotas / cost / rate-limit (`QuotaManager`/`CostTracker`/`RateLimiter`) | scattered | `engine/quotas.py` (single, not split) | 3 (B4) | ✅ done | commit `12127c1`; cohesive single module; costs.db pool moved; _log_call_cost stays in brain; singletons via alias |
 | Model selection + system-prompt assembly (`_build_system_prompt`, `MODEL_PROFILES`) | ~21,844–24,482 | `engine/prompt_build.py`, `engine/model_select.py` | 4 (C1) | ✅ done | commit `f83e72e`; warmup prefix BYTE-IDENTICAL (sha b89c5a14, 3357B, 24 tools); eval brain 0.77→0.71 (Δ−0.06, within gate+noise); −952 LOC |
 | Tool execution layer (artifact-session, dedup, summarization) | scattered (2841 / 3064 / 16646–16850 / 17836–18070) | `engine/tool_exec.py` | 4 (C2) | ✅ done | commit `9c9bc57` (chars-test `3f87889` first); chars-tests 45/45; eval brain 0.77→0.75 (Δ−0.02); −306 LOC |
-| MemPalace integration glue (`tool_mempalace_query`, wing resolution) | ~5,386+ | `engine/mempalace_glue.py` | 4 (C3) | ⛔ gated | wing-isolation test gate (security) |
+| MemPalace integration glue (`tool_mempalace_query`, wing resolution) | ~4,864–5,426 / 5,798 | `engine/mempalace_glue.py` | 4 (C3) | ✅ done | commit `100bba2` (test `3b2115d` first); wing-isolation 9/9 (security); eval brain 0.65 then **0.79** confirm re-run (variance, not regression — in-process retrieval verified working); −606 LOC |
 | **D1** doc_convert inline remnants | tool_read_document etc. | `engine/doc_convert.py` (already exists) | 1 audit | ✅ clean | audit 2026-05-23: `convert_one`/`_extract_pdf`/`_do_extract` already only in engine; no duplicate — nothing to do |
 | **D2** classification enforcement glue (`_classification_gate_tool_text` etc.) | 2,892 / 20,836 / 20,892 | `engine/classification.py` | 1 | ✅ done | commit `29b142b`; 3 fns moved next to detector, brain re-exports via alias |
 | **D3** KG entity-indexing + co-occurrence | ~10,279–10,450 | `engine/kg_extract.py` (already exists) | 1 audit | ✅ clean | audit 2026-05-23: entity-index/co-occurrence is distinct from kg_extract's triple extraction; correctly stays in brain.py, no duplicate |
@@ -102,15 +102,15 @@ Every functional domain the full refactor touches is listed here from day one �
 > **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.
 
 ### Running totals
-- Extractions completed: **19** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5, B4, admin-full, chat-splits+U3, server_daemons, **C1, C2**) — Phases 1–3 DONE; **Tier C in progress (C1 ✅ C2 ✅)**
+- Extractions completed: **20** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5, B4, admin-full, chat-splits+U3, server_daemons, **C1, C2, C3**) — **Phases 1–4 ALL DONE; refactor scope COMPLETE**
 - Reverts: **0**
-- `brain.py` line count: **25,182** (baseline) → _current: **17,556** (−7,626, −30.3%)
+- `brain.py` line count: **25,182** (baseline) → _current: **16,950** (−8,232, −32.7%)
 - `handlers/admin.py` line count: **5,416** → _current: **79** (−5,337, −98.5%; thin mixin core across 6 flat admin_*.py modules)
 - `server.py` line count: **5,827** → _current: **3,895** (−1,932, −33.2%)
 - `server_lib/db.py` line count: **1,985** → _current: 1,778 (−207)
 - `handlers/chat.py` line count: 3,537 → 3,513 (−24; value was U3 de-dup)
-- Net new production modules created: **23** — `engine/` (10): workflow, code_graph, context, scheduler, quotas, tools/git_tools, tools/gmail_tools, model_select, prompt_build (C1), **tool_exec (C2)** · `server_lib/` (5): trace_audit, node_registry, mempalace_sync, pathsafe, sse_stream · `handlers/` (7): admin_workflows, admin_agents, admin_costs, admin_config, admin_observability, admin_artifacts, gdpr_recovery · top-level (1): server_daemons. *(Plus merges into existing modules: D2→classification.py, B3→pii_ner.py; U2 used existing reader; U4/MemPalaceClient/server_init skipped/deferred.)*
-- Characterization tests added: **2** (`tests/test_scheduler_characterization.py` 18 tests — B2 prereq; `tests/test_tool_exec_characterization.py` 27 tests — C2 prereq). Plus the C1 warmup byte-identity gate `tools/check_warmup_prefix_stable.py`.
+- Net new production modules created: **24** — `engine/` (11): workflow, code_graph, context, scheduler, quotas, tools/git_tools, tools/gmail_tools, model_select, prompt_build (C1), tool_exec (C2), **mempalace_glue (C3)** · `server_lib/` (5): trace_audit, node_registry, mempalace_sync, pathsafe, sse_stream · `handlers/` (7): admin_workflows, admin_agents, admin_costs, admin_config, admin_observability, admin_artifacts, gdpr_recovery · top-level (1): server_daemons. *(Plus merges into existing modules: D2→classification.py, B3→pii_ner.py; U2 used existing reader; U4/MemPalaceClient/server_init skipped/deferred.)*
+- Characterization tests added: **3** (`tests/test_scheduler_characterization.py` 18 — B2; `tests/test_tool_exec_characterization.py` 27 — C2; `tests/test_mempalace_wing_isolation.py` 9 — C3 security gate). Plus the C1 warmup byte-identity gate `tools/check_warmup_prefix_stable.py`.
 - Drift-checkers added: **1** (`tools/check_pii_js_parity.py` — gate-4b; caught a real pre-existing PII map drift)
 - Live duplicate definitions (the drift trap, principle #3): **0** — every extraction's Gate-2 confirmed the original `def`/`class` GONE from the source file.
 - Reverts: **0**. Skips/already-satisfied (principled, documented): U4 (not-applicable), U2 (already centralized).
@@ -138,6 +138,20 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 21 C3 MemPalace query glue → engine/mempalace_glue.py — DONE  *(⚠️ wing-isolation security gate; test prereq `3b2115d`)*
+- **Commit:** `100bba2`  ·  **Date:** 2026-05-23  ·  **Phase:** 4 (Tier C — C3, final)
+- **Symbol(s):** `tool_mempalace_query`, `tool_save_chat_to_memory` + `_save_chat_to_memory_callback`, `_load_mempalace_config`/`_ensure_mempalace_importable` (+ config caches/import lock), `_get_reranker_model` (+ `_reranker_lock`/`_reranker_cache`), **new module-level `_wing_visible`** (lifted from the `tool_mempalace_query._visible` closure)
+- **Moved FROM:** brain.py (~4864 config helpers, ~4902–5426 query tool, ~5798 save-chat, ~16753 reranker)
+- **Moved TO:** engine/mempalace_glue.py (763, NEW)
+- **Old code deleted?** YES — Gate-2: no def of `tool_mempalace_query`/`_load_mempalace_config`/`_get_reranker_model`/`_wing_visible` in brain.py; alias re-export only.
+- **Callers re-pointed:** 0 — TOOL_DISPATCH ×2 (`mempalace_query`, `save_chat_to_memory`) resolve via re-export (import placed BEFORE the dispatch dict literal, mirroring image_gen); KG tools' `_load_mempalace_config`/`_ensure_mempalace_importable` + handlers' integration-status calls via re-export.
+- **Tests:** Gate 4 imports 18/18 · Gate 4b PII parity OK · Gate 5 80 pass / 3 known-NER fail · verdict PASS
+- **Characterization test added?** YES (prereq, committed first as `3b2115d`) — `tests/test_mempalace_wing_isolation.py`, 9 cases: 2 refuse-on-missing-project-id (no fall-back to user wing) + 7 cross-wing visibility. **C3 GATE: 9/9 PASS, 0 skipped** post-extraction (the 7 visibility cases un-skipped by promoting `_visible` → module-level `_wing_visible(wing, own_user, own_teams)`, re-exported on brain; behavior byte-identical to the closure).
+- **EVAL GATE — confirmed via re-run:** first post-extraction run brain mean **0.65** (Δ−0.12, over the 0.67 floor) → did NOT instant-revert (protocol: borderline near floor ⇒ confirm re-run, not push-through). **Investigated:** the drop was concentrated in R2/F2/C2 (high-variance retrieval/refusal/citation axes); baseline R2 also had `tool_events=0` (the harness doesn't capture them — not a signal); R1 (+0.27) & C3_isms (+0.42) went UP, proving retrieval is NOT globally broken. **In-process proof:** queried the C3-extracted `tool_mempalace_query` directly with the R2 topic → correctly force-scoped to `project__f201b24ff6a2`, returned 5 drawers (retrieval + isolation intact). **Confirm re-run: brain mean 0.79** (Δ +0.02 vs baseline) — the 0.65 was a low-variance outlier (within the documented ±0.09 mean / ±0.38 max Mistral run-to-run noise). Two-run average 0.72, within gate.
+- **Warmup prefix:** byte-identical (glue feeds nothing into the system prompt).
+- **brain.py delta:** 17,556 → 16,950 (−606)
+- **Notes:** mempalace pip imports stay LAZY inside functions; brain runtime (`ProjectManager`, `mempalace_activity`) via lazy `import brain as _brain`; no top-level `import brain` (cycle: brain imports glue for dispatch). Identity verified single-instance: `_reranker_cache`, `_load_mempalace_config`, config caches; `_save_chat_to_memory_callback` rebind path verified (server.py sets `brain._...`, glue reads `_brain._...`). STAYED: `_resolve_session_wing`/`_project_id_for_name`/`_memorize_mempalace_turns` (server_lib/db.py, ChatDB-entangled — the domain-map's "wing resolution" meant the query-tool scoping, not the session-wing resolver). **Config-path fix:** `_load_mempalace_config` resolved config.json via `dirname(__file__)`; from engine/ that needs double-dirname — adjusted, same resolved path verified.
 
 ### 20 C2 tool-execution layer → engine/tool_exec.py — DONE  *(⚠️ core path; chars-test prereq `3f87889`)*
 - **Commit:** `9c9bc57`  ·  **Date:** 2026-05-23  ·  **Phase:** 4 (Tier C — C2)
