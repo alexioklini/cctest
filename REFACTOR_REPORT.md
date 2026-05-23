@@ -68,8 +68,8 @@ Every functional domain the full refactor touches is listed here from day one �
 | server: 7 background daemons (nested in `main()`) | `server.py` ~3,903–5,716 | `server_daemons.py` | 3 | ⬜ planned | ⚠️ lift-to-module-scope, not copy-paste |
 | server: MemPalaceClient singleton | `server.py:69` | `server_lib/mempalace_client.py` | 3 | ⬜ planned | flagged by external analysis |
 | server: bootstrap/init (optional) | `server.py` ~3,033–3,500 | `server_init.py` | 3 | ⬜ planned | optional; `main()` may stay |
-| chat: SSE streaming (format/keepalive/replay) | `handlers/chat.py` | `server_lib/sse_stream.py` | 3 | ⬜ planned | reusable by future SSE endpoints (folds U3) |
-| chat: GDPR-recovery modal state machine | `handlers/chat.py` ~51–200 | `handlers/gdpr_recovery.py` | 3 | ⬜ planned | |
+| chat: SSE streaming (format/keepalive/replay) | `handlers/chat.py` | `server_lib/sse_stream.py` (36) | 3 | ✅ done | commit `bb10f4a`; the formatter was inline dup, extracted format_sse/encode_sse; folds U3 (3 sites) |
+| chat: GDPR-recovery modal state machine | `handlers/chat.py` ~51–200 | `handlers/gdpr_recovery.py` (52) | 3 | ✅ done | commit `bb10f4a`; module-level fns, plain move + re-export (no injection-list change) |
 | db: node registry | `server_lib/db.py` 54–163 | `server_lib/node_registry.py` | 1 | ✅ done | commit `92c4a24`; module-level fns+state, zero DB dep; shared dict identity preserved |
 | db: MemPalace sync cursor | `server_lib/db.py` ~1,324–1,422 | `server_lib/mempalace_sync.py` | 1 | ✅ done | commit `92c4a24`; ChatDB keeps delegating staticmethods; cycle avoided (local _db_safe + call-time _db_conn) |
 
@@ -79,7 +79,7 @@ Every functional domain the full refactor touches is listed here from day one �
 |---|---|---|---|---|---|
 | U1 path-traversal guard | 5 divergent (classification, projects ×2, favourites, admin) | `server_lib/pathsafe.py` | 2 | ✅ done (partial) | commit `6a0a525`; 2 identical-skeleton copies merged, 3 left (merging would CHANGE security verdict); denylist-family copies 3→1 |
 | U2 HTTP body read | 16 sites | (already centralized) | 2 | ✅ done (already-satisfied) | commit `c087db1`; canonical `_read_json` already exists — did NOT create competing module; repointed 3 inline-JSON stragglers; raw-JSON 4→1 |
-| U3 SSE formatter | 3 sites | folded into `server_lib/sse_stream.py` | 3 | ⬜ planned | with chat SSE split |
+| U3 SSE formatter | 3 sites | folded into `server_lib/sse_stream.py` | 3 | ✅ done | commit `bb10f4a`; 3 inline json.dumps SSE frames in chat.py → `encode_sse`. translate.py's divergent shape left (different wire behavior) |
 | U4 repo-root path constant | ~82 sites (an idiom, not one value) | — | 2 | 🚫 SKIP (not-applicable) | investigated 2026-05-23: 82 occurrences resolve to DIFFERENT dirs by file depth, not one duplicated value; naive unify would rewrite ~half to the wrong dir. True repo-root sites already named locally (AGENTS_DIR/CONFIG_PATH/_REPO_ROOT). Cosmetic churn w/ real divergence risk → SKIP per principle #2 |
 | U5 PII web/server rule sync | engine/pii_ner.py ↔ web/js/utils.js | `tools/check_pii_js_parity.py` (drift-CHECKER, gate-4b) | 3 | ✅ done | commit `793ca1e`; checker (not generator) diffs rule_id/category/action maps; caught a REAL pre-existing drift (`date` rule). Full codegen deferred — regex bodies differ by dialect; the metadata check catches the actual drift failure mode at near-zero risk |
 
@@ -100,7 +100,7 @@ Every functional domain the full refactor touches is listed here from day one �
 > **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.
 
 ### Running totals
-- Extractions completed: **15** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5, B4, admin-full) — Phases 1 & 2 DONE; Phase 3 in progress
+- Extractions completed: **16** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5, B4, admin-full, chat-splits+U3) — Phases 1 & 2 DONE; Phase 3 nearly done (server_daemons remaining)
 - `brain.py` line count: **25,182** (baseline) → _current: 18,814_ (−6,368, −25.3%)
 - `server_lib/db.py` line count: **1,985** → _current: 1,778_ (−207)
 - `handlers/admin.py` line count: **5,416** → _current: 79_ (−5,337, −98.5%; now a thin mixin-composition core across 6 flat admin_*.py modules)
@@ -132,6 +132,18 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 17 chat.py splits — SSE formatter (+U3) + GDPR-recovery — DONE
+- **Commit:** `bb10f4a`  ·  **Date:** 2026-05-23  ·  **Phase:** 3 (chat split + U3)
+- **Symbol(s):** *sse_stream:* `format_sse`, `encode_sse`, `KEEPALIVE`. *gdpr_recovery:* `_gdpr_recovery_pending`/`_lock`/`_register`/`_clear`, `deliver_gdpr_recovery_choice`
+- **Moved FROM:** handlers/chat.py (inline SSE formatting ×3 + GDPR-recovery state machine ~51–200)
+- **Moved TO:** server_lib/sse_stream.py (36, NEW, stdlib-only) + handlers/gdpr_recovery.py (52, NEW)
+- **Old code deleted?** YES — Gate-2 clean for both; SSE inline dupes collapsed to `encode_sse` calls, GDPR-recovery defs gone (re-exported from chat.py).
+- **Callers re-pointed:** SSE 3 inline sites → `encode_sse`; GDPR-recovery via chat.py re-export (shared dict/lock identity preserved so the test's `.clear()` hits the live registry).
+- **Tests:** Gate 4 imports 18/18 · **tests/test_chat_worker_helpers 15/15 pass** · Gate 5 80 pass / 3 known-NER fail · verdict PASS
+- **Characterization test added?** n/a (existing test_chat_worker_helpers pins the path)
+- **chat.py delta:** 3,537 → 3,513 (−24; the SSE win is de-duplication not raw lines — inline formatting was small but repeated)
+- **Notes:** **U3 folded here** (3 inline `json.dumps` SSE frames → `encode_sse`). translate.py's divergent `ensure_ascii=False` SSE shape left alone (folding would change wire behavior — same discipline as U1/U2). chat-specific streaming machinery (`_stream_live_to_client`, `build_chat_event_callback`, worker, LiveStream attach/replay) STAYED; `LiveStream` lives in server.py — untouched (Resumable Streaming invariants preserved). GDPR-recovery = module-level fns → plain move (NOT a sub-mixin), so no `_inject_server_globals` change needed.
 
 ### 16 admin.py full decomposition (5 flat sub-modules) — DONE
 - **Commit:** `b2ff754`  ·  **Date:** 2026-05-23  ·  **Phase:** 3 (admin split)
