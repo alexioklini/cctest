@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from JS_REFACTOR_REPORT.md · 2026-05-23 20:37 · this HTML is a view; the .md is the source of truth.</p><h1>JS Refactor Report — web/js/ (Tier F) — living record</h1>
+</style></head><body><p class=meta>Generated from JS_REFACTOR_REPORT.md · 2026-05-23 20:40 · this HTML is a view; the .md is the source of truth.</p><h1>JS Refactor Report — web/js/ (Tier F) — living record</h1>
 <p><strong>Source of truth for what's done.</strong> The plan is <code>JS_REFACTOR_PLAN.md</code>; this file tracks</p>
 <p>progress. Mirrors the Python <code>REFACTOR_REPORT.md</code> discipline: a fixed Master file-map written</p>
 <p>on day one (all 17 rows present, statuses planned), and the run only *flips statuses* — it never</p>
@@ -32,10 +32,10 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <tr><td>2</td><td>Split <code>settings.js</code> (6,140 → <strong>7 files</strong>, all &lt;2k)</td><td><span class="badge done" title="done">✅</span> DONE</td></tr>
 <tr><td>3</td><td>Split <code>panels.js</code> (5,819 → <strong>6 files</strong>, all &lt;2k)</td><td><span class="badge done" title="done">✅</span> DONE</td></tr>
 <tr><td>4</td><td>Split <code>chat.js</code> (4,013 → 4 files) + REVIEW init.js (→3) / translation.js (→2)</td><td><span class="badge done" title="done">✅</span> DONE</td></tr>
-<tr><td>5</td><td>Final source-validation (mandatory close-out)</td><td><span class="badge wip" title="in progress">🔄</span> next</td></tr>
+<tr><td>5</td><td>Final source-validation (mandatory close-out)</td><td><span class="badge done" title="done">✅</span> DONE — all 8 checks pass</td></tr>
 </tbody></table>
-<p><strong>RESUME POINT:</strong> Phases 0–4 complete (gate green, baseline net-globals = <strong>901</strong>; ALL files &lt;2k).</p>
-<p>Next: <strong>Phase 5 (final source-validation)</strong> — then HARD STOP for user review.</p>
+<p><strong>RESUME POINT:</strong> Phases 0–5 complete. Gate green, all files &lt;2k, source-validation passed.</p>
+<p><strong>Tier F is ready for user review (HARD STOP).</strong> Awaiting acceptance before declaring complete.</p>
 <h3>Phase 1 decision — de-dup verified and REJECTED (user-approved 2026-05-23)</h3>
 <p>The plan said "verify counts at extraction time." Verification (subagent analysis) falsified the</p>
 <p>premise that the de-dup candidates are wins. All four were rejected as net-negative churn or</p>
@@ -198,4 +198,39 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <p>  (Rule 3). Flagged here for the Phase 5 cross-file-dup grep.</p>
 <ul>
 <li><strong>All files now &lt;2,000 LOC.</strong> Gate green, smoke 5/5.</li>
+</ul>
+<h3>Phase 5 — Final source-validation (all 8 checks PASS, verified against source not the report)</h3>
+<p>1. <strong>Every claimed split file exists at its claimed size</strong> — all 20 new files confirmed via <code>wc -l</code>. ✓</p>
+<p>2. <strong>No function defined twice</strong> — cross-file grep of all top-level fn/const/var/class names: the</p>
+<p>   ONLY duplicate is the pre-existing <code>escapeHtml</code> (favourites.js + workflows.js, present before</p>
+<p>   Tier F, untouched — documented in Phase 4). <code>const</code>/<code>let</code> grep "dupes" were destructuring</p>
+<p>   artifacts, not real collisions. No split copied-instead-of-moved. ✓</p>
+<p>3. <strong>Net globals unchanged</strong> — <code>.globals.json</code> writable count = 901 = baseline. (Phase-0 was 879;</p>
+<p>   the +22 is the one sanctioned switchGeneralTab-decomposition bump, recorded at Phase 2.) ✓</p>
+<p>4. <strong>No monster file remains</strong> — no web/js file &gt;2,000 LOC; largest is settings_general_tabs.js</p>
+<p>   (1,988). settings.js / panels.js / chat.js all DELETED (not shims). ✓</p>
+<p>5. <strong>index.html load order</strong> — all 34 <code>js/</code> scripts present, none dangling; split files occupy</p>
+<p>   their parents' original slots; ordering constraints hold (settings_general before</p>
+<p>   settings_general_tabs; translation before translation_live; user_admin + monitors before</p>
+<p>   init.js, which is last). ✓</p>
+<p>6. <strong>Full gate green + real browser pass</strong> — <code>./js_gate.sh</code> PASS (eslint clean modulo 3 baseline,</p>
+<p>   net-globals 901, smoke 5/5); headed (non-headless) browser pass 5/5; PLUS an extra console-error</p>
+<p>   sweep over split-heavy flows not in the base smoke (Agent Settings, GDPR + Tools tabs, Translation</p>
+<p>   view loading translation_live.js) — zero console errors. ✓</p>
+<p>7. <strong>Coverage promise</strong> — all 17 original web/js files appear in the Master map with a final status</p>
+<p>   + size; the 2 REVIEW files (init.js, translation.js) each carry a recorded SPLIT decision with</p>
+<p>   rationale. Nothing silently omitted. ✓</p>
+<p>8. <strong>No inconsistency between report and source</strong> — none found; nothing to revert. ✓</p>
+<p><strong>Known gate limitation (documented, not a defect):</strong> ESLint <code>no-redeclare</code> is per-file, so it does</p>
+<p>NOT catch cross-file same-name globals — that's why Phase 5 check 2 greps cross-file independently.</p>
+<p>The net-globals count (<code>sort -u</code>) is dup-insensitive, so the invariant stays valid regardless.</p>
+<h3>Tier F summary</h3>
+<ul>
+<li><strong>29,193 LOC across 17 files → all &lt;2,000 LOC.</strong> 3 monsters split (settings/panels/chat), 2 REVIEW</li>
+</ul>
+<p>  files split (init/translation), de-dup verified-and-rejected, 20 new cohesive files created.</p>
+<ul>
+<li>Gate green after every step; one commit per green step, directly to main; HTML republished each step.</li>
+<li>Net behavior change: <strong>zero</strong> (gate + smoke + headed + extra sweep all green throughout).</li>
+<li>Net globals: 879 → 901 (single sanctioned decomposition bump; every split was a pure relocation).</li>
 </ul></body></html>

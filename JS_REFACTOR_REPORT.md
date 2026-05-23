@@ -19,10 +19,10 @@ pushed on every update via `./refactor_publish.sh "<msg>" JS_REFACTOR_REPORT.md`
 | 2 | Split `settings.js` (6,140 → **7 files**, all <2k) | ✅ DONE |
 | 3 | Split `panels.js` (5,819 → **6 files**, all <2k) | ✅ DONE |
 | 4 | Split `chat.js` (4,013 → 4 files) + REVIEW init.js (→3) / translation.js (→2) | ✅ DONE |
-| 5 | Final source-validation (mandatory close-out) | 🔄 next |
+| 5 | Final source-validation (mandatory close-out) | ✅ DONE — all 8 checks pass |
 
-**RESUME POINT:** Phases 0–4 complete (gate green, baseline net-globals = **901**; ALL files <2k).
-Next: **Phase 5 (final source-validation)** — then HARD STOP for user review.
+**RESUME POINT:** Phases 0–5 complete. Gate green, all files <2k, source-validation passed.
+**Tier F is ready for user review (HARD STOP).** Awaiting acceptance before declaring complete.
 
 ### Phase 1 decision — de-dup verified and REJECTED (user-approved 2026-05-23)
 
@@ -178,3 +178,37 @@ with a disposition + size — nothing silently out of scope.
   the net-globals count (`sort -u`) counts it once, so the invariant is unaffected. Out of scope
   (Rule 3). Flagged here for the Phase 5 cross-file-dup grep.
 - **All files now <2,000 LOC.** Gate green, smoke 5/5.
+
+### Phase 5 — Final source-validation (all 8 checks PASS, verified against source not the report)
+1. **Every claimed split file exists at its claimed size** — all 20 new files confirmed via `wc -l`. ✓
+2. **No function defined twice** — cross-file grep of all top-level fn/const/var/class names: the
+   ONLY duplicate is the pre-existing `escapeHtml` (favourites.js + workflows.js, present before
+   Tier F, untouched — documented in Phase 4). `const`/`let` grep "dupes" were destructuring
+   artifacts, not real collisions. No split copied-instead-of-moved. ✓
+3. **Net globals unchanged** — `.globals.json` writable count = 901 = baseline. (Phase-0 was 879;
+   the +22 is the one sanctioned switchGeneralTab-decomposition bump, recorded at Phase 2.) ✓
+4. **No monster file remains** — no web/js file >2,000 LOC; largest is settings_general_tabs.js
+   (1,988). settings.js / panels.js / chat.js all DELETED (not shims). ✓
+5. **index.html load order** — all 34 `js/` scripts present, none dangling; split files occupy
+   their parents' original slots; ordering constraints hold (settings_general before
+   settings_general_tabs; translation before translation_live; user_admin + monitors before
+   init.js, which is last). ✓
+6. **Full gate green + real browser pass** — `./js_gate.sh` PASS (eslint clean modulo 3 baseline,
+   net-globals 901, smoke 5/5); headed (non-headless) browser pass 5/5; PLUS an extra console-error
+   sweep over split-heavy flows not in the base smoke (Agent Settings, GDPR + Tools tabs, Translation
+   view loading translation_live.js) — zero console errors. ✓
+7. **Coverage promise** — all 17 original web/js files appear in the Master map with a final status
+   + size; the 2 REVIEW files (init.js, translation.js) each carry a recorded SPLIT decision with
+   rationale. Nothing silently omitted. ✓
+8. **No inconsistency between report and source** — none found; nothing to revert. ✓
+
+**Known gate limitation (documented, not a defect):** ESLint `no-redeclare` is per-file, so it does
+NOT catch cross-file same-name globals — that's why Phase 5 check 2 greps cross-file independently.
+The net-globals count (`sort -u`) is dup-insensitive, so the invariant stays valid regardless.
+
+### Tier F summary
+- **29,193 LOC across 17 files → all <2,000 LOC.** 3 monsters split (settings/panels/chat), 2 REVIEW
+  files split (init/translation), de-dup verified-and-rejected, 20 new cohesive files created.
+- Gate green after every step; one commit per green step, directly to main; HTML republished each step.
+- Net behavior change: **zero** (gate + smoke + headed + extra sweep all green throughout).
+- Net globals: 879 → 901 (single sanctioned decomposition bump; every split was a pure relocation).
