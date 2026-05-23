@@ -2,8 +2,10 @@
 
 **Goal:** Identify *all* opportunities to refactor the codebase into reusable modules, then execute the extraction completely (the previous attempt was left incomplete).
 
-**Status:** Plan written. **Phase 0 (safety net) DONE.** Ready to start Phase 1.
-**Last session:** 2026-05-22 · **HEAD:** `4bad7e4` on `main` · **Resume:** read this file top-to-bottom, then jump to *"How to resume tomorrow"*.
+**Status:** Plan written. **Phase 0 (safety net) DONE.** Execution protocol set. Ready to start Phase 1.
+**Last updated:** 2026-05-23 · **HEAD:** `d48b5de` on `main` · **Resume:** read this file top-to-bottom, then jump to *"How to resume"*.
+
+> **When the user says "refactor the code" (or similar), execute autonomously per the *Execution protocol* section below — do NOT ask which phase to start or pause at each boundary. The protocol already encodes the answers.**
 
 ---
 
@@ -14,6 +16,31 @@
 3. Two files are **uncommitted** (`REFACTOR_PLAN.md`, `refactor_gate.sh`). Decide whether to commit them first.
 4. **Two open decisions block nothing but should be settled** (see *Open decisions*). Then start **Phase 1: audit last time's incompleteness** (sweep `engine/` for surviving duplicate copies in `brain.py`).
 5. Execution style chosen by user: **phase-gated checkpoints** — do a full phase, stop, show grep-proofs + test results, then continue.
+
+---
+
+## Execution protocol (how to run this autonomously — user-approved 2026-05-23)
+
+The user wants: *"say refactor the code, walk away, come back hours later done"* — without manually starting each phase. These settings make that safe and uninterrupted up to Tier C.
+
+**Autonomy boundary:** Run **Phase 1 → Phase 3 (audit + Tier A + Tier B + handler/db/server splits) start-to-finish, unattended.** Commit after each green gate. **HARD STOP before Tier C** (C1 model-select/system-prompt, C2 tool-exec, C3 MemPalace glue) and report — Tier C is eval-gated + KV-cache-sensitive and needs the user's review before proceeding.
+Also stop immediately (don't push through) on: a **failed gate**, an **import break**, or a **decision the plan/handover doesn't already answer**.
+
+**Context-window discipline (this is what keeps a multi-hour run from overfilling):**
+- **One subagent per extraction.** Spawn an `Explore`/`general-purpose` agent to do the bulky work — read the brain.py block, grep all call sites, run `./refactor_gate.sh`. The agent's reads/greps/test logs stay in *its* context and die with it. It returns ONLY: pass/fail, the call sites it repointed, and one line of summary. The main thread must NEVER read brain.py wholesale or dump grep/test output into its own context.
+- **Disk is the memory, not the conversation.** After each extraction, update `REFACTOR_PROGRESS.md` (the running ledger). State survives compaction AND a fresh session. The conversation is disposable; the ledger is truth. On resume, read `REFACTOR_PROGRESS.md` first to see what's done.
+- **Commit after every green extraction** (one extraction = one commit, directly to main per project rule). Any point in the run is therefore recoverable; a later failure never strands earlier good work.
+
+**Pre-decided (do NOT re-ask):**
+- *NER tests:* the 3 `test_pii_ner.py` failures stay the fixed baseline ("no new failures"). Do NOT load spaCy per gate run.
+- *Smoke test:* NOT automated. Rely on import-gate + unittest between phases; the user does a manual chat sanity-check after the run. (Tier C still requires the eval harness — that gate stands.)
+
+**Per-extraction loop (the subagent runs this, returns the result):**
+1. Move the block to its new module; re-export from brain.py so callers still resolve.
+2. Gate 2: `./refactor_gate.sh grep <SYMBOL>` → confirm brain.py shows ONLY changelog/comment hits.
+3. Gate 3: grep call sites repo-wide → all resolve to the new module.
+4. Gates 4+5: `./refactor_gate.sh` → imports clean + no new test failures.
+5. If all pass: commit, append a row to `REFACTOR_PROGRESS.md`. If any fail: revert the move, log the blocker in the ledger, STOP and report.
 
 ---
 
