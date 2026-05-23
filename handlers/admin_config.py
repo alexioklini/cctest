@@ -607,16 +607,11 @@ class AdminConfigHandlers:
         except Exception as e:
             self._send_json({"error": f"Agent not found: {agent_id} ({e})"}, 404)
             return
-        prev_agent = getattr(engine._thread_local, "current_agent", None)
-        prev_mcp = getattr(engine._thread_local, "mcp_manager", None)
-        try:
+        with engine.request_context():
             engine._thread_local.current_agent = agent
             # Use the live MCP manager so connected MCP servers are measured.
             engine._thread_local.mcp_manager = engine._mcp_manager
             breakdown = engine.get_tool_breakdown(agent_id)
-        finally:
-            engine._thread_local.current_agent = prev_agent
-            engine._thread_local.mcp_manager = prev_mcp
         self._send_json(breakdown)
 
     def _handle_tools_config_save(self):

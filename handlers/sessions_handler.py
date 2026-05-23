@@ -44,9 +44,7 @@ def _backfill_orphan_artifacts(sid: str) -> None:
             return
         # Run registration under the session's thread-local context so
         # `_register_artifact_version` can resolve session_id.
-        prev_sid = getattr(engine._thread_local, "current_session_id", None)
-        engine._thread_local.current_session_id = sid
-        try:
+        with engine.request_context(current_session_id=sid):
             for folder in folders:
                 folder_path = os.path.join(artifacts_root, folder)
                 try:
@@ -64,8 +62,6 @@ def _backfill_orphan_artifacts(sid: str) -> None:
                             fpath, "created", agent_id)
                     except Exception:
                         pass
-        finally:
-            engine._thread_local.current_session_id = prev_sid
     except Exception:
         pass
 
@@ -190,11 +186,9 @@ class SessionsHandlerMixin:
                 self._send_json({"suggestion": None, "config": cfg})
                 return
             # Set thread-local agent context so LLM call picks up the right config
-            engine._thread_local.current_agent = engine.AgentConfig(session.agent_id)
-            try:
+            with engine.request_context():
+                engine._thread_local.current_agent = engine.AgentConfig(session.agent_id)
                 text = engine.generate_next_prompt_suggestion(session)
-            finally:
-                engine._thread_local.current_agent = None
             self._send_json({
                 "suggestion": text,
                 "model_used": (cfg.get("model") or session.model),

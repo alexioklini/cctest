@@ -6684,78 +6684,79 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
             memory_store=MemoryStore(agent_id, base_dir=agent_config.memory_dir),
             mcp_manager=mcp_mgr,
         )
-        init_thread_context(_warmup_ctx, agent_config=agent_config)
+        with request_context():
+            init_thread_context(_warmup_ctx, agent_config=agent_config)
 
-        if mode == "full":
-            # Build the prefix through the SHARED helper so it is byte-identical
-            # to the live chat worker's first-turn prefix (the chat worker calls
-            # the same build_first_turn_prefix). discovered_tools=set() matches
-            # turn 0 (nothing discovered yet); mcp_manager + model binding are
-            # handled inside the helper. Tool wire-shape (openai) differs from
-            # the sidecar's anthropic shape but does NOT affect the KV-relevant
-            # system_prompt / tool-name set.
-            system_prompt, all_tools, _ = build_first_turn_prefix(
-                model, agent_id,
-                mcp_manager=mcp_mgr,
-                discovered_tools=set(),
-                is_openai_shape=True,
-            )
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "."},
-            ]
-        else:  # "minimal"
-            messages = [{"role": "user", "content": "."}]
+            if mode == "full":
+                # Build the prefix through the SHARED helper so it is byte-identical
+                # to the live chat worker's first-turn prefix (the chat worker calls
+                # the same build_first_turn_prefix). discovered_tools=set() matches
+                # turn 0 (nothing discovered yet); mcp_manager + model binding are
+                # handled inside the helper. Tool wire-shape (openai) differs from
+                # the sidecar's anthropic shape but does NOT affect the KV-relevant
+                # system_prompt / tool-name set.
+                system_prompt, all_tools, _ = build_first_turn_prefix(
+                    model, agent_id,
+                    mcp_manager=mcp_mgr,
+                    discovered_tools=set(),
+                    is_openai_shape=True,
+                )
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "."},
+                ]
+            else:  # "minimal"
+                messages = [{"role": "user", "content": "."}]
 
-        endpoint = f"{base_url}/chat/completions"
-        # Match send_message: stream=True + stream_options so the tokenised
-        # request shape is identical to what the real first turn sends.
-        # max_tokens=8 is fine — the KV prefix covers system+tools+user and
-        # doesn't depend on the output-length budget.
-        payload = {
-            "model": get_api_model_id(model),
-            "max_tokens": 8,
-            "messages": messages,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
-        if all_tools:
-            payload["tools"] = all_tools
-        model_cfg = resolve_model_settings(model)
-        if all_tools and model_cfg.get("parallel_tool_calls", True):
-            payload["parallel_tool_calls"] = True
-        # KV-prefix stability: real chat requests now go through
-        # _apply_inference_to_payload, which forces enable_thinking on/off for
-        # oMLX thinking-capable models. The warmup payload must mirror that
-        # exactly or the prefix won't match and prompt cache will miss.
-        # When `thinking=True` we inject the same legacy flag the chat path
-        # uses so the helper renders enable_thinking=true into the payload.
-        provider_name = prov.get("provider_name", "")
-        _inf = get_inference_params(model)
-        if thinking:
-            _inf = dict(_inf)
-            _inf["thinking"] = True
-            _inf["thinking_level"] = "high"
-        _apply_inference_to_payload(payload, _inf, provider_name, scoped_model=model)
-        headers = make_headers(api_key)
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
-        _provider_name = prov.get("provider_name", "") or "default"
-        with _provider_queue.acquire_if(
-            _provider_name, label="warmup",
-            session_id=None, agent_id=agent_id, user_id=None,
-            model=model, event_callback=None, cancel_token=None,
-            timeout=max(timeout * 2, 60),
-        ):
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                resp.read()
-        dur_ms = int((time.time() - t0) * 1000)
-        now = time.time()
-        set_warmup_state(model, state="warm", last_warmup_ts=now,
-                         last_error="", mode=mode,
-                         thinking_primed=bool(thinking))
-        return {"ok": True, "state": "warm", "duration_ms": dur_ms,
-                "error": "", "mode": mode, "thinking": bool(thinking)}
+            endpoint = f"{base_url}/chat/completions"
+            # Match send_message: stream=True + stream_options so the tokenised
+            # request shape is identical to what the real first turn sends.
+            # max_tokens=8 is fine — the KV prefix covers system+tools+user and
+            # doesn't depend on the output-length budget.
+            payload = {
+                "model": get_api_model_id(model),
+                "max_tokens": 8,
+                "messages": messages,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            }
+            if all_tools:
+                payload["tools"] = all_tools
+            model_cfg = resolve_model_settings(model)
+            if all_tools and model_cfg.get("parallel_tool_calls", True):
+                payload["parallel_tool_calls"] = True
+            # KV-prefix stability: real chat requests now go through
+            # _apply_inference_to_payload, which forces enable_thinking on/off for
+            # oMLX thinking-capable models. The warmup payload must mirror that
+            # exactly or the prefix won't match and prompt cache will miss.
+            # When `thinking=True` we inject the same legacy flag the chat path
+            # uses so the helper renders enable_thinking=true into the payload.
+            provider_name = prov.get("provider_name", "")
+            _inf = get_inference_params(model)
+            if thinking:
+                _inf = dict(_inf)
+                _inf["thinking"] = True
+                _inf["thinking_level"] = "high"
+            _apply_inference_to_payload(payload, _inf, provider_name, scoped_model=model)
+            headers = make_headers(api_key)
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+            _provider_name = prov.get("provider_name", "") or "default"
+            with _provider_queue.acquire_if(
+                _provider_name, label="warmup",
+                session_id=None, agent_id=agent_id, user_id=None,
+                model=model, event_callback=None, cancel_token=None,
+                timeout=max(timeout * 2, 60),
+            ):
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    resp.read()
+            dur_ms = int((time.time() - t0) * 1000)
+            now = time.time()
+            set_warmup_state(model, state="warm", last_warmup_ts=now,
+                             last_error="", mode=mode,
+                             thinking_primed=bool(thinking))
+            return {"ok": True, "state": "warm", "duration_ms": dur_ms,
+                    "error": "", "mode": mode, "thinking": bool(thinking)}
     except urllib.error.HTTPError as e:
         try:
             body = e.read().decode("utf-8", errors="replace")[:500]
@@ -6772,14 +6773,6 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
                          last_warmup_ts=time.time(), mode=mode)
         return {"ok": False, "state": "failed", "error": err,
                 "duration_ms": int((time.time() - t0) * 1000), "mode": mode}
-    finally:
-        clear_thread_context()
-        # Don't let the warmed model leak to the next warmup on the keeper
-        # thread (it would resolve the wrong profile for a different model).
-        try:
-            _thread_local._current_model = None
-        except Exception:
-            pass
 
 
 # --- Background Task Runner ---
@@ -6924,57 +6917,56 @@ class TaskRunner:
                 team_ids=caller_team_ids,
                 memory_store=target_memory,
             )
-            init_thread_context(_task_ctx, agent_config=target)
-            if cancel_flag.is_set():
-                status = "cancelled"
-            else:
-                delegate_inf = get_inference_params(model, target.config.get("model_purpose"))
-                # GDPR policy gate: the calling agent's context (system
-                # prompt + the task payload itself) may carry PII, and the
-                # delegate target can be a different cloud provider than
-                # the parent. Scan both, swap model and/or pseudonymise
-                # per admin policy, deanon the reply before returning it
-                # up to the caller.
-                _del_deanon = _identity_deanon
-                _wire_system = system_prompt
-                _wire_messages = messages
-                try:
-                    _msg_blobs = []
-                    _msg_idx = []
-                    for _i, _m in enumerate(messages):
-                        _c = _m.get("content")
-                        if isinstance(_c, str):
-                            _msg_blobs.append(_c)
-                            _msg_idx.append(_i)
-                    _scan_inputs = [system_prompt] + _msg_blobs
-                    model, _new_blobs, _del_deanon = gdpr_pick_model_for_background(
-                        model, _scan_inputs, purpose="delegate_task")
-                    if _new_blobs is not _scan_inputs:
-                        _wire_system = _new_blobs[0]
-                        _wire_messages = list(messages)
-                        for _i, _nb in zip(_msg_idx, _new_blobs[1:]):
-                            _wire_messages[_i] = {**messages[_i], "content": _nb}
-                except GDPRBlockedError as e:
-                    status = "error"
-                    result_text = f"Delegate error: GDPR block — {e}"
-                if status != "error":
-                    from handlers import sidecar_proxy as _sidecar_proxy
-                    _res = _sidecar_proxy.background_call(
-                        messages=_wire_messages, model=model, system_prompt=_wire_system,
-                        agent_id=agent_id,
-                        max_tokens=int(delegate_inf.get("max_tokens") or 0) or None,
-                    )
-                    result_text = _del_deanon(_res.get("reply") or "")
-                    if cancel_flag.is_set():
-                        status = "cancelled"
-                    elif _res.get("error"):
-                        result_text = f"Delegate error: {_res['error']}"
+            with request_context():
+                init_thread_context(_task_ctx, agent_config=target)
+                if cancel_flag.is_set():
+                    status = "cancelled"
+                else:
+                    delegate_inf = get_inference_params(model, target.config.get("model_purpose"))
+                    # GDPR policy gate: the calling agent's context (system
+                    # prompt + the task payload itself) may carry PII, and the
+                    # delegate target can be a different cloud provider than
+                    # the parent. Scan both, swap model and/or pseudonymise
+                    # per admin policy, deanon the reply before returning it
+                    # up to the caller.
+                    _del_deanon = _identity_deanon
+                    _wire_system = system_prompt
+                    _wire_messages = messages
+                    try:
+                        _msg_blobs = []
+                        _msg_idx = []
+                        for _i, _m in enumerate(messages):
+                            _c = _m.get("content")
+                            if isinstance(_c, str):
+                                _msg_blobs.append(_c)
+                                _msg_idx.append(_i)
+                        _scan_inputs = [system_prompt] + _msg_blobs
+                        model, _new_blobs, _del_deanon = gdpr_pick_model_for_background(
+                            model, _scan_inputs, purpose="delegate_task")
+                        if _new_blobs is not _scan_inputs:
+                            _wire_system = _new_blobs[0]
+                            _wire_messages = list(messages)
+                            for _i, _nb in zip(_msg_idx, _new_blobs[1:]):
+                                _wire_messages[_i] = {**messages[_i], "content": _nb}
+                    except GDPRBlockedError as e:
                         status = "error"
+                        result_text = f"Delegate error: GDPR block — {e}"
+                    if status != "error":
+                        from handlers import sidecar_proxy as _sidecar_proxy
+                        _res = _sidecar_proxy.background_call(
+                            messages=_wire_messages, model=model, system_prompt=_wire_system,
+                            agent_id=agent_id,
+                            max_tokens=int(delegate_inf.get("max_tokens") or 0) or None,
+                        )
+                        result_text = _del_deanon(_res.get("reply") or "")
+                        if cancel_flag.is_set():
+                            status = "cancelled"
+                        elif _res.get("error"):
+                            result_text = f"Delegate error: {_res['error']}"
+                            status = "error"
         except Exception as e:
             result_text = str(e)
             status = "error"
-        finally:
-            clear_thread_context()
 
         with self._lock:
             self._tasks[task_id]["status"] = status
@@ -7286,55 +7278,50 @@ class WorkflowExecution:
         #  - ask_user_for_file finds the execution id
         #  - cost-logging keys all LLM calls under "wf-<execution_id>"
         #  - ask_llm sees workflow defaults (model, agent)
-        _thread_local.workflow_execution_id = self.execution_id
-        _thread_local.current_session_id = f"wf-{self.execution_id}"
-        _thread_local.current_user_id = self.user_id or ""
-        _thread_local.workflow_default_model = self.model or ""
-        _thread_local.workflow_agent_id = self.agent_id or ""
-        # Resolve and pin a current_agent so cost logging records the right agent
-        try:
-            _thread_local.current_agent = AgentConfig(self.agent_id or "main")
-        except Exception:
-            _thread_local.current_agent = None
-        try:
-            interp = _WorkflowInterpreter(self._program, self)  # type: ignore
-            interp.run()
-            if self._cancel.is_set():
-                self.status = "cancelled"
-            else:
-                self.status = "completed"
-        except WorkflowError as e:
-            self.status = "failed"
-            self.error = f"Line {e.line}: {e}"
-        except Exception as e:
-            self.status = "failed"
-            self.error = str(e)
-        finally:
-            for k in ("workflow_execution_id", "current_session_id", "current_user_id",
-                      "workflow_default_model", "workflow_agent_id", "current_agent"):
-                try:
-                    setattr(_thread_local, k, None if k != "current_user_id" else "")
-                except Exception:
-                    pass
-            self.finished_at = datetime.datetime.now().isoformat()
-            # Compute duration
+        with request_context():
+            _thread_local.workflow_execution_id = self.execution_id
+            _thread_local.current_session_id = f"wf-{self.execution_id}"
+            _thread_local.current_user_id = self.user_id or ""
+            _thread_local.workflow_default_model = self.model or ""
+            _thread_local.workflow_agent_id = self.agent_id or ""
+            # Resolve and pin a current_agent so cost logging records the right agent
             try:
-                start_dt = datetime.datetime.fromisoformat(self.started_at) if self.started_at else None
-                end_dt = datetime.datetime.fromisoformat(self.finished_at)
-                duration_ms = int((end_dt - start_dt).total_seconds() * 1000) if start_dt else 0
+                _thread_local.current_agent = AgentConfig(self.agent_id or "main")
             except Exception:
-                duration_ms = 0
-            # Persist terminal state
+                _thread_local.current_agent = None
             try:
-                rv = self._return_value
-                rv_str = json.dumps(rv, default=str) if rv is not None else ""
-                _workflow_history_finalize(
-                    self.execution_id, self.status, self.finished_at,
-                    duration_ms, self.error, rv_str,
-                    json.dumps(self.steps, default=str),
-                )
+                interp = _WorkflowInterpreter(self._program, self)  # type: ignore
+                interp.run()
+                if self._cancel.is_set():
+                    self.status = "cancelled"
+                else:
+                    self.status = "completed"
+            except WorkflowError as e:
+                self.status = "failed"
+                self.error = f"Line {e.line}: {e}"
             except Exception as e:
-                logging.warning(f"workflow finalize: {e}")
+                self.status = "failed"
+                self.error = str(e)
+            finally:
+                self.finished_at = datetime.datetime.now().isoformat()
+                # Compute duration
+                try:
+                    start_dt = datetime.datetime.fromisoformat(self.started_at) if self.started_at else None
+                    end_dt = datetime.datetime.fromisoformat(self.finished_at)
+                    duration_ms = int((end_dt - start_dt).total_seconds() * 1000) if start_dt else 0
+                except Exception:
+                    duration_ms = 0
+                # Persist terminal state
+                try:
+                    rv = self._return_value
+                    rv_str = json.dumps(rv, default=str) if rv is not None else ""
+                    _workflow_history_finalize(
+                        self.execution_id, self.status, self.finished_at,
+                        duration_ms, self.error, rv_str,
+                        json.dumps(self.steps, default=str),
+                    )
+                except Exception as e:
+                    logging.warning(f"workflow finalize: {e}")
 
     def _record_step(self, line: int, kind: str, detail: str) -> None:
         self.steps.append({
@@ -11993,13 +11980,8 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None, tool_round
         _display_tool_call(tc["name"], tc["input"])
         if event_callback:
             event_callback("tool_call", {"name": tc["name"], "args": tc["input"], "tool_round": tool_round})
-        _thread_local.event_callback = event_callback
-        _thread_local.tool_use_id = tc["id"]
-        try:
+        with request_context(event_callback=event_callback, tool_use_id=tc["id"]):
             result = _execute_tool(tc["name"], tc["input"])
-        finally:
-            _thread_local.event_callback = None
-            _thread_local.tool_use_id = None
         _display_tool_result(tc["name"], result)
         if event_callback:
             event_callback("tool_result", {"name": tc["name"], "result": result, "tool_round": tool_round})

@@ -2055,28 +2055,29 @@ class BrainAgentHandler(
                                   "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"}})
                 return
             try:
-                agent_config = engine.AgentConfig(agent_id)
-                engine._thread_local.current_agent = agent_config
-                engine._thread_local.memory_store = engine.MemoryStore(
-                    agent_id, base_dir=agent_config.memory_dir)
-                engine._thread_local.mcp_manager = engine._mcp_manager
-                if session_id:
-                    engine._thread_local.session_id = session_id
-                    engine._thread_local.current_session_id = session_id
-                    engine._thread_local.attachment_image_model = server_config.get("attachment_image_model", "")
-                runner = engine._get_hook_runner(agent_id)
-                if runner:
-                    blocked = runner.run_pre_hooks(tool_name, tool_args)
-                    if blocked:
-                        self._send_json({"jsonrpc": "2.0", "id": msg_id,
-                                          "result": {"content": [{"type": "text", "text": f"Blocked by hook: {blocked}"}],
-                                                      "isError": True}})
-                        return
-                result = engine.TOOL_DISPATCH[tool_name](tool_args)
-                if runner:
-                    result = runner.run_post_hooks(tool_name, tool_args, str(result)[:51200])
-                self._send_json({"jsonrpc": "2.0", "id": msg_id,
-                                  "result": {"content": [{"type": "text", "text": str(result)}]}})
+                with engine.request_context():
+                    agent_config = engine.AgentConfig(agent_id)
+                    engine._thread_local.current_agent = agent_config
+                    engine._thread_local.memory_store = engine.MemoryStore(
+                        agent_id, base_dir=agent_config.memory_dir)
+                    engine._thread_local.mcp_manager = engine._mcp_manager
+                    if session_id:
+                        engine._thread_local.session_id = session_id
+                        engine._thread_local.current_session_id = session_id
+                        engine._thread_local.attachment_image_model = server_config.get("attachment_image_model", "")
+                    runner = engine._get_hook_runner(agent_id)
+                    if runner:
+                        blocked = runner.run_pre_hooks(tool_name, tool_args)
+                        if blocked:
+                            self._send_json({"jsonrpc": "2.0", "id": msg_id,
+                                              "result": {"content": [{"type": "text", "text": f"Blocked by hook: {blocked}"}],
+                                                          "isError": True}})
+                            return
+                    result = engine.TOOL_DISPATCH[tool_name](tool_args)
+                    if runner:
+                        result = runner.run_post_hooks(tool_name, tool_args, str(result)[:51200])
+                    self._send_json({"jsonrpc": "2.0", "id": msg_id,
+                                      "result": {"content": [{"type": "text", "text": str(result)}]}})
             except Exception as e:
                 self._send_json({"jsonrpc": "2.0", "id": msg_id,
                                   "result": {"content": [{"type": "text", "text": f"Error: {e}"}],
@@ -2947,35 +2948,33 @@ def _user_profile_run_llm(uid: str, prior_profile: str, samples: list[str],
             f"{joined_samples}\n\n"
             "Output the COMPLETE profile using the schema above."
         )
-    try:
-        # Use the same delegate path as _generate_chat_summary (the existing
-        # in-tree pattern for background LLM calls). Returns the assistant's
-        # text or a "Delegation error: …" string we filter out.
-        # current_agent must be an AgentConfig object, not just the agent id.
-        engine._thread_local.current_agent = engine.AgentConfig("main")
-        engine._thread_local.current_user_id = uid
-        engine._thread_local.memory_store = None
-        from handlers import sidecar_proxy as _sidecar_proxy
-        _res = _sidecar_proxy.background_call(
-            messages=[{"role": "user", "content": user_msg}],
-            model=model,
-            system_prompt=_PROFILE_SYSTEM_PROMPT,
-            agent_id="main",
-            user_id=uid,
-            max_tokens=2000,
-        )
-        result = _profile_deanon(_res.get("reply") or "")
-        if not result:
-            if _res.get("error"):
-                print(f"[profile] sidecar returned error: {str(_res['error'])[:200]}", flush=True)
+    with engine.request_context():
+        try:
+            # Use the same delegate path as _generate_chat_summary (the existing
+            # in-tree pattern for background LLM calls). Returns the assistant's
+            # text or a "Delegation error: …" string we filter out.
+            # current_agent must be an AgentConfig object, not just the agent id.
+            engine._thread_local.current_agent = engine.AgentConfig("main")
+            engine._thread_local.current_user_id = uid
+            engine._thread_local.memory_store = None
+            from handlers import sidecar_proxy as _sidecar_proxy
+            _res = _sidecar_proxy.background_call(
+                messages=[{"role": "user", "content": user_msg}],
+                model=model,
+                system_prompt=_PROFILE_SYSTEM_PROMPT,
+                agent_id="main",
+                user_id=uid,
+                max_tokens=2000,
+            )
+            result = _profile_deanon(_res.get("reply") or "")
+            if not result:
+                if _res.get("error"):
+                    print(f"[profile] sidecar returned error: {str(_res['error'])[:200]}", flush=True)
+                return None
+            return result.strip()
+        except Exception as e:
+            print(f"[profile] LLM call uid={uid} failed: {type(e).__name__}: {e}", flush=True)
             return None
-        return result.strip()
-    except Exception as e:
-        print(f"[profile] LLM call uid={uid} failed: {type(e).__name__}: {e}", flush=True)
-        return None
-    finally:
-        engine._thread_local.current_agent = None
-        engine._thread_local.memory_store = None
 
 def _profile_run_synchronous(user: dict, since_ts: float, now: float):
     """Run a profile update for one user. Used by the daemon and by the

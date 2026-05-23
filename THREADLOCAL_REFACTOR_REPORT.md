@@ -16,15 +16,14 @@ single context-manager (no scattered `=None` teardown); a new concurrency/bleed 
 |-------|------|--------|
 | 0 | Build the gate (bleed test + tlgrep mode) + inventory | ✅ done |
 | 1 | RequestContext + ContextVar + compat shim (no call-site changes) | ✅ done |
-| 2 | Migrate enter/exit sites to `request_context(...)` ctx-manager | ⬜ |
+| 2 | Migrate enter/exit sites to `request_context(...)` ctx-manager | ✅ done |
 | 3 | Migrate reads to typed accessors (kill raw getattr) | ⬜ |
 | 4 | Remove the shim | ⬜ |
 | 5 | Final source-validation | ⬜ |
 
-**RESUME POINT:** Phase 2b — remaining enter/exit sites: `engine/scheduler.py` (centralized
-init/clear pair → ctx-manager), `server_lib/tool_mcp.py` + `handlers/sessions_handler.py` /
-`handlers/admin_config.py` if they set context, and the sidecar-reconstitute path. Then Phase 3
-(migrate reads to typed accessors).
+**RESUME POINT:** Phase 3 — migrate the READS (`getattr(_thread_local, 'x', default)` /
+`_thread_local.x` reads) to typed accessors, file-by-file, running `tlgrep <attr>` after each file
+to prove the raw access is gone. Phase 2 fully done (all enter/exit sites on the ctx-manager).
 
 ---
 
@@ -136,6 +135,34 @@ statuses; it never appends. A genuinely new attribute = scope change to flag to 
   independently of the broad `unittest discover`).
 - Full `./refactor_gate.sh` GREEN: 18/18 imports, PII parity OK, no new unittest fails beyond the 3
   known spaCy ones, Gate 5b OK.
+
+### Phase 2d — brain.py init/clear pairs + workflow + handler/server save-restore sites ✅ (commit: this)
+Closes out Phase 2: every enter/exit site now uses `request_context(...)`; **zero
+`clear_thread_context()` calls remain in live code** (the helper is now only defined/re-exported —
+left for Phase 4 cleanup), zero dynamic `setattr(_thread_local, k, None)` teardown loops, zero
+`del _thread_local`.
+- **brain.py `run_model_warmup`**: `init_thread_context` + `try/finally: clear_thread_context() +
+  _current_model=None` → `with request_context():` (init kept inside). KV-prefix invariant preserved —
+  `build_first_turn_prefix` still binds `_current_model` identically inside the context; the deleted
+  `_current_model=None` leak-guard is now the with-exit's automatic reset.
+- **brain.py `TaskRunner` delegate run**: init/clear pair → `with request_context():`.
+- **brain.py `WorkflowExecution._execute`**: setters + the dynamic `for k in (...): setattr(_, k, None)`
+  teardown loop → `with request_context():` wrapping the method body; deleted ONLY the teardown loop
+  (kept `self.finished_at` / duration / history-finalize in the finally).
+- **brain.py `_execute_tools_batch`** (a native-loop relic, no live caller — migrated for
+  grep-cleanliness, NOT revived): per-tool `event_callback`/`tool_use_id` save/restore →
+  `with request_context(event_callback=..., tool_use_id=tc["id"]):`.
+- **handlers/sessions_handler.py** ×2: next-prompt (`current_agent` set/finally=None) and artifact
+  registration (`prev_sid` save/restore) → `with engine.request_context(...)`.
+- **handlers/admin_config.py**: tool-breakdown `prev_agent`/`prev_mcp` save/restore →
+  `with engine.request_context():`.
+- **server.py** ×2: profile background call (`= None` finally teardown) and the MCP JSON-RPC
+  `tools/call` dispatch (NO prior teardown — latent handler-thread bleed closed) → wrapped.
+- Each verified by `git diff -w` (only +`with` / −save-restore-teardown lines), `ast.parse`, import,
+  full gate. The 4 surviving `_thread_local.x = None` in live code are confirmed legitimate SETTERS
+  inside `with` blocks (workflow AgentConfig except-fallback; summary/profile no-memory-store;
+  note_context else-branch) — NOT teardown.
+- Full `./refactor_gate.sh` GREEN.
 
 ### Phase 2b — sidecar reconstitute (tool_mcp) + scheduler ✅ (commit: this)
 - **`server_lib/tool_mcp.py`** (the sidecar→Brain tool-dispatch reconstitute path — CLAUDE.md
