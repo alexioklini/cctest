@@ -56,13 +56,13 @@ Every functional domain the full refactor touches is listed here from day one �
 | Domain | Source | → Target | Phase | Status | Note |
 |---|---|---|---|---|---|
 | admin: workflows | `handlers/admin.py` 217–1,136 | `handlers/admin_workflows.py` (flat, not pkg) | 1 | ✅ done | commit `8831427`; AdminWorkflowHandlers sub-mixin, MRO intact, server.py injection-list updated |
-| admin: artifacts/files/sidecar/channels | admin.py (lines shifted −913 after workflows split) | `handlers/admin_artifacts.py` (flat) | 3 | ⬜ planned | largest cluster (~3,200); same sub-mixin + injection-list pattern as workflows |
-| admin: costs/quotas UI | admin.py | `handlers/admin_costs.py` (flat) | 3 | ⬜ planned | |
-| admin: skills | admin.py | `handlers/admin_skills.py` (flat) | 3 | ⬜ planned | |
-| admin: tool-settings/research/NER config | admin.py | `handlers/admin_config.py` (flat) | 3 | ⬜ planned | |
-| admin: teams | admin.py | `handlers/admin_teams.py` (flat) | 3 | ⬜ planned | |
-| admin: agents | admin.py | `handlers/admin_agents.py` (flat) | 3 | ⬜ planned | |
-| admin: KG/traces/audit observability | admin.py | `handlers/admin_observability.py` (flat) | 3 | ⬜ planned | |
+| admin: artifacts/files/sidecar/channels | admin.py | `handlers/admin_artifacts.py` (1600) | 3 | ✅ done | commit `b2ff754`; largest cluster (artifacts/files/channels/nodes/sidecar/services/backup/workers/refine/telegram/restart) |
+| admin: costs/quotas UI | admin.py | `handlers/admin_costs.py` (193) | 3 | ✅ done | commit `b2ff754` |
+| admin: skills | admin.py | `handlers/admin_agents.py` (merged) | 3 | ✅ done | commit `b2ff754`; merged into admin_agents (Rule 2 — tiny area) |
+| admin: tool-settings/research/NER config | admin.py | `handlers/admin_config.py` (729) | 3 | ✅ done | commit `b2ff754`; + server_config/hooks |
+| admin: teams | admin.py | `handlers/admin_agents.py` (merged) | 3 | ✅ done | commit `b2ff754`; merged into admin_agents |
+| admin: agents | admin.py | `handlers/admin_agents.py` (723) | 3 | ✅ done | commit `b2ff754`; agents+teams+skills+files/commands |
+| admin: KG/traces/audit observability | admin.py | `handlers/admin_observability.py` (1338) | 3 | ✅ done | commit `b2ff754`; +MCP/MemPalace/context-manager |
 
 > **Convention note (set 2026-05-23 at the workflows split):** admin sub-handlers go to FLAT `handlers/admin_<area>.py` modules, each a mixin inherited by `AdminHandlerMixin`, each registered in `server._inject_server_globals()`'s `_handler_mod_names`. Avoids converting `admin.py`→`admin/__init__.py` (file-vs-package collision). The plan's `handlers/admin/<area>.py` package layout remains the ideal end-state but isn't worth the in-flight conversion risk.
 | server: 7 background daemons (nested in `main()`) | `server.py` ~3,903–5,716 | `server_daemons.py` | 3 | ⬜ planned | ⚠️ lift-to-module-scope, not copy-paste |
@@ -100,10 +100,10 @@ Every functional domain the full refactor touches is listed here from day one �
 > **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.
 
 ### Running totals
-- Extractions completed: **14** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5, B4) — Phases 1 & 2 DONE; Phase 3 in progress
+- Extractions completed: **15** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5, B4, admin-full) — Phases 1 & 2 DONE; Phase 3 in progress
 - `brain.py` line count: **25,182** (baseline) → _current: 18,814_ (−6,368, −25.3%)
 - `server_lib/db.py` line count: **1,985** → _current: 1,778_ (−207)
-- `handlers/admin.py` line count: **5,416** → _current: 4,503_ (−913)
+- `handlers/admin.py` line count: **5,416** → _current: 79_ (−5,337, −98.5%; now a thin mixin-composition core across 6 flat admin_*.py modules)
 - Net new modules created: **11** (`engine/workflow.py`, `engine/code_graph.py`, `engine/tools/git_tools.py`, `engine/tools/gmail_tools.py`, `server_lib/trace_audit.py`, `server_lib/node_registry.py`, `server_lib/mempalace_sync.py`, `handlers/admin_workflows.py`, `engine/context.py`, `server_lib/pathsafe.py`, `engine/scheduler.py`, `engine/quotas.py`; D2 merged into existing engine/classification.py; B3 merged into existing engine/pii_ner.py; U2 used existing reader; U4 skipped)
 - Characterization tests added: **1** (`tests/test_scheduler_characterization.py`, 18 tests — B2 prereq)
 - Drift-checkers added: **1** (`tools/check_pii_js_parity.py` — gate-4b; caught a real pre-existing PII map drift)
@@ -132,6 +132,18 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 16 admin.py full decomposition (5 flat sub-modules) — DONE
+- **Commit:** `b2ff754`  ·  **Date:** 2026-05-23  ·  **Phase:** 3 (admin split)
+- **Symbol(s):** the remaining `_handle_*` clusters → 5 mixins: `AdminAgentsHandlers`, `AdminCostsHandlers`, `AdminConfigHandlers`, `AdminObservabilityHandlers`, `AdminArtifactsHandlers`
+- **Moved FROM:** handlers/admin.py (4,503 lines of route handlers)
+- **Moved TO:** handlers/admin_agents.py (723), admin_costs.py (193), admin_config.py (729), admin_observability.py (1338), admin_artifacts.py (1600) — all NEW flat modules
+- **Old code deleted?** YES — Gate-2 spot-checked 6 methods (`_handle_create_agent`/`_quota_me`/`_tool_settings_save`/`_kg_stats_global`/`_artifacts_browse`/`_refine`): 0 occurrences in admin.py. Only `_serve_static` def remains.
+- **Callers re-pointed:** 0 — `AdminHandlerMixin` inherits all 6 sub-mixins (incl. workflows), so `BrainAgentHandler` MRO unchanged; all 5 representative methods verified resolving on the composed handler FROM their new module.
+- **Tests:** Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail (stable 2x) · verdict PASS
+- **Characterization test added?** n/a (HTTP handlers; behavior unchanged via inheritance)
+- **handlers/admin.py delta:** 4,503 → **79** (−4,424) — thin core: `AdminHandlerMixin` inheriting 6 sub-mixins + shared `_serve_static`
+- **Notes:** Continues the proven workflows-split pattern. **Judgment (Rule 2):** realized the plan's 7-way intent as 5 cohesive modules — merged tiny areas (teams+agents+skills → admin_agents; tool-settings+research+NER+server-config+hooks → admin_config). **Invariant #2 (the silent-NameError trap):** all 5 new mixins imported (server.py:940–944) AND registered in `_inject_server_globals` `_handler_mod_names` (server.py:969–973) — injection-loop verified each receives the full 116-global set (parity with admin_workflows). Area-private helpers co-located with their sole-area callers (no cross-module private splits); only `_serve_static` (generic) left shared.
 
 ### 15 B4 quotas / cost / rate-limit — DONE
 - **Commit:** `12127c1`  ·  **Date:** 2026-05-23  ·  **Phase:** 3 (B4)

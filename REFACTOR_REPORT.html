@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 10:02 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 10:09 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -59,13 +59,13 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <h3>B. Other oversized files — domains to split</h3>
 <table><thead><tr><th>Domain</th><th>Source</th><th>→ Target</th><th>Phase</th><th>Status</th><th>Note</th></tr></thead><tbody>
 <tr><td>admin: workflows</td><td><code>handlers/admin.py</code> 217–1,136</td><td><code>handlers/admin_workflows.py</code> (flat, not pkg)</td><td>1</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>8831427</code>; AdminWorkflowHandlers sub-mixin, MRO intact, server.py injection-list updated</td></tr>
-<tr><td>admin: artifacts/files/sidecar/channels</td><td>admin.py (lines shifted −913 after workflows split)</td><td><code>handlers/admin_artifacts.py</code> (flat)</td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>largest cluster (~3,200); same sub-mixin + injection-list pattern as workflows</td></tr>
-<tr><td>admin: costs/quotas UI</td><td>admin.py</td><td><code>handlers/admin_costs.py</code> (flat)</td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
-<tr><td>admin: skills</td><td>admin.py</td><td><code>handlers/admin_skills.py</code> (flat)</td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
-<tr><td>admin: tool-settings/research/NER config</td><td>admin.py</td><td><code>handlers/admin_config.py</code> (flat)</td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
-<tr><td>admin: teams</td><td>admin.py</td><td><code>handlers/admin_teams.py</code> (flat)</td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
-<tr><td>admin: agents</td><td>admin.py</td><td><code>handlers/admin_agents.py</code> (flat)</td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
-<tr><td>admin: KG/traces/audit observability</td><td>admin.py</td><td><code>handlers/admin_observability.py</code> (flat)</td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
+<tr><td>admin: artifacts/files/sidecar/channels</td><td>admin.py</td><td><code>handlers/admin_artifacts.py</code> (1600)</td><td>3</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>b2ff754</code>; largest cluster (artifacts/files/channels/nodes/sidecar/services/backup/workers/refine/telegram/restart)</td></tr>
+<tr><td>admin: costs/quotas UI</td><td>admin.py</td><td><code>handlers/admin_costs.py</code> (193)</td><td>3</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>b2ff754</code></td></tr>
+<tr><td>admin: skills</td><td>admin.py</td><td><code>handlers/admin_agents.py</code> (merged)</td><td>3</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>b2ff754</code>; merged into admin_agents (Rule 2 — tiny area)</td></tr>
+<tr><td>admin: tool-settings/research/NER config</td><td>admin.py</td><td><code>handlers/admin_config.py</code> (729)</td><td>3</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>b2ff754</code>; + server_config/hooks</td></tr>
+<tr><td>admin: teams</td><td>admin.py</td><td><code>handlers/admin_agents.py</code> (merged)</td><td>3</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>b2ff754</code>; merged into admin_agents</td></tr>
+<tr><td>admin: agents</td><td>admin.py</td><td><code>handlers/admin_agents.py</code> (723)</td><td>3</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>b2ff754</code>; agents+teams+skills+files/commands</td></tr>
+<tr><td>admin: KG/traces/audit observability</td><td>admin.py</td><td><code>handlers/admin_observability.py</code> (1338)</td><td>3</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>b2ff754</code>; +MCP/MemPalace/context-manager</td></tr>
 </tbody></table>
 <blockquote><strong>Convention note (set 2026-05-23 at the workflows split):</strong> admin sub-handlers go to FLAT <code>handlers/admin_&lt;area&gt;.py</code> modules, each a mixin inherited by <code>AdminHandlerMixin</code>, each registered in <code>server._inject_server_globals()</code>'s <code>_handler_mod_names</code>. Avoids converting <code>admin.py</code>→<code>admin/__init__.py</code> (file-vs-package collision). The plan's <code>handlers/admin/&lt;area&gt;.py</code> package layout remains the ideal end-state but isn't worth the in-flight conversion risk.</blockquote>
 <p>| server: 7 background daemons (nested in <code>main()</code>) | <code>server.py</code> ~3,903–5,716 | <code>server_daemons.py</code> | 3 | <span class="badge planned" title="planned">⬜</span> planned | <span class="badge warn" title="attention">⚠️</span> lift-to-module-scope, not copy-paste |</p>
@@ -98,10 +98,10 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <blockquote><strong>Coverage promise:</strong> every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.</blockquote>
 <h3>Running totals</h3>
 <ul>
-<li>Extractions completed: <strong>14</strong> (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5, B4) — Phases 1 &amp; 2 DONE; Phase 3 in progress</li>
+<li>Extractions completed: <strong>15</strong> (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5, B4, admin-full) — Phases 1 &amp; 2 DONE; Phase 3 in progress</li>
 <li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 18,814_ (−6,368, −25.3%)</li>
 <li><code>server_lib/db.py</code> line count: <strong>1,985</strong> → _current: 1,778_ (−207)</li>
-<li><code>handlers/admin.py</code> line count: <strong>5,416</strong> → _current: 4,503_ (−913)</li>
+<li><code>handlers/admin.py</code> line count: <strong>5,416</strong> → _current: 79_ (−5,337, −98.5%; now a thin mixin-composition core across 6 flat admin_*.py modules)</li>
 <li>Net new modules created: <strong>11</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>, <code>engine/tools/git_tools.py</code>, <code>engine/tools/gmail_tools.py</code>, <code>server_lib/trace_audit.py</code>, <code>server_lib/node_registry.py</code>, <code>server_lib/mempalace_sync.py</code>, <code>handlers/admin_workflows.py</code>, <code>engine/context.py</code>, <code>server_lib/pathsafe.py</code>, <code>engine/scheduler.py</code>, <code>engine/quotas.py</code>; D2 merged into existing engine/classification.py; B3 merged into existing engine/pii_ner.py; U2 used existing reader; U4 skipped)</li>
 <li>Characterization tests added: <strong>1</strong> (<code>tests/test_scheduler_characterization.py</code>, 18 tests — B2 prereq)</li>
 <li>Drift-checkers added: <strong>1</strong> (<code>tools/check_pii_js_parity.py</code> — gate-4b; caught a real pre-existing PII map drift)</li>
@@ -128,6 +128,19 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 </ul>
 <p>```</p>
 <hr>
+<h3>16 admin.py full decomposition (5 flat sub-modules) — DONE</h3>
+<ul>
+<li><strong>Commit:</strong> <code>b2ff754</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 3 (admin split)</li>
+<li><strong>Symbol(s):</strong> the remaining <code>_handle_*</code> clusters → 5 mixins: <code>AdminAgentsHandlers</code>, <code>AdminCostsHandlers</code>, <code>AdminConfigHandlers</code>, <code>AdminObservabilityHandlers</code>, <code>AdminArtifactsHandlers</code></li>
+<li><strong>Moved FROM:</strong> handlers/admin.py (4,503 lines of route handlers)</li>
+<li><strong>Moved TO:</strong> handlers/admin_agents.py (723), admin_costs.py (193), admin_config.py (729), admin_observability.py (1338), admin_artifacts.py (1600) — all NEW flat modules</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2 spot-checked 6 methods (<code>_handle_create_agent</code>/<code>_quota_me</code>/<code>_tool_settings_save</code>/<code>_kg_stats_global</code>/<code>_artifacts_browse</code>/<code>_refine</code>): 0 occurrences in admin.py. Only <code>_serve_static</code> def remains.</li>
+<li><strong>Callers re-pointed:</strong> 0 — <code>AdminHandlerMixin</code> inherits all 6 sub-mixins (incl. workflows), so <code>BrainAgentHandler</code> MRO unchanged; all 5 representative methods verified resolving on the composed handler FROM their new module.</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail (stable 2x) · verdict PASS</li>
+<li><strong>Characterization test added?</strong> n/a (HTTP handlers; behavior unchanged via inheritance)</li>
+<li><strong>handlers/admin.py delta:</strong> 4,503 → <strong>79</strong> (−4,424) — thin core: <code>AdminHandlerMixin</code> inheriting 6 sub-mixins + shared <code>_serve_static</code></li>
+<li><strong>Notes:</strong> Continues the proven workflows-split pattern. <strong>Judgment (Rule 2):</strong> realized the plan's 7-way intent as 5 cohesive modules — merged tiny areas (teams+agents+skills → admin_agents; tool-settings+research+NER+server-config+hooks → admin_config). <strong>Invariant #2 (the silent-NameError trap):</strong> all 5 new mixins imported (server.py:940–944) AND registered in <code>_inject_server_globals</code> <code>_handler_mod_names</code> (server.py:969–973) — injection-loop verified each receives the full 116-global set (parity with admin_workflows). Area-private helpers co-located with their sole-area callers (no cross-module private splits); only <code>_serve_static</code> (generic) left shared.</li>
+</ul>
 <h3>15 B4 quotas / cost / rate-limit — DONE</h3>
 <ul>
 <li><strong>Commit:</strong> <code>12127c1</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 3 (B4)</li>
