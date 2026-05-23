@@ -21,6 +21,10 @@
 
 ## Execution protocol (how to run this autonomously — user-approved 2026-05-23)
 
+**Driver:** continuous single session held open by a goal-condition until *Phases 1–3 complete + gate green + report pushed*. Run extraction-after-extraction without pausing for the user; clean context via subagent-per-extraction + disk-state. Hard-stop before Tier C (Phase 4).
+**On obstacle (failed gate / genuine ambiguity):** revert that extraction (tree stays clean — principle #2), log it as BLOCKED in `REFACTOR_REPORT.md`, **skip to the next independent domain**, and surface all blockers together when pausing at Tier C. Do NOT halt the whole run for one snag. Only a systemic failure (gate broken, can't import at all, repo/push auth dead) halts everything.
+
+
 The user wants: *"say refactor the code, walk away, come back hours later done"* — without manually starting each phase. These settings make that safe and uninterrupted up to Tier C.
 
 **Autonomy boundary:** Run **Phase 1 → Phase 3 (audit + Tier A + Tier B + handler/db/server splits) start-to-finish, unattended.** Commit after each green gate. **HARD STOP before Tier C** (C1 model-select/system-prompt, C2 tool-exec, C3 MemPalace glue) and report — Tier C is eval-gated + KV-cache-sensitive and needs the user's review before proceeding.
