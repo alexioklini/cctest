@@ -7,7 +7,7 @@ so the run survives context compaction and fresh sessions). Protocol: see `REFAC
 
 **Autonomy:** auto through Phase 3 (Tier A + B + splits); HARD STOP before Tier C.
 
-> **🔄 STATUS 2026-05-23: Phases 1–4 DONE (20 extractions, 0 reverts). Tier E ADDED (user request) — IN PROGRESS.** Tiers A–D + Tier C complete: brain.py 25,182 → 16,950 (−32.7%); handlers/admin.py 5,416 → 79 (−98.5%); server.py 5,827 → 3,895 (−33%). A source-vs-report audit (2026-05-23) verified the refactor faithful (0 surviving duplicate defs, all 24 modules real, re-exports resolve to new modules). **Tier E** (data-registry + ingest pipeline + the remaining ~48 `tool_*` implementations) is now planned + in progress — target brain.py ≈13–13.5k LOC. See *Tier E plan* + *Status board*.
+> **✅ STATUS 2026-05-23: ALL TIERS COMPLETE — Phases 1–4 + Tier C + Tier E DONE.** 24 extractions, 0 reverts, gate green throughout. **brain.py 25,182 → 12,334 (−51.0%, more than halved)**; handlers/admin.py 5,416 → 79 (−98.5%); server.py 5,827 → 3,895 (−33%). Tier E (user request) extracted TOOL_DEFINITIONS data (E2), the ingest pipeline (E3), and ALL remaining tool_* implementations (E1 file/shell/python/doc + E4 the other 38) into engine/. Every TOOL_DISPATCH entry resolves to its extracted module; 67 characterization tests + warmup byte-identity guard the risky paths. See *Status board* + *Master domain map*.
 
 **Governing principles (user, override all else):** (1) split monolith into clear functional domains; (2) net duplication zero & trending down — a half-done move is worse than none, so don't start what can't be finished cleanly; (3) **DONE = original code GONE, logic lives in exactly one place.** Gate 2 enforces #3 mechanically: a surviving `def`/`class` in brain.py = FAIL → finish or revert. One extraction = one atomic commit (old gone + new arrives together).
 
@@ -24,7 +24,7 @@ so the run survives context compaction and fresh sessions). Protocol: see `REFAC
 | 2 | B1 `engine/context.py` (relocate only, NOT DI) + U1/U2/U4 utilities | ✅ DONE — B1 ✅, U1 ✅(partial), U2 ✅(already-satisfied), U4 🚫 SKIP(not-applicable) |
 | 3 | B2 scheduler (⚠️ chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (⚠️ daemons nested in main()) · chat.py split | ✅ DONE — B2✅ B3✅ B4✅ admin-full✅ server_daemons✅ chat-split✅ (+U3✅). MemPalaceClient + server_init deferred/optional |
 | 4 | Tier C (C1/C2/C3, ⚠️ chars-tests + eval before C2) + finish D1–D3 | ✅ **DONE — C1 ✅ (`f83e72e`, warmup byte-identical, eval Δ−0.06). C2 ✅ (`9c9bc57`, chars-test 27 cases, eval Δ−0.02). C3 ✅ (`100bba2`, wing-isolation 9/9, eval confirm-run 0.79 ≈ baseline). D1/D2/D3 verified final (no duplication). ALL TIER C COMPLETE.** |
-| 5 | **Tier E — registry-data + ingest pipeline + remaining tool_* implementations** | ⬜ **PLANNED (added 2026-05-23 by user request).** E1 file/shell/python/docs tools (⚠️ chars-test first — `_after_file_write`/GDPR coupling). E2 `TOOL_DEFINITIONS` data → `engine/tool_schemas.py` (~1,212 LOC, pure data, biggest single block). E3 document/ingest pipeline → `engine/ingest.py` (~700 LOC). E4 web/image + ask_* + transcribe/translate + delegation/context/skills/nodes/MCP/worker tool bodies → grouped `engine/tools/*.py`. See *Tier E plan* below. Gate per extraction = `./refactor_gate.sh` + (E1) chars-test + eval Δ<0.10. |
+| 5 | **Tier E — registry-data + ingest pipeline + remaining tool_* implementations** | ✅ **DONE (2026-05-23).** E1 ✅ (`c3fbc70`, 10 file/shell/python/doc tools, chars-test 13, eval Δ−0.07). E2 ✅ (`8d45315`, TOOL_DEFINITIONS data → `engine/tool_schemas.py`, warmup byte-identical). E3 ✅ (`fe8a0e6`, ingest pipeline → `engine/ingest.py`). E4 ✅ (`1eb0c39`, 38 remaining tools grouped → `engine/tools/*.py` + mempalace_glue, eval Δ−0.05 errors:0). brain.py 16,950 → 12,334. ALL TIER E COMPLETE. |
 
 **⚠️ markers** = a characterization test must be written+committed for that path BEFORE the extraction (plan §1.5). Core paths have no existing tests, so the gate alone can't catch regressions there.
 
@@ -139,19 +139,19 @@ Every functional domain the full refactor touches is listed here from day one �
 | file/shell/python/doc tool bodies (10 tools) | scattered ~3,400–4,700 | `engine/tools/file_tools.py` | E1 | ✅ done | commit `c3fbc70` (chars-test `5ad37da` 13 cases first); −1,098 LOC; 10/10 dispatch-identity; eval brain 0.77→0.70 (Δ−0.07, within gate); warmup byte-identical |
 | `TOOL_DEFINITIONS` schema data (+OPENAI/index) | 560–1,772 | `engine/tool_schemas.py` | E2 | ✅ done | commit `8d45315`; −1,220 LOC; warmup byte-identical (tool_names sha b80c9c46, 59 tools, identity True); DISPATCH/GROUPS stayed |
 | document/ingest pipeline (4 classes) | 7,884–8,650 | `engine/ingest.py` | E3 | ✅ done | commit `fe8a0e6`; −697 LOC; 4 classes single-identity; `_ingest_watcher` singleton stayed (server.py assigns it); warmup byte-identical |
-| remaining tool bodies (web/translate/delegation/context/skills/nodes/MCP/ask_*/worker, ~28 tools) | scattered | `engine/tools/{web,translate,delegation,context_tools,skill_node,mcp_tools}.py` + fold memory tools into `mempalace_glue.py` | E4 | ⬜ planned | per-group; ask_* couples to `_pending_answers` blocking path |
+| remaining tool bodies (38 tools: memory/KG, context, translate, delegation/worker, misc, ask_*) | scattered | `engine/tools/{context_tools,translate_tools,delegation_tools,misc_tools,ask_tools}.py` + folded memory/KG into `mempalace_glue.py` | E4 | ✅ done | commit `1eb0c39`; −1,601 LOC; 38 tools, all 63 dispatch entries callable + identity True; ask_* blocking-state stayed in brain; eval brain 0.77→0.72 (Δ−0.05, errors:0) |
 
 ---
 
 ### Running totals
-- Extractions completed: **23** (…, C1, C2, C3, **E1, E2, E3**) — Phases 1–4 done; **Tier E in progress (E1 ✅ E2 ✅ E3 ✅; E4 next)**
+- Extractions completed: **24** (…, C1, C2, C3, **E1, E2, E3, E4**) — Phases 1–4 + Tier C + Tier E ALL DONE
 - Reverts: **0**
-- `brain.py` line count: **25,182** (baseline) → _current: **13,935** (−11,247, −44.7%)
+- `brain.py` line count: **25,182** (baseline) → _current: **12,334** (−12,848, −51.0%)
 - `handlers/admin.py` line count: **5,416** → _current: **79** (−5,337, −98.5%; thin mixin core across 6 flat admin_*.py modules)
 - `server.py` line count: **5,827** → _current: **3,895** (−1,932, −33.2%)
 - `server_lib/db.py` line count: **1,985** → _current: 1,778 (−207)
 - `handlers/chat.py` line count: 3,537 → 3,513 (−24; value was U3 de-dup)
-- Net new production modules created: **27** — `engine/` (14): workflow, code_graph, context, scheduler, quotas, tools/git_tools, tools/gmail_tools, model_select, prompt_build (C1), tool_exec (C2), mempalace_glue (C3), **tool_schemas (E2), ingest (E3), tools/file_tools (E1)** · `server_lib/` (5): trace_audit, node_registry, mempalace_sync, pathsafe, sse_stream · `handlers/` (7): admin_workflows, admin_agents, admin_costs, admin_config, admin_observability, admin_artifacts, gdpr_recovery · top-level (1): server_daemons. *(Plus merges into existing modules: D2→classification.py, B3→pii_ner.py; U2 used existing reader; U4/MemPalaceClient/server_init skipped/deferred.)*
+- Net new production modules created: **32** — `engine/` (19, incl. tools/{context_tools,translate_tools,delegation_tools,misc_tools,ask_tools} from E4): workflow, code_graph, context, scheduler, quotas, tools/git_tools, tools/gmail_tools, model_select, prompt_build (C1), tool_exec (C2), mempalace_glue (C3), **tool_schemas (E2), ingest (E3), tools/file_tools (E1)** · `server_lib/` (5): trace_audit, node_registry, mempalace_sync, pathsafe, sse_stream · `handlers/` (7): admin_workflows, admin_agents, admin_costs, admin_config, admin_observability, admin_artifacts, gdpr_recovery · top-level (1): server_daemons. *(Plus merges into existing modules: D2→classification.py, B3→pii_ner.py; U2 used existing reader; U4/MemPalaceClient/server_init skipped/deferred.)*
 - Characterization tests added: **4** (`tests/test_scheduler_characterization.py` 18 — B2; `tests/test_tool_exec_characterization.py` 27 — C2; `tests/test_mempalace_wing_isolation.py` 9 — C3 security gate; `tests/test_file_tools_characterization.py` 13 — E1). Plus the C1 warmup byte-identity gate `tools/check_warmup_prefix_stable.py`.
 - Drift-checkers added: **1** (`tools/check_pii_js_parity.py` — gate-4b; caught a real pre-existing PII map drift)
 - Live duplicate definitions (the drift trap, principle #3): **0** — every extraction's Gate-2 confirmed the original `def`/`class` GONE from the source file.
@@ -180,6 +180,20 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 25 E4 remaining 38 tool bodies → grouped engine/tools/*.py + mempalace_glue — DONE  *(final tool extraction)*
+- **Commit:** `1eb0c39`  ·  **Date:** 2026-05-23  ·  **Phase:** 5 (Tier E — E4)
+- **Symbol(s):** 38 `tool_*` across 6 destinations — *mempalace_glue (folded):* memory_store/recall/delete/shared + mempalace_kg_query/search/neighbors (+ private `_graph_expand_results`, `_kg_*` helpers); *context_tools:* context_search/detail/recall; *translate_tools:* translate_text/document, detect_language, get_glossary, list_glossaries, transcribe_audio (+ whisper/voxtral helper cluster); *delegation_tools:* delegate_task, task_status/cancel, worker_status/send/pause/resume/abort; *misc_tools:* use_skill, list_nodes, mcp_connect/disconnect/servers, get_artifact_detail, web_fetch, is_enabled/deferred/passes_purpose; *ask_tools:* ask_user, ask_user_for_file, ask_llm, worker_ask_user (+ `_normalize_ask_questions`)
+- **Moved FROM:** brain.py (scattered tool bodies)
+- **Moved TO:** engine/mempalace_glue.py (+606→1,369) + engine/tools/{context_tools.py 69, translate_tools.py 544, delegation_tools.py 180, misc_tools.py 296, ask_tools.py 267} (5 NEW)
+- **Old code deleted?** YES — Gate-2 spot-checked 6 (`tool_delegate_task`/`context_search`/`translate_text`/`ask_user`/`memory_recall`/`web_fetch`): no def in brain.py.
+- **Callers re-pointed:** 0 — re-export blocks resolve `brain.tool_X` + dispatch + server_lib/translate callers (`brain.tool_translate_document` etc.).
+- **Tests:** Gate 4 imports 18/18 · Gate 4b PII parity OK · Gate 5 no new failures · **all 4 chars-test files 67 tests pass** · verdict PASS
+- **4-EDIT-SITE:** all 63 TOOL_DISPATCH entries callable + verified moved tools resolve to their new modules (the 3 KG `lambda args: tool_X(args)` forwarders → direct refs, behavior-identical, needed for dispatch-identity).
+- **ask_* decision (⚠️ the careful one):** only the 4 tool bodies + `_normalize_ask_questions` moved. Blocking-state globals (`_ask_user_pending`/`_lock`, `_workflow_file_pending`/`_lock`) + register/clear/`deliver_*` helpers STAYED in brain — handlers (chat, admin_artifacts, admin_workflows) mutate them via `brain.deliver_*` under brain-held locks; moved tools reach them via `_brain.`.
+- **EVAL GATE:** brain mean 0.77 → **0.72 (Δ −0.05)**, **errors: 0** — every question produced a real answer (no tool-dispatch breakage). Within Δ<0.10.
+- **Warmup prefix:** byte-identical. **brain.py delta:** 13,935 → 12,334 (−1,601).
+- **Notes:** No top-level `import brain` in any of the 5 new modules + glue (grep 0; one-way DAG). ContextManager/MemoryStore/`_html_to_markdown`/`_web_cache`/`_WHISPER_PROVIDER` stayed in brain (shared), reached via `_brain.`.
 
 ### 24 E1 file/shell/python/doc tools → engine/tools/file_tools.py — DONE  *(⚠️ highest-coupling Tier E; chars-test prereq `5ad37da`)*
 - **Commit:** `c3fbc70`  ·  **Date:** 2026-05-23  ·  **Phase:** 5 (Tier E — E1)
