@@ -2,7 +2,36 @@
 
 Companion to the completed Python refactor (`REFACTOR_REPORT.md`). Same discipline:
 analyze → goal → gate → extract-with-gate-between → living report. This file is the
-**plan**; progress is tracked in `JS_REFACTOR_REPORT.md` (created when work starts).
+**plan**; progress is tracked in `JS_REFACTOR_REPORT.md` (the living "what's done" record).
+
+---
+
+## ▶ HOW TO START / RESUME IN A FRESH SESSION (read this first)
+
+**Disk is the memory; the conversation is disposable.** To pick this up in any new session:
+1. Read this file (`JS_REFACTOR_PLAN.md`) top-to-bottom — it has the full scope, gate, phases.
+2. Read `JS_REFACTOR_REPORT.md` — the **source of truth for what's done**. Its Master file-map
+   shows every file's status (⬜ planned / 🔄 in progress / ✅ done / 🚫 stays). Resume at the
+   first non-done phase.
+3. Run `cd web/js && ./js_gate.sh` to confirm the gate is green before changing anything.
+
+**Trigger to type in a fresh session** (either works):
+- Cold start / first run: `Start Tier F — read JS_REFACTOR_PLAN.md and begin.`
+- Resume mid-way: `Continue Tier F — check JS_REFACTOR_REPORT.md for where we are and proceed.`
+
+**RESUME POINT (update this line as phases complete):**
+> Phase 0 (gate) status — see `JS_REFACTOR_REPORT.md` Status board. Next un-done phase is the
+> resume target. If `JS_REFACTOR_REPORT.md` doesn't exist yet, Phase 0 hasn't started — begin there.
+
+**Recommended goal wording** (paste as the session goal so the run is checkable + bounded):
+> Execute Tier F per JS_REFACTOR_PLAN.md. Success = all 17 web/js files dispositioned (3 monsters
+> split, init.js/translation.js reviewed with a recorded decision, de-dup done), `./js_gate.sh`
+> green after every step, no file >2,000 LOC, JS_REFACTOR_REPORT.md + HTML published each step,
+> Phase 5 source-validation passes. Run Phase 0→4 unattended, committing per green step; HARD STOP
+> before declaring the tier complete so I can review. Stop immediately on any gate failure or a
+> decision the plan doesn't already answer.
+
+---
 
 **User decisions (2026-05-23):**
 1. **Build a real gate FIRST** (before any refactor) — JS has no test/lint/build infra today.
