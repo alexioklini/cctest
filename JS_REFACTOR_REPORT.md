@@ -15,14 +15,33 @@ pushed on every update via `./refactor_publish.sh "<msg>" JS_REFACTOR_REPORT.md`
 | Phase | What | Status |
 |---|---|---|
 | 0 | Build the GATE (ESLint + net-globals + Playwright smoke), green on unchanged code | ✅ DONE |
-| 1 | Cross-cutting de-dup (modal factory, DOM/date helpers → `dom_helpers.js`/`utils.js`) | ⬜ planned |
-| 2 | Split `settings.js` (6,140 → ~6 files) | ⬜ planned |
+| 1 | Cross-cutting de-dup — **verified and REJECTED** (all candidates net-negative; see below) | ✅ DONE (no-op + recorded) |
+| 2 | Split `settings.js` (6,140 → ~6 files) | 🔄 in progress |
 | 3 | Split `panels.js` (5,819 → ~5 files) | ⬜ planned |
 | 4 | Split `chat.js` (4,013 → ~4 files) + REVIEW init.js / translation.js | ⬜ planned |
 | 5 | Final source-validation (mandatory close-out) | ⬜ planned |
 
-**RESUME POINT:** Phase 0 complete (gate built + green + committed, baseline net-globals = **879**).
-Next un-done phase: **Phase 1 (cross-cutting de-dup)**.
+**RESUME POINT:** Phases 0–1 complete (gate green, baseline net-globals = **879**; de-dup verified
+and rejected as net-negative). Next: **Phase 2 (split settings.js)**.
+
+### Phase 1 decision — de-dup verified and REJECTED (user-approved 2026-05-23)
+
+The plan said "verify counts at extraction time." Verification (subagent analysis) falsified the
+premise that the de-dup candidates are wins. All four were rejected as net-negative churn or
+behavior-change risk — which would violate the tier's zero-behavior-change invariant and the
+plan's own "don't make competing copies" warning (the Python U2 lesson). **User approved skipping.**
+
+| Candidate | Finding | Decision |
+|---|---|---|
+| **F-U1 modal factory** | 22 raw `modal-overlay` blocks: only **6 SIMPLE** (search/file-preview/provider-keys/key-edit/stats/password), **16 RICH** (tabs, vertical sidebars, dynamic innerHTML, sized classes). `utils.js` already has `showDialog({title,message,buttons,input,danger})`. A new `createModal()` would be a competing 2nd modal system; only 6/22 adoptable. | **SKIP** — would add a competing copy. |
+| **F-U2 DOM helpers** | `.closest('.modal-overlay').remove()` ×18 (+7 sched variant), `classList.toggle(x,cond)` ×42. Each is a self-documenting one-liner; wrapping adds indirection, zero size gain. | **SKIP** — churn, zero gain. |
+| **F-U3 date formatters** | `humanAgo`(ISO→"3h"), `timeAgo`(unix→"3h ago"), `_fmtTs`(ISO→abs ts), `_fmtDuration`(ms→elapsed) are 4 genuinely-distinct semantics, not duplicates. | **SKIP** — not dupes. |
+| **fetch → API.*** | translation.js's 17 fetches are SSE-streaming job polls / FormData uploads / blob downloads-with-Bearer / live-mic chunk POSTs — special cases, not clean `API.post()` swaps; rerouting carries real behavior-change risk on the streaming/upload paths. | **SKIP** — not safe swaps. |
+
+**`dom_helpers.js`** (Master-map row): deferred — created only if a genuinely-shared helper emerges
+*during* the splits (Phases 2–4). If none emerges, its row is marked "not created — no shared
+helper materialised." Phase 1 thus produces **no code change** (a verified no-op); the gate stays
+green trivially.
 
 ---
 
@@ -73,17 +92,17 @@ can't mask a regression. The list may shrink, never grow.
 | `translation.js` | 2,389 | REVIEW | ⬜ | Over 2k but a single cohesive domain. Split only if it holds clear sub-domains; else stays. Decision to be recorded. |
 | `workflows.js` | 1,897 | stays | 🚫 | Under 2k, single cohesive domain. De-dup only (Phase 1 helpers). |
 | `nav.js` | 1,351 | stays | 🚫 | Cohesive navigation domain, under 2k. |
-| `utils.js` | 1,154 | DEDUP TARGET | ➕ | Grows in Phase 1 (date/DOM helpers may land here). Not split. |
+| `utils.js` | 1,154 | DEDUP TARGET | 🚫 | Phase 1 de-dup verified+rejected — no helpers extracted (existing `showDialog`/`esc`/etc. already centralised). Stays as-is. |
 | `favourites.js` | 848 | stays | 🚫 | Cohesive, under 2k. |
 | `files.js` | 604 | stays | 🚫 | Cohesive, under 2k. |
 | `sessions.js` | 529 | stays | 🚫 | Cohesive, under 2k. |
 | `classification.js` | 374 | stays | 🚫 | Cohesive, under 2k. |
-| `api.js` | 371 | DEDUP TARGET | ➕ | Audit stray `fetch()` → route through `API.*`. Not split. |
+| `api.js` | 371 | DEDUP TARGET | 🚫 | Stray-`fetch` audit done: the non-`API.*` fetches (translation.js SSE/upload/blob, auth/warmup) are special cases, not safe swaps. No change. |
 | `buddy.js` | 351 | stays | 🚫 | Cohesive, under 2k. |
 | `share.js` | 305 | stays | 🚫 | Cohesive, under 2k. |
 | `state.js` | 94 | stays | 🚫 | Pure data, loads 2nd. Never split. |
 | `search.js` | 55 | stays | 🚫 | Tiny. |
-| `dom_helpers.js` (NEW) | 0→ | CREATED (Phase 1) | ⬜ | New shared file for the modal factory + DOM helpers (F-U1/F-U2). |
+| `dom_helpers.js` (NEW) | 0 | DEFERRED | ⬜ | Created only if a shared helper emerges during the splits; F-U1/F-U2 were rejected, so not created yet. |
 
 **Total Tier F scope = 29,193 LOC across 17 files.** Coverage promise: every file above appears
 with a disposition + size — nothing silently out of scope.
