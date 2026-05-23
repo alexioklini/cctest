@@ -1,0 +1,304 @@
+<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Refactor Progress Report</title><style>
+:root{color-scheme:light dark}
+body{font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;max-width:1100px;
+ margin:2rem auto;padding:0 1.2rem;color:#1a1a1a;background:#fff}
+@media(prefers-color-scheme:dark){body{color:#e6e6e6;background:#16181c}
+ table{border-color:#333}th{background:#23262b}td,th{border-color:#333}
+ code{background:#23262b}blockquote{background:#1d2025;border-color:#444}}
+h1{font-size:1.7rem;border-bottom:2px solid #ddd;padding-bottom:.3rem}
+h2{font-size:1.3rem;margin-top:2rem;border-bottom:1px solid #eee;padding-bottom:.2rem}
+h3{font-size:1.08rem;margin-top:1.4rem}
+table{border-collapse:collapse;width:100%;margin:.8rem 0;font-size:.9rem}
+th,td{border:1px solid #ddd;padding:.4rem .6rem;text-align:left;vertical-align:top}
+th{background:#f4f5f7}
+code{background:#f0f1f3;padding:.1rem .3rem;border-radius:3px;font-size:.88em}
+blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
+ padding:.5rem .9rem;border-radius:0 4px 4px 0}
+hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
+.badge{font-style:normal}
+.meta{color:#888;font-size:.82rem}
+</style></head><body><p class=meta>Generated from THREADLOCAL_REFACTOR_PLAN.md · 2026-05-23 20:48 · this HTML is a view; the .md is the source of truth.</p><h1>Thread-Local Refactor Plan — request-context → typed RequestContext + contextvars (Tier G)</h1>
+<p>Companion to the completed Python module-extraction refactor (<code>REFACTOR_REPORT.md</code>) and the</p>
+<p>web/js refactor (<code>JS_REFACTOR_PLAN.md</code>). Same discipline: **analyze → goal → gate → migrate-with-</p>
+<p>gate-between → living report<strong>. This file is the </strong>plan**; progress is tracked in</p>
+<p><code>THREADLOCAL_REFACTOR_REPORT.md</code> (the living "what's done" record). HTML report + auto-verification</p>
+<p>at the end, exactly like the prior tiers.</p>
+<p>This is the "thread-local after JS" tier the JS plan deferred (<code>JS_REFACTOR_PLAN.md</code> §"User</p>
+<p>decisions" 3–4: *"Defer thread-local (separate later tier)… JS first, thread-local after."*).</p>
+<hr>
+<h2>▶ HOW TO START / RESUME IN A FRESH SESSION (read this first)</h2>
+<p><strong>Disk is the memory; the conversation is disposable.</strong> To pick this up in any new session:</p>
+<p>1. Read this file (<code>THREADLOCAL_REFACTOR_PLAN.md</code>) top-to-bottom — full scope, gate, phases.</p>
+<p>2. Read <code>THREADLOCAL_REFACTOR_REPORT.md</code> — the <strong>source of truth for what's done</strong>. Its attribute</p>
+<p>   map shows every attribute's migration status (<span class="badge planned" title="planned">⬜</span> planned / <span class="badge wip" title="in progress">🔄</span> in progress / <span class="badge done" title="done">✅</span> done). Resume at the</p>
+<p>   first non-done phase.</p>
+<p>3. Run <code>./refactor_gate.sh</code> to confirm the gate is green before changing anything.</p>
+<p><strong>Trigger to type in a fresh session:</strong></p>
+<ul>
+<li>Cold start: <code>Start Tier G — read THREADLOCAL_REFACTOR_PLAN.md and begin.</code></li>
+<li>Resume mid-way: <code>Continue Tier G — check THREADLOCAL_REFACTOR_REPORT.md for where we are and proceed.</code></li>
+</ul>
+<p><strong>RESUME POINT (update as phases complete):</strong></p>
+<blockquote>Phase 0 (gate) status — see <code>THREADLOCAL_REFACTOR_REPORT.md</code> Status board. If that file doesn't</blockquote>
+<blockquote>exist yet, Phase 0 hasn't started — begin there.</blockquote>
+<p><strong>Recommended goal wording</strong> (paste as the session goal so the run is checkable + bounded):</p>
+<blockquote>Execute Tier G per THREADLOCAL_REFACTOR_PLAN.md. Success = every request-context attribute migrated</blockquote>
+<blockquote>off raw <code>_thread_local</code> onto the typed RequestContext (contextvars-backed) accessed through one</blockquote>
+<blockquote>module; all enter/exit sites use the single context-manager (no scattered <code>=None</code> teardown); the</blockquote>
+<blockquote>new concurrency/bleed test passes; <code>./refactor_gate.sh</code> green after every step (no new unittest</blockquote>
+<blockquote>failures beyond the 3 known spaCy ones); THREADLOCAL_REFACTOR_REPORT.md + HTML published each step;</blockquote>
+<blockquote>Phase 5 source-validation passes. Run Phase 0→4 unattended, committing per green step; HARD STOP</blockquote>
+<blockquote>before declaring the tier complete so I can review. Stop immediately on any gate failure or a</blockquote>
+<blockquote>decision the plan doesn't already answer.</blockquote>
+<hr>
+<p><strong>User decisions (2026-05-23):</strong></p>
+<p>1. <strong>End-state = typed <code>RequestContext</code> dataclass in a <code>contextvars.ContextVar</code></strong>, entered/exited via</p>
+<p>   ONE context-manager (token reset = automatic teardown). Fixes bleed-risk structurally + async-safe.</p>
+<p>2. <strong>Build a real concurrency/bleed gate FIRST</strong> (before any migration) — there is ZERO coverage of</p>
+<p>   the no-request-state-bleed property today. Wire it into the existing <code>refactor_gate.sh</code>.</p>
+<p>3. <strong>Scope = request-context only.</strong> Leave the 6 DB-connection <code>threading.local()</code> pools alone</p>
+<p>   (<code>_db_pool</code>, <code>_cost_db_pool</code>, <code>_auth_db_pool</code>, <code>_sched_db_pool</code>, <code>_context_db_pool</code>,</p>
+<p>   <code>_code_graph_db_pool</code>) — they're a correct, separate use of <code>threading.local()</code>.</p>
+<hr>
+<h2>The problem</h2>
+<p><code>engine/context.py:23</code> defines <code>_thread_local = threading.local()</code>. It carries **~33 ad-hoc</p>
+<p>request-scoped attributes** (<code>current_agent</code>, <code>current_user_id</code>, <code>current_session_id</code>, <code>project</code>,</p>
+<p><code>mcp_manager</code>, <code>memory_store</code>, <code>_current_model</code>, <code>research_mode_override</code>, <code>caveman_*</code>,</p>
+<p><code>event_callback</code>, <code>_gdpr_*</code>, <code>trace_id</code>, <code>tool_*</code>, <code>note_context</code>, <code>plan_mode</code>, <code>delegate_*</code>,</p>
+<p><code>workflow_*</code>, …) accessed via <strong>~140 references across 18 files</strong>. CLAUDE.md §"Concurrency &amp; Thread</p>
+<p>Safety" makes the invariant explicit: *"Thread-locals required for every request/background thread …</p>
+<p>Never fall back to globals — concurrent requests bleed."*</p>
+<p>Three structural fragilities:</p>
+<p>1. <strong>Untyped, no source of truth.</strong> Attributes are read with <code>getattr(_thread_local, 'x', default)</code></p>
+<p>   sprinkled across the codebase (≥20 distinct <code>getattr</code> call shapes). Nothing enumerates the legal</p>
+<p>   attribute set; a typo'd attribute silently reads its default forever.</p>
+<p>2. <strong>Manual teardown = bleed-risk.</strong> Cleanup is hand-written <code>_thread_local.x = None</code> in <code>finally</code></p>
+<p>   blocks (≥10 sites just in <code>handlers/chat.py</code>). Miss one attribute on one path → it bleeds into the</p>
+<p>   next request reusing that worker thread. This is the exact failure mode CLAUDE.md warns about, with</p>
+<p>   no test guarding it.</p>
+<p>3. <strong>Three import spellings</strong> (<code>engine._thread_local</code> ×93, <code>brain._thread_local</code> ×6,</p>
+<p>   <code>from engine.context import _thread_local</code> ×3) plus a real historical import-bug (the</p>
+<p>   <code>engine/doc_convert.py</code> OCR cost-tracking case that silently defaulted <code>agent_id='main'</code>). Any</p>
+<p>   migration MUST preserve every alias so all spellings keep resolving.</p>
+<p>Non-chat-worker setters also exist (scheduler, <code>handlers/translate.py</code>, the classification daemon in</p>
+<p><code>server_daemons.py</code>) — they set request-context attrs too and must adopt the same context-manager.</p>
+<h2>The goal (success criteria — loop until met)</h2>
+<ul>
+<li>A single typed <strong><code>RequestContext</code></strong> (dataclass, all ~33 fields enumerated with types + defaults)</li>
+</ul>
+<p>  stored in a <strong><code>contextvars.ContextVar</code></strong>, defined in one module (extend <code>engine/context.py</code> — the</p>
+<p>  current home of <code>_thread_local</code> — or a new <code>engine/reqctx.py</code>; pick one, state which).</p>
+<ul>
+<li><strong>One context-manager</strong> (<code>request_context(**overrides)</code> / <code>bind_request_context(...)</code>) is the ONLY</li>
+</ul>
+<p>  way request state is entered + torn down. Entering pushes a context; exiting resets the</p>
+<p>  ContextVar token — teardown is automatic and total (no per-attribute <code>=None</code>). Nested binds</p>
+<p>  (delegate / sub-call) stack and pop correctly.</p>
+<ul>
+<li><strong>Every read/write goes through typed accessors</strong> on that module (or the context object) — zero raw</li>
+</ul>
+<p>  <code>getattr(_thread_local, …)</code> / <code>_thread_local.x = …</code> left in live code (grep-gate enforces).</p>
+<ul>
+<li><strong>Backward-compat shim:</strong> <code>_thread_local</code> keeps resolving from <code>engine</code>, <code>brain</code>, and</li>
+</ul>
+<p>  <code>engine.context</code> for the duration (so the migration is incremental + every alias works), backed by</p>
+<p>  the new ContextVar so reads/writes through the old name and the new accessors see the SAME state.</p>
+<p>  The shim is removed only when the last raw reference is gone (Phase 4) — state which sites still use</p>
+<p>  it at each step.</p>
+<ul>
+<li><strong>Zero behavior change</strong> — verified by <code>refactor_gate.sh</code> (existing unittests + imports) after every</li>
+</ul>
+<p>  step, PLUS the new concurrency/bleed test.</p>
+<ul>
+<li><strong>No request-state bleed</strong> — the new test runs overlapping requests on a shared worker pool and</li>
+</ul>
+<p>  asserts each sees only its own context. This property has no coverage today; it is the headline</p>
+<p>  acceptance criterion.</p>
+<ul>
+<li>Living <code>THREADLOCAL_REFACTOR_REPORT.md</code>, one commit per migration step, gate green between each,</li>
+</ul>
+<p>  HTML republished each step.</p>
+<h2>Non-goals (explicit scope fence)</h2>
+<ul>
+<li>NO touching the 6 DB-connection <code>threading.local()</code> pools (separate, correct pattern).</li>
+<li>NO behavior/feature changes; NO new request-context attributes; NO renaming attributes for taste</li>
+</ul>
+<p>  (a field keeps its name unless a rename is forced by the dataclass — if so, alias it).</p>
+<ul>
+<li>NO async/await rewrite of the request handlers — <code>contextvars</code> is chosen precisely because it works</li>
+</ul>
+<p>  for BOTH the current threaded model and any future async without rewriting call sites.</p>
+<ul>
+<li>NOT migrating the DB pools, warmup KV state, or the session-scoped tool-dedup state</li>
+</ul>
+<p>  (<code>brain.py:11204</code> — already moved off threading.local by a prior tier).</p>
+<hr>
+<h2>Phase 0 — Build the GATE (DO THIS FIRST, before any migration)</h2>
+<p>The Python analog already exists: <code>refactor_gate.sh</code> (unittest baseline 80 pass / 3 known spaCy</p>
+<p>fails + 16/16 import check + grep-gate). Phase 0 EXTENDS it with the missing piece — a concurrency</p>
+<p>bleed test — and adds a Tier-G grep-gate.</p>
+<h3>Gate component 1 — concurrency / no-bleed test (<code>tests/test_request_context_isolation.py</code>)</h3>
+<ul>
+<li>The property with zero coverage today. Spin up N worker threads sharing a pool; each enters</li>
+</ul>
+<p>  <code>request_context(current_user_id=Ui, current_session_id=Si, current_agent=Ai, project=Pi, …)</code>,</p>
+<p>  does interleaved work (sleep/yield to force overlap), and asserts at every checkpoint that it reads</p>
+<p>  back <strong>exactly its own</strong> values — never another thread's. Include a teardown assertion: after the</p>
+<p>  context-manager exits, the ContextVar is back to its prior value (default at top level), proving no</p>
+<p>  residue leaks to the next task on that thread.</p>
+<ul>
+<li>Add a <strong>negative control</strong> that would FAIL on the old raw-<code>_thread_local</code> design if teardown were</li>
+</ul>
+<p>  skipped (documents what the test actually catches — mirrors the JS smoke's console-error backstop).</p>
+<ul>
+<li>Must run in the bare <code>/opt/homebrew/bin/python3</code> test process (no server, no spaCy) so it's part of</li>
+</ul>
+<p>  the fast gate.</p>
+<h3>Gate component 2 — Tier-G grep-gate (raw access must be gone, per migrated attribute)</h3>
+<ul>
+<li>A <code>refactor_gate.sh tlgrep &lt;attr&gt;</code> mode (parallel to the existing <code>grep &lt;SYMBOL&gt;</code> mode): proves a</li>
+</ul>
+<p>  migrated attribute has <strong>no remaining raw <code>_thread_local.&lt;attr&gt;</code> read/write</strong> in live code (the</p>
+<p>  shim definition + the accessor module are the only allowed mentions). A surviving raw access =</p>
+<p>  NOT DONE for that attribute → finish or revert. This is the Tier-G analog of the existing "original</p>
+<p>  definition must be gone from brain.py" gate-2.</p>
+<h3>Gate component 3 — extend <code>refactor_gate.sh</code></h3>
+<p>```</p>
+<p>1. unittest suite          # baseline 80 pass / 3 known spaCy fails — NO new failures</p>
+<p>2. import check            # 16/16 core+handler modules import clean</p>
+<p>3. test_request_context_isolation.py  # NEW — the no-bleed property (component 1)</p>
+<p>4. tlgrep &lt;attr&gt; (per step)            # NEW — raw access for a migrated attr is gone (component 2)</p>
+<p>```</p>
+<p>Prints <code>GATE PASS ✓</code> / <code>GATE FAIL ✗</code> (reuse the existing script's vocabulary). Components 1–3 run on</p>
+<p>every invocation; component 4 is the per-attribute proof run during migration steps.</p>
+<p><strong>Phase 0 exit:</strong> the concurrency test is written and **passes against the CURRENT raw-<code>_thread_local</code></p>
+<p>design** (this proves the test is correct + establishes the green baseline before any change), the</p>
+<p>grep-gate mode works, <code>refactor_gate.sh</code> is green, committed.</p>
+<blockquote>The test must pass on TODAY's code first. If it can't (because today's manual teardown actually does</blockquote>
+<blockquote>leak somewhere), that's a real pre-existing bug — surface it, document it as a known-finding baseline</blockquote>
+<blockquote>(like the JS <code>.eslint-baseline.txt</code>), and make the gate fail only on NEW leaks. Don't silently "fix"</blockquote>
+<blockquote>it as part of building the gate.</blockquote>
+<hr>
+<h2>Phase 1 — Introduce RequestContext + ContextVar + the shim (no call-site changes yet)</h2>
+<p>Smallest-blast-radius first: stand up the new machinery WITHOUT migrating any call site, so the gate</p>
+<p>proves the shim is behavior-identical before anything moves.</p>
+<ul>
+<li>Define <code>RequestContext</code> dataclass (all ~33 fields, typed, defaulted) + <code>_request_ctx: ContextVar</code> +</li>
+</ul>
+<p>  <code>request_context(**overrides)</code> context-manager + typed get/set accessors, in the chosen module.</p>
+<ul>
+<li>Make <code>_thread_local</code> a <strong>compatibility shim object</strong> whose <code>__getattr__</code>/<code>__setattr__</code> proxy to the</li>
+</ul>
+<p>  ContextVar-backed RequestContext (so the 93 <code>engine._thread_local.x</code> reads + the <code>brain.</code> /</p>
+<p>  <code>engine.context.</code> aliases all hit the new storage). Preserve all three import spellings + the</p>
+<p>  re-exports.</p>
+<ul>
+<li>Gate: full <code>refactor_gate.sh</code> green INCLUDING the new concurrency test — the shim must pass the</li>
+</ul>
+<p>  same no-bleed property. One commit.</p>
+<h2>Phase 2 — Migrate the enter/exit sites to the context-manager (kills scattered teardown)</h2>
+<p>The bleed-risk fix. Replace the hand-written set-then-<code>finally: =None</code> blocks with `with</p>
+<p>request_context(...)`. Order by blast radius (smallest first):</p>
+<p>1. <strong>Non-chat-worker setters</strong> (fewest attrs): <code>handlers/translate.py</code>, the classification daemon in</p>
+<p>   <code>server_daemons.py</code>, <code>engine/scheduler.py</code>. Each becomes a <code>with request_context(...)</code>.</p>
+<p>2. <strong>Background calls</strong> routed through <code>sidecar_proxy.background_call</code> / <code>tool_mcp.handle_tools_call</code></p>
+<p>   (reconstitutes context from the sidecar payload — CLAUDE.md §"Dispatch path" step 3).</p>
+<p>3. <strong>The chat worker</strong> (<code>handlers/chat.py</code> — the biggest, ~43 refs + ~10 teardown sites): wrap the</p>
+<p>   turn in one <code>with request_context(...)</code>; delete the <code>finally: _thread_local.x = None</code> block once</p>
+<p>   the context-manager owns teardown. This is the highest-value, highest-risk step — gate hard</p>
+<p>   (unittests + concurrency test + a real server-up smoke turn).</p>
+<p>Gate after each site. Each = one commit.</p>
+<h2>Phase 3 — Migrate the reads to typed accessors (kill raw getattr)</h2>
+<p>Replace every <code>getattr(_thread_local, 'x', default)</code> / <code>_thread_local.x</code> READ with the typed accessor</p>
+<p>(<code>reqctx.current_agent()</code> or <code>ctx.current_agent</code>). Do it file-by-file (18 files), gate between, each a</p>
+<p>commit. After each file, run <code>refactor_gate.sh tlgrep &lt;attr&gt;</code> for the attrs that file owned to prove</p>
+<p>the raw access is gone there.</p>
+<h2>Phase 4 — Remove the shim</h2>
+<p>When the grep-gate shows ZERO raw <code>_thread_local.&lt;attr&gt;</code> reads/writes remain in live code, delete the</p>
+<p><code>_thread_local</code> compatibility shim (or reduce it to a thin deprecated alias if any external/Telegram</p>
+<p>path still needs it — state which). Final <code>tlgrep</code> over ALL attrs must be clean. One commit.</p>
+<h2>Phase 5 — Final source-validation (REQUIRED close-out, like the JS/Python audits)</h2>
+<p>Mirrors the post-Tier-C/E/F audits: **verify the report against actual source — don't trust the</p>
+<p>report.** Do NOT skip; this is the acceptance gate for the whole tier.</p>
+<p>1. <strong>Every claimed-migrated attribute</strong> is on the <code>RequestContext</code> dataclass with a type + default</p>
+<p>   (grep the dataclass; cross-check against the Phase-0 attribute inventory — none dropped/renamed</p>
+<p>   silently).</p>
+<p>2. <strong>Zero raw <code>_thread_local.&lt;attr&gt;</code> access</strong> in live code for every attribute (<code>tlgrep</code> over the full</p>
+<p>   attribute list) — the shim/accessor module is the only allowed mention (or shim is deleted).</p>
+<p>3. <strong>All teardown is context-manager-owned</strong> — independently grep for surviving `_thread_local.* =</p>
+<p>   None<code> / </code>del _thread_local` in live code; there should be none (the context-manager's token-reset</p>
+<p>   replaced them). Any survivor = a missed enter/exit site → fix or revert.</p>
+<p>4. <strong>All three import spellings still resolve</strong> (or are intentionally gone) — <code>import engine; engine._thread_local</code>,</p>
+<p>   <code>import brain; brain._thread_local</code>, <code>from engine.context import _thread_local</code> (or RequestContext</p>
+<p>   accessors). No dangling import. The historical <code>engine/doc_convert.py</code> OCR-cost path must still</p>
+<p>   resolve (don't reintroduce that silent-default bug).</p>
+<p>5. <strong>The concurrency/bleed test passes</strong> + a teardown-residue assertion is present and meaningful</p>
+<p>   (would fail if a context leaked).</p>
+<p>6. <strong>Full <code>refactor_gate.sh</code> green</strong> (no new unittest failures beyond the 3 known spaCy ones; 16/16</p>
+<p>   imports) + a real server-up smoke turn (one interactive chat turn + one scheduled/background call)</p>
+<p>   confirming the live request path still threads context correctly.</p>
+<p>7. <strong>Coverage-promise check:</strong> every one of the ~33 attributes from the Phase-0 inventory appears in</p>
+<p>   the report's attribute map with a final status (<span class="badge done" title="done">✅</span> migrated / <span class="badge excluded" title="excluded">🚫</span> intentionally-left-with-reason) —</p>
+<p>   none silently omitted.</p>
+<p>8. Mark any inconsistency in <code>THREADLOCAL_REFACTOR_REPORT.md</code> and fix (or revert) before declaring done.</p>
+<hr>
+<h2>The safe-migration rule (correctness contract)</h2>
+<p>1. <strong>The shim and the new accessors back the SAME ContextVar</strong> — there is never a moment where reads</p>
+<p>   through the old name and the new accessors see different state. (Phase 1 establishes this; the gate</p>
+<p>   proves it via the concurrency test.)</p>
+<p>2. <strong>Teardown is total + automatic</strong> — a migrated enter/exit site uses the context-manager; the</p>
+<p>   ContextVar token-reset clears EVERY field at once. No per-attribute teardown survives (Phase 5 §3).</p>
+<p>3. <strong>Every import spelling preserved</strong> until the shim is removed; the shim removal is its own gated step.</p>
+<p>4. <strong>Background + delegate sub-calls bind a NESTED context</strong> that pops correctly (the scheduler /</p>
+<p>   sidecar-reconstituted / delegate paths must not bleed into or out of the parent).</p>
+<p>5. <strong>Fail loud</strong> — gate red blocks the commit; a missed teardown site must surface via the concurrency</p>
+<p>   test or the residue grep, not silently no-op.</p>
+<h2>The attribute inventory — COMPLETE scope, fixed up front (NOT grown)</h2>
+<p><code>THREADLOCAL_REFACTOR_REPORT.md</code> MUST open with a table covering **all request-context attributes from</p>
+<p>day one** — exactly like the JS report's Master file-map and the Python report's domain map. Every</p>
+<p>attribute is listed with its current ref count, owning subsystem, and migration status. The run only</p>
+<p><strong>flips statuses</strong> (<span class="badge planned" title="planned">⬜</span>→<span class="badge wip" title="in progress">🔄</span>→<span class="badge done" title="done">✅</span>); it never appends a "newly discovered" attribute. A genuinely new</p>
+<p>attribute = a scope change to flag to the user, not a silent add. The Phase-0 inventory (from</p>
+<p><code>grep -rhoE '_thread_local\.[a-z_]+'</code>) is the fixed scope: ~33 attributes including <code>current_agent</code>,</p>
+<p><code>current_user_id</code>, <code>current_session_id</code>, <code>memory_store</code>, <code>_current_model</code>, <code>project</code>, <code>mcp_manager</code>,</p>
+<p><code>current_team_ids</code>, <code>session_id</code>, <code>research_mode_override</code>, <code>event_callback</code>, <code>_gdpr_mapping_id</code>,</p>
+<p><code>_gdpr_anonymising</code>, <code>_gdpr_after_file_write_cb</code>, <code>trace_id</code>, <code>tool_use_id</code>, <code>tool_round</code>, <code>plan_mode</code>,</p>
+<p><code>note_context</code>, <code>in_worker_subagent</code>, <code>execution_overrides</code>, <code>delegate_agent_id</code>, <code>current_worker_id</code>,</p>
+<p><code>caveman_system</code>, <code>caveman_chat</code>, <code>attachment_image_model</code>, <code>attachments</code>, <code>workflow_run_id</code>,</p>
+<p><code>workflow_execution_id</code>, <code>workflow_default_model</code>, <code>workflow_agent_id</code>, <code>_intent_action_recovery_count</code>,</p>
+<p><code>_guided_tasks_for_msg</code>, <code>_discovered_tools</code>. **The report's Phase-0 step records the exact final list</p>
+<p>+ ref counts** (this plan's list is indicative; the inventory is authoritative once measured).</p>
+<h2>Execution protocol (same as the JS + Python refactors)</h2>
+<ul>
+<li>Subagent-per-migration-step (bulky reads die with it); main thread holds only pass/fail + what moved.</li>
+<li>One step = one commit, directly to main. Gate green before commit. <code>THREADLOCAL_REFACTOR_REPORT.md</code></li>
+</ul>
+<p>  updated in the same commit: <strong>flip the status of the affected attribute/site rows</strong> + add a per-step</p>
+<p>  record block. The inventory is the COMPLETE scope written on the FIRST commit; the run only flips</p>
+<p>  statuses — it NEVER appends a row. A genuinely new attribute = surface to the user as a scope change.</p>
+<ul>
+<li><strong>Publish the HTML report on every update</strong>: <code>./refactor_publish.sh "&lt;msg&gt;" THREADLOCAL_REFACTOR_REPORT.md</code></li>
+</ul>
+<p>  (the publish script + converter were parameterized 2026-05-23 to take a report filename; they</p>
+<p>  regenerate <code>THREADLOCAL_REFACTOR_REPORT.html</code> and push). **HTML is a generated VIEW — never</p>
+<p>  hand-edited; only the <code>.md</code> is source of truth.**</p>
+<ul>
+<li>The server is launchd-managed; a static-reload isn't enough here (Python daemon) — restart the</li>
+</ul>
+<p>  server (<code>launcher.py restart</code> or the daemon) before the Phase-2/Phase-5 server-up smoke.</p>
+<ul>
+<li>Stop + report on any gate failure or genuine ambiguity the plan doesn't answer.</li>
+<li><strong>Phase 5 (final source-validation) is mandatory before declaring the tier complete.</strong></li>
+</ul>
+<h2>Open questions to settle at Phase 0 (during the build, not now)</h2>
+<ul>
+<li><strong>Module home:</strong> extend <code>engine/context.py</code> (current <code>_thread_local</code> home) vs a new <code>engine/reqctx.py</code>.</li>
+</ul>
+<p>  Decide by import-cycle safety (the accessors are imported very widely — must not create a cycle with</p>
+<p>  <code>brain</code>). Record the call.</p>
+<ul>
+<li><strong>Server-up smoke harness:</strong> the existing tiers used a real chat turn + a scheduled run. Confirm the</li>
+</ul>
+<p>  same two-path smoke (interactive + background) is the right runtime backstop here, since the bug class</p>
+<p>  (context bleed) only manifests under concurrency — the unittest covers the property; the server smoke</p>
+<p>  covers the wiring.</p></body></html>
