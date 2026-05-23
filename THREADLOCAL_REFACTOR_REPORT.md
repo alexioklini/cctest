@@ -15,13 +15,14 @@ single context-manager (no scattered `=None` teardown); a new concurrency/bleed 
 | Phase | What | Status |
 |-------|------|--------|
 | 0 | Build the gate (bleed test + tlgrep mode) + inventory | ✅ done |
-| 1 | RequestContext + ContextVar + compat shim (no call-site changes) | ⬜ |
+| 1 | RequestContext + ContextVar + compat shim (no call-site changes) | ✅ done |
 | 2 | Migrate enter/exit sites to `request_context(...)` ctx-manager | ⬜ |
 | 3 | Migrate reads to typed accessors (kill raw getattr) | ⬜ |
 | 4 | Remove the shim | ⬜ |
 | 5 | Final source-validation | ⬜ |
 
-**RESUME POINT:** Phase 1 — introduce RequestContext + ContextVar + compat shim (no call-site changes).
+**RESUME POINT:** Phase 2 — migrate enter/exit sites to the `request_context(...)` context-manager
+(order: non-chat-worker setters → background/sidecar reconstitute → chat worker).
 
 ---
 
@@ -133,3 +134,25 @@ statuses; it never appends. A genuinely new attribute = scope change to flag to 
   independently of the broad `unittest discover`).
 - Full `./refactor_gate.sh` GREEN: 18/18 imports, PII parity OK, no new unittest fails beyond the 3
   known spaCy ones, Gate 5b OK.
+
+### Phase 1 — RequestContext + ContextVar + shim ✅ (commit: this)
+- `engine/context.py`: added `RequestContext` dataclass (37 typed fields with defaults mirroring the
+  Phase-0 getattr-default inventory + a `_dynamic: dict` for the `_artifact_folder_*` keys),
+  `_request_ctx: ContextVar[RequestContext]`, `_active_ctx()` (lazy-installs a fresh ctx per
+  contextvars context), `get_request_context()` accessor, and the `request_context(**overrides)`
+  context-manager (token-tracked nested bind; `_request_ctx.reset(token)` = atomic total teardown).
+- `_thread_local` is now a `_RequestContextShim` singleton: `__getattr__`/`__setattr__`/`__delattr__`
+  proxy to the active RequestContext (declared fields) or its `_dynamic` bucket (unknown keys).
+  Unknown attr with no value → `AttributeError`, so existing `getattr(_thread_local, x, DEFAULT)`
+  call sites still get their default. **No call sites changed** — the shim backs the SAME storage as
+  the new accessors.
+- All three import spellings verified identical instance + same storage: `brain._thread_local`
+  (= codebase's `engine._thread_local` via `import brain as engine`), `engine.context._thread_local`,
+  `from engine.context import _thread_local`. `clear_thread_context()`/`init_thread_context()` still
+  work through the shim unchanged.
+- Per-thread isolation preserved: `ThreadPoolExecutor` worker threads start with their own empty
+  contextvars context (no parent copy), so `set()` is thread-scoped exactly like the old
+  `threading.local()` — confirmed by the unchanged Gate 5b bleed test.
+- 5 new shim unittests added (`TestRequestContextShim`): shared-storage, typed-default, dynamic-key,
+  unknown-raises, ctx-manager nest+restore. Suite now 8 tests, all pass.
+- Full `./refactor_gate.sh` GREEN.

@@ -18,7 +18,7 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from engine.context import _thread_local
+from engine.context import _thread_local, request_context, get_request_context, RequestContext
 
 
 # The core request-identity fields exercised by the bleed test. (A representative
@@ -150,6 +150,47 @@ class TestRequestContextIsolation(unittest.TestCase):
         )
         # Clean up so we don't pollute other tests sharing the interpreter.
         _teardown_ctx()
+
+
+class TestRequestContextShim(unittest.TestCase):
+    """Locks in the Phase-1 ContextVar-backed shim contract: the old
+    `_thread_local` name and the new accessors share the SAME storage, declared
+    fields read their typed default when unset, dynamic keys route to a bucket,
+    and `request_context(...)` nests + restores."""
+
+    def setUp(self):
+        # Start each test from a clean top-level context.
+        from engine import context as ec
+        ec.clear_thread_context()
+
+    def test_shim_and_accessor_share_storage(self):
+        _thread_local.current_user_id = "shared-U"
+        self.assertEqual(get_request_context().current_user_id, "shared-U")
+
+    def test_unset_field_returns_typed_default(self):
+        self.assertIs(getattr(_thread_local, "plan_mode"), False)
+        self.assertEqual(getattr(_thread_local, "caveman_system"), 0)
+        self.assertEqual(getattr(_thread_local, "audit_source"), "chat")
+
+    def test_dynamic_key_escape_hatch(self):
+        setattr(_thread_local, "_artifact_folder_sX", "2026-05-23_sX")
+        self.assertEqual(getattr(_thread_local, "_artifact_folder_sX", None), "2026-05-23_sX")
+        self.assertIsNone(getattr(_thread_local, "_artifact_folder_other", None))
+
+    def test_unknown_attr_raises_so_getattr_default_applies(self):
+        with self.assertRaises(AttributeError):
+            _thread_local.no_such_attr_zzz
+
+    def test_context_manager_nests_and_restores(self):
+        _thread_local.project = "outer"
+        with request_context(project="inner", current_user_id="U-in"):
+            self.assertEqual(_thread_local.project, "inner")
+            self.assertEqual(_thread_local.current_user_id, "U-in")
+            # nested again
+            with request_context(project="innermost"):
+                self.assertEqual(_thread_local.project, "innermost")
+            self.assertEqual(_thread_local.project, "inner")
+        self.assertEqual(_thread_local.project, "outer")
 
 
 if __name__ == "__main__":
