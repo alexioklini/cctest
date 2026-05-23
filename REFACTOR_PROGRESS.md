@@ -7,6 +7,8 @@ so the run survives context compaction and fresh sessions). Protocol: see `REFAC
 
 **Autonomy:** auto through Phase 3 (Tier A + B + splits); HARD STOP before Tier C.
 
+**Governing principles (user, override all else):** (1) split monolith into clear functional domains; (2) net duplication zero & trending down — a half-done move is worse than none, so don't start what can't be finished cleanly; (3) **DONE = original code GONE, logic lives in exactly one place.** Gate 2 enforces #3 mechanically: a surviving `def`/`class` in brain.py = FAIL → finish or revert. One extraction = one atomic commit (old gone + new arrives together).
+
 ---
 
 ## Status board

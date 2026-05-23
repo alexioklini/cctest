@@ -19,12 +19,25 @@ KNOWN_FAILS="test_contact_warn_promotes_ner_findings test_name_roundtrip test_ne
 
 if [ "${1:-}" = "grep" ]; then
   sym="$2"
-  echo "=== Gate 2: live references to '$sym' outside changelog/comments ==="
-  # Show hits, then you eyeball that survivors are only the changelog string / comments.
-  grep -rn "$sym" brain.py engine/ handlers/ server_lib/ server.py 2>/dev/null \
+  # Gate 2 enforces governing principle #3: the ORIGINAL DEFINITION must be gone
+  # from brain.py. A surviving `def <sym>(` / `class <sym>(` in brain.py = NOT DONE
+  # (worse-than-before state) -> revert. A `from ... import <sym>` alias is fine.
+  echo "=== Gate 2: definition of '$sym' must NOT remain in brain.py ==="
+  defhits=$(grep -nE "^(def|class| +def| +class) +$sym\b" brain.py 2>/dev/null)
+  if [ -n "$defhits" ]; then
+    echo "  FAIL — original definition still in brain.py (principle #3 violated):"
+    echo "$defhits" | sed 's/^/    /'
+    echo "  -> finish the move (delete this) or revert. NOT a completed extraction."
+  else
+    echo "  OK — no definition of '$sym' in brain.py."
+  fi
+  echo ""
+  echo "  --- all live references (alias import is expected; eyeball the rest) ---"
+  grep -rnE "\b$sym\b" brain.py engine/ handlers/ server_lib/ server.py 2>/dev/null \
     | grep -v -E '^\S+:[0-9]+:\s*#' \
-    || echo "(no references at all — fully removed)"
-  exit 0
+    | grep -vE '^\S+:8:|^\S+:[0-9]+:.*"[0-9]+\.[0-9]+\.[0-9]+", "20' \
+    || echo "  (no references at all — fully removed)"
+  [ -n "$defhits" ] && exit 1 || exit 0
 fi
 
 fail=0

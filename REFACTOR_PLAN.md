@@ -4,9 +4,27 @@
 **Date:** 2026-05-22
 **Method:** Three parallel structural surveys (brain.py map, cross-file duplication, handler/server_lib/engine cohesion) + direct verification of line ranges and dependency direction.
 
-> This is a **plan**, not executed work. Each item lists evidence, value, risk, and a verification gate. Nothing here changes behavior; every extraction is a move + re-export.
+> This is a **plan**, not executed work. Each item lists evidence, value, risk, and a verification gate. Nothing here changes behavior; every extraction is a **move** (delete-from-source + add-to-new-module in one commit), with at most a **thin import alias** at the old name — never a second copy of the logic. See §0 principle #3 for the strict definition of "done."
+
+> **What a "re-export" may and may not be.** A re-export is a *single import line* — `from engine.workflow import _wf_parse` at the top of `brain.py` — so existing callers still resolve the name. That is allowed and expected (it keeps the one-way DAG and the handler-mixin chain working). What is **forbidden** is leaving the *function body* in `brain.py` alongside the new module's copy. The body lives in exactly one file; the old name, if kept at all, is a pointer to it, not a duplicate of it.
 
 > **Cross-checked against an external code analysis (2026-05-23).** Its findings were verified accurate and folded in. Decisions taken: (a) **test gap** — add characterization tests for the specific path before each risky extraction (see §0.5); (b) **thread-locals** — B1 relocates only, full dependency-injection is explicitly a *separate future initiative* (see B1 + §8); (c) **~29k-line JS frontend** — explicitly **out of scope** for this refactor, tracked as a future initiative (see §8).
+
+---
+
+## 0. Governing principles (user priorities — these override everything below)
+
+The user named three priorities. They are the success criteria; every other section serves them.
+
+1. **Split the monolith into clear functional domains.** The point is *clarity + maintainability* — each domain (workflow, scheduler, PII, quotas, prompt-build, …) becomes a named module a person can reason about in isolation. Cohesion is the goal, not just line-count reduction. A "successful" extraction leaves the domain understandable on its own.
+
+2. **No duplicated functionality.** The last refactor stopped mid-turn and left things *worse than before* — partial extractions with logic living in two places that then drift. Net duplication must be **zero, and trending down**, never up. If an extraction can't be finished cleanly, it is **not started** — a half-done move is worse than no move.
+
+3. **DEFINITION OF DONE — the original is GONE.** A relocation is complete **only when the original code no longer exists** and the logic lives in **exactly one place** (the new module). Not "the new module also works." Not "re-exported for compatibility while the old copy lingers." The old implementation is deleted; callers reach the logic only through the new home. **If the original still exists, the task is NOT done — it is in a worse state than before and must be finished or reverted.**
+
+> These promote the per-extraction Gate 2 ("old copy deleted") from a checklist item to *the* acceptance test. An extraction that passes import/test gates but leaves the original in place **fails** — revert it. No extraction is committed in a half-moved state. One extraction = one atomic commit where the old code is gone in the same commit the new code arrives.
+
+**Current state (verified 2026-05-23):** no top-level function is defined in both `brain.py` and `engine/` (checked all 88 engine defs) — so the prior refactor did NOT leave live duplicate *definitions*. The incompleteness is *incoherent splits*, not duplication: e.g. PII scanner logic (`_pii_rules`/`_pii_scan_text`) sits in `brain.py` while only the NER loader is in `engine/pii_ner.py` (B3 fixes). Document-*read* extraction (D1) appears genuinely complete — the `openpyxl` references remaining in `brain.py` are in the *writer* tools (`tool_write_document`/xlsx builder), a different concern; **confirm before treating D1 as open.**
 
 ---
 
