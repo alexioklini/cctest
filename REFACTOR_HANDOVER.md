@@ -42,7 +42,9 @@ Also stop immediately (don't push through) on: a **failed gate**, an **import br
 2. Gate 2: `./refactor_gate.sh grep <SYMBOL>` → confirm brain.py shows ONLY changelog/comment hits.
 3. Gate 3: grep call sites repo-wide → all resolve to the new module.
 4. Gates 4+5: `./refactor_gate.sh` → imports clean + no new test failures.
-5. If all pass: commit, append a full entry to `REFACTOR_REPORT.md` (what moved · where · old code deleted? · tests) + flip the Status board + update Running totals. If any fail: revert the move, log it as a REVERTED/BLOCKED entry in the report, STOP and report.
+5. If all pass: commit, append a full entry to `REFACTOR_REPORT.md` (what moved · where · old code deleted? · tests) + flip the domain's row in the *Master domain map* + flip the Status board + update Running totals. If any fail: revert the move, log it as a REVERTED/BLOCKED entry in the report, STOP and report.
+
+> `REFACTOR_REPORT.md` opens with a **Master domain map** = the COMPLETE scope (every domain done/planned-with-phase/gated/excluded-with-reason). It is fixed up front, not grown. The autonomous run flips statuses in it; it does not add rows. A genuinely new domain = a scope change to surface to the user, not a silent append.
 
 ---
 
