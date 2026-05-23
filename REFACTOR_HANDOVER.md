@@ -46,6 +46,8 @@ Also stop immediately (don't push through) on: a **failed gate**, an **import br
 
 > `REFACTOR_REPORT.md` opens with a **Master domain map** = the COMPLETE scope (every domain done/planned-with-phase/gated/excluded-with-reason). It is fixed up front, not grown. The autonomous run flips statuses in it; it does not add rows. A genuinely new domain = a scope change to surface to the user, not a silent append.
 
+> **Publish the report on every update (user wants remote viewing).** After updating `REFACTOR_REPORT.md`, run `./refactor_publish.sh "<commit msg>"` — it regenerates `REFACTOR_REPORT.html` (zero-dep converter `refactor_report_html.py`) and pushes to `origin/main`. **HTML is a generated VIEW, never hand-edited — only the `.md` is the source of truth I read/update.** Repo is PUBLIC (user-approved 2026-05-23); report viewable at https://github.com/alexioklini/cctest/blob/main/REFACTOR_REPORT.html. Never edit the .html directly; if it drifts from the .md, regenerate.
+
 ---
 
 ## Why last time was incomplete (the core lesson)

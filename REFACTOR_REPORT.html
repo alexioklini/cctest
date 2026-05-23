@@ -1,0 +1,150 @@
+<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Refactor Progress Report</title><style>
+:root{color-scheme:light dark}
+body{font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;max-width:1100px;
+ margin:2rem auto;padding:0 1.2rem;color:#1a1a1a;background:#fff}
+@media(prefers-color-scheme:dark){body{color:#e6e6e6;background:#16181c}
+ table{border-color:#333}th{background:#23262b}td,th{border-color:#333}
+ code{background:#23262b}blockquote{background:#1d2025;border-color:#444}}
+h1{font-size:1.7rem;border-bottom:2px solid #ddd;padding-bottom:.3rem}
+h2{font-size:1.3rem;margin-top:2rem;border-bottom:1px solid #eee;padding-bottom:.2rem}
+h3{font-size:1.08rem;margin-top:1.4rem}
+table{border-collapse:collapse;width:100%;margin:.8rem 0;font-size:.9rem}
+th,td{border:1px solid #ddd;padding:.4rem .6rem;text-align:left;vertical-align:top}
+th{background:#f4f5f7}
+code{background:#f0f1f3;padding:.1rem .3rem;border-radius:3px;font-size:.88em}
+blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
+ padding:.5rem .9rem;border-radius:0 4px 4px 0}
+hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
+.badge{font-style:normal}
+.meta{color:#888;font-size:.82rem}
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 08:44 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+<p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
+<p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
+<p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
+<p>→ *Execution protocol*. Plan: <code>REFACTOR_PLAN.md</code>.</p>
+<p><strong>Autonomy:</strong> auto through Phase 3 (Tier A + B + splits); HARD STOP before Tier C.</p>
+<p><strong>Governing principles (user, override all else):</strong> (1) split monolith into clear functional domains; (2) net duplication zero &amp; trending down — a half-done move is worse than none, so don't start what can't be finished cleanly; (3) <strong>DONE = original code GONE, logic lives in exactly one place.</strong> Gate 2 enforces #3 mechanically: a surviving <code>def</code>/<code>class</code> in brain.py = FAIL → finish or revert. One extraction = one atomic commit (old gone + new arrives together).</p>
+<blockquote><strong>Reporting rule for the autonomous run:</strong> after each extraction, (1) append a full block to *Extraction record* below, (2) flip the domain's row in the *Master domain map* (<span class="badge planned" title="planned">⬜</span>→<span class="badge wip" title="in progress">🔄</span>→<span class="badge done" title="done">✅</span>), and (3) flip the *Status board* + *Running totals*. Record source→destination, whether the old code was deleted (the principle-#3 evidence), and the gate/test result — green or not. A reverted/abandoned attempt is logged too (state = REVERTED), so the report shows what was tried, not just what stuck. The report is updated in the SAME commit as the extraction (or immediately after), never deferred. <strong>The Master domain map is the complete scope from day one — never add a domain to it as "newly discovered work"; if something genuinely new appears, that's a scope change to flag, not a silent append.</strong></blockquote>
+<hr>
+<h2>Status board</h2>
+<table><thead><tr><th>Phase</th><th>Scope</th><th>State</th></tr></thead><tbody>
+<tr><td>0</td><td>Safety net (gate + baseline)</td><td><span class="badge done" title="done">✅</span> DONE (commit <code>d48b5de</code>)</td></tr>
+<tr><td>1</td><td>Tier-D audit + Tier A pure wins + admin/workflows + db splits</td><td><span class="badge planned" title="planned">⬜</span> not started</td></tr>
+<tr><td>2</td><td>B1 <code>engine/context.py</code> (relocate only, NOT DI) + U1/U2/U4 utilities</td><td><span class="badge planned" title="planned">⬜</span> not started</td></tr>
+<tr><td>3</td><td>B2 scheduler (<span class="badge warn" title="attention">⚠️</span> chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (<span class="badge warn" title="attention">⚠️</span> daemons nested in main()) · chat.py split</td><td><span class="badge planned" title="planned">⬜</span> not started</td></tr>
+<tr><td>4</td><td>Tier C (C1/C2/C3, <span class="badge warn" title="attention">⚠️</span> chars-tests + eval before C2) + finish D1–D3</td><td><span class="badge gated" title="gated">⛔</span> STOP — needs user review before starting</td></tr>
+</tbody></table>
+<p><strong><span class="badge warn" title="attention">⚠️</span> markers</strong> = a characterization test must be written+committed for that path BEFORE the extraction (plan §1.5). Core paths have no existing tests, so the gate alone can't catch regressions there.</p>
+<hr>
+<h2>Master domain map — the COMPLETE scope (planned + done + excluded)</h2>
+<p>Every functional domain the full refactor touches is listed here from day one — not grown as work proceeds. Each row carries its <strong>phase</strong>, <strong>target module</strong>, and <strong>status</strong>. Domains not yet touched say so and name the phase that will cover them. Domains that will <strong>NOT</strong> be touched are listed with the reason. Status legend: <span class="badge done" title="done">✅</span> done · <span class="badge planned" title="planned">⬜</span> planned (not started) · <span class="badge wip" title="in progress">🔄</span> in progress · <span class="badge gated" title="gated">⛔</span> gated (needs review) · <span class="badge excluded" title="excluded">🚫</span> out of scope.</p>
+<h3>A. <code>brain.py</code> (25,182 LOC) — domains to extract</h3>
+<table><thead><tr><th>Domain</th><th>Source (brain.py)</th><th>→ Target module</th><th>Phase</th><th>Status</th><th>Note</th></tr></thead><tbody>
+<tr><td>Workflow engine (lexer→AST→interpreter)</td><td>~12,522–14,000</td><td><code>engine/workflow.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>self-contained; first pure win</td></tr>
+<tr><td>Code structure graph (tree-sitter, code-graph.db)</td><td>~17,779–18,952</td><td><code>engine/code_graph.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>owns its DB pool</td></tr>
+<tr><td>Git / GitHub tools</td><td>18,978 / 19,176</td><td><code>engine/tools/git_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>subprocess wrappers; keep 4-edit-site registration in brain.py</td></tr>
+<tr><td>Gmail tools</td><td>~4,916–5,200</td><td><code>engine/tools/gmail_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>API-client tools</td></tr>
+<tr><td>Trace manager + audit trail</td><td>~16,365–16,762</td><td><code>server_lib/trace_audit.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>owns traces/audit DB pools</td></tr>
+<tr><td><code>_thread_local</code> + execution context</td><td>~11,257+</td><td><code>engine/context.py</code></td><td>2 (B1)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td><strong>relocate only</strong>, NOT DI; prerequisite for B2–B4</td></tr>
+<tr><td>Scheduler + task runner</td><td>~14,000–15,641</td><td><code>engine/scheduler.py</code></td><td>3 (B2)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td><span class="badge warn" title="attention">⚠️</span> characterization test first; coupled to <code>_thread_local</code></td></tr>
+<tr><td>GDPR/PII scanner (<code>_pii_rules</code>/<code>_pii_scan_*</code>)</td><td>16,771–17,477</td><td><code>engine/pii_scan.py</code> (merge into <code>engine/pii_ner.py</code>)</td><td>3 (B3)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>fixes incoherent split (logic in brain, loader in engine) + web/index.html sync via U5</td></tr>
+<tr><td>Quotas / cost / rate-limit (<code>QuotaManager</code>/<code>CostTracker</code>/<code>RateLimiter</code>)</td><td>scattered</td><td><code>engine/quotas.py</code>, <code>engine/cost.py</code></td><td>3 (B4)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>each owns a DB pool</td></tr>
+<tr><td>Model selection + system-prompt assembly (<code>_build_system_prompt</code>, <code>MODEL_PROFILES</code>)</td><td>~21,844–24,482</td><td><code>engine/prompt_build.py</code>, <code>engine/model_select.py</code></td><td>4 (C1)</td><td><span class="badge gated" title="gated">⛔</span> gated</td><td>KV-cache sensitive; eval + warmup byte-stability gate</td></tr>
+<tr><td>Tool execution layer (artifact-session, dedup, summarization)</td><td>~2,839–4,845</td><td><code>engine/tool_exec.py</code></td><td>4 (C2)</td><td><span class="badge gated" title="gated">⛔</span> gated</td><td><span class="badge warn" title="attention">⚠️</span> characterization test first; core path</td></tr>
+<tr><td>MemPalace integration glue (<code>tool_mempalace_query</code>, wing resolution)</td><td>~5,386+</td><td><code>engine/mempalace_glue.py</code></td><td>4 (C3)</td><td><span class="badge gated" title="gated">⛔</span> gated</td><td>wing-isolation test gate (security)</td></tr>
+<tr><td><strong>D1</strong> doc_convert inline remnants</td><td>tool_read_document etc.</td><td><code>engine/doc_convert.py</code> (already exists)</td><td>1 audit</td><td><span class="badge planned" title="planned">⬜</span> verify</td><td>likely ALREADY complete (v9.10.0); openpyxl hits are *writer* tools — confirm, don't redo</td></tr>
+<tr><td><strong>D2</strong> classification enforcement glue (<code>_classification_gate_tool_text</code> etc.)</td><td>~2,892</td><td><code>engine/classification.py</code> (already exists)</td><td>4</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>move glue next to detector</td></tr>
+<tr><td><strong>D3</strong> KG entity-indexing + co-occurrence</td><td>~10,279–10,450</td><td><code>engine/kg_extract.py</code> (already exists)</td><td>4</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>finish the partial extraction</td></tr>
+</tbody></table>
+<h3>B. Other oversized files — domains to split</h3>
+<table><thead><tr><th>Domain</th><th>Source</th><th>→ Target</th><th>Phase</th><th>Status</th><th>Note</th></tr></thead><tbody>
+<tr><td>admin: workflows</td><td><code>handlers/admin.py</code> ~219–1,140</td><td><code>handlers/admin/workflows.py</code></td><td>1</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>isolated; extract first</td></tr>
+<tr><td>admin: artifacts/files/sidecar/channels</td><td>admin.py ~2,200–5,416</td><td><code>handlers/admin/artifacts.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>largest cluster (~3,200)</td></tr>
+<tr><td>admin: costs/quotas UI</td><td>admin.py ~1,610–2,100</td><td><code>handlers/admin/costs.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
+<tr><td>admin: skills</td><td>admin.py ~1,305–1,610</td><td><code>handlers/admin/skills.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
+<tr><td>admin: tool-settings/research/NER config</td><td>admin.py ~1,707–2,000</td><td><code>handlers/admin/config.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
+<tr><td>admin: teams</td><td>admin.py ~19–220</td><td><code>handlers/admin/teams.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
+<tr><td>admin: agents</td><td>admin.py ~1,210–1,392</td><td><code>handlers/admin/agents.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
+<tr><td>admin: KG/traces/audit observability</td><td>admin.py ~2,099–2,200</td><td><code>handlers/admin/observability.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
+<tr><td>server: 7 background daemons (nested in <code>main()</code>)</td><td><code>server.py</code> ~3,903–5,716</td><td><code>server_daemons.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td><span class="badge warn" title="attention">⚠️</span> lift-to-module-scope, not copy-paste</td></tr>
+<tr><td>server: MemPalaceClient singleton</td><td><code>server.py:69</code></td><td><code>server_lib/mempalace_client.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>flagged by external analysis</td></tr>
+<tr><td>server: bootstrap/init (optional)</td><td><code>server.py</code> ~3,033–3,500</td><td><code>server_init.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>optional; <code>main()</code> may stay</td></tr>
+<tr><td>chat: SSE streaming (format/keepalive/replay)</td><td><code>handlers/chat.py</code></td><td><code>server_lib/sse_stream.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>reusable by future SSE endpoints (folds U3)</td></tr>
+<tr><td>chat: GDPR-recovery modal state machine</td><td><code>handlers/chat.py</code> ~51–200</td><td><code>handlers/gdpr_recovery.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
+<tr><td>db: node registry</td><td><code>server_lib/db.py</code> ~54–130</td><td><code>server_lib/node_registry.py</code></td><td>1</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
+<tr><td>db: MemPalace sync cursor</td><td><code>server_lib/db.py</code> ~1,750+</td><td><code>server_lib/mempalace_sync.py</code></td><td>1</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>(<code>ChatDB</code> core stays in db.py)</td></tr>
+</tbody></table>
+<h3>C. Cross-cutting reusable utilities (de-duplication)</h3>
+<table><thead><tr><th>Utility</th><th>Copies today</th><th>→ Target</th><th>Phase</th><th>Status</th><th>Note</th></tr></thead><tbody>
+<tr><td>U1 path-traversal guard</td><td>5 divergent (classification, projects ×2, favourites, admin)</td><td><code>server_lib/pathsafe.py</code></td><td>2</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>security; HIGH value</td></tr>
+<tr><td>U2 HTTP body read</td><td>16 sites</td><td><code>server_lib/http_util.py</code></td><td>2</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>inconsistent error handling today</td></tr>
+<tr><td>U3 SSE formatter</td><td>3 sites</td><td>folded into <code>server_lib/sse_stream.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>with chat SSE split</td></tr>
+<tr><td>U4 repo-root path constant</td><td>~82 sites</td><td><code>common.py</code> constant</td><td>2</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>cosmetic</td></tr>
+<tr><td>U5 PII web/server rule sync</td><td>brain.py ↔ web/index.html</td><td>codegen JS table from Python</td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>after B3; stops hand-sync drift</td></tr>
+</tbody></table>
+<h3>D. Domains that will NOT be touched (out of scope) — with reason</h3>
+<table><thead><tr><th>Domain</th><th>Status</th><th>Why excluded</th></tr></thead><tbody>
+<tr><td>Web frontend (~29k LOC vanilla JS: settings.js 6.1k, panels.js 5.8k, chat.js 4k)</td><td><span class="badge excluded" title="excluded">🚫</span> out of scope</td><td>Different language/toolchain/risk profile. Separate future initiative (plan §8). *Exception:* U5 touches <code>web/index.html</code>'s PIIScanner via codegen — the one frontend seam crossed.</td></tr>
+<tr><td>Thread-local → full dependency-injection conversion</td><td><span class="badge excluded" title="excluded">🚫</span> out of scope</td><td>Multi-week architectural change across the whole codebase. B1 relocates only. Could be piloted later (plan §8).</td></tr>
+<tr><td>Encoding all prose invariants as tests/types</td><td><span class="badge excluded" title="excluded">🚫</span> out of scope</td><td>Broad initiative; §1.5 characterization tests are a first down-payment, not the whole thing.</td></tr>
+<tr><td>Already-centralized helpers (<code>_send_json</code>/<code>_read_json</code>, auth gates, <code>resolve_provider_for_model</code>, <code>@_db_safe</code>/<code>_db_conn</code>, TOOL_DEFINITIONS dedup)</td><td><span class="badge excluded" title="excluded">🚫</span> not needed</td><td>Already single-sourced (v8.26.0/v8.28.0). Re-extracting would add churn for zero gain.</td></tr>
+<tr><td><code>handlers/favourites.py</code> vs <code>server_lib/favourites.py</code></td><td><span class="badge excluded" title="excluded">🚫</span> not needed</td><td>Legitimate HTTP-layer vs DB-layer split, not duplication.</td></tr>
+<tr><td><code>ChatDB</code> core (stays in <code>server_lib/db.py</code>)</td><td><span class="badge excluded" title="excluded">🚫</span> stays put</td><td>The core session store; only node-registry + mempalace-sync peel off around it.</td></tr>
+<tr><td>Session/SessionManager/LiveStream (stays in <code>server.py</code>)</td><td><span class="badge excluded" title="excluded">🚫</span> stays put</td><td>Core abstraction; dispatch layer legitimately lives with the server.</td></tr>
+<tr><td><code>web/index.html</code> PIIScanner (stays, regex-only)</td><td><span class="badge excluded" title="excluded">🚫</span> stays (managed)</td><td>Browser can't run the Python NER; intentionally regex-only. U5 makes it codegen-synced so it can't drift — but it is not "extracted."</td></tr>
+<tr><td><code>engine/file_pseudonymize.py</code></td><td><span class="badge planned" title="planned">⬜</span> audit</td><td>Possibly dead/rarely-used (per analysis). Phase 1 audit confirms usage before any action.</td></tr>
+</tbody></table>
+<blockquote><strong>Coverage promise:</strong> every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.</blockquote>
+<h3>Running totals</h3>
+<ul>
+<li>Extractions completed: <strong>0</strong></li>
+<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 25,182_</li>
+<li>Net new modules created: <strong>0</strong></li>
+<li>Live duplicate definitions (brain.py ∩ engine/): <strong>0</strong> (verified 2026-05-23)</li>
+</ul>
+<hr>
+<h2>Extraction record</h2>
+<p>One block per extraction, newest first. Every block answers the four questions: <strong>what moved · where to · old code deleted? · tests pass?</strong> Fill every field — "did the old code get deleted" is the principle-#3 acceptance evidence; "tests" is the Gate 4/5 result.</p>
+<p><strong>Template (copy for each new extraction):</strong></p>
+<p>```</p>
+<h3>&lt;#&gt; &lt;name&gt; — &lt;state: DONE | REVERTED | BLOCKED&gt;</h3>
+<ul>
+<li><strong>Commit:</strong> &lt;sha&gt;  ·  <strong>Date:</strong> &lt;ISO&gt;  ·  <strong>Phase:</strong> &lt;n&gt;</li>
+<li><strong>Symbol(s):</strong> &lt;the def/class names moved — used for Gate-2 grep&gt;</li>
+<li><strong>Moved FROM:</strong> brain.py:&lt;line-range&gt; (&lt;what it was&gt;)</li>
+<li><strong>Moved TO:</strong> &lt;new module path&gt; (&lt;lines&gt;)</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2 <code>./refactor_gate.sh grep &lt;symbol&gt;</code> shows no def/class in brain.py (alias import only) | NO → see Blockers</li>
+<li><strong>Callers re-pointed:</strong> &lt;N&gt; sites → &lt;how they now resolve&gt; (Gate 3)</li>
+<li><strong>Tests:</strong> Gate 4 imports &lt;X/X clean&gt; · Gate 5 unittest &lt;P pass / F fail, only the 3 known NER-env&gt; · gate verdict &lt;PASS/FAIL&gt;</li>
+<li><strong>Characterization test added?</strong> &lt;n/a (Tier A) | name of test file+case, if B2/C2/etc.&gt;</li>
+<li><strong>brain.py delta:</strong> &lt;before&gt; → &lt;after&gt; lines (−&lt;N&gt;)</li>
+<li><strong>Notes:</strong> &lt;anything non-obvious; behavior intentionally changed?&gt;</li>
+</ul>
+<p>```</p>
+<hr>
+<p>_No extractions yet — Phase 0 only established the safety net (gate + baseline). First entry will be the Phase-1 Tier-D audit / first Tier-A extraction._</p>
+<p>&lt;!-- WORKED EXAMPLE of a completed entry (delete or keep as format reference):</p>
+<h3>1 A1 workflow engine — DONE</h3>
+<ul>
+<li><strong>Commit:</strong> abc1234  ·  <strong>Date:</strong> 2026-05-24  ·  <strong>Phase:</strong> 1</li>
+<li><strong>Symbol(s):</strong> _wf_parse, _wf_tok_line, _WFProgram, WorkflowInterpreter</li>
+<li><strong>Moved FROM:</strong> brain.py:12522–14000 (workflow lexer→AST→interpreter)</li>
+<li><strong>Moved TO:</strong> engine/workflow.py (1478 lines)</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2 grep shows only <code>from engine.workflow import ...</code> alias in brain.py, no def/class</li>
+<li><strong>Callers re-pointed:</strong> 5 sites (all inside brain.py) → resolve via the alias import</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 clean · Gate 5 80 pass / 3 fail (known NER) · gate verdict PASS</li>
+<li><strong>Characterization test added?</strong> n/a (Tier A, self-contained)</li>
+<li><strong>brain.py delta:</strong> 25,182 → 23,704 lines (−1,478)</li>
+<li><strong>Notes:</strong> pure relocation, zero behavior change.</li>
+</ul>
+<p>--&gt;</p>
+<hr>
+<h2>Blockers / decisions encountered mid-run</h2>
+<p>(empty — log here if a gate fails, an extraction is reverted, or an unforeseen decision arises; then STOP and report. Each entry: what was attempted, what failed, what state the tree is in now.)</p>
+<hr>
+<h2>Baseline (from Phase 0, for gate comparison)</h2>
+<ul>
+<li>Imports: <strong>18/18 clean</strong> on <code>/opt/homebrew/bin/python3</code>.</li>
+<li>Tests: <strong>80 pass / 3 fail</strong>; the 3 are <code>test_contact_warn_promotes_ner_findings</code>, <code>test_name_roundtrip</code>, <code>test_ner_findings_merge_with_regex</code> (all NER-env, not code). Gate rule = no NEW failures beyond these.</li>
+<li><code>./refactor_gate.sh</code> → <strong>GATE PASS ✓</strong> at clean HEAD <code>4bad7e4</code>.</li>
+</ul></body></html>
