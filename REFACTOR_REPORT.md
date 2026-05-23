@@ -7,7 +7,7 @@ so the run survives context compaction and fresh sessions). Protocol: see `REFAC
 
 **Autonomy:** auto through Phase 3 (Tier A + B + splits); HARD STOP before Tier C.
 
-> **🔄 STATUS 2026-05-23: Phases 1–3 COMPLETE; Tier C (Phase 4) IN PROGRESS — C1 DONE.** 18 extractions, 0 reverts, gate green throughout. C1 (model-select + system-prompt build → engine/{model_select,prompt_build}.py) shipped with warmup prefix BYTE-IDENTICAL + eval Δ−0.06 (within gate). C2 chars-test prereq committed (27 cases). brain.py 25,182 → 17,862 (−29.1%); handlers/admin.py 5,416 → 79 (−98.5%); server.py 5,827 → 3,895 (−33%). NEXT: C2 tool-exec extraction, then C3 (wing-isolation gate). See *Status board* + *Master domain map*.
+> **🔄 STATUS 2026-05-23: Phases 1–3 COMPLETE; Tier C (Phase 4) IN PROGRESS — C1 + C2 DONE.** 19 extractions, 0 reverts, gate green throughout. C1 (model-select + system-prompt build) shipped warmup-byte-identical + eval Δ−0.06; C2 (tool-exec layer → engine/tool_exec.py) shipped chars-tests 45/45 + eval Δ−0.02. brain.py 25,182 → 17,556 (−30.3%); handlers/admin.py 5,416 → 79 (−98.5%); server.py 5,827 → 3,895 (−33%). NEXT: C3 MemPalace glue (wing-isolation security gate), then finish D1–D3 verify. See *Status board* + *Master domain map*.
 
 **Governing principles (user, override all else):** (1) split monolith into clear functional domains; (2) net duplication zero & trending down — a half-done move is worse than none, so don't start what can't be finished cleanly; (3) **DONE = original code GONE, logic lives in exactly one place.** Gate 2 enforces #3 mechanically: a surviving `def`/`class` in brain.py = FAIL → finish or revert. One extraction = one atomic commit (old gone + new arrives together).
 
@@ -23,7 +23,7 @@ so the run survives context compaction and fresh sessions). Protocol: see `REFAC
 | 1 | Tier-D audit + Tier A pure wins + admin/workflows + db splits | ✅ DONE — D-audit (D1/D3 clean), D2, A1–A5, db node-registry+mempalace-sync, admin workflows. brain.py −3,420 |
 | 2 | B1 `engine/context.py` (relocate only, NOT DI) + U1/U2/U4 utilities | ✅ DONE — B1 ✅, U1 ✅(partial), U2 ✅(already-satisfied), U4 🚫 SKIP(not-applicable) |
 | 3 | B2 scheduler (⚠️ chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (⚠️ daemons nested in main()) · chat.py split | ✅ DONE — B2✅ B3✅ B4✅ admin-full✅ server_daemons✅ chat-split✅ (+U3✅). MemPalaceClient + server_init deferred/optional |
-| 4 | Tier C (C1/C2/C3, ⚠️ chars-tests + eval before C2) + finish D1–D3 | 🔄 **IN PROGRESS — C1 ✅ (commit `f83e72e`, warmup byte-identical + eval Δ−0.06). C2 chars-test ✅ (commit `3f87889`, 27 cases). NEXT: C2 extraction → engine/tool_exec.py, then C3 (wing-isolation gate). Per-sub-step gate = eval brain mean ≥0.67 (Δ<0.10).** |
+| 4 | Tier C (C1/C2/C3, ⚠️ chars-tests + eval before C2) + finish D1–D3 | 🔄 **IN PROGRESS — C1 ✅ (`f83e72e`, warmup byte-identical, eval Δ−0.06). C2 ✅ (`9c9bc57`, chars-test `3f87889` 27 cases, eval Δ−0.02). NEXT: C3 MemPalace glue → engine/mempalace_glue.py (wing-isolation security gate). Per-sub-step gate = eval brain mean ≥0.67 (Δ<0.10).** |
 
 **⚠️ markers** = a characterization test must be written+committed for that path BEFORE the extraction (plan §1.5). Core paths have no existing tests, so the gate alone can't catch regressions there.
 
@@ -47,7 +47,7 @@ Every functional domain the full refactor touches is listed here from day one �
 | GDPR/PII scanner (`_pii_rules`/`_pii_scan_*`) | (post-shift) | merged into `engine/pii_ner.py` | 3 (B3) | ✅ done | commit `793ca1e`; merged with NER half; rule order preserved; 41/41 GDPR+pseudonymizer tests pass; U5 drift-checker shipped |
 | Quotas / cost / rate-limit (`QuotaManager`/`CostTracker`/`RateLimiter`) | scattered | `engine/quotas.py` (single, not split) | 3 (B4) | ✅ done | commit `12127c1`; cohesive single module; costs.db pool moved; _log_call_cost stays in brain; singletons via alias |
 | Model selection + system-prompt assembly (`_build_system_prompt`, `MODEL_PROFILES`) | ~21,844–24,482 | `engine/prompt_build.py`, `engine/model_select.py` | 4 (C1) | ✅ done | commit `f83e72e`; warmup prefix BYTE-IDENTICAL (sha b89c5a14, 3357B, 24 tools); eval brain 0.77→0.71 (Δ−0.06, within gate+noise); −952 LOC |
-| Tool execution layer (artifact-session, dedup, summarization) | ~2,839–4,845 | `engine/tool_exec.py` | 4 (C2) | ⛔ gated | ⚠️ characterization test first; core path |
+| Tool execution layer (artifact-session, dedup, summarization) | scattered (2841 / 3064 / 16646–16850 / 17836–18070) | `engine/tool_exec.py` | 4 (C2) | ✅ done | commit `9c9bc57` (chars-test `3f87889` first); chars-tests 45/45; eval brain 0.77→0.75 (Δ−0.02); −306 LOC |
 | MemPalace integration glue (`tool_mempalace_query`, wing resolution) | ~5,386+ | `engine/mempalace_glue.py` | 4 (C3) | ⛔ gated | wing-isolation test gate (security) |
 | **D1** doc_convert inline remnants | tool_read_document etc. | `engine/doc_convert.py` (already exists) | 1 audit | ✅ clean | audit 2026-05-23: `convert_one`/`_extract_pdf`/`_do_extract` already only in engine; no duplicate — nothing to do |
 | **D2** classification enforcement glue (`_classification_gate_tool_text` etc.) | 2,892 / 20,836 / 20,892 | `engine/classification.py` | 1 | ✅ done | commit `29b142b`; 3 fns moved next to detector, brain re-exports via alias |
@@ -102,15 +102,15 @@ Every functional domain the full refactor touches is listed here from day one �
 > **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.
 
 ### Running totals
-- Extractions completed: **18** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5, B4, admin-full, chat-splits+U3, server_daemons, **C1**) — Phases 1–3 DONE; **Tier C in progress (C1 ✅)**
+- Extractions completed: **19** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5, B4, admin-full, chat-splits+U3, server_daemons, **C1, C2**) — Phases 1–3 DONE; **Tier C in progress (C1 ✅ C2 ✅)**
 - Reverts: **0**
-- `brain.py` line count: **25,182** (baseline) → _current: **17,862** (−7,320, −29.1%)
+- `brain.py` line count: **25,182** (baseline) → _current: **17,556** (−7,626, −30.3%)
 - `handlers/admin.py` line count: **5,416** → _current: **79** (−5,337, −98.5%; thin mixin core across 6 flat admin_*.py modules)
 - `server.py` line count: **5,827** → _current: **3,895** (−1,932, −33.2%)
 - `server_lib/db.py` line count: **1,985** → _current: 1,778 (−207)
 - `handlers/chat.py` line count: 3,537 → 3,513 (−24; value was U3 de-dup)
-- Net new production modules created: **22** — `engine/` (9): workflow, code_graph, context, scheduler, quotas, tools/git_tools, tools/gmail_tools, **model_select, prompt_build (C1)** · `server_lib/` (5): trace_audit, node_registry, mempalace_sync, pathsafe, sse_stream · `handlers/` (7): admin_workflows, admin_agents, admin_costs, admin_config, admin_observability, admin_artifacts, gdpr_recovery · top-level (1): server_daemons. *(Plus merges into existing modules: D2→classification.py, B3→pii_ner.py; U2 used existing reader; U4/MemPalaceClient/server_init skipped/deferred.)*
-- Characterization tests added: **1** (`tests/test_scheduler_characterization.py`, 18 tests — B2 prereq)
+- Net new production modules created: **23** — `engine/` (10): workflow, code_graph, context, scheduler, quotas, tools/git_tools, tools/gmail_tools, model_select, prompt_build (C1), **tool_exec (C2)** · `server_lib/` (5): trace_audit, node_registry, mempalace_sync, pathsafe, sse_stream · `handlers/` (7): admin_workflows, admin_agents, admin_costs, admin_config, admin_observability, admin_artifacts, gdpr_recovery · top-level (1): server_daemons. *(Plus merges into existing modules: D2→classification.py, B3→pii_ner.py; U2 used existing reader; U4/MemPalaceClient/server_init skipped/deferred.)*
+- Characterization tests added: **2** (`tests/test_scheduler_characterization.py` 18 tests — B2 prereq; `tests/test_tool_exec_characterization.py` 27 tests — C2 prereq). Plus the C1 warmup byte-identity gate `tools/check_warmup_prefix_stable.py`.
 - Drift-checkers added: **1** (`tools/check_pii_js_parity.py` — gate-4b; caught a real pre-existing PII map drift)
 - Live duplicate definitions (the drift trap, principle #3): **0** — every extraction's Gate-2 confirmed the original `def`/`class` GONE from the source file.
 - Reverts: **0**. Skips/already-satisfied (principled, documented): U4 (not-applicable), U2 (already centralized).
@@ -138,6 +138,20 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 20 C2 tool-execution layer → engine/tool_exec.py — DONE  *(⚠️ core path; chars-test prereq `3f87889`)*
+- **Commit:** `9c9bc57`  ·  **Date:** 2026-05-23  ·  **Phase:** 4 (Tier C — C2)
+- **Symbol(s):** `_ok`/`_err`, `_get_artifact_session_folder`, dedup cluster (`_tool_dedup_lock`/`_tool_dedup`/`_TOOL_DEDUP_TTL`/`_dedup_sid`/`_dedup_state`/`_dedup_gc_locked`/`_check_tool_dedup`/`reset_tool_dedup`), read-path tracker (`_session_read_paths_lock`/`_session_read_paths`/`_session_read_paths_sid`/`_SESSION_READ_PATHS_MAX`/`_record_session_read_path`/`_read_doc_cache_session_paths`), result-processing (`_BASE64_DATA_RE`/`_BASE64_RAW_RE`/`_sanitize_tool_result`/`_compress_old_tool_results`/`TOOL_RESULT_BUDGET_THRESHOLD`/`TOOL_RESULT_PREVIEW_SIZE`/`_apply_tool_result_budget`/`_MICROCOMPACT_TOOLS`/`_COMPACT_TOOL_ARGS`/`_MICROCOMPACT_EXEMPT`/`_microcompact`/`_find_tool_name_for_result`/`_find_tool_name_for_block`)
+- **Moved FROM:** brain.py (scattered: ~2841, ~3064, ~16646–16850, ~17836–18070)
+- **Moved TO:** engine/tool_exec.py (475, NEW)
+- **Old code deleted?** YES — Gate-2 verified 5 representative symbols (`_check_tool_dedup`/`_microcompact`/`_sanitize_tool_result`/`_record_session_read_path`/`_get_artifact_session_folder`): "no definition in brain.py".
+- **Callers re-pointed:** 0 — brain.py does module-level `from engine.tool_exec import _ok, _err, ...` so bare in-brain `_ok(...)`/`_err(...)` calls bind to the module global; handlers' `engine._microcompact`/etc. resolve via the brain-alias re-export.
+- **Tests:** Gate 4 imports 18/18 · Gate 4b PII parity OK · Gate 5 80 pass / 3 known-NER fail · verdict PASS
+- **Characterization test added?** YES (prereq, committed first as `3f87889`) — `tests/test_tool_exec_characterization.py`, 27 cases pinning dedup thresholds/exemptions/50-bound, sanitize/_mcp_images, compress 500→200 boundary, microcompact >100 gate + tokens_freed//4, read-path abs/dedup/scope/256-cap, `_ok`/`_err` shape, artifact-folder naming. **45/45 (tool_exec + scheduler) pass post-extraction.**
+- **EVAL GATE:** brain mean 0.77 → **0.75 (Δ −0.02)** — well within Δ<0.10. Tool-exec is a pure relocation (no prompt/answer-shape change), the chars-tests prove byte-identical behavior, and the eval confirms no quality movement.
+- **Warmup prefix:** byte-identical (tool-exec feeds nothing into the system prompt). An apparent "drift" mid-dev was the hour-rounded timestamp rolling over — confirmed against the clean tree, not C2.
+- **brain.py delta:** 17,862 → 17,556 (−306)
+- **Notes:** Identity verified single-instance for every moved mutable global (`_tool_dedup`/`_session_read_paths` + their locks, `_ok`, `_brain.TaskCancelled is brain.TaskCancelled`) — no concurrency/dedup split. `extract_attachment_text` + `_gdpr_anon_tool_text` correctly STAYED (PII/pseudonymizer-coupled, not pure). `_get_reranker_model` (sits between read-path globals and helpers in brain.py) left untouched — not a C2 target.
 
 ### 19 C1 model-select + system-prompt build → engine/{model_select,prompt_build}.py — DONE  *(⚠️ KV-cache sensitive)*
 - **Commit:** `f83e72e`  ·  **Date:** 2026-05-23  ·  **Phase:** 4 (Tier C — C1)
