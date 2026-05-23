@@ -936,6 +936,7 @@ from handlers.sessions_handler import SessionsHandlerMixin
 from handlers.providers import ProvidersHandlerMixin
 from handlers.projects import ProjectsHandlerMixin
 from handlers.admin import AdminHandlerMixin
+from handlers.admin_workflows import AdminWorkflowHandlers
 from handlers.favourites import FavouritesHandlerMixin
 from handlers.translate import TranslateHandlerMixin
 from handlers.share import ShareHandlerMixin
@@ -959,6 +960,7 @@ def _inject_server_globals():
         ProvidersHandlerMixin.__module__,
         ProjectsHandlerMixin.__module__,
         AdminHandlerMixin.__module__,
+        AdminWorkflowHandlers.__module__,
         FavouritesHandlerMixin.__module__,
         TranslateHandlerMixin.__module__,
         ShareHandlerMixin.__module__,
