@@ -140,7 +140,11 @@ don't trust the report.** Do NOT skip; this is the acceptance gate for the whole
 5. **index.html load order** — every new `<script>` present, in a valid order (defined-before-
    caller), no dangling reference to a deleted file.
 6. **Full gate green** + a real browser pass (not just headless smoke) of the core flows.
-7. Mark any inconsistency in `JS_REFACTOR_REPORT.md` and fix (or revert) before declaring done.
+7. **Coverage-promise check:** every one of the 17 files appears in the Master file-map with a
+   final status (✅ split / ➕ dedup-target / 🚫 stays-with-reason) and its size — none silently
+   omitted. The two REVIEW files (init.js, translation.js) must have a recorded split-or-stay
+   decision with rationale.
+8. Mark any inconsistency in `JS_REFACTOR_REPORT.md` and fix (or revert) before declaring done.
 
 ---
 
@@ -156,6 +160,42 @@ handlers/callbacks), no file reads another's globals at top level, no circular d
 The gate's `no-undef` (against the generated globals) + net-globals-count diff + smoke
 console-error check together enforce this mechanically.
 
+## The Master file-map — COMPLETE scope, fixed up front (NOT grown)
+
+`JS_REFACTOR_REPORT.md` MUST open with a table covering **all 17 web/js files from day one** —
+exactly like the Python report's "Master domain map." Every file is listed with its size,
+disposition (split / dedup-source / stays-with-reason), and target(s). The run only **flips
+statuses** (⬜→🔄→✅) in this table; it never appends "newly discovered" work. A genuinely new
+domain = a scope change to flag to the user, not a silent add. **Excluded/untouched files are
+shown WITH their size + reason** (not omitted). The complete scope is:
+
+| File | LOC | Disposition | Target / reason |
+|---|---|---|---|
+| `settings.js` | 6,140 | ⬜ SPLIT (Phase 2) | → settings_agent / _teams / _general / _tools / _hooks / _schedule |
+| `panels.js` | 5,819 | ⬜ SPLIT (Phase 3) | → panels_chats / _projects / _right / _gdpr |
+| `chat.js` | 4,013 | ⬜ SPLIT (Phase 4) | → chat_send / _render / _nav / _tools |
+| `init.js` | 2,899 | ⬜ REVIEW | Bootstrap + monitors. Over 2k — assess at Phase 4: split out the monitor classes (ConnectionMonitor etc.) if cohesive, else document why it stays whole (load-time init sequencing). |
+| `translation.js` | 2,389 | ⬜ REVIEW | Over 2k but a single cohesive domain (translation UI). Split only if it holds clear sub-domains; otherwise stays — record the call. |
+| `workflows.js` | 1,897 | 🚫 stays | Under 2k, single cohesive domain. De-dup only (Phase 1 helpers). |
+| `nav.js` | 1,351 | 🚫 stays | Cohesive navigation domain, under 2k. |
+| `utils.js` | 1,154 | ➕ DEDUP TARGET | Grows in Phase 1 (modal factory, DOM/date helpers land here). Not split. |
+| `favourites.js` | 848 | 🚫 stays | Cohesive, under 2k. |
+| `files.js` | 604 | 🚫 stays | Cohesive, under 2k. |
+| `sessions.js` | 529 | 🚫 stays | Cohesive, under 2k. |
+| `classification.js` | 374 | 🚫 stays | Cohesive, under 2k. |
+| `api.js` | 371 | ➕ DEDUP TARGET | Audit stray `fetch()` → route through `API.*`. Not split. |
+| `buddy.js` | 351 | 🚫 stays | Cohesive, under 2k. |
+| `share.js` | 305 | 🚫 stays | Cohesive, under 2k. |
+| `state.js` | 94 | 🚫 stays | Pure data, loads 2nd. Never split. |
+| `search.js` | 55 | 🚫 stays | Tiny. |
+| `dom_helpers.js` (NEW) | 0→ | ➕ CREATED (Phase 1) | New shared file for the modal factory + DOM helpers (F-U1/F-U2). |
+
+**Threshold rule:** the 3 monsters (>4k) are definite splits; `init.js`/`translation.js` (2–3k)
+are REVIEW (split iff cohesive sub-domains exist, else documented as intentional); everything
+under 2k stays unless it holds extractable duplication. **Total Tier F scope = 29,193 LOC; the
+report's coverage promise: every one of the 17 files appears in this table with a disposition +
+size, done/planned/excluded — nothing silently out of scope.**
+
 ## Invariants any split MUST preserve
 1. **Net global count unchanged** — relocate, never add/drop a global. (Gate checks this.)
 2. **Load order correct** — every global defined before its first caller (init.js is the only
@@ -167,7 +207,11 @@ console-error check together enforce this mechanically.
 ## Execution protocol (same as the Python refactor)
 - Subagent-per-split (bulky reads die with it); main thread holds only pass/fail + what moved.
 - One split = one commit, directly to main. Gate green before commit. `JS_REFACTOR_REPORT.md`
-  updated in the same commit (Master file-map flipped ⬜→✅, per-split record block).
+  updated in the same commit: **flip the status of the affected file's row in the Master
+  file-map** (⬜→🔄→✅) + add a per-split record block. The Master file-map is the COMPLETE
+  17-file scope written on the FIRST commit (all rows present from day one, statuses planned);
+  the run only flips statuses — it NEVER appends a row. A genuinely new domain = surface to the
+  user as a scope change, not a silent add.
 - **Publish the HTML report on every update** (remote viewing, like the Python refactor): run
   `./refactor_publish.sh "<msg>" JS_REFACTOR_REPORT.md` — the converter + publish script were
   parameterized (2026-05-23) to take a report filename, so they regenerate `JS_REFACTOR_REPORT.html`
