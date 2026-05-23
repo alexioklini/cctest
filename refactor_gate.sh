@@ -5,6 +5,7 @@
 #
 # Usage:  ./refactor_gate.sh                  # full gate
 #         ./refactor_gate.sh grep <SYMBOL>    # gate-2 helper: prove old copy is gone
+#         ./refactor_gate.sh tlgrep <ATTR>    # Tier-G: prove raw _thread_local.<attr> is gone
 #
 # Baseline recorded 2026-05-22 at clean HEAD (before any extraction):
 #   - unittest: 80 pass / 3 fail. The 3 failures are ALL in test_pii_ner.py and
@@ -38,6 +39,29 @@ if [ "${1:-}" = "grep" ]; then
     | grep -vE '^\S+:8:|^\S+:[0-9]+:.*"[0-9]+\.[0-9]+\.[0-9]+", "20' \
     || echo "  (no references at all — fully removed)"
   [ -n "$defhits" ] && exit 1 || exit 0
+fi
+
+if [ "${1:-}" = "tlgrep" ]; then
+  attr="$2"
+  # Tier-G gate component 2: a MIGRATED request-context attribute must have NO
+  # remaining raw `_thread_local.<attr>` read/write in live code. The only
+  # allowed mention is the shim/accessor definition in engine/context.py (the
+  # ContextVar-backed storage) — every other reference must go through a typed
+  # accessor. A surviving raw access = NOT DONE for that attr -> finish or revert.
+  echo "=== Tier-G: raw _thread_local.$attr must be gone from live code (engine/context.py exempt) ==="
+  hits=$(grep -rnE "_thread_local\.$attr\b|getattr\(_thread_local, ['\"]$attr['\"]|setattr\(_thread_local, ['\"]$attr['\"]" \
+           brain.py engine/ handlers/ server_lib/ server.py server_daemons.py 2>/dev/null \
+           | grep -v '^engine/context\.py:' \
+           | grep -vE '^\S+:[0-9]+:\s*#')
+  if [ -n "$hits" ]; then
+    echo "  FAIL — raw access of '$attr' still in live code:"
+    echo "$hits" | sed 's/^/    /'
+    echo "  -> route through the typed accessor or revert. NOT migrated."
+    exit 1
+  else
+    echo "  OK — no raw _thread_local.$attr access outside engine/context.py."
+    exit 0
+  fi
 fi
 
 fail=0
@@ -76,6 +100,15 @@ if [ -n "$newfails" ]; then
   echo "  NEW failures beyond the 3 known NER-env ones:"; echo "$newfails" | sed 's/^/    /'; fail=1
 else
   echo "  OK — no new failures beyond the 3 known NER-env baseline."
+fi
+
+echo ""
+echo "=== Gate 5b: request-context no-bleed property (Tier-G headline criterion) ==="
+out2=$($PY -m unittest tests.test_request_context_isolation 2>&1)
+if echo "$out2" | tail -1 | grep -q '^OK'; then
+  echo "  OK — concurrency/bleed + teardown-residue + negative-control all pass."
+else
+  echo "$out2" | tail -6 | sed 's/^/  /'; fail=1
 fi
 
 echo ""
