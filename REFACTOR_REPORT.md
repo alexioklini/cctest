@@ -19,8 +19,8 @@ so the run survives context compaction and fresh sessions). Protocol: see `REFAC
 |---|---|---|
 | 0 | Safety net (gate + baseline) | ✅ DONE (commit `d48b5de`) |
 | 1 | Tier-D audit + Tier A pure wins + admin/workflows + db splits | ✅ DONE — D-audit (D1/D3 clean), D2, A1–A5, db node-registry+mempalace-sync, admin workflows. brain.py −3,420 |
-| 2 | B1 `engine/context.py` (relocate only, NOT DI) + U1/U2/U4 utilities | 🔄 next |
-| 3 | B2 scheduler (⚠️ chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (⚠️ daemons nested in main()) · chat.py split | ⬜ not started |
+| 2 | B1 `engine/context.py` (relocate only, NOT DI) + U1/U2/U4 utilities | ✅ DONE — B1 ✅, U1 ✅(partial), U2 ✅(already-satisfied), U4 🚫 SKIP(not-applicable) |
+| 3 | B2 scheduler (⚠️ chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (⚠️ daemons nested in main()) · chat.py split | 🔄 next |
 | 4 | Tier C (C1/C2/C3, ⚠️ chars-tests + eval before C2) + finish D1–D3 | ⛔ STOP — needs user review before starting |
 
 **⚠️ markers** = a characterization test must be written+committed for that path BEFORE the extraction (plan §1.5). Core paths have no existing tests, so the gate alone can't catch regressions there.
@@ -40,7 +40,7 @@ Every functional domain the full refactor touches is listed here from day one �
 | Git / GitHub tools | 16,783–17,165 | `engine/tools/git_tools.py` | 1 (Tier A) | ✅ done | commit `3563081`; 4-site reg verified, dispatch-identity True/True |
 | Gmail tools | 4,770–5,086 | `engine/tools/gmail_tools.py` | 1 (Tier A) | ✅ done | commit `f8f3a1e`; 5 tools, 4-site reg verified, all dispatch-identity True |
 | Trace manager + audit trail | 15,043–15,437 | `server_lib/trace_audit.py` | 1 (Tier A) | ✅ done | commit `fa146c3`; both DB pools moved; 58 `_audit_log` sites resolve via re-export; server.py rebind verified |
-| `_thread_local` + execution context | ~11,257+ | `engine/context.py` | 2 (B1) | ⬜ planned | **relocate only**, NOT DI; prerequisite for B2–B4 |
+| `_thread_local` + execution context | brain.py:10,878 | `engine/context.py` | 2 (B1) | ✅ done | commit `5e56783`; relocated only (not DI); instance identity verified True across 291 sites |
 | Scheduler + task runner | ~14,000–15,641 | `engine/scheduler.py` | 3 (B2) | ⬜ planned | ⚠️ characterization test first; coupled to `_thread_local` |
 | GDPR/PII scanner (`_pii_rules`/`_pii_scan_*`) | 16,771–17,477 | `engine/pii_scan.py` (merge into `engine/pii_ner.py`) | 3 (B3) | ⬜ planned | fixes incoherent split (logic in brain, loader in engine) + web/index.html sync via U5 |
 | Quotas / cost / rate-limit (`QuotaManager`/`CostTracker`/`RateLimiter`) | scattered | `engine/quotas.py`, `engine/cost.py` | 3 (B4) | ⬜ planned | each owns a DB pool |
@@ -77,10 +77,10 @@ Every functional domain the full refactor touches is listed here from day one �
 
 | Utility | Copies today | → Target | Phase | Status | Note |
 |---|---|---|---|---|---|
-| U1 path-traversal guard | 5 divergent (classification, projects ×2, favourites, admin) | `server_lib/pathsafe.py` | 2 | ⬜ planned | security; HIGH value |
-| U2 HTTP body read | 16 sites | `server_lib/http_util.py` | 2 | ⬜ planned | inconsistent error handling today |
+| U1 path-traversal guard | 5 divergent (classification, projects ×2, favourites, admin) | `server_lib/pathsafe.py` | 2 | ✅ done (partial) | commit `6a0a525`; 2 identical-skeleton copies merged, 3 left (merging would CHANGE security verdict); denylist-family copies 3→1 |
+| U2 HTTP body read | 16 sites | (already centralized) | 2 | ✅ done (already-satisfied) | commit `c087db1`; canonical `_read_json` already exists — did NOT create competing module; repointed 3 inline-JSON stragglers; raw-JSON 4→1 |
 | U3 SSE formatter | 3 sites | folded into `server_lib/sse_stream.py` | 3 | ⬜ planned | with chat SSE split |
-| U4 repo-root path constant | ~82 sites | `common.py` constant | 2 | ⬜ planned | cosmetic |
+| U4 repo-root path constant | ~82 sites (an idiom, not one value) | — | 2 | 🚫 SKIP (not-applicable) | investigated 2026-05-23: 82 occurrences resolve to DIFFERENT dirs by file depth, not one duplicated value; naive unify would rewrite ~half to the wrong dir. True repo-root sites already named locally (AGENTS_DIR/CONFIG_PATH/_REPO_ROOT). Cosmetic churn w/ real divergence risk → SKIP per principle #2 |
 | U5 PII web/server rule sync | brain.py ↔ web/index.html | codegen JS table from Python | 3 | ⬜ planned | after B3; stops hand-sync drift |
 
 ### D. Domains that will NOT be touched (out of scope) — with reason
@@ -100,11 +100,12 @@ Every functional domain the full refactor touches is listed here from day one �
 > **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.
 
 ### Running totals
-- Extractions completed: **8** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows) — **Phase 1 DONE**
-- `brain.py` line count: **25,182** (baseline) → _current: 21,762_ (−3,420, −13.6%)
+- Extractions completed: **11** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2) — **Phases 1 & 2 DONE**
+- `brain.py` line count: **25,182** (baseline) → _current: 21,689_ (−3,493, −13.9%)
 - `server_lib/db.py` line count: **1,985** → _current: 1,778_ (−207)
 - `handlers/admin.py` line count: **5,416** → _current: 4,503_ (−913)
-- Net new modules created: **8** (`engine/workflow.py`, `engine/code_graph.py`, `engine/tools/git_tools.py`, `engine/tools/gmail_tools.py`, `server_lib/trace_audit.py`, `server_lib/node_registry.py`, `server_lib/mempalace_sync.py`, `handlers/admin_workflows.py`; D2 merged into existing engine/classification.py)
+- Net new modules created: **10** (`engine/workflow.py`, `engine/code_graph.py`, `engine/tools/git_tools.py`, `engine/tools/gmail_tools.py`, `server_lib/trace_audit.py`, `server_lib/node_registry.py`, `server_lib/mempalace_sync.py`, `handlers/admin_workflows.py`, `engine/context.py`, `server_lib/pathsafe.py`; D2 merged into existing engine/classification.py; U2 used existing reader; U4 skipped)
+- Reverts: **0**. Skips/already-satisfied (principled, documented): U4 (not-applicable), U2 (already centralized).
 - Live duplicate definitions (brain.py ∩ engine/): **0** — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean
 
 ---
@@ -129,6 +130,45 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 12 U4 repo-root constant — SKIP (not-applicable)
+- **Commit:** — (no change)  ·  **Date:** 2026-05-23  ·  **Phase:** 2
+- **Investigation:** 82× `os.path.dirname(os.path.abspath(__file__))` (+6 single-dirname). They do NOT share one value — they resolve to DIFFERENT directories by file depth (root files → repo root; depth-1 files use double-dirname for root, single-dirname for their own module dir). Verified: single `dirname` in handlers/admin.py → `…/handlers`, not root.
+- **Decision:** SKIP. U4 was a misconception — a common idiom resolving per-depth, not a duplicated constant. A naive global unify would silently rewrite ~half the sites to the wrong dir. The genuine repo-root sites are already named locally (`AGENTS_DIR`/`CONFIG_PATH`/`_REPO_ROOT`). Consolidating would touch ~38 heterogeneous files + add new import edges into brain/server/handlers (cycle risk) for zero behavioral/token benefit. Per governing principle #2 (risky/half-done worse than none), SKIP is the principled call.
+- **Old code deleted?** n/a (no change). **Tests:** n/a (nothing changed).
+
+### 11 U2 HTTP body read — DONE (already-satisfied)
+- **Commit:** `c087db1`  ·  **Date:** 2026-05-23  ·  **Phase:** 2
+- **Symbol(s):** existing `_read_json` (server.py:1018) — the canonical reader, already used by 60+ sites (CLAUDE.md: do NOT re-extract).
+- **Decision:** did NOT create `server_lib/http_util.py` (would be a competing copy = anti-dedup). Repointed 3 inline `json.loads(rfile.read(...))` stragglers in chat.py (`_handle_chat_answer`, `_handle_chat_gdpr_recovery`, `_handle_attachment_scan`) → `self._read_json()`.
+- **Old code deleted?** YES — 3 inline raw-body reads collapsed to the helper call; raw-JSON straggler count 4→1.
+- **Callers re-pointed:** 3 sites. **Left with reason:** `_handle_gdpr_scan_text` (load-bearing 200KB→413 cap `_read_json` lacks) + 6 multipart raw-BYTES sites (boundary parsing, per-site caps — JSON reader doesn't fit).
+- **Tests:** Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS
+- **delta:** −3 LOC, no new module.
+- **Notes:** Behavior preserved (both yield `{}` on empty body; try/except still maps malformed JSON → 400).
+
+### 10 U1 path-traversal guard — DONE (partial, faithful)
+- **Commit:** `6a0a525`  ·  **Date:** 2026-05-23  ·  **Phase:** 2
+- **Symbol(s):** new `server_lib/pathsafe.validate_path` + `HARD_DENY` constant
+- **Moved FROM:** inline guards in handlers/classification.py (`_validate_scan_path` + `_BLOCKED_PREFIXES`) + handlers/projects.py (`_project_input_folder_validate` + `_PROJECT_INPUT_FOLDER_FORBIDDEN`)
+- **Moved TO:** server_lib/pathsafe.py (93 lines, NEW) — parameterized: shared realpath + `HARD_DENY` (`/etc /var /usr /bin /sbin /System /Library/Keychains`) + `os.sep` boundary; per-site policy via kwargs (`allowed_roots`, `deny_agents_dir`, `must_exist`/`must_be_dir`, `expand_user`).
+- **Old code deleted?** YES — both inline denylists/skeletons gone from the 2 repointed files; `validate_path` defined once (gate-2 clean).
+- **Callers re-pointed:** 2 of 5 (the identical-skeleton copies). **Left with reason (security):** admin._validate_file_path (loose `startswith` boundary, no `os.sep` — tightening = behavior change); image-confinement trio (projects:328 + favourites ×2 — single-root, NO denylist — adding one = behavior change). Divergent denylist-family copies 3→1.
+- **Tests:** Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS
+- **Characterization test added?** n/a — but per-site policy preservation VERIFIED: throwaway harness confirmed identical old-vs-new allow/deny verdict + resolved path across representative allowed+denied paths for both repointed sites.
+- **Notes:** Cosmetic-only side effect: 2 projects error *strings* reworded (decision unchanged). The KEY discipline here — refused to homogenize the 5 copies because they DIVERGE in security-meaningful ways (denylist presence, boundary strictness, allowlist vs allow-by-default); merging all would silently change security verdicts. Faithful partial > risky full.
+
+### 9 B1 _thread_local execution context — DONE
+- **Commit:** `5e56783`  ·  **Date:** 2026-05-23  ·  **Phase:** 2 (shared seam — prerequisite for B2–B4)
+- **Symbol(s):** `_thread_local` (threading.local), `ExecutionContext`, `init_thread_context`, `clear_thread_context`
+- **Moved FROM:** brain.py:10,878 (83-line context block)
+- **Moved TO:** engine/context.py (105 lines, NEW; stdlib-only, no `import brain` → low-level cycle-free base)
+- **Old code deleted?** YES — Gate-2 grep: `_thread_local = threading.local()` gone from brain.py; brain re-exports all four.
+- **Callers re-pointed:** 0 — all 291 `_thread_local` refs (`brain.`, `engine.` [= the `import brain as engine` alias], bare) resolve to the SAME instance via re-export. **Instance identity verified True** (`brain._thread_local is engine.context._thread_local`).
+- **Tests:** Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS
+- **Characterization test added?** n/a (relocation, not behavior change)
+- **brain.py delta:** 21,762 → 21,689 (−73)
+- **Notes:** RELOCATION ONLY (not DI, per scope). #1 risk was instance-identity (a thread-local's whole point is shared identity — two instances = silent concurrent context bleed); verified True. Surfaced a load-bearing fact for the whole refactor: the `engine` name in handlers/server is `import brain as engine` (the brain module aliased), NOT the `engine/` package. Establishes the canonical shared-state home so Phase-3 B2–B4 can `from engine.context import _thread_local` instead of `import brain`.
 
 ### 8 admin: workflow handlers split — DONE
 - **Commit:** `8831427`  ·  **Date:** 2026-05-23  ·  **Phase:** 1 (admin split)

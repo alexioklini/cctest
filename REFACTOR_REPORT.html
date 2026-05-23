@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:22 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:34 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -30,8 +30,8 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <table><thead><tr><th>Phase</th><th>Scope</th><th>State</th></tr></thead><tbody>
 <tr><td>0</td><td>Safety net (gate + baseline)</td><td><span class="badge done" title="done">✅</span> DONE (commit <code>d48b5de</code>)</td></tr>
 <tr><td>1</td><td>Tier-D audit + Tier A pure wins + admin/workflows + db splits</td><td><span class="badge done" title="done">✅</span> DONE — D-audit (D1/D3 clean), D2, A1–A5, db node-registry+mempalace-sync, admin workflows. brain.py −3,420</td></tr>
-<tr><td>2</td><td>B1 <code>engine/context.py</code> (relocate only, NOT DI) + U1/U2/U4 utilities</td><td><span class="badge wip" title="in progress">🔄</span> next</td></tr>
-<tr><td>3</td><td>B2 scheduler (<span class="badge warn" title="attention">⚠️</span> chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (<span class="badge warn" title="attention">⚠️</span> daemons nested in main()) · chat.py split</td><td><span class="badge planned" title="planned">⬜</span> not started</td></tr>
+<tr><td>2</td><td>B1 <code>engine/context.py</code> (relocate only, NOT DI) + U1/U2/U4 utilities</td><td><span class="badge done" title="done">✅</span> DONE — B1 <span class="badge done" title="done">✅</span>, U1 <span class="badge done" title="done">✅</span>(partial), U2 <span class="badge done" title="done">✅</span>(already-satisfied), U4 <span class="badge excluded" title="excluded">🚫</span> SKIP(not-applicable)</td></tr>
+<tr><td>3</td><td>B2 scheduler (<span class="badge warn" title="attention">⚠️</span> chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (<span class="badge warn" title="attention">⚠️</span> daemons nested in main()) · chat.py split</td><td><span class="badge wip" title="in progress">🔄</span> next</td></tr>
 <tr><td>4</td><td>Tier C (C1/C2/C3, <span class="badge warn" title="attention">⚠️</span> chars-tests + eval before C2) + finish D1–D3</td><td><span class="badge gated" title="gated">⛔</span> STOP — needs user review before starting</td></tr>
 </tbody></table>
 <p><strong><span class="badge warn" title="attention">⚠️</span> markers</strong> = a characterization test must be written+committed for that path BEFORE the extraction (plan §1.5). Core paths have no existing tests, so the gate alone can't catch regressions there.</p>
@@ -45,7 +45,7 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <tr><td>Git / GitHub tools</td><td>16,783–17,165</td><td><code>engine/tools/git_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>3563081</code>; 4-site reg verified, dispatch-identity True/True</td></tr>
 <tr><td>Gmail tools</td><td>4,770–5,086</td><td><code>engine/tools/gmail_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>f8f3a1e</code>; 5 tools, 4-site reg verified, all dispatch-identity True</td></tr>
 <tr><td>Trace manager + audit trail</td><td>15,043–15,437</td><td><code>server_lib/trace_audit.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>fa146c3</code>; both DB pools moved; 58 <code>_audit_log</code> sites resolve via re-export; server.py rebind verified</td></tr>
-<tr><td><code>_thread_local</code> + execution context</td><td>~11,257+</td><td><code>engine/context.py</code></td><td>2 (B1)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td><strong>relocate only</strong>, NOT DI; prerequisite for B2–B4</td></tr>
+<tr><td><code>_thread_local</code> + execution context</td><td>brain.py:10,878</td><td><code>engine/context.py</code></td><td>2 (B1)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>5e56783</code>; relocated only (not DI); instance identity verified True across 291 sites</td></tr>
 <tr><td>Scheduler + task runner</td><td>~14,000–15,641</td><td><code>engine/scheduler.py</code></td><td>3 (B2)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td><span class="badge warn" title="attention">⚠️</span> characterization test first; coupled to <code>_thread_local</code></td></tr>
 <tr><td>GDPR/PII scanner (<code>_pii_rules</code>/<code>_pii_scan_*</code>)</td><td>16,771–17,477</td><td><code>engine/pii_scan.py</code> (merge into <code>engine/pii_ner.py</code>)</td><td>3 (B3)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>fixes incoherent split (logic in brain, loader in engine) + web/index.html sync via U5</td></tr>
 <tr><td>Quotas / cost / rate-limit (<code>QuotaManager</code>/<code>CostTracker</code>/<code>RateLimiter</code>)</td><td>scattered</td><td><code>engine/quotas.py</code>, <code>engine/cost.py</code></td><td>3 (B4)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>each owns a DB pool</td></tr>
@@ -77,10 +77,10 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <p>| db: MemPalace sync cursor | <code>server_lib/db.py</code> ~1,324–1,422 | <code>server_lib/mempalace_sync.py</code> | 1 | <span class="badge done" title="done">✅</span> done | commit <code>92c4a24</code>; ChatDB keeps delegating staticmethods; cycle avoided (local _db_safe + call-time _db_conn) |</p>
 <h3>C. Cross-cutting reusable utilities (de-duplication)</h3>
 <table><thead><tr><th>Utility</th><th>Copies today</th><th>→ Target</th><th>Phase</th><th>Status</th><th>Note</th></tr></thead><tbody>
-<tr><td>U1 path-traversal guard</td><td>5 divergent (classification, projects ×2, favourites, admin)</td><td><code>server_lib/pathsafe.py</code></td><td>2</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>security; HIGH value</td></tr>
-<tr><td>U2 HTTP body read</td><td>16 sites</td><td><code>server_lib/http_util.py</code></td><td>2</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>inconsistent error handling today</td></tr>
+<tr><td>U1 path-traversal guard</td><td>5 divergent (classification, projects ×2, favourites, admin)</td><td><code>server_lib/pathsafe.py</code></td><td>2</td><td><span class="badge done" title="done">✅</span> done (partial)</td><td>commit <code>6a0a525</code>; 2 identical-skeleton copies merged, 3 left (merging would CHANGE security verdict); denylist-family copies 3→1</td></tr>
+<tr><td>U2 HTTP body read</td><td>16 sites</td><td>(already centralized)</td><td>2</td><td><span class="badge done" title="done">✅</span> done (already-satisfied)</td><td>commit <code>c087db1</code>; canonical <code>_read_json</code> already exists — did NOT create competing module; repointed 3 inline-JSON stragglers; raw-JSON 4→1</td></tr>
 <tr><td>U3 SSE formatter</td><td>3 sites</td><td>folded into <code>server_lib/sse_stream.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>with chat SSE split</td></tr>
-<tr><td>U4 repo-root path constant</td><td>~82 sites</td><td><code>common.py</code> constant</td><td>2</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>cosmetic</td></tr>
+<tr><td>U4 repo-root path constant</td><td>~82 sites (an idiom, not one value)</td><td>—</td><td>2</td><td><span class="badge excluded" title="excluded">🚫</span> SKIP (not-applicable)</td><td>investigated 2026-05-23: 82 occurrences resolve to DIFFERENT dirs by file depth, not one duplicated value; naive unify would rewrite ~half to the wrong dir. True repo-root sites already named locally (AGENTS_DIR/CONFIG_PATH/_REPO_ROOT). Cosmetic churn w/ real divergence risk → SKIP per principle #2</td></tr>
 <tr><td>U5 PII web/server rule sync</td><td>brain.py ↔ web/index.html</td><td>codegen JS table from Python</td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>after B3; stops hand-sync drift</td></tr>
 </tbody></table>
 <h3>D. Domains that will NOT be touched (out of scope) — with reason</h3>
@@ -98,11 +98,12 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <blockquote><strong>Coverage promise:</strong> every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.</blockquote>
 <h3>Running totals</h3>
 <ul>
-<li>Extractions completed: <strong>8</strong> (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows) — <strong>Phase 1 DONE</strong></li>
-<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 21,762_ (−3,420, −13.6%)</li>
+<li>Extractions completed: <strong>11</strong> (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2) — <strong>Phases 1 &amp; 2 DONE</strong></li>
+<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 21,689_ (−3,493, −13.9%)</li>
 <li><code>server_lib/db.py</code> line count: <strong>1,985</strong> → _current: 1,778_ (−207)</li>
 <li><code>handlers/admin.py</code> line count: <strong>5,416</strong> → _current: 4,503_ (−913)</li>
-<li>Net new modules created: <strong>8</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>, <code>engine/tools/git_tools.py</code>, <code>engine/tools/gmail_tools.py</code>, <code>server_lib/trace_audit.py</code>, <code>server_lib/node_registry.py</code>, <code>server_lib/mempalace_sync.py</code>, <code>handlers/admin_workflows.py</code>; D2 merged into existing engine/classification.py)</li>
+<li>Net new modules created: <strong>10</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>, <code>engine/tools/git_tools.py</code>, <code>engine/tools/gmail_tools.py</code>, <code>server_lib/trace_audit.py</code>, <code>server_lib/node_registry.py</code>, <code>server_lib/mempalace_sync.py</code>, <code>handlers/admin_workflows.py</code>, <code>engine/context.py</code>, <code>server_lib/pathsafe.py</code>; D2 merged into existing engine/classification.py; U2 used existing reader; U4 skipped)</li>
+<li>Reverts: <strong>0</strong>. Skips/already-satisfied (principled, documented): U4 (not-applicable), U2 (already centralized).</li>
 <li>Live duplicate definitions (brain.py ∩ engine/): <strong>0</strong> — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean</li>
 </ul>
 <hr>
@@ -125,6 +126,49 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 </ul>
 <p>```</p>
 <hr>
+<h3>12 U4 repo-root constant — SKIP (not-applicable)</h3>
+<ul>
+<li><strong>Commit:</strong> — (no change)  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 2</li>
+<li><strong>Investigation:</strong> 82× <code>os.path.dirname(os.path.abspath(__file__))</code> (+6 single-dirname). They do NOT share one value — they resolve to DIFFERENT directories by file depth (root files → repo root; depth-1 files use double-dirname for root, single-dirname for their own module dir). Verified: single <code>dirname</code> in handlers/admin.py → <code>…/handlers</code>, not root.</li>
+<li><strong>Decision:</strong> SKIP. U4 was a misconception — a common idiom resolving per-depth, not a duplicated constant. A naive global unify would silently rewrite ~half the sites to the wrong dir. The genuine repo-root sites are already named locally (<code>AGENTS_DIR</code>/<code>CONFIG_PATH</code>/<code>_REPO_ROOT</code>). Consolidating would touch ~38 heterogeneous files + add new import edges into brain/server/handlers (cycle risk) for zero behavioral/token benefit. Per governing principle #2 (risky/half-done worse than none), SKIP is the principled call.</li>
+<li><strong>Old code deleted?</strong> n/a (no change). <strong>Tests:</strong> n/a (nothing changed).</li>
+</ul>
+<h3>11 U2 HTTP body read — DONE (already-satisfied)</h3>
+<ul>
+<li><strong>Commit:</strong> <code>c087db1</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 2</li>
+<li><strong>Symbol(s):</strong> existing <code>_read_json</code> (server.py:1018) — the canonical reader, already used by 60+ sites (CLAUDE.md: do NOT re-extract).</li>
+<li><strong>Decision:</strong> did NOT create <code>server_lib/http_util.py</code> (would be a competing copy = anti-dedup). Repointed 3 inline <code>json.loads(rfile.read(...))</code> stragglers in chat.py (<code>_handle_chat_answer</code>, <code>_handle_chat_gdpr_recovery</code>, <code>_handle_attachment_scan</code>) → <code>self._read_json()</code>.</li>
+<li><strong>Old code deleted?</strong> YES — 3 inline raw-body reads collapsed to the helper call; raw-JSON straggler count 4→1.</li>
+<li><strong>Callers re-pointed:</strong> 3 sites. <strong>Left with reason:</strong> <code>_handle_gdpr_scan_text</code> (load-bearing 200KB→413 cap <code>_read_json</code> lacks) + 6 multipart raw-BYTES sites (boundary parsing, per-site caps — JSON reader doesn't fit).</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS</li>
+<li><strong>delta:</strong> −3 LOC, no new module.</li>
+<li><strong>Notes:</strong> Behavior preserved (both yield <code>{}</code> on empty body; try/except still maps malformed JSON → 400).</li>
+</ul>
+<h3>10 U1 path-traversal guard — DONE (partial, faithful)</h3>
+<ul>
+<li><strong>Commit:</strong> <code>6a0a525</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 2</li>
+<li><strong>Symbol(s):</strong> new <code>server_lib/pathsafe.validate_path</code> + <code>HARD_DENY</code> constant</li>
+<li><strong>Moved FROM:</strong> inline guards in handlers/classification.py (<code>_validate_scan_path</code> + <code>_BLOCKED_PREFIXES</code>) + handlers/projects.py (<code>_project_input_folder_validate</code> + <code>_PROJECT_INPUT_FOLDER_FORBIDDEN</code>)</li>
+<li><strong>Moved TO:</strong> server_lib/pathsafe.py (93 lines, NEW) — parameterized: shared realpath + <code>HARD_DENY</code> (<code>/etc /var /usr /bin /sbin /System /Library/Keychains</code>) + <code>os.sep</code> boundary; per-site policy via kwargs (<code>allowed_roots</code>, <code>deny_agents_dir</code>, <code>must_exist</code>/<code>must_be_dir</code>, <code>expand_user</code>).</li>
+<li><strong>Old code deleted?</strong> YES — both inline denylists/skeletons gone from the 2 repointed files; <code>validate_path</code> defined once (gate-2 clean).</li>
+<li><strong>Callers re-pointed:</strong> 2 of 5 (the identical-skeleton copies). <strong>Left with reason (security):</strong> admin._validate_file_path (loose <code>startswith</code> boundary, no <code>os.sep</code> — tightening = behavior change); image-confinement trio (projects:328 + favourites ×2 — single-root, NO denylist — adding one = behavior change). Divergent denylist-family copies 3→1.</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS</li>
+<li><strong>Characterization test added?</strong> n/a — but per-site policy preservation VERIFIED: throwaway harness confirmed identical old-vs-new allow/deny verdict + resolved path across representative allowed+denied paths for both repointed sites.</li>
+<li><strong>Notes:</strong> Cosmetic-only side effect: 2 projects error *strings* reworded (decision unchanged). The KEY discipline here — refused to homogenize the 5 copies because they DIVERGE in security-meaningful ways (denylist presence, boundary strictness, allowlist vs allow-by-default); merging all would silently change security verdicts. Faithful partial &gt; risky full.</li>
+</ul>
+<h3>9 B1 _thread_local execution context — DONE</h3>
+<ul>
+<li><strong>Commit:</strong> <code>5e56783</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 2 (shared seam — prerequisite for B2–B4)</li>
+<li><strong>Symbol(s):</strong> <code>_thread_local</code> (threading.local), <code>ExecutionContext</code>, <code>init_thread_context</code>, <code>clear_thread_context</code></li>
+<li><strong>Moved FROM:</strong> brain.py:10,878 (83-line context block)</li>
+<li><strong>Moved TO:</strong> engine/context.py (105 lines, NEW; stdlib-only, no <code>import brain</code> → low-level cycle-free base)</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2 grep: <code>_thread_local = threading.local()</code> gone from brain.py; brain re-exports all four.</li>
+<li><strong>Callers re-pointed:</strong> 0 — all 291 <code>_thread_local</code> refs (<code>brain.</code>, <code>engine.</code> [= the <code>import brain as engine</code> alias], bare) resolve to the SAME instance via re-export. <strong>Instance identity verified True</strong> (<code>brain._thread_local is engine.context._thread_local</code>).</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS</li>
+<li><strong>Characterization test added?</strong> n/a (relocation, not behavior change)</li>
+<li><strong>brain.py delta:</strong> 21,762 → 21,689 (−73)</li>
+<li><strong>Notes:</strong> RELOCATION ONLY (not DI, per scope). #1 risk was instance-identity (a thread-local's whole point is shared identity — two instances = silent concurrent context bleed); verified True. Surfaced a load-bearing fact for the whole refactor: the <code>engine</code> name in handlers/server is <code>import brain as engine</code> (the brain module aliased), NOT the <code>engine/</code> package. Establishes the canonical shared-state home so Phase-3 B2–B4 can <code>from engine.context import _thread_local</code> instead of <code>import brain</code>.</li>
+</ul>
 <h3>8 admin: workflow handlers split — DONE</h3>
 <ul>
 <li><strong>Commit:</strong> <code>8831427</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (admin split)</li>
