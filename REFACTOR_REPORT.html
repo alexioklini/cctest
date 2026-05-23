@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 08:55 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 08:59 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -40,7 +40,7 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <p>Every functional domain the full refactor touches is listed here from day one — not grown as work proceeds. Each row carries its <strong>phase</strong>, <strong>target module</strong>, and <strong>status</strong>. Domains not yet touched say so and name the phase that will cover them. Domains that will <strong>NOT</strong> be touched are listed with the reason. Status legend: <span class="badge done" title="done">✅</span> done · <span class="badge planned" title="planned">⬜</span> planned (not started) · <span class="badge wip" title="in progress">🔄</span> in progress · <span class="badge gated" title="gated">⛔</span> gated (needs review) · <span class="badge excluded" title="excluded">🚫</span> out of scope.</p>
 <h3>A. <code>brain.py</code> (25,182 LOC) — domains to extract</h3>
 <table><thead><tr><th>Domain</th><th>Source (brain.py)</th><th>→ Target module</th><th>Phase</th><th>Status</th><th>Note</th></tr></thead><tbody>
-<tr><td>Workflow engine (lexer→AST→interpreter)</td><td>~12,522–14,000</td><td><code>engine/workflow.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>self-contained; first pure win</td></tr>
+<tr><td>Workflow engine (lexer→AST→interpreter)</td><td>12,486–13,443</td><td><code>engine/workflow.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>094ec90</code>; 977-line new module. Orchestration layer (WorkflowEngine/Execution) stays in brain (runtime-entangled), reaches engine via alias</td></tr>
 <tr><td>Code structure graph (tree-sitter, code-graph.db)</td><td>~17,779–18,952</td><td><code>engine/code_graph.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>owns its DB pool</td></tr>
 <tr><td>Git / GitHub tools</td><td>18,978 / 19,176</td><td><code>engine/tools/git_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>subprocess wrappers; keep 4-edit-site registration in brain.py</td></tr>
 <tr><td>Gmail tools</td><td>~4,916–5,200</td><td><code>engine/tools/gmail_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>API-client tools</td></tr>
@@ -97,9 +97,9 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <blockquote><strong>Coverage promise:</strong> every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.</blockquote>
 <h3>Running totals</h3>
 <ul>
-<li>Extractions completed: <strong>1</strong> (D2)</li>
-<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 24,925_ (−257)</li>
-<li>Net new modules created: <strong>0</strong> (D2 merged into existing engine/classification.py)</li>
+<li>Extractions completed: <strong>2</strong> (D2, A1)</li>
+<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 23,982_ (−1,200)</li>
+<li>Net new modules created: <strong>1</strong> (<code>engine/workflow.py</code>; D2 merged into existing engine/classification.py)</li>
 <li>Live duplicate definitions (brain.py ∩ engine/): <strong>0</strong> — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean</li>
 </ul>
 <hr>
@@ -122,6 +122,19 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 </ul>
 <p>```</p>
 <hr>
+<h3>2 A1 workflow engine — DONE</h3>
+<ul>
+<li><strong>Commit:</strong> <code>094ec90</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (Tier A pure win)</li>
+<li><strong>Symbol(s):</strong> <code>WorkflowError</code>, <code>_WF_KEYWORDS</code>/<code>_WF_TT</code>/<code>_WF_OP_MULTICHAR</code>, <code>_wf_tokenize</code>/<code>_wf_tok_line</code>, all <code>_WF*</code> AST nodes (<code>_WFNode</code>/<code>_WFLiteral</code>/<code>_WFVar</code>/<code>_WFGetAttr</code>/<code>_WFGetItem</code>/<code>_WFBinOp</code>/<code>_WFUnary</code>/<code>_WFFnCall</code>/<code>_WFList</code>/<code>_WFDict</code>/<code>_WFInterpStr</code>/<code>_WFAssign</code>/<code>_WFCall</code>/<code>_WFIf</code>/<code>_WFFor</code>/<code>_WFReturn</code>/<code>_WFProgram</code>), <code>_WFParser</code>, <code>_wf_parse</code>, <code>_WFReturnValue</code>, <code>_WorkflowInterpreter</code></li>
+<li><strong>Moved FROM:</strong> brain.py:12486–13443 (lexer→AST→parser→interpreter cluster)</li>
+<li><strong>Moved TO:</strong> engine/workflow.py (977 lines, NEW module)</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2 grep shows no <code>def</code>/<code>class</code> of <code>_wf_parse</code>, <code>_WorkflowInterpreter</code>, <code>WorkflowError</code> in brain.py; brain.py keeps a single <code>from engine.workflow import (...)</code> alias block.</li>
+<li><strong>Callers re-pointed:</strong> 5 in-brain.py sites (<code>WorkflowEngine</code>/<code>WorkflowExecution</code> methods + <code>WorkflowError</code> excepts) resolve via alias. No external callers.</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 clean · Gate 5 80 pass / 3 fail (only known NER-env) · verdict PASS</li>
+<li><strong>Characterization test added?</strong> n/a (Tier A, self-contained pure engine)</li>
+<li><strong>brain.py delta:</strong> 24,925 → 23,982 lines (−943)</li>
+<li><strong>Notes:</strong> Boundary drawn between the <strong>pure engine</strong> (lexer/parser/interpreter — moved) and the <strong>orchestration layer</strong> (<code>WorkflowEngine</code>, <code>WorkflowExecution</code>, <code>workflow_*</code>/<code>_workflow_history_*</code> fns — STAYED in brain.py: entangled with <code>AGENTS_DIR</code>, <code>AgentConfig</code>, <code>_thread_local</code>, scheduler DB). Interpreter's only brain dependency is <code>TOOL_DISPATCH</code>, reached lazily via <code>import brain as _brain</code> inside <code>_eval_call</code> (established engine pattern; no top-level import → one-way DAG intact). Pure relocation, zero behavior change (runtime-verified: parse works, <code>WorkflowError</code> alias identity holds, TOOL_DISPATCH resolves 63 entries).</li>
+</ul>
 <h3>1 D2 classification enforcement glue — DONE</h3>
 <ul>
 <li><strong>Commit:</strong> <code>29b142b</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (Tier-D audit/debt-paydown)</li>
