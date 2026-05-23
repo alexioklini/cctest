@@ -1021,315 +1021,312 @@ class Scheduler:
             user_id=(task_row.get("user_id") or ""),
             memory_store=target_memory,
         )
-        init_thread_context(_sched_ctx_pre, agent_config=target)
+        with request_context():
+            init_thread_context(_sched_ctx_pre, agent_config=target)
 
-        # Build system prompt via the unified builder
-        # (PROMPT_TOOLS_UNIFICATION_PLAN.md). Default purpose for scheduled
-        # tasks is `research_minimal` (lean prompt); per-schedule
-        # `tool_profile='interactive'` opts back into the full agent
-        # surface. active_tool_names is computed inline so the per-tool
-        # prose blocks match the wire payload (KV-prefix stability).
-        #
-        # Determine the purpose for this scheduled task. Sources, in order:
-        #   1. Memory-summary tasks (Brain-internal) — name prefix forces
-        #      `memory_summary` purpose.
-        #   2. Per-schedule `tool_profile` field — empty/unset →
-        #      `research_minimal` (default), `interactive` opts into the
-        #      full chat surface.
-        # Hoisted up here so the prompt and the wire tool list agree.
-        if name.startswith("_memory_summary_"):
-            _sched_purpose_pre = "memory_summary"
-        else:
-            _task_profile = (task_row.get("tool_profile") or "").strip()
-            _sched_purpose_pre = "interactive" if _task_profile == "interactive" else "research_minimal"
-        if _sched_purpose_pre == "transform":
-            _sched_active_names: set[str] = set()
-        else:
-            # Scheduled tasks go through the same single resolver hierarchy
-            # as every other LLM call: global tool_settings → agent-level
-            # tool_overrides → purpose filter. The task's owning agent
-            # supplies layer 2.
-            _sched_active_names = {
-                t.get("name", "") for t in _brain.resolve_active_tools(
-                    purpose=_sched_purpose_pre,
-                    agent_id=agent_id,
-                    discovered_tools=set(),
-                    mcp_manager=None,  # MCP listing belongs in the prompt only
-                    is_openai_shape=False,
-                )
-            }
-        system_prompt = _brain._build_system_prompt(
-            include_memory_summary=False,
-            purpose=_sched_purpose_pre,
-            task_name=name,
-            task_working_dir=task_working_dir or "",
-            active_tool_names=_sched_active_names,
-        )
+            # Build system prompt via the unified builder
+            # (PROMPT_TOOLS_UNIFICATION_PLAN.md). Default purpose for scheduled
+            # tasks is `research_minimal` (lean prompt); per-schedule
+            # `tool_profile='interactive'` opts back into the full agent
+            # surface. active_tool_names is computed inline so the per-tool
+            # prose blocks match the wire payload (KV-prefix stability).
+            #
+            # Determine the purpose for this scheduled task. Sources, in order:
+            #   1. Memory-summary tasks (Brain-internal) — name prefix forces
+            #      `memory_summary` purpose.
+            #   2. Per-schedule `tool_profile` field — empty/unset →
+            #      `research_minimal` (default), `interactive` opts into the
+            #      full chat surface.
+            # Hoisted up here so the prompt and the wire tool list agree.
+            if name.startswith("_memory_summary_"):
+                _sched_purpose_pre = "memory_summary"
+            else:
+                _task_profile = (task_row.get("tool_profile") or "").strip()
+                _sched_purpose_pre = "interactive" if _task_profile == "interactive" else "research_minimal"
+            if _sched_purpose_pre == "transform":
+                _sched_active_names: set[str] = set()
+            else:
+                # Scheduled tasks go through the same single resolver hierarchy
+                # as every other LLM call: global tool_settings → agent-level
+                # tool_overrides → purpose filter. The task's owning agent
+                # supplies layer 2.
+                _sched_active_names = {
+                    t.get("name", "") for t in _brain.resolve_active_tools(
+                        purpose=_sched_purpose_pre,
+                        agent_id=agent_id,
+                        discovered_tools=set(),
+                        mcp_manager=None,  # MCP listing belongs in the prompt only
+                        is_openai_shape=False,
+                    )
+                }
+            system_prompt = _brain._build_system_prompt(
+                include_memory_summary=False,
+                purpose=_sched_purpose_pre,
+                task_name=name,
+                task_working_dir=task_working_dir or "",
+                active_tool_names=_sched_active_names,
+            )
 
-        # Point the agent at the durable attachment paths (no per-run copy).
-        # Files live under agents/<agent>/scheduled_attachments/<uuid>/<name>
-        # and are persisted with the schedule definition; deletion of the
-        # schedule purges them.
-        task_message = task
-        attachments_meta = []
-        try:
-            atts_raw = task_row.get("attachments") or "[]"
-            attachments_meta = json.loads(atts_raw) if isinstance(atts_raw, str) else atts_raw
-        except (ValueError, TypeError):
+            # Point the agent at the durable attachment paths (no per-run copy).
+            # Files live under agents/<agent>/scheduled_attachments/<uuid>/<name>
+            # and are persisted with the schedule definition; deletion of the
+            # schedule purges them.
+            task_message = task
             attachments_meta = []
-        if attachments_meta:
-            existing_paths = [a.get("path", "") for a in attachments_meta
-                              if a.get("path") and os.path.isfile(a["path"])]
-            if existing_paths:
-                paths_list = "\n".join(f"  - {p}" for p in existing_paths)
-                has_docs = any(os.path.splitext(p)[1].lower()
-                               in (".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".tsv")
-                               for p in existing_paths)
-                if has_docs:
-                    notice = (f"\n\n[Task attachments on disk. "
-                              f"IMPORTANT: Use the read_document tool (NOT read_file) "
-                              f"for PDF, DOCX, XLSX, PPTX:]\n{paths_list}")
-                else:
-                    notice = f"\n\n[Task attachments on disk:]\n{paths_list}"
-                task_message = task_message + notice
-
-        messages = [{"role": "user", "content": task_message}]
-
-        # Get timeout (default 5 min)
-        task_timeout = task_row.get("timeout") or 300
-
-        # Run with isolated memory and live tracking
-        result_text = ""
-        status = "success"
-
-        def on_event(event_type, data):
-            if event_type == "tool_call":
-                run_info["tool_calls"] += 1
-                entry = f"{data.get('name','')}({str(data.get('args',{}))[:80]})"
-                run_info["tool_log"].append(entry)
-                if len(run_info["tool_log"]) > 50:
-                    run_info["tool_log"] = run_info["tool_log"][-50:]
-
-        # Timeout watchdog — cancels the task after timeout seconds
-        def watchdog():
-            if not cancel_token._cancelled.wait(task_timeout):
-                cancel_token.cancel()
-                run_info["status"] = "timeout"
-
-        timer = threading.Thread(target=watchdog, daemon=True)
-        timer.start()
-
-        try:
-            # Clear any stale trace id from a previous run on this thread so
-            # the sidecar background_call mints a fresh one that we capture after.
-            _thread_local.trace_id = None
-
-            sched_inf = _brain.get_inference_params(model, target.config.get("model_purpose"))
-            # Per-task thinking override: '' = inherit model defaults; 'none'
-            # explicitly disables; otherwise (low|medium|high) wins over the
-            # model's inference.thinking_level so the UI choice takes effect
-            # even if the model has a different default.
-            _task_thinking = (task_row.get("thinking_level") or "").strip().lower()
-            if _task_thinking and _task_thinking != "none":
-                sched_inf = dict(sched_inf)
-                sched_inf["thinking_level"] = _task_thinking
-            elif _task_thinking == "none":
-                sched_inf = dict(sched_inf)
-                sched_inf.pop("thinking_level", None)
-                sched_inf["thinking"] = False
-            # Sidecar path. Brain resolves provider, builds the tool list +
-            # sampling, dispatches tools via /v1/tools/call, and persists the
-            # final reply. The agentic loop itself runs in the sidecar process.
-            from handlers import sidecar_proxy as _sidecar_proxy
-            _sidecar_blocked = False
-            _sched_deanon = _brain._identity_deanon
             try:
-                # GDPR policy gate. Build a flat list with system_prompt at
-                # index 0 (if any) followed by string contents in messages
-                # order; rewrite back in place after pseudonymisation.
-                _gdpr_blobs = []
-                _has_sys = bool(system_prompt)
-                if _has_sys:
-                    _gdpr_blobs.append(system_prompt)
-                _msg_idx = []
-                for _i, _m in enumerate(messages):
-                    _c = _m.get("content") if isinstance(_m, dict) else None
-                    if isinstance(_c, str):
-                        _gdpr_blobs.append(_c)
-                        _msg_idx.append(_i)
-                model, _new_blobs, _sched_deanon = _brain.gdpr_pick_model_for_background(
-                    model, _gdpr_blobs, purpose="scheduled")
-                if _new_blobs is not _gdpr_blobs:
-                    _ofs = 0
+                atts_raw = task_row.get("attachments") or "[]"
+                attachments_meta = json.loads(atts_raw) if isinstance(atts_raw, str) else atts_raw
+            except (ValueError, TypeError):
+                attachments_meta = []
+            if attachments_meta:
+                existing_paths = [a.get("path", "") for a in attachments_meta
+                                  if a.get("path") and os.path.isfile(a["path"])]
+                if existing_paths:
+                    paths_list = "\n".join(f"  - {p}" for p in existing_paths)
+                    has_docs = any(os.path.splitext(p)[1].lower()
+                                   in (".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".tsv")
+                                   for p in existing_paths)
+                    if has_docs:
+                        notice = (f"\n\n[Task attachments on disk. "
+                                  f"IMPORTANT: Use the read_document tool (NOT read_file) "
+                                  f"for PDF, DOCX, XLSX, PPTX:]\n{paths_list}")
+                    else:
+                        notice = f"\n\n[Task attachments on disk:]\n{paths_list}"
+                    task_message = task_message + notice
+
+            messages = [{"role": "user", "content": task_message}]
+
+            # Get timeout (default 5 min)
+            task_timeout = task_row.get("timeout") or 300
+
+            # Run with isolated memory and live tracking
+            result_text = ""
+            status = "success"
+
+            def on_event(event_type, data):
+                if event_type == "tool_call":
+                    run_info["tool_calls"] += 1
+                    entry = f"{data.get('name','')}({str(data.get('args',{}))[:80]})"
+                    run_info["tool_log"].append(entry)
+                    if len(run_info["tool_log"]) > 50:
+                        run_info["tool_log"] = run_info["tool_log"][-50:]
+
+            # Timeout watchdog — cancels the task after timeout seconds
+            def watchdog():
+                if not cancel_token._cancelled.wait(task_timeout):
+                    cancel_token.cancel()
+                    run_info["status"] = "timeout"
+
+            timer = threading.Thread(target=watchdog, daemon=True)
+            timer.start()
+
+            try:
+
+                sched_inf = _brain.get_inference_params(model, target.config.get("model_purpose"))
+                # Per-task thinking override: '' = inherit model defaults; 'none'
+                # explicitly disables; otherwise (low|medium|high) wins over the
+                # model's inference.thinking_level so the UI choice takes effect
+                # even if the model has a different default.
+                _task_thinking = (task_row.get("thinking_level") or "").strip().lower()
+                if _task_thinking and _task_thinking != "none":
+                    sched_inf = dict(sched_inf)
+                    sched_inf["thinking_level"] = _task_thinking
+                elif _task_thinking == "none":
+                    sched_inf = dict(sched_inf)
+                    sched_inf.pop("thinking_level", None)
+                    sched_inf["thinking"] = False
+                # Sidecar path. Brain resolves provider, builds the tool list +
+                # sampling, dispatches tools via /v1/tools/call, and persists the
+                # final reply. The agentic loop itself runs in the sidecar process.
+                from handlers import sidecar_proxy as _sidecar_proxy
+                _sidecar_blocked = False
+                _sched_deanon = _brain._identity_deanon
+                try:
+                    # GDPR policy gate. Build a flat list with system_prompt at
+                    # index 0 (if any) followed by string contents in messages
+                    # order; rewrite back in place after pseudonymisation.
+                    _gdpr_blobs = []
+                    _has_sys = bool(system_prompt)
                     if _has_sys:
-                        system_prompt = _new_blobs[0]
-                        _ofs = 1
-                    for _i, _idx in enumerate(_msg_idx):
-                        messages[_idx] = {**messages[_idx], "content": _new_blobs[_ofs + _i]}
-            except _brain.GDPRBlockedError as _ge:
-                result_text = f"[DELEGATION ERROR] {_ge}"
-                status = "error"
-                _sidecar_blocked = True
-
-            if _sidecar_blocked:
-                pass  # result_text + status already set from the GDPR block above
-            else:
-                _prov = _brain.resolve_provider_for_model(model)
-                # Reuse the purpose resolved up front (memory_summary for
-                # `_memory_summary_` name prefix; otherwise per-task
-                # `tool_profile` — `interactive` for full chat surface,
-                # else research_minimal).
-                _sched_purpose = _sched_purpose_pre
-
-                _tool_context = {
-                    "session_id": sched_session_id,
-                    "agent_id": agent_id,
-                    "user_id": (task_row.get("user_id") or ""),
-                    "team_ids": [],
-                    "project": "",  # schedules don't bind to a project today
-                    "note_context": None,
-                    "workflow_run_id": "",
-                    "plan_mode": False,
-                    "research_mode_override": None,
-                    "execution_overrides": {},
-                    "attachment_image_model": "",
-                    "caveman_chat": _task_caveman,
-                    "caveman_system": 0,
-                    "trace_id": "",
-                }
-                _sampling = {
-                    "temperature": sched_inf.get("temperature"),
-                    "top_p": sched_inf.get("top_p"),
-                    "top_k": sched_inf.get("top_k"),
-                    "stop_sequences": sched_inf.get("stop") or sched_inf.get("stop_sequences"),
-                }
-                _max_tokens = int(sched_inf.get("max_tokens") or _brain.get_model_max_output(model))
-                _agent_cfg = target.config or {}
-                _max_rounds = int((_agent_cfg.get("limits") or {}).get("max_tool_rounds", 25) or 25)
-                _thinking_level = sched_inf.get("thinking_level") if sched_inf.get("thinking") is not False else None
-
-                # Bridge sidecar SSE → on_event so tool_calls + tool_log keep updating.
-                def _sc_event(ev_type, data):
-                    if ev_type == "tool_call":
-                        on_event("tool_call", data)
-
-                # Model-level `parallel_tool_calls: false` → Anthropic SDK
-                # `tool_choice.disable_parallel_tool_use=True`. Mistral via
-                # CLIProxyAPI in streaming mode mis-emits parallel tool_use
-                # batches that occasionally drop the final write_file —
-                # sequential tool use sidesteps the issue.
-                _model_cfg = _brain._models_config.get(model, {}) or {}
-                _disable_parallel = _model_cfg.get("parallel_tool_calls", True) is False
-                _result = _sidecar_proxy.run_turn(
-                    messages=messages,
-                    model=model,
-                    api_key=_prov["api_key"],
-                    base_url=_prov["base_url"],
-                    system_prompt=system_prompt,
-                    purpose=_sched_purpose,
-                    tool_context=_tool_context,
-                    sampling=_sampling,
-                    thinking_level=_thinking_level,
-                    max_tokens=_max_tokens,
-                    max_rounds=_max_rounds,
-                    event_callback=_sc_event,
-                    cancel_token=cancel_token,
-                    timeout_s=float(task_timeout) + 60.0,
-                    disable_parallel_tool_use=_disable_parallel,
-                )
-                _sc_err = _result.get("error")
-                _sc_reply = _sched_deanon(_result.get("reply") or "")
-                if _sc_err and not _sc_reply:
-                    result_text = f"[DELEGATION ERROR] sidecar: {str(_sc_err)[:300]}"
+                        _gdpr_blobs.append(system_prompt)
+                    _msg_idx = []
+                    for _i, _m in enumerate(messages):
+                        _c = _m.get("content") if isinstance(_m, dict) else None
+                        if isinstance(_c, str):
+                            _gdpr_blobs.append(_c)
+                            _msg_idx.append(_i)
+                    model, _new_blobs, _sched_deanon = _brain.gdpr_pick_model_for_background(
+                        model, _gdpr_blobs, purpose="scheduled")
+                    if _new_blobs is not _gdpr_blobs:
+                        _ofs = 0
+                        if _has_sys:
+                            system_prompt = _new_blobs[0]
+                            _ofs = 1
+                        for _i, _idx in enumerate(_msg_idx):
+                            messages[_idx] = {**messages[_idx], "content": _new_blobs[_ofs + _i]}
+                except _brain.GDPRBlockedError as _ge:
+                    result_text = f"[DELEGATION ERROR] {_ge}"
                     status = "error"
-                elif _sc_err and _sc_reply:
-                    result_text = _sc_reply + f"\n\n*(Sidecar error after partial: {str(_sc_err)[:200]})*"
+                    _sidecar_blocked = True
+
+                if _sidecar_blocked:
+                    pass  # result_text + status already set from the GDPR block above
                 else:
-                    result_text = _sc_reply
-                run_info["trace_id"] = _result.get("turn_id") or None
-                # Sidecar's tool_calls_total is authoritative; on_event may have
-                # missed start events if the worker died mid-turn.
-                run_info["tool_calls"] = max(
-                    run_info["tool_calls"], int(_result.get("tool_calls_total") or 0))
-            # Check if the loop returned an error string instead of raising.
-            # Strip the redundant 'Delegation error: ' prefix and the trailing
-            # colon-with-nothing-after that comes from bare-exception args, and
-            # add a clear context line so non-interactive consumers (the
-            # schedule history view, audit logs, downstream daemons) see what
-            # actually went wrong rather than a bare '[DELEGATION ERROR]
-            # Delegation error: '.
-            if result_text.startswith("Delegation error:"):
+                    _prov = _brain.resolve_provider_for_model(model)
+                    # Reuse the purpose resolved up front (memory_summary for
+                    # `_memory_summary_` name prefix; otherwise per-task
+                    # `tool_profile` — `interactive` for full chat surface,
+                    # else research_minimal).
+                    _sched_purpose = _sched_purpose_pre
+
+                    _tool_context = {
+                        "session_id": sched_session_id,
+                        "agent_id": agent_id,
+                        "user_id": (task_row.get("user_id") or ""),
+                        "team_ids": [],
+                        "project": "",  # schedules don't bind to a project today
+                        "note_context": None,
+                        "workflow_run_id": "",
+                        "plan_mode": False,
+                        "research_mode_override": None,
+                        "execution_overrides": {},
+                        "attachment_image_model": "",
+                        "caveman_chat": _task_caveman,
+                        "caveman_system": 0,
+                        "trace_id": "",
+                    }
+                    _sampling = {
+                        "temperature": sched_inf.get("temperature"),
+                        "top_p": sched_inf.get("top_p"),
+                        "top_k": sched_inf.get("top_k"),
+                        "stop_sequences": sched_inf.get("stop") or sched_inf.get("stop_sequences"),
+                    }
+                    _max_tokens = int(sched_inf.get("max_tokens") or _brain.get_model_max_output(model))
+                    _agent_cfg = target.config or {}
+                    _max_rounds = int((_agent_cfg.get("limits") or {}).get("max_tool_rounds", 25) or 25)
+                    _thinking_level = sched_inf.get("thinking_level") if sched_inf.get("thinking") is not False else None
+
+                    # Bridge sidecar SSE → on_event so tool_calls + tool_log keep updating.
+                    def _sc_event(ev_type, data):
+                        if ev_type == "tool_call":
+                            on_event("tool_call", data)
+
+                    # Model-level `parallel_tool_calls: false` → Anthropic SDK
+                    # `tool_choice.disable_parallel_tool_use=True`. Mistral via
+                    # CLIProxyAPI in streaming mode mis-emits parallel tool_use
+                    # batches that occasionally drop the final write_file —
+                    # sequential tool use sidesteps the issue.
+                    _model_cfg = _brain._models_config.get(model, {}) or {}
+                    _disable_parallel = _model_cfg.get("parallel_tool_calls", True) is False
+                    _result = _sidecar_proxy.run_turn(
+                        messages=messages,
+                        model=model,
+                        api_key=_prov["api_key"],
+                        base_url=_prov["base_url"],
+                        system_prompt=system_prompt,
+                        purpose=_sched_purpose,
+                        tool_context=_tool_context,
+                        sampling=_sampling,
+                        thinking_level=_thinking_level,
+                        max_tokens=_max_tokens,
+                        max_rounds=_max_rounds,
+                        event_callback=_sc_event,
+                        cancel_token=cancel_token,
+                        timeout_s=float(task_timeout) + 60.0,
+                        disable_parallel_tool_use=_disable_parallel,
+                    )
+                    _sc_err = _result.get("error")
+                    _sc_reply = _sched_deanon(_result.get("reply") or "")
+                    if _sc_err and not _sc_reply:
+                        result_text = f"[DELEGATION ERROR] sidecar: {str(_sc_err)[:300]}"
+                        status = "error"
+                    elif _sc_err and _sc_reply:
+                        result_text = _sc_reply + f"\n\n*(Sidecar error after partial: {str(_sc_err)[:200]})*"
+                    else:
+                        result_text = _sc_reply
+                    run_info["trace_id"] = _result.get("turn_id") or None
+                    # Sidecar's tool_calls_total is authoritative; on_event may have
+                    # missed start events if the worker died mid-turn.
+                    run_info["tool_calls"] = max(
+                        run_info["tool_calls"], int(_result.get("tool_calls_total") or 0))
+                # Check if the loop returned an error string instead of raising.
+                # Strip the redundant 'Delegation error: ' prefix and the trailing
+                # colon-with-nothing-after that comes from bare-exception args, and
+                # add a clear context line so non-interactive consumers (the
+                # schedule history view, audit logs, downstream daemons) see what
+                # actually went wrong rather than a bare '[DELEGATION ERROR]
+                # Delegation error: '.
+                if result_text.startswith("Delegation error:"):
+                    status = "error"
+                    _detail = result_text[len("Delegation error:"):].strip().rstrip(":").strip()
+                    if not _detail:
+                        _detail = ("Delegation produced no error detail "
+                                   "(likely a swallowed cancellation or an "
+                                   "exception with empty args). Check "
+                                   "server.error.log around this run for the "
+                                   "real cause.")
+                    result_text = (
+                        f"[DELEGATION ERROR] {_detail}\n"
+                        f"Tool calls made before failure: {run_info['tool_calls']}."
+                    )
+            except _brain.TaskCancelled:
+                if run_info.get("status") == "timeout":
+                    elapsed = (datetime.datetime.now() - datetime.datetime.fromisoformat(run_info["started_at"])).total_seconds()
+                    # Always-present, parseable timeout context for non-interactive
+                    # consumers. Don't append to an existing result_text — if the
+                    # task got cut mid-tool the partial body has no value and just
+                    # clutters the audit row.
+                    result_text = (
+                        f"[TIMEOUT] Task '{name}' timed out after {elapsed:.0f}s "
+                        f"(limit: {task_timeout}s).\n"
+                        f"Model: {model}\n"
+                        f"Tool calls made before timeout: {run_info['tool_calls']}.\n"
+                        f"Increase the task timeout in the schedule editor if the "
+                        f"workload legitimately needs more time, or simplify the "
+                        f"task prompt."
+                    )
+                    status = "timeout"
+                else:
+                    result_text = (
+                        f"[CANCELLED] Task '{name}' was cancelled by user or admin.\n"
+                        f"Model: {model}\n"
+                        f"Tool calls made before cancel: {run_info['tool_calls']}."
+                    )
+                    status = "cancelled"
+            except urllib.error.HTTPError as e:
+                error_body = ""
+                try:
+                    error_body = e.read().decode("utf-8")[:500]
+                except Exception:
+                    pass
+                result_text = (
+                    f"[HTTP ERROR] {e.code} {e.reason}\n"
+                    f"Model: {model}\n"
+                    f"Tool calls made before error: {run_info['tool_calls']}.\n"
+                    + (f"Response body: {error_body}" if error_body else "")
+                )
                 status = "error"
-                _detail = result_text[len("Delegation error:"):].strip().rstrip(":").strip()
-                if not _detail:
-                    _detail = ("Delegation produced no error detail "
-                               "(likely a swallowed cancellation or an "
-                               "exception with empty args). Check "
-                               "server.error.log around this run for the "
-                               "real cause.")
+            except urllib.error.URLError as e:
                 result_text = (
-                    f"[DELEGATION ERROR] {_detail}\n"
-                    f"Tool calls made before failure: {run_info['tool_calls']}."
+                    f"[CONNECTION ERROR] Could not reach LLM API for model '{model}': "
+                    f"{e.reason}\n"
+                    f"Tool calls made before error: {run_info['tool_calls']}."
                 )
-        except _brain.TaskCancelled:
-            if run_info.get("status") == "timeout":
-                elapsed = (datetime.datetime.now() - datetime.datetime.fromisoformat(run_info["started_at"])).total_seconds()
-                # Always-present, parseable timeout context for non-interactive
-                # consumers. Don't append to an existing result_text — if the
-                # task got cut mid-tool the partial body has no value and just
-                # clutters the audit row.
+                status = "error"
+            except Exception as e:
+                import traceback
+                tb = traceback.format_exc()
                 result_text = (
-                    f"[TIMEOUT] Task '{name}' timed out after {elapsed:.0f}s "
-                    f"(limit: {task_timeout}s).\n"
+                    f"[ERROR] {type(e).__name__}: {e}\n"
                     f"Model: {model}\n"
-                    f"Tool calls made before timeout: {run_info['tool_calls']}.\n"
-                    f"Increase the task timeout in the schedule editor if the "
-                    f"workload legitimately needs more time, or simplify the "
-                    f"task prompt."
+                    f"Tool calls made before error: {run_info['tool_calls']}.\n\n"
+                    f"Traceback (last 500 chars):\n{tb[-500:]}"
                 )
-                status = "timeout"
-            else:
-                result_text = (
-                    f"[CANCELLED] Task '{name}' was cancelled by user or admin.\n"
-                    f"Model: {model}\n"
-                    f"Tool calls made before cancel: {run_info['tool_calls']}."
-                )
-                status = "cancelled"
-        except urllib.error.HTTPError as e:
-            error_body = ""
-            try:
-                error_body = e.read().decode("utf-8")[:500]
-            except Exception:
-                pass
-            result_text = (
-                f"[HTTP ERROR] {e.code} {e.reason}\n"
-                f"Model: {model}\n"
-                f"Tool calls made before error: {run_info['tool_calls']}.\n"
-                + (f"Response body: {error_body}" if error_body else "")
-            )
-            status = "error"
-        except urllib.error.URLError as e:
-            result_text = (
-                f"[CONNECTION ERROR] Could not reach LLM API for model '{model}': "
-                f"{e.reason}\n"
-                f"Tool calls made before error: {run_info['tool_calls']}."
-            )
-            status = "error"
-        except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            result_text = (
-                f"[ERROR] {type(e).__name__}: {e}\n"
-                f"Model: {model}\n"
-                f"Tool calls made before error: {run_info['tool_calls']}.\n\n"
-                f"Traceback (last 500 chars):\n{tb[-500:]}"
-            )
-            status = "error"
-        finally:
-            cancel_token.cancel()  # stop the watchdog if still running
-            clear_thread_context()
-            with self._lock:
-                self._running_tasks.pop(name, None)
+                status = "error"
+            finally:
+                cancel_token.cancel()  # stop the watchdog if still running
+                with self._lock:
+                    self._running_tasks.pop(name, None)
 
         # Only stamp artifact_folder if the folder actually materialised —
         # tasks that made no file writes shouldn't claim a folder.

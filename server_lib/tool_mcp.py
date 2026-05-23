@@ -170,22 +170,6 @@ def _apply_context(ctx: dict) -> None:
         tl.event_callback = None
 
 
-def _clear_context() -> None:
-    tl = engine._thread_local
-    for attr in (
-        "current_session_id", "current_user_id", "current_team_ids", "project",
-        "note_context", "workflow_run_id", "plan_mode", "research_mode_override",
-        "execution_overrides", "attachment_image_model", "_current_model",
-        "current_agent", "memory_store", "mcp_manager", "caveman_chat",
-        "caveman_system", "_gdpr_after_file_write_cb", "_gdpr_mapping_id",
-        "event_callback",
-    ):
-        try:
-            setattr(tl, attr, None)
-        except Exception:
-            pass
-
-
 # ---------- Tool dispatch ----------
 
 def _dispatch(name: str, args: dict) -> tuple[str, bool]:
@@ -295,11 +279,12 @@ def handle_tools_call(handler) -> None:
     turn_id = ctx.get("turn_id") or ""
 
     t0 = time.time()
-    try:
+    # The sidecar runs in a separate process; for tool dispatches coming BACK
+    # we rebuild the per-turn context on THIS handler thread. request_context()
+    # owns teardown (token-reset on exit) — no scattered per-attribute clear.
+    with engine.request_context():
         _apply_context(ctx)
         result_str, is_error = _dispatch(name, args)
-    finally:
-        _clear_context()
     elapsed_ms = int((time.time() - t0) * 1000)
 
     # Stash a copy for the chat-worker side proxy so it can fire the

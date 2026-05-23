@@ -137,6 +137,23 @@ statuses; it never appends. A genuinely new attribute = scope change to flag to 
 - Full `./refactor_gate.sh` GREEN: 18/18 imports, PII parity OK, no new unittest fails beyond the 3
   known spaCy ones, Gate 5b OK.
 
+### Phase 2b — sidecar reconstitute (tool_mcp) + scheduler ✅ (commit: this)
+- **`server_lib/tool_mcp.py`** (the sidecar→Brain tool-dispatch reconstitute path — CLAUDE.md
+  "Dispatch path" step 3): the `try: _apply_context(ctx); _dispatch(...) finally: _clear_context()`
+  became `with engine.request_context(): _apply_context(ctx); _dispatch(...)`. **Deleted
+  `_clear_context()`** — it was a 19-attribute scattered `setattr(tl, attr, None)` teardown loop, the
+  exact antipattern; the token-reset replaces it. `_apply_context` keeps setting fields via the shim,
+  now into the active context.
+- **`engine/scheduler.py`** (`_execute_scheduled`): wrapped the context scope (init through the
+  teardown finally, ~1024–1332) in `with request_context():`; kept `init_thread_context(...)` as the
+  first statement inside (sets fields into the active ctx). Deleted the `clear_thread_context()` call
+  and the now-redundant `_thread_local.trace_id = None` reset + its comment (fresh context starts
+  trace_id=None). `git diff -w` = +1 with / −4 lines, nothing else.
+- Full `./refactor_gate.sh` GREEN.
+- **Still TODO in 2d:** two more `init_thread_context`/`clear_thread_context` pairs in `brain.py`
+  (warmup ~6687/6776, background task ~6927/6977) + save/restore sites in `handlers/sessions_handler.py`
+  (×2), `handlers/admin_config.py` (×1), `server.py` (×2).
+
 ### Phase 2c — chat worker + the 3 other chat.py context sites ✅ (commit: this)
 The headline bleed-risk fix. All four enter/exit sites in `handlers/chat.py` now use
 `with engine.request_context(...)`; every manual `_thread_local.x = None` teardown is gone.
