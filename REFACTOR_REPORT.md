@@ -39,7 +39,7 @@ Every functional domain the full refactor touches is listed here from day one �
 | Code structure graph (tree-sitter, code-graph.db) | 16,761–17,931 | `engine/code_graph.py` | 1 (Tier A) | ✅ done | commit `3aa1cf2`; 1205-line new module, owns its DB pool (verified not shared); 4-site tool reg verified |
 | Git / GitHub tools | 16,783–17,165 | `engine/tools/git_tools.py` | 1 (Tier A) | ✅ done | commit `3563081`; 4-site reg verified, dispatch-identity True/True |
 | Gmail tools | 4,770–5,086 | `engine/tools/gmail_tools.py` | 1 (Tier A) | ✅ done | commit `f8f3a1e`; 5 tools, 4-site reg verified, all dispatch-identity True |
-| Trace manager + audit trail | ~16,365–16,762 | `server_lib/trace_audit.py` | 1 (Tier A) | ⬜ planned | owns traces/audit DB pools |
+| Trace manager + audit trail | 15,043–15,437 | `server_lib/trace_audit.py` | 1 (Tier A) | ✅ done | commit `fa146c3`; both DB pools moved; 58 `_audit_log` sites resolve via re-export; server.py rebind verified |
 | `_thread_local` + execution context | ~11,257+ | `engine/context.py` | 2 (B1) | ⬜ planned | **relocate only**, NOT DI; prerequisite for B2–B4 |
 | Scheduler + task runner | ~14,000–15,641 | `engine/scheduler.py` | 3 (B2) | ⬜ planned | ⚠️ characterization test first; coupled to `_thread_local` |
 | GDPR/PII scanner (`_pii_rules`/`_pii_scan_*`) | 16,771–17,477 | `engine/pii_scan.py` (merge into `engine/pii_ner.py`) | 3 (B3) | ⬜ planned | fixes incoherent split (logic in brain, loader in engine) + web/index.html sync via U5 |
@@ -98,9 +98,9 @@ Every functional domain the full refactor touches is listed here from day one �
 > **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.
 
 ### Running totals
-- Extractions completed: **5** (D2, A1, A2, A3, A4)
-- `brain.py` line count: **25,182** (baseline) → _current: 22,144_ (−3,038)
-- Net new modules created: **4** (`engine/workflow.py`, `engine/code_graph.py`, `engine/tools/git_tools.py`, `engine/tools/gmail_tools.py`; D2 merged into existing engine/classification.py)
+- Extractions completed: **6** (D2, A1, A2, A3, A4, A5)
+- `brain.py` line count: **25,182** (baseline) → _current: 21,762_ (−3,420, −13.6%)
+- Net new modules created: **5** (`engine/workflow.py`, `engine/code_graph.py`, `engine/tools/git_tools.py`, `engine/tools/gmail_tools.py`, `server_lib/trace_audit.py`; D2 merged into existing engine/classification.py)
 - Live duplicate definitions (brain.py ∩ engine/): **0** — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean
 
 ---
@@ -125,6 +125,18 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 6 A5 trace manager + audit trail — DONE
+- **Commit:** `fa146c3`  ·  **Date:** 2026-05-23  ·  **Phase:** 1 (Tier A — riskiest, widely-called `_audit_log`)
+- **Symbol(s):** `TraceManager`, `AuditLog`, `_traces_conn`/`_audit_conn`, `_traces_db_pool`/`_audit_db_pool`, `TRACES_DB`/`AUDIT_DB`, `_AUDIT_ACTION_MAP`, `_audit_summarize_args`/`_audit_summarize_result`, singleton holders `_audit_log`/`_trace_manager`
+- **Moved FROM:** brain.py:15043–15437 (trace + audit subsystem)
+- **Moved TO:** server_lib/trace_audit.py (428 lines, NEW)
+- **Old code deleted?** YES — Gate-2 grep: no surviving class/def/DB-const in brain.py; single `from server_lib.trace_audit import (...)` alias block.
+- **Callers re-pointed:** 0 repointed — 58 `_audit_log` + 13 `_trace_manager` sites repo-wide (brain.py, handlers/admin, handlers/chat, engine/classification ×8 lazy, providers, server.py) ALL resolve via the brain/`engine`-alias module attr. No churn.
+- **Tests:** Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS
+- **Characterization test added?** n/a (Tier A; but extra-verified the startup-rebind invariant — see Notes)
+- **brain.py delta:** 22,144 → 21,762 (−382)
+- **Notes:** Lowest-coupling resolution possible — `_audit_log`/`_trace_manager` are module-level **singletons** (`None` at load, instantiated by server.py:3269–3270 via `engine._audit_log = engine.AuditLog()`). The closure touches ONLY stdlib + `AGENTS_DIR` (recomputed locally from `__file__`, verified equal) → **zero brain-runtime dependency, no lazy import, no cycle** (server_lib sits below brain in the DAG). Critical invariant verified by simulation: server.py's startup rebind sets the brain module attr, so every bare-name/`engine.`/`_brain.` reader sees the live singleton. This was the highest-risk Tier-A move; clean.
 
 ### 5 A4 gmail tools — DONE
 - **Commit:** `f8f3a1e`  ·  **Date:** 2026-05-23  ·  **Phase:** 1 (Tier A pure win)

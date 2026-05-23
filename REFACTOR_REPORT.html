@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:08 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:13 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -44,7 +44,7 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <tr><td>Code structure graph (tree-sitter, code-graph.db)</td><td>16,761–17,931</td><td><code>engine/code_graph.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>3aa1cf2</code>; 1205-line new module, owns its DB pool (verified not shared); 4-site tool reg verified</td></tr>
 <tr><td>Git / GitHub tools</td><td>16,783–17,165</td><td><code>engine/tools/git_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>3563081</code>; 4-site reg verified, dispatch-identity True/True</td></tr>
 <tr><td>Gmail tools</td><td>4,770–5,086</td><td><code>engine/tools/gmail_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>f8f3a1e</code>; 5 tools, 4-site reg verified, all dispatch-identity True</td></tr>
-<tr><td>Trace manager + audit trail</td><td>~16,365–16,762</td><td><code>server_lib/trace_audit.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>owns traces/audit DB pools</td></tr>
+<tr><td>Trace manager + audit trail</td><td>15,043–15,437</td><td><code>server_lib/trace_audit.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>fa146c3</code>; both DB pools moved; 58 <code>_audit_log</code> sites resolve via re-export; server.py rebind verified</td></tr>
 <tr><td><code>_thread_local</code> + execution context</td><td>~11,257+</td><td><code>engine/context.py</code></td><td>2 (B1)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td><strong>relocate only</strong>, NOT DI; prerequisite for B2–B4</td></tr>
 <tr><td>Scheduler + task runner</td><td>~14,000–15,641</td><td><code>engine/scheduler.py</code></td><td>3 (B2)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td><span class="badge warn" title="attention">⚠️</span> characterization test first; coupled to <code>_thread_local</code></td></tr>
 <tr><td>GDPR/PII scanner (<code>_pii_rules</code>/<code>_pii_scan_*</code>)</td><td>16,771–17,477</td><td><code>engine/pii_scan.py</code> (merge into <code>engine/pii_ner.py</code>)</td><td>3 (B3)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>fixes incoherent split (logic in brain, loader in engine) + web/index.html sync via U5</td></tr>
@@ -97,9 +97,9 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <blockquote><strong>Coverage promise:</strong> every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.</blockquote>
 <h3>Running totals</h3>
 <ul>
-<li>Extractions completed: <strong>5</strong> (D2, A1, A2, A3, A4)</li>
-<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 22,144_ (−3,038)</li>
-<li>Net new modules created: <strong>4</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>, <code>engine/tools/git_tools.py</code>, <code>engine/tools/gmail_tools.py</code>; D2 merged into existing engine/classification.py)</li>
+<li>Extractions completed: <strong>6</strong> (D2, A1, A2, A3, A4, A5)</li>
+<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 21,762_ (−3,420, −13.6%)</li>
+<li>Net new modules created: <strong>5</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>, <code>engine/tools/git_tools.py</code>, <code>engine/tools/gmail_tools.py</code>, <code>server_lib/trace_audit.py</code>; D2 merged into existing engine/classification.py)</li>
 <li>Live duplicate definitions (brain.py ∩ engine/): <strong>0</strong> — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean</li>
 </ul>
 <hr>
@@ -122,6 +122,19 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 </ul>
 <p>```</p>
 <hr>
+<h3>6 A5 trace manager + audit trail — DONE</h3>
+<ul>
+<li><strong>Commit:</strong> <code>fa146c3</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (Tier A — riskiest, widely-called <code>_audit_log</code>)</li>
+<li><strong>Symbol(s):</strong> <code>TraceManager</code>, <code>AuditLog</code>, <code>_traces_conn</code>/<code>_audit_conn</code>, <code>_traces_db_pool</code>/<code>_audit_db_pool</code>, <code>TRACES_DB</code>/<code>AUDIT_DB</code>, <code>_AUDIT_ACTION_MAP</code>, <code>_audit_summarize_args</code>/<code>_audit_summarize_result</code>, singleton holders <code>_audit_log</code>/<code>_trace_manager</code></li>
+<li><strong>Moved FROM:</strong> brain.py:15043–15437 (trace + audit subsystem)</li>
+<li><strong>Moved TO:</strong> server_lib/trace_audit.py (428 lines, NEW)</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2 grep: no surviving class/def/DB-const in brain.py; single <code>from server_lib.trace_audit import (...)</code> alias block.</li>
+<li><strong>Callers re-pointed:</strong> 0 repointed — 58 <code>_audit_log</code> + 13 <code>_trace_manager</code> sites repo-wide (brain.py, handlers/admin, handlers/chat, engine/classification ×8 lazy, providers, server.py) ALL resolve via the brain/<code>engine</code>-alias module attr. No churn.</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS</li>
+<li><strong>Characterization test added?</strong> n/a (Tier A; but extra-verified the startup-rebind invariant — see Notes)</li>
+<li><strong>brain.py delta:</strong> 22,144 → 21,762 (−382)</li>
+<li><strong>Notes:</strong> Lowest-coupling resolution possible — <code>_audit_log</code>/<code>_trace_manager</code> are module-level <strong>singletons</strong> (<code>None</code> at load, instantiated by server.py:3269–3270 via <code>engine._audit_log = engine.AuditLog()</code>). The closure touches ONLY stdlib + <code>AGENTS_DIR</code> (recomputed locally from <code>__file__</code>, verified equal) → <strong>zero brain-runtime dependency, no lazy import, no cycle</strong> (server_lib sits below brain in the DAG). Critical invariant verified by simulation: server.py's startup rebind sets the brain module attr, so every bare-name/<code>engine.</code>/<code>_brain.</code> reader sees the live singleton. This was the highest-risk Tier-A move; clean.</li>
+</ul>
 <h3>5 A4 gmail tools — DONE</h3>
 <ul>
 <li><strong>Commit:</strong> <code>f8f3a1e</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (Tier A pure win)</li>
