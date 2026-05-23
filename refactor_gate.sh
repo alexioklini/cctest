@@ -49,7 +49,12 @@ if [ "${1:-}" = "tlgrep" ]; then
   # ContextVar-backed storage) — every other reference must go through a typed
   # accessor. A surviving raw access = NOT DONE for that attr -> finish or revert.
   echo "=== Tier-G: raw _thread_local.$attr must be gone from live code (engine/context.py exempt) ==="
-  hits=$(grep -rnE "_thread_local\.$attr\b|getattr\(_thread_local, ['\"]$attr['\"]|setattr\(_thread_local, ['\"]$attr['\"]" \
+  # Match every prefix form the codebase uses for the shim name: bare
+  # `_thread_local`, `brain._thread_local`, `_brain._thread_local`,
+  # `engine._thread_local` (the `import brain as engine` alias). The optional
+  # `(\w+\.)?` prefix catches all of them in the .X / getattr / setattr shapes.
+  P='(\w+\.)?_thread_local'
+  hits=$(grep -rnE "${P}\.$attr\b|getattr\(${P}, ['\"]$attr['\"]|setattr\(${P}, ['\"]$attr['\"]" \
            brain.py execution.py engine/ handlers/ server_lib/ server.py server_daemons.py 2>/dev/null \
            | grep -v '^engine/context\.py:' \
            | grep -vE '^\S+:[0-9]+:\s*#')

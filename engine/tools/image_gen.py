@@ -178,8 +178,8 @@ def tool_generate_image(args: dict) -> str:
         )
 
     # Resolve artifact save folder (same logic as tool_write_file)
-    session_id = getattr(brain._thread_local, "current_session_id", None)
-    agent = getattr(brain._thread_local, "current_agent", None) or brain._current_agent
+    session_id = brain.get_request_context().current_session_id
+    agent = brain.get_request_context().current_agent or brain._current_agent
     agent_id_local = agent.agent_id if agent else "main"
 
     if session_id and agent_id_local:

@@ -235,8 +235,8 @@ def tool_gmail_send(args: dict) -> str:
     import mimetypes
     from email.message import EmailMessage as _EmailMessage
     resolved: list[tuple[str, bytes, str, str]] = []  # (name, bytes, maintype, subtype)
-    session_id = getattr(_brain._thread_local, 'current_session_id', None)
-    agent_ctx = getattr(_brain._thread_local, 'current_agent', None) or _brain._current_agent
+    session_id = _brain.get_request_context().current_session_id
+    agent_ctx = _brain.get_request_context().current_agent or _brain._current_agent
     artifact_dir = None
     if session_id and agent_ctx:
         artifact_dir = os.path.join(

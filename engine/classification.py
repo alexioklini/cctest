@@ -600,7 +600,7 @@ def _classification_gate_tool_text(text: str, source: str) -> None:
             return
         # Resolve current model — sidecar tool dispatch sets current_session_id
         # in thread-locals; we look up the session model from there.
-        sid = getattr(_brain._thread_local, "current_session_id", "") or ""
+        sid = _brain.get_request_context().current_session_id or ""
         model = ""
         if sid:
             try:
@@ -631,7 +631,7 @@ def _classification_gate_tool_text(text: str, source: str) -> None:
         if action != "block":
             return
         # Audit + raise
-        _agent = getattr(_brain._thread_local, "current_agent", None) or _brain._current_agent
+        _agent = _brain.get_request_context().current_agent or _brain._current_agent
         _agent_id = _agent.agent_id if _agent else "main"
         if cfg.get("server_log", True) and _brain._audit_log:
             try:
@@ -736,9 +736,9 @@ def classification_pick_model_for_background(model: str, texts,
         return (model, samples if not _input_was_str else samples[0], _identity_deanon)
 
     action = _classification_effective_action(worst_level, cfg=cfg)
-    _agent = getattr(_brain._thread_local, "current_agent", None) or _brain._current_agent
+    _agent = _brain.get_request_context().current_agent or _brain._current_agent
     _agent_id = _agent.agent_id if _agent else "main"
-    _sid = getattr(_brain._thread_local, "current_session_id", None) or ""
+    _sid = _brain.get_request_context().current_session_id or ""
     _log_audit = bool(cfg.get("server_log", True) and _brain._audit_log)
 
     if _log_audit:

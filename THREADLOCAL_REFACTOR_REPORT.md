@@ -153,6 +153,18 @@ mentions (docstrings/changelog). Phase 4 removes the shim.
 - Full `./refactor_gate.sh` GREEN: 18/18 imports, PII parity OK, no new unittest fails beyond the 3
   known spaCy ones, Gate 5b OK.
 
+### Phase 3c — SECOND gate blind spot: prefix-form accesses + tlgrep hardening ✅ (commit: this)
+A second blind spot: the `tlgrep` regex matched bare `_thread_local` + `engine._thread_local` but
+NOT `brain._thread_local` / `_brain._thread_local` in the `getattr(...)` shape. Three more files in
+the scanned dirs had raw access via that prefix, invisible to the gate:
+- `engine/classification.py` (4), `engine/tools/gmail_tools.py` (2), `engine/tools/image_gen.py` (2)
+  — all `getattr(_brain._thread_local, 'X', DEF)` / `getattr(brain._thread_local, ...)`. Migrated to
+  `_brain.get_request_context().X` / `brain.get_request_context().X`.
+- **Hardened `tlgrep`**: regex now uses `(\w+\.)?_thread_local` so it catches EVERY prefix form
+  (bare / `brain.` / `_brain.` / `engine.`) in the `.X` / `getattr` / `setattr` shapes. Re-ran tlgrep
+  over ALL 39 attrs with the hardened regex → **0 failures**. Independent repo-wide sweep confirms the
+  only surviving `_thread_local` mentions are docstrings/comments + the shim's own test. Gate green.
+
 ### Phase 3b — SCOPE CORRECTION: execution.py + gate-scope widening ✅ (commit: this)
 **The plan's "18 files" was incomplete + the gate had a blind spot.** `execution.py` (the
 worker-subagent module — LIVE: imported by `brain.py:11995` `from execution import
