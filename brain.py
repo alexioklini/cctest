@@ -5980,6 +5980,9 @@ from engine.context import (  # noqa: E402
     ExecutionContext,
     init_thread_context,
     clear_thread_context,
+    RequestContext,
+    request_context,
+    get_request_context,
 )
 
 

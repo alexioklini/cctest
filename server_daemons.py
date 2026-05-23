@@ -645,10 +645,7 @@ def _mempalace_chat_sync_loop(srv):
                     # picker returns None and the LLM call fails fast on
                     # an air-gapped server (same fail-fast contract as
                     # scheduled tasks; Stage 2 closes that hole).
-                    _prev_clf_uid = getattr(engine._thread_local,
-                                            'current_user_id', None)
-                    engine._thread_local.current_user_id = session_user_id or ""
-                    try:
+                    with engine.request_context(current_user_id=session_user_id or ""):
                         i = 0
                         while i < len(new_messages):
                             m = new_messages[i]
@@ -672,8 +669,6 @@ def _mempalace_chat_sync_loop(srv):
                                     i += 2
                                     continue
                             i += 1
-                    finally:
-                        engine._thread_local.current_user_id = _prev_clf_uid
 
                 # Track the current turn's anchor user-message id. Every drawer
                 # filed from this turn (user, assistant, attachment, tool result)

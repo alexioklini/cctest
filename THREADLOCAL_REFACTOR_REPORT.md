@@ -135,6 +135,24 @@ statuses; it never appends. A genuinely new attribute = scope change to flag to 
 - Full `./refactor_gate.sh` GREEN: 18/18 imports, PII parity OK, no new unittest fails beyond the 3
   known spaCy ones, Gate 5b OK.
 
+### Phase 2a — non-chat-worker setters: server_daemons + translate ✅ (commit: this)
+- `server_daemons.py` (mempalace-classifier): the `current_user_id` save/`try`/`finally:`-restore
+  around the classify loop → `with engine.request_context(current_user_id=session_user_id or ""):`.
+  Teardown now token-reset (the manual save/restore pair is gone).
+- `handlers/translate.py`: the three `_prime_artifact_threadlocals(...)` enter-sites had NO teardown
+  (each ran in a fresh per-job `threading.Thread`, so no reuse-bleed today, but a latent risk). Wrapped
+  the body of `_run_translate_job`, `_run_media_job`, and `_tr_history_save_live` in
+  `with brain.request_context():` so whatever priming sets is torn down on return. `git diff -w`
+  confirms the ONLY content changes are 3× `import brain` + 3× `with brain.request_context():`; the
+  rest is pure reindent (no logic change). `_prime_artifact_threadlocals` itself unchanged.
+- `brain.py`: re-exports `RequestContext`, `request_context`, `get_request_context` from
+  `engine.context` (so `brain.request_context` / `engine.request_context` resolve).
+- Full `./refactor_gate.sh` GREEN.
+- **Deferred to 2b/2c:** `engine/scheduler.py` already uses a CENTRALIZED enter/exit pair
+  (`init_thread_context` / one `clear_thread_context()` in `finally`) — NOT the scattered-`=None`
+  antipattern, so it's lower priority; migrated in its own step. The chat worker (~10 teardown sites)
+  is the headline Phase-2 step (2c).
+
 ### Phase 1 — RequestContext + ContextVar + shim ✅ (commit: this)
 - `engine/context.py`: added `RequestContext` dataclass (37 typed fields with defaults mirroring the
   Phase-0 getattr-default inventory + a `_dynamic: dict` for the `_artifact_folder_*` keys),

@@ -975,63 +975,65 @@ def _run_translate_job(job_id: str) -> None:
     job = JOB_REGISTRY.get(job_id)
     if not job:
         return
-    try:
-        # Resolve output dir to the agent's artifact folder for this synthetic
-        # session so the translated file shows up under Artifacts.
-        import brain  # late — picks up AGENTS_DIR + helpers
-        from datetime import datetime as _dt
-        folder = f"{_dt.now().strftime('%Y-%m-%d')}_{job.session_id[:8]}"
-        out_dir = os.path.join(brain.AGENTS_DIR, job.agent_id, "artifacts", folder)
-        os.makedirs(out_dir, exist_ok=True)
+    import brain  # late — picks up AGENTS_DIR + helpers
+    with brain.request_context():
+        try:
+            # Resolve output dir to the agent's artifact folder for this synthetic
+            # session so the translated file shows up under Artifacts.
+            import brain  # late — picks up AGENTS_DIR + helpers
+            from datetime import datetime as _dt
+            folder = f"{_dt.now().strftime('%Y-%m-%d')}_{job.session_id[:8]}"
+            out_dir = os.path.join(brain.AGENTS_DIR, job.agent_id, "artifacts", folder)
+            os.makedirs(out_dir, exist_ok=True)
 
-        # Copy the source into the artifact folder so history can re-open it.
-        # Original lives in /tmp/brain-translate-* and gets cleaned on reboot;
-        # the artifact copy is the durable handle for the History UI.
-        source_artifact_path = _copy_source_to_artifacts(job.src_path, out_dir)
+            # Copy the source into the artifact folder so history can re-open it.
+            # Original lives in /tmp/brain-translate-* and gets cleaned on reboot;
+            # the artifact copy is the durable handle for the History UI.
+            source_artifact_path = _copy_source_to_artifacts(job.src_path, out_dir)
 
-        result = translate_document_file(
-            job.src_path,
-            target_lang=job.target_lang,
-            source_lang=job.source_lang,
-            glossary_slug=job.glossary,
-            model=job.model,
-            tone=job.tone,
-            output_dir=out_dir,
-            progress=job.update_progress,
-        )
+            result = translate_document_file(
+                job.src_path,
+                target_lang=job.target_lang,
+                source_lang=job.source_lang,
+                glossary_slug=job.glossary,
+                model=job.model,
+                tone=job.tone,
+                output_dir=out_dir,
+                progress=job.update_progress,
+            )
 
-        # Promote as artifact so the artifact panel (and miner) sees it.
-        # _after_file_write reads thread-locals: current_session_id is required
-        # by _register_artifact_version, and event_callback gates the whole
-        # artifact registration block. Worker thread starts with neither set —
-        # without this priming the file lands on disk but never gets a DB row.
-        _prime_artifact_threadlocals(brain, job.session_id)
-        if source_artifact_path:
+            # Promote as artifact so the artifact panel (and miner) sees it.
+            # _after_file_write reads thread-locals: current_session_id is required
+            # by _register_artifact_version, and event_callback gates the whole
+            # artifact registration block. Worker thread starts with neither set —
+            # without this priming the file lands on disk but never gets a DB row.
+            _prime_artifact_threadlocals(brain, job.session_id)
+            if source_artifact_path:
+                try:
+                    brain._after_file_write(source_artifact_path, "created", job.agent_id)
+                except Exception:
+                    pass
             try:
-                brain._after_file_write(source_artifact_path, "created", job.agent_id)
+                brain._after_file_write(result["output_path"], "created", job.agent_id)
             except Exception:
                 pass
-        try:
-            brain._after_file_write(result["output_path"], "created", job.agent_id)
-        except Exception:
-            pass
 
-        job.source_artifact_path = source_artifact_path
-        job.finish(
-            output_path=result["output_path"],
-            runs=result.get("runs", 0),
-            fallback=result.get("fallback", False),
-            detected=result.get("detected"),
-            noop=result.get("noop", False),
-            model=result.get("model", ""),
-        )
-        # Persist to translation history.
-        try:
-            _tr_history_save_job(job)
-        except Exception:
-            pass
-    except Exception as e:
-        job.fail(str(e))
+            job.source_artifact_path = source_artifact_path
+            job.finish(
+                output_path=result["output_path"],
+                runs=result.get("runs", 0),
+                fallback=result.get("fallback", False),
+                detected=result.get("detected"),
+                noop=result.get("noop", False),
+                model=result.get("model", ""),
+            )
+            # Persist to translation history.
+            try:
+                _tr_history_save_job(job)
+            except Exception:
+                pass
+        except Exception as e:
+            job.fail(str(e))
 
 
 
@@ -1043,64 +1045,66 @@ def _run_media_job(job_id: str) -> None:
     job = JOB_REGISTRY.get(job_id)
     if not job:
         return
-    try:
-        import brain
-        from datetime import datetime as _dt
-        folder = f"{_dt.now().strftime('%Y-%m-%d')}_{job.session_id[:8]}"
-        out_dir = os.path.join(brain.AGENTS_DIR, job.agent_id, "artifacts", folder)
-        os.makedirs(out_dir, exist_ok=True)
-
-        # Persist the source media into the artifact folder so history can
-        # re-play it later — same rationale as the document worker.
-        source_artifact_path = _copy_source_to_artifacts(job.src_path, out_dir)
-        job.source_artifact_path = source_artifact_path
-
-        def _progress(stage: str, done: int, total: int) -> None:
-            job.update_stage(stage, done, total)
-
-        result = transcribe_and_translate(
-            job.src_path,
-            target_lang=job.target_lang,
-            source_lang=job.source_lang,
-            glossary_slug=job.glossary,
-            model=job.model,
-            transcribe_model=job.transcribe_model,
-            progress=_progress,
-        )
-
-        base_name = os.path.splitext(os.path.basename(job.filename))[0] or "media"
-        files = write_media_output_files(result, out_dir=out_dir, base_name=base_name)
-
-        # Promote each emitted file as artifact (the bilingual TXT is the
-        # "primary"; SRT/VTT live alongside).
-        _prime_artifact_threadlocals(brain, job.session_id)
-        if source_artifact_path:
-            try:
-                brain._after_file_write(source_artifact_path, "created", job.agent_id)
-            except Exception:
-                pass
-        for path in {v for k, v in files.items() if k != "primary"}:
-            try:
-                brain._after_file_write(path, "created", job.agent_id)
-            except Exception:
-                pass
-
-        job.finish_media(
-            transcript=result.get("transcript", ""),
-            segments=result.get("segments") or [],
-            duration_s=result.get("duration_s", 0.0),
-            output_files=files,
-            primary_path=files.get("primary", ""),
-            transcribe_model=result.get("transcribe_model", ""),
-            translation_model=job.model,
-        )
-        # Persist to translation history.
+    import brain
+    with brain.request_context():
         try:
-            _tr_history_save_job(job)
-        except Exception:
-            pass
-    except Exception as e:
-        job.fail(str(e))
+            import brain
+            from datetime import datetime as _dt
+            folder = f"{_dt.now().strftime('%Y-%m-%d')}_{job.session_id[:8]}"
+            out_dir = os.path.join(brain.AGENTS_DIR, job.agent_id, "artifacts", folder)
+            os.makedirs(out_dir, exist_ok=True)
+
+            # Persist the source media into the artifact folder so history can
+            # re-play it later — same rationale as the document worker.
+            source_artifact_path = _copy_source_to_artifacts(job.src_path, out_dir)
+            job.source_artifact_path = source_artifact_path
+
+            def _progress(stage: str, done: int, total: int) -> None:
+                job.update_stage(stage, done, total)
+
+            result = transcribe_and_translate(
+                job.src_path,
+                target_lang=job.target_lang,
+                source_lang=job.source_lang,
+                glossary_slug=job.glossary,
+                model=job.model,
+                transcribe_model=job.transcribe_model,
+                progress=_progress,
+            )
+
+            base_name = os.path.splitext(os.path.basename(job.filename))[0] or "media"
+            files = write_media_output_files(result, out_dir=out_dir, base_name=base_name)
+
+            # Promote each emitted file as artifact (the bilingual TXT is the
+            # "primary"; SRT/VTT live alongside).
+            _prime_artifact_threadlocals(brain, job.session_id)
+            if source_artifact_path:
+                try:
+                    brain._after_file_write(source_artifact_path, "created", job.agent_id)
+                except Exception:
+                    pass
+            for path in {v for k, v in files.items() if k != "primary"}:
+                try:
+                    brain._after_file_write(path, "created", job.agent_id)
+                except Exception:
+                    pass
+
+            job.finish_media(
+                transcript=result.get("transcript", ""),
+                segments=result.get("segments") or [],
+                duration_s=result.get("duration_s", 0.0),
+                output_files=files,
+                primary_path=files.get("primary", ""),
+                transcribe_model=result.get("transcribe_model", ""),
+                translation_model=job.model,
+            )
+            # Persist to translation history.
+            try:
+                _tr_history_save_job(job)
+            except Exception:
+                pass
+        except Exception as e:
+            job.fail(str(e))
 
 
 # ─── Translation history helpers ────────────────────────────────────────────
@@ -1173,67 +1177,69 @@ def _tr_history_save_live(*, user_id: str, sess) -> None:
     segs_raw = list(sess.segments) if hasattr(sess, "segments") else []
     if not segs_raw:
         return
-    from datetime import datetime as _dt
-    title = f"Live mic — {_dt.now().strftime('%H:%M')}"
-    seg_dicts = [
-        {
-            "start": s.start if hasattr(s, "start") else s.get("start", 0),
-            "end": s.end if hasattr(s, "end") else s.get("end", 0),
-            "text": s.text if hasattr(s, "text") else s.get("text", ""),
-            "translation": s.translation if hasattr(s, "translation") else s.get("translation", ""),
-        }
-        for s in segs_raw
-    ]
+    import brain
+    with brain.request_context():
+        from datetime import datetime as _dt
+        title = f"Live mic — {_dt.now().strftime('%H:%M')}"
+        seg_dicts = [
+            {
+                "start": s.start if hasattr(s, "start") else s.get("start", 0),
+                "end": s.end if hasattr(s, "end") else s.get("end", 0),
+                "text": s.text if hasattr(s, "text") else s.get("text", ""),
+                "translation": s.translation if hasattr(s, "translation") else s.get("translation", ""),
+            }
+            for s in segs_raw
+        ]
 
-    # Write SRT + TXT into the agent's artifact folder so the live recording
-    # can be downloaded later from history (matches the doc/media behaviour).
-    output_files: dict = {}
-    artifact_path = ""
-    try:
-        import brain
-        from server_lib.translate import to_srt, to_vtt
-        agent_id = getattr(sess, "agent_id", "") or "main"
-        synth_session = f"tr{_uuid.uuid4().hex[:14]}"
-        folder = f"{_dt.now().strftime('%Y-%m-%d')}_{synth_session[:8]}"
-        out_dir = os.path.join(brain.AGENTS_DIR, agent_id, "artifacts", folder)
-        os.makedirs(out_dir, exist_ok=True)
-        base = f"live-mic-{_dt.now().strftime('%Y%m%d-%H%M%S')}"
-        text_key = "translation" if any(s.get("translation") for s in seg_dicts) else "text"
-        srt_path = os.path.join(out_dir, f"{base}.srt")
-        with open(srt_path, "w", encoding="utf-8") as f:
-            f.write(to_srt(seg_dicts, text_key))
-        output_files["srt"] = srt_path
-        txt_path = os.path.join(out_dir, f"{base}.txt")
-        lines = []
-        for s in seg_dicts:
-            line = s.get("translation") or s.get("text") or ""
-            if line:
-                lines.append(line)
-        with open(txt_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
-        output_files["txt"] = txt_path
-        artifact_path = txt_path
-        _prime_artifact_threadlocals(brain, synth_session)
-        for p in output_files.values():
-            try:
-                brain._after_file_write(p, "created", agent_id)
-            except Exception:
-                pass
-    except Exception:
-        # Failing to write the artifact files shouldn't drop the history row.
-        pass
+        # Write SRT + TXT into the agent's artifact folder so the live recording
+        # can be downloaded later from history (matches the doc/media behaviour).
+        output_files: dict = {}
+        artifact_path = ""
+        try:
+            import brain
+            from server_lib.translate import to_srt, to_vtt
+            agent_id = getattr(sess, "agent_id", "") or "main"
+            synth_session = f"tr{_uuid.uuid4().hex[:14]}"
+            folder = f"{_dt.now().strftime('%Y-%m-%d')}_{synth_session[:8]}"
+            out_dir = os.path.join(brain.AGENTS_DIR, agent_id, "artifacts", folder)
+            os.makedirs(out_dir, exist_ok=True)
+            base = f"live-mic-{_dt.now().strftime('%Y%m%d-%H%M%S')}"
+            text_key = "translation" if any(s.get("translation") for s in seg_dicts) else "text"
+            srt_path = os.path.join(out_dir, f"{base}.srt")
+            with open(srt_path, "w", encoding="utf-8") as f:
+                f.write(to_srt(seg_dicts, text_key))
+            output_files["srt"] = srt_path
+            txt_path = os.path.join(out_dir, f"{base}.txt")
+            lines = []
+            for s in seg_dicts:
+                line = s.get("translation") or s.get("text") or ""
+                if line:
+                    lines.append(line)
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+            output_files["txt"] = txt_path
+            artifact_path = txt_path
+            _prime_artifact_threadlocals(brain, synth_session)
+            for p in output_files.values():
+                try:
+                    brain._after_file_write(p, "created", agent_id)
+                except Exception:
+                    pass
+        except Exception:
+            # Failing to write the artifact files shouldn't drop the history row.
+            pass
 
-    TranslateHistoryDB.add(
-        entry_id=_uuid.uuid4().hex,
-        user_id=user_id,
-        type="live",
-        title=title,
-        source_lang=getattr(sess, "source_lang", "") or "",
-        target_lang=getattr(sess, "target_lang", "") or "",
-        result_json=json.dumps({
-            "segments": seg_dicts,
-            "output_files": {k: os.path.basename(v) for k, v in output_files.items()},
-            "output_files_paths": output_files,
-        }, ensure_ascii=False),
-        artifact_path=artifact_path,
-    )
+        TranslateHistoryDB.add(
+            entry_id=_uuid.uuid4().hex,
+            user_id=user_id,
+            type="live",
+            title=title,
+            source_lang=getattr(sess, "source_lang", "") or "",
+            target_lang=getattr(sess, "target_lang", "") or "",
+            result_json=json.dumps({
+                "segments": seg_dicts,
+                "output_files": {k: os.path.basename(v) for k, v in output_files.items()},
+                "output_files_paths": output_files,
+            }, ensure_ascii=False),
+            artifact_path=artifact_path,
+        )
