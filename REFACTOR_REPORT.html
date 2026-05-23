@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 08:59 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:02 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -41,7 +41,7 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <h3>A. <code>brain.py</code> (25,182 LOC) — domains to extract</h3>
 <table><thead><tr><th>Domain</th><th>Source (brain.py)</th><th>→ Target module</th><th>Phase</th><th>Status</th><th>Note</th></tr></thead><tbody>
 <tr><td>Workflow engine (lexer→AST→interpreter)</td><td>12,486–13,443</td><td><code>engine/workflow.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>094ec90</code>; 977-line new module. Orchestration layer (WorkflowEngine/Execution) stays in brain (runtime-entangled), reaches engine via alias</td></tr>
-<tr><td>Code structure graph (tree-sitter, code-graph.db)</td><td>~17,779–18,952</td><td><code>engine/code_graph.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>owns its DB pool</td></tr>
+<tr><td>Code structure graph (tree-sitter, code-graph.db)</td><td>16,761–17,931</td><td><code>engine/code_graph.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>3aa1cf2</code>; 1205-line new module, owns its DB pool (verified not shared); 4-site tool reg verified</td></tr>
 <tr><td>Git / GitHub tools</td><td>18,978 / 19,176</td><td><code>engine/tools/git_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>subprocess wrappers; keep 4-edit-site registration in brain.py</td></tr>
 <tr><td>Gmail tools</td><td>~4,916–5,200</td><td><code>engine/tools/gmail_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>API-client tools</td></tr>
 <tr><td>Trace manager + audit trail</td><td>~16,365–16,762</td><td><code>server_lib/trace_audit.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>owns traces/audit DB pools</td></tr>
@@ -97,9 +97,9 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <blockquote><strong>Coverage promise:</strong> every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.</blockquote>
 <h3>Running totals</h3>
 <ul>
-<li>Extractions completed: <strong>2</strong> (D2, A1)</li>
-<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 23,982_ (−1,200)</li>
-<li>Net new modules created: <strong>1</strong> (<code>engine/workflow.py</code>; D2 merged into existing engine/classification.py)</li>
+<li>Extractions completed: <strong>3</strong> (D2, A1, A2)</li>
+<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 22,829_ (−2,353)</li>
+<li>Net new modules created: <strong>2</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>; D2 merged into existing engine/classification.py)</li>
 <li>Live duplicate definitions (brain.py ∩ engine/): <strong>0</strong> — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean</li>
 </ul>
 <hr>
@@ -122,6 +122,19 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 </ul>
 <p>```</p>
 <hr>
+<h3>3 A2 code-structure graph — DONE</h3>
+<ul>
+<li><strong>Commit:</strong> <code>3aa1cf2</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (Tier A pure win)</li>
+<li><strong>Symbol(s):</strong> <code>CodeGraph</code> (+ <code>_code_graph</code>), <code>CODE_GRAPH_DB</code>, <code>_code_graph_db_pool</code>, <code>_code_graph_conn</code>, <code>_code_graph_init_db</code>, <code>_EXT_TO_LANG</code>/<code>_DEFAULT_EXCLUDE_DIRS</code>/<code>_CLASS_TYPES</code>/<code>_FUNCTION_TYPES</code>/<code>_IMPORT_TYPES</code>/<code>_CALL_TYPES</code>, <code>_extract_node_name</code>/<code>_extract_call_name</code>/<code>_extract_import_name</code>/<code>_is_test_function</code>, <code>_get_code_graph</code>, <code>_maybe_update_code_graph</code>, <code>tool_code_graph_build</code>/<code>query</code>/<code>impact</code>/<code>enhance</code></li>
+<li><strong>Moved FROM:</strong> brain.py:16761–17931 (tree-sitter AST + code-graph.db subsystem)</li>
+<li><strong>Moved TO:</strong> engine/code_graph.py (1205 lines, NEW module)</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2 grep shows no <code>def</code>/<code>class</code> of <code>CodeGraph</code> or <code>_maybe_update_code_graph</code> in brain.py; single <code>from engine.code_graph import (...)</code> alias block.</li>
+<li><strong>Callers re-pointed:</strong> 0 external repoints — TOOL_DISPATCH ×4 + <code>_after_file_write</code>'s <code>_maybe_update_code_graph(path)</code> all resolve through the alias (identity-checked <code>brain.X is cg.X</code>).</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 clean · Gate 5 80 pass / 3 fail (only known NER-env) · verdict PASS</li>
+<li><strong>Characterization test added?</strong> n/a (Tier A, self-contained; owns its own DB)</li>
+<li><strong>brain.py delta:</strong> 23,982 → 22,829 lines (−1,153)</li>
+<li><strong>Notes:</strong> Owns its <code>_code_graph_db_pool</code> (threading.local) — grep-verified NOT shared with any other subsystem, moved with the module. <code>_after_file_write</code> (general write hook: artifacts + code-graph + more) STAYED in brain.py, calls into engine via alias. <strong>4-site tool-registration rule verified</strong> (the v8.27.0 image_gen bug class): DEFINITIONS/GROUPS/DISPATCH entries stay in brain.py and resolve to the moved <code>tool_*</code> fns. tree-sitter import kept lazy/optional (not promoted to mandatory). No import cycle (sole brain-runtime touch was already a lazy <code>from handlers import sidecar_proxy</code>).</li>
+</ul>
 <h3>2 A1 workflow engine — DONE</h3>
 <ul>
 <li><strong>Commit:</strong> <code>094ec90</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (Tier A pure win)</li>

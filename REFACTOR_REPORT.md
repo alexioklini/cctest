@@ -36,7 +36,7 @@ Every functional domain the full refactor touches is listed here from day one �
 | Domain | Source (brain.py) | → Target module | Phase | Status | Note |
 |---|---|---|---|---|---|
 | Workflow engine (lexer→AST→interpreter) | 12,486–13,443 | `engine/workflow.py` | 1 (Tier A) | ✅ done | commit `094ec90`; 977-line new module. Orchestration layer (WorkflowEngine/Execution) stays in brain (runtime-entangled), reaches engine via alias |
-| Code structure graph (tree-sitter, code-graph.db) | ~17,779–18,952 | `engine/code_graph.py` | 1 (Tier A) | ⬜ planned | owns its DB pool |
+| Code structure graph (tree-sitter, code-graph.db) | 16,761–17,931 | `engine/code_graph.py` | 1 (Tier A) | ✅ done | commit `3aa1cf2`; 1205-line new module, owns its DB pool (verified not shared); 4-site tool reg verified |
 | Git / GitHub tools | 18,978 / 19,176 | `engine/tools/git_tools.py` | 1 (Tier A) | ⬜ planned | subprocess wrappers; keep 4-edit-site registration in brain.py |
 | Gmail tools | ~4,916–5,200 | `engine/tools/gmail_tools.py` | 1 (Tier A) | ⬜ planned | API-client tools |
 | Trace manager + audit trail | ~16,365–16,762 | `server_lib/trace_audit.py` | 1 (Tier A) | ⬜ planned | owns traces/audit DB pools |
@@ -98,9 +98,9 @@ Every functional domain the full refactor touches is listed here from day one �
 > **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.
 
 ### Running totals
-- Extractions completed: **2** (D2, A1)
-- `brain.py` line count: **25,182** (baseline) → _current: 23,982_ (−1,200)
-- Net new modules created: **1** (`engine/workflow.py`; D2 merged into existing engine/classification.py)
+- Extractions completed: **3** (D2, A1, A2)
+- `brain.py` line count: **25,182** (baseline) → _current: 22,829_ (−2,353)
+- Net new modules created: **2** (`engine/workflow.py`, `engine/code_graph.py`; D2 merged into existing engine/classification.py)
 - Live duplicate definitions (brain.py ∩ engine/): **0** — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean
 
 ---
@@ -125,6 +125,18 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 3 A2 code-structure graph — DONE
+- **Commit:** `3aa1cf2`  ·  **Date:** 2026-05-23  ·  **Phase:** 1 (Tier A pure win)
+- **Symbol(s):** `CodeGraph` (+ `_code_graph`), `CODE_GRAPH_DB`, `_code_graph_db_pool`, `_code_graph_conn`, `_code_graph_init_db`, `_EXT_TO_LANG`/`_DEFAULT_EXCLUDE_DIRS`/`_CLASS_TYPES`/`_FUNCTION_TYPES`/`_IMPORT_TYPES`/`_CALL_TYPES`, `_extract_node_name`/`_extract_call_name`/`_extract_import_name`/`_is_test_function`, `_get_code_graph`, `_maybe_update_code_graph`, `tool_code_graph_build`/`query`/`impact`/`enhance`
+- **Moved FROM:** brain.py:16761–17931 (tree-sitter AST + code-graph.db subsystem)
+- **Moved TO:** engine/code_graph.py (1205 lines, NEW module)
+- **Old code deleted?** YES — Gate-2 grep shows no `def`/`class` of `CodeGraph` or `_maybe_update_code_graph` in brain.py; single `from engine.code_graph import (...)` alias block.
+- **Callers re-pointed:** 0 external repoints — TOOL_DISPATCH ×4 + `_after_file_write`'s `_maybe_update_code_graph(path)` all resolve through the alias (identity-checked `brain.X is cg.X`).
+- **Tests:** Gate 4 imports 18/18 clean · Gate 5 80 pass / 3 fail (only known NER-env) · verdict PASS
+- **Characterization test added?** n/a (Tier A, self-contained; owns its own DB)
+- **brain.py delta:** 23,982 → 22,829 lines (−1,153)
+- **Notes:** Owns its `_code_graph_db_pool` (threading.local) — grep-verified NOT shared with any other subsystem, moved with the module. `_after_file_write` (general write hook: artifacts + code-graph + more) STAYED in brain.py, calls into engine via alias. **4-site tool-registration rule verified** (the v8.27.0 image_gen bug class): DEFINITIONS/GROUPS/DISPATCH entries stay in brain.py and resolve to the moved `tool_*` fns. tree-sitter import kept lazy/optional (not promoted to mandatory). No import cycle (sole brain-runtime touch was already a lazy `from handlers import sidecar_proxy`).
 
 ### 2 A1 workflow engine — DONE
 - **Commit:** `094ec90`  ·  **Date:** 2026-05-23  ·  **Phase:** 1 (Tier A pure win)
