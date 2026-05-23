@@ -18,11 +18,11 @@ pushed on every update via `./refactor_publish.sh "<msg>" JS_REFACTOR_REPORT.md`
 | 1 | Cross-cutting de-dup — **verified and REJECTED** (all candidates net-negative; see below) | ✅ DONE (no-op + recorded) |
 | 2 | Split `settings.js` (6,140 → **7 files**, all <2k) | ✅ DONE |
 | 3 | Split `panels.js` (5,819 → **6 files**, all <2k) | ✅ DONE |
-| 4 | Split `chat.js` (4,013 → ~4 files) + REVIEW init.js / translation.js | ⬜ planned |
-| 5 | Final source-validation (mandatory close-out) | ⬜ planned |
+| 4 | Split `chat.js` (4,013 → 4 files) + REVIEW init.js (→3) / translation.js (→2) | ✅ DONE |
+| 5 | Final source-validation (mandatory close-out) | 🔄 next |
 
-**RESUME POINT:** Phases 0–3 complete (gate green, baseline net-globals = **901**). Next:
-**Phase 4 (split chat.js + REVIEW init.js / translation.js)**.
+**RESUME POINT:** Phases 0–4 complete (gate green, baseline net-globals = **901**; ALL files <2k).
+Next: **Phase 5 (final source-validation)** — then HARD STOP for user review.
 
 ### Phase 1 decision — de-dup verified and REJECTED (user-approved 2026-05-23)
 
@@ -87,9 +87,9 @@ can't mask a regression. The list may shrink, never grow.
 |---|---|---|---|---|
 | `settings.js` | 6,140 | SPLIT (Phase 2) | ✅ | DELETED → settings_teams (55) / settings_general (589) / settings_general_tabs (1,988, NEW — switchGeneralTab tab-bodies) / settings_tools (771) / settings_agent (1,539) / settings_hooks (110) / settings_schedule (1,109). All <2k. |
 | `panels.js` | 5,819 | SPLIT (Phase 3) | ✅ | DELETED → panels_gdpr (818) / panels_chats (376) / panels_projects (1,324) / panels_project_sync (1,010, sub-split from projects) / panels_right (846) / panels_artifacts (1,452). All <2k. Trailing top-level `click` listener (deferred) kept with sync group. |
-| `chat.js` | 4,013 | SPLIT (Phase 4) | ⬜ | → chat_send / _render / _nav / _tools |
-| `init.js` | 2,899 | REVIEW (Phase 4) | ⬜ | Bootstrap + monitors. Over 2k — split out monitor classes if cohesive, else document why it stays whole (load-time init sequencing). Decision recorded at Phase 4. |
-| `translation.js` | 2,389 | REVIEW | ⬜ | Over 2k but a single cohesive domain. Split only if it holds clear sub-domains; else stays. Decision to be recorded. |
+| `chat.js` | 4,013 | SPLIT (Phase 4) | ✅ | DELETED → chat_render (1,383) / chat_nav (266) / chat_tools (680) / chat_send (1,615). All <2k. |
+| `init.js` | 2,899 | REVIEW → **SPLIT** | ✅ | **Decision: SPLIT.** Monitor-only split left it at ~2,187 (>2k), so also lifted the cohesive admin-user/settings domain. Reduced to **1,209** (bootstrap/auth/composer/toggles stay — load-order-sensitive). → user_admin (949) + monitors (745). |
+| `translation.js` | 2,389 | REVIEW → **SPLIT** | ✅ | **Decision: SPLIT.** The live-mic domain (recording/VAD/WAV/live-SSE) is operationally independent (record-on-demand, only shares trState/trAuthHeaders). Lifted to translation_live (624); translation.js → **1,766** (text/glossary/document/media + history stay). |
 | `workflows.js` | 1,897 | stays | 🚫 | Under 2k, single cohesive domain. De-dup only (Phase 1 helpers). |
 | `nav.js` | 1,351 | stays | 🚫 | Cohesive navigation domain, under 2k. |
 | `utils.js` | 1,154 | DEDUP TARGET | 🚫 | Phase 1 de-dup verified+rejected — no helpers extracted (existing `showDialog`/`esc`/etc. already centralised). Stays as-is. |
@@ -102,7 +102,11 @@ can't mask a regression. The list may shrink, never grow.
 | `share.js` | 305 | stays | 🚫 | Cohesive, under 2k. |
 | `state.js` | 94 | stays | 🚫 | Pure data, loads 2nd. Never split. |
 | `search.js` | 55 | stays | 🚫 | Tiny. |
-| `dom_helpers.js` (NEW) | 0 | DEFERRED | ⬜ | Created only if a shared helper emerges during the splits; F-U1/F-U2 were rejected, so not created yet. |
+| `dom_helpers.js` (NEW) | 0 | DEFERRED → NOT CREATED | 🚫 | No genuinely-shared helper emerged during the splits (F-U1/F-U2 rejected). Not created. |
+
+**New files created by the splits (all <2k):** `settings_general_tabs.js` (1,988), `panels_project_sync.js`
+(1,010), `panels_artifacts.js` (1,452), `user_admin.js` (949), `monitors.js` (745), `translation_live.js`
+(624) — plus the per-domain settings_*/panels_*/chat_* files listed in their parent rows above.
 
 **Total Tier F scope = 29,193 LOC across 17 files.** Coverage promise: every file above appears
 with a disposition + size — nothing silently out of scope.
@@ -151,3 +155,26 @@ with a disposition + size — nothing silently out of scope.
 - Subagent hit + recovered from a block-comment-boundary corruption (smoke fail surfaced it →
   git restore → redo with block-comment tracking; final files pass `node --check` + full gate).
 - Verified independently: no duplicate fn name across the 6 files. **Gate green, smoke 5/5.**
+
+### Phase 4 — `chat.js` split + init.js / translation.js REVIEW (all files now <2k)
+- **chat.js** (4,013) DELETED → chat_render (1,383) / chat_nav (266) / chat_tools (680) /
+  chat_send (1,615). 88 defs relocated, no dupes, each `node --check` clean. The pre-existing
+  `spinnerBar` latent block-scope finding relocated with its code (chat.js→chat_send.js); baseline
+  entry re-pointed (not fixed — Rule 3). Net-globals 901 unchanged.
+- **init.js REVIEW → SPLIT.** Plan said "split out monitors if cohesive, else document staying
+  whole." Monitor-only extraction left init.js at ~2,187 (>2k → fails the no-file-over-2k criterion),
+  so the split was extended to also lift the cohesive **admin-user/settings** domain (not bootstrap-
+  coupled). init.js 2,899 → **1,209** (theme/thinking/composer/auth/research/caveman/slash/
+  `init`/`renderPromptCards`/`applyRoleVisibility` stay — these run during the load-time bootstrap).
+  → `user_admin.js` (949), `monitors.js` (745). Both load BEFORE init.js so their globals exist when
+  `init()` runs. Net-globals unchanged.
+- **translation.js REVIEW → SPLIT.** Single cohesive UI, but the live-mic domain (recording, VAD,
+  WAV encode, live SSE, live-segment render — 20 defs) is operationally independent (record-on-demand,
+  only reads shared `trState`/`trAuthHeaders`). Lifted to `translation_live.js` (624); translation.js
+  2,389 → **1,766** (text/glossary/document/media + shared history stay). Loads after translation.js.
+- **Pre-existing cross-file duplicate noted (NOT introduced, NOT fixed):** `escapeHtml` is defined in
+  BOTH `favourites.js` and `workflows.js` — confirmed present before Tier F (git HEAD~5), both are
+  "stays" files I never touched. ESLint `no-redeclare` is per-file so it doesn't flag cross-file dups;
+  the net-globals count (`sort -u`) counts it once, so the invariant is unaffected. Out of scope
+  (Rule 3). Flagged here for the Phase 5 cross-file-dup grep.
+- **All files now <2,000 LOC.** Gate green, smoke 5/5.
