@@ -37,8 +37,8 @@ Every functional domain the full refactor touches is listed here from day one �
 |---|---|---|---|---|---|
 | Workflow engine (lexer→AST→interpreter) | 12,486–13,443 | `engine/workflow.py` | 1 (Tier A) | ✅ done | commit `094ec90`; 977-line new module. Orchestration layer (WorkflowEngine/Execution) stays in brain (runtime-entangled), reaches engine via alias |
 | Code structure graph (tree-sitter, code-graph.db) | 16,761–17,931 | `engine/code_graph.py` | 1 (Tier A) | ✅ done | commit `3aa1cf2`; 1205-line new module, owns its DB pool (verified not shared); 4-site tool reg verified |
-| Git / GitHub tools | 18,978 / 19,176 | `engine/tools/git_tools.py` | 1 (Tier A) | ⬜ planned | subprocess wrappers; keep 4-edit-site registration in brain.py |
-| Gmail tools | ~4,916–5,200 | `engine/tools/gmail_tools.py` | 1 (Tier A) | ⬜ planned | API-client tools |
+| Git / GitHub tools | 16,783–17,165 | `engine/tools/git_tools.py` | 1 (Tier A) | ✅ done | commit `3563081`; 4-site reg verified, dispatch-identity True/True |
+| Gmail tools | 4,770–5,086 | `engine/tools/gmail_tools.py` | 1 (Tier A) | ✅ done | commit `f8f3a1e`; 5 tools, 4-site reg verified, all dispatch-identity True |
 | Trace manager + audit trail | ~16,365–16,762 | `server_lib/trace_audit.py` | 1 (Tier A) | ⬜ planned | owns traces/audit DB pools |
 | `_thread_local` + execution context | ~11,257+ | `engine/context.py` | 2 (B1) | ⬜ planned | **relocate only**, NOT DI; prerequisite for B2–B4 |
 | Scheduler + task runner | ~14,000–15,641 | `engine/scheduler.py` | 3 (B2) | ⬜ planned | ⚠️ characterization test first; coupled to `_thread_local` |
@@ -98,9 +98,9 @@ Every functional domain the full refactor touches is listed here from day one �
 > **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.
 
 ### Running totals
-- Extractions completed: **3** (D2, A1, A2)
-- `brain.py` line count: **25,182** (baseline) → _current: 22,829_ (−2,353)
-- Net new modules created: **2** (`engine/workflow.py`, `engine/code_graph.py`; D2 merged into existing engine/classification.py)
+- Extractions completed: **5** (D2, A1, A2, A3, A4)
+- `brain.py` line count: **25,182** (baseline) → _current: 22,144_ (−3,038)
+- Net new modules created: **4** (`engine/workflow.py`, `engine/code_graph.py`, `engine/tools/git_tools.py`, `engine/tools/gmail_tools.py`; D2 merged into existing engine/classification.py)
 - Live duplicate definitions (brain.py ∩ engine/): **0** — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean
 
 ---
@@ -125,6 +125,30 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 5 A4 gmail tools — DONE
+- **Commit:** `f8f3a1e`  ·  **Date:** 2026-05-23  ·  **Phase:** 1 (Tier A pure win)
+- **Symbol(s):** `tool_gmail_inbox`/`read`/`search`/`send`/`reply` + helpers `_gmail_config`, `_decode_mime_header`, `_get_email_body`
+- **Moved FROM:** brain.py:4770–5086 (Gmail Tools block)
+- **Moved TO:** engine/tools/gmail_tools.py (336 lines, NEW)
+- **Old code deleted?** YES — Gate-2 grep: no `def tool_gmail_*` in brain.py; alias re-export + dispatch refs only.
+- **Callers re-pointed:** `_gmail_config` (integration-status helper) resolves via re-export; all 5 dispatch entries via alias.
+- **Tests:** Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS
+- **Characterization test added?** n/a (Tier A)
+- **brain.py delta:** 22,448 → 22,144 (−304)
+- **Notes:** 4-edit-site rule verified for ALL 5 tools (DEFINITIONS/GROUPS/DISPATCH stay; fn moves); dispatch-identity check all True. Matches git_tools.py pattern: local `_ok`/`_err`, brain runtime (`get_tool_config`/`AGENTS_DIR`/`_thread_local`) via lazy `import brain as _brain`. No config-loader duplication. No import cycle.
+
+### 4 A3 git/github tools — DONE
+- **Commit:** `3563081`  ·  **Date:** 2026-05-23  ·  **Phase:** 1 (Tier A pure win)
+- **Symbol(s):** `tool_git_command`, `tool_github_command` + git-specific helpers `_run_git`, `_run_gh`
+- **Moved FROM:** brain.py:16783–17165 (git/github subprocess-wrapper tools)
+- **Moved TO:** engine/tools/git_tools.py (401 lines, NEW; engine/tools/ already existed w/ image_gen.py)
+- **Old code deleted?** YES — Gate-2 grep: no `def tool_git_command`/`tool_github_command` in brain.py; alias + dispatch refs only.
+- **Callers re-pointed:** 0 external (helpers had no outside callers); 2 dispatch entries via alias.
+- **Tests:** Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS
+- **Characterization test added?** n/a (Tier A)
+- **brain.py delta:** 22,829 → 22,448 (−381)
+- **Notes:** 4-edit-site rule verified; dispatch-identity True/True. Trivial `_ok`/`_err` re-declared locally per image_gen pattern (no brain runtime state needed). No top-level `import brain`. First entries under the new `engine/tools/` package convention (image_gen.py predates this refactor).
 
 ### 3 A2 code-structure graph — DONE
 - **Commit:** `3aa1cf2`  ·  **Date:** 2026-05-23  ·  **Phase:** 1 (Tier A pure win)

@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:02 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:08 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -42,8 +42,8 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <table><thead><tr><th>Domain</th><th>Source (brain.py)</th><th>→ Target module</th><th>Phase</th><th>Status</th><th>Note</th></tr></thead><tbody>
 <tr><td>Workflow engine (lexer→AST→interpreter)</td><td>12,486–13,443</td><td><code>engine/workflow.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>094ec90</code>; 977-line new module. Orchestration layer (WorkflowEngine/Execution) stays in brain (runtime-entangled), reaches engine via alias</td></tr>
 <tr><td>Code structure graph (tree-sitter, code-graph.db)</td><td>16,761–17,931</td><td><code>engine/code_graph.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>3aa1cf2</code>; 1205-line new module, owns its DB pool (verified not shared); 4-site tool reg verified</td></tr>
-<tr><td>Git / GitHub tools</td><td>18,978 / 19,176</td><td><code>engine/tools/git_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>subprocess wrappers; keep 4-edit-site registration in brain.py</td></tr>
-<tr><td>Gmail tools</td><td>~4,916–5,200</td><td><code>engine/tools/gmail_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>API-client tools</td></tr>
+<tr><td>Git / GitHub tools</td><td>16,783–17,165</td><td><code>engine/tools/git_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>3563081</code>; 4-site reg verified, dispatch-identity True/True</td></tr>
+<tr><td>Gmail tools</td><td>4,770–5,086</td><td><code>engine/tools/gmail_tools.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>f8f3a1e</code>; 5 tools, 4-site reg verified, all dispatch-identity True</td></tr>
 <tr><td>Trace manager + audit trail</td><td>~16,365–16,762</td><td><code>server_lib/trace_audit.py</code></td><td>1 (Tier A)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>owns traces/audit DB pools</td></tr>
 <tr><td><code>_thread_local</code> + execution context</td><td>~11,257+</td><td><code>engine/context.py</code></td><td>2 (B1)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td><strong>relocate only</strong>, NOT DI; prerequisite for B2–B4</td></tr>
 <tr><td>Scheduler + task runner</td><td>~14,000–15,641</td><td><code>engine/scheduler.py</code></td><td>3 (B2)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td><span class="badge warn" title="attention">⚠️</span> characterization test first; coupled to <code>_thread_local</code></td></tr>
@@ -97,9 +97,9 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <blockquote><strong>Coverage promise:</strong> every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.</blockquote>
 <h3>Running totals</h3>
 <ul>
-<li>Extractions completed: <strong>3</strong> (D2, A1, A2)</li>
-<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 22,829_ (−2,353)</li>
-<li>Net new modules created: <strong>2</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>; D2 merged into existing engine/classification.py)</li>
+<li>Extractions completed: <strong>5</strong> (D2, A1, A2, A3, A4)</li>
+<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 22,144_ (−3,038)</li>
+<li>Net new modules created: <strong>4</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>, <code>engine/tools/git_tools.py</code>, <code>engine/tools/gmail_tools.py</code>; D2 merged into existing engine/classification.py)</li>
 <li>Live duplicate definitions (brain.py ∩ engine/): <strong>0</strong> — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean</li>
 </ul>
 <hr>
@@ -122,6 +122,32 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 </ul>
 <p>```</p>
 <hr>
+<h3>5 A4 gmail tools — DONE</h3>
+<ul>
+<li><strong>Commit:</strong> <code>f8f3a1e</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (Tier A pure win)</li>
+<li><strong>Symbol(s):</strong> <code>tool_gmail_inbox</code>/<code>read</code>/<code>search</code>/<code>send</code>/<code>reply</code> + helpers <code>_gmail_config</code>, <code>_decode_mime_header</code>, <code>_get_email_body</code></li>
+<li><strong>Moved FROM:</strong> brain.py:4770–5086 (Gmail Tools block)</li>
+<li><strong>Moved TO:</strong> engine/tools/gmail_tools.py (336 lines, NEW)</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2 grep: no <code>def tool_gmail_*</code> in brain.py; alias re-export + dispatch refs only.</li>
+<li><strong>Callers re-pointed:</strong> <code>_gmail_config</code> (integration-status helper) resolves via re-export; all 5 dispatch entries via alias.</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS</li>
+<li><strong>Characterization test added?</strong> n/a (Tier A)</li>
+<li><strong>brain.py delta:</strong> 22,448 → 22,144 (−304)</li>
+<li><strong>Notes:</strong> 4-edit-site rule verified for ALL 5 tools (DEFINITIONS/GROUPS/DISPATCH stay; fn moves); dispatch-identity check all True. Matches git_tools.py pattern: local <code>_ok</code>/<code>_err</code>, brain runtime (<code>get_tool_config</code>/<code>AGENTS_DIR</code>/<code>_thread_local</code>) via lazy <code>import brain as _brain</code>. No config-loader duplication. No import cycle.</li>
+</ul>
+<h3>4 A3 git/github tools — DONE</h3>
+<ul>
+<li><strong>Commit:</strong> <code>3563081</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (Tier A pure win)</li>
+<li><strong>Symbol(s):</strong> <code>tool_git_command</code>, <code>tool_github_command</code> + git-specific helpers <code>_run_git</code>, <code>_run_gh</code></li>
+<li><strong>Moved FROM:</strong> brain.py:16783–17165 (git/github subprocess-wrapper tools)</li>
+<li><strong>Moved TO:</strong> engine/tools/git_tools.py (401 lines, NEW; engine/tools/ already existed w/ image_gen.py)</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2 grep: no <code>def tool_git_command</code>/<code>tool_github_command</code> in brain.py; alias + dispatch refs only.</li>
+<li><strong>Callers re-pointed:</strong> 0 external (helpers had no outside callers); 2 dispatch entries via alias.</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS</li>
+<li><strong>Characterization test added?</strong> n/a (Tier A)</li>
+<li><strong>brain.py delta:</strong> 22,829 → 22,448 (−381)</li>
+<li><strong>Notes:</strong> 4-edit-site rule verified; dispatch-identity True/True. Trivial <code>_ok</code>/<code>_err</code> re-declared locally per image_gen pattern (no brain runtime state needed). No top-level <code>import brain</code>. First entries under the new <code>engine/tools/</code> package convention (image_gen.py predates this refactor).</li>
+</ul>
 <h3>3 A2 code-structure graph — DONE</h3>
 <ul>
 <li><strong>Commit:</strong> <code>3aa1cf2</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (Tier A pure win)</li>
