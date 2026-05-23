@@ -540,3 +540,298 @@ def detect_with_pii(text: str,
                     result["content_signals"]["keyword_hits"],
                 )
     return result
+
+
+# ── Phase B enforcement glue ──────────────────────────────────────────────
+# These three functions are the runtime enforcement layer that sits next to
+# the pure detector above. They reach back into brain.py's namespace lazily
+# (brain IS the live `engine` alias — `import brain as engine`), so the
+# config helpers (`_get_classification_config`, `_classification_scan_text`,
+# `_classification_action_level`), the runtime globals (`_thread_local`,
+# `_current_agent`, `_audit_log`, `_models_config`), `is_model_local`,
+# `_identity_deanon`, and `ClassificationBlockedError` are all read fresh
+# off the brain module on each call. The lazy import keeps this module's
+# top-level free of any brain dependency (one-way DAG).
+
+
+def _classification_effective_action(level: str, cfg: dict | None = None) -> str:
+    """Resolve per-level action with strict-always-block invariant.
+
+    Returns: 'ignore' | 'warn' | 'force_local' | 'block'
+
+    Invariants:
+    - strict ALWAYS resolves to 'block' regardless of admin config (ARL §1.11
+      "ohne Zustimmung des Vorstands ausnahmslos untersagt").
+    - When server_block is OFF, 'block' downgrades to 'force_local' so the
+      master switch behaves like gdpr_scanner.server_block.
+    """
+    import brain as _brain
+    if cfg is None:
+        cfg = _brain._get_classification_config()
+    if not cfg.get("enabled", True):
+        return "ignore"
+    if level == "strict":
+        return "block" if cfg.get("server_block", True) else "force_local"
+    actions = cfg.get("per_level_action", {}) or {}
+    action = actions.get(level, "ignore")
+    if action == "block" and not cfg.get("server_block", True):
+        action = "force_local"
+    return action
+
+
+def _classification_gate_tool_text(text: str, source: str) -> None:
+    """Classification gate for tool-read content. Raises
+    ClassificationBlockedError when the current chat's model is non-local
+    AND the detected classification level resolves to a `block` action
+    (strict, or confidential with `server_block` on and no usable local
+    fallback). Force_local is left to the chat worker's pre-flight — by
+    the time we reach this seam the model is locked, so the only options
+    here are pass-through (warn) or hard-block.
+
+    No-op when scanner disabled, content unclassified, or model is local.
+    Never raises on its own internal errors — fail-open.
+    """
+    import brain as _brain
+    if not text:
+        return
+    try:
+        cfg = _brain._get_classification_config()
+        if not cfg.get("enabled", True):
+            return
+        # Resolve current model — sidecar tool dispatch sets current_session_id
+        # in thread-locals; we look up the session model from there.
+        sid = getattr(_brain._thread_local, "current_session_id", "") or ""
+        model = ""
+        if sid:
+            try:
+                from server_lib.db import ChatDB as _ChatDB
+                info = _ChatDB.get_session_info(sid)
+                model = (info or {}).get("model") or ""
+            except Exception:
+                model = ""
+        if not model:
+            return
+        try:
+            if _brain.is_model_local(model):
+                return
+        except Exception:
+            return
+        # Derive a filename hint from `source` (e.g. "file:report.pdf" → "report.pdf")
+        fn_hint = ""
+        if isinstance(source, str) and ":" in source:
+            fn_hint = source.split(":", 1)[1]
+        result = _brain._classification_scan_text(text, filename=fn_hint)
+        if not result:
+            return
+        # Action level = max(marker, heuristic). The audit log still gets
+        # the raw final_level for context but the gate decision follows
+        # the higher of the two signals.
+        level = _brain._classification_action_level(result)
+        action = _classification_effective_action(level, cfg=cfg)
+        if action != "block":
+            return
+        # Audit + raise
+        _agent = getattr(_brain._thread_local, "current_agent", None) or _brain._current_agent
+        _agent_id = _agent.agent_id if _agent else "main"
+        if cfg.get("server_log", True) and _brain._audit_log:
+            try:
+                _brain._audit_log.log_action(
+                    agent=_agent_id,
+                    action_type="classification_blocked",
+                    tool_name="classification_scanner",
+                    args_summary=f"source={source} level={level}",
+                    result_summary=f"model={model} reason=tool_read policy=block",
+                    result_status="blocked",
+                    session_id=sid or None,
+                    source="tool",
+                )
+            except Exception:
+                pass
+        raise _brain.ClassificationBlockedError(
+            f"[Classification block] Refusing to return '{level}' content "
+            f"to a non-local model (source={source}). "
+            f"Switch to a local model to access this document."
+        )
+    except _brain.ClassificationBlockedError:
+        raise  # re-raise — caller turns into a tool error
+    except Exception as e:
+        try:
+            print(f"[classification] gate error (fail-open): {e}", flush=True)
+        except Exception:
+            pass
+        return
+
+
+def classification_pick_model_for_background(model: str, texts,
+                                               purpose: str = "",
+                                               filenames: list[str] | None = None):
+    """Decide model for a background call based on classification detection.
+
+    Parallels gdpr_pick_model_for_background but with a different policy
+    shape: per-level action (`ignore` / `warn` / `force_local` / `block`)
+    instead of GDPR's anonymise/swap/abort. There is NO anonymise path
+    for classified content — anonymisation strips PII, not classification
+    markers, so it doesn't change the legal status of the document.
+
+    Returns: (model, texts, deanon_fn).
+      * `deanon_fn` is always `_identity_deanon` — kept for signature
+        compatibility with the GDPR helper so callers can pipe both
+        through the same scaffolding.
+
+    Caller flow (mirror gdpr_pick_model_for_background usage):
+
+        try:
+            model, texts2, _ = engine.classification_pick_model_for_background(
+                model, texts, purpose='chat_summary')
+        except engine.ClassificationBlockedError:
+            return None  # skip background call
+
+    Note: classification scanning over multiple texts treats each as an
+    independent sample; the worst per-text level wins.
+    """
+    import brain as _brain
+    _identity_deanon = _brain._identity_deanon
+    if isinstance(texts, str):
+        samples = [texts]
+        _input_was_str = True
+    else:
+        try:
+            samples = [t if isinstance(t, str) else "" for t in texts]
+        except TypeError:
+            return (model, [], _identity_deanon)
+        _input_was_str = False
+
+    cfg = _brain._get_classification_config()
+    if not cfg.get("enabled", True) or not any(samples):
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
+
+    filenames = list(filenames or [])
+    while len(filenames) < len(samples):
+        filenames.append("")
+
+    # Scan each sample, pick the worst level
+    worst_rank = -1
+    worst_level = None
+    worst_evidence: list[dict] = []
+    for s, fn in zip(samples, filenames):
+        if not s:
+            continue
+        try:
+            r = _brain._classification_scan_text(s, filename=fn)
+        except Exception:
+            continue
+        if not r:
+            continue
+        # Action level follows the higher of marker and content
+        # heuristic, so a public-marked PDF with confidential content
+        # gets the confidential policy here too.
+        lvl = _brain._classification_action_level(r)
+        rank = LEVEL_RANK.get(lvl, -1) if lvl != "unmarked" else 0  # unmarked acts as 'internal'
+        if rank > worst_rank:
+            worst_rank = rank
+            worst_level = lvl
+            worst_evidence = r.get("marker_evidence", [])[:1]
+
+    if worst_level is None or worst_rank < 0:
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
+
+    action = _classification_effective_action(worst_level, cfg=cfg)
+    _agent = getattr(_brain._thread_local, "current_agent", None) or _brain._current_agent
+    _agent_id = _agent.agent_id if _agent else "main"
+    _sid = getattr(_brain._thread_local, "current_session_id", None) or ""
+    _log_audit = bool(cfg.get("server_log", True) and _brain._audit_log)
+
+    if _log_audit:
+        try:
+            _brain._audit_log.log_action(
+                agent=_agent_id,
+                action_type="classification_detected",
+                tool_name="classification_scanner",
+                args_summary=f"level={worst_level}",
+                result_summary=f"purpose={purpose or '-'} model={model} action={action}",
+                result_status="warning",
+                session_id=_sid or None,
+                source="background",
+            )
+        except Exception:
+            pass
+
+    # ignore / warn → pass through (no-op routing)
+    if action in ("ignore", "warn"):
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
+
+    # Already on a local model — nothing to reroute regardless of action.
+    try:
+        model_is_local = _brain.is_model_local(model)
+    except Exception:
+        model_is_local = False
+    if model_is_local:
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
+
+    # block → raise (after audit)
+    if action == "block":
+        if _log_audit:
+            try:
+                _brain._audit_log.log_action(
+                    agent=_agent_id,
+                    action_type="classification_blocked",
+                    tool_name="classification_scanner",
+                    args_summary=f"model={model} level={worst_level}",
+                    result_summary=f"purpose={purpose or '-'} policy=block",
+                    result_status="blocked",
+                    session_id=_sid or None,
+                    source="background",
+                )
+            except Exception:
+                pass
+        raise _brain.ClassificationBlockedError(
+            f"[Classification block] Background call refused (purpose={purpose or '-'}): "
+            f"content classified '{worst_level}'; policy=block."
+        )
+
+    # force_local → swap to fallback if usable, else block (NOT passthrough —
+    # for classified content we'd rather refuse than silently leak).
+    fallback = (cfg.get("default_local_fallback_model") or "").strip()
+    swap_ok = False
+    if fallback and fallback != model:
+        try:
+            fcfg = (_brain._models_config or {}).get(fallback) or {}
+            if fcfg.get("enabled") and _brain.is_model_local(fallback):
+                swap_ok = True
+        except Exception:
+            swap_ok = False
+    if swap_ok:
+        if _log_audit:
+            try:
+                _brain._audit_log.log_action(
+                    agent=_agent_id,
+                    action_type="classification_auto_fallback",
+                    tool_name="classification_scanner",
+                    args_summary=f"{model} -> {fallback} level={worst_level}",
+                    result_summary=f"purpose={purpose or '-'} policy=force_local",
+                    result_status="ok",
+                    session_id=_sid or None,
+                    source="background",
+                )
+            except Exception:
+                pass
+        return (fallback, samples if not _input_was_str else samples[0], _identity_deanon)
+    # No usable local fallback — block.
+    if _log_audit:
+        try:
+            _brain._audit_log.log_action(
+                agent=_agent_id,
+                action_type="classification_blocked",
+                tool_name="classification_scanner",
+                args_summary=f"model={model} level={worst_level} fallback={fallback or '-'}",
+                result_summary=f"purpose={purpose or '-'} policy=force_local reason=no_local_fallback",
+                result_status="blocked",
+                session_id=_sid or None,
+                source="background",
+            )
+        except Exception:
+            pass
+    raise _brain.ClassificationBlockedError(
+        f"[Classification block] No usable local fallback for '{worst_level}' "
+        f"content (purpose={purpose or '-'}): fallback='{fallback or '-'}'."
+    )
