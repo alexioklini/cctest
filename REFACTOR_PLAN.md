@@ -6,6 +6,8 @@
 
 > This is a **plan**, not executed work. Each item lists evidence, value, risk, and a verification gate. Nothing here changes behavior; every extraction is a move + re-export.
 
+> **Cross-checked against an external code analysis (2026-05-23).** Its findings were verified accurate and folded in. Decisions taken: (a) **test gap** — add characterization tests for the specific path before each risky extraction (see §0.5); (b) **thread-locals** — B1 relocates only, full dependency-injection is explicitly a *separate future initiative* (see B1 + §8); (c) **~29k-line JS frontend** — explicitly **out of scope** for this refactor, tracked as a future initiative (see §8).
+
 ---
 
 ## 0. Ground truth (verified)
@@ -35,6 +37,23 @@ These shared globals are the seams that bind `brain.py` together. Any extraction
 
 ---
 
+## 1.5. Characterization tests — prerequisite for risky extractions
+
+**The gap the external analysis caught:** the 1,923 test lines cover *only* the PII/pseudonymization/GDPR path. There are **zero tests** for tool execution, the chat worker loop, scheduler/task execution, session management, the sidecar protocol, or route handling. Our verification gate ("no new test failures") therefore **cannot detect a behavioral regression** in exactly the riskiest extractions (B2 scheduler, C2 tool-exec) — the gate would stay green while behavior silently changed. That is the precise failure mode that bit prior attempts.
+
+**Decision (user-approved 2026-05-23): add characterization tests narrowly, just-in-time.** Not a broad test-coverage project — *behavior-pinning* tests for **only the path about to be extracted**, written and committed **immediately before** that extraction, so the gate becomes trustworthy where it matters.
+
+| Before extracting | Add characterization tests pinning | Why |
+|---|---|---|
+| B2 scheduler | a fire of a scheduled task → produces the expected `schedule_history` row + synthetic session id + artifact scoping; `tool_profile` → purpose resolution | scheduler has zero tests; couples to `_thread_local` set per fire |
+| C2 tool-exec | tool dispatch round-trip (dedup guard, artifact-session folder write, result summarization/truncation) | core path, untested; artifact-session coupling is subtle |
+| C1 prompt/model (already eval-gated) | eval harness is the characterization here; **add** a byte-stable warmup-payload assertion | KV-prefix must not shift |
+| C3 mempalace-glue (already wing-isolation-gated) | a test asserting `project__*` never resolves for a cross-project caller | security-critical isolation |
+
+These tests are **part of the extraction's commit** (or the commit right before it) and become permanent regression coverage. Tier A extractions are self-contained enough that import-gate + existing tests suffice — no new tests required there.
+
+---
+
 ## 2. Extraction candidates — `brain.py` (the 25k monolith)
 
 Ordered by **value ÷ risk**. "Self-contained" = minimal `_thread_local` reliance; can move with a clean public surface.
@@ -53,7 +72,7 @@ Ordered by **value ÷ risk**. "Self-contained" = minimal `_thread_local` relianc
 
 | # | Domain | Approx. lines | Target module | Risk |
 |---|---|---|---|---|
-| B1 | **Extract `_thread_local` + execution context** into `engine/context.py` | ~200 (the definitions) | `engine/context.py` | *Prerequisite* for clean Tier-B/C extractions. Many call sites read `engine._thread_local.*` — re-export keeps them working, but this is the load-bearing change. Do before B2–B4. |
+| B1 | **Relocate `_thread_local` + execution context** into `engine/context.py` | ~200 (the definitions) | `engine/context.py` | *Prerequisite* for clean Tier-B/C extractions. Many call sites read `engine._thread_local.*` — re-export keeps them working, but this is the load-bearing change. Do before B2–B4. **Scope note:** this is a *relocation only* — it does NOT convert the implicit-thread-local-dependency pattern to explicit dependency-passing. The external analysis correctly flags that thread-locals hurt testability ("Never fall back to globals — concurrent requests bleed"); full DI conversion is its own multi-week effort, tracked as a future initiative in §8, not part of this refactor. |
 | B2 | **Scheduler + task runner** | ~1,640 | `engine/scheduler.py` | Tightly coupled to `_thread_local` (set per fire). Extract *after* B1. |
 | B3 | **GDPR/PII scanner** (`_pii_rules` 16771 ~563 lines, `_pii_scan_text`, `_pii_scan_bare_identifiers`) | ~900 | `engine/pii_scan.py` (merge with existing `engine/pii_ner.py`) | Currently `engine/pii_ner.py` holds *only* the NER loader; the regex tiers + orchestration still live in `brain.py`. **Completing this extraction also addresses the web/index.html sync problem** (see §4). |
 | B4 | **Quotas** (`QuotaManager`) + **cost tracking** (`CostTracker`) + **rate limiting** (`RateLimiter`) | ~600 | `engine/quotas.py`, `engine/cost.py` | Each owns a DB pool; called from chat round-0 gate. Medium coupling. |
@@ -100,8 +119,11 @@ Split into an `handlers/admin/` package (mixin umbrella in `__init__.py`):
 
 | Extract | Concern | ~lines | Keep in server.py |
 |---|---|---|---|
-| `server_daemons.py` | 7 background loops: mempalace miner/sync, project sync, user profile, warmup keeper | ~1,500 | HTTP dispatch (`BrainAgentHandler`, do_GET/POST/…) |
+| `server_daemons.py` | 7 background loops: mempalace miner/sync, project sync, user profile, warmup keeper | ~1,500 | HTTP dispatch (`BrainAgentHandler` at :982, do_GET/POST/…) |
 | `server_init.py` (optional) | config load, auth/scheduler/tracing setup | ~600 | `Session`/`SessionManager`/`LiveStream` classes (core abstraction, leave) |
+| `server_lib/mempalace_client.py` | `MemPalaceClient` singleton wrapper (server.py:69) — flagged by the external analysis | ~varies | — |
+
+> **Extraction wrinkle (verified 2026-05-23):** the 7 daemon loops are **nested functions inside `def main()`** (defined at lines ~3903–5716, all within `main()` starting at 3033), not free functions. Extracting them means lifting them to module scope in `server_daemons.py` and passing what they currently close over (config, server globals) as explicit args. This is more than a copy-paste move — budget for it. Invariant #5 (thread-locals set before sidecar calls) applies.
 
 ### `handlers/chat.py` (3,540 lines — 3 concerns)
 
@@ -172,3 +194,15 @@ Each phase ends with a **gate** before the next begins. Project rule (CLAUDE.md)
 - **C1 scope:** `_build_system_prompt` is ~447 real lines but the surrounding model-selection cluster is ~2,600. How much moves together vs. stays?
 - **`common.py` vs `server_lib/`:** prefer one new top-level `common.py`, or fold utilities into existing `server_lib/`? (Affects import churn.)
 - **`admin/` package vs flat files:** package (`handlers/admin/__init__.py` umbrella) keeps the mixin import surface stable; confirm that's preferred over `admin_*.py` siblings.
+
+---
+
+## 8. Explicitly out of scope (tracked as separate future initiatives)
+
+The external analysis (2026-05-23) raised three structural themes broader than module extraction. Captured here so they are **consciously deferred, not silently dropped** — each is its own project:
+
+1. **Web frontend monolith (~29,000 lines vanilla JS, no framework/bundler).** Largest: `web/js/settings.js` (6,140), `panels.js` (5,819), `chat.js` (4,013), `init.js` (2,899). Same "monolith mid-decomposition" pattern as `brain.py`, but a different language, toolchain, and risk profile. **Not part of this Python refactor.** A future initiative would survey it (like we did `brain.py`), decide on ES-module/bundler adoption, and split the three big files. *Note: `web/index.html`'s `PIIScanner` IS touched indirectly by B3/U5 (codegen the JS rule table from Python) — that's the one frontend seam this refactor crosses.*
+
+2. **Thread-local → explicit dependency injection.** B1 *relocates* `_thread_local`; it does not eliminate the implicit-dependency pattern the analysis criticizes (every function depends on setup done elsewhere; "concurrent requests bleed" if a fallback-to-global slips in). Converting reads to explicit context-passing — following the model the sidecar already uses (context dict echoed back) — is a multi-week architectural effort across the whole codebase. **Deferred.** Could be piloted on one domain (e.g. scheduler) later to prove the pattern before committing broadly.
+
+3. **Institutional knowledge in prose, not enforced invariants.** The CLAUDE.md / handover docs are accurate but carry invariants (KV-prefix stability, wing isolation, 4-edit-site tool rule, thread-local discipline) that exist only as prose. A future initiative could encode the load-bearing ones as **tests or assertions** so they fail loudly when violated. The characterization tests in §1.5 are a first down-payment on this (warmup-payload assertion, wing-isolation test); broadening it is out of scope here.

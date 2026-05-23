@@ -15,9 +15,11 @@ so the run survives context compaction and fresh sessions). Protocol: see `REFAC
 |---|---|---|
 | 0 | Safety net (gate + baseline) | ✅ DONE (commit `d48b5de`) |
 | 1 | Tier-D audit + Tier A pure wins + admin/workflows + db splits | ⬜ not started |
-| 2 | B1 `engine/context.py` + U1/U2/U4 utilities | ⬜ not started |
-| 3 | B2 scheduler · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons · chat.py split | ⬜ not started |
-| 4 | Tier C (C1/C2/C3) + finish D1–D3 | ⛔ STOP — needs user review before starting |
+| 2 | B1 `engine/context.py` (relocate only, NOT DI) + U1/U2/U4 utilities | ⬜ not started |
+| 3 | B2 scheduler (⚠️ chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (⚠️ daemons nested in main()) · chat.py split | ⬜ not started |
+| 4 | Tier C (C1/C2/C3, ⚠️ chars-tests + eval before C2) + finish D1–D3 | ⛔ STOP — needs user review before starting |
+
+**⚠️ markers** = a characterization test must be written+committed for that path BEFORE the extraction (plan §1.5). Core paths have no existing tests, so the gate alone can't catch regressions there.
 
 ---
 

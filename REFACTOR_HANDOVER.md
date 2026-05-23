@@ -34,6 +34,8 @@ Also stop immediately (don't push through) on: a **failed gate**, an **import br
 **Pre-decided (do NOT re-ask):**
 - *NER tests:* the 3 `test_pii_ner.py` failures stay the fixed baseline ("no new failures"). Do NOT load spaCy per gate run.
 - *Smoke test:* NOT automated. Rely on import-gate + unittest between phases; the user does a manual chat sanity-check after the run. (Tier C still requires the eval harness — that gate stands.)
+- *Characterization tests (from external-analysis review, see `REFACTOR_PLAN.md` §1.5):* the core paths (scheduler, tool-exec, sessions, sidecar) have NO tests, so the gate can't catch regressions there. **Before B2 (scheduler) and before Tier C (C2 tool-exec), first write+commit behavior-pinning tests for ONLY that path**, so the gate is trustworthy for the risky moves. Tier A needs none (self-contained). This is a hard prerequisite, not optional.
+- *Out of scope (do NOT start):* the ~29k-line JS frontend, full thread-local→DI conversion, encoding-all-invariants-as-tests. Tracked in `REFACTOR_PLAN.md` §8 as separate future initiatives. B1 relocates thread-locals only — do not attempt DI conversion.
 
 **Per-extraction loop (the subagent runs this, returns the result):**
 1. Move the block to its new module; re-export from brain.py so callers still resolve.
