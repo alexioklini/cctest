@@ -28,7 +28,7 @@ Also stop immediately (don't push through) on: a **failed gate**, an **import br
 
 **Context-window discipline (this is what keeps a multi-hour run from overfilling):**
 - **One subagent per extraction.** Spawn an `Explore`/`general-purpose` agent to do the bulky work — read the brain.py block, grep all call sites, run `./refactor_gate.sh`. The agent's reads/greps/test logs stay in *its* context and die with it. It returns ONLY: pass/fail, the call sites it repointed, and one line of summary. The main thread must NEVER read brain.py wholesale or dump grep/test output into its own context.
-- **Disk is the memory, not the conversation.** After each extraction, update `REFACTOR_PROGRESS.md` (the running ledger). State survives compaction AND a fresh session. The conversation is disposable; the ledger is truth. On resume, read `REFACTOR_PROGRESS.md` first to see what's done.
+- **Disk is the memory, not the conversation.** After each extraction, update `REFACTOR_REPORT.md` (the living progress report). State survives compaction AND a fresh session. The conversation is disposable; the report is truth. On resume, read `REFACTOR_REPORT.md` first to see what's done. Each report entry must answer the four questions: **what moved · where to · was the old code deleted (principle-#3 evidence) · did the gate/tests pass.** Use the template in that file; log REVERTED/BLOCKED attempts too, not just successes.
 - **Commit after every green extraction** (one extraction = one commit, directly to main per project rule). Any point in the run is therefore recoverable; a later failure never strands earlier good work.
 
 **Pre-decided (do NOT re-ask):**
@@ -42,7 +42,7 @@ Also stop immediately (don't push through) on: a **failed gate**, an **import br
 2. Gate 2: `./refactor_gate.sh grep <SYMBOL>` → confirm brain.py shows ONLY changelog/comment hits.
 3. Gate 3: grep call sites repo-wide → all resolve to the new module.
 4. Gates 4+5: `./refactor_gate.sh` → imports clean + no new test failures.
-5. If all pass: commit, append a row to `REFACTOR_PROGRESS.md`. If any fail: revert the move, log the blocker in the ledger, STOP and report.
+5. If all pass: commit, append a full entry to `REFACTOR_REPORT.md` (what moved · where · old code deleted? · tests) + flip the Status board + update Running totals. If any fail: revert the move, log it as a REVERTED/BLOCKED entry in the report, STOP and report.
 
 ---
 
