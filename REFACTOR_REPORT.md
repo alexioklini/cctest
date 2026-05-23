@@ -18,8 +18,8 @@ so the run survives context compaction and fresh sessions). Protocol: see `REFAC
 | Phase | Scope | State |
 |---|---|---|
 | 0 | Safety net (gate + baseline) | ✅ DONE (commit `d48b5de`) |
-| 1 | Tier-D audit + Tier A pure wins + admin/workflows + db splits | 🔄 in progress (D-audit done; D2 ✅) |
-| 2 | B1 `engine/context.py` (relocate only, NOT DI) + U1/U2/U4 utilities | ⬜ not started |
+| 1 | Tier-D audit + Tier A pure wins + admin/workflows + db splits | ✅ DONE — D-audit (D1/D3 clean), D2, A1–A5, db node-registry+mempalace-sync, admin workflows. brain.py −3,420 |
+| 2 | B1 `engine/context.py` (relocate only, NOT DI) + U1/U2/U4 utilities | 🔄 next |
 | 3 | B2 scheduler (⚠️ chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (⚠️ daemons nested in main()) · chat.py split | ⬜ not started |
 | 4 | Tier C (C1/C2/C3, ⚠️ chars-tests + eval before C2) + finish D1–D3 | ⛔ STOP — needs user review before starting |
 
@@ -55,14 +55,16 @@ Every functional domain the full refactor touches is listed here from day one �
 
 | Domain | Source | → Target | Phase | Status | Note |
 |---|---|---|---|---|---|
-| admin: workflows | `handlers/admin.py` ~219–1,140 | `handlers/admin/workflows.py` | 1 | ⬜ planned | isolated; extract first |
-| admin: artifacts/files/sidecar/channels | admin.py ~2,200–5,416 | `handlers/admin/artifacts.py` | 3 | ⬜ planned | largest cluster (~3,200) |
-| admin: costs/quotas UI | admin.py ~1,610–2,100 | `handlers/admin/costs.py` | 3 | ⬜ planned | |
-| admin: skills | admin.py ~1,305–1,610 | `handlers/admin/skills.py` | 3 | ⬜ planned | |
-| admin: tool-settings/research/NER config | admin.py ~1,707–2,000 | `handlers/admin/config.py` | 3 | ⬜ planned | |
-| admin: teams | admin.py ~19–220 | `handlers/admin/teams.py` | 3 | ⬜ planned | |
-| admin: agents | admin.py ~1,210–1,392 | `handlers/admin/agents.py` | 3 | ⬜ planned | |
-| admin: KG/traces/audit observability | admin.py ~2,099–2,200 | `handlers/admin/observability.py` | 3 | ⬜ planned | |
+| admin: workflows | `handlers/admin.py` 217–1,136 | `handlers/admin_workflows.py` (flat, not pkg) | 1 | ✅ done | commit `8831427`; AdminWorkflowHandlers sub-mixin, MRO intact, server.py injection-list updated |
+| admin: artifacts/files/sidecar/channels | admin.py (lines shifted −913 after workflows split) | `handlers/admin_artifacts.py` (flat) | 3 | ⬜ planned | largest cluster (~3,200); same sub-mixin + injection-list pattern as workflows |
+| admin: costs/quotas UI | admin.py | `handlers/admin_costs.py` (flat) | 3 | ⬜ planned | |
+| admin: skills | admin.py | `handlers/admin_skills.py` (flat) | 3 | ⬜ planned | |
+| admin: tool-settings/research/NER config | admin.py | `handlers/admin_config.py` (flat) | 3 | ⬜ planned | |
+| admin: teams | admin.py | `handlers/admin_teams.py` (flat) | 3 | ⬜ planned | |
+| admin: agents | admin.py | `handlers/admin_agents.py` (flat) | 3 | ⬜ planned | |
+| admin: KG/traces/audit observability | admin.py | `handlers/admin_observability.py` (flat) | 3 | ⬜ planned | |
+
+> **Convention note (set 2026-05-23 at the workflows split):** admin sub-handlers go to FLAT `handlers/admin_<area>.py` modules, each a mixin inherited by `AdminHandlerMixin`, each registered in `server._inject_server_globals()`'s `_handler_mod_names`. Avoids converting `admin.py`→`admin/__init__.py` (file-vs-package collision). The plan's `handlers/admin/<area>.py` package layout remains the ideal end-state but isn't worth the in-flight conversion risk.
 | server: 7 background daemons (nested in `main()`) | `server.py` ~3,903–5,716 | `server_daemons.py` | 3 | ⬜ planned | ⚠️ lift-to-module-scope, not copy-paste |
 | server: MemPalaceClient singleton | `server.py:69` | `server_lib/mempalace_client.py` | 3 | ⬜ planned | flagged by external analysis |
 | server: bootstrap/init (optional) | `server.py` ~3,033–3,500 | `server_init.py` | 3 | ⬜ planned | optional; `main()` may stay |
@@ -98,10 +100,11 @@ Every functional domain the full refactor touches is listed here from day one �
 > **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.
 
 ### Running totals
-- Extractions completed: **7** (D2, A1, A2, A3, A4, A5, db-splits)
+- Extractions completed: **8** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows) — **Phase 1 DONE**
 - `brain.py` line count: **25,182** (baseline) → _current: 21,762_ (−3,420, −13.6%)
 - `server_lib/db.py` line count: **1,985** → _current: 1,778_ (−207)
-- Net new modules created: **7** (`engine/workflow.py`, `engine/code_graph.py`, `engine/tools/git_tools.py`, `engine/tools/gmail_tools.py`, `server_lib/trace_audit.py`, `server_lib/node_registry.py`, `server_lib/mempalace_sync.py`; D2 merged into existing engine/classification.py)
+- `handlers/admin.py` line count: **5,416** → _current: 4,503_ (−913)
+- Net new modules created: **8** (`engine/workflow.py`, `engine/code_graph.py`, `engine/tools/git_tools.py`, `engine/tools/gmail_tools.py`, `server_lib/trace_audit.py`, `server_lib/node_registry.py`, `server_lib/mempalace_sync.py`, `handlers/admin_workflows.py`; D2 merged into existing engine/classification.py)
 - Live duplicate definitions (brain.py ∩ engine/): **0** — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean
 
 ---
@@ -126,6 +129,18 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 8 admin: workflow handlers split — DONE
+- **Commit:** `8831427`  ·  **Date:** 2026-05-23  ·  **Phase:** 1 (admin split)
+- **Symbol(s):** 17 `_handle_workflow_*` route handlers (list/save/delete/run/list_executions/get_execution/approve/cancel/history/history_delete_run/history_delete_bulk/history_get/upload_file/promote_session/get_or_create_session/run_file_download/run_file_preview) + 5 workflow-only helpers (`_seed_artifacts_for_run`, `_lookup_workflow_run_session`, `_workflow_run_paths`, `_workflow_run_paths_classified`, `_workflow_run_can_access`)
+- **Moved FROM:** handlers/admin.py:217–1136 (Workflow Handlers block)
+- **Moved TO:** handlers/admin_workflows.py (949 lines, NEW) — new `AdminWorkflowHandlers` mixin
+- **Old code deleted?** YES — Gate-2 grep: `_handle_workflow_save` etc. no longer defined in admin.py; now in admin_workflows.py.
+- **Callers re-pointed:** 0 — `AdminHandlerMixin(AdminWorkflowHandlers)` inherits the methods, so `BrainAgentHandler`'s MRO is unchanged and route dispatch resolves them exactly as before (verified `_handle_workflow_run` accessible on the composed handler via MRO).
+- **Tests:** Gate 4 imports 18/18 (incl. handlers.admin) · Gate 5 80 pass / 3 known-NER fail · verdict PASS
+- **Characterization test added?** n/a (HTTP handler methods; behavior unchanged via inheritance)
+- **handlers/admin.py delta:** 5,416 → 4,503 (−913)
+- **Notes:** **Invariant #2 trap handled** — `server._inject_server_globals()` injects server globals into each handler module's `__dict__` keyed off `Mixin.__module__`. The moved methods now live in a NEW module, so it had to be added to `_handler_mod_names` (server.py:963) or bare-name lookups (`engine`, `_db_conn`, `sqlite3`) would `NameError` at runtime — invisible to import-gate. Verified the new module gets identical global resolution to admin.py (parity). server.py:939 imports the mixin. Chose flat `handlers/admin_*.py` over the `handlers/admin/` package (collision-risk avoidance) — convention set for the remaining Phase-3 admin splits.
 
 ### 7 db.py splits — node-registry + mempalace-sync — DONE
 - **Commit:** `92c4a24`  ·  **Date:** 2026-05-23  ·  **Phase:** 1 (db splits)
