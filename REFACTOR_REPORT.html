@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 08:44 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 08:55 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -29,7 +29,7 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <h2>Status board</h2>
 <table><thead><tr><th>Phase</th><th>Scope</th><th>State</th></tr></thead><tbody>
 <tr><td>0</td><td>Safety net (gate + baseline)</td><td><span class="badge done" title="done">✅</span> DONE (commit <code>d48b5de</code>)</td></tr>
-<tr><td>1</td><td>Tier-D audit + Tier A pure wins + admin/workflows + db splits</td><td><span class="badge planned" title="planned">⬜</span> not started</td></tr>
+<tr><td>1</td><td>Tier-D audit + Tier A pure wins + admin/workflows + db splits</td><td><span class="badge wip" title="in progress">🔄</span> in progress (D-audit done; D2 <span class="badge done" title="done">✅</span>)</td></tr>
 <tr><td>2</td><td>B1 <code>engine/context.py</code> (relocate only, NOT DI) + U1/U2/U4 utilities</td><td><span class="badge planned" title="planned">⬜</span> not started</td></tr>
 <tr><td>3</td><td>B2 scheduler (<span class="badge warn" title="attention">⚠️</span> chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (<span class="badge warn" title="attention">⚠️</span> daemons nested in main()) · chat.py split</td><td><span class="badge planned" title="planned">⬜</span> not started</td></tr>
 <tr><td>4</td><td>Tier C (C1/C2/C3, <span class="badge warn" title="attention">⚠️</span> chars-tests + eval before C2) + finish D1–D3</td><td><span class="badge gated" title="gated">⛔</span> STOP — needs user review before starting</td></tr>
@@ -52,9 +52,9 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <tr><td>Model selection + system-prompt assembly (<code>_build_system_prompt</code>, <code>MODEL_PROFILES</code>)</td><td>~21,844–24,482</td><td><code>engine/prompt_build.py</code>, <code>engine/model_select.py</code></td><td>4 (C1)</td><td><span class="badge gated" title="gated">⛔</span> gated</td><td>KV-cache sensitive; eval + warmup byte-stability gate</td></tr>
 <tr><td>Tool execution layer (artifact-session, dedup, summarization)</td><td>~2,839–4,845</td><td><code>engine/tool_exec.py</code></td><td>4 (C2)</td><td><span class="badge gated" title="gated">⛔</span> gated</td><td><span class="badge warn" title="attention">⚠️</span> characterization test first; core path</td></tr>
 <tr><td>MemPalace integration glue (<code>tool_mempalace_query</code>, wing resolution)</td><td>~5,386+</td><td><code>engine/mempalace_glue.py</code></td><td>4 (C3)</td><td><span class="badge gated" title="gated">⛔</span> gated</td><td>wing-isolation test gate (security)</td></tr>
-<tr><td><strong>D1</strong> doc_convert inline remnants</td><td>tool_read_document etc.</td><td><code>engine/doc_convert.py</code> (already exists)</td><td>1 audit</td><td><span class="badge planned" title="planned">⬜</span> verify</td><td>likely ALREADY complete (v9.10.0); openpyxl hits are *writer* tools — confirm, don't redo</td></tr>
-<tr><td><strong>D2</strong> classification enforcement glue (<code>_classification_gate_tool_text</code> etc.)</td><td>~2,892</td><td><code>engine/classification.py</code> (already exists)</td><td>4</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>move glue next to detector</td></tr>
-<tr><td><strong>D3</strong> KG entity-indexing + co-occurrence</td><td>~10,279–10,450</td><td><code>engine/kg_extract.py</code> (already exists)</td><td>4</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>finish the partial extraction</td></tr>
+<tr><td><strong>D1</strong> doc_convert inline remnants</td><td>tool_read_document etc.</td><td><code>engine/doc_convert.py</code> (already exists)</td><td>1 audit</td><td><span class="badge done" title="done">✅</span> clean</td><td>audit 2026-05-23: <code>convert_one</code>/<code>_extract_pdf</code>/<code>_do_extract</code> already only in engine; no duplicate — nothing to do</td></tr>
+<tr><td><strong>D2</strong> classification enforcement glue (<code>_classification_gate_tool_text</code> etc.)</td><td>2,892 / 20,836 / 20,892</td><td><code>engine/classification.py</code></td><td>1</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>29b142b</code>; 3 fns moved next to detector, brain re-exports via alias</td></tr>
+<tr><td><strong>D3</strong> KG entity-indexing + co-occurrence</td><td>~10,279–10,450</td><td><code>engine/kg_extract.py</code> (already exists)</td><td>1 audit</td><td><span class="badge done" title="done">✅</span> clean</td><td>audit 2026-05-23: entity-index/co-occurrence is distinct from kg_extract's triple extraction; correctly stays in brain.py, no duplicate</td></tr>
 </tbody></table>
 <h3>B. Other oversized files — domains to split</h3>
 <table><thead><tr><th>Domain</th><th>Source</th><th>→ Target</th><th>Phase</th><th>Status</th><th>Note</th></tr></thead><tbody>
@@ -92,15 +92,15 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <tr><td><code>ChatDB</code> core (stays in <code>server_lib/db.py</code>)</td><td><span class="badge excluded" title="excluded">🚫</span> stays put</td><td>The core session store; only node-registry + mempalace-sync peel off around it.</td></tr>
 <tr><td>Session/SessionManager/LiveStream (stays in <code>server.py</code>)</td><td><span class="badge excluded" title="excluded">🚫</span> stays put</td><td>Core abstraction; dispatch layer legitimately lives with the server.</td></tr>
 <tr><td><code>web/index.html</code> PIIScanner (stays, regex-only)</td><td><span class="badge excluded" title="excluded">🚫</span> stays (managed)</td><td>Browser can't run the Python NER; intentionally regex-only. U5 makes it codegen-synced so it can't drift — but it is not "extracted."</td></tr>
-<tr><td><code>engine/file_pseudonymize.py</code></td><td><span class="badge planned" title="planned">⬜</span> audit</td><td>Possibly dead/rarely-used (per analysis). Phase 1 audit confirms usage before any action.</td></tr>
+<tr><td><code>engine/file_pseudonymize.py</code></td><td><span class="badge done" title="done">✅</span> keep (live)</td><td>Audit 2026-05-23: actively imported (pseudonymizer.py re-exports <code>deanonymize_file</code>; handlers/chat.py uses <code>SUPPORTED_EXTS</code>). NOT dead — leave as-is.</td></tr>
 </tbody></table>
 <blockquote><strong>Coverage promise:</strong> every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.</blockquote>
 <h3>Running totals</h3>
 <ul>
-<li>Extractions completed: <strong>0</strong></li>
-<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 25,182_</li>
-<li>Net new modules created: <strong>0</strong></li>
-<li>Live duplicate definitions (brain.py ∩ engine/): <strong>0</strong> (verified 2026-05-23)</li>
+<li>Extractions completed: <strong>1</strong> (D2)</li>
+<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 24,925_ (−257)</li>
+<li>Net new modules created: <strong>0</strong> (D2 merged into existing engine/classification.py)</li>
+<li>Live duplicate definitions (brain.py ∩ engine/): <strong>0</strong> — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean</li>
 </ul>
 <hr>
 <h2>Extraction record</h2>
@@ -122,7 +122,25 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 </ul>
 <p>```</p>
 <hr>
-<p>_No extractions yet — Phase 0 only established the safety net (gate + baseline). First entry will be the Phase-1 Tier-D audit / first Tier-A extraction._</p>
+<h3>1 D2 classification enforcement glue — DONE</h3>
+<ul>
+<li><strong>Commit:</strong> <code>29b142b</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (Tier-D audit/debt-paydown)</li>
+<li><strong>Symbol(s):</strong> <code>_classification_gate_tool_text</code>, <code>_classification_effective_action</code>, <code>classification_pick_model_for_background</code></li>
+<li><strong>Moved FROM:</strong> brain.py:2892–2971 + 20836–20857 + 20892–21063 (classification enforcement glue, stranded next to GDPR seam — a half-done prior migration; handlers/chat.py already imported <code>_classification_effective_action</code> from engine)</li>
+<li><strong>Moved TO:</strong> engine/classification.py:557–793 (appended after <code>detect_with_pii</code>, beside the <code>detect_classification</code> detector)</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2 <code>./refactor_gate.sh grep &lt;sym&gt;</code> shows "no definition in brain.py" for all 3; brain.py keeps a single alias re-export <code>from engine.classification import ...</code>.</li>
+<li><strong>Callers re-pointed:</strong> brain.py 2 sites (<code>_gdpr_anon_tool_text</code>, <code>gdpr_pick_model_for_background</code>) resolve via alias; handlers/chat.py:3415 (<code>engine._classification_effective_action</code>) resolves via the <code>import brain as engine</code> alias — unchanged.</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 clean · Gate 5 80 pass / 3 fail (only the 3 known NER-env) · gate verdict PASS</li>
+<li><strong>Characterization test added?</strong> n/a (Tier-D debt-paydown into existing module; not a core path — covered by existing gdpr/classification unit tests)</li>
+<li><strong>brain.py delta:</strong> 25,182 → 24,925 lines (−257)</li>
+<li><strong>Notes:</strong> No import cycle — the 3 fns reach mutable brain globals (<code>_thread_local</code>, <code>_audit_log</code>, etc.) via call-time <code>import brain as _brain</code>, the same lazy pattern <code>detect_with_pii</code> already used. <code>ClassificationBlockedError</code> (subclasses GDPRBlockedError, caught at 10+ background sites) + <code>_CLASSIFICATION_DEFAULTS</code> (used by handlers/classification.py) intentionally STAY in brain.py. Pure relocation, zero behavior change (runtime-verified strict→block, public→ignore).</li>
+</ul>
+<p><strong>Audit findings (Phase-1 Tier-D sweep, 2026-05-23 — no code change, recorded for completeness):</strong></p>
+<ul>
+<li><strong>D1 doc_convert:</strong> CLEAN. <code>convert_one</code>/<code>_extract_pdf</code>/<code>_do_extract</code> exist only in engine/doc_convert.py — no surviving duplicate in brain.py. v9.10.0 unification was complete.</li>
+<li><strong>D3 KG entity-indexing:</strong> CLEAN. brain.py:10279–10450 (<code>_extract_entities</code>, <code>_rebuild_entity_index</code>, <code>_recall_cooccurrence</code>, …) is entity co-occurrence + file-linking, a DIFFERENT concern from engine/kg_extract.py's LLM normative-triple extraction. No duplication; correctly stays in brain.py.</li>
+<li><strong>engine/file_pseudonymize.py:</strong> LIVE, not dead. Imported by pseudonymizer.py + handlers/chat.py.</li>
+</ul>
 <p>&lt;!-- WORKED EXAMPLE of a completed entry (delete or keep as format reference):</p>
 <h3>1 A1 workflow engine — DONE</h3>
 <ul>
