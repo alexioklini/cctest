@@ -304,7 +304,7 @@ const PIIScanner = {
     // Network
     ipv4:'network', ipv6:'network',
     // Personal / biographical
-    passport:'personal', dob:'personal',
+    passport:'personal', dob:'personal', date:'personal',
     // spaCy NER findings (Phase 1: German). Server-only — no client-side
     // detector is registered for these. Grouped under `contact` alongside
     // email/phone so the same default `ignore` action applies.

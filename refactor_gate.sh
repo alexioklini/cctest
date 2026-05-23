@@ -62,6 +62,11 @@ EOF
 [ $? -ne 0 ] && fail=1
 
 echo ""
+echo "=== Gate 4b: PII scanner Python<->JS parity (drift checker, U5) ==="
+$PY tools/check_pii_js_parity.py | sed 's/^/  /'
+[ ${PIPESTATUS[0]} -ne 0 ] && fail=1
+
+echo ""
 echo "=== Gate 5a: test suite (stdlib unittest, no pytest needed) ==="
 out=$($PY -m unittest discover -s tests -p "test_*.py" 2>&1)
 newfails=$(echo "$out" | grep -E "^(FAIL|ERROR):" | sed -E 's/^(FAIL|ERROR): ([a-zA-Z0-9_]+).*/\2/' \

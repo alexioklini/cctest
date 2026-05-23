@@ -255,3 +255,787 @@ def scan_text(text: str, *, lang: str = "de",
         if len(findings) >= max_findings:
             break
     return findings
+
+
+# === GDPR / PII regex scanner (relocated from brain.py, B3) ============
+# Pure regex + stdlib detection of personal data. Mirrors the browser-side
+# PIIScanner in web/index.html. Moved here from brain.py so the regex half
+# and the NER half (above) live together. The regex scanner has ZERO heavy
+# dependencies (re + stdlib only) and runs without spaCy — spaCy stays
+# lazy-imported in load_models(). DELICATE rule-ordering invariants: do NOT
+# reorder _PII_RULES (first-match-wins + overlap suppression). brain.py
+# re-exports _pii_rules / _pii_scan_text / _pii_scan_bare_identifiers /
+# PII_RULE_CATEGORIES / PII_DEFAULT_CATEGORY_ACTIONS for back-compat.
+
+PII_RULE_CATEGORIES: dict[str, str] = {
+    # Tier 2 — cloud secrets / API keys / credentials. Always highest severity.
+    "pem_private_key": "secrets", "aws_access_key": "secrets",
+    "aws_secret_key": "secrets", "github_app_token": "secrets",
+    "github_pat": "secrets", "slack_token": "secrets",
+    "slack_webhook": "secrets", "google_api_key": "secrets",
+    "google_oauth_client": "secrets", "stripe_live": "secrets",
+    "stripe_test": "secrets", "openai_key": "secrets",
+    "anthropic_key": "secrets", "twilio_sid": "secrets",
+    "sendgrid_key": "secrets", "mailgun_key": "secrets",
+    "jwt": "secrets", "azure_storage_conn": "secrets",
+    "azure_account_key": "secrets", "basic_auth_url": "secrets",
+    "generic_secret_assignment": "secrets",
+
+    # Tier 1 — national IDs with checksum validation.
+    "de_steuerid": "national_id", "uk_nino": "national_id",
+    "uk_nhs": "national_id", "nl_bsn": "national_id",
+    "be_national": "national_id", "pl_pesel": "national_id",
+    "pt_nif": "national_id", "se_personnummer": "national_id",
+    "dk_cpr": "national_id", "no_fnr": "national_id",
+    "ch_ahv": "national_id", "cz_rc": "national_id",
+    "ro_cnp": "national_id", "hu_taj": "national_id",
+    "gr_amka": "national_id", "bg_egn": "national_id",
+    "ie_pps": "national_id", "br_cpf": "national_id",
+    "br_cnpj": "national_id", "ca_sin": "national_id",
+    "mx_curp": "national_id", "ar_dni": "national_id",
+    "in_aadhaar": "national_id", "jp_mynumber": "national_id",
+    "kr_rrn": "national_id", "sg_nric": "national_id",
+    "tw_nid": "national_id", "at_svnr": "national_id",
+    "fr_insee": "national_id", "es_dni_nie": "national_id",
+    "it_codicefiscale": "national_id", "us_ssn": "national_id",
+    "us_ssn_ctx": "national_id",
+
+    # Context-fallback — keyword + shape, no checksum. Softer category.
+    "svnr_ctx": "national_id_ctx", "ssn_ctx_loose": "national_id_ctx",
+    "tax_id_ctx": "national_id_ctx", "insurance_number_ctx": "national_id_ctx",
+    "id_card_ctx": "national_id_ctx", "drivers_license_ctx": "national_id_ctx",
+    "passport_ctx_loose": "national_id_ctx", "health_insurance_ctx": "national_id_ctx",
+
+    # Financial
+    "iban": "financial", "credit_card": "financial",
+    "bank_account_ctx": "financial",
+
+    # Contact info (emails + phone) — often intentional, allowlist-aware
+    "email": "contact", "phone": "contact",
+
+    # Network identifiers (often infrastructure, not personal data)
+    "ipv4": "network", "ipv6": "network",
+
+    # Biographical / personal-document identifiers
+    "passport": "personal", "dob": "personal", "date": "personal",
+
+    # spaCy NER findings (Phase 1: German). Sit in the `contact` category
+    # alongside email/phone — soft PII the user often includes deliberately
+    # in chat, so the default `ignore` action matches that ergonomics; admins
+    # who want stricter handling flip the category to warn/block in Settings.
+    # rule_ids minted in engine/pii_ner.py — keep in sync.
+    "name": "contact",
+    "address": "contact",
+    "organisation": "contact",
+
+    # Heuristic fallback
+    "bare_identifier": "bare_id",
+}
+
+# Default category actions. "block" means refuse (or swap to local) when
+# server_block is true; downgraded to "warn" when server_block is false.
+PII_DEFAULT_CATEGORY_ACTIONS: dict[str, str] = {
+    "secrets":         "block",
+    "national_id":     "warn",
+    "national_id_ctx": "warn",
+    "financial":       "warn",
+    "contact":         "ignore",
+    "network":         "ignore",
+    "personal":        "warn",
+    "bare_id":         "warn",
+}
+
+
+_PII_RULES: list[dict] = []
+
+
+def _pii_rules() -> list[dict]:
+    """Return compiled PII rules. Built lazily. Mirrors PIIScanner.rules in web/index.html."""
+    global _PII_RULES
+    if _PII_RULES:
+        return _PII_RULES
+
+    import re as _re
+
+    def _digits(s): return "".join(c for c in s if c.isdigit())
+
+    def _luhn_str(s: str) -> bool:
+        d = _digits(s)
+        if not d: return False
+        total, alt = 0, False
+        for c in reversed(d):
+            n = int(c)
+            if alt:
+                n *= 2
+                if n > 9: n -= 9
+            total += n
+            alt = not alt
+        return total % 10 == 0
+
+    def _cc_ok(m: str) -> bool:
+        d = _digits(m)
+        return 13 <= len(d) <= 19 and _luhn_str(d)
+
+    def _iban_ok(s: str) -> bool:
+        iban = "".join(s.split()).upper()
+        if not 15 <= len(iban) <= 34: return False
+        rearr = iban[4:] + iban[:4]
+        num = ""
+        for c in rearr:
+            if "A" <= c <= "Z": num += str(ord(c) - 55)
+            elif c.isdigit(): num += c
+            else: return False
+        rem = 0
+        for d in num: rem = (rem * 10 + int(d)) % 97
+        return rem == 1
+
+    def _phone_ok(m: str) -> bool:
+        d = _digits(m)
+        return 8 <= len(d) <= 15
+
+    def _ipv4_ok(m: str) -> bool:
+        return not any(m.startswith(p) for p in ("0.", "127.", "255.", "169.254."))
+
+    def _us_ssn_dashed_ok(m: str) -> bool:
+        a, b, c = m.split("-")
+        if a in ("000", "666") or a.startswith("9"): return False
+        return b != "00" and c != "0000"
+
+    def _us_ssn_ctx_ok(m: str) -> bool:
+        g = _re.search(r"\d{9}", m)
+        if not g: return False
+        s = g.group(0)
+        a, b, c = s[:3], s[3:5], s[5:]
+        if a in ("000", "666") or a.startswith("9"): return False
+        return b != "00" and c != "0000"
+
+    def _at_svnr_ok(m: str) -> bool:
+        if len(m) != 10 or not m.isdigit(): return False
+        w = [3, 7, 9, 5, 8, 4, 2, 1, 6]
+        d = [int(c) for c in m]
+        vals = [d[0], d[1]] + d[3:]
+        if sum(x * y for x, y in zip(vals, w)) % 11 != d[2]: return False
+        dd, mm = int(m[4:6]), int(m[6:8])
+        return 1 <= dd <= 31 and 1 <= mm <= 12
+
+    def _fr_insee_ok(m: str) -> bool:
+        clean = "".join(c if c.isdigit() else ("0" if c.upper() in "AB " else "") for c in m)
+        if len(clean) != 15: return False
+        body, key = clean[:13], int(clean[13:])
+        return (97 - (int(body) % 97)) == key
+
+    def _de_steuerid_ok(m: str) -> bool:
+        g = _re.search(r"\d{11}", m)
+        if not g: return False
+        d = g.group(0)
+        if d[0] == "0": return False
+        counts: dict[str, int] = {}
+        for c in d: counts[c] = counts.get(c, 0) + 1
+        repeats = [n for n in counts.values() if n > 1]
+        return len(repeats) == 1 and repeats[0] in (2, 3)
+
+    def _dni_nie_ok(m: str) -> bool:
+        s = m.upper()
+        letters = "TRWAGMYFPDXBNJZSQVHLCKE"
+        try:
+            if s[0] in "XYZ":
+                num = int(str("XYZ".index(s[0])) + s[1:-1])
+            else:
+                num = int(s[:-1])
+        except ValueError:
+            return False
+        return letters[num % 23] == s[-1]
+
+    # ── EU national IDs ──
+
+    def _uk_nhs_ok(m: str) -> bool:
+        d = _digits(m)
+        if len(d) != 10: return False
+        s = sum(int(d[i]) * (10 - i) for i in range(9))
+        chk = 11 - (s % 11)
+        if chk == 11: chk = 0
+        return chk != 10 and chk == int(d[9])
+
+    def _nl_bsn_ok(m: str) -> bool:
+        g = _re.search(r"\d{8,9}", m)
+        if not g: return False
+        d = g.group(0).rjust(9, "0")
+        if int(d) == 0: return False
+        w = [9,8,7,6,5,4,3,2,-1]
+        return sum(int(d[i]) * w[i] for i in range(9)) % 11 == 0
+
+    def _be_national_ok(m: str) -> bool:
+        d = _digits(m)
+        if len(d) != 11: return False
+        body9 = d[:9]; chk = int(d[9:])
+        a = 97 - (int(body9) % 97)
+        b = 97 - (int("2" + body9) % 97)
+        return chk in (a, b)
+
+    def _pl_pesel_ok(m: str) -> bool:
+        w = [1,3,7,9,1,3,7,9,1,3]
+        s = sum(int(m[i]) * w[i] for i in range(10))
+        chk = (10 - (s % 10)) % 10
+        if chk != int(m[10]): return False
+        mm = int(m[2:4])
+        return (1 <= mm <= 12) or (21 <= mm <= 32) or (41 <= mm <= 52) or (61 <= mm <= 72) or (81 <= mm <= 92)
+
+    def _pt_nif_ok(m: str) -> bool:
+        g = _re.search(r"\d{9}", m)
+        if not g: return False
+        d = g.group(0)
+        if d[0] not in "123568 9": return False
+        s = sum(int(d[i]) * (9 - i) for i in range(8))
+        chk = 11 - (s % 11)
+        if chk >= 10: chk = 0
+        return chk == int(d[8])
+
+    def _se_personnummer_ok(m: str) -> bool:
+        d = _digits(m)
+        if len(d) not in (10, 12): return False
+        short = d[2:] if len(d) == 12 else d
+        s = 0
+        for i in range(9):
+            n = int(short[i]) * (2 if i % 2 == 0 else 1)
+            if n > 9: n -= 9
+            s += n
+        chk = (10 - (s % 10)) % 10
+        return chk == int(short[9])
+
+    def _dk_cpr_ok(m: str) -> bool:
+        d = _digits(m)
+        if len(d) != 10: return False
+        dd, mm = int(d[:2]), int(d[2:4])
+        return 1 <= dd <= 31 and 1 <= mm <= 12
+
+    def _no_fnr_ok(m: str) -> bool:
+        if len(m) != 11: return False
+        d = [int(c) for c in m]
+        w1 = [3,7,6,1,8,9,4,5,2]
+        w2 = [5,4,3,2,7,6,5,4,3,2]
+        s1 = sum(d[i] * w1[i] for i in range(9))
+        k1 = 11 - (s1 % 11)
+        if k1 == 11: k1 = 0
+        if k1 == 10 or k1 != d[9]: return False
+        s2 = sum(d[i] * w2[i] for i in range(10))
+        k2 = 11 - (s2 % 11)
+        if k2 == 11: k2 = 0
+        return k2 != 10 and k2 == d[10]
+
+    def _ch_ahv_ok(m: str) -> bool:
+        d = _digits(m)
+        if len(d) != 13 or not d.startswith("756"): return False
+        s = sum(int(d[i]) * (1 if i % 2 == 0 else 3) for i in range(12))
+        return (10 - (s % 10)) % 10 == int(d[12])
+
+    def _cz_rc_ok(m: str) -> bool:
+        d = _digits(m)
+        if len(d) not in (9, 10): return False
+        if len(d) == 10:
+            n = int(d)
+            if n % 11 != 0 and not (n % 11 == 10 and d[9] == "0"): return False
+        mm = int(d[2:4])
+        real = mm - 50 if mm > 50 else mm
+        return 1 <= real <= 12
+
+    def _ro_cnp_ok(m: str) -> bool:
+        if len(m) != 13: return False
+        w = [2,7,9,1,4,6,3,5,8,2,7,9]
+        s = sum(int(m[i]) * w[i] for i in range(12))
+        chk = s % 11
+        if chk == 10: chk = 1
+        if chk != int(m[12]): return False
+        mm, dd = int(m[3:5]), int(m[5:7])
+        return 1 <= mm <= 12 and 1 <= dd <= 31
+
+    def _hu_taj_ok(m: str) -> bool:
+        g = _re.search(r"\d{3}[- ]?\d{3}[- ]?\d{3}", m)
+        if not g: return False
+        d = _digits(g.group(0))
+        if len(d) != 9: return False
+        s = sum(int(d[i]) * (3 if i % 2 == 0 else 7) for i in range(8))
+        return (s % 10) == int(d[8])
+
+    def _gr_amka_ok(m: str) -> bool:
+        dd, mm = int(m[:2]), int(m[2:4])
+        if dd < 1 or dd > 31 or mm < 1 or mm > 12: return False
+        return _luhn_str(m)
+
+    def _bg_egn_ok(m: str) -> bool:
+        w = [2,4,8,5,10,9,7,3,6]
+        s = sum(int(m[i]) * w[i] for i in range(9))
+        chk = (s % 11) % 10
+        if chk != int(m[9]): return False
+        mm = int(m[2:4])
+        real = mm - 40 if mm > 40 else (mm - 20 if mm > 20 else mm)
+        return 1 <= real <= 12
+
+    def _ie_pps_ok(m: str) -> bool:
+        s = m.upper()
+        if len(s) not in (8, 9): return False
+        digits = s[:7]; check = s[7]
+        letters = "WABCDEFGHIJKLMNOPQRSTUV"
+        w = [8,7,6,5,4,3,2]
+        total = sum(int(digits[i]) * w[i] for i in range(7))
+        if len(s) == 9:
+            extra = 0 if s[8] == "W" else (ord(s[8]) - 64)
+            total += extra * 9
+        return letters[total % 23] == check
+
+    # ── Americas + APAC ──
+
+    def _br_cpf_ok(m: str) -> bool:
+        d = _digits(m)
+        if len(d) != 11 or d == d[0] * 11: return False
+        def calc(end):
+            s = sum(int(d[i]) * (end + 1 - i) for i in range(end))
+            r = (s * 10) % 11
+            return 0 if r == 10 else r
+        return calc(9) == int(d[9]) and calc(10) == int(d[10])
+
+    def _br_cnpj_ok(m: str) -> bool:
+        d = _digits(m)
+        if len(d) != 14 or d == d[0] * 14: return False
+        w1 = [5,4,3,2,9,8,7,6,5,4,3,2]
+        w2 = [6,5,4,3,2,9,8,7,6,5,4,3,2]
+        def calc(end, ws):
+            s = sum(int(d[i]) * ws[i] for i in range(end))
+            r = s % 11
+            return 0 if r < 2 else 11 - r
+        return calc(12, w1) == int(d[12]) and calc(13, w2) == int(d[13])
+
+    def _ca_sin_ok(m: str) -> bool:
+        d = _digits(m)
+        if len(d) != 9 or d[0] in ("0", "8"): return False
+        return _luhn_str(d)
+
+    def _in_aadhaar_ok(m: str) -> bool:
+        # Verhoeff — m may include keyword prefix, extract 12 digits
+        g = _re.search(r"[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}", m)
+        if not g: return False
+        d = _digits(g.group(0))
+        if len(d) != 12: return False
+        d2 = [
+            [0,1,2,3,4,5,6,7,8,9],[1,2,3,4,0,6,7,8,9,5],[2,3,4,0,1,7,8,9,5,6],
+            [3,4,0,1,2,8,9,5,6,7],[4,0,1,2,3,9,5,6,7,8],[5,9,8,7,6,0,4,3,2,1],
+            [6,5,9,8,7,1,0,4,3,2],[7,6,5,9,8,2,1,0,4,3],[8,7,6,5,9,3,2,1,0,4],
+            [9,8,7,6,5,4,3,2,1,0]]
+        p = [
+            [0,1,2,3,4,5,6,7,8,9],[1,5,7,6,2,8,3,0,9,4],[5,8,0,3,7,9,6,1,4,2],
+            [8,9,1,6,0,4,3,5,2,7],[9,4,5,3,1,2,6,8,7,0],[4,2,8,6,5,7,3,9,0,1],
+            [2,7,9,3,8,0,6,4,1,5],[7,0,4,6,9,1,3,2,5,8]]
+        c = 0
+        rev = [int(x) for x in reversed(d)]
+        for i, x in enumerate(rev):
+            c = d2[c][p[i % 8][x]]
+        return c == 0
+
+    def _jp_mynumber_ok(m: str) -> bool:
+        w = [6,5,4,3,2,7,6,5,4,3,2]
+        s = sum(int(m[i]) * w[i] for i in range(11))
+        r = s % 11
+        chk = 0 if r <= 1 else 11 - r
+        return chk == int(m[11])
+
+    def _kr_rrn_ok(m: str) -> bool:
+        d = _digits(m)
+        if len(d) != 13: return False
+        w = [2,3,4,5,6,7,8,9,2,3,4,5]
+        s = sum(int(d[i]) * w[i] for i in range(12))
+        chk = (11 - (s % 11)) % 10
+        if chk != int(d[12]): return False
+        mm, dd = int(d[2:4]), int(d[4:6])
+        return 1 <= mm <= 12 and 1 <= dd <= 31
+
+    def _sg_nric_ok(m: str) -> bool:
+        if len(m) != 9: return False
+        first, digits, check = m[0], m[1:8], m[8]
+        w = [2,7,6,5,4,3,2]
+        s = sum(int(digits[i]) * w[i] for i in range(7))
+        if first in ("T", "G"): s += 4
+        if first == "M": s += 3
+        r = s % 11
+        tables = {
+            "S": "JZIHGFEDCBA", "T": "JZIHGFEDCBA",
+            "F": "XWUTRQPNMLK", "G": "XWUTRQPNMLK",
+            "M": "KLJNPQRTUWX",
+        }
+        t = tables.get(first)
+        return bool(t) and t[r] == check
+
+    def _tw_nid_ok(m: str) -> bool:
+        mp = {"A":10,"B":11,"C":12,"D":13,"E":14,"F":15,"G":16,"H":17,"I":34,"J":18,"K":19,"L":20,"M":21,"N":22,"O":35,"P":23,"Q":24,"R":25,"S":26,"T":27,"U":28,"V":29,"W":32,"X":30,"Y":31,"Z":33}
+        pref = mp.get(m[0])
+        if pref is None: return False
+        first, second = pref // 10, pref % 10
+        digits = [first, second] + [int(c) for c in m[1:]]
+        w = [1,9,8,7,6,5,4,3,2,1,1]
+        return sum(digits[i] * w[i] for i in range(len(digits))) % 10 == 0
+
+    # ── Tier 2 validators ──
+
+    def _basic_auth_ok(m: str) -> bool:
+        return not _re.search(r"://[^:]*:(password|changeme|example|xxx+|\*+)@", m, _re.IGNORECASE)
+
+    def _generic_secret_ok(m: str) -> bool:
+        g = _re.search(r"[\"']([A-Za-z0-9+/=_\-]{20,})[\"']", m)
+        if not g: return False
+        v = g.group(1)
+        if _re.fullmatch(r"(?:xxx+|\*+|changeme|example|placeholder|your[_-]?(?:key|token|secret))", v, _re.IGNORECASE):
+            return False
+        return len(set(v)) >= 6
+
+    _PII_RULES = [
+        # ── Tier 2: cloud secrets (distinct prefixes → high priority) ──
+        {"id": "pem_private_key", "label": "Private key",
+         "re": _re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]{1,10000}?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----")},
+        {"id": "aws_access_key", "label": "AWS access key ID",
+         "re": _re.compile(r"(?<![A-Z0-9])(?:AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA|ABIA|ACCA)[A-Z0-9]{16}(?![A-Z0-9])")},
+        {"id": "aws_secret_key", "label": "AWS secret access key",
+         "re": _re.compile(r"(?:aws_secret_access_key|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?secret)[\s:=\"']*([A-Za-z0-9/+]{40})(?![A-Za-z0-9/+=])", _re.IGNORECASE)},
+        {"id": "github_app_token", "label": "GitHub app token",
+         "re": _re.compile(r"\bgithub_pat_[A-Za-z0-9_]{82}\b")},
+        {"id": "github_pat", "label": "GitHub personal access token",
+         "re": _re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,255}\b")},
+        {"id": "slack_token", "label": "Slack token",
+         "re": _re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,200}\b")},
+        {"id": "slack_webhook", "label": "Slack webhook URL",
+         "re": _re.compile(r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+")},
+        {"id": "google_api_key", "label": "Google API key",
+         "re": _re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")},
+        {"id": "google_oauth_client", "label": "Google OAuth client ID",
+         "re": _re.compile(r"\b\d{12}-[a-z0-9]{32}\.apps\.googleusercontent\.com\b")},
+        {"id": "stripe_live", "label": "Stripe live key",
+         "re": _re.compile(r"\b(?:sk|rk|pk)_live_[0-9a-zA-Z]{24,99}\b")},
+        {"id": "stripe_test", "label": "Stripe test key",
+         "re": _re.compile(r"\b(?:sk|rk|pk)_test_[0-9a-zA-Z]{24,99}\b")},
+        {"id": "openai_key", "label": "OpenAI API key",
+         "re": _re.compile(r"\bsk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20,}\b")},
+        {"id": "anthropic_key", "label": "Anthropic API key",
+         "re": _re.compile(r"\bsk-ant-[a-z0-9]{2,6}-[A-Za-z0-9_\-]{85,120}\b")},
+        {"id": "twilio_sid", "label": "Twilio account SID",
+         "re": _re.compile(r"\bAC[a-f0-9]{32}\b")},
+        {"id": "sendgrid_key", "label": "SendGrid API key",
+         "re": _re.compile(r"\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b")},
+        {"id": "mailgun_key", "label": "Mailgun API key",
+         "re": _re.compile(r"\bkey-[a-f0-9]{32}\b")},
+        {"id": "jwt", "label": "JWT",
+         "re": _re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b")},
+        {"id": "azure_storage_conn", "label": "Azure Storage connection string",
+         "re": _re.compile(r"DefaultEndpointsProtocol=https;AccountName=[A-Za-z0-9]+;AccountKey=[A-Za-z0-9+/=]{80,};?(?:EndpointSuffix=[^;\s]+)?")},
+        {"id": "azure_account_key", "label": "Azure account key",
+         "re": _re.compile(r"(?:AccountKey|SharedAccessKey)=([A-Za-z0-9+/=]{40,100})(?=[;\"'\s]|$)")},
+        {"id": "basic_auth_url", "label": "Credentials in URL",
+         "re": _re.compile(r"\b(?:https?|ftp|ssh|git|postgres|postgresql|mysql|mongodb|redis)://[^\s:@/]+:[^\s@/]+@[A-Za-z0-9.\-]+"),
+         "ok": _basic_auth_ok},
+        {"id": "generic_secret_assignment", "label": "Hard-coded secret",
+         "re": _re.compile(r"\b(?:api[_-]?key|secret|token|password|passwd|pwd|auth|bearer)[\s:=]{1,4}[\"']([A-Za-z0-9+/=_\-]{20,})[\"']", _re.IGNORECASE),
+         "ok": _generic_secret_ok},
+
+        # ── Context-gated first (keyword+digits beats bare-digits rules below) ──
+        {"id": "de_steuerid", "label": "German Steuer-ID",
+         "re": _re.compile(r"(?:\bSteuer[- ]?ID\b|Steueridentifikationsnummer|\bTIN\b)[^\d\n]{0,20}(\d{11})(?!\d)", _re.IGNORECASE),
+         "ok": _de_steuerid_ok},
+
+        # ── Standard identifiers ──
+        {"id": "email", "label": "Email address",
+         "re": _re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")},
+        {"id": "iban", "label": "IBAN",
+         # Country code + check digits + body. Optional spaces only BETWEEN
+         # body characters, never at the tail — `[A-Z0-9](?:[ ]?[A-Z0-9])*`
+         # forces the match to end on an alphanumeric, so the regex can't
+         # greedily swallow a trailing space (which then surfaces in the
+         # mapping dict as e.g. `'DE89…000 '` and confuses the audit view).
+         "re": _re.compile(r"\b[A-Z]{2}\d{2}[ ]?[A-Z0-9](?:[ ]?[A-Z0-9]){10,29}\b"),
+         "ok": _iban_ok},
+        {"id": "ipv4", "label": "IPv4 address",
+         "re": _re.compile(r"(?<!\d)(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?!\d)"),
+         "ok": _ipv4_ok},
+        {"id": "ipv6", "label": "IPv6 address",
+         "re": _re.compile(r"\b(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}\b")},
+        {"id": "us_ssn", "label": "US Social Security Number",
+         "re": _re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"),
+         "ok": _us_ssn_dashed_ok},
+        {"id": "us_ssn_ctx", "label": "US Social Security Number",
+         "re": _re.compile(r"(?:\bSSN\b|\bsocial\s+security\b)[^\w\n]{0,15}\d{9}(?!\d)", _re.IGNORECASE),
+         "ok": _us_ssn_ctx_ok},
+
+        # ── Tier 1 EU national IDs ──
+        {"id": "uk_nino", "label": "UK National Insurance Number",
+         "re": _re.compile(r"\b(?!BG|GB|NK|KN|TN|NT|ZZ)[A-CEGHJ-PR-TW-Z][A-CEGHJ-NPR-TW-Z][0-9]{6}[A-D]?\b")},
+        {"id": "uk_nhs", "label": "UK NHS number",
+         "re": _re.compile(r"(?<!\d)\d{3}[ -]?\d{3}[ -]?\d{4}(?!\d)"),
+         "ok": _uk_nhs_ok},
+        {"id": "nl_bsn", "label": "Dutch BSN",
+         "re": _re.compile(r"(?:\bBSN\b|burgerservicenummer|sofinummer)[^\d\n]{0,15}(\d{8,9})(?!\d)", _re.IGNORECASE),
+         "ok": _nl_bsn_ok},
+        {"id": "be_national", "label": "Belgian national number",
+         "re": _re.compile(r"(?<!\d)\d{2}[. ]?\d{2}[. ]?\d{2}[- ]?\d{3}[. ]?\d{2}(?!\d)"),
+         "ok": _be_national_ok},
+        {"id": "pl_pesel", "label": "Polish PESEL",
+         "re": _re.compile(r"(?<!\d)\d{11}(?!\d)"),
+         "ok": _pl_pesel_ok},
+        {"id": "pt_nif", "label": "Portuguese NIF",
+         "re": _re.compile(r"(?:\bNIF\b|número\s+fiscal|contribuinte)[^\d\n]{0,15}(\d{9})(?!\d)", _re.IGNORECASE),
+         "ok": _pt_nif_ok},
+        {"id": "se_personnummer", "label": "Swedish personnummer",
+         "re": _re.compile(r"(?<!\d)(?:\d{2})?\d{6}[-+]?\d{4}(?!\d)"),
+         "ok": _se_personnummer_ok},
+        {"id": "dk_cpr", "label": "Danish CPR",
+         "re": _re.compile(r"(?<!\d)\d{6}[- ]?\d{4}(?!\d)"),
+         "ok": _dk_cpr_ok},
+        {"id": "no_fnr", "label": "Norwegian fødselsnummer",
+         "re": _re.compile(r"(?<!\d)\d{11}(?!\d)"),
+         "ok": _no_fnr_ok},
+        {"id": "ch_ahv", "label": "Swiss AHV (OASI)",
+         "re": _re.compile(r"\b756[.\- ]?\d{4}[.\- ]?\d{4}[.\- ]?\d{2}\b"),
+         "ok": _ch_ahv_ok},
+        {"id": "cz_rc", "label": "Czech rodné číslo",
+         "re": _re.compile(r"(?<!\d)\d{6}/?\d{3,4}(?!\d)"),
+         "ok": _cz_rc_ok},
+        {"id": "ro_cnp", "label": "Romanian CNP",
+         "re": _re.compile(r"(?<!\d)\d{13}(?!\d)"),
+         "ok": _ro_cnp_ok},
+        {"id": "hu_taj", "label": "Hungarian TAJ",
+         "re": _re.compile(r"(?:\bTAJ\b|társadalom|társadalombiztos)[^\d\n]{0,15}(\d{3}[- ]?\d{3}[- ]?\d{3})(?!\d)", _re.IGNORECASE),
+         "ok": _hu_taj_ok},
+        {"id": "gr_amka", "label": "Greek AMKA",
+         "re": _re.compile(r"(?<!\d)\d{11}(?!\d)"),
+         "ok": _gr_amka_ok},
+        {"id": "bg_egn", "label": "Bulgarian EGN",
+         "re": _re.compile(r"(?<!\d)\d{10}(?!\d)"),
+         "ok": _bg_egn_ok},
+        {"id": "ie_pps", "label": "Irish PPS",
+         "re": _re.compile(r"\b\d{7}[A-W][A-IW]?\b"),
+         "ok": _ie_pps_ok},
+
+        # ── Tier 1 Americas + APAC ──
+        {"id": "br_cpf", "label": "Brazilian CPF",
+         "re": _re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b"),
+         "ok": _br_cpf_ok},
+        {"id": "br_cnpj", "label": "Brazilian CNPJ",
+         "re": _re.compile(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b"),
+         "ok": _br_cnpj_ok},
+        {"id": "ca_sin", "label": "Canadian SIN",
+         "re": _re.compile(r"(?<!\d)\d{3}[- ]?\d{3}[- ]?\d{3}(?!\d)"),
+         "ok": _ca_sin_ok},
+        {"id": "mx_curp", "label": "Mexican CURP",
+         "re": _re.compile(r"\b[A-Z][AEIOUX][A-Z]{2}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b", _re.IGNORECASE)},
+        {"id": "ar_dni", "label": "Argentine DNI",
+         "re": _re.compile(r"\bDNI[\s:]*\d{1,2}\.?\d{3}\.?\d{3}\b", _re.IGNORECASE)},
+        {"id": "in_aadhaar", "label": "Indian Aadhaar",
+         "re": _re.compile(r"(?:\baadhaar\b|\bUID\b|\bUIDAI\b)[^\d\n]{0,20}([2-9]\d{3}[ -]?\d{4}[ -]?\d{4})(?!\d)", _re.IGNORECASE),
+         "ok": _in_aadhaar_ok},
+        {"id": "jp_mynumber", "label": "Japanese My Number",
+         "re": _re.compile(r"(?<!\d)\d{12}(?!\d)"),
+         "ok": _jp_mynumber_ok},
+        {"id": "kr_rrn", "label": "Korean RRN",
+         "re": _re.compile(r"(?<!\d)\d{6}[- ]?[1-8]\d{6}(?!\d)"),
+         "ok": _kr_rrn_ok},
+        {"id": "sg_nric", "label": "Singapore NRIC/FIN",
+         "re": _re.compile(r"\b[STFGM]\d{7}[A-Z]\b"),
+         "ok": _sg_nric_ok},
+        {"id": "tw_nid", "label": "Taiwan national ID",
+         "re": _re.compile(r"\b[A-Z][12]\d{8}\b"),
+         "ok": _tw_nid_ok},
+
+        # ── Other checksum IDs ──
+        {"id": "at_svnr", "label": "Austrian Sozialversicherungsnummer",
+         "re": _re.compile(r"(?<!\d)\d{10}(?!\d)"),
+         "ok": _at_svnr_ok},
+        {"id": "fr_insee", "label": "French INSEE / NIR",
+         "re": _re.compile(r"(?<!\d)[12]\d{2}(?:0[1-9]|1[0-2]|[2-9]\d)(?:\d{2}|\dA|\dB)\d{3}\d{3}[\s ]?\d{2}(?!\d)", _re.IGNORECASE),
+         "ok": _fr_insee_ok},
+        {"id": "es_dni_nie", "label": "Spanish DNI/NIE",
+         "re": _re.compile(r"(?<![A-Z0-9])(?:[XYZ]?\d{7,8}[A-HJ-NP-TV-Z])(?![A-Z0-9])", _re.IGNORECASE),
+         "ok": _dni_nie_ok},
+        {"id": "it_codicefiscale", "label": "Italian Codice Fiscale",
+         "re": _re.compile(r"\b[A-Z]{6}\d{2}[A-EHLMPR-T]\d{2}[A-Z]\d{3}[A-Z]\b", _re.IGNORECASE)},
+
+        # ── Credit card (after national IDs) ──
+        {"id": "credit_card", "label": "Credit card number",
+         "re": _re.compile(r"(?<![+\d])(?:\d[ -]?){13,19}(?!\d)"),
+         "ok": _cc_ok},
+
+        # ── Phone (after national IDs) ──
+        {"id": "phone", "label": "Phone number",
+         "re": _re.compile(r"(?:(?<![\w.])\+\d{1,3}[\s().-]?(?:\d[\s().-]?){7,14}\d|(?<!\d)\d{3}[\s.-]\d{3,4}[\s.-]\d{3,4}(?!\d))"),
+         "ok": _phone_ok},
+
+        # ── Context-gated heuristics ──
+        {"id": "passport", "label": "Passport number",
+         "re": _re.compile(r"passport[^\w\n]{0,20}([A-Z][0-9]{6,9}|[A-Z]{1,2}[0-9]{6,8})", _re.IGNORECASE)},
+        {"id": "dob", "label": "Date of birth",
+         "re": _re.compile(r"(?:\b(?:DOB|born|date\s+of\s+birth|geboren|geburtsdatum|né|née|nacido)\b[^\n]{0,20}?(?:\d{1,2}[\/.\- ]\d{1,2}[\/.\- ]\d{2,4}|\d{4}-\d{2}-\d{2}))", _re.IGNORECASE)},
+
+        # ── Context-fallback: fire on keyword + number-shape even if checksum
+        # fails. Runs LAST — strict checksum rules above still win first. ──
+        {"id": "svnr_ctx", "label": "Social-insurance number (likely)",
+         "re": _re.compile(r"(?:\bSVNR\b|\bSV[- ]?Nr\.?\b|\bSV[- ]?Nummer\b|Sozialversicherungsnummer|social[- ]?insurance|national[- ]?insurance|\bNIN\b)[^\d\n]{0,20}(\d[\d \-\/.]{7,19}\d)", _re.IGNORECASE)},
+        {"id": "ssn_ctx_loose", "label": "Social Security Number (likely)",
+         "re": _re.compile(r"(?:\bSSN\b|social[- ]?security[- ]?(?:number|no\.?|\#)?)[^\d\n]{0,15}(\d{3}[- ]?\d{2}[- ]?\d{4}|\d{9})", _re.IGNORECASE)},
+        {"id": "tax_id_ctx", "label": "Tax identification number (likely)",
+         "re": _re.compile(r"(?:\bTIN\b|tax[- ]?id(?:entification)?[- ]?(?:number|no\.?)?|Steuer[- ]?ID|Steuernummer|USt[- ]?ID|VAT[- ]?(?:number|no\.?))[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-./]{6,18}[A-Z0-9])", _re.IGNORECASE)},
+        {"id": "insurance_number_ctx", "label": "Insurance number (likely)",
+         "re": _re.compile(r"(?:insurance[- ]?number|insurance[- ]?no\.?|Versicherungsnummer|numéro[- ]?(?:de[- ]?)?sécurité[- ]?sociale|numero[- ]?(?:di[- ]?)?previdenza)[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-./]{6,19}[A-Z0-9])", _re.IGNORECASE)},
+        {"id": "id_card_ctx", "label": "ID / identity card number (likely)",
+         "re": _re.compile(r"(?:\bID[- ]?(?:number|no\.?|card)\b|Personalausweis|carte[- ]?d['\s-]identit|documento[- ]?(?:de[- ]?)?identi[dt]ad|cédula)[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-./]{5,16}[A-Z0-9])", _re.IGNORECASE)},
+        {"id": "drivers_license_ctx", "label": "Driver's license number (likely)",
+         "re": _re.compile(r"(?:driver'?s?[- ]?licen[sc]e|Führerschein|permis[- ]?de[- ]?conduire|carnet[- ]?de[- ]?conducir|patente)[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-./]{5,16}[A-Z0-9])", _re.IGNORECASE)},
+        {"id": "passport_ctx_loose", "label": "Passport number (likely)",
+         "re": _re.compile(r"(?:passport|Reisepass|passeport|pasaporte|passaporto)[^\w\n]{0,20}([A-Z0-9][A-Z0-9\- ]{5,14}[A-Z0-9])", _re.IGNORECASE)},
+        {"id": "bank_account_ctx", "label": "Bank account number (likely)",
+         "re": _re.compile(r"(?:\baccount[- ]?(?:number|no\.?|\#)\b|\bacct\.?[- ]?(?:no\.?|\#)?\b|\bIBAN\b|Kontonummer|numéro[- ]?de[- ]?compte|número[- ]?de[- ]?cuenta)[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-/.]{7,30}[A-Z0-9])", _re.IGNORECASE)},
+        {"id": "health_insurance_ctx", "label": "Health insurance number (likely)",
+         "re": _re.compile(r"(?:health[- ]?insurance|Krankenversicherungsnummer|Krankenkasse|assurance[- ]?maladie|seguridad[- ]?social|Medicare|Medicaid|\bNHS[- ]?(?:number|no\.?)?|\bAMKA\b|\bTAJ\b)[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-./]{5,19}[A-Z0-9])", _re.IGNORECASE)},
+
+        # ── Dates ─────────────────────────────────────────────────────
+        # Runs last in the rules list so every national-ID + IBAN +
+        # credit-card rule above gets first claim on their digit groups
+        # via overlap suppression (otherwise YYYY-MM-DD would steal digits
+        # from a 16-digit credit card start, dd.mm.yyyy from a Steuer-ID
+        # context, etc.). Word-bounded so dates inside larger digit blocks
+        # don't fire. Years constrained to 19xx/20xx to suppress noise
+        # from arbitrary number triplets like "10/100/2030 ratio".
+        {"id": "date", "label": "Date",
+         "re": _re.compile(
+             r"\b("
+             r"(?:19|20)\d{2}-\d{1,2}-\d{1,2}"          # ISO 2026-05-19
+             r"|\d{1,2}\.\d{1,2}\.(?:19|20)\d{2}"        # 19.05.2026
+             r"|\d{1,2}-\d{1,2}-(?:19|20)\d{2}"          # 19-05-2026
+             r"|\d{1,2}/\d{1,2}/(?:19|20)\d{2}"          # 05/19/2026
+             r"|\d{1,2}\.\d{1,2}\.\d{2}"                 # 19.05.26 (2-digit yr)
+             r"|\d{1,2}/\d{1,2}/\d{2}"                   # 05/19/26
+             r")\b"
+         )},
+    ]
+    return _PII_RULES
+
+
+def _pii_scan_bare_identifiers(text: str) -> list[dict]:
+    """Heuristic: flag pasted lists of bare numeric identifiers. Fires when the
+    message is dominated (>=60%) by 9-14-digit ID-shaped lines with little prose.
+    Catches the 'what is this number?' paste case where the value fails all
+    strict checksums but is clearly identifier-shaped."""
+    import re as _re
+    if not text or not isinstance(text, str) or len(text) > 2000:
+        return []
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return []
+    id_like = [l for l in lines if _re.fullmatch(r"\d[\d .\-/]{7,18}\d", l)]
+    threshold = max(1, (len(lines) * 6 + 9) // 10)  # ceil(len*0.6)
+    if len(id_like) < threshold:
+        return []
+    findings: list[dict] = []
+    for line in id_like:
+        digits = _re.sub(r"\D", "", line)
+        if not 9 <= len(digits) <= 14:
+            continue
+        idx = text.find(line)
+        if idx < 0:
+            continue
+        findings.append({
+            "rule_id": "bare_identifier",
+            "label": "Numeric identifier (unverified)",
+            "start": idx,
+            "end": idx + len(line),
+            "len": len(line),
+        })
+        if len(findings) >= 20:
+            break
+    return findings
+
+
+def _pii_scan_text(text: str, max_findings: int = 100,
+                   cfg: dict | None = None) -> list[dict]:
+    """Scan text for PII. Returns list of {rule_id, label, start, end, category,
+    action} with overlap-suppression across rules (first match wins).
+
+    Applies per-category actions: rules with action='ignore' are skipped entirely;
+    email findings matching `email_allowlist` are suppressed regardless of action.
+    """
+    if not text or not isinstance(text, str):
+        return []
+    # Config-resolution helpers live in brain.py (config.json reader + the
+    # rule_overrides/category action resolver). Lazy import breaks the
+    # brain<->engine cycle; the regex scan itself is pure (no brain dep).
+    import brain as _brain
+    _get_gdpr_scanner_config = _brain._get_gdpr_scanner_config
+    _pii_effective_action = _brain._pii_effective_action
+    _pii_email_allowed = _brain._pii_email_allowed
+    if cfg is None:
+        cfg = _get_gdpr_scanner_config()
+    allowlist = cfg.get("email_allowlist") or []
+    findings: list[dict] = []
+    spans: list[tuple[int, int]] = []
+    for rule in _pii_rules():
+        rid = rule["id"]
+        action = _pii_effective_action(rid, cfg)
+        if action == "ignore":
+            continue
+        for m in rule["re"].finditer(text):
+            match = m.group(0)
+            ok = rule.get("ok")
+            if ok and not ok(match):
+                continue
+            s, e = m.start(), m.end()
+            if any(s < se and e > ss for ss, se in spans):
+                continue
+            # Email allowlist: if this email matches a trusted address/domain,
+            # skip it silently (don't reserve the span so weaker rules could
+            # theoretically reclaim it — but no other rule matches bare emails
+            # anyway, and consuming the span would incorrectly mask findings).
+            if rid == "email" and _pii_email_allowed(match, allowlist):
+                continue
+            spans.append((s, e))
+            findings.append({
+                "rule_id": rid, "label": rule["label"],
+                "start": s, "end": e, "len": e - s,
+                "category": PII_RULE_CATEGORIES.get(rid, "personal"),
+                "action": action,
+            })
+            if len(findings) >= max_findings:
+                return findings
+    # Heuristic: bare-identifier fallback when the rule catalog didn't cover a
+    # paste of ID-shaped numbers. Checksum-strict rules above still win first.
+    bare_action = _pii_effective_action("bare_identifier", cfg)
+    if bare_action != "ignore":
+        for f in _pii_scan_bare_identifiers(text):
+            if any(f["start"] < se and f["end"] > ss for ss, se in spans):
+                continue
+            spans.append((f["start"], f["end"]))
+            f["category"] = "bare_id"
+            f["action"] = bare_action
+            findings.append(f)
+            if len(findings) >= max_findings:
+                break
+
+    # spaCy NER pass (Phase 1: German PER/LOC/ORG → name/address/organisation).
+    # Runs after regex + bare-id so checksum-validated findings win on overlap.
+    # Cap inherits remaining budget. Never raises into the regex pipeline.
+    # Action policy is governed by the `contact` category — admins who don't
+    # want NER findings set `contact` to ignore (default) in Settings → GDPR.
+    if len(findings) < max_findings:
+        try:
+            # Phase 1 hard-codes lang='de' — only model loaded. Phase 2 wires
+            # language detection (server_lib/translate/detect.py).
+            if is_available("de"):
+                for f in scan_text(text, lang="de",
+                                           max_findings=max_findings - len(findings)):
+                    s, e = f["start"], f["end"]
+                    if any(s < se and e > ss for ss, se in spans):
+                        continue
+                    action = _pii_effective_action(f["rule_id"], cfg)
+                    if action == "ignore":
+                        continue
+                    spans.append((s, e))
+                    f["action"] = action
+                    findings.append(f)
+                    if len(findings) >= max_findings:
+                        break
+        except Exception as e:
+            # NER must never break the regex pipeline.
+            print(f"[pii_ner] scan skipped: {e}", flush=True)
+
+    return findings
