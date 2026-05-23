@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from JS_REFACTOR_REPORT.md · 2026-05-23 20:10 · this HTML is a view; the .md is the source of truth.</p><h1>JS Refactor Report — web/js/ (Tier F) — living record</h1>
+</style></head><body><p class=meta>Generated from JS_REFACTOR_REPORT.md · 2026-05-23 20:18 · this HTML is a view; the .md is the source of truth.</p><h1>JS Refactor Report — web/js/ (Tier F) — living record</h1>
 <p><strong>Source of truth for what's done.</strong> The plan is <code>JS_REFACTOR_PLAN.md</code>; this file tracks</p>
 <p>progress. Mirrors the Python <code>REFACTOR_REPORT.md</code> discipline: a fixed Master file-map written</p>
 <p>on day one (all 17 rows present, statuses planned), and the run only *flips statuses* — it never</p>
@@ -29,13 +29,13 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <table><thead><tr><th>Phase</th><th>What</th><th>Status</th></tr></thead><tbody>
 <tr><td>0</td><td>Build the GATE (ESLint + net-globals + Playwright smoke), green on unchanged code</td><td><span class="badge done" title="done">✅</span> DONE</td></tr>
 <tr><td>1</td><td>Cross-cutting de-dup — <strong>verified and REJECTED</strong> (all candidates net-negative; see below)</td><td><span class="badge done" title="done">✅</span> DONE (no-op + recorded)</td></tr>
-<tr><td>2</td><td>Split <code>settings.js</code> (6,140 → ~6 files)</td><td><span class="badge wip" title="in progress">🔄</span> in progress</td></tr>
+<tr><td>2</td><td>Split <code>settings.js</code> (6,140 → <strong>7 files</strong>, all &lt;2k)</td><td><span class="badge done" title="done">✅</span> DONE</td></tr>
 <tr><td>3</td><td>Split <code>panels.js</code> (5,819 → ~5 files)</td><td><span class="badge planned" title="planned">⬜</span> planned</td></tr>
 <tr><td>4</td><td>Split <code>chat.js</code> (4,013 → ~4 files) + REVIEW init.js / translation.js</td><td><span class="badge planned" title="planned">⬜</span> planned</td></tr>
 <tr><td>5</td><td>Final source-validation (mandatory close-out)</td><td><span class="badge planned" title="planned">⬜</span> planned</td></tr>
 </tbody></table>
-<p><strong>RESUME POINT:</strong> Phases 0–1 complete (gate green, baseline net-globals = <strong>879</strong>; de-dup verified</p>
-<p>and rejected as net-negative). Next: <strong>Phase 2 (split settings.js)</strong>.</p>
+<p><strong>RESUME POINT:</strong> Phases 0–2 complete (gate green, baseline net-globals = <strong>901</strong> after the</p>
+<p>sanctioned switchGeneralTab-decomposition bump). Next: <strong>Phase 3 (split panels.js)</strong>.</p>
 <h3>Phase 1 decision — de-dup verified and REJECTED (user-approved 2026-05-23)</h3>
 <p>The plan said "verify counts at extraction time." Verification (subagent analysis) falsified the</p>
 <p>premise that the de-dup candidates are wins. All four were rejected as net-negative churn or</p>
@@ -79,7 +79,7 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <h2>Master file-map — COMPLETE 17-file scope (fixed up front, statuses only flip)</h2>
 <p><span class="badge planned" title="planned">⬜</span> planned · <span class="badge wip" title="in progress">🔄</span> in progress · <span class="badge done" title="done">✅</span> done · <span class="badge excluded" title="excluded">🚫</span> stays (with reason) · ➕ dedup-target/created</p>
 <table><thead><tr><th>File</th><th>LOC (start)</th><th>Disposition</th><th>Status</th><th>Target / reason</th></tr></thead><tbody>
-<tr><td><code>settings.js</code></td><td>6,140</td><td>SPLIT (Phase 2)</td><td><span class="badge planned" title="planned">⬜</span></td><td>→ settings_agent / _teams / _general / _tools / _hooks / _schedule</td></tr>
+<tr><td><code>settings.js</code></td><td>6,140</td><td>SPLIT (Phase 2)</td><td><span class="badge done" title="done">✅</span></td><td>DELETED → settings_teams (55) / settings_general (589) / settings_general_tabs (1,988, NEW — switchGeneralTab tab-bodies) / settings_tools (771) / settings_agent (1,539) / settings_hooks (110) / settings_schedule (1,109). All &lt;2k.</td></tr>
 <tr><td><code>panels.js</code></td><td>5,819</td><td>SPLIT (Phase 3)</td><td><span class="badge planned" title="planned">⬜</span></td><td>→ panels_chats / _projects / _right / _gdpr</td></tr>
 <tr><td><code>chat.js</code></td><td>4,013</td><td>SPLIT (Phase 4)</td><td><span class="badge planned" title="planned">⬜</span></td><td>→ chat_send / _render / _nav / _tools</td></tr>
 <tr><td><code>init.js</code></td><td>2,899</td><td>REVIEW (Phase 4)</td><td><span class="badge planned" title="planned">⬜</span></td><td>Bootstrap + monitors. Over 2k — split out monitor classes if cohesive, else document why it stays whole (load-time init sequencing). Decision recorded at Phase 4.</td></tr>
@@ -121,4 +121,26 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <ul>
 <li>Smoke decision confirmed: all flows READ-ONLY (type-without-send, open-and-close modals) so the</li>
 </ul>
-<p>  live admin/admin run creates no data.</p></body></html>
+<p>  live admin/admin run creates no data.</p>
+<h3>Phase 2 — <code>settings.js</code> split (6,140 → 7 files, all &lt;2k)</h3>
+<ul>
+<li>Cut-paste relocation of all 130 top-level defs into 6 cohesive files (teams / general / tools /</li>
+</ul>
+<p>  agent / hooks / schedule), then <code>settings.js</code> DELETED. Zero reassignments vs the partition plan.</p>
+<ul>
+<li><strong><code>switchGeneralTab</code> decomposition</strong>: the ~2,000-LOC tab dispatcher kept <code>settings_general.js</code> at</li>
+</ul>
+<p>  2,565 LOC (over the 2k limit). Per the plan ("split by tab via a dispatch table"), decomposed it:</p>
+<p>  the 7 shared string-builder helpers (<code>P/G/ROW/DOT/MONO/BADGE/SEC</code>) hoisted to module scope; each</p>
+<p>  <code>if (tab==='X')</code> body extracted to <code>async _genTab_&lt;X&gt;(C)</code> in a NEW <code>settings_general_tabs.js</code></p>
+<p>  (1,988 LOC); <code>switchGeneralTab</code> is now a 12-line <code>RENDERERS[tab]</code> dispatch. Nested wings/tunnels</p>
+<p>  sub-tab logic stays inside <code>_genTab_mempalace</code>. Dead <code>tools-legacy-NEVER-MATCHES</code> block kept as a</p>
+<p>  defined-but-unreferenced <code>_genTab_tools_legacy</code> (preserves its never-matched behavior, loses no global).</p>
+<ul>
+<li><strong>Net-globals 879 → 901</strong> (+22 = 7 hoisted helpers + 15 <code>_genTab_*</code>). Sanctioned single bump:</li>
+</ul>
+<p>  real new globals from decomposing one mega-function, none dropped. Baseline updated same commit.</p>
+<ul>
+<li>Verified: no duplicate fn name across the 7 files; load order in index.html places</li>
+</ul>
+<p>  settings_general.js before settings_general_tabs.js (helpers defined first). <strong>Gate green, smoke 5/5.</strong></p></body></html>

@@ -16,13 +16,13 @@ pushed on every update via `./refactor_publish.sh "<msg>" JS_REFACTOR_REPORT.md`
 |---|---|---|
 | 0 | Build the GATE (ESLint + net-globals + Playwright smoke), green on unchanged code | ✅ DONE |
 | 1 | Cross-cutting de-dup — **verified and REJECTED** (all candidates net-negative; see below) | ✅ DONE (no-op + recorded) |
-| 2 | Split `settings.js` (6,140 → ~6 files) | 🔄 in progress |
+| 2 | Split `settings.js` (6,140 → **7 files**, all <2k) | ✅ DONE |
 | 3 | Split `panels.js` (5,819 → ~5 files) | ⬜ planned |
 | 4 | Split `chat.js` (4,013 → ~4 files) + REVIEW init.js / translation.js | ⬜ planned |
 | 5 | Final source-validation (mandatory close-out) | ⬜ planned |
 
-**RESUME POINT:** Phases 0–1 complete (gate green, baseline net-globals = **879**; de-dup verified
-and rejected as net-negative). Next: **Phase 2 (split settings.js)**.
+**RESUME POINT:** Phases 0–2 complete (gate green, baseline net-globals = **901** after the
+sanctioned switchGeneralTab-decomposition bump). Next: **Phase 3 (split panels.js)**.
 
 ### Phase 1 decision — de-dup verified and REJECTED (user-approved 2026-05-23)
 
@@ -85,7 +85,7 @@ can't mask a regression. The list may shrink, never grow.
 
 | File | LOC (start) | Disposition | Status | Target / reason |
 |---|---|---|---|---|
-| `settings.js` | 6,140 | SPLIT (Phase 2) | ⬜ | → settings_agent / _teams / _general / _tools / _hooks / _schedule |
+| `settings.js` | 6,140 | SPLIT (Phase 2) | ✅ | DELETED → settings_teams (55) / settings_general (589) / settings_general_tabs (1,988, NEW — switchGeneralTab tab-bodies) / settings_tools (771) / settings_agent (1,539) / settings_hooks (110) / settings_schedule (1,109). All <2k. |
 | `panels.js` | 5,819 | SPLIT (Phase 3) | ⬜ | → panels_chats / _projects / _right / _gdpr |
 | `chat.js` | 4,013 | SPLIT (Phase 4) | ⬜ | → chat_send / _render / _nav / _tools |
 | `init.js` | 2,899 | REVIEW (Phase 4) | ⬜ | Bootstrap + monitors. Over 2k — split out monitor classes if cohesive, else document why it stays whole (load-time init sequencing). Decision recorded at Phase 4. |
@@ -123,3 +123,18 @@ with a disposition + size — nothing silently out of scope.
   flows pass, zero console errors). Phase-0 exit criterion met.
 - Smoke decision confirmed: all flows READ-ONLY (type-without-send, open-and-close modals) so the
   live admin/admin run creates no data.
+
+### Phase 2 — `settings.js` split (6,140 → 7 files, all <2k)
+- Cut-paste relocation of all 130 top-level defs into 6 cohesive files (teams / general / tools /
+  agent / hooks / schedule), then `settings.js` DELETED. Zero reassignments vs the partition plan.
+- **`switchGeneralTab` decomposition**: the ~2,000-LOC tab dispatcher kept `settings_general.js` at
+  2,565 LOC (over the 2k limit). Per the plan ("split by tab via a dispatch table"), decomposed it:
+  the 7 shared string-builder helpers (`P/G/ROW/DOT/MONO/BADGE/SEC`) hoisted to module scope; each
+  `if (tab==='X')` body extracted to `async _genTab_<X>(C)` in a NEW `settings_general_tabs.js`
+  (1,988 LOC); `switchGeneralTab` is now a 12-line `RENDERERS[tab]` dispatch. Nested wings/tunnels
+  sub-tab logic stays inside `_genTab_mempalace`. Dead `tools-legacy-NEVER-MATCHES` block kept as a
+  defined-but-unreferenced `_genTab_tools_legacy` (preserves its never-matched behavior, loses no global).
+- **Net-globals 879 → 901** (+22 = 7 hoisted helpers + 15 `_genTab_*`). Sanctioned single bump:
+  real new globals from decomposing one mega-function, none dropped. Baseline updated same commit.
+- Verified: no duplicate fn name across the 7 files; load order in index.html places
+  settings_general.js before settings_general_tabs.js (helpers defined first). **Gate green, smoke 5/5.**
