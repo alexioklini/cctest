@@ -43,7 +43,7 @@ Every functional domain the full refactor touches is listed here from day one �
 | `_thread_local` + execution context | brain.py:10,878 | `engine/context.py` | 2 (B1) | ✅ done | commit `5e56783`; relocated only (not DI); instance identity verified True across 291 sites |
 | Scheduler + task runner | 12,950–15,641 | `engine/scheduler.py` | 3 (B2) | ✅ done | commit `2ba75be` (test `b09c5dd` first); 1407-LOC module; _thread_local via engine.context (3-way identity True); invariant #5 preserved; 18/18 chars-tests pass |
 | GDPR/PII scanner (`_pii_rules`/`_pii_scan_*`) | (post-shift) | merged into `engine/pii_ner.py` | 3 (B3) | ✅ done | commit `793ca1e`; merged with NER half; rule order preserved; 41/41 GDPR+pseudonymizer tests pass; U5 drift-checker shipped |
-| Quotas / cost / rate-limit (`QuotaManager`/`CostTracker`/`RateLimiter`) | scattered | `engine/quotas.py`, `engine/cost.py` | 3 (B4) | ⬜ planned | each owns a DB pool |
+| Quotas / cost / rate-limit (`QuotaManager`/`CostTracker`/`RateLimiter`) | scattered | `engine/quotas.py` (single, not split) | 3 (B4) | ✅ done | commit `12127c1`; cohesive single module; costs.db pool moved; _log_call_cost stays in brain; singletons via alias |
 | Model selection + system-prompt assembly (`_build_system_prompt`, `MODEL_PROFILES`) | ~21,844–24,482 | `engine/prompt_build.py`, `engine/model_select.py` | 4 (C1) | ⛔ gated | KV-cache sensitive; eval + warmup byte-stability gate |
 | Tool execution layer (artifact-session, dedup, summarization) | ~2,839–4,845 | `engine/tool_exec.py` | 4 (C2) | ⛔ gated | ⚠️ characterization test first; core path |
 | MemPalace integration glue (`tool_mempalace_query`, wing resolution) | ~5,386+ | `engine/mempalace_glue.py` | 4 (C3) | ⛔ gated | wing-isolation test gate (security) |
@@ -100,11 +100,11 @@ Every functional domain the full refactor touches is listed here from day one �
 > **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.
 
 ### Running totals
-- Extractions completed: **13** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5) — Phases 1 & 2 DONE; Phase 3 in progress
-- `brain.py` line count: **25,182** (baseline) → _current: 19,613_ (−5,569, −22.1%)
+- Extractions completed: **14** (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5, B4) — Phases 1 & 2 DONE; Phase 3 in progress
+- `brain.py` line count: **25,182** (baseline) → _current: 18,814_ (−6,368, −25.3%)
 - `server_lib/db.py` line count: **1,985** → _current: 1,778_ (−207)
 - `handlers/admin.py` line count: **5,416** → _current: 4,503_ (−913)
-- Net new modules created: **11** (`engine/workflow.py`, `engine/code_graph.py`, `engine/tools/git_tools.py`, `engine/tools/gmail_tools.py`, `server_lib/trace_audit.py`, `server_lib/node_registry.py`, `server_lib/mempalace_sync.py`, `handlers/admin_workflows.py`, `engine/context.py`, `server_lib/pathsafe.py`, `engine/scheduler.py`; D2 merged into existing engine/classification.py; U2 used existing reader; U4 skipped)
+- Net new modules created: **11** (`engine/workflow.py`, `engine/code_graph.py`, `engine/tools/git_tools.py`, `engine/tools/gmail_tools.py`, `server_lib/trace_audit.py`, `server_lib/node_registry.py`, `server_lib/mempalace_sync.py`, `handlers/admin_workflows.py`, `engine/context.py`, `server_lib/pathsafe.py`, `engine/scheduler.py`, `engine/quotas.py`; D2 merged into existing engine/classification.py; B3 merged into existing engine/pii_ner.py; U2 used existing reader; U4 skipped)
 - Characterization tests added: **1** (`tests/test_scheduler_characterization.py`, 18 tests — B2 prereq)
 - Drift-checkers added: **1** (`tools/check_pii_js_parity.py` — gate-4b; caught a real pre-existing PII map drift)
 - Reverts: **0**. Skips/already-satisfied (principled, documented): U4 (not-applicable), U2 (already centralized).
@@ -132,6 +132,18 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 15 B4 quotas / cost / rate-limit — DONE
+- **Commit:** `12127c1`  ·  **Date:** 2026-05-23  ·  **Phase:** 3 (B4)
+- **Symbol(s):** `CostTracker`, `QuotaManager`, `RateLimiter`, `QuotaExceededError`, `_cost_tracker`/`_quota_manager`/`_rate_limiter` singletons, `COST_DB`/`_cost_db_pool`/`_cost_conn`, `_cost_rates`/`_get_cost_rate`/`_compute_cost`, `QUOTA_DEFAULTS`/`_quota_default_role_limits`
+- **Moved FROM:** brain.py (scattered quota/cost/rate-limit code)
+- **Moved TO:** engine/quotas.py (900 lines, NEW) — **single module, not the planned cost.py + quotas.py split**
+- **Old code deleted?** YES — Gate-2: all 3 class defs gone from brain.py; brain re-exports + breadcrumb comments.
+- **Callers re-pointed:** 0 — singletons instantiated server.py:3262–3264 (unchanged, via alias); handlers use `engine._cost_tracker`/`_quota_manager`; doc_convert `from brain import _cost_tracker` (call-time) — all resolve via re-export.
+- **Tests:** Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS · no tests import this subsystem (grep empty)
+- **Characterization test added?** n/a (no existing tests; not flagged ⚠️ in plan — B2/C2 were the ⚠️ paths)
+- **brain.py delta:** 19,630 → 18,814 (−816)
+- **Notes:** **Module decision = single `engine/quotas.py`** (deviation from plan's 2-way split, Rule 2): QuotaManager reads CostTracker's `cost_log`, QuotaExceededError is the quota contract — cohesive; splitting would add a quotas→cost cross-module dep for zero independent reuse. costs.db pool moved with CostTracker (verified not shared — RateLimiter in-memory, QuotaManager reads via CostTracker). `_log_call_cost` correctly LEFT in brain (coupled to `_key_pools`/`_current_agent`/`_thread_local`/`_rate_limiter`), reaches the moved helpers via alias. `QuotaExceededError` caught nowhere in live code (send_message gate gone since Phase 5). `is_model_local`/`_models_config` stay in brain, reached lazily. CostTracker body byte-identical.
 
 ### 14 B3 PII regex scanner + U5 parity drift-checker — DONE
 - **Commit:** `793ca1e`  ·  **Date:** 2026-05-23  ·  **Phase:** 3 (B3 + U5)
