@@ -17,12 +17,12 @@ pushed on every update via `./refactor_publish.sh "<msg>" JS_REFACTOR_REPORT.md`
 | 0 | Build the GATE (ESLint + net-globals + Playwright smoke), green on unchanged code | ✅ DONE |
 | 1 | Cross-cutting de-dup — **verified and REJECTED** (all candidates net-negative; see below) | ✅ DONE (no-op + recorded) |
 | 2 | Split `settings.js` (6,140 → **7 files**, all <2k) | ✅ DONE |
-| 3 | Split `panels.js` (5,819 → ~5 files) | ⬜ planned |
+| 3 | Split `panels.js` (5,819 → **6 files**, all <2k) | ✅ DONE |
 | 4 | Split `chat.js` (4,013 → ~4 files) + REVIEW init.js / translation.js | ⬜ planned |
 | 5 | Final source-validation (mandatory close-out) | ⬜ planned |
 
-**RESUME POINT:** Phases 0–2 complete (gate green, baseline net-globals = **901** after the
-sanctioned switchGeneralTab-decomposition bump). Next: **Phase 3 (split panels.js)**.
+**RESUME POINT:** Phases 0–3 complete (gate green, baseline net-globals = **901**). Next:
+**Phase 4 (split chat.js + REVIEW init.js / translation.js)**.
 
 ### Phase 1 decision — de-dup verified and REJECTED (user-approved 2026-05-23)
 
@@ -86,7 +86,7 @@ can't mask a regression. The list may shrink, never grow.
 | File | LOC (start) | Disposition | Status | Target / reason |
 |---|---|---|---|---|
 | `settings.js` | 6,140 | SPLIT (Phase 2) | ✅ | DELETED → settings_teams (55) / settings_general (589) / settings_general_tabs (1,988, NEW — switchGeneralTab tab-bodies) / settings_tools (771) / settings_agent (1,539) / settings_hooks (110) / settings_schedule (1,109). All <2k. |
-| `panels.js` | 5,819 | SPLIT (Phase 3) | ⬜ | → panels_chats / _projects / _right / _gdpr |
+| `panels.js` | 5,819 | SPLIT (Phase 3) | ✅ | DELETED → panels_gdpr (818) / panels_chats (376) / panels_projects (1,324) / panels_project_sync (1,010, sub-split from projects) / panels_right (846) / panels_artifacts (1,452). All <2k. Trailing top-level `click` listener (deferred) kept with sync group. |
 | `chat.js` | 4,013 | SPLIT (Phase 4) | ⬜ | → chat_send / _render / _nav / _tools |
 | `init.js` | 2,899 | REVIEW (Phase 4) | ⬜ | Bootstrap + monitors. Over 2k — split out monitor classes if cohesive, else document why it stays whole (load-time init sequencing). Decision recorded at Phase 4. |
 | `translation.js` | 2,389 | REVIEW | ⬜ | Over 2k but a single cohesive domain. Split only if it holds clear sub-domains; else stays. Decision to be recorded. |
@@ -138,3 +138,16 @@ with a disposition + size — nothing silently out of scope.
   real new globals from decomposing one mega-function, none dropped. Baseline updated same commit.
 - Verified: no duplicate fn name across the 7 files; load order in index.html places
   settings_general.js before settings_general_tabs.js (helpers defined first). **Gate green, smoke 5/5.**
+
+### Phase 3 — `panels.js` split (5,819 → 6 files, all <2k)
+- Cut-paste relocation of all 177 top-level defs into 6 cohesive files; panels.js DELETED.
+  Plan named 4 targets; `projects` and `right` clusters each exceeded 2k, so sub-split per the
+  plan's "may sub-split" allowance: projects → `panels_projects` (1,324) + `panels_project_sync`
+  (1,010); right → `panels_right` (846) + `panels_artifacts` (1,452).
+- Net-globals **901 unchanged** (pure relocation, no baseline bump).
+- The one piece of top-level executable code (a `document.addEventListener('click', …)` sync-history
+  expand handler — not a named def) went to `panels_project_sync.js`. Verified safe under the
+  load-order contract: it only *registers* a listener (deferred), reads no other-file globals at load.
+- Subagent hit + recovered from a block-comment-boundary corruption (smoke fail surfaced it →
+  git restore → redo with block-comment tracking; final files pass `node --check` + full gate).
+- Verified independently: no duplicate fn name across the 6 files. **Gate green, smoke 5/5.**
