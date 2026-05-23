@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:46 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:55 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -47,7 +47,7 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <tr><td>Trace manager + audit trail</td><td>15,043–15,437</td><td><code>server_lib/trace_audit.py</code></td><td>1 (Tier A)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>fa146c3</code>; both DB pools moved; 58 <code>_audit_log</code> sites resolve via re-export; server.py rebind verified</td></tr>
 <tr><td><code>_thread_local</code> + execution context</td><td>brain.py:10,878</td><td><code>engine/context.py</code></td><td>2 (B1)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>5e56783</code>; relocated only (not DI); instance identity verified True across 291 sites</td></tr>
 <tr><td>Scheduler + task runner</td><td>12,950–15,641</td><td><code>engine/scheduler.py</code></td><td>3 (B2)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>2ba75be</code> (test <code>b09c5dd</code> first); 1407-LOC module; _thread_local via engine.context (3-way identity True); invariant #5 preserved; 18/18 chars-tests pass</td></tr>
-<tr><td>GDPR/PII scanner (<code>_pii_rules</code>/<code>_pii_scan_*</code>)</td><td>16,771–17,477</td><td><code>engine/pii_scan.py</code> (merge into <code>engine/pii_ner.py</code>)</td><td>3 (B3)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>fixes incoherent split (logic in brain, loader in engine) + web/index.html sync via U5</td></tr>
+<tr><td>GDPR/PII scanner (<code>_pii_rules</code>/<code>_pii_scan_*</code>)</td><td>(post-shift)</td><td>merged into <code>engine/pii_ner.py</code></td><td>3 (B3)</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>793ca1e</code>; merged with NER half; rule order preserved; 41/41 GDPR+pseudonymizer tests pass; U5 drift-checker shipped</td></tr>
 <tr><td>Quotas / cost / rate-limit (<code>QuotaManager</code>/<code>CostTracker</code>/<code>RateLimiter</code>)</td><td>scattered</td><td><code>engine/quotas.py</code>, <code>engine/cost.py</code></td><td>3 (B4)</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>each owns a DB pool</td></tr>
 <tr><td>Model selection + system-prompt assembly (<code>_build_system_prompt</code>, <code>MODEL_PROFILES</code>)</td><td>~21,844–24,482</td><td><code>engine/prompt_build.py</code>, <code>engine/model_select.py</code></td><td>4 (C1)</td><td><span class="badge gated" title="gated">⛔</span> gated</td><td>KV-cache sensitive; eval + warmup byte-stability gate</td></tr>
 <tr><td>Tool execution layer (artifact-session, dedup, summarization)</td><td>~2,839–4,845</td><td><code>engine/tool_exec.py</code></td><td>4 (C2)</td><td><span class="badge gated" title="gated">⛔</span> gated</td><td><span class="badge warn" title="attention">⚠️</span> characterization test first; core path</td></tr>
@@ -81,7 +81,7 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <tr><td>U2 HTTP body read</td><td>16 sites</td><td>(already centralized)</td><td>2</td><td><span class="badge done" title="done">✅</span> done (already-satisfied)</td><td>commit <code>c087db1</code>; canonical <code>_read_json</code> already exists — did NOT create competing module; repointed 3 inline-JSON stragglers; raw-JSON 4→1</td></tr>
 <tr><td>U3 SSE formatter</td><td>3 sites</td><td>folded into <code>server_lib/sse_stream.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>with chat SSE split</td></tr>
 <tr><td>U4 repo-root path constant</td><td>~82 sites (an idiom, not one value)</td><td>—</td><td>2</td><td><span class="badge excluded" title="excluded">🚫</span> SKIP (not-applicable)</td><td>investigated 2026-05-23: 82 occurrences resolve to DIFFERENT dirs by file depth, not one duplicated value; naive unify would rewrite ~half to the wrong dir. True repo-root sites already named locally (AGENTS_DIR/CONFIG_PATH/_REPO_ROOT). Cosmetic churn w/ real divergence risk → SKIP per principle #2</td></tr>
-<tr><td>U5 PII web/server rule sync</td><td>brain.py ↔ web/index.html</td><td>codegen JS table from Python</td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>after B3; stops hand-sync drift</td></tr>
+<tr><td>U5 PII web/server rule sync</td><td>engine/pii_ner.py ↔ web/js/utils.js</td><td><code>tools/check_pii_js_parity.py</code> (drift-CHECKER, gate-4b)</td><td>3</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>793ca1e</code>; checker (not generator) diffs rule_id/category/action maps; caught a REAL pre-existing drift (<code>date</code> rule). Full codegen deferred — regex bodies differ by dialect; the metadata check catches the actual drift failure mode at near-zero risk</td></tr>
 </tbody></table>
 <h3>D. Domains that will NOT be touched (out of scope) — with reason</h3>
 <table><thead><tr><th>Domain</th><th>Status</th><th>Why excluded</th></tr></thead><tbody>
@@ -98,12 +98,13 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <blockquote><strong>Coverage promise:</strong> every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.</blockquote>
 <h3>Running totals</h3>
 <ul>
-<li>Extractions completed: <strong>12</strong> (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2) — Phases 1 &amp; 2 DONE; Phase 3 in progress</li>
-<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 20,386_ (−4,796, −19.0%)</li>
+<li>Extractions completed: <strong>13</strong> (D2, A1, A2, A3, A4, A5, db-splits, admin-workflows, B1, U1, U2, B2, B3+U5) — Phases 1 &amp; 2 DONE; Phase 3 in progress</li>
+<li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 19,613_ (−5,569, −22.1%)</li>
 <li><code>server_lib/db.py</code> line count: <strong>1,985</strong> → _current: 1,778_ (−207)</li>
 <li><code>handlers/admin.py</code> line count: <strong>5,416</strong> → _current: 4,503_ (−913)</li>
 <li>Net new modules created: <strong>11</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>, <code>engine/tools/git_tools.py</code>, <code>engine/tools/gmail_tools.py</code>, <code>server_lib/trace_audit.py</code>, <code>server_lib/node_registry.py</code>, <code>server_lib/mempalace_sync.py</code>, <code>handlers/admin_workflows.py</code>, <code>engine/context.py</code>, <code>server_lib/pathsafe.py</code>, <code>engine/scheduler.py</code>; D2 merged into existing engine/classification.py; U2 used existing reader; U4 skipped)</li>
 <li>Characterization tests added: <strong>1</strong> (<code>tests/test_scheduler_characterization.py</code>, 18 tests — B2 prereq)</li>
+<li>Drift-checkers added: <strong>1</strong> (<code>tools/check_pii_js_parity.py</code> — gate-4b; caught a real pre-existing PII map drift)</li>
 <li>Reverts: <strong>0</strong>. Skips/already-satisfied (principled, documented): U4 (not-applicable), U2 (already centralized).</li>
 <li>Live duplicate definitions (brain.py ∩ engine/): <strong>0</strong> — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean</li>
 </ul>
@@ -127,6 +128,19 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 </ul>
 <p>```</p>
 <hr>
+<h3>14 B3 PII regex scanner + U5 parity drift-checker — DONE</h3>
+<ul>
+<li><strong>Commit:</strong> <code>793ca1e</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 3 (B3 + U5)</li>
+<li><strong>Symbol(s):</strong> <code>_pii_rules</code>, <code>_pii_scan_text</code>, <code>_pii_scan_bare_identifiers</code>, <code>PII_RULE_CATEGORIES</code>, <code>PII_DEFAULT_CATEGORY_ACTIONS</code></li>
+<li><strong>Moved FROM:</strong> brain.py (GDPR/PII regex scanner cluster, ~770 LOC post line-shift)</li>
+<li><strong>Moved TO:</strong> engine/pii_ner.py (merged with the existing spaCy-NER half — pii_ner.py top-level imports are stdlib-only, spaCy lazy-loaded in <code>load_models</code>, so the regex scanner stays import-light; no separate pii_scan.py needed)</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2: no <code>_pii_scan_text</code>/<code>_pii_rules</code> def in brain.py; brain re-exports all 5 (back-compat: <code>brain.X</code>/<code>engine.X</code>/<code>from brain import _pii_scan_text</code> all resolve).</li>
+<li><strong>Callers re-pointed:</strong> 0 — re-export covers tests (<code>brain._pii_scan_text</code>), engine/classification.py (<code>from brain import</code>), handlers (<code>engine.X</code>). Config-coupled helpers (<code>_pii_effective_action</code>, <code>_get_gdpr_scanner_config</code>, <code>_pii_email_allowed</code>) stay in brain (not pure).</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 · Gate 4b parity OK · Gate 5 80 pass / 3 known-NER fail · <strong>GDPR + pseudonymizer suites 41/41 pass</strong> · verdict PASS</li>
+<li><strong>Characterization test added?</strong> n/a — existing GDPR/pseudonymizer tests already pin behavior (41 tests); they're the characterization layer for this path.</li>
+<li><strong>brain.py delta:</strong> 20,386 → 19,613 (−773)</li>
+<li><strong>Notes:</strong> <strong>Rule order is a correctness invariant</strong> (first-match-wins + overlap suppression: context-gated before bare-digit, credit_card after national-IDs, phone after national-IDs) — body extracted as exact byte-range, NOT re-typed; verified by 41/41 tests + functional smoke. Scanner is pure (re + stdlib, zero brain dep; <code>_pii_scan_text</code> lazy-imports brain only for the config-action resolver — cycle-safe). <strong>U5 = drift-CHECKER</strong> (<code>tools/check_pii_js_parity.py</code>, gate-4b), not a generator: diffs Python rule_ids + category/action maps vs <code>web/js/utils.js</code> PIIScanner — regex *bodies* differ by dialect (re vs RegExp) so aren't diffed; only the metadata that silently drifts. <strong>First run caught a REAL pre-existing drift</strong> — Python <code>date</code> rule had no JS category entry (relied on <code>||'personal'</code> fallback); fixed in utils.js. CLAUDE.md note updated for the moved location.</li>
+</ul>
 <h3>13 B2 scheduler + task runner — DONE  *(prereq: chars-test <code>b09c5dd</code>)*</h3>
 <ul>
 <li><strong>Commit:</strong> <code>2ba75be</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 3 (B2 — <span class="badge warn" title="attention">⚠️</span> core path)</li>
