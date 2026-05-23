@@ -2,22 +2,56 @@
 
 Non-obvious invariants for this package. Root CLAUDE.md has the full architecture picture.
 
-**Runtime source of truth — IMPORTANT.** `brain.py` is the live monolith — everything that handlers/server.py reach via `import brain as engine` runs from `brain.py`'s namespace. The agentic loop, system-prompt builder, tool dispatch, provider routing, and all middleware live in `brain.py`. The `engine/` subtree is a **partial extraction** — only the modules below are actually imported at runtime.
+**Runtime source of truth — IMPORTANT.** As of the 2026-05-23 module-extraction
+refactor (Tiers A–E, see `REFACTOR_REPORT.md`), `engine/` is now the live home
+for most domains; `brain.py` (≈12.3k LOC, down from 25.2k) is the **orchestration
++ re-export layer**. Extracted symbols are defined in `engine/` and re-exported on
+`brain` (`brain.X is engine.<mod>.X`), so handlers/server.py reaching them via
+`import brain as engine` still resolve — but the live code runs from the engine
+module. **Invariant: engine modules must NOT top-level `import brain`** (cycle —
+brain imports them for the re-export); they reach brain runtime via lazy
+`import brain as _brain` inside functions, and shared low-level state via
+`from engine.context import _thread_local`.
 
-**Live engine/ modules (imported externally):**
+**Live engine/ modules:**
 
-| File | Owns | Importers |
-|------|------|-----------|
-| `tools/image_gen.py` | Image generation via Mistral Conversations API (only live tool extraction) | `brain.py` TOOL_DISPATCH (line ~21845) |
-| `kg_extract.py` | LLM-driven triple extraction over project input folders | `handlers/admin.py`, `handlers/projects.py`, `server.py` |
-| `doc_convert.py` | the single document-extraction pipeline (markitdown→fallback) for ALL reads + companion `.md` conversion — see "Document Extraction Pipeline" below | `server.py`, `handlers/classification.py`, brain.py via lazy import |
-| `sync_log.py` | Sync run log table + helpers | `handlers/projects.py`, `server.py` |
+| File | Owns |
+|------|------|
+| `context.py` | `_thread_local` + `ExecutionContext` (the shared-state base; cycle-free, no `import brain`) |
+| `tool_schemas.py` | `TOOL_DEFINITIONS` (Anthropic schema list) + OPENAI mirror + indices |
+| `tool_exec.py` | tool-exec helpers: `_ok`/`_err`, dedup (`_check_tool_dedup`), sanitise/compress/microcompact, read-path tracker, `_get_artifact_session_folder` |
+| `prompt_build.py` | `_build_system_prompt` + postprocess + the `*_preamble_text` helpers (+ per-session prompt cache) |
+| `model_select.py` | `MODEL_PROFILES`, `resolve_provider_for_model`, provider cache + key-pools |
+| `mempalace_glue.py` | `tool_mempalace_query` + `_wing_visible` (project-wing isolation) + memory/KG tools |
+| `scheduler.py` / `quotas.py` / `workflow.py` / `code_graph.py` | scheduler+task-runner · CostTracker/QuotaManager/RateLimiter · workflow lexer/parser/interpreter · tree-sitter code graph |
+| `ingest.py` | DocumentParser/Chunker/IngestManager/IngestWatcher (`_ingest_watcher` singleton stays in brain) |
+| `tools/*` | every `tool_*` implementation: `file_tools` (file/shell/python/doc), `git_tools`, `gmail_tools`, `image_gen`, `context_tools`, `translate_tools`, `delegation_tools`, `misc_tools` (web_fetch/use_skill/mcp/nodes), `ask_tools` |
+| `pii_ner.py` / `classification.py` / `doc_convert.py` / `kg_extract.py` / `sync_log.py` | GDPR regex+NER · ARL classification · doc-extraction pipeline · KG triple extraction · sync log |
 
-Anything else under `engine/` is dead. brain.py owns the live equivalent.
+What STAYS in `brain.py`: tool registry **wiring** (`TOOL_GROUPS`, `TOOL_DISPATCH`),
+runtime classes (AgentConfig, MemoryStore, ProjectManager, MCPManager, TaskRunner,
+WorkflowEngine, ContextManager, LocalProviderQueue), warmup/`build_first_turn_prefix`,
+the tool-resolver (`resolve_active_tools`), GDPR/PII + classification config glue,
+KG entity-indexing, the ask_* blocking-state (`_ask_user_pending`/`deliver_*`),
+hooks, and `DEFAULT_PROJECT_INSTRUCTIONS`.
 
-**Deleted in 8.29.0**: `loop.py` + `constants.py` (~4700 LOC). **8.30.0**: 8 internal modules + `analytics/` package (~9918 LOC). **8.32.0**: rest of `tools/` (`files.py`, `email.py`, `git.py`, `code_graph.py`, `web.py`) and entire `memory/` subpackage (`store.py`, `autodream.py`, `mempalace.py`) — ~9700 LOC. brain.py was already the live source for every symbol: all 11 file/shell/python tools, all 5 gmail tools, both git tools, all 4 code_graph tools, web_fetch (with `_html_to_markdown` that the dead `engine/tools/web.py` was missing), `MemoryStore` class, `_autodream_*` helpers. MemPalace functionality uses the **`mempalace` pip package directly** (`mempalace.searcher`, `mempalace.palace`, `mempalace.knowledge_graph`, `mempalace.closet_llm`) — never `engine.memory.mempalace`. Also dropped: 3 broken `tests/test_worker_phase*.py` files (imported `from engine import execution` — `execution.py` lives at repo root, so they failed at import), entire `backup/` directory (38K LOC of historical snapshots, audit-trail-only).
+**Adding a new tool** = 4 sites across 3 files: schema dict in `TOOL_DEFINITIONS`
+(`engine/tool_schemas.py`), `TOOL_GROUPS` (`brain.py`), the `tool_*` function (in
+the matching `engine/tools/<group>.py`, reaching brain runtime via lazy `_brain`),
+and a `TOOL_DISPATCH` entry (`brain.py`) — a **direct ref** to the function (not a
+`lambda` forwarder, so the dispatch-identity check passes). MemPalace uses the
+**`mempalace` pip package directly** (`mempalace.searcher`/`.palace`/
+`.knowledge_graph`/`.closet_llm`).
 
-**Rule going forward**: new tool implementations go in **brain.py only**. Adding a tool means editing 4 sites in brain.py: `TOOL_DEFINITIONS` (~line 421), `TOOL_GROUPS` (~line 1635), the `tool_*` function definition, `TOOL_DISPATCH` (~line 21862). No engine/tools/ directory entries unless the tool is genuinely large enough to warrant its own module (only `image_gen.py` qualifies today).
+**Historical (pre-refactor cleanup, kept for the record):** v8.29.0 deleted
+`loop.py`+`constants.py` (~4700 LOC); v8.30.0 deleted 8 internal modules +
+`analytics/` (~9918 LOC); v8.32.0 deleted the then-dead duplicate `tools/`
+(`files.py`/`email.py`/`git.py`/`code_graph.py`/`web.py`) + `memory/` subpackage
+(~9700 LOC) — at that time brain.py was the live source and those engine copies
+had drifted. The 2026-05-23 refactor reversed that direction deliberately:
+single-sourced the logic back INTO `engine/` with brain re-exporting (0 surviving
+duplicate defs, verified by `refactor_gate.sh` Gate-2). Also long-dropped: 3 broken
+`tests/test_worker_phase*.py`, the `backup/` snapshots.
 
 The invariants below describe brain.py's runtime behavior.
 

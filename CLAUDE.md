@@ -72,14 +72,13 @@ Guidance for Claude Code in this repo. **Non-obvious invariants only** — what'
 - `launcher.py` — Gateway CLI (start/stop/restart, launch frontends)
 - `server.py` — HTTP API daemon (launchd-managed, port 8420)
 - `client.py` — Shared HTTP/SSE client library
-- `brain.py` — Core engine: tools, agents, MCP, scheduler, agentic loop
-- `engine/` — Extracted engine modules (loop, provider, models, scheduler, tasks, tools, …) — see `engine/CLAUDE.md`
+- `brain.py` — Core orchestration: the tool registry **wiring** (`TOOL_GROUPS` + `TOOL_DISPATCH`), runtime classes (AgentConfig, MemoryStore, ProjectManager, MCPManager, TaskRunner, WorkflowEngine, ContextManager, LocalProviderQueue), warmup/first-turn-prefix, the tool-resolver, GDPR/PII + classification glue, KG entity-indexing, hooks. **Tool implementations + schemas + most domains now live in `engine/`** (see below) — brain.py re-exports them so `brain.X` still resolves.
+- `engine/` — Extracted engine modules — see `engine/CLAUDE.md`. Includes: `loop`, `provider`, `models`, `scheduler`, `tasks`, `quotas`, `context`, `workflow`, `code_graph`, `prompt_build` (`_build_system_prompt`), `model_select` (`MODEL_PROFILES` + `resolve_provider_for_model`), `tool_exec` (dedup/sanitise/compress + `_ok`/`_err`), `tool_schemas` (`TOOL_DEFINITIONS`), `mempalace_glue` (`tool_mempalace_query` + memory/KG tools), `ingest` (DocumentParser/Chunker/IngestManager), `pii_ner`, `classification`, `doc_convert`, `kg_extract`, and `engine/tools/*` (every `tool_*` implementation: file/git/gmail/web/translate/delegation/context/misc/ask).
 - `handlers/` — HTTP handler modules extracted from server.py — see `handlers/CLAUDE.md`
 - `server_lib/` — DB, auth, sessions, notifications, profile helpers
 - `tui.py`, `telegram.py` — Terminal + Telegram frontends
 - `web/index.html` — Single-page web UI (`web/js/` split into api/chat/files/settings/… modules)
 - `desktop/` — Electron shell (CORS-free IPC + lazy llama.cpp host)
-- `tools.md` — Global tool-usage guide (loaded into system prompt)
 - `config.json` — Providers, server, Telegram (gitignored)
 - `agents/<name>/` — `soul.md`, `agent.json`, `skills/`, `mcp.json`; SQLite DBs in `agents/main/`
 
@@ -87,9 +86,12 @@ Guidance for Claude Code in this repo. **Non-obvious invariants only** — what'
 
 ```
 launcher.py → server.py (port 8420)                ┌──────────────────────────┐
-                ├── brain.py  # tools, providers, ─┤ sidecar/sidecar.py 8421  │
-                │             # MemPalace, KG,     │  Anthropic Python SDK    │
-                │             # scheduler, LCM     │  agentic loop owner      │
+                ├── brain.py  # tool registry     ─┤ sidecar/sidecar.py 8421  │
+                │   + engine/ # wiring, runtime    │  Anthropic Python SDK    │
+                │             # classes, glue;     │  agentic loop owner      │
+                │             # tool impls/schemas │                          │
+                │             # + most domains     │                          │
+                │             # live in engine/    │                          │
                 ├── handlers/sidecar_proxy.py ────►│                          │
                 ├── server_lib/tool_mcp.py ◄──HTTP─┤  POSTs /v1/tools/call    │
                 ├── SQLite      # chats, scheduler, context, costs, traces, …
@@ -97,8 +99,11 @@ launcher.py → server.py (port 8420)                ┌────────
 ```
 
 All chat + non-interactive LLM calls go through the **sidecar** subprocess
-(separate venv, anthropic 0.101.0). Brain owns tools, MemPalace, scheduler,
-projects, MCP routing; the sidecar owns the agentic loop. Providers are
+(separate venv, anthropic 0.101.0). Brain is the orchestration layer — it owns
+tool registry wiring + dispatch, MemPalace/scheduler/projects/MCP routing and
+the runtime classes, while the tool implementations, schemas, scheduler,
+quotas, prompt-build, model-select and MemPalace-query logic live in `engine/`
+(re-exported on `brain`); the sidecar owns the agentic loop. Providers are
 plain OpenAI-compatible entries in `config.json` — Brain hands the sidecar
 an Anthropic-shape payload + provider env (CLIProxyAPI translates back to
 each upstream wire format).
@@ -372,7 +377,11 @@ Scoping: `main` → heads + standalone (not members directly). Heads → their m
 
 ## Tools
 
-Source of truth: `TOOL_DEFINITIONS` in `brain.py` (Anthropic flat shape).
+Source of truth: `TOOL_DEFINITIONS` in `engine/tool_schemas.py` (Anthropic
+flat shape; re-exported as `brain.TOOL_DEFINITIONS`). Tool **implementations**
+live in `engine/tools/*` (file/git/gmail/web/translate/delegation/context/
+misc/ask) + `engine/mempalace_glue.py` (memory/KG); the registry **wiring**
+(`TOOL_GROUPS`, `TOOL_DISPATCH`) stays in `brain.py`.
 Groups: core, documents, code_graph, web, email, delegation, git, scheduler,
 mcp, skills, nodes, context, memory, code_exec. Resolution per turn lives
 in `resolve_active_tools(purpose=...)` — single decision point for chat,
@@ -516,8 +525,14 @@ body for atomic per-tool replacement).
   `tool_settings.execute_command.description`.
 - Memory is MemPalace **direct, not MCP**. Tool: `mempalace_query`
   (+ `save_chat_to_memory`, `mempalace_get_drawer`, `mempalace_list_drawers`).
-- **Adding a new tool** = 4 edit sites in `brain.py`: `TOOL_DEFINITIONS`,
-  `TOOL_GROUPS`, the `tool_*` function, `TOOL_DISPATCH`. Per-tool prose
+- **Adding a new tool** = 4 edit sites across 3 files: the schema dict in
+  `TOOL_DEFINITIONS` (`engine/tool_schemas.py`), `TOOL_GROUPS` (`brain.py`),
+  the `tool_*` function (in the matching `engine/tools/<group>.py` — file
+  bodies reach brain runtime via lazy `import brain as _brain`), and a
+  `TOOL_DISPATCH` entry (`brain.py`) pointing at the function (imported via
+  the module's re-export). **Dispatch-identity rule:** the `TOOL_DISPATCH`
+  value must be a direct ref to the moved fn (not a `lambda args: tool_X(args)`
+  forwarder) or the 4-site/extraction checks can't verify it. Per-tool prose
   is added later via the admin UI, not in code.
 - **Pre-existing**: 4 tools (`memory_delete`, `memory_recall`, `memory_shared`,
   `memory_persist`) are missing from `TOOL_GROUPS` — surface as
