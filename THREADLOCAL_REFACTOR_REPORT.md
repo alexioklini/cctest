@@ -21,8 +21,10 @@ single context-manager (no scattered `=None` teardown); a new concurrency/bleed 
 | 4 | Remove the shim | ⬜ |
 | 5 | Final source-validation | ⬜ |
 
-**RESUME POINT:** Phase 2 — migrate enter/exit sites to the `request_context(...)` context-manager
-(order: non-chat-worker setters → background/sidecar reconstitute → chat worker).
+**RESUME POINT:** Phase 2b — remaining enter/exit sites: `engine/scheduler.py` (centralized
+init/clear pair → ctx-manager), `server_lib/tool_mcp.py` + `handlers/sessions_handler.py` /
+`handlers/admin_config.py` if they set context, and the sidecar-reconstitute path. Then Phase 3
+(migrate reads to typed accessors).
 
 ---
 
@@ -134,6 +136,28 @@ statuses; it never appends. A genuinely new attribute = scope change to flag to 
   independently of the broad `unittest discover`).
 - Full `./refactor_gate.sh` GREEN: 18/18 imports, PII parity OK, no new unittest fails beyond the 3
   known spaCy ones, Gate 5b OK.
+
+### Phase 2c — chat worker + the 3 other chat.py context sites ✅ (commit: this)
+The headline bleed-risk fix. All four enter/exit sites in `handlers/chat.py` now use
+`with engine.request_context(...)`; every manual `_thread_local.x = None` teardown is gone.
+- **`worker()`** (the per-turn turn body): wrapped the entire 1026-line body in
+  `with engine.request_context():`; deleted the 11-line manual teardown block in its `finally`
+  (current_agent/mcp_manager/memory_store/plan_mode/caveman_chat/caveman_system/execution_overrides/
+  research_mode_override/_current_model/_gdpr_anonymising + the comment). `git diff -w` = exactly
+  +1 `with` line / −11 teardown lines. The mid-turn `_gdpr_anonymising = True` (line ~2172) now
+  lives inside the `with` and auto-resets on exit.
+- **`_generate_chat_summary`** (bg summary thread): wrapped the setters→try/except in the ctx-manager;
+  deleted the teardown-only `finally` (current_agent=None / memory_store=None).
+- **`_recover_one_turn`** (Brain-restart recovery daemon thread): wrapped the setter `try/except`
+  through the function body in the ctx-manager (it had NO teardown before — latent bleed closed).
+- **`_handle_chat` pre-worker setter** (the HTTP HANDLER thread, which IS reused by ThreadingMixIn —
+  the only genuine active bleed risk among the four): `engine._thread_local.current_session_id =
+  session.id` → `with engine.request_context(current_session_id=session.id):` scoped to the
+  budget/microcompact pre-processing block (the only code there reading it; the worker sets its own).
+- Done via Python-script reindents (not hand-editing 1000+ lines); each verified by `ast.parse` +
+  import + `git diff -w` content check. Two surviving `_thread_local.x = None` in chat.py (569, 2021)
+  are legitimate SETTERS inside wrapped blocks (no-memory-store / note_context else-branch), not
+  teardown. Full `./refactor_gate.sh` GREEN.
 
 ### Phase 2a — non-chat-worker setters: server_daemons + translate ✅ (commit: this)
 - `server_daemons.py` (mempalace-classifier): the `current_user_id` save/`try`/`finally:`-restore

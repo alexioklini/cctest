@@ -564,99 +564,97 @@ def _generate_chat_summary(session):
     """
     if len(session.messages) < 2:
         return
-    engine._thread_local.current_agent = session.agent
-    engine._thread_local.memory_store = None
-    engine._thread_local.current_user_id = (getattr(session, "user_id", "") or "")
-    msgs = session.messages
-    # Only the user's questions feed the summary — the assistant's answers are
-    # excluded by design (sidebar synopsis should reflect what was asked).
-    user_msgs = []
-    for m in msgs:
-        if m.get("role") != "user":
-            continue
-        content = m.get("content", "")
-        if isinstance(content, list):
-            parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
-            content = " ".join(parts)
-        if isinstance(content, str) and content.strip():
-            # Strip the round-0 artifact-folder preamble that rides in the
-            # first user message's content — it's plumbing, not what the user
-            # asked (mirrors add_message's auto-title strip).
-            _pre = (m.get("metadata") or {}).get("preamble")
-            if _pre and content.startswith(_pre):
-                content = content[len(_pre):].lstrip("\n")
-            if content.strip():
-                user_msgs.append(content[:200])
-    # Keep the first question (sets the topic) plus the most recent ones.
-    if len(user_msgs) > 4:
-        sample = user_msgs[:1] + user_msgs[-3:]
-    else:
-        sample = user_msgs
+    with engine.request_context():
+        engine._thread_local.current_agent = session.agent
+        engine._thread_local.memory_store = None
+        engine._thread_local.current_user_id = (getattr(session, "user_id", "") or "")
+        msgs = session.messages
+        # Only the user's questions feed the summary — the assistant's answers are
+        # excluded by design (sidebar synopsis should reflect what was asked).
+        user_msgs = []
+        for m in msgs:
+            if m.get("role") != "user":
+                continue
+            content = m.get("content", "")
+            if isinstance(content, list):
+                parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                content = " ".join(parts)
+            if isinstance(content, str) and content.strip():
+                # Strip the round-0 artifact-folder preamble that rides in the
+                # first user message's content — it's plumbing, not what the user
+                # asked (mirrors add_message's auto-title strip).
+                _pre = (m.get("metadata") or {}).get("preamble")
+                if _pre and content.startswith(_pre):
+                    content = content[len(_pre):].lstrip("\n")
+                if content.strip():
+                    user_msgs.append(content[:200])
+        # Keep the first question (sets the topic) plus the most recent ones.
+        if len(user_msgs) > 4:
+            sample = user_msgs[:1] + user_msgs[-3:]
+        else:
+            sample = user_msgs
 
-    if not sample:
-        return
-
-    prompt = (
-        "Summarize the topics the user has asked about across this conversation "
-        "in one short line (max 100 chars). If several distinct topics came up, "
-        "cover them briefly rather than only the latest. Focus on the topics/tasks, "
-        "not greetings. Output ONLY the summary, nothing else. "
-        "Base your summary ONLY on the user questions below.\n\n"
-        + "\n".join(sample)
-    )
-    try:
-        configured = (server_config.get("chat_summary_model") or "").strip()
-        model = ""
-        if configured:
-            mcfg = (engine._models_config or {}).get(configured) or {}
-            if mcfg.get("enabled", True):
-                model = configured
-        if not model:
-            model = engine._background_model_default()
-        if not model:
+        if not sample:
             return
 
-        _summary_deanon = engine._identity_deanon
+        prompt = (
+            "Summarize the topics the user has asked about across this conversation "
+            "in one short line (max 100 chars). If several distinct topics came up, "
+            "cover them briefly rather than only the latest. Focus on the topics/tasks, "
+            "not greetings. Output ONLY the summary, nothing else. "
+            "Base your summary ONLY on the user questions below.\n\n"
+            + "\n".join(sample)
+        )
         try:
-            model, _new_sample, _summary_deanon = engine.gdpr_pick_model_for_background(
-                model, sample, purpose="chat_summary")
-            if _new_sample is not sample:
-                sample = list(_new_sample)
-                prompt = (
-                    "Summarize the topics the user has asked about across this conversation "
-                    "in one short line (max 100 chars). If several distinct topics came up, "
-                    "cover them briefly rather than only the latest. Focus on the topics/tasks, "
-                    "not greetings. Output ONLY the summary, nothing else. "
-                    "Base your summary ONLY on the user questions below.\n\n"
-                    + "\n".join(sample)
-                )
-        except engine.GDPRBlockedError:
-            return
+            configured = (server_config.get("chat_summary_model") or "").strip()
+            model = ""
+            if configured:
+                mcfg = (engine._models_config or {}).get(configured) or {}
+                if mcfg.get("enabled", True):
+                    model = configured
+            if not model:
+                model = engine._background_model_default()
+            if not model:
+                return
+
+            _summary_deanon = engine._identity_deanon
+            try:
+                model, _new_sample, _summary_deanon = engine.gdpr_pick_model_for_background(
+                    model, sample, purpose="chat_summary")
+                if _new_sample is not sample:
+                    sample = list(_new_sample)
+                    prompt = (
+                        "Summarize the topics the user has asked about across this conversation "
+                        "in one short line (max 100 chars). If several distinct topics came up, "
+                        "cover them briefly rather than only the latest. Focus on the topics/tasks, "
+                        "not greetings. Output ONLY the summary, nothing else. "
+                        "Base your summary ONLY on the user questions below.\n\n"
+                        + "\n".join(sample)
+                    )
+            except engine.GDPRBlockedError:
+                return
+            except Exception:
+                pass
+
+            _res = sidecar_proxy.background_call(
+                messages=[{"role": "user", "content": prompt}],
+                model=model,
+                system_prompt="Output only a brief summary sentence. No quotes, no prefix.",
+                agent_id=session.agent_id,
+                session_id=session.id,
+                project=(session.project or ""),
+                max_tokens=120,
+            )
+            result = _summary_deanon(_res.get("reply") or "")
+            if result and not _res.get("error"):
+                summary = result.strip().strip('"').strip("'")[:120]
+                with session.lock:
+                    session.summary = summary
+                ChatDB.save_session(session.id, session.agent_id, session.model,
+                                    session.title, session.status, session.created_at,
+                                    session.last_active, session.project or "", summary)
         except Exception:
             pass
-
-        _res = sidecar_proxy.background_call(
-            messages=[{"role": "user", "content": prompt}],
-            model=model,
-            system_prompt="Output only a brief summary sentence. No quotes, no prefix.",
-            agent_id=session.agent_id,
-            session_id=session.id,
-            project=(session.project or ""),
-            max_tokens=120,
-        )
-        result = _summary_deanon(_res.get("reply") or "")
-        if result and not _res.get("error"):
-            summary = result.strip().strip('"').strip("'")[:120]
-            with session.lock:
-                session.summary = summary
-            ChatDB.save_session(session.id, session.agent_id, session.model,
-                                session.title, session.status, session.created_at,
-                                session.last_active, session.project or "", summary)
-    except Exception:
-        pass
-    finally:
-        engine._thread_local.current_agent = None
-        engine._thread_local.memory_store = None
 
 
 def build_chat_event_callback(session, live, sid):
@@ -915,164 +913,165 @@ def _recover_one_turn(sid, turn_id, model, started_at):
 
     # Re-establish thread-local context for tools that might still fire on
     # in-flight rounds (some tools peek at current_session_id/current_agent).
-    try:
-        engine._thread_local.current_session_id = sid
-        engine._thread_local.current_user_id = session.user_id or ""
-        engine._thread_local.current_agent = engine.AgentConfig(session.agent_id)
-        engine._thread_local.memory_store = session.memory
-        engine._thread_local.mcp_manager = engine._mcp_manager
-        engine._thread_local.project = session.project or ""
-    except Exception:
-        pass
-
-    live = LiveStream()
-    with session.lock:
-        session._streaming = True
-        session.live_stream = live
-    event_callback, state = build_chat_event_callback(session, live, sid)
-    _partial_reply = state["partial_reply"]
-    _partial_tools = state["partial_tools"]
-    _partial_thinking = state["partial_thinking"]
-    _usage_totals = state["usage_totals"]
-    created_files = state["created_files"]
-
-    sc_url = _sp.sidecar_url() + f"/turn/{turn_id}/events?since=0"
-    req = urllib.request.Request(sc_url, method="GET")
-    req.add_header("Accept", "text/event-stream")
-
-    xlate_state = {
-        "round_index": 0,
-        "block_types": {},
-        "tool_uses": {},
-        "tool_results": {},
-        "turn_id": turn_id,
-    }
-    final_text = ""
-    final_summary: dict = {}
-    cancelled = False
-    error_msg = None
-    catastrophic = False
-
-    try:
-        resp = urllib.request.urlopen(req, timeout=1800.0)
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            print(f"[turn-recovery] sidecar 404 for turn={turn_id[:8]} — "
-                  f"event log already purged; marking lost", flush=True)
-            catastrophic = True
-        else:
-            error_msg = f"sidecar HTTP {e.code}: {e.reason}"
-    except Exception as e:
-        error_msg = f"sidecar transport {type(e).__name__}: {e}"
-
-    if catastrophic or error_msg:
-        # Recover what we can: persist whatever streaming_text the prior process
-        # already wrote, tagged with a marker, then clear the row.
+    with engine.request_context():
         try:
-            prior_partial, _meta = ChatDB.get_streaming_text(sid)
+            engine._thread_local.current_session_id = sid
+            engine._thread_local.current_user_id = session.user_id or ""
+            engine._thread_local.current_agent = engine.AgentConfig(session.agent_id)
+            engine._thread_local.memory_store = session.memory
+            engine._thread_local.mcp_manager = engine._mcp_manager
+            engine._thread_local.project = session.project or ""
         except Exception:
-            prior_partial = ""
-        partial = (prior_partial or "").strip()
-        if partial:
-            partial += "\n\n*(Server restart — turn lost)*"
+            pass
+
+        live = LiveStream()
+        with session.lock:
+            session._streaming = True
+            session.live_stream = live
+        event_callback, state = build_chat_event_callback(session, live, sid)
+        _partial_reply = state["partial_reply"]
+        _partial_tools = state["partial_tools"]
+        _partial_thinking = state["partial_thinking"]
+        _usage_totals = state["usage_totals"]
+        created_files = state["created_files"]
+
+        sc_url = _sp.sidecar_url() + f"/turn/{turn_id}/events?since=0"
+        req = urllib.request.Request(sc_url, method="GET")
+        req.add_header("Accept", "text/event-stream")
+
+        xlate_state = {
+            "round_index": 0,
+            "block_types": {},
+            "tool_uses": {},
+            "tool_results": {},
+            "turn_id": turn_id,
+        }
+        final_text = ""
+        final_summary: dict = {}
+        cancelled = False
+        error_msg = None
+        catastrophic = False
+
+        try:
+            resp = urllib.request.urlopen(req, timeout=1800.0)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                print(f"[turn-recovery] sidecar 404 for turn={turn_id[:8]} — "
+                      f"event log already purged; marking lost", flush=True)
+                catastrophic = True
+            else:
+                error_msg = f"sidecar HTTP {e.code}: {e.reason}"
+        except Exception as e:
+            error_msg = f"sidecar transport {type(e).__name__}: {e}"
+
+        if catastrophic or error_msg:
+            # Recover what we can: persist whatever streaming_text the prior process
+            # already wrote, tagged with a marker, then clear the row.
             try:
-                session.add_message("assistant", partial, metadata={
-                    "model": model, "partial": True, "recovery_lost": True,
-                })
+                prior_partial, _meta = ChatDB.get_streaming_text(sid)
+            except Exception:
+                prior_partial = ""
+            partial = (prior_partial or "").strip()
+            if partial:
+                partial += "\n\n*(Server restart — turn lost)*"
+                try:
+                    session.add_message("assistant", partial, metadata={
+                        "model": model, "partial": True, "recovery_lost": True,
+                    })
+                except Exception:
+                    pass
+            try:
+                live.emit("error", {"message": error_msg or "turn log lost across restart"})
             except Exception:
                 pass
-        try:
-            live.emit("error", {"message": error_msg or "turn log lost across restart"})
-        except Exception:
-            pass
-        _finalize_recovery(session, live, sid, turn_id)
-        return
+            _finalize_recovery(session, live, sid, turn_id)
+            return
 
-    try:
-        buf = ""
-        for raw_line in resp:
-            line = raw_line.decode("utf-8", errors="replace")
-            if line.startswith(":"):
-                continue
-            line = line.rstrip("\n").rstrip("\r")
-            if not line:
-                if buf:
-                    try:
-                        evt = json.loads(buf)
-                    except Exception:
-                        evt = None
-                    buf = ""
-                    if evt:
-                        ev_type = evt.get("type", "")
-                        data = evt.get("data") or {}
-                        _sp._translate_anthropic_event(
-                            ev_type, data, xlate_state, event_callback)
-                        if ev_type == "done":
-                            final_summary = data
-                            final_text = data.get("final_text", "") or ""
-                        elif ev_type == "error":
-                            error_msg = data.get("message", "sidecar error")
-                        elif ev_type == "cancelled":
-                            cancelled = True
-                continue
-            if line.startswith("data: "):
-                buf += line[6:]
-            elif line.startswith("data:"):
-                buf += line[5:]
-    except Exception as e:
-        error_msg = error_msg or f"recovery drain {type(e).__name__}: {e}"
-
-    # Persist assistant message + emit terminal `done` into LiveStream so any
-    # tab attached via GET /v1/chat/stream sees the turn finish.
-    try:
-        reply = final_text or "".join(_partial_reply).strip()
-        if reply:
-            msg_metadata = {
-                "model": model,
-                "tokens_in": _usage_totals["tokens_in"],
-                "tokens_out": _usage_totals["tokens_out"],
-                "last_tokens_in": _usage_totals["last_tokens_in"],
-                "tokens": engine._estimate_conversation_tokens(session.messages),
-                "recovered": True,
-            }
-            if created_files:
-                msg_metadata["files"] = created_files
-            if _partial_tools:
-                msg_metadata["tools"] = _partial_tools
-            if cancelled:
-                msg_metadata["partial"] = True
-                reply = reply + "\n\n*(Cancelled)*"
-            elif error_msg and not final_text:
-                msg_metadata["partial"] = True
-                reply = reply + f"\n\n*(Recovery error: {str(error_msg)[:200]})*"
-            session.add_message("assistant", reply, metadata=msg_metadata)
-            done_data = {
-                "text": reply,
-                "tokens": msg_metadata["tokens"],
-                "max_context": session.max_context,
-                "model": model,
-                "tokens_in": _usage_totals["tokens_in"],
-                "tokens_out": _usage_totals["tokens_out"],
-                "last_tokens_in": _usage_totals["last_tokens_in"],
-            }
-            if created_files:
-                done_data["files"] = created_files
-            live.emit("done", done_data)
-        else:
-            live.emit("error", {"message": error_msg or "no reply recovered"})
-    except Exception as e:
-        print(f"[turn-recovery] persistence failed turn={turn_id[:8]}: {e}",
-              flush=True)
         try:
-            live.emit("error", {"message": str(e)})
-        except Exception:
-            pass
-    finally:
-        _finalize_recovery(session, live, sid, turn_id)
-        print(f"[turn-recovery] done turn={turn_id[:8]} model={model[:24]} "
-              f"reply={len(final_text)}c rounds={final_summary.get('rounds', 0)} "
-              f"tools={final_summary.get('tool_calls_total', 0)} "
-              f"error={error_msg} cancelled={cancelled}", flush=True)
+            buf = ""
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="replace")
+                if line.startswith(":"):
+                    continue
+                line = line.rstrip("\n").rstrip("\r")
+                if not line:
+                    if buf:
+                        try:
+                            evt = json.loads(buf)
+                        except Exception:
+                            evt = None
+                        buf = ""
+                        if evt:
+                            ev_type = evt.get("type", "")
+                            data = evt.get("data") or {}
+                            _sp._translate_anthropic_event(
+                                ev_type, data, xlate_state, event_callback)
+                            if ev_type == "done":
+                                final_summary = data
+                                final_text = data.get("final_text", "") or ""
+                            elif ev_type == "error":
+                                error_msg = data.get("message", "sidecar error")
+                            elif ev_type == "cancelled":
+                                cancelled = True
+                    continue
+                if line.startswith("data: "):
+                    buf += line[6:]
+                elif line.startswith("data:"):
+                    buf += line[5:]
+        except Exception as e:
+            error_msg = error_msg or f"recovery drain {type(e).__name__}: {e}"
+
+        # Persist assistant message + emit terminal `done` into LiveStream so any
+        # tab attached via GET /v1/chat/stream sees the turn finish.
+        try:
+            reply = final_text or "".join(_partial_reply).strip()
+            if reply:
+                msg_metadata = {
+                    "model": model,
+                    "tokens_in": _usage_totals["tokens_in"],
+                    "tokens_out": _usage_totals["tokens_out"],
+                    "last_tokens_in": _usage_totals["last_tokens_in"],
+                    "tokens": engine._estimate_conversation_tokens(session.messages),
+                    "recovered": True,
+                }
+                if created_files:
+                    msg_metadata["files"] = created_files
+                if _partial_tools:
+                    msg_metadata["tools"] = _partial_tools
+                if cancelled:
+                    msg_metadata["partial"] = True
+                    reply = reply + "\n\n*(Cancelled)*"
+                elif error_msg and not final_text:
+                    msg_metadata["partial"] = True
+                    reply = reply + f"\n\n*(Recovery error: {str(error_msg)[:200]})*"
+                session.add_message("assistant", reply, metadata=msg_metadata)
+                done_data = {
+                    "text": reply,
+                    "tokens": msg_metadata["tokens"],
+                    "max_context": session.max_context,
+                    "model": model,
+                    "tokens_in": _usage_totals["tokens_in"],
+                    "tokens_out": _usage_totals["tokens_out"],
+                    "last_tokens_in": _usage_totals["last_tokens_in"],
+                }
+                if created_files:
+                    done_data["files"] = created_files
+                live.emit("done", done_data)
+            else:
+                live.emit("error", {"message": error_msg or "no reply recovered"})
+        except Exception as e:
+            print(f"[turn-recovery] persistence failed turn={turn_id[:8]}: {e}",
+                  flush=True)
+            try:
+                live.emit("error", {"message": str(e)})
+            except Exception:
+                pass
+        finally:
+            _finalize_recovery(session, live, sid, turn_id)
+            print(f"[turn-recovery] done turn={turn_id[:8]} model={model[:24]} "
+                  f"reply={len(final_text)}c rounds={final_summary.get('rounds', 0)} "
+                  f"tools={final_summary.get('tool_calls_total', 0)} "
+                  f"error={error_msg} cancelled={cancelled}", flush=True)
 
 
 def _finalize_recovery(session, live, sid, turn_id):
@@ -1927,11 +1926,11 @@ class ChatHandlerMixin:
                 pass
 
         # Pre-processing: tool result budget + microcompact
-        engine._thread_local.current_session_id = session.id
-        if len(session.messages) > 4:
-            engine._apply_tool_result_budget(session.messages, session_id=session.id,
-                                              agent_id=session.agent_id)
-            session.messages, _mc_freed = engine._microcompact(session.messages, keep_recent=5)
+        with engine.request_context(current_session_id=session.id):
+            if len(session.messages) > 4:
+                engine._apply_tool_result_budget(session.messages, session_id=session.id,
+                                                  agent_id=session.agent_id)
+                session.messages, _mc_freed = engine._microcompact(session.messages, keep_recent=5)
 
         # LCM is manual-only (status-bar ✂️ button → POST /v1/context/compact).
         # No automatic trigger here; the user decides when to compact.
@@ -1976,1034 +1975,1024 @@ class ChatHandlerMixin:
                 print(f"  [WARN] Message rollback DB cleanup: {e}", flush=True)
 
         def worker():
-            # Set thread-local agent context (thread-safe, no global mutation)
-            engine._thread_local.memory_store = session.memory
-            agent_config = engine.AgentConfig(session.agent_id)
-            engine._thread_local.current_agent = agent_config
-            engine._thread_local.current_session_id = sid
-            engine._thread_local.current_user_id = session.user_id or ""
-            # Team IDs the user belongs to — used for team-scoped MemPalace wing filtering
-            try:
-                engine._thread_local.current_team_ids = [
-                    t["id"] for t in _auth_mod.AuthDB.get_user_teams(session.user_id)
-                ] if session.user_id else []
-            except Exception:
-                engine._thread_local.current_team_ids = []
+            with engine.request_context():
+                # Set thread-local agent context (thread-safe, no global mutation)
+                engine._thread_local.memory_store = session.memory
+                agent_config = engine.AgentConfig(session.agent_id)
+                engine._thread_local.current_agent = agent_config
+                engine._thread_local.current_session_id = sid
+                engine._thread_local.current_user_id = session.user_id or ""
+                # Team IDs the user belongs to — used for team-scoped MemPalace wing filtering
+                try:
+                    engine._thread_local.current_team_ids = [
+                        t["id"] for t in _auth_mod.AuthDB.get_user_teams(session.user_id)
+                    ] if session.user_id else []
+                except Exception:
+                    engine._thread_local.current_team_ids = []
 
-            # Reset per-request state (prevents cross-session leaks in pooled threads)
-            engine.reset_tool_dedup()
+                # Reset per-request state (prevents cross-session leaks in pooled threads)
+                engine.reset_tool_dedup()
 
-            # Use shared MCP manager (singleton from main())
-            engine._thread_local.mcp_manager = engine._mcp_manager
+                # Use shared MCP manager (singleton from main())
+                engine._thread_local.mcp_manager = engine._mcp_manager
 
-            # Set plan mode if requested
-            engine._thread_local.plan_mode = (chat_mode == "plan")
+                # Set plan mode if requested
+                engine._thread_local.plan_mode = (chat_mode == "plan")
 
-            # Set project scope if provided
-            if project_name:
-                session.project = project_name
-                engine._thread_local.project = project_name
-            else:
-                engine._thread_local.project = session.project  # Use session's existing project
+                # Set project scope if provided
+                if project_name:
+                    session.project = project_name
+                    engine._thread_local.project = project_name
+                else:
+                    engine._thread_local.project = session.project  # Use session's existing project
 
-            # Per-session research-mode override (sticky). None = use the
-            # project's own `research_mode` default; True/False = force the
-            # override for this session. _build_system_prompt and the
-            # citation validator both read this off _thread_local so they
-            # never disagree mid-turn.
-            engine._thread_local.research_mode_override = getattr(
-                session, "research_mode_override", None)
+                # Per-session research-mode override (sticky). None = use the
+                # project's own `research_mode` default; True/False = force the
+                # override for this session. _build_system_prompt and the
+                # citation validator both read this off _thread_local so they
+                # never disagree mid-turn.
+                engine._thread_local.research_mode_override = getattr(
+                    session, "research_mode_override", None)
 
-            # Set note context for AI-assisted note editing
-            if session.note_context:
-                engine._thread_local.note_context = session.note_context
-            else:
-                engine._thread_local.note_context = None
+                # Set note context for AI-assisted note editing
+                if session.note_context:
+                    engine._thread_local.note_context = session.note_context
+                else:
+                    engine._thread_local.note_context = None
 
-            # Workflow-run binding: when this session was created from the
-            # inline workflow detail view, expose the execution_id so the
-            # round-0 preamble can pull a compact summary of the run.
-            engine._thread_local.workflow_run_id = getattr(session, 'workflow_run_id', '') or ''
+                # Workflow-run binding: when this session was created from the
+                # inline workflow detail view, expose the execution_id so the
+                # round-0 preamble can pull a compact summary of the run.
+                engine._thread_local.workflow_run_id = getattr(session, 'workflow_run_id', '') or ''
 
-            # Set caveman modes: chat-level (session toggle) + system-level (model config)
-            engine._thread_local.caveman_chat = session.caveman_mode
-            model_cfg = engine.resolve_model_settings(session.model) if engine._models_config else {}
-            engine._thread_local.caveman_system = int(model_cfg.get("caveman_system", 0) or 0)
+                # Set caveman modes: chat-level (session toggle) + system-level (model config)
+                engine._thread_local.caveman_chat = session.caveman_mode
+                model_cfg = engine.resolve_model_settings(session.model) if engine._models_config else {}
+                engine._thread_local.caveman_system = int(model_cfg.get("caveman_system", 0) or 0)
 
-            # Set worker subagent execution overrides from agent config
-            engine._thread_local.execution_overrides = agent_config.config.get("execution_overrides") or {}
+                # Set worker subagent execution overrides from agent config
+                engine._thread_local.execution_overrides = agent_config.config.get("execution_overrides") or {}
 
-            # Set attachment image model for read_attachment vision support
-            engine._thread_local.attachment_image_model = server_config.get("attachment_image_model", "")
+                # Set attachment image model for read_attachment vision support
+                engine._thread_local.attachment_image_model = server_config.get("attachment_image_model", "")
 
-            # Set current model for worker summariser (cache reuse)
-            engine._thread_local._current_model = session.model
+                # Set current model for worker summariser (cache reuse)
+                engine._thread_local._current_model = session.model
 
-            # Snapshot message count for rollback on failure
-            _msg_count_before = len(session.messages)
-            _req_start = time.time()
+                # Snapshot message count for rollback on failure
+                _msg_count_before = len(session.messages)
+                _req_start = time.time()
 
-            try:
-                # ── Transparent anonymisation (worker-side) ──
-                # If the client requested anonymise, this is where it runs.
-                # We're inside the SSE response, so synthetic events + the
-                # recovery-prompt event reach the client immediately. On
-                # success: append the anonymised user message to
-                # session.messages and continue. On failure: emit the
-                # recovery-required event, block on the Event, branch to
-                # local-model or cancel. On cancel: emit done + return.
-                nonlocal_message = message
-                nonlocal_user_content = user_content
-                if session._gdpr_pending_action == "anonymise":
-                    # Reuse the session's existing mapping when one exists —
-                    # same session = same PII scope, so a value pseudonymised
-                    # in turn 1 must map to the same token in turn 2. Minting
-                    # a fresh mapping per turn would (a) break cross-turn
-                    # token stability (model sees different placeholders for
-                    # the same person), (b) re-scan + re-emit synthetic rows
-                    # for already-known values, and (c) leave a graveyard of
-                    # one-shot pseudonym_maps rows in chats.db.
-                    _mapping = None
-                    try:
-                        _prior_maps = ChatDB.list_pseudonym_maps_for_session(sid) or []
-                        if _prior_maps:
-                            _latest_mid = _prior_maps[-1][0]
-                            _mapping = pseudonymizer.get_mapping(_latest_mid)
-                            if _mapping is None:
-                                _mapping = pseudonymizer.load_mapping(_latest_mid)
-                                if _mapping is not None:
-                                    pseudonymizer.restore_mapping_to_registry(_mapping)
-                    except Exception:
+                try:
+                    # ── Transparent anonymisation (worker-side) ──
+                    # If the client requested anonymise, this is where it runs.
+                    # We're inside the SSE response, so synthetic events + the
+                    # recovery-prompt event reach the client immediately. On
+                    # success: append the anonymised user message to
+                    # session.messages and continue. On failure: emit the
+                    # recovery-required event, block on the Event, branch to
+                    # local-model or cancel. On cancel: emit done + return.
+                    nonlocal_message = message
+                    nonlocal_user_content = user_content
+                    if session._gdpr_pending_action == "anonymise":
+                        # Reuse the session's existing mapping when one exists —
+                        # same session = same PII scope, so a value pseudonymised
+                        # in turn 1 must map to the same token in turn 2. Minting
+                        # a fresh mapping per turn would (a) break cross-turn
+                        # token stability (model sees different placeholders for
+                        # the same person), (b) re-scan + re-emit synthetic rows
+                        # for already-known values, and (c) leave a graveyard of
+                        # one-shot pseudonym_maps rows in chats.db.
                         _mapping = None
-                    _mapping_reused = _mapping is not None
-                    if _mapping is None:
-                        _mapping = pseudonymizer.new_mapping()
-                    _anon_tool_id = f"anon_{_mapping.mapping_id[:12]}"
-                    _t0 = time.time()
-                    # Upfront row: this step pseudonymises the typed text
-                    # and installs the per-turn mapping. Attachments are NOT
-                    # rewritten on disk anymore — `tool_read_document` /
-                    # `tool_read_file` pseudonymise extracted text on the
-                    # way back to the LLM, emitting their own
-                    # `anonymise_read` synthetic rows when findings are
-                    # added to this same mapping.
-                    _pending_attachments = [
-                        os.path.basename(p) for p in saved_paths
-                    ]
-                    _emit_synthetic_tool_event(
-                        live=live, sid=sid, kind="anonymise",
-                        tool_use_id=_anon_tool_id, phase="dispatch",
-                        args={
-                            "scope": "chat_text",
-                            "pending_on_read": _pending_attachments,
-                            "mapping": "reused" if _mapping_reused else "new",
-                        },
-                    )
-                    # Keep _anon_sources around for the error-path audit
-                    # summaries below — those still want the full list.
-                    _anon_sources = ["chat_text"] + [
-                        f"attachment:{n}" for n in _pending_attachments
-                    ]
-                    _anon_ok = False
-                    try:
-                        _scanner_cfg = engine._get_gdpr_scanner_config()
-                        # Scan ONLY the user-typed slice. The trailing
-                        # attachment notice (`[User attached files saved to
-                        # disk. IMPORTANT: …]\n  - /tmp/…/<filename>`) is
-                        # Brain-generated boilerplate + literal disk paths
-                        # the LLM needs verbatim to call read_document.
-                        # spaCy NER otherwise misclassifies "IMPORTANT" as
-                        # organisation and filenames as addresses; the
-                        # resulting fake path makes read_document fail with
-                        # "file not found". Splice the notice back onto the
-                        # pseudonymised typed text so the rest of the
-                        # pipeline sees the same shape it always did.
-                        _typed, _notice = _split_attachment_notice(
-                            nonlocal_message)
-                        _findings = engine._pii_scan_text(
-                            _typed, cfg=_scanner_cfg)
-                        if _findings:
-                            _pseudo = pseudonymizer.pseudonymize_text(
-                                _typed, _findings,
-                                mapping=_mapping, source="chat_text")
-                            _anonymised = _pseudo + _notice
-                            if isinstance(nonlocal_user_content, str):
-                                nonlocal_user_content = _anonymised
-                            else:
-                                for _blk in nonlocal_user_content:
-                                    if _blk.get("type") == "text":
-                                        _blk["text"] = _anonymised
-                                        break
-                            nonlocal_message = _anonymised
-                        # Locate real-PII spans in the ORIGINAL user text
-                        # so the chat UI can paint them with the same
-                        # yellow <mark> overlay it uses on assistant
-                        # replies. Done after pseudonymisation (so
-                        # _mapping.forward is populated) but BEFORE we
-                        # save the message — we attach the result both
-                        # to the persisted metadata and to the SSE
-                        # anonymise_done event below so the live render
-                        # picks it up without a reload.
                         try:
-                            _live_user_spans = pseudonymizer.find_restored_spans(
-                                user_content if isinstance(user_content, str) else (
-                                    next((b.get("text", "") for b in (user_content or [])
-                                          if isinstance(b, dict) and b.get("type") == "text"), "")
-                                ),
-                                mapping=_mapping,
+                            _prior_maps = ChatDB.list_pseudonym_maps_for_session(sid) or []
+                            if _prior_maps:
+                                _latest_mid = _prior_maps[-1][0]
+                                _mapping = pseudonymizer.get_mapping(_latest_mid)
+                                if _mapping is None:
+                                    _mapping = pseudonymizer.load_mapping(_latest_mid)
+                                    if _mapping is not None:
+                                        pseudonymizer.restore_mapping_to_registry(_mapping)
+                        except Exception:
+                            _mapping = None
+                        _mapping_reused = _mapping is not None
+                        if _mapping is None:
+                            _mapping = pseudonymizer.new_mapping()
+                        _anon_tool_id = f"anon_{_mapping.mapping_id[:12]}"
+                        _t0 = time.time()
+                        # Upfront row: this step pseudonymises the typed text
+                        # and installs the per-turn mapping. Attachments are NOT
+                        # rewritten on disk anymore — `tool_read_document` /
+                        # `tool_read_file` pseudonymise extracted text on the
+                        # way back to the LLM, emitting their own
+                        # `anonymise_read` synthetic rows when findings are
+                        # added to this same mapping.
+                        _pending_attachments = [
+                            os.path.basename(p) for p in saved_paths
+                        ]
+                        _emit_synthetic_tool_event(
+                            live=live, sid=sid, kind="anonymise",
+                            tool_use_id=_anon_tool_id, phase="dispatch",
+                            args={
+                                "scope": "chat_text",
+                                "pending_on_read": _pending_attachments,
+                                "mapping": "reused" if _mapping_reused else "new",
+                            },
+                        )
+                        # Keep _anon_sources around for the error-path audit
+                        # summaries below — those still want the full list.
+                        _anon_sources = ["chat_text"] + [
+                            f"attachment:{n}" for n in _pending_attachments
+                        ]
+                        _anon_ok = False
+                        try:
+                            _scanner_cfg = engine._get_gdpr_scanner_config()
+                            # Scan ONLY the user-typed slice. The trailing
+                            # attachment notice (`[User attached files saved to
+                            # disk. IMPORTANT: …]\n  - /tmp/…/<filename>`) is
+                            # Brain-generated boilerplate + literal disk paths
+                            # the LLM needs verbatim to call read_document.
+                            # spaCy NER otherwise misclassifies "IMPORTANT" as
+                            # organisation and filenames as addresses; the
+                            # resulting fake path makes read_document fail with
+                            # "file not found". Splice the notice back onto the
+                            # pseudonymised typed text so the rest of the
+                            # pipeline sees the same shape it always did.
+                            _typed, _notice = _split_attachment_notice(
+                                nonlocal_message)
+                            _findings = engine._pii_scan_text(
+                                _typed, cfg=_scanner_cfg)
+                            if _findings:
+                                _pseudo = pseudonymizer.pseudonymize_text(
+                                    _typed, _findings,
+                                    mapping=_mapping, source="chat_text")
+                                _anonymised = _pseudo + _notice
+                                if isinstance(nonlocal_user_content, str):
+                                    nonlocal_user_content = _anonymised
+                                else:
+                                    for _blk in nonlocal_user_content:
+                                        if _blk.get("type") == "text":
+                                            _blk["text"] = _anonymised
+                                            break
+                                nonlocal_message = _anonymised
+                            # Locate real-PII spans in the ORIGINAL user text
+                            # so the chat UI can paint them with the same
+                            # yellow <mark> overlay it uses on assistant
+                            # replies. Done after pseudonymisation (so
+                            # _mapping.forward is populated) but BEFORE we
+                            # save the message — we attach the result both
+                            # to the persisted metadata and to the SSE
+                            # anonymise_done event below so the live render
+                            # picks it up without a reload.
+                            try:
+                                _live_user_spans = pseudonymizer.find_restored_spans(
+                                    user_content if isinstance(user_content, str) else (
+                                        next((b.get("text", "") for b in (user_content or [])
+                                              if isinstance(b, dict) and b.get("type") == "text"), "")
+                                    ),
+                                    mapping=_mapping,
+                                )
+                            except Exception:
+                                _live_user_spans = []
+                            # Eager mapping install — always persist + install on
+                            # the session, even when typed text had no findings.
+                            # Tool calls later in the turn (read_document /
+                            # read_file / read_attachment) will add to this same
+                            # mapping when they scan extracted attachment text.
+                            # The streaming deanonymizer reverses every token
+                            # before the user sees the assistant reply.
+                            pseudonymizer.save_mapping(
+                                _mapping, session_id=sid, turn_id=_anon_tool_id)
+                            session._gdpr_mapping_id = _mapping.mapping_id
+                            session._gdpr_streamer = StreamingDeanonymizer(_mapping)
+                            # Per-turn flag read by `_build_system_prompt` post-
+                            # process to append the verbatim-token-preservation
+                            # clamp. Cleared in the worker's finally below.
+                            engine._thread_local._gdpr_anonymising = True
+                            _anon_done_result = {
+                                "scope": "chat_text",
+                                "findings": len(_findings),
+                                "tokens_minted": len(_mapping.forward),
+                                "categories": dict(_mapping.finding_counts),
+                                "pending_on_read": _pending_attachments,
+                                "mapping": "reused" if _mapping_reused else "new",
+                                "mapping_id": _mapping.mapping_id,
+                            }
+                            if _live_user_spans:
+                                # Side-channel: the chat client pulls these
+                                # off the synthetic anonymise_done event and
+                                # attaches them to the just-appended user
+                                # message so the inline yellow <mark>
+                                # overlay renders on the request side too,
+                                # matching the assistant-side behavior.
+                                _anon_done_result["user_spans"] = _live_user_spans
+                            _emit_synthetic_tool_event(
+                                live=live, sid=sid, kind="anonymise",
+                                tool_use_id=_anon_tool_id, phase="done",
+                                result=_anon_done_result,
+                                status="ok",
+                                duration_ms=int((time.time() - _t0) * 1000),
                             )
-                        except Exception:
-                            _live_user_spans = []
-                        # Eager mapping install — always persist + install on
-                        # the session, even when typed text had no findings.
-                        # Tool calls later in the turn (read_document /
-                        # read_file / read_attachment) will add to this same
-                        # mapping when they scan extracted attachment text.
-                        # The streaming deanonymizer reverses every token
-                        # before the user sees the assistant reply.
-                        pseudonymizer.save_mapping(
-                            _mapping, session_id=sid, turn_id=_anon_tool_id)
-                        session._gdpr_mapping_id = _mapping.mapping_id
-                        session._gdpr_streamer = StreamingDeanonymizer(_mapping)
-                        # Per-turn flag read by `_build_system_prompt` post-
-                        # process to append the verbatim-token-preservation
-                        # clamp. Cleared in the worker's finally below.
-                        engine._thread_local._gdpr_anonymising = True
-                        _anon_done_result = {
-                            "scope": "chat_text",
-                            "findings": len(_findings),
-                            "tokens_minted": len(_mapping.forward),
-                            "categories": dict(_mapping.finding_counts),
-                            "pending_on_read": _pending_attachments,
-                            "mapping": "reused" if _mapping_reused else "new",
-                            "mapping_id": _mapping.mapping_id,
-                        }
-                        if _live_user_spans:
-                            # Side-channel: the chat client pulls these
-                            # off the synthetic anonymise_done event and
-                            # attaches them to the just-appended user
-                            # message so the inline yellow <mark>
-                            # overlay renders on the request side too,
-                            # matching the assistant-side behavior.
-                            _anon_done_result["user_spans"] = _live_user_spans
-                        _emit_synthetic_tool_event(
-                            live=live, sid=sid, kind="anonymise",
-                            tool_use_id=_anon_tool_id, phase="done",
-                            result=_anon_done_result,
-                            status="ok",
-                            duration_ms=int((time.time() - _t0) * 1000),
-                        )
-                        if engine._audit_log:
-                            try:
-                                engine._audit_log.log_action(
-                                    agent=session.agent_id, session_id=sid,
-                                    action_type="pii_anonymised",
-                                    tool_name="gdpr_scanner",
-                                    args_summary=f"{len(_findings)} findings",
-                                    result_summary=(
-                                        f"mapping_id={_mapping.mapping_id} "
-                                        f"categories={list(_mapping.finding_counts)}"),
-                                    result_status="success",
-                                    duration_ms=int((time.time() - _t0) * 1000),
-                                    source="chat",
-                                )
-                            except Exception:
-                                pass
-                        _anon_ok = True
-                    except Exception as _e:
-                        _err_summary = f"{type(_e).__name__}: {str(_e)[:200]}"
-                        _emit_synthetic_tool_event(
-                            live=live, sid=sid, kind="anonymise",
-                            tool_use_id=_anon_tool_id, phase="done",
-                            result={"error": _err_summary,
-                                    "sources": _anon_sources},
-                            status="error",
-                            duration_ms=int((time.time() - _t0) * 1000),
-                        )
-                        try:
-                            pseudonymizer.delete_persisted_mapping(_mapping.mapping_id)
-                            pseudonymizer.close_mapping(_mapping.mapping_id)
-                        except Exception:
-                            pass
-                        if engine._audit_log:
-                            try:
-                                engine._audit_log.log_action(
-                                    agent=session.agent_id, session_id=sid,
-                                    action_type="pii_anonymise_failed",
-                                    tool_name="gdpr_scanner",
-                                    args_summary=",".join(_anon_sources),
-                                    result_summary=_err_summary,
-                                    result_status="error",
-                                    duration_ms=int((time.time() - _t0) * 1000),
-                                    source="chat",
-                                )
-                            except Exception:
-                                pass
-                        live.emit("gdpr_recovery_required", {
-                            "session_id": sid,
-                            "error": _err_summary,
-                            "sources": _anon_sources,
-                        })
-                        _event = _gdpr_recovery_register(sid)
-                        _delivered = _event.wait(timeout=300)
-                        with _gdpr_recovery_lock:
-                            _choice = (_gdpr_recovery_pending.get(sid) or {}).get("choice")
-                        _gdpr_recovery_clear(sid)
-                        if not _delivered or _choice == "cancel":
                             if engine._audit_log:
                                 try:
                                     engine._audit_log.log_action(
                                         agent=session.agent_id, session_id=sid,
-                                        action_type="pii_anonymise_failed_cancel",
+                                        action_type="pii_anonymised",
+                                        tool_name="gdpr_scanner",
+                                        args_summary=f"{len(_findings)} findings",
+                                        result_summary=(
+                                            f"mapping_id={_mapping.mapping_id} "
+                                            f"categories={list(_mapping.finding_counts)}"),
+                                        result_status="success",
+                                        duration_ms=int((time.time() - _t0) * 1000),
+                                        source="chat",
+                                    )
+                                except Exception:
+                                    pass
+                            _anon_ok = True
+                        except Exception as _e:
+                            _err_summary = f"{type(_e).__name__}: {str(_e)[:200]}"
+                            _emit_synthetic_tool_event(
+                                live=live, sid=sid, kind="anonymise",
+                                tool_use_id=_anon_tool_id, phase="done",
+                                result={"error": _err_summary,
+                                        "sources": _anon_sources},
+                                status="error",
+                                duration_ms=int((time.time() - _t0) * 1000),
+                            )
+                            try:
+                                pseudonymizer.delete_persisted_mapping(_mapping.mapping_id)
+                                pseudonymizer.close_mapping(_mapping.mapping_id)
+                            except Exception:
+                                pass
+                            if engine._audit_log:
+                                try:
+                                    engine._audit_log.log_action(
+                                        agent=session.agent_id, session_id=sid,
+                                        action_type="pii_anonymise_failed",
                                         tool_name="gdpr_scanner",
                                         args_summary=",".join(_anon_sources),
-                                        result_summary=(
-                                            "timeout" if not _delivered else "user_cancelled"),
-                                        result_status="warning",
+                                        result_summary=_err_summary,
+                                        result_status="error",
+                                        duration_ms=int((time.time() - _t0) * 1000),
+                                        source="chat",
+                                    )
+                                except Exception:
+                                    pass
+                            live.emit("gdpr_recovery_required", {
+                                "session_id": sid,
+                                "error": _err_summary,
+                                "sources": _anon_sources,
+                            })
+                            _event = _gdpr_recovery_register(sid)
+                            _delivered = _event.wait(timeout=300)
+                            with _gdpr_recovery_lock:
+                                _choice = (_gdpr_recovery_pending.get(sid) or {}).get("choice")
+                            _gdpr_recovery_clear(sid)
+                            if not _delivered or _choice == "cancel":
+                                if engine._audit_log:
+                                    try:
+                                        engine._audit_log.log_action(
+                                            agent=session.agent_id, session_id=sid,
+                                            action_type="pii_anonymise_failed_cancel",
+                                            tool_name="gdpr_scanner",
+                                            args_summary=",".join(_anon_sources),
+                                            result_summary=(
+                                                "timeout" if not _delivered else "user_cancelled"),
+                                            result_status="warning",
+                                            duration_ms=0, source="chat",
+                                        )
+                                    except Exception:
+                                        pass
+                                live.emit("done", {
+                                    "text": "", "tokens": 0, "model": session.model,
+                                    "cancelled": True, "reason": "gdpr_anonymise_failed",
+                                })
+                                return
+                            # local_model: swap, use ORIGINAL content.
+                            _fallback = (engine._get_gdpr_scanner_config().get(
+                                "default_local_fallback_model") or "").strip()
+                            if not _fallback:
+                                live.emit("error", {
+                                    "message": "Anonymisation failed and no local "
+                                               "fallback model is configured."})
+                                live.emit("done", {
+                                    "text": "", "tokens": 0, "model": session.model,
+                                    "cancelled": True,
+                                    "reason": "gdpr_no_local_fallback",
+                                })
+                                return
+                            if _fallback != session.model:
+                                try:
+                                    provider = engine.resolve_provider_for_model(_fallback)
+                                    with session.lock:
+                                        session.model = _fallback
+                                        session.api_key = provider["api_key"]
+                                        session.base_url = provider["base_url"]
+                                        session.max_context = engine.get_model_max_context(_fallback)
+                                    # Update thread-local model reference too.
+                                    engine._thread_local._current_model = session.model
+                                except Exception:
+                                    pass
+                            if engine._audit_log:
+                                try:
+                                    engine._audit_log.log_action(
+                                        agent=session.agent_id, session_id=sid,
+                                        action_type="pii_anonymise_failed_local_swap",
+                                        tool_name="gdpr_scanner",
+                                        args_summary=",".join(_anon_sources),
+                                        result_summary=f"→ {_fallback}",
+                                        result_status="success",
                                         duration_ms=0, source="chat",
                                     )
                                 except Exception:
                                     pass
-                            live.emit("done", {
-                                "text": "", "tokens": 0, "model": session.model,
-                                "cancelled": True, "reason": "gdpr_anonymise_failed",
-                            })
-                            return
-                        # local_model: swap, use ORIGINAL content.
-                        _fallback = (engine._get_gdpr_scanner_config().get(
-                            "default_local_fallback_model") or "").strip()
-                        if not _fallback:
-                            live.emit("error", {
-                                "message": "Anonymisation failed and no local "
-                                           "fallback model is configured."})
-                            live.emit("done", {
-                                "text": "", "tokens": 0, "model": session.model,
-                                "cancelled": True,
-                                "reason": "gdpr_no_local_fallback",
-                            })
-                            return
-                        if _fallback != session.model:
+                            # Fall through with ORIGINAL content + new local model.
+                        # User message wasn't added pre-worker for the anonymise
+                        # path. Add it now — anonymised on success, original on
+                        # local-fallback recovery. Update the rollback snapshot
+                        # so it INCLUDES the new user msg (matches non-anonymise
+                        # path semantics: rollback strips intermediate tool msgs
+                        # but keeps the user msg in place).
+                        #
+                        # On anonymise SUCCESS: in-memory `session.messages` holds
+                        # the pseudonymised text (what goes on the wire to the
+                        # cloud LLM on this turn), but the DB row stores the
+                        # ORIGINAL text the user typed (so the session inspector,
+                        # chat reload, and audit trail show real values — same
+                        # symmetry as assistant replies, which are persisted
+                        # de-anonymised). The mapping_id rides in metadata so the
+                        # admin audit view can still link the row to the
+                        # decryption record. On local-fallback recovery `_anon_ok`
+                        # is False and `nonlocal_user_content == user_content`,
+                        # so both paths persist the same text — no split needed.
+                        if _anon_ok and nonlocal_user_content is not user_content:
+                            # Split persistence: in-memory `session.messages`
+                            # holds the pseudonymised text (what the cloud LLM
+                            # receives on this turn), the DB row holds the
+                            # ORIGINAL (so the chat UI and reload show real
+                            # values). `metadata.wire_content` is the wire-
+                            # truth — the session inspector renders it side-
+                            # by-side with the original so an auditor can
+                            # confirm what actually left the box.
+                            with session.lock:
+                                _msg = {"role": "user", "content": nonlocal_user_content}
+                                session.messages.append(_msg)
+                                session.last_active = time.time()
+                                if not session.title:
+                                    from server import _derive_session_title
+                                    _t = user_content if isinstance(user_content, str) else str(user_content)
+                                    session.title = _derive_session_title(_t)
+                            # Locate every real-PII span in the persisted user
+                            # text so the chat UI can highlight them with the
+                            # same `<mark class="gdpr-restored">` overlay it
+                            # uses on assistant replies. The persisted text
+                            # IS the original (with real values), so
+                            # find_restored_spans walks the mapping's
+                            # `forward` (real→fake) and reports where each
+                            # real value sits. For multimodal blocks we
+                            # scan the text block(s) only and emit spans
+                            # per-block; the renderer pulls them off
+                            # `metadata.gdpr_restored_spans`.
                             try:
-                                provider = engine.resolve_provider_for_model(_fallback)
-                                with session.lock:
-                                    session.model = _fallback
-                                    session.api_key = provider["api_key"]
-                                    session.base_url = provider["base_url"]
-                                    session.max_context = engine.get_model_max_context(_fallback)
-                                # Update thread-local model reference too.
-                                engine._thread_local._current_model = session.model
+                                if isinstance(user_content, str):
+                                    _user_spans = pseudonymizer.find_restored_spans(
+                                        user_content, mapping=_mapping)
+                                else:
+                                    _user_spans = []
+                                    for _b in (user_content or []):
+                                        if isinstance(_b, dict) and _b.get("type") == "text":
+                                            _user_spans = pseudonymizer.find_restored_spans(
+                                                _b.get("text") or "", mapping=_mapping)
+                                            if _user_spans:
+                                                break
                             except Exception:
-                                pass
-                        if engine._audit_log:
-                            try:
-                                engine._audit_log.log_action(
-                                    agent=session.agent_id, session_id=sid,
-                                    action_type="pii_anonymise_failed_local_swap",
-                                    tool_name="gdpr_scanner",
-                                    args_summary=",".join(_anon_sources),
-                                    result_summary=f"→ {_fallback}",
-                                    result_status="success",
-                                    duration_ms=0, source="chat",
-                                )
-                            except Exception:
-                                pass
-                        # Fall through with ORIGINAL content + new local model.
-                    # User message wasn't added pre-worker for the anonymise
-                    # path. Add it now — anonymised on success, original on
-                    # local-fallback recovery. Update the rollback snapshot
-                    # so it INCLUDES the new user msg (matches non-anonymise
-                    # path semantics: rollback strips intermediate tool msgs
-                    # but keeps the user msg in place).
-                    #
-                    # On anonymise SUCCESS: in-memory `session.messages` holds
-                    # the pseudonymised text (what goes on the wire to the
-                    # cloud LLM on this turn), but the DB row stores the
-                    # ORIGINAL text the user typed (so the session inspector,
-                    # chat reload, and audit trail show real values — same
-                    # symmetry as assistant replies, which are persisted
-                    # de-anonymised). The mapping_id rides in metadata so the
-                    # admin audit view can still link the row to the
-                    # decryption record. On local-fallback recovery `_anon_ok`
-                    # is False and `nonlocal_user_content == user_content`,
-                    # so both paths persist the same text — no split needed.
-                    if _anon_ok and nonlocal_user_content is not user_content:
-                        # Split persistence: in-memory `session.messages`
-                        # holds the pseudonymised text (what the cloud LLM
-                        # receives on this turn), the DB row holds the
-                        # ORIGINAL (so the chat UI and reload show real
-                        # values). `metadata.wire_content` is the wire-
-                        # truth — the session inspector renders it side-
-                        # by-side with the original so an auditor can
-                        # confirm what actually left the box.
-                        with session.lock:
-                            _msg = {"role": "user", "content": nonlocal_user_content}
-                            session.messages.append(_msg)
-                            session.last_active = time.time()
-                            if not session.title:
-                                from server import _derive_session_title
-                                _t = user_content if isinstance(user_content, str) else str(user_content)
-                                session.title = _derive_session_title(_t)
-                        # Locate every real-PII span in the persisted user
-                        # text so the chat UI can highlight them with the
-                        # same `<mark class="gdpr-restored">` overlay it
-                        # uses on assistant replies. The persisted text
-                        # IS the original (with real values), so
-                        # find_restored_spans walks the mapping's
-                        # `forward` (real→fake) and reports where each
-                        # real value sits. For multimodal blocks we
-                        # scan the text block(s) only and emit spans
-                        # per-block; the renderer pulls them off
-                        # `metadata.gdpr_restored_spans`.
-                        try:
-                            if isinstance(user_content, str):
-                                _user_spans = pseudonymizer.find_restored_spans(
-                                    user_content, mapping=_mapping)
-                            else:
                                 _user_spans = []
-                                for _b in (user_content or []):
-                                    if isinstance(_b, dict) and _b.get("type") == "text":
-                                        _user_spans = pseudonymizer.find_restored_spans(
-                                            _b.get("text") or "", mapping=_mapping)
-                                        if _user_spans:
-                                            break
-                        except Exception:
-                            _user_spans = []
-                        _user_meta = {
-                            "gdpr_mapping_id": _mapping.mapping_id,
-                            "wire_content": nonlocal_user_content,
-                        }
-                        if _user_spans:
-                            _user_meta["gdpr_restored_spans"] = _user_spans
-                        if preamble_text:
-                            _user_meta["preamble"] = preamble_text
-                        ChatDB.save_message(
-                            sid, "user", user_content,
-                            metadata=_user_meta)
-                        ChatDB.save_session(
-                            sid, session.agent_id, session.model, session.title,
-                            session.status, session.created_at, session.last_active,
-                            session.project or "", user_id=session.user_id)
-                    else:
-                        session.add_message(
-                            "user", nonlocal_user_content,
-                            metadata=({"preamble": preamble_text}
-                                      if preamble_text else None))
-                    _msg_count_before = len(session.messages)
-
-                # --- Standard backend ---
-                # Use detected purpose from auto-resolve, or fall back to agent's fixed purpose.
-                # In the anonymise branch above, `nonlocal_message` is the
-                # pseudonymised text; in every other branch it's just the
-                # original `message` we copied at function entry. We use
-                # `nonlocal_message` directly here — assigning back to
-                # `message` would mark `message` as a worker-local for the
-                # whole function (Python decides scope at compile-time),
-                # and the `nonlocal_message = message` snapshot at the
-                # top of the try would crash with UnboundLocalError because
-                # the outer-scope `message` is shadowed.
-                purpose = session.agent.config.get("model_purpose")
-                if not purpose and session.agent.config.get("model") == "auto":
-                    purpose = engine.classify_task_purpose(nonlocal_message)
-                inf_params = engine.get_inference_params(session.model, purpose)
-                # Apply thinking level from request — only when the model supports thinking.
-                _model_cfg = engine._models_config.get(session.model, {}) or {}
-                _tfmt = _model_cfg.get("thinking_format", "none")
-                if thinking_level and thinking_level != "none" and _tfmt != "none":
-                    _THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 32768}
-                    inf_params["thinking"] = True
-                    inf_params["thinking_budget"] = _THINKING_BUDGETS.get(thinking_level, 8192)
-                    # Provider-facing reasoning toggle. Engine's _apply_inference_to_payload maps this
-                    # per thinking_format: reasoning_effort for mistral_blocks/reasoning_field/openai_opaque,
-                    # chat_template_kwargs.enable_thinking for oMLX inline_tags variants, etc.
-                    inf_params["thinking_level"] = thinking_level
-                else:
-                    inf_params.pop("thinking", None)
-                    inf_params.pop("thinking_budget", None)
-                    inf_params.pop("thinking_level", None)
-                # If thinking-mode flipped vs what the warmup keeper primed,
-                # kick off a background re-prime so the *next* turn's KV
-                # prefix matches. Current turn still pays the cold cost.
-                # No-op when model isn't warmup-flagged or has thinking_format=none.
-                _wants_thinking = bool(inf_params.get("thinking"))
-                engine.maybe_reprime_for_thinking(session.model, _wants_thinking,
-                                                  agent_id=session.agent_id)
-
-                # Sidecar path: build the system prompt, hand the loop over
-                # to the Anthropic SDK in the sidecar process. event_callback
-                # translates sidecar SSE → Brain's LiveStream vocabulary, so
-                # persistence, references, citation validation all stay on
-                # this thread unchanged.
-                # SHARED prefix builder — same function the warm-pool prime
-                # (run_model_warmup) calls, so the first-turn system prompt +
-                # tool set are byte-identical and oMLX reuses the warm KV prefix.
-                # On turn 0 _discovered_tools is empty (matches warmup); the
-                # anthropic wire-shape (is_openai_shape=False) only changes tool
-                # serialization, not the KV-relevant prompt/name set.
-                _system_prompt, _active_tools, _active_tool_names = engine.build_first_turn_prefix(
-                    session.model, session.agent_id,
-                    mcp_manager=getattr(engine, "_mcp_manager", None),
-                    discovered_tools=getattr(engine._thread_local, "_discovered_tools", set()) or set(),
-                    is_openai_shape=False,
-                )
-                # Persist for the session inspector — overwritten per turn,
-                # no history. Best-effort; persist failure must not block
-                # the chat call.
-                try:
-                    with _db_conn() as _ssp_conn:
-                        _ssp_conn.execute(
-                            "UPDATE sessions SET last_system_prompt = ? WHERE id = ?",
-                            (_system_prompt, sid))
-                        _ssp_conn.commit()
-                except Exception:
-                    pass
-                _tool_context = {
-                    "session_id": sid,
-                    "agent_id": session.agent_id,
-                    "user_id": session.user_id or "",
-                    "team_ids": list(getattr(engine._thread_local, "current_team_ids", []) or []),
-                    "project": getattr(engine._thread_local, "project", "") or "",
-                    "note_context": getattr(engine._thread_local, "note_context", None),
-                    "workflow_run_id": getattr(engine._thread_local, "workflow_run_id", "") or "",
-                    "plan_mode": bool(getattr(engine._thread_local, "plan_mode", False)),
-                    "research_mode_override": getattr(engine._thread_local, "research_mode_override", None),
-                    "execution_overrides": getattr(engine._thread_local, "execution_overrides", None) or {},
-                    "attachment_image_model": getattr(engine._thread_local, "attachment_image_model", "") or "",
-                    "caveman_chat": int(getattr(engine._thread_local, "caveman_chat", 0) or 0),
-                    "caveman_system": int(getattr(engine._thread_local, "caveman_system", 0) or 0),
-                    # Transparent anonymisation: when set, the tool-dispatch
-                    # thread installs an _after_file_write callback that
-                    # rewrites any file the LLM produces back into real
-                    # values before the UI sees the artifact.
-                    "gdpr_mapping_id": getattr(session, "_gdpr_mapping_id", "") or "",
-                }
-                _sampling = {
-                    "temperature": inf_params.get("temperature"),
-                    "top_p": inf_params.get("top_p"),
-                    "top_k": inf_params.get("top_k"),
-                    "stop_sequences": inf_params.get("stop") or inf_params.get("stop_sequences"),
-                }
-                _max_tokens = int(inf_params.get("max_tokens", 16000) or 16000)
-                _agent_cfg = session.agent.config or {}
-                _max_rounds = int((_agent_cfg.get("limits") or {}).get("max_tool_rounds", 25) or 25)
-                # Transparent anonymisation: if a mapping is live, walk the
-                # FULL message history and produce a wire-only pseudonymised
-                # copy. Prior turns' assistant replies (persisted
-                # de-anonymised so the chat UI shows real values) carry real
-                # PII; without this pass they ship to the cloud LLM raw. The
-                # mapping-reuse short-circuit keeps token ids stable from
-                # turn 1, so a long anonymise session pays one regex scan
-                # per turn, not new mint cost.
-                _wire_messages = session.messages
-                _gmid = getattr(session, "_gdpr_mapping_id", "") or ""
-                if _gmid:
-                    _m = pseudonymizer.get_mapping(_gmid)
-                    if _m is not None:
-                        _wire_messages, _hist_new, _hist_counts = (
-                            _pseudonymize_history_for_wire(
-                                session.messages, _m,
-                                engine._get_gdpr_scanner_config()))
-                        if _hist_new > 0 or _hist_counts:
-                            try:
-                                _tuid = (f"anon_hist_{_gmid[:8]}_"
-                                         f"{int(time.time()*1000) % 1_000_000}")
-                                emit_gdpr_tool_event_for_session(
-                                    sid,
-                                    kind="anonymise_read",
-                                    tool_use_id=_tuid,
-                                    args={"source": "history"},
-                                    result={
-                                        "findings": sum(_hist_counts.values()),
-                                        "tokens_minted": _hist_new,
-                                        "categories": _hist_counts,
-                                        "source": "history",
-                                        "mapping_id": _gmid,
-                                    },
-                                    status="ok",
-                                    duration_ms=0,
-                                )
-                            except Exception:
-                                pass
-                            # Persist any newly-minted tokens so a server
-                            # restart mid-turn can still de-anonymise.
-                            try:
-                                pseudonymizer.save_mapping(
-                                    _m, session_id=sid, turn_id=_gmid)
-                            except Exception:
-                                pass
-                _result = sidecar_proxy.run_turn(
-                    messages=_wire_messages,
-                    model=session.model,
-                    api_key=session.api_key,
-                    base_url=session.base_url,
-                    system_prompt=_system_prompt,
-                    purpose="interactive",
-                    tool_context=_tool_context,
-                    sampling=_sampling,
-                    thinking_level=(thinking_level if thinking_level and thinking_level != "none" else None),
-                    max_tokens=_max_tokens,
-                    max_rounds=_max_rounds,
-                    event_callback=event_callback,
-                    cancel_token=session.cancel_token,
-                )
-                # On sidecar error: surface the message to the client AS PART
-                # of the assistant reply, but stay on the happy path so the
-                # downstream `done` event still fires. Raising here would
-                # leave HTTP clients that only listen for `done` blocked.
-                _se = _result.get("error")
-                _sr = _result.get("reply") or ""
-                if _se and not _sr:
-                    reply = f"*(Sidecar error: {str(_se)[:300]})*"
-                elif _se and _sr:
-                    reply = _sr + f"\n\n*(Sidecar error after partial: {str(_se)[:200]})*"
-                else:
-                    reply = _sr
-                if reply:
-                    # Log this turn's token usage to the cost ledger. The native
-                    # loop used to do this per-round; the SDK-sidecar migration
-                    # (v9.0.0) dropped the write path, so interactive chats logged
-                    # nothing and session cost read back as $0. Log once per turn
-                    # from the accumulated usage totals, keyed by the model that
-                    # actually answered (fallback model wins when one was used).
-                    _cost_model = (getattr(engine._thread_local, '_fallback_model_used', None)
-                                   or session.model)
-                    try:
-                        engine._log_call_cost(
-                            _cost_model,
-                            _usage_totals["tokens_in"],
-                            _usage_totals["tokens_out"],
-                            session_id=sid,
-                            api_key=session.api_key,
-                        )
-                    except Exception as _ce:
-                        print(f"[chat] cost log failed: {_ce}")
-                    # Compute cost before saving
-                    session_cost = None
-                    if engine._cost_tracker:
-                        try:
-                            sc = engine._cost_tracker.get_session_cost(sid)
-                            session_cost = round(sc.get("cost", 0.0), 4)
-                        except Exception:
-                            pass
-                    # Build metadata: model, tokens, cost, files, tools, duration, usage
-                    _req_duration = round(time.time() - _req_start, 2)
-                    msg_metadata = {}
-                    msg_metadata["model"] = session.model
-                    msg_metadata["duration"] = _req_duration
-                    msg_metadata["tokens_in"] = _usage_totals["tokens_in"]
-                    msg_metadata["tokens_out"] = _usage_totals["tokens_out"]
-                    msg_metadata["last_tokens_in"] = _usage_totals["last_tokens_in"]
-                    if _request_payloads:
-                        msg_metadata["request_payloads"] = _request_payloads
-                    fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
-                    if fb_model:
-                        msg_metadata["model"] = fb_model
-                        msg_metadata["original_model"] = session.model
-                    msg_metadata["tokens"] = engine._estimate_conversation_tokens(session.messages)
-                    if session_cost is not None:
-                        msg_metadata["cost"] = session_cost
-                    if created_files:
-                        msg_metadata["files"] = created_files
-                    if _partial_tools:
-                        msg_metadata["tools"] = _partial_tools
-                    # Leftover thinking deltas that never got a thinking_done (truncated
-                    # stream / error before flush). Persist as a fallback thinking row
-                    # rather than losing the content.
-                    thinking_leftover = "".join(_partial_thinking).strip()
-                    if thinking_leftover:
-                        try:
-                            session.add_message("thinking", thinking_leftover,
-                                                 metadata={"tool_round": None, "fallback": True})
-                        except Exception:
-                            msg_metadata["thinking"] = thinking_leftover  # legacy fallback
-                        _partial_thinking.clear()
-                    if _thinking_summary:
-                        msg_metadata["thinking_summary"] = _thinking_summary
-                    # Per-turn state snapshot: thinking level requested + caveman modes applied
-                    if thinking_level:
-                        msg_metadata["thinking_level"] = thinking_level
-                    _cav_chat = int(getattr(engine._thread_local, "caveman_chat", 0) or 0)
-                    _cav_sys = int(getattr(engine._thread_local, "caveman_system", 0) or 0)
-                    if _cav_chat:
-                        msg_metadata["caveman_chat"] = _cav_chat
-                    if _cav_sys:
-                        msg_metadata["caveman_system"] = _cav_sys
-                    # --- Citation validator (Phase 1+2: validate + optional re-round) ---
-                    # Phase 1: scans reply for [Quelle: X — "Y"] brackets, verifies each
-                    # quote against the actual source files, counts uncited claims.
-                    # Phase 2: when a project chat's reply violates the citation
-                    # threshold (>30% uncited bullets OR ≥2 unverified quotes), fire ONE
-                    # synchronous re-round with feedback — the corrected text replaces
-                    # `reply` before persistence and the `done` SSE event. Max 1 re-round
-                    # per turn. Gated by mempalace.citation_reround.enabled in config.
-                    #
-                    # Only runs in research-mode chats. Non-research project
-                    # chats (codegen, drafting, anything that uses indexed
-                    # content as input rather than reproducing it) skip
-                    # validation + re-round entirely — citation enforcement
-                    # is the wrong primitive for those workflows.
-                    _proj_active = getattr(engine._thread_local, 'project', None)
-                    _research_active = False
-                    if _proj_active:
-                        _rm_override = getattr(session, "research_mode_override", None)
-                        if _rm_override is not None:
-                            _research_active = bool(_rm_override)
-                        else:
-                            _proj_cfg_for_rm = engine.ProjectManager.get_project(
-                                session.agent_id, _proj_active)
-                            _research_active = bool(
-                                (_proj_cfg_for_rm or {}).get("research_mode", False))
-                    if _proj_active and _research_active and reply:
-                        try:
-                            _val = engine.validate_citations_in_response(reply, session_id=sid)
-                            _cv_meta = {
-                                "verified": _val.get("verified", 0),
-                                "unverified_count": len(_val.get("unverified", []) or []),
-                                "unverified_samples": [
-                                    {"basename": bn, "quote_excerpt": q[:120], "reason": r}
-                                    for (bn, q, r) in (_val.get("unverified") or [])[:5]
-                                ],
-                                "uncited_claims": _val.get("uncited_claims", 0),
-                                "claim_total": _val.get("claim_total", 0),
-                                "total_brackets": _val.get("total_brackets", 0),
+                            _user_meta = {
+                                "gdpr_mapping_id": _mapping.mapping_id,
+                                "wire_content": nonlocal_user_content,
                             }
-
-                            # Citation-Warning: instead of re-rounding (which
-                            # turned correct refusals into hallucinated
-                            # citations on refusal-bucket questions), append
-                            # a persistent warning to the reply itself so it
-                            # survives reload. Same threshold the re-round
-                            # used (>30% uncited OR ≥2 unverified quotes).
-                            if engine.citation_reround_needed(_val):
-                                _uncited = int(_val.get("uncited_claims", 0) or 0)
-                                _ctotal = int(_val.get("claim_total", 0) or 0)
-                                _unver = len(_val.get("unverified", []) or [])
-                                _parts = []
-                                if _ctotal > 0 and _uncited > 0:
-                                    _parts.append(
-                                        f"**{_uncited} von {_ctotal} Behauptungen** "
-                                        f"ohne Quellenangabe"
-                                    )
-                                if _unver >= 2:
-                                    _parts.append(
-                                        f"**{_unver} Zitat(e)** konnten nicht "
-                                        f"in den Quelldateien verifiziert werden"
-                                    )
-                                if _parts:
-                                    _warning = (
-                                        "\n\n---\n\n"
-                                        "> ⚠️ **Hinweis zur Quellentreue**: "
-                                        + "; ".join(_parts)
-                                        + ". Möglich ist auch, dass zu dieser "
-                                          "Frage keine passenden Informationen "
-                                          "in den Quellen vorlagen und die "
-                                          "Antwort daher ohne Belege bleiben "
-                                          "musste. Bitte einzelne Aussagen vor "
-                                          "Weiterverwendung gegen die "
-                                          "Originalquellen prüfen."
-                                    )
-                                    reply = reply + _warning
-                                    _cv_meta["warning_appended"] = True
-
-                            msg_metadata["citation_validation"] = _cv_meta
-                        except Exception as _e:
-                            # Validation must never crash the response; log and continue.
-                            try: print(f"[citation-validator] error: {_e}")
-                            except Exception: pass
-
-                    # Sidecar empty-round nudge marker — persistent so the
-                    # user sees it after reload too, not just live via SSE.
-                    # Triggered from attempt 1 (any nudge is unusual; the
-                    # model should have answered directly).
-                    _nudges = int(_nudge_count[0] or 0)
-                    if _nudges > 0:
-                        msg_metadata["nudge_count"] = _nudges
-                        _gave_up = (reply.strip() ==
-                                    "No response was returned. Please modify "
-                                    "your request or change the model.")
-                        if _gave_up:
-                            # Give-up text is already the visible reply — don't
-                            # double up with a hint, the message itself says it.
-                            pass
+                            if _user_spans:
+                                _user_meta["gdpr_restored_spans"] = _user_spans
+                            if preamble_text:
+                                _user_meta["preamble"] = preamble_text
+                            ChatDB.save_message(
+                                sid, "user", user_content,
+                                metadata=_user_meta)
+                            ChatDB.save_session(
+                                sid, session.agent_id, session.model, session.title,
+                                session.status, session.created_at, session.last_active,
+                                session.project or "", user_id=session.user_id)
                         else:
-                            _nudge_hint = (
-                                "\n\n---\n\n"
-                                f"> ℹ️ **Hinweis**: Das Modell hat {_nudges} "
-                                f"Mal neu angesetzt, bevor eine Antwort kam."
-                            )
-                            reply = reply + _nudge_hint
-                    # ── Transparent anonymisation: deanonymize final reply ──
-                    # The text_delta path already de-anonymised live deltas;
-                    # this pass covers the final assembled reply (which may
-                    # include text the streamer held back at flush time, plus
-                    # nudge/citation hints appended above). It's also the
-                    # canonical text persisted to the messages table.
-                    _gdpr_streamer = getattr(session, "_gdpr_streamer", None)
-                    _gdpr_mapping_id = getattr(session, "_gdpr_mapping_id", None)
-                    if _gdpr_mapping_id and _gdpr_streamer is not None:
-                        # Flush any held-back streamer tail to subscribers.
-                        _tail = _gdpr_streamer.flush()
-                        if _tail:
-                            live.emit("text_delta", {"text": _tail})
-                        _mapping = pseudonymizer.get_mapping(_gdpr_mapping_id)
-                        if _mapping is not None:
-                            _deanon_reply, _restored = pseudonymizer.deanonymize_text(
-                                reply, mapping=_mapping)
-                            _t1 = time.time()
-                            _deanon_tool_id = f"deanon_{_gdpr_mapping_id[:12]}"
-                            _emit_synthetic_tool_event(
-                                live=live, sid=sid, kind="deanonymise_text",
-                                tool_use_id=_deanon_tool_id, phase="dispatch",
-                                args={"target": "assistant_reply",
-                                      "mapping_id": _gdpr_mapping_id},
-                            )
-                            _emit_synthetic_tool_event(
-                                live=live, sid=sid, kind="deanonymise_text",
-                                tool_use_id=_deanon_tool_id, phase="done",
-                                result={"restored": int(_restored),
-                                        "mapping_id": _gdpr_mapping_id},
-                                status="ok",
-                                duration_ms=int((time.time() - _t1) * 1000),
-                            )
-                            try:
-                                if engine._audit_log:
-                                    engine._audit_log.log_action(
-                                        agent=session.agent_id, session_id=sid,
-                                        action_type="pii_deanonymise_text",
-                                        tool_name="gdpr_scanner",
-                                        args_summary="assistant_reply",
-                                        result_summary=(
-                                            f"restored={_restored} "
-                                            f"mapping_id={_gdpr_mapping_id}"),
-                                        result_status="success",
-                                        duration_ms=0, source="chat",
+                            session.add_message(
+                                "user", nonlocal_user_content,
+                                metadata=({"preamble": preamble_text}
+                                          if preamble_text else None))
+                        _msg_count_before = len(session.messages)
+
+                    # --- Standard backend ---
+                    # Use detected purpose from auto-resolve, or fall back to agent's fixed purpose.
+                    # In the anonymise branch above, `nonlocal_message` is the
+                    # pseudonymised text; in every other branch it's just the
+                    # original `message` we copied at function entry. We use
+                    # `nonlocal_message` directly here — assigning back to
+                    # `message` would mark `message` as a worker-local for the
+                    # whole function (Python decides scope at compile-time),
+                    # and the `nonlocal_message = message` snapshot at the
+                    # top of the try would crash with UnboundLocalError because
+                    # the outer-scope `message` is shadowed.
+                    purpose = session.agent.config.get("model_purpose")
+                    if not purpose and session.agent.config.get("model") == "auto":
+                        purpose = engine.classify_task_purpose(nonlocal_message)
+                    inf_params = engine.get_inference_params(session.model, purpose)
+                    # Apply thinking level from request — only when the model supports thinking.
+                    _model_cfg = engine._models_config.get(session.model, {}) or {}
+                    _tfmt = _model_cfg.get("thinking_format", "none")
+                    if thinking_level and thinking_level != "none" and _tfmt != "none":
+                        _THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 32768}
+                        inf_params["thinking"] = True
+                        inf_params["thinking_budget"] = _THINKING_BUDGETS.get(thinking_level, 8192)
+                        # Provider-facing reasoning toggle. Engine's _apply_inference_to_payload maps this
+                        # per thinking_format: reasoning_effort for mistral_blocks/reasoning_field/openai_opaque,
+                        # chat_template_kwargs.enable_thinking for oMLX inline_tags variants, etc.
+                        inf_params["thinking_level"] = thinking_level
+                    else:
+                        inf_params.pop("thinking", None)
+                        inf_params.pop("thinking_budget", None)
+                        inf_params.pop("thinking_level", None)
+                    # If thinking-mode flipped vs what the warmup keeper primed,
+                    # kick off a background re-prime so the *next* turn's KV
+                    # prefix matches. Current turn still pays the cold cost.
+                    # No-op when model isn't warmup-flagged or has thinking_format=none.
+                    _wants_thinking = bool(inf_params.get("thinking"))
+                    engine.maybe_reprime_for_thinking(session.model, _wants_thinking,
+                                                      agent_id=session.agent_id)
+
+                    # Sidecar path: build the system prompt, hand the loop over
+                    # to the Anthropic SDK in the sidecar process. event_callback
+                    # translates sidecar SSE → Brain's LiveStream vocabulary, so
+                    # persistence, references, citation validation all stay on
+                    # this thread unchanged.
+                    # SHARED prefix builder — same function the warm-pool prime
+                    # (run_model_warmup) calls, so the first-turn system prompt +
+                    # tool set are byte-identical and oMLX reuses the warm KV prefix.
+                    # On turn 0 _discovered_tools is empty (matches warmup); the
+                    # anthropic wire-shape (is_openai_shape=False) only changes tool
+                    # serialization, not the KV-relevant prompt/name set.
+                    _system_prompt, _active_tools, _active_tool_names = engine.build_first_turn_prefix(
+                        session.model, session.agent_id,
+                        mcp_manager=getattr(engine, "_mcp_manager", None),
+                        discovered_tools=getattr(engine._thread_local, "_discovered_tools", set()) or set(),
+                        is_openai_shape=False,
+                    )
+                    # Persist for the session inspector — overwritten per turn,
+                    # no history. Best-effort; persist failure must not block
+                    # the chat call.
+                    try:
+                        with _db_conn() as _ssp_conn:
+                            _ssp_conn.execute(
+                                "UPDATE sessions SET last_system_prompt = ? WHERE id = ?",
+                                (_system_prompt, sid))
+                            _ssp_conn.commit()
+                    except Exception:
+                        pass
+                    _tool_context = {
+                        "session_id": sid,
+                        "agent_id": session.agent_id,
+                        "user_id": session.user_id or "",
+                        "team_ids": list(getattr(engine._thread_local, "current_team_ids", []) or []),
+                        "project": getattr(engine._thread_local, "project", "") or "",
+                        "note_context": getattr(engine._thread_local, "note_context", None),
+                        "workflow_run_id": getattr(engine._thread_local, "workflow_run_id", "") or "",
+                        "plan_mode": bool(getattr(engine._thread_local, "plan_mode", False)),
+                        "research_mode_override": getattr(engine._thread_local, "research_mode_override", None),
+                        "execution_overrides": getattr(engine._thread_local, "execution_overrides", None) or {},
+                        "attachment_image_model": getattr(engine._thread_local, "attachment_image_model", "") or "",
+                        "caveman_chat": int(getattr(engine._thread_local, "caveman_chat", 0) or 0),
+                        "caveman_system": int(getattr(engine._thread_local, "caveman_system", 0) or 0),
+                        # Transparent anonymisation: when set, the tool-dispatch
+                        # thread installs an _after_file_write callback that
+                        # rewrites any file the LLM produces back into real
+                        # values before the UI sees the artifact.
+                        "gdpr_mapping_id": getattr(session, "_gdpr_mapping_id", "") or "",
+                    }
+                    _sampling = {
+                        "temperature": inf_params.get("temperature"),
+                        "top_p": inf_params.get("top_p"),
+                        "top_k": inf_params.get("top_k"),
+                        "stop_sequences": inf_params.get("stop") or inf_params.get("stop_sequences"),
+                    }
+                    _max_tokens = int(inf_params.get("max_tokens", 16000) or 16000)
+                    _agent_cfg = session.agent.config or {}
+                    _max_rounds = int((_agent_cfg.get("limits") or {}).get("max_tool_rounds", 25) or 25)
+                    # Transparent anonymisation: if a mapping is live, walk the
+                    # FULL message history and produce a wire-only pseudonymised
+                    # copy. Prior turns' assistant replies (persisted
+                    # de-anonymised so the chat UI shows real values) carry real
+                    # PII; without this pass they ship to the cloud LLM raw. The
+                    # mapping-reuse short-circuit keeps token ids stable from
+                    # turn 1, so a long anonymise session pays one regex scan
+                    # per turn, not new mint cost.
+                    _wire_messages = session.messages
+                    _gmid = getattr(session, "_gdpr_mapping_id", "") or ""
+                    if _gmid:
+                        _m = pseudonymizer.get_mapping(_gmid)
+                        if _m is not None:
+                            _wire_messages, _hist_new, _hist_counts = (
+                                _pseudonymize_history_for_wire(
+                                    session.messages, _m,
+                                    engine._get_gdpr_scanner_config()))
+                            if _hist_new > 0 or _hist_counts:
+                                try:
+                                    _tuid = (f"anon_hist_{_gmid[:8]}_"
+                                             f"{int(time.time()*1000) % 1_000_000}")
+                                    emit_gdpr_tool_event_for_session(
+                                        sid,
+                                        kind="anonymise_read",
+                                        tool_use_id=_tuid,
+                                        args={"source": "history"},
+                                        result={
+                                            "findings": sum(_hist_counts.values()),
+                                            "tokens_minted": _hist_new,
+                                            "categories": _hist_counts,
+                                            "source": "history",
+                                            "mapping_id": _gmid,
+                                        },
+                                        status="ok",
+                                        duration_ms=0,
                                     )
+                                except Exception:
+                                    pass
+                                # Persist any newly-minted tokens so a server
+                                # restart mid-turn can still de-anonymise.
+                                try:
+                                    pseudonymizer.save_mapping(
+                                        _m, session_id=sid, turn_id=_gmid)
+                                except Exception:
+                                    pass
+                    _result = sidecar_proxy.run_turn(
+                        messages=_wire_messages,
+                        model=session.model,
+                        api_key=session.api_key,
+                        base_url=session.base_url,
+                        system_prompt=_system_prompt,
+                        purpose="interactive",
+                        tool_context=_tool_context,
+                        sampling=_sampling,
+                        thinking_level=(thinking_level if thinking_level and thinking_level != "none" else None),
+                        max_tokens=_max_tokens,
+                        max_rounds=_max_rounds,
+                        event_callback=event_callback,
+                        cancel_token=session.cancel_token,
+                    )
+                    # On sidecar error: surface the message to the client AS PART
+                    # of the assistant reply, but stay on the happy path so the
+                    # downstream `done` event still fires. Raising here would
+                    # leave HTTP clients that only listen for `done` blocked.
+                    _se = _result.get("error")
+                    _sr = _result.get("reply") or ""
+                    if _se and not _sr:
+                        reply = f"*(Sidecar error: {str(_se)[:300]})*"
+                    elif _se and _sr:
+                        reply = _sr + f"\n\n*(Sidecar error after partial: {str(_se)[:200]})*"
+                    else:
+                        reply = _sr
+                    if reply:
+                        # Log this turn's token usage to the cost ledger. The native
+                        # loop used to do this per-round; the SDK-sidecar migration
+                        # (v9.0.0) dropped the write path, so interactive chats logged
+                        # nothing and session cost read back as $0. Log once per turn
+                        # from the accumulated usage totals, keyed by the model that
+                        # actually answered (fallback model wins when one was used).
+                        _cost_model = (getattr(engine._thread_local, '_fallback_model_used', None)
+                                       or session.model)
+                        try:
+                            engine._log_call_cost(
+                                _cost_model,
+                                _usage_totals["tokens_in"],
+                                _usage_totals["tokens_out"],
+                                session_id=sid,
+                                api_key=session.api_key,
+                            )
+                        except Exception as _ce:
+                            print(f"[chat] cost log failed: {_ce}")
+                        # Compute cost before saving
+                        session_cost = None
+                        if engine._cost_tracker:
+                            try:
+                                sc = engine._cost_tracker.get_session_cost(sid)
+                                session_cost = round(sc.get("cost", 0.0), 4)
                             except Exception:
                                 pass
-                            # Capture wire-truth before we mutate `reply`.
-                            # The session inspector reads this so an auditor
-                            # can see the raw LLM output (with pseudonymised
-                            # tokens still embedded) alongside the de-
-                            # anonymised text the user actually sees in chat.
-                            # Skip the metadata bloat when no tokens needed
-                            # restoring (pre/post are byte-identical).
-                            if _restored:
-                                msg_metadata["wire_content"] = reply
-                            reply = _deanon_reply
-                            msg_metadata["gdpr_mapping_id"] = _gdpr_mapping_id
-                            msg_metadata["gdpr_restored"] = int(_restored)
-                            # Per-span highlight payload so the UI can mark
-                            # each restored value in the assistant reply with
-                            # a tooltip ("email — alice@… was anonymised as
-                            # <EMAIL_1_7e77>"). Offsets are against `reply`
-                            # (the de-anonymised final text). Skipped when
-                            # no tokens were restored to keep metadata lean.
-                            if _restored:
+                        # Build metadata: model, tokens, cost, files, tools, duration, usage
+                        _req_duration = round(time.time() - _req_start, 2)
+                        msg_metadata = {}
+                        msg_metadata["model"] = session.model
+                        msg_metadata["duration"] = _req_duration
+                        msg_metadata["tokens_in"] = _usage_totals["tokens_in"]
+                        msg_metadata["tokens_out"] = _usage_totals["tokens_out"]
+                        msg_metadata["last_tokens_in"] = _usage_totals["last_tokens_in"]
+                        if _request_payloads:
+                            msg_metadata["request_payloads"] = _request_payloads
+                        fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
+                        if fb_model:
+                            msg_metadata["model"] = fb_model
+                            msg_metadata["original_model"] = session.model
+                        msg_metadata["tokens"] = engine._estimate_conversation_tokens(session.messages)
+                        if session_cost is not None:
+                            msg_metadata["cost"] = session_cost
+                        if created_files:
+                            msg_metadata["files"] = created_files
+                        if _partial_tools:
+                            msg_metadata["tools"] = _partial_tools
+                        # Leftover thinking deltas that never got a thinking_done (truncated
+                        # stream / error before flush). Persist as a fallback thinking row
+                        # rather than losing the content.
+                        thinking_leftover = "".join(_partial_thinking).strip()
+                        if thinking_leftover:
+                            try:
+                                session.add_message("thinking", thinking_leftover,
+                                                     metadata={"tool_round": None, "fallback": True})
+                            except Exception:
+                                msg_metadata["thinking"] = thinking_leftover  # legacy fallback
+                            _partial_thinking.clear()
+                        if _thinking_summary:
+                            msg_metadata["thinking_summary"] = _thinking_summary
+                        # Per-turn state snapshot: thinking level requested + caveman modes applied
+                        if thinking_level:
+                            msg_metadata["thinking_level"] = thinking_level
+                        _cav_chat = int(getattr(engine._thread_local, "caveman_chat", 0) or 0)
+                        _cav_sys = int(getattr(engine._thread_local, "caveman_system", 0) or 0)
+                        if _cav_chat:
+                            msg_metadata["caveman_chat"] = _cav_chat
+                        if _cav_sys:
+                            msg_metadata["caveman_system"] = _cav_sys
+                        # --- Citation validator (Phase 1+2: validate + optional re-round) ---
+                        # Phase 1: scans reply for [Quelle: X — "Y"] brackets, verifies each
+                        # quote against the actual source files, counts uncited claims.
+                        # Phase 2: when a project chat's reply violates the citation
+                        # threshold (>30% uncited bullets OR ≥2 unverified quotes), fire ONE
+                        # synchronous re-round with feedback — the corrected text replaces
+                        # `reply` before persistence and the `done` SSE event. Max 1 re-round
+                        # per turn. Gated by mempalace.citation_reround.enabled in config.
+                        #
+                        # Only runs in research-mode chats. Non-research project
+                        # chats (codegen, drafting, anything that uses indexed
+                        # content as input rather than reproducing it) skip
+                        # validation + re-round entirely — citation enforcement
+                        # is the wrong primitive for those workflows.
+                        _proj_active = getattr(engine._thread_local, 'project', None)
+                        _research_active = False
+                        if _proj_active:
+                            _rm_override = getattr(session, "research_mode_override", None)
+                            if _rm_override is not None:
+                                _research_active = bool(_rm_override)
+                            else:
+                                _proj_cfg_for_rm = engine.ProjectManager.get_project(
+                                    session.agent_id, _proj_active)
+                                _research_active = bool(
+                                    (_proj_cfg_for_rm or {}).get("research_mode", False))
+                        if _proj_active and _research_active and reply:
+                            try:
+                                _val = engine.validate_citations_in_response(reply, session_id=sid)
+                                _cv_meta = {
+                                    "verified": _val.get("verified", 0),
+                                    "unverified_count": len(_val.get("unverified", []) or []),
+                                    "unverified_samples": [
+                                        {"basename": bn, "quote_excerpt": q[:120], "reason": r}
+                                        for (bn, q, r) in (_val.get("unverified") or [])[:5]
+                                    ],
+                                    "uncited_claims": _val.get("uncited_claims", 0),
+                                    "claim_total": _val.get("claim_total", 0),
+                                    "total_brackets": _val.get("total_brackets", 0),
+                                }
+
+                                # Citation-Warning: instead of re-rounding (which
+                                # turned correct refusals into hallucinated
+                                # citations on refusal-bucket questions), append
+                                # a persistent warning to the reply itself so it
+                                # survives reload. Same threshold the re-round
+                                # used (>30% uncited OR ≥2 unverified quotes).
+                                if engine.citation_reround_needed(_val):
+                                    _uncited = int(_val.get("uncited_claims", 0) or 0)
+                                    _ctotal = int(_val.get("claim_total", 0) or 0)
+                                    _unver = len(_val.get("unverified", []) or [])
+                                    _parts = []
+                                    if _ctotal > 0 and _uncited > 0:
+                                        _parts.append(
+                                            f"**{_uncited} von {_ctotal} Behauptungen** "
+                                            f"ohne Quellenangabe"
+                                        )
+                                    if _unver >= 2:
+                                        _parts.append(
+                                            f"**{_unver} Zitat(e)** konnten nicht "
+                                            f"in den Quelldateien verifiziert werden"
+                                        )
+                                    if _parts:
+                                        _warning = (
+                                            "\n\n---\n\n"
+                                            "> ⚠️ **Hinweis zur Quellentreue**: "
+                                            + "; ".join(_parts)
+                                            + ". Möglich ist auch, dass zu dieser "
+                                              "Frage keine passenden Informationen "
+                                              "in den Quellen vorlagen und die "
+                                              "Antwort daher ohne Belege bleiben "
+                                              "musste. Bitte einzelne Aussagen vor "
+                                              "Weiterverwendung gegen die "
+                                              "Originalquellen prüfen."
+                                        )
+                                        reply = reply + _warning
+                                        _cv_meta["warning_appended"] = True
+
+                                msg_metadata["citation_validation"] = _cv_meta
+                            except Exception as _e:
+                                # Validation must never crash the response; log and continue.
+                                try: print(f"[citation-validator] error: {_e}")
+                                except Exception: pass
+
+                        # Sidecar empty-round nudge marker — persistent so the
+                        # user sees it after reload too, not just live via SSE.
+                        # Triggered from attempt 1 (any nudge is unusual; the
+                        # model should have answered directly).
+                        _nudges = int(_nudge_count[0] or 0)
+                        if _nudges > 0:
+                            msg_metadata["nudge_count"] = _nudges
+                            _gave_up = (reply.strip() ==
+                                        "No response was returned. Please modify "
+                                        "your request or change the model.")
+                            if _gave_up:
+                                # Give-up text is already the visible reply — don't
+                                # double up with a hint, the message itself says it.
+                                pass
+                            else:
+                                _nudge_hint = (
+                                    "\n\n---\n\n"
+                                    f"> ℹ️ **Hinweis**: Das Modell hat {_nudges} "
+                                    f"Mal neu angesetzt, bevor eine Antwort kam."
+                                )
+                                reply = reply + _nudge_hint
+                        # ── Transparent anonymisation: deanonymize final reply ──
+                        # The text_delta path already de-anonymised live deltas;
+                        # this pass covers the final assembled reply (which may
+                        # include text the streamer held back at flush time, plus
+                        # nudge/citation hints appended above). It's also the
+                        # canonical text persisted to the messages table.
+                        _gdpr_streamer = getattr(session, "_gdpr_streamer", None)
+                        _gdpr_mapping_id = getattr(session, "_gdpr_mapping_id", None)
+                        if _gdpr_mapping_id and _gdpr_streamer is not None:
+                            # Flush any held-back streamer tail to subscribers.
+                            _tail = _gdpr_streamer.flush()
+                            if _tail:
+                                live.emit("text_delta", {"text": _tail})
+                            _mapping = pseudonymizer.get_mapping(_gdpr_mapping_id)
+                            if _mapping is not None:
+                                _deanon_reply, _restored = pseudonymizer.deanonymize_text(
+                                    reply, mapping=_mapping)
+                                _t1 = time.time()
+                                _deanon_tool_id = f"deanon_{_gdpr_mapping_id[:12]}"
+                                _emit_synthetic_tool_event(
+                                    live=live, sid=sid, kind="deanonymise_text",
+                                    tool_use_id=_deanon_tool_id, phase="dispatch",
+                                    args={"target": "assistant_reply",
+                                          "mapping_id": _gdpr_mapping_id},
+                                )
+                                _emit_synthetic_tool_event(
+                                    live=live, sid=sid, kind="deanonymise_text",
+                                    tool_use_id=_deanon_tool_id, phase="done",
+                                    result={"restored": int(_restored),
+                                            "mapping_id": _gdpr_mapping_id},
+                                    status="ok",
+                                    duration_ms=int((time.time() - _t1) * 1000),
+                                )
                                 try:
-                                    _spans = pseudonymizer.find_restored_spans(
-                                        reply, mapping=_mapping)
+                                    if engine._audit_log:
+                                        engine._audit_log.log_action(
+                                            agent=session.agent_id, session_id=sid,
+                                            action_type="pii_deanonymise_text",
+                                            tool_name="gdpr_scanner",
+                                            args_summary="assistant_reply",
+                                            result_summary=(
+                                                f"restored={_restored} "
+                                                f"mapping_id={_gdpr_mapping_id}"),
+                                            result_status="success",
+                                            duration_ms=0, source="chat",
+                                        )
                                 except Exception:
-                                    _spans = []
-                                if _spans:
-                                    msg_metadata["gdpr_restored_spans"] = _spans
-                    session.add_message("assistant", reply, metadata=msg_metadata or None)
-                    done_data = {
-                        "text": reply,
-                        "tokens": engine._estimate_conversation_tokens(session.messages),
-                        "max_context": session.max_context,
-                        "model": session.model,
-                        "duration": _req_duration,
-                        "tokens_in": _usage_totals["tokens_in"],
-                        "tokens_out": _usage_totals["tokens_out"],
-                        "last_tokens_in": _usage_totals["last_tokens_in"],
-                    }
-                    if session_cost is not None:
-                        done_data["cost"] = session_cost
-                    # GDPR highlight payload — UI marks each restored span
-                    # in the reply with a tooltip. Pulled from the metadata
-                    # we just attached to the persisted message; live path
-                    # picks it up here, reload reads it from msg_metadata.
-                    _gdpr_spans = msg_metadata.get("gdpr_restored_spans") if msg_metadata else None
-                    if _gdpr_spans:
-                        done_data["gdpr_restored_spans"] = _gdpr_spans
-                    # Include fallback model info if a fallback was used
-                    fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
-                    if fb_model:
-                        done_data["fallback_model"] = fb_model
-                        done_data["original_model"] = session.model
-                    # Auto-routing: tell the client which model Auto picked and
-                    # why, so the composer can show "Auto (Model)" + tooltip
-                    # without dropping the user's "auto" selection.
-                    if auto_route:
-                        done_data["auto_route"] = auto_route
-                    # Include file attachments
-                    if created_files:
-                        done_data["files"] = created_files
-                    live.emit("done", done_data)
+                                    pass
+                                # Capture wire-truth before we mutate `reply`.
+                                # The session inspector reads this so an auditor
+                                # can see the raw LLM output (with pseudonymised
+                                # tokens still embedded) alongside the de-
+                                # anonymised text the user actually sees in chat.
+                                # Skip the metadata bloat when no tokens needed
+                                # restoring (pre/post are byte-identical).
+                                if _restored:
+                                    msg_metadata["wire_content"] = reply
+                                reply = _deanon_reply
+                                msg_metadata["gdpr_mapping_id"] = _gdpr_mapping_id
+                                msg_metadata["gdpr_restored"] = int(_restored)
+                                # Per-span highlight payload so the UI can mark
+                                # each restored value in the assistant reply with
+                                # a tooltip ("email — alice@… was anonymised as
+                                # <EMAIL_1_7e77>"). Offsets are against `reply`
+                                # (the de-anonymised final text). Skipped when
+                                # no tokens were restored to keep metadata lean.
+                                if _restored:
+                                    try:
+                                        _spans = pseudonymizer.find_restored_spans(
+                                            reply, mapping=_mapping)
+                                    except Exception:
+                                        _spans = []
+                                    if _spans:
+                                        msg_metadata["gdpr_restored_spans"] = _spans
+                        session.add_message("assistant", reply, metadata=msg_metadata or None)
+                        done_data = {
+                            "text": reply,
+                            "tokens": engine._estimate_conversation_tokens(session.messages),
+                            "max_context": session.max_context,
+                            "model": session.model,
+                            "duration": _req_duration,
+                            "tokens_in": _usage_totals["tokens_in"],
+                            "tokens_out": _usage_totals["tokens_out"],
+                            "last_tokens_in": _usage_totals["last_tokens_in"],
+                        }
+                        if session_cost is not None:
+                            done_data["cost"] = session_cost
+                        # GDPR highlight payload — UI marks each restored span
+                        # in the reply with a tooltip. Pulled from the metadata
+                        # we just attached to the persisted message; live path
+                        # picks it up here, reload reads it from msg_metadata.
+                        _gdpr_spans = msg_metadata.get("gdpr_restored_spans") if msg_metadata else None
+                        if _gdpr_spans:
+                            done_data["gdpr_restored_spans"] = _gdpr_spans
+                        # Include fallback model info if a fallback was used
+                        fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
+                        if fb_model:
+                            done_data["fallback_model"] = fb_model
+                            done_data["original_model"] = session.model
+                        # Auto-routing: tell the client which model Auto picked and
+                        # why, so the composer can show "Auto (Model)" + tooltip
+                        # without dropping the user's "auto" selection.
+                        if auto_route:
+                            done_data["auto_route"] = auto_route
+                        # Include file attachments
+                        if created_files:
+                            done_data["files"] = created_files
+                        live.emit("done", done_data)
 
-                    # Continuous session summarization: refresh memory summary at token thresholds
-                    try:
-                        token_count = engine._estimate_conversation_tokens(session.messages)
-                        last_summary_tokens = getattr(session, '_last_summary_at', 0)
-                        threshold = 10000 if last_summary_tokens == 0 else last_summary_tokens + 5000
-                        if token_count >= threshold:
-                            session._last_summary_at = token_count
-                            engine.trigger_memory_summary_refresh(session.agent_id)
-                    except Exception:
-                        pass
+                        # Continuous session summarization: refresh memory summary at token thresholds
+                        try:
+                            token_count = engine._estimate_conversation_tokens(session.messages)
+                            last_summary_tokens = getattr(session, '_last_summary_at', 0)
+                            threshold = 10000 if last_summary_tokens == 0 else last_summary_tokens + 5000
+                            if token_count >= threshold:
+                                session._last_summary_at = token_count
+                                engine.trigger_memory_summary_refresh(session.agent_id)
+                        except Exception:
+                            pass
 
-                    # Auto-memory extraction: check if response contains memorable info
-                    try:
-                        am_cfg = engine._get_auto_memory_config(session.agent_id)
-                        min_msg_len = am_cfg.get("min_message_length", 20)
-                        if am_cfg.get("enabled", True) and reply and message and len(message) > min_msg_len:
-                            threading.Thread(
-                                target=engine._auto_memory_extract,
-                                args=(session.agent_id, message, reply[:1000]),
-                                daemon=True,
-                                name=f"auto_memory_{session.agent_id}"
-                            ).start()
-                    except Exception:
-                        pass
+                        # Auto-memory extraction: check if response contains memorable info
+                        try:
+                            am_cfg = engine._get_auto_memory_config(session.agent_id)
+                            min_msg_len = am_cfg.get("min_message_length", 20)
+                            if am_cfg.get("enabled", True) and reply and message and len(message) > min_msg_len:
+                                threading.Thread(
+                                    target=engine._auto_memory_extract,
+                                    args=(session.agent_id, message, reply[:1000]),
+                                    daemon=True,
+                                    name=f"auto_memory_{session.agent_id}"
+                                ).start()
+                        except Exception:
+                            pass
 
-                    # Generate chat summary (background, for sidebar display).
-                    # Regenerated every turn so the synopsis tracks the latest
-                    # questions, not just the opening one.
-                    try:
-                        if len(session.messages) >= 2:
-                            threading.Thread(
-                                target=_generate_chat_summary,
-                                args=(session,),
-                                daemon=True,
-                                name=f"chat_summary_{sid}"
-                            ).start()
-                    except Exception:
-                        pass
+                        # Generate chat summary (background, for sidebar display).
+                        # Regenerated every turn so the synopsis tracks the latest
+                        # questions, not just the opening one.
+                        try:
+                            if len(session.messages) >= 2:
+                                threading.Thread(
+                                    target=_generate_chat_summary,
+                                    args=(session,),
+                                    daemon=True,
+                                    name=f"chat_summary_{sid}"
+                                ).start()
+                        except Exception:
+                            pass
 
-                    # Index chat transcript for content search (4+ messages, every 4th message or first time)
-                    try:
-                        msg_count = len(session.messages)
-                        if msg_count >= 4 and (msg_count % 4 == 0 or not os.path.isdir(
-                                os.path.join(engine.AGENTS_DIR, session.agent_id, "chats-indexed"))):
-                            threading.Thread(
-                                target=_index_chat_transcript,
-                                args=(session,),
-                                daemon=True,
-                                name=f"chat_index_{sid}"
-                            ).start()
-                    except Exception:
-                        pass
-                else:
-                    # Empty reply — rollback all intermediate messages from tool loop
-                    _rollback_messages(session, sid, _msg_count_before)
-                    live.emit("done", {"text": "", "tokens": 0, "model": session.model})
-            except engine.TaskCancelled:
-                # Save partial response if any text was streamed
-                partial = "".join(_partial_reply).strip()
-                if partial:
-                    _rollback_messages(session, sid, _msg_count_before)
-                    partial += "\n\n*(Cancelled)*"
-                    meta = {"model": session.model, "partial": True}
-                    if _partial_tools:
-                        meta["tools"] = _partial_tools
-                    session.add_message("assistant", partial, metadata=meta)
-                else:
-                    _rollback_messages(session, sid, _msg_count_before)
-                live.emit("error", {"message": "Cancelled"})
-            except SystemExit as e:
-                partial = "".join(_partial_reply).strip()
-                if partial:
-                    _rollback_messages(session, sid, _msg_count_before)
-                    partial += f"\n\n*(Engine error: exit code {e.code})*"
-                    meta = {"model": session.model, "partial": True}
-                    if _partial_tools:
-                        meta["tools"] = _partial_tools
-                    session.add_message("assistant", partial, metadata=meta)
-                else:
-                    _rollback_messages(session, sid, _msg_count_before)
-                live.emit("error", {"message": f"Engine fatal error (exit code {e.code})"})
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                partial = "".join(_partial_reply).strip()
-                if partial:
-                    _rollback_messages(session, sid, _msg_count_before)
-                    partial += f"\n\n*(Error: {str(e)[:200]})*"
-                    meta = {"model": session.model, "partial": True}
-                    if _partial_tools:
-                        meta["tools"] = _partial_tools
-                    session.add_message("assistant", partial, metadata=meta)
-                else:
-                    _rollback_messages(session, sid, _msg_count_before)
-                live.emit("error", {"message": str(e)})
-            finally:
-                # If the worker died without emitting a terminal event (e.g. a
-                # bare process exit), make sure subscribers aren't left hanging.
-                if not live.done:
-                    live.emit("error", {"message": "Server worker terminated unexpectedly"})
-                with session.lock:
-                    session._streaming = False
-                    if session.live_stream is live:
-                        session.live_stream = None
-                # Auto mode: the per-turn router swapped session.model to the
-                # concrete pick (load-bearing during the turn). Restore "auto"
-                # as the persisted session model so reopening the chat shows
-                # Auto in the composer, not the last working model. The model
-                # that actually answered is recorded in the assistant message
-                # metadata, so nothing is lost.
-                if auto_route:
+                        # Index chat transcript for content search (4+ messages, every 4th message or first time)
+                        try:
+                            msg_count = len(session.messages)
+                            if msg_count >= 4 and (msg_count % 4 == 0 or not os.path.isdir(
+                                    os.path.join(engine.AGENTS_DIR, session.agent_id, "chats-indexed"))):
+                                threading.Thread(
+                                    target=_index_chat_transcript,
+                                    args=(session,),
+                                    daemon=True,
+                                    name=f"chat_index_{sid}"
+                                ).start()
+                        except Exception:
+                            pass
+                    else:
+                        # Empty reply — rollback all intermediate messages from tool loop
+                        _rollback_messages(session, sid, _msg_count_before)
+                        live.emit("done", {"text": "", "tokens": 0, "model": session.model})
+                except engine.TaskCancelled:
+                    # Save partial response if any text was streamed
+                    partial = "".join(_partial_reply).strip()
+                    if partial:
+                        _rollback_messages(session, sid, _msg_count_before)
+                        partial += "\n\n*(Cancelled)*"
+                        meta = {"model": session.model, "partial": True}
+                        if _partial_tools:
+                            meta["tools"] = _partial_tools
+                        session.add_message("assistant", partial, metadata=meta)
+                    else:
+                        _rollback_messages(session, sid, _msg_count_before)
+                    live.emit("error", {"message": "Cancelled"})
+                except SystemExit as e:
+                    partial = "".join(_partial_reply).strip()
+                    if partial:
+                        _rollback_messages(session, sid, _msg_count_before)
+                        partial += f"\n\n*(Engine error: exit code {e.code})*"
+                        meta = {"model": session.model, "partial": True}
+                        if _partial_tools:
+                            meta["tools"] = _partial_tools
+                        session.add_message("assistant", partial, metadata=meta)
+                    else:
+                        _rollback_messages(session, sid, _msg_count_before)
+                    live.emit("error", {"message": f"Engine fatal error (exit code {e.code})"})
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    partial = "".join(_partial_reply).strip()
+                    if partial:
+                        _rollback_messages(session, sid, _msg_count_before)
+                        partial += f"\n\n*(Error: {str(e)[:200]})*"
+                        meta = {"model": session.model, "partial": True}
+                        if _partial_tools:
+                            meta["tools"] = _partial_tools
+                        session.add_message("assistant", partial, metadata=meta)
+                    else:
+                        _rollback_messages(session, sid, _msg_count_before)
+                    live.emit("error", {"message": str(e)})
+                finally:
+                    # If the worker died without emitting a terminal event (e.g. a
+                    # bare process exit), make sure subscribers aren't left hanging.
+                    if not live.done:
+                        live.emit("error", {"message": "Server worker terminated unexpectedly"})
                     with session.lock:
-                        session.model = "auto"
+                        session._streaming = False
+                        if session.live_stream is live:
+                            session.live_stream = None
+                    # Auto mode: the per-turn router swapped session.model to the
+                    # concrete pick (load-bearing during the turn). Restore "auto"
+                    # as the persisted session model so reopening the chat shows
+                    # Auto in the composer, not the last working model. The model
+                    # that actually answered is recorded in the assistant message
+                    # metadata, so nothing is lost.
+                    if auto_route:
+                        with session.lock:
+                            session.model = "auto"
+                        try:
+                            ChatDB.save_session(session.id, session.agent_id, "auto",
+                                                session.title, session.status,
+                                                session.created_at, session.last_active,
+                                                session.project or "", user_id=session.user_id)
+                        except Exception:
+                            pass
                     try:
-                        ChatDB.save_session(session.id, session.agent_id, "auto",
-                                            session.title, session.status,
-                                            session.created_at, session.last_active,
-                                            session.project or "", user_id=session.user_id)
+                        ChatDB.set_streaming_text(sid, "")  # finalized — clear the partial
                     except Exception:
                         pass
-                try:
-                    ChatDB.set_streaming_text(sid, "")  # finalized — clear the partial
-                except Exception:
-                    pass
-                # Transparent anonymisation: drop the in-memory mapping at
-                # turn end. The encrypted SQLite row stays (persist_maps=true
-                # per design), so reload paths can still de-anonymise the
-                # persisted reply if we ever surface "show what was sent"
-                # audit UI. Cancellation / error cases also flow through
-                # here, so the registry never leaks across turns.
-                _gdpr_mid = getattr(session, "_gdpr_mapping_id", None)
-                if _gdpr_mid:
-                    # Persist any mid-turn additions: read-side tools
-                    # (`_gdpr_anon_tool_text`) mutate `mapping.forward` in
-                    # place when they discover new PII, but `save_mapping`
-                    # is only called once upfront BEFORE the sidecar
-                    # round. Without this second save, reload paths can't
-                    # de-anonymise persisted messages that referenced
-                    # tokens minted mid-turn. UPSERT on `mapping_id` =
-                    # safe to re-call.
-                    try:
-                        _m_inmem = pseudonymizer.get_mapping(_gdpr_mid)
-                        if _m_inmem is not None:
-                            pseudonymizer.save_mapping(
-                                _m_inmem, session_id=sid, turn_id=_gdpr_mid)
-                    except Exception:
-                        pass
-                    try:
-                        pseudonymizer.close_mapping(_gdpr_mid)
-                    except Exception:
-                        pass
-                    session._gdpr_mapping_id = None
-                    session._gdpr_streamer = None
-                engine._thread_local._gdpr_anonymising = False
-                # Clean up thread-local state
-                engine._thread_local.current_agent = None
-                engine._thread_local.mcp_manager = None
-                engine._thread_local.memory_store = None
-                engine._thread_local.plan_mode = False
-                engine._thread_local.caveman_chat = 0
-                engine._thread_local.caveman_system = 0
-                engine._thread_local.execution_overrides = {}
-                engine._thread_local.research_mode_override = None
-                engine._thread_local._current_model = None
+                    # Transparent anonymisation: drop the in-memory mapping at
+                    # turn end. The encrypted SQLite row stays (persist_maps=true
+                    # per design), so reload paths can still de-anonymise the
+                    # persisted reply if we ever surface "show what was sent"
+                    # audit UI. Cancellation / error cases also flow through
+                    # here, so the registry never leaks across turns.
+                    _gdpr_mid = getattr(session, "_gdpr_mapping_id", None)
+                    if _gdpr_mid:
+                        # Persist any mid-turn additions: read-side tools
+                        # (`_gdpr_anon_tool_text`) mutate `mapping.forward` in
+                        # place when they discover new PII, but `save_mapping`
+                        # is only called once upfront BEFORE the sidecar
+                        # round. Without this second save, reload paths can't
+                        # de-anonymise persisted messages that referenced
+                        # tokens minted mid-turn. UPSERT on `mapping_id` =
+                        # safe to re-call.
+                        try:
+                            _m_inmem = pseudonymizer.get_mapping(_gdpr_mid)
+                            if _m_inmem is not None:
+                                pseudonymizer.save_mapping(
+                                    _m_inmem, session_id=sid, turn_id=_gdpr_mid)
+                        except Exception:
+                            pass
+                        try:
+                            pseudonymizer.close_mapping(_gdpr_mid)
+                        except Exception:
+                            pass
+                        session._gdpr_mapping_id = None
+                        session._gdpr_streamer = None
 
 
         t = threading.Thread(target=worker, daemon=True)
