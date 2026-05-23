@@ -77,7 +77,7 @@ Guidance for Claude Code in this repo. **Non-obvious invariants only** — what'
 - `handlers/` — HTTP handler modules extracted from server.py — see `handlers/CLAUDE.md`
 - `server_lib/` — DB, auth, sessions, notifications, profile helpers
 - `tui.py`, `telegram.py` — Terminal + Telegram frontends
-- `web/index.html` — Single-page web UI (`web/js/` split into api/chat/files/settings/… modules)
+- `web/index.html` — Single-page web UI. `web/js/` = global-scope `<script>` files loaded in a fixed dependency order (api → state → utils → nav → sessions → chat_* → panels_* → settings_* → … → user_admin → monitors → init; init.js loads LAST and is the only load-time caller). **NO ES modules / bundler** — every fn/var is a browser global; cross-file calls rely on load order (calls are lazy/click-driven, so order only needs every global defined before init.js runs). Tier F (2026-05-23) split the 3 monsters + 2 over-2k files into cohesive per-domain files (all <2k now): `settings.js`→`settings_{teams,general,general_tabs,tools,agent,hooks,schedule}.js`; `panels.js`→`panels_{gdpr,chats,projects,project_sync,right,artifacts}.js`; `chat.js`→`chat_{render,nav,tools,send}.js`; `init.js`→ +`user_admin.js`+`monitors.js`; `translation.js`→ +`translation_live.js`. **Gate before editing JS**: `cd web/js && ./js_gate.sh` (ESLint `no-undef`/`no-redeclare` against auto-generated `.globals.json` + net-globals-count invariant + Playwright smoke w/ zero-console-error assertion; smoke needs the dev server up). Moving a fn between files = relocate one global, count stays constant. See `JS_REFACTOR_PLAN.md` / `JS_REFACTOR_REPORT.md`.
 - `desktop/` — Electron shell (CORS-free IPC + lazy llama.cpp host)
 - `config.json` — Providers, server, Telegram (gitignored)
 - `agents/<name>/` — `soul.md`, `agent.json`, `skills/`, `mcp.json`; SQLite DBs in `agents/main/`
@@ -319,7 +319,7 @@ Two-phase implementation. **Phase A** = audit/diagnostic Data view. **Phase B** 
 - **Persistence** (`classification_scans` in `chats.db`, `ClassificationDB` in `server_lib/db.py`): `scan_id + user_id + summary_json + evidence_json` (50KB cap with progressive trim — drops extra marker excerpts, then keyword hits, then keeps only per-file summary fields). Non-admin users see only own scans; admins see all.
 - **Derived artifacts**: per user policy, auto-marked `internal` — convention only in Phase A; Phase B will inject the marker on `write_file`/`edit_file`.
 - **UI** (`web/js/classification.js`, `#data-view` in `web/index.html`): three input modes (Upload / Server folder / Project), filtered table (mismatch-only / unmarked-only / per-level), CSV export (client-side when not persisted; server-side `.csv` endpoint otherwise), scan history list, drag-drop dropzone.
-- **Settings → Classification tab** (`web/js/settings.js`): admin-editable keyword lists per sensitivity (`internal`/`confidential`/`strict`) with "Restore defaults" per group; extra marker regex patterns. WPB-specific defaults seeded in `DEFAULT_KEYWORDS` (`Vorstand`, `Aufsichtsrat`, `CISO`, `CRYPTSHARE`, …).
+- **Settings → Classification tab** (renderer `_genTab_classification` in `web/js/settings_general_tabs.js`; keyword editor + `clsSaveSettings`/`clsRestoreDefaultKw` handlers in `web/js/settings_tools.js`): admin-editable keyword lists per sensitivity (`internal`/`confidential`/`strict`) with "Restore defaults" per group; extra marker regex patterns. WPB-specific defaults seeded in `DEFAULT_KEYWORDS` (`Vorstand`, `Aufsichtsrat`, `CISO`, `CRYPTSHARE`, …).
 ### Phase B — Enforcement (v9.6.0)
 
 - **Policy config** (`config.json → classification_scanner`):
@@ -342,11 +342,11 @@ Two-phase implementation. **Phase A** = audit/diagnostic Data view. **Phase B** 
 
 - **PDF footer fallback** (`engine.classification.extract_pdf_page_texts`): when markitdown's main extraction yields no marker (markitdown drops repeating PDF footers), `detect_with_pii(text, pdf_path=path)` triggers a secondary fitz-based per-page text extraction and re-scans for markers only. Recovered marker promotes the result; heuristic + content_signals stay from the primary extraction. Validated on synthetic PDFs; the WPB ARL footer is unrecoverable (vector graphics) — that's a per-PDF tooling limit, not a detector failure.
 
-- **Composer modal + block** (`web/js/panels.js: classificationActionModal`): mirrors the GDPR modal. Fires after the PII modal in `chat.js: sendMessage()`. Strict-level + block → only Cancel button (no swap path). Confidential force_local → Cancel + "Lokales Modell verwenden". Skipped when model is already local. `classificationBlockActive(chat)` is now folded into `piiBlockActive(chat)` so the model dropdown auto-restricts to local-only when classified attachments are pending.
+- **Composer modal + block** (`web/js/panels_gdpr.js: classificationActionModal`): mirrors the GDPR modal. Fires after the PII modal in `chat_send.js: sendMessage()`. Strict-level + block → only Cancel button (no swap path). Confidential force_local → Cancel + "Lokales Modell verwenden". Skipped when model is already local. `classificationBlockActive(chat)` is now folded into `piiBlockActive(chat)` so the model dropdown auto-restricts to local-only when classified attachments are pending.
 
 - **`/v1/attachments/scan` extended** (`handlers/chat.py`): response gains `classification: {marker_level, final_level, marker_meta, marker_evidence, mismatch, effective_action, level_label_de}`. Per-file chip badges (`web/js/files.js`): 🔒 / 🏠 / ⛔ icon + level label, color-coded by sensitivity.
 
-- **Settings → Classification policy block** (`web/js/settings.js`): admin-editable master switches (enabled, server_block, server_log), default_local_fallback_model dropdown (filtered to enabled local models), per-level action dropdowns. Strict row is locked at `block` with a tooltip referencing ARL §1.11.
+- **Settings → Classification policy block** (`web/js/settings_general_tabs.js` / `settings_tools.js`): admin-editable master switches (enabled, server_block, server_log), default_local_fallback_model dropdown (filtered to enabled local models), per-level action dropdowns. Strict row is locked at `block` with a tooltip referencing ARL §1.11.
 
 ### Open follow-ups (Phase C, deferred)
 
@@ -501,7 +501,7 @@ they only render in project-retrieval contexts. Brain.py only emits a
 short "this is a project chat with its own memory" paragraph from the
 prompt; everything tool-related is in tool config.
 
-**Admin UI** (`web/js/settings.js` — General Settings → Tools tab):
+**Admin UI** (`web/js/settings_tools.js` — General Settings → Tools tab):
 grouped collapsible registry showing all 63 tools. Per-tool expanded
 panel exposes: enabled/deferred toggles, group label (read-only),
 optional integration knobs (for the ~13 tools with `tool_config` entries
@@ -575,12 +575,12 @@ Tools: `context_search`, `context_detail`, `context_recall`.
 
 **Manual-only trigger** (Phase 5 step 8). The chat worker no longer auto-fires
 LCM at turn start. The status-bar ✂️ button (`#status-lcm-btn` in
-`web/index.html`) calls `triggerLCM()` (`web/js/chat.js`) which POSTs to
+`web/index.html`) calls `triggerLCM()` (`web/js/chat_send.js`) which POSTs to
 `/v1/context/compact` (`handlers/admin.py:_handle_context_compact`); that
 calls `engine._context_manager.check_and_compact(..., force=True)` directly.
-The LCM warning banner (`web/js/panels.js:170`) shows at ≥60% context usage
+The LCM warning banner (`web/js/panels_chats.js`) shows at ≥60% context usage
 to prompt the user. The `compacting` / `compacted` SSE event handlers are
-kept in `chat.js` for future re-introduction but aren't currently emitted.
+kept in `chat_send.js` for future re-introduction but aren't currently emitted.
 
 Summarisation LLM calls (`ContextManager.summarize_chunk`, `condense`,
 `recall`) route through `sidecar_proxy.background_call` like every other
