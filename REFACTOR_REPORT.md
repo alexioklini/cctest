@@ -86,21 +86,38 @@ Every functional domain the full refactor touches is listed here from day one �
 | U4 repo-root path constant | ~82 sites (an idiom, not one value) | — | 2 | 🚫 SKIP (not-applicable) | investigated 2026-05-23: 82 occurrences resolve to DIFFERENT dirs by file depth, not one duplicated value; naive unify would rewrite ~half to the wrong dir. True repo-root sites already named locally (AGENTS_DIR/CONFIG_PATH/_REPO_ROOT). Cosmetic churn w/ real divergence risk → SKIP per principle #2 |
 | U5 PII web/server rule sync | engine/pii_ner.py ↔ web/js/utils.js | `tools/check_pii_js_parity.py` (drift-CHECKER, gate-4b) | 3 | ✅ done | commit `793ca1e`; checker (not generator) diffs rule_id/category/action maps; caught a REAL pre-existing drift (`date` rule). Full codegen deferred — regex bodies differ by dialect; the metadata check catches the actual drift failure mode at near-zero risk |
 
-### D. Domains that will NOT be touched (out of scope) — with reason
+### D. Domains that will NOT be touched (out of scope) — with reason + size
 
-| Domain | Status | Why excluded |
+| Domain | Size (LOC) | Status | Why excluded |
+|---|---|---|---|
+| Web frontend — vanilla JS (`web/js/*.js`: settings.js 6,140, panels.js 5,819, chat.js 4,013, init.js 2,899, translation.js 2,389, workflows.js 1,897, …17 files) | **29,193** (+ `web/index.html` 1,357) | 🚫 out of scope **→ now Tier F** | Different language/toolchain/risk profile (global `<script>` tags, no test infra). Was "separate future initiative"; **now being addressed as Tier F** — see `JS_REFACTOR_PLAN.md` / `JS_REFACTOR_REPORT.md`. *Exception:* U5 touches `web/index.html`'s PIIScanner via codegen — the one frontend seam crossed during Tiers A–E. |
+| Thread-local → full dependency-injection conversion | 366 refs / 34 attrs (cross-cutting, not one file) | 🚫 out of scope (deferred tier) | Multi-week architectural change across the whole codebase. B1 relocated `_thread_local` to `engine/context.py` only. **Deferred as a future tier** (user decision 2026-05-23: JS first). |
+| Encoding all prose invariants as tests/types | n/a (cross-cutting) | 🚫 out of scope | Broad initiative; the 4 characterization-test files (67 cases) are a down-payment, not the whole thing. |
+| Already-centralized helpers (`_send_json`/`_read_json`, auth gates, `resolve_provider_for_model`, `@_db_safe`/`_db_conn`, TOOL_DEFINITIONS dedup) | n/a (already single-sourced) | 🚫 not needed | Already single-sourced (v8.26.0/v8.28.0). Re-extracting = churn for zero gain. |
+| `handlers/favourites.py` vs `server_lib/favourites.py` | 848 + small | 🚫 not needed | Legitimate HTTP-layer vs DB-layer split, not duplication. |
+| `ChatDB` core (stays in `server_lib/db.py`) | ~1,778 (db.py current) | 🚫 stays put | The core session store; only node-registry + mempalace-sync peeled off around it. |
+| Session/SessionManager/LiveStream (stays in `server.py`) | part of server.py 3,895 | 🚫 stays put | Core abstraction; dispatch layer legitimately lives with the server. |
+| `web/index.html` PIIScanner (stays, regex-only) | part of index.html 1,357 | 🚫 stays (managed) | Browser can't run the Python NER; intentionally regex-only. U5 makes it codegen-synced so it can't drift — but it is not "extracted." |
+| `engine/file_pseudonymize.py` | ~existing | ✅ keep (live) | Audit 2026-05-23: actively imported (pseudonymizer.py re-exports `deanonymize_file`; handlers/chat.py uses `SUPPORTED_EXTS`). NOT dead — leave as-is. |
+
+### D2. What REMAINS in `brain.py` (12,334 LOC) — stayed by design, with size + reason
+
+The refactor extracted 12,848 LOC out of brain.py (−51%). What's left is the irreducible
+orchestration core — none of it is a "missed" extraction; each cluster is runtime-entangled,
+registry-wiring, or a data literal that belongs with its consumer. Measured 2026-05-23:
+
+| What stays in brain.py | Size (LOC) | Why it stays (not refactored) |
 |---|---|---|
-| Web frontend (~29k LOC vanilla JS: settings.js 6.1k, panels.js 5.8k, chat.js 4k) | 🚫 out of scope | Different language/toolchain/risk profile. Separate future initiative (plan §8). *Exception:* U5 touches `web/index.html`'s PIIScanner via codegen — the one frontend seam crossed. |
-| Thread-local → full dependency-injection conversion | 🚫 out of scope | Multi-week architectural change across the whole codebase. B1 relocates only. Could be piloted later (plan §8). |
-| Encoding all prose invariants as tests/types | 🚫 out of scope | Broad initiative; §1.5 characterization tests are a first down-payment, not the whole thing. |
-| Already-centralized helpers (`_send_json`/`_read_json`, auth gates, `resolve_provider_for_model`, `@_db_safe`/`_db_conn`, TOOL_DEFINITIONS dedup) | 🚫 not needed | Already single-sourced (v8.26.0/v8.28.0). Re-extracting would add churn for zero gain. |
-| `handlers/favourites.py` vs `server_lib/favourites.py` | 🚫 not needed | Legitimate HTTP-layer vs DB-layer split, not duplication. |
-| `ChatDB` core (stays in `server_lib/db.py`) | 🚫 stays put | The core session store; only node-registry + mempalace-sync peel off around it. |
-| Session/SessionManager/LiveStream (stays in `server.py`) | 🚫 stays put | Core abstraction; dispatch layer legitimately lives with the server. |
-| `web/index.html` PIIScanner (stays, regex-only) | 🚫 stays (managed) | Browser can't run the Python NER; intentionally regex-only. U5 makes it codegen-synced so it can't drift — but it is not "extracted." |
-| `engine/file_pseudonymize.py` | ✅ keep (live) | Audit 2026-05-23: actively imported (pseudonymizer.py re-exports `deanonymize_file`; handlers/chat.py uses `SUPPORTED_EXTS`). NOT dead — leave as-is. |
+| Runtime classes: `ContextManager` 607, `MemoryStore` 390, `LocalProviderQueue` 286, `AgentConfig` 284, `NoteManager` 267, `ProjectManager` 263, `TaskRunner` 262, `MCPManager` 245, `WorkflowExecution` 204, `WebCache` 194, `MCPStdioClient`/`SSEClient` ~330, `WorkflowEngine` 142, … | **~3,600** | Core abstractions entangled with thread-locals / live server state / the agentic-loop orchestration. Moving them is a DI conversion (the deferred thread-local tier), not a relocation. |
+| `TOOL_GROUPS` (29) + `TOOL_DISPATCH` (70) registry **wiring** | ~100 | The registry wiring binds tool names → live callables; the schema *data* moved to `engine/tool_schemas.py` (E2) and impls to `engine/tools/*` (E1/E4), but the dispatch table must stay where it composes the live functions. |
+| Constants/data: `CAVEMAN_*_PROMPTS` ~50, `DEFAULT_PROJECT_INSTRUCTIONS` 30, `KNOWN_MODELS` 18, changelog string ~108 | ~250 | Behavior data read by brain-resident code; no independent reuse. |
+| Orchestration glue: warmup/`build_first_turn_prefix`, the tool-resolver (`resolve_active_tools`), GDPR/PII + classification config resolvers, KG entity-indexing, ask_* blocking-state + `deliver_*`, hooks, the 48-tool registration entries, re-export alias blocks, `_after_file_write`/`_gdpr_anon_tool_text` shared seams | **~8,300** (remainder) | The thin layer that wires the extracted engine modules together + holds shared cross-tool seams reached via lazy `_brain`. Splitting further would fragment single-decision-point logic (resolver, GDPR seam) or require the deferred DI work. |
 
-> **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.
+> The brain.py remainder is **deliberately the orchestration layer**, not a backlog. The only
+> remaining structural change that would shrink it materially is the deferred thread-local → DI
+> tier (would let several runtime classes move out); tracked separately.
+
+> **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason-AND-size. If a domain isn't in this table, it's an omission to fix, not silent scope.
 
 ---
 
