@@ -10875,89 +10875,16 @@ def get_graph_stats(agent_id: str) -> dict:
     }
 
 
-_thread_local = threading.local()
-
-
-# ---------------------------------------------------------------------------
-# ExecutionContext — Phase 1 refactor
-# ---------------------------------------------------------------------------
-# Captures the invariant fields that every execution mode (chat, scheduled,
-# delegate) needs.  Built upfront by each entry point and passed to
-# init_thread_context() so thread-local setup happens in one place.
-# ---------------------------------------------------------------------------
-
-class ExecutionContext:
-    """Lightweight struct for per-request execution state.
-
-    Fields are deliberately simple (no defaults that mask omissions):
-      mode          – 'chat' | 'scheduled' | 'delegate'
-      agent_id      – str  (e.g. 'main')
-      session_id    – str  (chat session id or synthetic 'sched-<run_id>')
-      user_id       – str  (empty string for background/anonymous)
-      team_ids      – list[str]
-      project       – str | None  (project name, if any)
-      memory_store  – MemoryStore | None
-      mcp_manager   – MCPManager | None
-    """
-
-    __slots__ = (
-        "mode", "agent_id", "session_id", "user_id", "team_ids",
-        "project", "memory_store", "mcp_manager",
-    )
-
-    def __init__(
-        self,
-        *,
-        mode: str,
-        agent_id: str,
-        session_id: str = "",
-        user_id: str = "",
-        team_ids: "list[str] | None" = None,
-        project: "str | None" = None,
-        memory_store=None,
-        mcp_manager=None,
-    ):
-        self.mode = mode
-        self.agent_id = agent_id
-        self.session_id = session_id
-        self.user_id = user_id
-        self.team_ids = team_ids or []
-        self.project = project
-        self.memory_store = memory_store
-        self.mcp_manager = mcp_manager
-
-
-def init_thread_context(ctx: ExecutionContext, agent_config=None) -> None:
-    """Set thread-locals from an ExecutionContext.
-
-    agent_config: AgentConfig instance for the agent (optional; omit when the
-    caller has already set _thread_local.current_agent before calling this).
-    """
-    if agent_config is not None:
-        _thread_local.current_agent = agent_config
-    _thread_local.current_session_id = ctx.session_id
-    _thread_local.session_id = ctx.session_id
-    _thread_local.current_user_id = ctx.user_id
-    _thread_local.current_team_ids = ctx.team_ids
-    _thread_local.delegate_agent_id = ctx.agent_id
-    if ctx.memory_store is not None:
-        _thread_local.memory_store = ctx.memory_store
-    if ctx.mcp_manager is not None:
-        _thread_local.mcp_manager = ctx.mcp_manager
-    if ctx.project is not None:
-        _thread_local.project = ctx.project
-
-
-def clear_thread_context() -> None:
-    """Reset all context thread-locals to safe defaults after a request."""
-    _thread_local.current_agent = None
-    _thread_local.memory_store = None
-    _thread_local.delegate_agent_id = None
-    _thread_local.current_session_id = None
-    _thread_local.session_id = None
-    _thread_local.current_user_id = ""
-    _thread_local.current_team_ids = []
-    _thread_local.trace_id = None
+# Execution context (thread-local + helpers) now lives in engine/context.py
+# (B1 relocation). Re-exported here so brain._thread_local / the brain-aliased
+# engine._thread_local / bare _thread_local all resolve to the SAME instance.
+# Instance identity is load-bearing — see engine/context.py.
+from engine.context import (  # noqa: E402
+    _thread_local,
+    ExecutionContext,
+    init_thread_context,
+    clear_thread_context,
+)
 
 
 class _MempalaceActivity:
