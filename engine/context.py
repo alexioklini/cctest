@@ -1,46 +1,39 @@
-"""Per-request / per-thread execution context.
+"""Per-request execution context.
 
-Canonical home for the thread-local execution-context object and the small
-cluster of helpers that exclusively manage it. This is a LOW-level module:
-it imports only the standard library and must NOT import brain (cycle).
-Other engine modules and brain import the `_thread_local` instance FROM here.
+Canonical home for the typed request-context object + the helpers that manage
+it. This is a LOW-level module: it imports only the standard library and must
+NOT import brain (cycle). Other engine modules and brain reach request state via
+`from engine.context import get_request_context` (or `request_context`).
 
-The `_thread_local` INSTANCE IDENTITY is load-bearing: every module that
-touches thread context must see the SAME `threading.local()` object, or
-concurrent request context silently bleeds. brain re-exports this object
-(`from engine.context import _thread_local`) so `brain._thread_local` and the
-brain-aliased `engine._thread_local` resolve to this exact instance.
+State lives in a `contextvars.ContextVar` holding a `RequestContext` dataclass —
+isolated per logical context (works for the current threaded model AND any future
+async without rewriting call sites) and torn down atomically via token-reset
+(no per-attribute `=None`). The Tier-G refactor replaced the previous ad-hoc
+`threading.local()` attribute bag (and its `_thread_local` compatibility shim,
+removed in Phase 4) with this — see THREADLOCAL_REFACTOR_REPORT.md.
 
-Thread-local attributes are set dynamically by each entry point (chat,
-scheduled, delegate, warmup) — not declared here. Per CLAUDE.md the required
-ones are current_agent, mcp_manager, current_session_id, current_user_id (plus
-project, research_mode_override, and others set opportunistically).
+Read/write request state ONLY through `get_request_context().<field>`; enter +
+tear it down ONLY through `with request_context(**overrides):`. Field defaults
+below mirror the old call-site `getattr(..., x, DEFAULT)` defaults so a never-set
+field reads back the same value it always did.
+
+NOTE: the DB-connection `threading.local()` pools elsewhere in the codebase
+(`_db_pool`, `_auth_db_pool`, …) are a SEPARATE, correct use of thread-locals —
+deliberately untouched by Tier-G.
 """
 
 import contextvars
-import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field, fields as _dc_fields
 
 
 # ---------------------------------------------------------------------------
-# RequestContext + ContextVar (Tier-G thread-local refactor, Phase 1)
+# RequestContext + ContextVar (Tier-G thread-local refactor)
 # ---------------------------------------------------------------------------
-# The single typed home for per-request execution state. Replaces the ad-hoc
-# `threading.local()` attribute bag. Stored in a `contextvars.ContextVar` so it
-# is isolated per logical context (works for the current threaded model AND any
-# future async without rewriting call sites) and torn down atomically via token
-# reset (no per-attribute `=None`).
-#
-# The legacy name `_thread_local` is kept as a COMPATIBILITY SHIM
-# (`_RequestContextShim` below) whose attribute access proxies to the active
-# RequestContext, so all three historical import spellings keep resolving and
-# every existing `_thread_local.x` read/write hits the new storage. The shim is
-# removed only in Phase 4, once no raw access remains.
-#
-# Fields + defaults below mirror the call-site `getattr(_thread_local, x, DEF)`
-# defaults measured in Phase 0 (THREADLOCAL_REFACTOR_REPORT.md inventory), so a
-# never-set field reads back the same value the old getattr-default produced.
+# The single typed home for per-request execution state. Stored in a
+# `contextvars.ContextVar`; entered/torn-down via the `request_context()`
+# context-manager below. Field defaults mirror the call-site getattr-defaults
+# measured in the Phase-0 inventory.
 
 
 @dataclass
