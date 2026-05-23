@@ -1,0 +1,14 @@
+{
+  "name": "brain-web-js-gate",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dev-only gate toolchain for the web/js Tier-F refactor (ESLint + Playwright smoke). No runtime deps; web/js ships as global <script> tags.",
+  "scripts": {
+    "gate": "./js_gate.sh"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "@playwright/test": "^1.48.0"
+  }
+}
