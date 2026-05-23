@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from server_lib import auth as _auth_mod
+from server_lib import pathsafe
 import brain as engine
 
 
@@ -372,31 +373,25 @@ class ProjectsHandlerMixin:
     # daemon scans them on a hourly poll and files everything into the project's
     # private MemPalace wing (`project__<name>--<agent>`).
 
-    _PROJECT_INPUT_FOLDER_FORBIDDEN = (
-        # Refuse paths that obviously belong to brain itself or sensitive system dirs.
-        "/etc", "/var", "/usr", "/bin", "/sbin", "/System", "/Library/Keychains",
-    )
-
     def _project_input_folder_validate(self, raw: str) -> tuple:
         """Return (resolved_path, error). Refuses non-dirs, brain agents/, and
-        obviously sensitive system dirs."""
-        if not raw or not isinstance(raw, str):
-            return "", "Path is required"
-        try:
-            p = os.path.expanduser(raw.strip())
-            p = os.path.realpath(p)
-        except (OSError, ValueError) as e:
-            return "", f"Invalid path: {e}"
-        if not os.path.isdir(p):
-            return "", "Path is not a directory or does not exist"
-        # Refuse paths inside our agents tree — those are managed elsewhere.
-        agents_root = os.path.realpath(engine.AGENTS_DIR)
-        if p == agents_root or p.startswith(agents_root + os.sep):
-            return "", "Cannot add a folder inside the agents directory"
-        for forbidden in self._PROJECT_INPUT_FOLDER_FORBIDDEN:
-            if p == forbidden or p.startswith(forbidden + os.sep):
-                return "", f"Path is in a protected location ({forbidden})"
-        return p, ""
+        obviously sensitive system dirs.
+
+        Skeleton in server_lib.pathsafe; this site's policy = no allowed-roots
+        allowlist (any dir not denied is fine), deny the agents/ tree, require
+        an existing directory, expanduser. Adapts the shared tuple's None to ""
+        to keep this method's historical ("", error) contract for callers.
+        """
+        rp, err = pathsafe.validate_path(
+            raw,
+            allowed_roots=None,
+            deny_agents_dir=engine.AGENTS_DIR,
+            must_be_dir=True,
+            expand_user=True,
+        )
+        if err:
+            return "", err
+        return rp, ""
 
     def _handle_project_input_folders_list(self, path: str):
         """GET /v1/agents/{id}/projects/{name}/input-folders"""

@@ -30,6 +30,7 @@ from urllib.parse import urlparse, parse_qs
 import brain as engine
 from engine import classification as cls
 from server_lib.db import ClassificationDB
+from server_lib import pathsafe
 
 
 # Cap on persisted evidence size per scan (50KB JSON)
@@ -81,26 +82,17 @@ def _safe_root_allowlist(user_id: str) -> list[str]:
     return sorted(roots)
 
 
-_BLOCKED_PREFIXES = ("/etc", "/var", "/usr", "/bin", "/sbin",
-                     "/System", "/Library/Keychains")
-
-
 def _validate_scan_path(path: str, user_id: str) -> tuple[str | None, str | None]:
-    """Returns (real_path, error). error=None on success."""
-    if not path or not isinstance(path, str):
-        return None, "path required"
-    rp = os.path.realpath(path)
-    if not os.path.exists(rp):
-        return None, f"path not found: {path}"
-    # Hard deny
-    for bad in _BLOCKED_PREFIXES:
-        if rp == bad or rp.startswith(bad + os.sep):
-            return None, f"refusing system path: {path}"
-    # Must be under at least one allowed root
-    for root in _safe_root_allowlist(user_id):
-        if rp == root or rp.startswith(root + os.sep):
-            return rp, None
-    return None, f"path is outside allowed roots: {path}"
+    """Returns (real_path, error). error=None on success.
+
+    Hard-denylist + must-be-under-an-allowed-root. Skeleton lives in
+    server_lib.pathsafe; the allowed roots are this site's policy.
+    """
+    return pathsafe.validate_path(
+        path,
+        allowed_roots=_safe_root_allowlist(user_id),
+        must_exist=True,
+    )
 
 
 def _extract_text(src: str) -> tuple[str, list[str], str | None]:
