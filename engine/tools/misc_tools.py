@@ -16,7 +16,7 @@
 #
 # Seams:
 #   - `_ok` / `_err` from engine.tool_exec.
-#   - `_thread_local` from engine.context.
+#   - `get_request_context` from engine.context.
 #   - brain runtime symbols (`_global_tool_*`, `get_tool_config`, `_web_cache`,
 #     `_html_to_markdown`, `_mcp_manager`, `MCPManager`, `AGENTS_DIR`,
 #     `_current_agent`) reached lazily via `import brain as _brain`. NO
@@ -32,7 +32,7 @@ import os
 import urllib.request
 import urllib.error
 
-from engine.context import _thread_local
+from engine.context import get_request_context
 from engine.tool_exec import _ok, _err
 
 
@@ -72,7 +72,7 @@ def tool_use_skill(args: dict) -> str:
     skill_name = args.get("skill", "")
     if not skill_name:
         return _err("use_skill: skill name is required")
-    agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+    agent = get_request_context().current_agent or _brain._current_agent
     if not agent:
         return _err("use_skill: no active agent")
 
@@ -114,10 +114,10 @@ def tool_mcp_connect(args: dict) -> str:
         return _err("Both 'url' and 'name' are required")
 
     # Use thread-local MCP manager if available, otherwise global
-    mcp = getattr(_thread_local, 'mcp_manager', None) or _brain._mcp_manager
+    mcp = get_request_context().mcp_manager or _brain._mcp_manager
     if not mcp:
         mcp = _brain.MCPManager()
-        _thread_local.mcp_manager = mcp
+        get_request_context().mcp_manager = mcp
 
     result = mcp.connect_runtime(url, name, transport)
     if result.get("error"):
@@ -125,7 +125,7 @@ def tool_mcp_connect(args: dict) -> str:
 
     # Persist to mcp.json if requested
     if persist:
-        agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+        agent = get_request_context().current_agent or _brain._current_agent
         agent_id = agent.agent_id if agent else "main"
         mcp_json_path = os.path.join(_brain.AGENTS_DIR, agent_id, "mcp.json")
         try:
@@ -154,7 +154,7 @@ def tool_mcp_disconnect(args: dict) -> str:
     if not name:
         return _err("'name' is required")
 
-    mcp = getattr(_thread_local, 'mcp_manager', None) or _brain._mcp_manager
+    mcp = get_request_context().mcp_manager or _brain._mcp_manager
     if not mcp:
         return _err("No MCP manager available")
 
@@ -167,7 +167,7 @@ def tool_mcp_disconnect(args: dict) -> str:
 def tool_mcp_servers(args: dict) -> str:
     """List all connected MCP servers."""
     import brain as _brain
-    mcp = getattr(_thread_local, 'mcp_manager', None) or _brain._mcp_manager
+    mcp = get_request_context().mcp_manager or _brain._mcp_manager
     if not mcp:
         return _ok({"servers": [], "count": 0})
     servers = mcp.list_servers()
@@ -186,7 +186,7 @@ def tool_get_artifact_detail(args: dict) -> str:
     if not artifact_id:
         return _err("artifact_id is required")
 
-    agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+    agent = get_request_context().current_agent or _brain._current_agent
     agent_id = agent.agent_id if agent else "main"
     artifacts_root = os.path.join(_brain.AGENTS_DIR, agent_id, "artifacts")
 

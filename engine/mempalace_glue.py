@@ -67,7 +67,7 @@ import sys
 import threading
 import time
 
-from engine.context import _thread_local
+from engine.context import get_request_context
 from engine.tool_exec import _ok, _err
 
 
@@ -181,10 +181,10 @@ def tool_mempalace_query(args: dict) -> str:
     #   team__<team_id>        ← team-visible chats
     #   user__<user_id>        ← per-user
     # Plus shared wings (no "__" prefix, e.g. "brain_code") that anyone can read.
-    current_user_id = getattr(_thread_local, "current_user_id", "") or ""
-    current_team_ids = list(getattr(_thread_local, "current_team_ids", []) or [])
-    current_project = getattr(_thread_local, "project", None) or ""
-    _ag = getattr(_thread_local, "current_agent", None)
+    current_user_id = get_request_context().current_user_id or ""
+    current_team_ids = list(get_request_context().current_team_ids or [])
+    current_project = get_request_context().project or ""
+    _ag = get_request_context().current_agent
     # _thread_local.current_agent is an AgentConfig instance (not a string).
     current_agent_id = getattr(_ag, "agent_id", None) or (
         _ag if isinstance(_ag, str) else "main") or "main"
@@ -676,7 +676,7 @@ def tool_mempalace_query(args: dict) -> str:
 
 def tool_save_chat_to_memory(args: dict) -> str:
     """Enable save_to_memory on the current session and trigger immediate sync."""
-    session_id = getattr(_thread_local, "current_session_id", None)
+    session_id = get_request_context().current_session_id
     if not session_id:
         return _err("save_chat_to_memory: no active session")
     # The callback is installed by server.py as `brain._save_chat_to_memory_callback`
@@ -853,7 +853,7 @@ def tool_memory_store(args: dict) -> str:
     if not name or not content:
         return _err("memory_store: name and content are required")
     # If project is active, store in project directory
-    project = getattr(_thread_local, 'project', None)
+    project = get_request_context().project
     if project:
         agent_id = ms.agent_id
         proj_dir = os.path.join(_brain.AGENTS_DIR, agent_id, "projects", project)
@@ -885,7 +885,7 @@ def tool_memory_recall(args: dict) -> str:
     mode = args.get("mode", "")
 
     # Project-scoped search: search project collection first, then agent
-    project = getattr(_thread_local, 'project', None)
+    project = get_request_context().project
     if project and query:
         agent_id = ms.agent_id
         proj_dir = os.path.join(_brain.AGENTS_DIR, agent_id, "projects", project)
@@ -965,9 +965,9 @@ def tool_memory_shared(args: dict) -> str:
     # Determine which agent's memory to use
     if scope == "team":
         # Find the team head for the calling agent
-        caller_id = getattr(_thread_local, "delegate_agent_id", None)
+        caller_id = get_request_context().delegate_agent_id
         if not caller_id:
-            agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+            agent = get_request_context().current_agent or _brain._current_agent
             caller_id = agent.agent_id if agent else "main"
         team_info = _brain._get_agent_team_info(caller_id)
         if not team_info:
@@ -1031,13 +1031,13 @@ def _kg_resolve_project_scope() -> tuple[str, list[str], str | None]:
     if not palace_path or not os.path.isdir(palace_path):
         return "", [], f"mempalace: palace_path missing: {palace_path}"
 
-    current_project = getattr(_thread_local, "project", None) or ""
+    current_project = get_request_context().project or ""
     if not current_project:
         return "", [], (
             "mempalace_kg: this tool requires a project context. "
             "Step 1 supports only project-scoped queries.")
 
-    _ag = getattr(_thread_local, "current_agent", None)
+    _ag = get_request_context().current_agent
     current_agent_id = getattr(_ag, "agent_id", None) or (
         _ag if isinstance(_ag, str) else "main") or "main"
     proj_cfg = _brain.ProjectManager.get_project(current_agent_id, current_project)

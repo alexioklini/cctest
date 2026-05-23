@@ -716,11 +716,11 @@ def _get_token_config(agent_id: str | None = None) -> dict:
     Model comes from _thread_local._current_model (set per request). Profile
     contributes deferred_tool_groups, compact_threshold, include_tools_guide.
     """
-    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    agent = get_request_context().current_agent or _current_agent
     result = dict(TOKEN_CONFIG_DEFAULTS)
 
     # Overlay model profile's token_config fragment if a model is bound
-    mid = getattr(_thread_local, '_current_model', None)
+    mid = get_request_context()._current_model
     if mid:
         prof = resolve_profile_token_config(mid)
         for k, v in prof.items():
@@ -762,7 +762,7 @@ def _get_agent_tool_names(agent_id: str | None = None) -> set[str] | None:
     has_global = bool(_tool_settings)
     agent_overrides = {}
     if agent_id:
-        agent = getattr(_thread_local, 'current_agent', None)
+        agent = get_request_context().current_agent
         if agent and getattr(agent, 'agent_id', None) == agent_id:
             agent_overrides = (agent.config.get("token_config", {}) or {}).get("tool_overrides") or {}
         else:
@@ -893,7 +893,7 @@ def get_tool_breakdown(agent_id: str | None = None) -> dict:
         _bump(gname, "builtin", info)
 
     # --- MCP tools (grouped by actual server, via authoritative _tool_to_server map) ---
-    mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+    mcp_mgr = get_request_context().mcp_manager or _mcp_manager
     mcp_tools_list: list[dict] = []
     tool_to_server: dict[str, str] = {}
     if mcp_mgr:
@@ -940,7 +940,7 @@ def get_tool_breakdown(agent_id: str | None = None) -> dict:
     deferred_builtin_tokens = sum(g["tokens"] for g in group_list if g.get("deferred"))
 
     # Deferral status: would MCP be auto-deferred for the agent's current model?
-    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    agent = get_request_context().current_agent or _current_agent
     model = (agent.config.get("model") if agent else "") or ""
     max_ctx = get_model_max_context(model) if model else 0
     mcp_tokens = sum(g["tokens"] for g in group_list if g["source"] == "mcp")
@@ -1134,7 +1134,7 @@ def resolve_active_tools(
         # Pre-compute agent overrides once
         agent_overrides: dict = {}
         if agent_id:
-            agent_ctx = getattr(_thread_local, 'current_agent', None)
+            agent_ctx = get_request_context().current_agent
             if agent_ctx and getattr(agent_ctx, 'agent_id', None) == agent_id:
                 agent_overrides = (agent_ctx.config.get("token_config", {}) or {}).get("tool_overrides") or {}
             else:
@@ -1176,7 +1176,7 @@ def resolve_active_tools(
         defer_mcp = tcfg.get("defer_mcp_tools", "auto")
         # Need a concrete model id for the "auto" threshold; thread-local
         # current_agent is the source-of-truth at request time.
-        agent_ctx = getattr(_thread_local, "current_agent", None) or _current_agent
+        agent_ctx = get_request_context().current_agent or _current_agent
         model = (agent_ctx.config.get("model") if agent_ctx else "") or ""
         should_defer = _should_defer_mcp(defer_mcp, mcp_tools, model,
                                          is_openai=is_openai_shape)
@@ -1276,7 +1276,7 @@ def _agent_tool_override(agent_id: str | None, name: str) -> dict:
     if not agent_id:
         return {}
     # Fast path: thread-local agent matches
-    agent = getattr(_thread_local, 'current_agent', None)
+    agent = get_request_context().current_agent
     if agent and getattr(agent, 'agent_id', None) == agent_id:
         cfg = agent.config.get("token_config", {})
     else:
@@ -1590,7 +1590,7 @@ def _gdpr_anon_tool_text(text: str, source: str) -> str:
     # turns the raise into a JSON tool-error the LLM sees verbatim.
     _classification_gate_tool_text(text, source)
     try:
-        mapping_id = getattr(_thread_local, "_gdpr_mapping_id", "") or ""
+        mapping_id = get_request_context()._gdpr_mapping_id or ""
     except Exception:
         mapping_id = ""
     if not mapping_id:
@@ -1616,7 +1616,7 @@ def _gdpr_anon_tool_text(text: str, source: str) -> str:
         # Surface a synthetic anonymise_read row so the UI shows what
         # happened. Best-effort — never block the tool return.
         try:
-            sid = getattr(_thread_local, "current_session_id", "") or ""
+            sid = get_request_context().current_session_id or ""
             if sid:
                 from handlers.chat import emit_gdpr_tool_event_for_session
                 _tuid = f"anon_read_{mapping_id[:8]}_{int(time.time()*1000) % 1_000_000}"
@@ -1715,7 +1715,7 @@ _WHISPER_PROVIDER = "local-mlx-whisper"
 
 def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: str) -> str:
     """Use a vision-capable model to describe an image attachment."""
-    vision_model = getattr(_thread_local, 'attachment_image_model', '') or ''
+    vision_model = get_request_context().attachment_image_model or ''
     if not vision_model:
         # Fall back to the cheapest enabled image-capable model.
         candidates = [
@@ -4601,7 +4601,7 @@ _ingest_watcher: IngestWatcher | None = None
 
 def _get_memory_store() -> MemoryStore | None:
     """Get the active memory store: thread-local (delegation/scheduler) or global (main thread)."""
-    return getattr(_thread_local, 'memory_store', None) or _memory_store
+    return get_request_context().memory_store or _memory_store
 
 
 # tool_memory_store / tool_memory_recall / tool_memory_delete /
@@ -5347,8 +5347,8 @@ def generate_next_prompt_suggestion(session) -> str | None:
         # Set current_user_id so client-mode ambient proxy routing can pick a
         # client owned by the session's user. session_id stays None — this is
         # a sessionless call (no live SSE on the chat).
-        _prev_uid = getattr(_thread_local, "current_user_id", None)
-        _thread_local.current_user_id = (getattr(session, "user_id", "") or "")
+        _prev_uid = get_request_context().current_user_id
+        get_request_context().current_user_id = (getattr(session, "user_id", "") or "")
         try:
             from handlers import sidecar_proxy as _sidecar_proxy
             _res = _sidecar_proxy.background_call(
@@ -5360,7 +5360,7 @@ def generate_next_prompt_suggestion(session) -> str | None:
             )
             text = _deanon(_res.get("reply") or "")
         finally:
-            _thread_local.current_user_id = _prev_uid
+            get_request_context().current_user_id = _prev_uid
         try:
             sys.stderr.write(f"[next_prompt] model={model} raw={text!r}\n")
         except Exception:
@@ -6603,7 +6603,7 @@ def build_first_turn_prefix(model: str, agent_id: str, *,
 
     Returns (system_prompt, active_tools, active_tool_names).
     """
-    _thread_local._current_model = model
+    get_request_context()._current_model = model
     active_tools = resolve_active_tools(
         purpose="interactive",
         agent_id=agent_id,
@@ -6794,8 +6794,8 @@ class TaskRunner:
         task_id = _uuid.uuid4().hex[:8]
         cancel_flag = threading.Event()
         # Capture caller's user_id and team ids for MemPalace wing scoping in the child thread
-        caller_user_id = getattr(_thread_local, "current_user_id", "") or ""
-        caller_team_ids = list(getattr(_thread_local, "current_team_ids", []) or [])
+        caller_user_id = get_request_context().current_user_id or ""
+        caller_team_ids = list(get_request_context().current_team_ids or [])
 
         with self._lock:
             self._tasks[task_id] = {
@@ -7279,16 +7279,16 @@ class WorkflowExecution:
         #  - cost-logging keys all LLM calls under "wf-<execution_id>"
         #  - ask_llm sees workflow defaults (model, agent)
         with request_context():
-            _thread_local.workflow_execution_id = self.execution_id
-            _thread_local.current_session_id = f"wf-{self.execution_id}"
-            _thread_local.current_user_id = self.user_id or ""
-            _thread_local.workflow_default_model = self.model or ""
-            _thread_local.workflow_agent_id = self.agent_id or ""
+            get_request_context().workflow_execution_id = self.execution_id
+            get_request_context().current_session_id = f"wf-{self.execution_id}"
+            get_request_context().current_user_id = self.user_id or ""
+            get_request_context().workflow_default_model = self.model or ""
+            get_request_context().workflow_agent_id = self.agent_id or ""
             # Resolve and pin a current_agent so cost logging records the right agent
             try:
-                _thread_local.current_agent = AgentConfig(self.agent_id or "main")
+                get_request_context().current_agent = AgentConfig(self.agent_id or "main")
             except Exception:
-                _thread_local.current_agent = None
+                get_request_context().current_agent = None
             try:
                 interp = _WorkflowInterpreter(self._program, self)  # type: ignore
                 interp.run()
@@ -8979,9 +8979,9 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = ""):
     if not all_findings:
         return (model, samples if not _input_was_str else samples[0], _identity_deanon)
 
-    _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    _agent = get_request_context().current_agent or _current_agent
     _agent_id = _agent.agent_id if _agent else "main"
-    _sid = getattr(_thread_local, 'current_session_id', None) or ""
+    _sid = get_request_context().current_session_id or ""
     _n = len(all_findings)
     _log_audit = bool(cfg.get("server_log", True) and _audit_log)
     _worst_action = _pii_worst_action(all_findings)
@@ -11153,7 +11153,7 @@ def _tool_search(args: dict) -> str:
                                      "input_schema": td.get("input_schema", {})}))
 
     # Search MCP tools
-    mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+    mcp_mgr = get_request_context().mcp_manager or _mcp_manager
     if mcp_mgr:
         try:
             for mcp_td in mcp_mgr.get_tool_definitions():
@@ -11180,10 +11180,10 @@ def _tool_search(args: dict) -> str:
     results = [m[1] for m in matches[:max_results]]
 
     # Track discovered tools for deferred loading
-    discovered = getattr(_thread_local, '_discovered_tools', set())
+    discovered = get_request_context()._discovered_tools
     for r in results:
         discovered.add(r["name"])
-    _thread_local._discovered_tools = discovered
+    get_request_context()._discovered_tools = discovered
 
     if not results:
         return _ok({"matches": [], "message": f"No tools found matching '{query}'"})
@@ -11512,17 +11512,17 @@ def run_citation_reround(messages: list, original_reply: str, validation: dict,
     try:
         from handlers import sidecar_proxy as _sidecar_proxy
         prov = resolve_provider_for_model(model)
-        sid = getattr(_thread_local, 'current_session_id', None) or ""
+        sid = get_request_context().current_session_id or ""
         agent_id = ""
-        _ag = getattr(_thread_local, "current_agent", None) or _current_agent
+        _ag = get_request_context().current_agent or _current_agent
         if _ag is not None:
             agent_id = getattr(_ag, "agent_id", "") or ""
         tool_context = {
             "session_id": sid,
             "agent_id": agent_id or "main",
-            "user_id": getattr(_thread_local, "current_user_id", "") or "",
+            "user_id": get_request_context().current_user_id or "",
             "team_ids": [],
-            "project": getattr(_thread_local, "project", "") or "",
+            "project": get_request_context().project or "",
             "note_context": None,
             "workflow_run_id": "",
             "plan_mode": False,
@@ -11624,7 +11624,7 @@ class HookRunner:
 
         env = os.environ.copy()
         env["HOOK_AGENT"] = self.agent_id
-        env["HOOK_SESSION_ID"] = getattr(_thread_local, 'session_id', "") or ""
+        env["HOOK_SESSION_ID"] = get_request_context().session_id or ""
         env["HOOK_TIMESTAMP"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         env.update({k: str(v) for k, v in env_extra.items()})
 
@@ -11756,7 +11756,7 @@ def _register_artifact_version(path: str, action: str, agent_id: str):
         from server import ChatDB
         import uuid as _uuid_mod
 
-        session_id = getattr(_thread_local, 'current_session_id', None) or ""
+        session_id = get_request_context().current_session_id or ""
         if not session_id:
             return None
 
@@ -11808,7 +11808,7 @@ def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
     # user-visible content). The callback is responsible for any synthetic
     # event emission + audit logging — keeping the SessionManager dependency
     # out of brain.py.
-    _gdpr_cb = getattr(_thread_local, "_gdpr_after_file_write_cb", None)
+    _gdpr_cb = get_request_context()._gdpr_after_file_write_cb
     if _gdpr_cb is not None:
         try:
             _gdpr_cb(path, action, agent_id)
@@ -11822,7 +11822,7 @@ def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
     # mempalace_add_drawer themselves; QMD/KG are no longer in the picture.
 
     # 3. File/artifact event emission (for UI)
-    ecb = getattr(_thread_local, 'event_callback', None)
+    ecb = get_request_context().event_callback
     if ecb:
         try:
             if is_artifact:
@@ -11905,8 +11905,8 @@ def _extract_and_save_mcp_blobs_direct(raw_result: str, session_id: str) -> str:
     if not isinstance(parsed, dict):
         return raw_result
 
-    _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
-    _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    _sid = session_id or get_request_context().current_session_id or ""
+    _agent = get_request_context().current_agent or _current_agent
     _agent_id = _agent.agent_id if _agent else "main"
     if not _sid or not _agent:
         return raw_result
@@ -11971,7 +11971,7 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None, tool_round
     # Surface the round number to tools that want to attribute "first read"
     # turns in cache stubs (read_document / read_file).
     try:
-        _thread_local.tool_round = tool_round
+        get_request_context().tool_round = tool_round
     except Exception:
         pass
 
@@ -12001,13 +12001,13 @@ def _execute_tool_inner(name: str, args: dict) -> str:
     and by workers themselves."""
     # --- Built-in pre-hooks ---
     # Plan mode: block non-readonly tools
-    if getattr(_thread_local, 'plan_mode', False):
+    if get_request_context().plan_mode:
         if name == "memory_shared" and args.get("action") == "store":
             return _err("Blocked in plan mode. Describe what you would do instead.")
         if name not in READONLY_TOOLS:
             return _err("Blocked in plan mode. Describe what you would do instead.")
     # Workflow tool restriction (was dead code — now enforced)
-    workflow_tools = getattr(_thread_local, 'workflow_allowed_tools', None)
+    workflow_tools = get_request_context().workflow_allowed_tools
     if workflow_tools is not None and name not in workflow_tools:
         return _err(f"Tool '{name}' not allowed in this workflow stage.")
     # Dedup check
@@ -12016,9 +12016,9 @@ def _execute_tool_inner(name: str, args: dict) -> str:
         return dedup
 
     # --- External pre-hooks ---
-    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    agent = get_request_context().current_agent or _current_agent
     agent_id = agent.agent_id if agent else "main"
-    session_id = getattr(_thread_local, 'session_id', None)
+    session_id = get_request_context().session_id
     try:
         runner = _get_hook_runner(agent_id)
         blocked = runner.run_pre_hooks(name, args)
@@ -12030,8 +12030,8 @@ def _execute_tool_inner(name: str, args: dict) -> str:
     # --- Tracing: start span ---
     tool_span = None
     if _trace_manager:
-        parent_span = getattr(_thread_local, 'current_trace_span', None)
-        trace_id = parent_span["trace_id"] if parent_span else getattr(_thread_local, 'trace_id', None)
+        parent_span = get_request_context().current_trace_span
+        trace_id = parent_span["trace_id"] if parent_span else get_request_context().trace_id
         parent_id = parent_span["id"] if parent_span else None
         tool_span = _trace_manager.start_span(
             "tool_call", name, agent=agent_id, model="",
@@ -12043,7 +12043,7 @@ def _execute_tool_inner(name: str, args: dict) -> str:
     result = None
     try:
         # Check MCP tools first (prefer thread-local for concurrent requests)
-        if (mcp := (getattr(_thread_local, 'mcp_manager', None) or _mcp_manager)) and mcp.is_mcp_tool(name):
+        if (mcp := (get_request_context().mcp_manager or _mcp_manager)) and mcp.is_mcp_tool(name):
             result = mcp.call_tool(name, args)
         else:
             fn = TOOL_DISPATCH.get(name)
@@ -12084,7 +12084,7 @@ def _execute_tool_inner(name: str, args: dict) -> str:
                     result_status=result_status,
                     duration_ms=duration_ms,
                     session_id=session_id,
-                    source=getattr(_thread_local, 'audit_source', 'chat'),
+                    source=get_request_context().audit_source,
                 )
             except Exception:
                 pass
@@ -12150,7 +12150,7 @@ def _middleware_cancel_check(messages, tool_round, event_callback, **ctx):
 def _middleware_compress_old(messages, tool_round, event_callback, **ctx):
     """Compress old tool results when accumulated budget exceeded (Layer 3)."""
     if tool_round > 0:
-        accumulated = getattr(_thread_local, '_tool_results_tokens', 0)
+        accumulated = get_request_context()._tool_results_tokens
         _limit = _get_agent_limits().get("tool_results_total_tokens", MAX_TOOL_RESULTS_TOKENS)
         if accumulated > _limit:
             _compress_old_tool_results(messages, keep_recent=4)
@@ -12188,11 +12188,11 @@ def _get_agent_limits(agent_id: str | None = None) -> dict:
     Precedence (lowest → highest):
       AGENT_LIMITS_DEFAULTS < model profile overlay < agent limits
     """
-    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    agent = get_request_context().current_agent or _current_agent
     result = dict(AGENT_LIMITS_DEFAULTS)
 
     # Overlay model profile's limits fragment if a model is bound
-    mid = getattr(_thread_local, '_current_model', None)
+    mid = get_request_context()._current_model
     if mid:
         prof = resolve_profile_limits(mid)
         for k, v in prof.items():
@@ -12226,10 +12226,10 @@ def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
         return
     if tokens_in == 0 and tokens_out == 0:
         return  # Skip if no usage data available
-    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    agent = get_request_context().current_agent or _current_agent
     agent_id = agent.agent_id if agent else "main"
     provider = _models_config.get(model, {}).get("provider", "")
-    user_id = getattr(_thread_local, 'current_user_id', "") or ""
+    user_id = get_request_context().current_user_id or ""
     # Resolve key_name from the pool using the api_key value
     key_name = ""
     if api_key and provider:

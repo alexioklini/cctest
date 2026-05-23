@@ -565,9 +565,9 @@ def _generate_chat_summary(session):
     if len(session.messages) < 2:
         return
     with engine.request_context():
-        engine._thread_local.current_agent = session.agent
-        engine._thread_local.memory_store = None
-        engine._thread_local.current_user_id = (getattr(session, "user_id", "") or "")
+        engine.get_request_context().current_agent = session.agent
+        engine.get_request_context().memory_store = None
+        engine.get_request_context().current_user_id = (getattr(session, "user_id", "") or "")
         msgs = session.messages
         # Only the user's questions feed the summary — the assistant's answers are
         # excluded by design (sidebar synopsis should reflect what was asked).
@@ -915,12 +915,12 @@ def _recover_one_turn(sid, turn_id, model, started_at):
     # in-flight rounds (some tools peek at current_session_id/current_agent).
     with engine.request_context():
         try:
-            engine._thread_local.current_session_id = sid
-            engine._thread_local.current_user_id = session.user_id or ""
-            engine._thread_local.current_agent = engine.AgentConfig(session.agent_id)
-            engine._thread_local.memory_store = session.memory
-            engine._thread_local.mcp_manager = engine._mcp_manager
-            engine._thread_local.project = session.project or ""
+            engine.get_request_context().current_session_id = sid
+            engine.get_request_context().current_user_id = session.user_id or ""
+            engine.get_request_context().current_agent = engine.AgentConfig(session.agent_id)
+            engine.get_request_context().memory_store = session.memory
+            engine.get_request_context().mcp_manager = engine._mcp_manager
+            engine.get_request_context().project = session.project or ""
         except Exception:
             pass
 
@@ -1977,67 +1977,67 @@ class ChatHandlerMixin:
         def worker():
             with engine.request_context():
                 # Set thread-local agent context (thread-safe, no global mutation)
-                engine._thread_local.memory_store = session.memory
+                engine.get_request_context().memory_store = session.memory
                 agent_config = engine.AgentConfig(session.agent_id)
-                engine._thread_local.current_agent = agent_config
-                engine._thread_local.current_session_id = sid
-                engine._thread_local.current_user_id = session.user_id or ""
+                engine.get_request_context().current_agent = agent_config
+                engine.get_request_context().current_session_id = sid
+                engine.get_request_context().current_user_id = session.user_id or ""
                 # Team IDs the user belongs to — used for team-scoped MemPalace wing filtering
                 try:
-                    engine._thread_local.current_team_ids = [
+                    engine.get_request_context().current_team_ids = [
                         t["id"] for t in _auth_mod.AuthDB.get_user_teams(session.user_id)
                     ] if session.user_id else []
                 except Exception:
-                    engine._thread_local.current_team_ids = []
+                    engine.get_request_context().current_team_ids = []
 
                 # Reset per-request state (prevents cross-session leaks in pooled threads)
                 engine.reset_tool_dedup()
 
                 # Use shared MCP manager (singleton from main())
-                engine._thread_local.mcp_manager = engine._mcp_manager
+                engine.get_request_context().mcp_manager = engine._mcp_manager
 
                 # Set plan mode if requested
-                engine._thread_local.plan_mode = (chat_mode == "plan")
+                engine.get_request_context().plan_mode = (chat_mode == "plan")
 
                 # Set project scope if provided
                 if project_name:
                     session.project = project_name
-                    engine._thread_local.project = project_name
+                    engine.get_request_context().project = project_name
                 else:
-                    engine._thread_local.project = session.project  # Use session's existing project
+                    engine.get_request_context().project = session.project  # Use session's existing project
 
                 # Per-session research-mode override (sticky). None = use the
                 # project's own `research_mode` default; True/False = force the
                 # override for this session. _build_system_prompt and the
                 # citation validator both read this off _thread_local so they
                 # never disagree mid-turn.
-                engine._thread_local.research_mode_override = getattr(
+                engine.get_request_context().research_mode_override = getattr(
                     session, "research_mode_override", None)
 
                 # Set note context for AI-assisted note editing
                 if session.note_context:
-                    engine._thread_local.note_context = session.note_context
+                    engine.get_request_context().note_context = session.note_context
                 else:
-                    engine._thread_local.note_context = None
+                    engine.get_request_context().note_context = None
 
                 # Workflow-run binding: when this session was created from the
                 # inline workflow detail view, expose the execution_id so the
                 # round-0 preamble can pull a compact summary of the run.
-                engine._thread_local.workflow_run_id = getattr(session, 'workflow_run_id', '') or ''
+                engine.get_request_context().workflow_run_id = getattr(session, 'workflow_run_id', '') or ''
 
                 # Set caveman modes: chat-level (session toggle) + system-level (model config)
-                engine._thread_local.caveman_chat = session.caveman_mode
+                engine.get_request_context().caveman_chat = session.caveman_mode
                 model_cfg = engine.resolve_model_settings(session.model) if engine._models_config else {}
-                engine._thread_local.caveman_system = int(model_cfg.get("caveman_system", 0) or 0)
+                engine.get_request_context().caveman_system = int(model_cfg.get("caveman_system", 0) or 0)
 
                 # Set worker subagent execution overrides from agent config
-                engine._thread_local.execution_overrides = agent_config.config.get("execution_overrides") or {}
+                engine.get_request_context().execution_overrides = agent_config.config.get("execution_overrides") or {}
 
                 # Set attachment image model for read_attachment vision support
-                engine._thread_local.attachment_image_model = server_config.get("attachment_image_model", "")
+                engine.get_request_context().attachment_image_model = server_config.get("attachment_image_model", "")
 
                 # Set current model for worker summariser (cache reuse)
-                engine._thread_local._current_model = session.model
+                engine.get_request_context()._current_model = session.model
 
                 # Snapshot message count for rollback on failure
                 _msg_count_before = len(session.messages)
@@ -2168,7 +2168,7 @@ class ChatHandlerMixin:
                             # Per-turn flag read by `_build_system_prompt` post-
                             # process to append the verbatim-token-preservation
                             # clamp. Cleared in the worker's finally below.
-                            engine._thread_local._gdpr_anonymising = True
+                            engine.get_request_context()._gdpr_anonymising = True
                             _anon_done_result = {
                                 "scope": "chat_text",
                                 "findings": len(_findings),
@@ -2291,7 +2291,7 @@ class ChatHandlerMixin:
                                         session.base_url = provider["base_url"]
                                         session.max_context = engine.get_model_max_context(_fallback)
                                     # Update thread-local model reference too.
-                                    engine._thread_local._current_model = session.model
+                                    engine.get_request_context()._current_model = session.model
                                 except Exception:
                                     pass
                             if engine._audit_log:
@@ -2442,7 +2442,7 @@ class ChatHandlerMixin:
                     _system_prompt, _active_tools, _active_tool_names = engine.build_first_turn_prefix(
                         session.model, session.agent_id,
                         mcp_manager=getattr(engine, "_mcp_manager", None),
-                        discovered_tools=getattr(engine._thread_local, "_discovered_tools", set()) or set(),
+                        discovered_tools=engine.get_request_context()._discovered_tools or set(),
                         is_openai_shape=False,
                     )
                     # Persist for the session inspector — overwritten per turn,
@@ -2460,16 +2460,16 @@ class ChatHandlerMixin:
                         "session_id": sid,
                         "agent_id": session.agent_id,
                         "user_id": session.user_id or "",
-                        "team_ids": list(getattr(engine._thread_local, "current_team_ids", []) or []),
-                        "project": getattr(engine._thread_local, "project", "") or "",
-                        "note_context": getattr(engine._thread_local, "note_context", None),
-                        "workflow_run_id": getattr(engine._thread_local, "workflow_run_id", "") or "",
-                        "plan_mode": bool(getattr(engine._thread_local, "plan_mode", False)),
-                        "research_mode_override": getattr(engine._thread_local, "research_mode_override", None),
-                        "execution_overrides": getattr(engine._thread_local, "execution_overrides", None) or {},
-                        "attachment_image_model": getattr(engine._thread_local, "attachment_image_model", "") or "",
-                        "caveman_chat": int(getattr(engine._thread_local, "caveman_chat", 0) or 0),
-                        "caveman_system": int(getattr(engine._thread_local, "caveman_system", 0) or 0),
+                        "team_ids": list(engine.get_request_context().current_team_ids or []),
+                        "project": engine.get_request_context().project or "",
+                        "note_context": engine.get_request_context().note_context,
+                        "workflow_run_id": engine.get_request_context().workflow_run_id or "",
+                        "plan_mode": bool(engine.get_request_context().plan_mode),
+                        "research_mode_override": engine.get_request_context().research_mode_override,
+                        "execution_overrides": engine.get_request_context().execution_overrides or {},
+                        "attachment_image_model": engine.get_request_context().attachment_image_model or "",
+                        "caveman_chat": int(engine.get_request_context().caveman_chat or 0),
+                        "caveman_system": int(engine.get_request_context().caveman_system or 0),
                         # Transparent anonymisation: when set, the tool-dispatch
                         # thread installs an _after_file_write callback that
                         # rewrites any file the LLM produces back into real
@@ -2564,7 +2564,7 @@ class ChatHandlerMixin:
                         # nothing and session cost read back as $0. Log once per turn
                         # from the accumulated usage totals, keyed by the model that
                         # actually answered (fallback model wins when one was used).
-                        _cost_model = (getattr(engine._thread_local, '_fallback_model_used', None)
+                        _cost_model = (engine.get_request_context()._fallback_model_used
                                        or session.model)
                         try:
                             engine._log_call_cost(
@@ -2594,7 +2594,7 @@ class ChatHandlerMixin:
                         msg_metadata["last_tokens_in"] = _usage_totals["last_tokens_in"]
                         if _request_payloads:
                             msg_metadata["request_payloads"] = _request_payloads
-                        fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
+                        fb_model = engine.get_request_context()._fallback_model_used
                         if fb_model:
                             msg_metadata["model"] = fb_model
                             msg_metadata["original_model"] = session.model
@@ -2621,8 +2621,8 @@ class ChatHandlerMixin:
                         # Per-turn state snapshot: thinking level requested + caveman modes applied
                         if thinking_level:
                             msg_metadata["thinking_level"] = thinking_level
-                        _cav_chat = int(getattr(engine._thread_local, "caveman_chat", 0) or 0)
-                        _cav_sys = int(getattr(engine._thread_local, "caveman_system", 0) or 0)
+                        _cav_chat = int(engine.get_request_context().caveman_chat or 0)
+                        _cav_sys = int(engine.get_request_context().caveman_system or 0)
                         if _cav_chat:
                             msg_metadata["caveman_chat"] = _cav_chat
                         if _cav_sys:
@@ -2641,7 +2641,7 @@ class ChatHandlerMixin:
                         # content as input rather than reproducing it) skip
                         # validation + re-round entirely — citation enforcement
                         # is the wrong primitive for those workflows.
-                        _proj_active = getattr(engine._thread_local, 'project', None)
+                        _proj_active = engine.get_request_context().project
                         _research_active = False
                         if _proj_active:
                             _rm_override = getattr(session, "research_mode_override", None)
@@ -2826,7 +2826,7 @@ class ChatHandlerMixin:
                         if _gdpr_spans:
                             done_data["gdpr_restored_spans"] = _gdpr_spans
                         # Include fallback model info if a fallback was used
-                        fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
+                        fb_model = engine.get_request_context()._fallback_model_used
                         if fb_model:
                             done_data["fallback_model"] = fb_model
                             done_data["original_model"] = session.model

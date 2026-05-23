@@ -43,7 +43,7 @@ from __future__ import annotations
 import json
 import os
 
-from engine.context import _thread_local
+from engine.context import get_request_context
 
 
 class _LazyBrain:
@@ -102,11 +102,11 @@ def _build_system_prompt(include_memory_summary: bool = True,
             "transform callers supply their own prompt directly.")
 
     import time as _time
-    session_id = getattr(_thread_local, 'current_session_id', None) or ""
-    caveman_chat = getattr(_thread_local, 'caveman_chat', 0) or 0
-    caveman_system = getattr(_thread_local, 'caveman_system', 0) or 0
-    plan_mode = bool(getattr(_thread_local, 'plan_mode', False))
-    gdpr_anon = bool(getattr(_thread_local, '_gdpr_anonymising', False))
+    session_id = get_request_context().current_session_id or ""
+    caveman_chat = get_request_context().caveman_chat or 0
+    caveman_system = get_request_context().caveman_system or 0
+    plan_mode = bool(get_request_context().plan_mode)
+    gdpr_anon = bool(get_request_context()._gdpr_anonymising)
     # Cache key covers ONLY things that change the disk-read prose. Caveman
     # levels and plan mode are deterministic string post-processing applied
     # after the cache lookup — keeping them out of the key means flipping
@@ -121,8 +121,8 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # research_mode_disciplines block). Without these in the cache key,
     # warmup (no project) and a follow-up project chat under the same
     # session_id collide and the second call returns the warmup prompt.
-    _proj_key = getattr(_thread_local, 'project', None) or ""
-    _rmo_key = getattr(_thread_local, 'research_mode_override', None)
+    _proj_key = get_request_context().project or ""
+    _rmo_key = get_request_context().research_mode_override
     _rmo_key = "n" if _rmo_key is None else ("t" if _rmo_key else "f")
     cache_key = f"{session_id}:{include_memory_summary}:{purpose}:{_atn_key}:{_proj_key}:{_rmo_key}"
     cached = _system_prompt_cache.get(cache_key)
@@ -138,7 +138,7 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # guide is now rendered from per-tool admin settings via
     # `_render_tool_descriptions(active_tool_names)` — the legacy on-disk
     # tools.md path is gone.
-    agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+    agent = get_request_context().current_agent or _brain._current_agent
     agent_id = agent.agent_id if agent else "main"
     soul = agent.soul if agent else ""
 
@@ -274,7 +274,7 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # question (minus the conversational framing).
     # interactive purpose: project context, team, skills, scheduler, MCP listings.
     # Inject project context if a project is active
-    active_project = getattr(_thread_local, 'project', None)
+    active_project = get_request_context().project
     if active_project:
         proj_cfg = _brain.ProjectManager.get_project(agent_id, active_project)
         if proj_cfg:
@@ -296,7 +296,7 @@ def _build_system_prompt(include_memory_summary: bool = True,
             # _project_research_mode). Surfaced on _thread_local so the
             # chat handler's citation validator + re-round read the same
             # value without recomputing.
-            _rm_override = getattr(_thread_local, 'research_mode_override', None)
+            _rm_override = get_request_context().research_mode_override
             if _rm_override is None:
                 _research_mode = bool(proj_cfg.get("research_mode", False))
             else:
@@ -378,7 +378,7 @@ def _build_system_prompt(include_memory_summary: bool = True,
             )
 
     # Inject note context for AI-assisted note editing
-    note_context = getattr(_thread_local, 'note_context', None)
+    note_context = get_request_context().note_context
     if note_context:
         note_path = note_context.replace("note_editing:", "").strip() if note_context.startswith("note_editing:") else ""
         notes_dir = os.path.dirname(note_path) if note_path else ""
@@ -413,7 +413,7 @@ def _build_system_prompt(include_memory_summary: bool = True,
         system_instruction += f"\n{agent_registry}\n\n"
 
     # Build skills registry (names + descriptions only, load on demand)
-    _agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+    _agent = get_request_context().current_agent or _brain._current_agent
     if _agent:
         skills = _agent.list_skills()
         if skills:
@@ -438,7 +438,7 @@ def _build_system_prompt(include_memory_summary: bool = True,
             system_instruction += "Use schedule_list and schedule_history tools to query scheduler state.\n\n"
 
     # MCP servers (prefer thread-local for concurrent requests)
-    mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _brain._mcp_manager
+    mcp_mgr = get_request_context().mcp_manager or _brain._mcp_manager
     if mcp_mgr and mcp_mgr.clients:
         system_instruction += "\nMCP SERVERS — external tools available via connected servers:\n"
         for srv in mcp_mgr.list_servers():

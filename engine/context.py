@@ -60,6 +60,10 @@ class RequestContext:
     # --- model select ---
     _current_model: object = None
     current_model: object = None
+    # Read (never written) in handlers/chat.py cost logging — a vestige of the
+    # deleted native-loop quota force-local swap. Always None today; declared so
+    # the typed accessor resolves (behavior-identical to the old getattr-None).
+    _fallback_model_used: object = None
     # --- project mode ---
     research_mode_override: object = None
     # --- chat / stream ---

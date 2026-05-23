@@ -2057,14 +2057,14 @@ class BrainAgentHandler(
             try:
                 with engine.request_context():
                     agent_config = engine.AgentConfig(agent_id)
-                    engine._thread_local.current_agent = agent_config
-                    engine._thread_local.memory_store = engine.MemoryStore(
+                    engine.get_request_context().current_agent = agent_config
+                    engine.get_request_context().memory_store = engine.MemoryStore(
                         agent_id, base_dir=agent_config.memory_dir)
-                    engine._thread_local.mcp_manager = engine._mcp_manager
+                    engine.get_request_context().mcp_manager = engine._mcp_manager
                     if session_id:
-                        engine._thread_local.session_id = session_id
-                        engine._thread_local.current_session_id = session_id
-                        engine._thread_local.attachment_image_model = server_config.get("attachment_image_model", "")
+                        engine.get_request_context().session_id = session_id
+                        engine.get_request_context().current_session_id = session_id
+                        engine.get_request_context().attachment_image_model = server_config.get("attachment_image_model", "")
                     runner = engine._get_hook_runner(agent_id)
                     if runner:
                         blocked = runner.run_pre_hooks(tool_name, tool_args)
@@ -2954,9 +2954,9 @@ def _user_profile_run_llm(uid: str, prior_profile: str, samples: list[str],
             # in-tree pattern for background LLM calls). Returns the assistant's
             # text or a "Delegation error: …" string we filter out.
             # current_agent must be an AgentConfig object, not just the agent id.
-            engine._thread_local.current_agent = engine.AgentConfig("main")
-            engine._thread_local.current_user_id = uid
-            engine._thread_local.memory_store = None
+            engine.get_request_context().current_agent = engine.AgentConfig("main")
+            engine.get_request_context().current_user_id = uid
+            engine.get_request_context().memory_store = None
             from handlers import sidecar_proxy as _sidecar_proxy
             _res = _sidecar_proxy.background_call(
                 messages=[{"role": "user", "content": user_msg}],

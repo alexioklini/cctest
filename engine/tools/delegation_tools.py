@@ -23,7 +23,7 @@
 
 from __future__ import annotations
 
-from engine.context import _thread_local
+from engine.context import get_request_context
 from engine.tool_exec import _ok, _err
 
 
@@ -41,9 +41,9 @@ def tool_delegate_task(args: dict) -> str:
         return _err(f"delegate_task: agent '{agent_id}' not found. Available: {', '.join(available)}")
 
     # Team-aware delegation scoping (prefer thread-local for concurrent requests)
-    caller_id = getattr(_thread_local, "delegate_agent_id", None)
+    caller_id = get_request_context().delegate_agent_id
     if not caller_id:
-        agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+        agent = get_request_context().current_agent or _brain._current_agent
         caller_id = agent.agent_id if agent else None
     if caller_id:
         scope = _brain._get_delegation_scope(caller_id)
@@ -125,7 +125,7 @@ def tool_worker_status(args: dict) -> str:
         if not w:
             return _err(f"Worker '{worker_id}' not found")
         return _ok({"workers": [registry.to_status_dict(w)]})
-    session_id = getattr(_thread_local, 'current_session_id', None) or ""
+    session_id = get_request_context().current_session_id or ""
     workers = registry.list_session(session_id)
     return _ok({"workers": [registry.to_status_dict(w) for w in workers]})
 

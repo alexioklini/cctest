@@ -9,7 +9,7 @@
 # Seams:
 #   - `_ok` / `_err` / `_get_artifact_session_folder` / `_record_session_read_path`
 #     come from engine.tool_exec (the C2 extraction; re-exported on brain too).
-#   - `_thread_local` comes from engine.context (low-level base, no cycle).
+#   - `get_request_context` comes from engine.context (low-level base, no cycle).
 #   - brain-runtime symbols (`_after_file_write`, `_gdpr_anon_tool_text`,
 #     `_route_to_node`, `get_tool_config`, `AGENTS_DIR`, `_current_agent`,
 #     `DocumentParser`) are reached lazily via `import brain as _brain` inside
@@ -33,7 +33,7 @@ import subprocess
 import sys
 import time
 
-from engine.context import _thread_local
+from engine.context import get_request_context
 from engine.tool_exec import (
     _ok,
     _err,
@@ -97,8 +97,8 @@ def tool_write_file(args: dict) -> str:
         # Resolve the session's artifact dir (when in a chat) so we can both
         # default relative paths into it AND warn on an absolute path that
         # lands outside it.
-        session_id = getattr(_thread_local, 'current_session_id', None)
-        agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+        session_id = get_request_context().current_session_id
+        agent = get_request_context().current_agent or _brain._current_agent
         artifact_dir = ""
         if session_id and agent:
             folder = _get_artifact_session_folder(session_id)
@@ -115,7 +115,7 @@ def tool_write_file(args: dict) -> str:
         with open(path, "w") as f:
             f.write(content)
         size = os.path.getsize(path)
-        agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+        agent = get_request_context().current_agent or _brain._current_agent
         _brain._after_file_write(path, "created", agent.agent_id if agent else "main")
         result = {"path": path, "size": size, "status": "written"}
         # Warn when an ABSOLUTE path was written outside the artifact folder —
@@ -161,7 +161,7 @@ def tool_edit_file(args: dict) -> str:
             new_content = content.replace(old_string, new_string, 1)
         with open(path, "w") as f:
             f.write(new_content)
-        agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+        agent = get_request_context().current_agent or _brain._current_agent
         _brain._after_file_write(path, "modified", agent.agent_id if agent else "main")
         return _ok({"path": path, "replacements": count if replace_all else 1, "status": "edited"})
     except Exception as e:
@@ -454,7 +454,7 @@ def tool_write_document(args: dict) -> str:
             return _err(f"write_document: unsupported format '{ext}'. Supported: .docx, .xlsx, .pptx, .pdf")
 
         size = os.path.getsize(path)
-        agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+        agent = get_request_context().current_agent or _brain._current_agent
         _brain._after_file_write(path, "created", agent.agent_id if agent else "main")
         return _ok({"path": path, "size": size, "format": ext.lstrip("."), "status": "written"})
     except ImportError as e:
@@ -520,7 +520,7 @@ def tool_edit_document(args: dict) -> str:
                         para.add_run(new_full)
                     count += 1
             doc.save(path)
-            agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+            agent = get_request_context().current_agent or _brain._current_agent
             _brain._after_file_write(path, "modified", agent.agent_id if agent else "main")
             return _ok({"path": path, "action": action, "replacements": count, "status": "edited"})
 
@@ -545,7 +545,7 @@ def tool_edit_document(args: dict) -> str:
                 except Exception:
                     ws[cell_ref] = value
                 wb.save(path)
-                agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+                agent = get_request_context().current_agent or _brain._current_agent
                 _brain._after_file_write(path, "modified", agent.agent_id if agent else "main")
                 return _ok({"path": path, "action": action, "cell": cell_ref, "sheet": sheet_name, "status": "edited"})
 
@@ -559,7 +559,7 @@ def tool_edit_document(args: dict) -> str:
                 ws = wb[sheet_name]
                 ws.append(values)
                 wb.save(path)
-                agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+                agent = get_request_context().current_agent or _brain._current_agent
                 _brain._after_file_write(path, "modified", agent.agent_id if agent else "main")
                 return _ok({"path": path, "action": action, "sheet": sheet_name, "row_added": len(values), "status": "edited"})
 
@@ -588,7 +588,7 @@ def tool_edit_document(args: dict) -> str:
                             shape.text_frame.text = body
                             break
                 prs.save(path)
-                agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+                agent = get_request_context().current_agent or _brain._current_agent
                 _brain._after_file_write(path, "modified", agent.agent_id if agent else "main")
                 return _ok({"path": path, "action": action, "slide_index": slide_index, "status": "edited"})
 
@@ -601,7 +601,7 @@ def tool_edit_document(args: dict) -> str:
                 if body:
                     slide.placeholders[1].text = body
                 prs.save(path)
-                agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+                agent = get_request_context().current_agent or _brain._current_agent
                 _brain._after_file_write(path, "modified", agent.agent_id if agent else "main")
                 return _ok({"path": path, "action": action, "slide_count": len(prs.slides), "status": "edited"})
 
@@ -838,8 +838,8 @@ def tool_execute_command(args: dict) -> str:
             # outputs land in the Artifacts panel without the model having to
             # guess the path. Falls back to Brain's cwd when there's no
             # session (background jobs, etc.).
-            session_id = getattr(_thread_local, 'current_session_id', None)
-            agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+            session_id = get_request_context().current_session_id
+            agent = get_request_context().current_agent or _brain._current_agent
             if session_id and agent:
                 folder = _get_artifact_session_folder(session_id)
                 cwd = os.path.join(_brain.AGENTS_DIR, agent.agent_id, "artifacts", folder)
@@ -851,8 +851,8 @@ def tool_execute_command(args: dict) -> str:
         # it shouldn't pollute the artifact panel.
         _artifact_cwd = None
         _pre_files: set[str] = set()
-        _session_id = getattr(_thread_local, 'current_session_id', None)
-        _agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+        _session_id = get_request_context().current_session_id
+        _agent = get_request_context().current_agent or _brain._current_agent
         if cwd and _session_id and _agent:
             _expected = os.path.join(_brain.AGENTS_DIR, _agent.agent_id, "artifacts",
                                      _get_artifact_session_folder(_session_id))
@@ -864,8 +864,8 @@ def tool_execute_command(args: dict) -> str:
                     _pre_files = set()
 
         # Use streaming version if event_callback is available
-        ecb = getattr(_thread_local, 'event_callback', None)
-        tuid = getattr(_thread_local, 'tool_use_id', None)
+        ecb = get_request_context().event_callback
+        tuid = get_request_context().tool_use_id
         if ecb and tuid:
             _res = _streaming_execute_command(command, timeout, cwd, ecb, tuid)
             _register_new_artifacts(_artifact_cwd, _pre_files, _agent)
@@ -1044,8 +1044,8 @@ def tool_python_exec(args: dict) -> str:
     venv_path = _cfg.get("venv_path", "")
 
     # Working dir = session artifact folder so files written by code become artifacts
-    session_id = getattr(_thread_local, 'current_session_id', None)
-    agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+    session_id = get_request_context().current_session_id
+    agent = get_request_context().current_agent or _brain._current_agent
     if session_id and agent:
         folder = _get_artifact_session_folder(session_id)
         work_dir = os.path.join(_brain.AGENTS_DIR, agent.agent_id, "artifacts", folder)

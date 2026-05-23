@@ -608,9 +608,9 @@ class AdminConfigHandlers:
             self._send_json({"error": f"Agent not found: {agent_id} ({e})"}, 404)
             return
         with engine.request_context():
-            engine._thread_local.current_agent = agent
+            engine.get_request_context().current_agent = agent
             # Use the live MCP manager so connected MCP servers are measured.
-            engine._thread_local.mcp_manager = engine._mcp_manager
+            engine.get_request_context().mcp_manager = engine._mcp_manager
             breakdown = engine.get_tool_breakdown(agent_id)
         self._send_json(breakdown)
 

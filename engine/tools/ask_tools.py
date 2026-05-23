@@ -25,7 +25,7 @@
 #
 # Seams:
 #   - `_ok` / `_err` from engine.tool_exec.
-#   - `_thread_local` from engine.context (event_callback, session/worker ids).
+#   - `get_request_context` from engine.context (event_callback, session/worker ids).
 #   - brain runtime symbols (the blocking-state helpers above, `AgentConfig`,
 #     `_load_tools_config`, `_current_agent`, `_delegate_fallback_model`)
 #     reached lazily via `import brain as _brain`. NO top-level `import brain`.
@@ -35,7 +35,7 @@
 
 from __future__ import annotations
 
-from engine.context import _thread_local
+from engine.context import get_request_context
 from engine.tool_exec import _ok, _err
 
 
@@ -83,9 +83,9 @@ def tool_ask_llm(args: dict) -> str:
     # Resolution order: explicit kwarg → workflow MODEL header → workflow AGENT.preferred_model
     # → refinement model → current agent → server fallback.
     if not model:
-        model = (getattr(_thread_local, "workflow_default_model", "") or "").strip()
+        model = (get_request_context().workflow_default_model or "").strip()
     if not model:
-        wf_agent = getattr(_thread_local, "workflow_agent_id", "") or ""
+        wf_agent = get_request_context().workflow_agent_id or ""
         if wf_agent:
             try:
                 _ag = _brain.AgentConfig(wf_agent)
@@ -99,7 +99,7 @@ def tool_ask_llm(args: dict) -> str:
         except Exception:
             model = ""
     if not model:
-        agent = getattr(_thread_local, "current_agent", None) or _brain._current_agent
+        agent = get_request_context().current_agent or _brain._current_agent
         if agent:
             model = agent.preferred_model or ""
     if not model:
@@ -108,11 +108,11 @@ def tool_ask_llm(args: dict) -> str:
         return _err("ask_llm: no model configured")
     # Inherit the workflow's synthetic session_id ("wf-<execution_id>") so the
     # cost log can attribute this LLM call back to the workflow run.
-    sid = getattr(_thread_local, "current_session_id", None) or ""
+    sid = get_request_context().current_session_id or ""
     try:
         from handlers import sidecar_proxy as _sidecar_proxy
         _agent_id = ""
-        _ag = getattr(_thread_local, "current_agent", None) or _brain._current_agent
+        _ag = get_request_context().current_agent or _brain._current_agent
         if _ag is not None:
             _agent_id = getattr(_ag, "agent_id", "") or ""
         _res = _sidecar_proxy.background_call(
@@ -141,13 +141,13 @@ def tool_ask_user_for_file(args: dict) -> str:
     timeout = int(args.get("timeout_seconds", 600))
 
     # Prefer workflow execution_id; fall back to session_id for chat use.
-    execution_id = getattr(_thread_local, "workflow_execution_id", None)
-    session_id = getattr(_thread_local, "current_session_id", None)
+    execution_id = get_request_context().workflow_execution_id
+    session_id = get_request_context().current_session_id
     key = execution_id or session_id
     if not key:
         return _err("ask_user_for_file requires an active workflow execution or chat session")
 
-    cb = getattr(_thread_local, "event_callback", None)
+    cb = get_request_context().event_callback
     if cb:
         try:
             cb("file_upload_needed", {
@@ -186,7 +186,7 @@ def tool_worker_ask_user(args: dict) -> str:
     Multi-question batches are not supported inside workers — call once per question.
     """
     from execution import get_worker_registry
-    worker_id = getattr(_thread_local, 'current_worker_id', None)
+    worker_id = get_request_context().current_worker_id
     if not worker_id:
         return _err("worker_ask_user can only be called from within a worker subagent")
     questions, _ = _normalize_ask_questions(args)
@@ -208,7 +208,7 @@ def tool_worker_ask_user(args: dict) -> str:
 def tool_ask_user(args: dict) -> str:
     """Ask the user one or more questions from the main chat loop (not inside a worker)."""
     import brain as _brain
-    session_id = getattr(_thread_local, 'current_session_id', None)
+    session_id = get_request_context().current_session_id
     if not session_id:
         return _err("ask_user requires an active session")
     questions, is_batch = _normalize_ask_questions(args)
@@ -217,7 +217,7 @@ def tool_ask_user(args: dict) -> str:
     context_summary = args.get("context_summary", "")
     timeout = int(args.get("timeout_seconds", 300))
 
-    cb = getattr(_thread_local, 'event_callback', None)
+    cb = get_request_context().event_callback
     if cb:
         try:
             payload = {

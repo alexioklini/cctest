@@ -53,7 +53,7 @@ import re
 import threading
 import time
 
-from engine.context import _thread_local
+from engine.context import get_request_context
 
 
 class _LazyBrain:
@@ -88,12 +88,12 @@ def _err(msg: str) -> str:
 def _get_artifact_session_folder(session_id: str) -> str:
     """Return session folder name for artifacts: <date>_<session_prefix>"""
     cache_key = f"_artifact_folder_{session_id}"
-    cached = getattr(_thread_local, cache_key, None)
+    cached = get_request_context()._dynamic.get(cache_key)
     if cached:
         return cached
     from datetime import datetime as _dt
     folder = f"{_dt.now().strftime('%Y-%m-%d')}_{session_id}"
-    setattr(_thread_local, cache_key, folder)
+    get_request_context()._dynamic[cache_key] = folder
     return folder
 
 
@@ -107,7 +107,7 @@ _TOOL_DEDUP_TTL = 3600  # seconds; drop state for sessions untouched this long
 def _dedup_sid() -> str:
     """Resolve the current dedup scope key. Session id when known, else a per-thread
     sentinel so unrelated CLI invocations don't contaminate each other."""
-    sid = getattr(_thread_local, 'current_session_id', None)
+    sid = get_request_context().current_session_id
     if sid:
         return sid
     # No session context (CLI one-shots, warmup, etc.) — fall back to thread id.
@@ -191,7 +191,7 @@ _session_read_paths: dict[str, set[str]] = {}  # sid -> {abs_path, ...}
 
 
 def _session_read_paths_sid() -> str:
-    sid = getattr(_thread_local, 'current_session_id', None)
+    sid = get_request_context().current_session_id
     if sid:
         return sid
     return f"_thread:{threading.get_ident()}"
@@ -314,9 +314,9 @@ def _apply_tool_result_budget(messages: list[dict], session_id: str | None = Non
                                agent_id: str | None = None) -> int:
     """Persist oversized tool results to disk and replace with truncated previews."""
     if not session_id:
-        session_id = getattr(_thread_local, 'current_session_id', None) or ""
+        session_id = get_request_context().current_session_id or ""
     if not agent_id:
-        agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+        agent = get_request_context().current_agent or _brain._current_agent
         agent_id = agent.agent_id if agent else "main"
 
     persisted = 0

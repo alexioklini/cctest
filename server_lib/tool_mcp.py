@@ -95,7 +95,7 @@ def _apply_context(ctx: dict) -> None:
     BACK from the sidecar we have to rebuild the local set on this
     request-handler thread.
     """
-    tl = engine._thread_local
+    tl = engine.get_request_context()
     tl.current_session_id = ctx.get("session_id") or ""
     tl.current_user_id = ctx.get("user_id") or ""
     tl.current_team_ids = list(ctx.get("team_ids") or [])
@@ -193,7 +193,7 @@ def _dispatch(name: str, args: dict) -> tuple[str, bool]:
         return json.dumps(raw, ensure_ascii=False), _looks_like_error_dict(raw)
 
     # MCP tools
-    mcp_mgr = getattr(engine._thread_local, "mcp_manager", None) or engine._mcp_manager
+    mcp_mgr = engine.get_request_context().mcp_manager or engine._mcp_manager
     if mcp_mgr is not None:
         try:
             for td in mcp_mgr.get_tool_definitions():

@@ -187,7 +187,7 @@ class SessionsHandlerMixin:
                 return
             # Set thread-local agent context so LLM call picks up the right config
             with engine.request_context():
-                engine._thread_local.current_agent = engine.AgentConfig(session.agent_id)
+                engine.get_request_context().current_agent = engine.AgentConfig(session.agent_id)
                 text = engine.generate_next_prompt_suggestion(session)
             self._send_json({
                 "suggestion": text,

@@ -17,13 +17,15 @@ single context-manager (no scattered `=None` teardown); a new concurrency/bleed 
 | 0 | Build the gate (bleed test + tlgrep mode) + inventory | ✅ done |
 | 1 | RequestContext + ContextVar + compat shim (no call-site changes) | ✅ done |
 | 2 | Migrate enter/exit sites to `request_context(...)` ctx-manager | ✅ done |
-| 3 | Migrate reads to typed accessors (kill raw getattr) | 🔄 in progress |
+| 3 | Migrate reads to typed accessors (kill raw getattr) | ✅ done |
 | 4 | Remove the shim | ⬜ |
 | 5 | Final source-validation | ⬜ |
 
-**RESUME POINT:** Phase 3 — migrate the READS (`getattr(_thread_local, 'x', default)` /
-`_thread_local.x` reads) to typed accessors, file-by-file, running `tlgrep <attr>` after each file
-to prove the raw access is gone. Phase 2 fully done (all enter/exit sites on the ctx-manager).
+**RESUME POINT:** Phase 4 — remove the `_thread_local` compat shim. All reads/writes now go through
+`get_request_context()` (tlgrep clean for all 38 attrs). What remains using the shim NAME: the
+back-compat `from engine.context import _thread_local` import in `brain.py` (re-export) + the shim
+definition in `engine/context.py`. Phase 4 decides whether to delete the shim or keep a thin
+deprecated alias (check Telegram / any external path first), then re-run tlgrep over all attrs.
 
 ---
 
@@ -61,54 +63,61 @@ via combined dotted-access + `getattr` + `setattr` scan. Counts are indicative o
 
 | Attribute | Owning subsystem | getattr default | Status |
 |-----------|------------------|-----------------|--------|
-| `current_agent` | core request | `None` | ⬜ |
-| `current_user_id` | core request | `""` / `None` | ⬜ |
-| `current_session_id` | core request | `""` / `None` | ⬜ |
-| `session_id` | core request | `""` / `None` | ⬜ |
-| `current_team_ids` | core request | `[]` | ⬜ |
-| `memory_store` | core request | `None` | ⬜ |
-| `mcp_manager` | core request | `None` | ⬜ |
-| `project` | core request | `""` / `None` | ⬜ |
-| `delegate_agent_id` | delegation | `None` | ⬜ |
-| `current_worker_id` | delegation | `None` | ⬜ |
-| `_current_model` | model select | `None` | ⬜ |
-| `current_model` | model select | `None` | ⬜ |
-| `research_mode_override` | project mode | `None` | ⬜ |
-| `event_callback` | chat stream | `None` | ⬜ |
-| `note_context` | chat | `None` | ⬜ |
-| `plan_mode` | chat | `False` | ⬜ |
-| `caveman_system` | caveman | `0` | ⬜ |
-| `caveman_chat` | caveman | `0` | ⬜ |
-| `attachment_image_model` | attachments | `''` | ⬜ |
-| `attachments` | attachments | (dotted) | ⬜ |
-| `_gdpr_mapping_id` | gdpr | `""` | ⬜ |
-| `_gdpr_anonymising` | gdpr | `False` | ⬜ |
-| `_gdpr_after_file_write_cb` | gdpr | `None` | ⬜ |
-| `trace_id` | tracing | `None` | ⬜ |
-| `current_trace_span` | tracing | `None` | ⬜ |
-| `audit_source` | audit | `'chat'` | ⬜ |
-| `tool_use_id` | tool exec | `None` | ⬜ |
-| `tool_round` | tool exec | (dotted) | ⬜ |
-| `_tool_results_tokens` | tool exec | `0` | ⬜ |
-| `_discovered_tools` | tool exec | `set()` | ⬜ |
-| `execution_overrides` | exec | (dotted) | ⬜ |
-| `_intent_action_recovery_count` | exec | (dotted) | ⬜ |
-| `_guided_tasks_for_msg` | exec | (dotted) | ⬜ |
-| `workflow_run_id` | workflow | (dotted) | ⬜ |
-| `workflow_execution_id` | workflow | `None` | ⬜ |
-| `workflow_default_model` | workflow | `""` | ⬜ |
-| `workflow_agent_id` | workflow | `""` | ⬜ |
-| `workflow_allowed_tools` | workflow | `None` | ⬜ |
-| `_artifact_folder_*` (dynamic) | tool exec | `None` | ⬜ |
+| `current_agent` | core request | `None` | ✅ |
+| `current_user_id` | core request | `""` / `None` | ✅ |
+| `current_session_id` | core request | `""` / `None` | ✅ |
+| `session_id` | core request | `""` / `None` | ✅ |
+| `current_team_ids` | core request | `[]` | ✅ |
+| `memory_store` | core request | `None` | ✅ |
+| `mcp_manager` | core request | `None` | ✅ |
+| `project` | core request | `""` / `None` | ✅ |
+| `delegate_agent_id` | delegation | `None` | ✅ |
+| `current_worker_id` | delegation | `None` | ✅ |
+| `_current_model` | model select | `None` | ✅ |
+| `current_model` | model select | `None` | ✅ |
+| `_fallback_model_used` | model select | `None` (read-only, always None — added Phase 3) | ✅ |
+| `research_mode_override` | project mode | `None` | ✅ |
+| `event_callback` | chat stream | `None` | ✅ |
+| `note_context` | chat | `None` | ✅ |
+| `plan_mode` | chat | `False` | ✅ |
+| `caveman_system` | caveman | `0` | ✅ |
+| `caveman_chat` | caveman | `0` | ✅ |
+| `attachment_image_model` | attachments | `''` | ✅ |
+| `attachments` | attachments | (dotted) | ✅ |
+| `_gdpr_mapping_id` | gdpr | `""` | ✅ |
+| `_gdpr_anonymising` | gdpr | `False` | ✅ |
+| `_gdpr_after_file_write_cb` | gdpr | `None` | ✅ |
+| `trace_id` | tracing | `None` | ✅ |
+| `current_trace_span` | tracing | `None` | ✅ |
+| `audit_source` | audit | `'chat'` | ✅ |
+| `tool_use_id` | tool exec | `None` | ✅ |
+| `tool_round` | tool exec | (dotted) | ✅ |
+| `_tool_results_tokens` | tool exec | `0` | ✅ |
+| `_discovered_tools` | tool exec | `set()` | ✅ |
+| `execution_overrides` | exec | (dotted) | ✅ |
+| `_intent_action_recovery_count` | exec | (dotted) | ✅ |
+| `_guided_tasks_for_msg` | exec | (dotted) | ✅ |
+| `workflow_run_id` | workflow | (dotted) | ✅ |
+| `workflow_execution_id` | workflow | `None` | ✅ |
+| `workflow_default_model` | workflow | `""` | ✅ |
+| `workflow_agent_id` | workflow | `""` | ✅ |
+| `workflow_allowed_tools` | workflow | `None` | ✅ |
+| `_artifact_folder_*` (dynamic) | tool exec | `None` | ✅ |
 
-**37 typed attributes + 1 dynamic pattern.** This is the complete, fixed scope. The run only flips
-statuses; it never appends. A genuinely new attribute = scope change to flag to the user.
+**38 typed attributes + 1 dynamic pattern.** (37 from the Phase-0 inventory + `_fallback_model_used`,
+the one discovered-during-Phase-3 addition — a dead read-only attr, see the Phase-3 record + decision
+log.) This is the complete, fixed scope.
 
 ---
 
 ## Import spellings (all must keep resolving until Phase 4)
 
-| Spelling | Live ref count (2026-05-23) |
+Phase-0 baseline counts (before migration). **After Phase 3, no CODE accesses the shim by attribute
+anymore** — all reads/writes go through `get_request_context()`. What still references the NAME
+`_thread_local`: the `brain.py` re-export import + the shim definition in `engine/context.py` + prose
+mentions (docstrings/changelog). Phase 4 removes the shim.
+
+| Spelling | Phase-0 baseline ref count |
 |----------|------------------------------|
 | `engine._thread_local.x` (incl. `import brain as engine`) | dominant — handlers/chat.py 60, server.py 11, handlers/admin_config.py 6, etc. |
 | `brain._thread_local` | 10 |
@@ -136,16 +145,39 @@ statuses; it never appends. A genuinely new attribute = scope change to flag to 
 - Full `./refactor_gate.sh` GREEN: 18/18 imports, PII parity OK, no new unittest fails beyond the 3
   known spaCy ones, Gate 5b OK.
 
-### Phase 3 — migrate reads to typed accessors (in progress)
-**Accessor pattern (decided + piloted):** `from engine.context import get_request_context`; replace
+### Phase 3 — migrate reads to typed accessors ✅ (commit: this)
+**Accessor pattern:** `from engine.context import get_request_context`; replace
 `getattr(_thread_local, 'X', DEF)` → `get_request_context().X` and `_thread_local.X = v` →
-`get_request_context().X = v` (or fold into `request_context(...)` kwargs at `with`-entry sites). The
-getattr-default is baked into the `RequestContext` field default (verified falsy-equivalent for the
-mixed-default attrs `current_session_id`/`project`/`session_id`), so the `or ...` tails still hold.
-Single accessor (attribute access on the context object) — no 37 per-attr getter funcs.
-- **Pilot: `engine/tools/context_tools.py`** ✅ — 3 reads (`current_session_id`×2, `current_model`)
-  migrated; import swapped `_thread_local`→`get_request_context`; gate + `tlgrep` clean. Validates the
-  recipe before parallelizing the remaining 17 files (~217 refs).
+`get_request_context().X = v`. The getattr-default is baked into the `RequestContext` field default
+(verified falsy-equivalent for the mixed-default attrs `current_session_id`/`project`/`session_id`),
+so the `or ...` tails still hold. Single accessor (attribute access on the context object) — no
+per-attr getter funcs. In `import brain as engine` files the form is `engine.get_request_context().X`.
+- **Pilot: `engine/tools/context_tools.py`** (3 reads) — validated the recipe, committed separately.
+- **Parallel migration (subagent-per-file-group, gated by me after):**
+  - engine/tools: `file_tools.py` (18), `ask_tools.py` (11), `misc_tools.py` (7), `translate_tools.py`
+    (6), `delegation_tools.py` (3); `tool_exec.py` (6, incl. the **dynamic `_artifact_folder_*` key** →
+    `get_request_context()._dynamic[key]` round-trip — the only dynamic-key site; verified identical).
+  - `engine/prompt_build.py` (13 — KV-prefix-sensitive; field defaults match, byte-identical),
+    `engine/mempalace_glue.py` (12), `engine/doc_convert.py` (3 — the **historical OCR-cost path** the
+    plan warned about; migrated keeping control flow, no silent-default reintroduced).
+  - handlers + server: `handlers/chat.py` (~30), `server.py` (11), `handlers/sidecar_proxy.py` (2 —
+    NOT in the original group list, caught by the global rescan), `handlers/translate.py`,
+    `handlers/admin_config.py`, `handlers/sessions_handler.py`, `server_lib/tool_mcp.py`
+    (`_apply_context`'s `tl = engine.get_request_context()` one-liner).
+  - **`brain.py` (54 sites: 42 reads + 12 writes)** — the import `from engine.context import
+    _thread_local` is KEPT (the back-compat shim must still resolve for Phase 4); only code-level
+    read/write access sites changed. Changelog-string + docstring mentions of `_thread_local` left as
+    prose.
+- **`_fallback_model_used` — discovered attr, ADDED to the dataclass.** Found in `handlers/chat.py`
+  cost logging (read 3× via `getattr(..., '_fallback_model_used', None)`, **written nowhere** — a
+  vestige of the deleted native-loop quota force-local swap, always `None`). Since `get_request_context()`
+  returns a bare dataclass (no `__getattr__`), the accessor needs the field declared, so it was added
+  (`_fallback_model_used: object = None`) — behavior-identical (still always None). This is the one
+  inventory addition beyond the Phase-0 list; recorded in the table. **Not a feature-scope change**
+  (dead read state), surfaced here per the plan's new-attribute discipline.
+- **Verification:** `tlgrep` run over ALL 38 attributes → **0 failures** (zero raw `_thread_local.<attr>`
+  code access remains anywhere outside `engine/context.py`). Each file `ast.parse` + import clean.
+  Full `./refactor_gate.sh` GREEN.
 
 ### Phase 2d — brain.py init/clear pairs + workflow + handler/server save-restore sites ✅ (commit: this)
 Closes out Phase 2: every enter/exit site now uses `request_context(...)`; **zero

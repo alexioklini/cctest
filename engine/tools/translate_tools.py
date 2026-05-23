@@ -34,7 +34,7 @@ import time
 import urllib.request
 import urllib.error
 
-from engine.context import _thread_local
+from engine.context import get_request_context
 from engine.tool_exec import _ok, _err, _get_artifact_session_folder
 
 
@@ -343,7 +343,7 @@ def tool_transcribe_audio(args: dict) -> str:
                 fallback_used_reason = "gdpr_server_block"
                 try:
                     if _brain._audit_log:
-                        _agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+                        _agent = get_request_context().current_agent or _brain._current_agent
                         _brain._audit_log.log_action(
                             agent=(_agent.agent_id if _agent else "main"),
                             action_type="pii_auto_fallback",
@@ -351,7 +351,7 @@ def tool_transcribe_audio(args: dict) -> str:
                             args_summary=f"cloud -> {model_id}",
                             result_summary="audio file, content not scannable",
                             result_status="ok",
-                            session_id=getattr(_thread_local, 'current_session_id', None) or None,
+                            session_id=get_request_context().current_session_id or None,
                             source="background",
                         )
                 except Exception:
@@ -496,8 +496,8 @@ def tool_translate_document(args: dict) -> str:
     # write_file uses.
     src_path = os.path.expanduser(path)
     if not os.path.isabs(src_path):
-        session_id = getattr(_thread_local, "current_session_id", None)
-        agent = getattr(_thread_local, "current_agent", None) or _brain._current_agent
+        session_id = get_request_context().current_session_id
+        agent = get_request_context().current_agent or _brain._current_agent
         if session_id and agent:
             folder = _get_artifact_session_folder(session_id)
             artifact_dir = os.path.join(_brain.AGENTS_DIR, agent.agent_id, "artifacts", folder)
@@ -509,8 +509,8 @@ def tool_translate_document(args: dict) -> str:
         return _err(f"translate_document: file not found: {src_path}")
 
     # Output goes into the artifact folder so it auto-promotes.
-    session_id = getattr(_thread_local, "current_session_id", None)
-    agent = getattr(_thread_local, "current_agent", None) or _brain._current_agent
+    session_id = get_request_context().current_session_id
+    agent = get_request_context().current_agent or _brain._current_agent
     if session_id and agent:
         folder = _get_artifact_session_folder(session_id)
         out_dir = os.path.join(_brain.AGENTS_DIR, agent.agent_id, "artifacts", folder)

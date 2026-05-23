@@ -958,9 +958,9 @@ def _prime_artifact_threadlocals(brain_mod, session_id: str) -> None:
     no-op: nobody is listening on this synthetic session's SSE stream.
     """
     try:
-        brain_mod._thread_local.current_session_id = session_id
-        if not getattr(brain_mod._thread_local, 'event_callback', None):
-            brain_mod._thread_local.event_callback = lambda *_args, **_kw: None
+        brain_mod.get_request_context().current_session_id = session_id
+        if not brain_mod.get_request_context().event_callback:
+            brain_mod.get_request_context().event_callback = lambda *_args, **_kw: None
     except Exception:
         pass
 

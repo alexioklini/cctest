@@ -35,6 +35,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from engine.context import get_request_context
+
 EXTRACT_SUBDIR = ".brain-extracted"
 
 SUPPORTED_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".csv", ".tsv",
@@ -476,7 +478,7 @@ def _log_ocr_cost(*, model: str, provider: str, pages: int, cost_usd: float) -> 
     thread-locals when called from a chat thread; falls back to ('main', '', '')
     for daemon calls."""
     try:
-        from brain import _cost_tracker, _thread_local, _current_agent
+        from brain import _cost_tracker, _current_agent
     except ImportError:
         return
     if _cost_tracker is None:
@@ -484,12 +486,13 @@ def _log_ocr_cost(*, model: str, provider: str, pages: int, cost_usd: float) -> 
     agent_id = "main"
     session_id = ""
     user_id = ""
-    if _thread_local is not None:
-        agent = getattr(_thread_local, "current_agent", None) or _current_agent
+    _ctx = get_request_context()
+    if _ctx is not None:
+        agent = _ctx.current_agent or _current_agent
         if agent is not None:
             agent_id = getattr(agent, "agent_id", "main")
-        session_id = getattr(_thread_local, "current_session_id", "") or ""
-        user_id = getattr(_thread_local, "current_user_id", "") or ""
+        session_id = _ctx.current_session_id or ""
+        user_id = _ctx.current_user_id or ""
     _cost_tracker.log_ocr(agent=agent_id, session_id=session_id, model=model,
                           provider=provider, pages=pages, cost_usd=cost_usd,
                           user_id=user_id)

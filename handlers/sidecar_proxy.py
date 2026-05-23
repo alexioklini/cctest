@@ -126,7 +126,7 @@ def _build_tool_list(*, purpose: str, agent_id: str | None,
     MCP merging happen inside the resolver; we just hand it the discovered-
     tools set from thread-local.
     """
-    discovered = getattr(engine._thread_local, "_discovered_tools", set()) or set()
+    discovered = engine.get_request_context()._discovered_tools or set()
     return engine.resolve_active_tools(
         purpose=purpose,
         agent_id=agent_id,
@@ -817,7 +817,7 @@ def background_call(
     inf = engine.get_inference_params(model)
     _max_tokens = int(max_tokens or inf.get("max_tokens") or engine.get_model_max_output(model))
     _user_id = user_id if user_id is not None else (
-        getattr(engine._thread_local, "current_user_id", "") or "")
+        engine.get_request_context().current_user_id or "")
     tool_context = {
         "session_id": session_id,
         "agent_id": agent_id,
