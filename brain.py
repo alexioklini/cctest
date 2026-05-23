@@ -713,8 +713,8 @@ def _get_token_config(agent_id: str | None = None) -> dict:
     Precedence (lowest → highest):
       TOKEN_CONFIG_DEFAULTS < model profile overlay < agent token_config
 
-    Model comes from _thread_local._current_model (set per request). Profile
-    contributes deferred_tool_groups, compact_threshold, include_tools_guide.
+    Model comes from get_request_context()._current_model (set per request).
+    Profile contributes deferred_tool_groups, compact_threshold, include_tools_guide.
     """
     agent = get_request_context().current_agent or _current_agent
     result = dict(TOKEN_CONFIG_DEFAULTS)
@@ -1564,7 +1564,7 @@ def _gdpr_anon_tool_text(text: str, source: str) -> str:
     """Pseudonymise text returned from a read-style tool, if the active
     session has a transparent-anonymisation mapping.
 
-    Reads `_thread_local._gdpr_mapping_id` (set by `tool_mcp._apply_context`
+    Reads `get_request_context()._gdpr_mapping_id` (set by `tool_mcp._apply_context`
     on every sidecar tool-dispatch from the per-turn `tool_context.gdpr_mapping_id`).
     No-op when no mapping is active — returns text unchanged.
 
@@ -6589,7 +6589,7 @@ def build_first_turn_prefix(model: str, agent_id: str, *,
     point of warmup. Any input that one caller sets and the other doesn't is a
     silent cache-miss; centralising the recipe here makes that impossible.
 
-    Binds `_thread_local._current_model = model` so `_get_token_config`
+    Binds `get_request_context()._current_model = model` so `_get_token_config`
     resolves the SAME model-profile overlay (deferred_tool_groups, etc.) in
     both paths. Caller is responsible for the thread-context (`current_agent`,
     mcp_manager) being set, and for restoring/clearing `_current_model`.

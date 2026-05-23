@@ -26,8 +26,8 @@ Owns:
     `_find_tool_name_for_block`.
 
 Seams:
-  - `_thread_local` comes from engine.context (low-level base, no cycle).
-    The dedup + read-path stores key off `_thread_local.current_session_id`.
+  - `get_request_context()` comes from engine.context (low-level base, no cycle).
+    The dedup + read-path stores key off `get_request_context().current_session_id`.
   - brain-runtime symbols (`TaskCancelled`, `AGENTS_DIR`, `_current_agent`)
     are reached lazily via the `_LazyBrain` proxy (`_brain.<name>`) — a
     top-level `import brain` would be a cycle (brain imports this module).

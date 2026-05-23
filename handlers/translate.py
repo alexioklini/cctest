@@ -952,7 +952,7 @@ def _prime_artifact_threadlocals(brain_mod, session_id: str) -> None:
     """Make _after_file_write believe it's running inside a chat session.
 
     The translate worker runs in a daemon thread that never went through the
-    chat dispatch, so `brain._thread_local` has neither current_session_id nor
+    chat dispatch, so the request context has neither current_session_id nor
     event_callback. Both are gates inside _after_file_write — without priming,
     the artifact would never be registered in the DB. The event callback is a
     no-op: nobody is listening on this synthetic session's SSE stream.

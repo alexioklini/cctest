@@ -54,10 +54,18 @@ if [ "${1:-}" = "tlgrep" ]; then
   # `engine._thread_local` (the `import brain as engine` alias). The optional
   # `(\w+\.)?` prefix catches all of them in the .X / getattr / setattr shapes.
   P='(\w+\.)?_thread_local'
-  hits=$(grep -rnE "${P}\.$attr\b|getattr\(${P}, ['\"]$attr['\"]|setattr\(${P}, ['\"]$attr['\"]" \
+  # Exclusions filter out PROSE mentions (the hardened prefix regex would
+  # otherwise match `_thread_local.X` inside docstrings + the changelog string
+  # tuples in brain.py): drop comment-only lines, changelog version-tuple lines
+  # (`("X.Y.Z", "20...`), and any line where the mention sits inside backticks
+  # (markdown-in-docstring like `_thread_local.current_user_id`).
+  hits=$(grep -rnE --include='*.py' -I "${P}\.$attr\b|getattr\(${P}, ['\"]$attr['\"]|setattr\(${P}, ['\"]$attr['\"]" \
            brain.py execution.py engine/ handlers/ server_lib/ server.py server_daemons.py 2>/dev/null \
+           | grep -v '__pycache__' \
            | grep -v '^engine/context\.py:' \
-           | grep -vE '^\S+:[0-9]+:\s*#')
+           | grep -vE '^\S+:[0-9]+:\s*#' \
+           | grep -vE '"[0-9]+\.[0-9]+\.[0-9]+", *"20' \
+           | grep -vE "\`[^\`]*_thread_local\.${attr}")
   if [ -n "$hits" ]; then
     echo "  FAIL — raw access of '$attr' still in live code:"
     echo "$hits" | sed 's/^/    /'

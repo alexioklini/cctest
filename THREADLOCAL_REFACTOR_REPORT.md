@@ -19,12 +19,10 @@ single context-manager (no scattered `=None` teardown); a new concurrency/bleed 
 | 2 | Migrate enter/exit sites to `request_context(...)` ctx-manager | ✅ done |
 | 3 | Migrate reads to typed accessors (kill raw getattr) | ✅ done |
 | 4 | Remove the shim | ✅ done |
-| 5 | Final source-validation | ⬜ |
+| 5 | Final source-validation | ✅ done — HARD STOP for user review |
 
-**RESUME POINT:** Phase 5 — final source-validation (the mandatory close-out audit). Verify the
-report against actual source: dataclass covers every claimed attr; tlgrep clean over all 39; no
-surviving teardown / shim; imports resolve; bleed test + server-up smoke; coverage-promise check.
-HARD STOP after Phase 5 for user review before declaring the tier complete.
+**RESUME POINT:** ALL PHASES DONE. Phase 5 audit passed (8/8 checks). **HARD STOP** — awaiting user
+review before declaring the tier complete (per the plan's close-out protocol).
 
 ---
 
@@ -111,9 +109,10 @@ via combined dotted-access + `getattr` + `setattr` scan. Counts are indicative o
 | `workflow_allowed_tools` | workflow | `None` | ✅ |
 | `_artifact_folder_*` (dynamic) | tool exec | `None` | ✅ |
 
-**39 typed attributes + 1 dynamic pattern.** (37 from the Phase-0 inventory + `_fallback_model_used`
+**40 typed attributes + 1 dynamic pattern.** (38 from the Phase-0 inventory + `_fallback_model_used`
 + `in_worker_subagent` — two discovered additions, both DEAD state, see Phase-3 / Phase-3b records +
-decision log.) This is the complete, fixed scope.
+decision log.) This is the complete, fixed scope. Phase-5 audit confirmed the dataclass has exactly
+these 40 fields (+ `_dynamic`) — no missing, no extra.
 
 ---
 
@@ -152,6 +151,34 @@ mentions (docstrings/changelog). Phase 4 removes the shim.
 - Full `./refactor_gate.sh` GREEN: 18/18 imports, PII parity OK, no new unittest fails beyond the 3
   known spaCy ones, Gate 5b OK.
 
+### Phase 5 — final source-validation ✅ (commit: this) — 8/8 checks, HARD STOP for review
+Mandatory close-out audit. Verified against ACTUAL SOURCE (not trusting the report):
+1. **Dataclass coverage** — `RequestContext` has exactly the 40 inventory fields (+ `_dynamic`),
+   verified programmatically: 0 missing, 0 extra. The inventory table = 40 typed rows + 1 dynamic.
+2. **Zero raw access** — `tlgrep` over ALL 40 attrs (hardened prefix regex) → **0 failures**. The
+   tlgrep was further hardened in this phase to exclude `__pycache__`/binaries + changelog-tuple +
+   backtick-prose false positives that the prefix regex surfaced; 4 stale docstring/comment
+   `_thread_local` mentions were updated to the accessor for accuracy.
+3. **Zero surviving teardown** — independent grep for `_thread_local.*=None` / `del _thread_local` /
+   `clear_thread_context()` calls / dynamic `setattr(...None)` loops in live code → none. (The
+   surviving `= None` lines are legit setters inside `with` blocks, confirmed in Phase 2.)
+4. **Import resolution** — `_thread_local` intentionally GONE from both `engine.context` and `brain`
+   (`hasattr` → False); `get_request_context`/`request_context`/`RequestContext` resolve via all live
+   paths; the historical `engine/doc_convert` OCR-cost path resolves (no silent-default reintroduced);
+   all 11 gate-checked + execution.py modules import clean.
+5. **Bleed test + teardown-residue assertion** — 7 isolation tests pass against the REAL accessor
+   (post-shim); negative control proves the bleed is observable; teardown-residue assertion present.
+6. **Full gate green + server-up smoke** — `refactor_gate.sh` GREEN (19/19 imports, 3 known spaCy
+   fails only). Daemon kickstart-restarted onto the new code → **clean boot, zero tracebacks**
+   (`server.error.log`), sidecar up, `/v1/status` healthy. In-process smoke on live production modules
+   exercised the 4 migrated paths (chat-worker `request_context` enter/read/teardown; sidecar
+   `_apply_context` reconstitute; dynamic `_artifact_folder` cache; nested bind/pop) — all pass.
+   (HTTP auth-gated turn skipped — the in-process smoke + clean live boot cover the wiring
+   deterministically without depending on a configured LLM provider.)
+7. **Coverage-promise** — all 40 attrs + the dynamic pattern carry a final ✅ status; zero ⬜/🔄
+   remain; nothing silently omitted.
+8. **Report consistency** — fixed the 38/39→40 count drift; inventory cross-checked 1:1 vs dataclass.
+
 ### Phase 4 — remove the shim ✅ (commit: this)
 All call sites now use `get_request_context()` / `request_context(...)`, so the back-compat
 `_thread_local` shim is dead surface — removed:
@@ -185,7 +212,7 @@ the scanned dirs had raw access via that prefix, invisible to the gate:
   `_brain.get_request_context().X` / `brain.get_request_context().X`.
 - **Hardened `tlgrep`**: regex now uses `(\w+\.)?_thread_local` so it catches EVERY prefix form
   (bare / `brain.` / `_brain.` / `engine.`) in the `.X` / `getattr` / `setattr` shapes. Re-ran tlgrep
-  over ALL 39 attrs with the hardened regex → **0 failures**. Independent repo-wide sweep confirms the
+  over ALL 40 attrs with the hardened regex → **0 failures**. Independent repo-wide sweep confirms the
   only surviving `_thread_local` mentions are docstrings/comments + the shim's own test. Gate green.
 
 ### Phase 3b — SCOPE CORRECTION: execution.py + gate-scope widening ✅ (commit: this)
@@ -243,7 +270,7 @@ per-attr getter funcs. In `import brain as engine` files the form is `engine.get
   (`_fallback_model_used: object = None`) — behavior-identical (still always None). This is the one
   inventory addition beyond the Phase-0 list; recorded in the table. **Not a feature-scope change**
   (dead read state), surfaced here per the plan's new-attribute discipline.
-- **Verification:** `tlgrep` run over ALL 38 attributes → **0 failures** (zero raw `_thread_local.<attr>`
+- **Verification:** `tlgrep` run over ALL 40 attributes → **0 failures** (zero raw `_thread_local.<attr>`
   code access remains anywhere outside `engine/context.py`). Each file `ast.parse` + import clean.
   Full `./refactor_gate.sh` GREEN.
 

@@ -13,10 +13,10 @@ _profile_run_synchronous) are reached through the `srv` parameter — the server
 module object, passed by main() at thread-spawn time (runtime, so no import
 cycle). The start sites stay in server.main(); only the loop bodies moved here.
 
-Invariant #5 (CLAUDE.md): the chat-sync classifier set-site still sets
-engine._thread_local.current_user_id before every classify call and restores
-it in the finally — reached via the module-level `engine` alias exactly as in
-server.py, unchanged by the lift.
+Invariant #5 (CLAUDE.md): the chat-sync classifier set-site still scopes
+`current_user_id` for every classify call — now via
+`with engine.request_context(current_user_id=...)` (Tier-G), which tears the
+scope down automatically (replacing the old set-then-finally-restore pattern).
 """
 
 import contextlib  # noqa: F401  (used by miner cycle via redirect_stdout)
