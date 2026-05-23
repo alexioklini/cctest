@@ -58,6 +58,7 @@ as the single instance — brain's re-export binds the same objects, so
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -761,3 +762,608 @@ def _get_reranker_model(model_id: str, device_pref: str = "auto"):
             except Exception:
                 pass
             return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E4 additions — memory tools + project-KG tools (folded in here per the
+# refactor plan: the memory + KG tools belong with the MemPalace glue).
+#
+#   - tool_memory_store / tool_memory_recall / tool_memory_delete /
+#     tool_memory_shared — the legacy file-backed MemoryStore tools, plus the
+#     private `_graph_expand_results` helper (follows `related` frontmatter
+#     links one hop). The MemoryStore class + `_get_memory_store` /
+#     `_parse_frontmatter` / `_record_recall_cooccurrence` /
+#     `_get_agent_team_info` / `trigger_memory_summary_refresh` / `AgentConfig`
+#     / `AGENTS_DIR` STAY in brain — reached via `_brain.`.
+#   - tool_mempalace_kg_query / tool_mempalace_kg_search /
+#     tool_mempalace_kg_neighbors — the project-scoped KG tools, plus their
+#     private helper cluster (`_kg_resolve_project_scope`, `_kg_open`,
+#     `_kg_source_in_scope`, `_kg_has_adapter_column`, `_kg_has_span_column`).
+#     These reach `_load_mempalace_config` / `_ensure_mempalace_importable`
+#     (defined above in this module) and `_brain.ProjectManager` lazily.
+#
+# Pure relocation — JSON envelopes + error strings byte-identical to pre-E4.
+# brain.py re-exports all 7 tools via `from engine.mempalace_glue import (...)`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _graph_expand_results(results: list[dict], base_dir: str, ingest_dir: str,
+                          max_hops: int = 1) -> list[dict]:
+    """Follow 'related' frontmatter links from matched results for context expansion."""
+    seen_files = {r.get("file_path", "") for r in results}
+    expanded = list(results)
+    frontier = list(results)
+    for _hop in range(max_hops):
+        next_frontier = []
+        for r in frontier:
+            fpath = r.get("file_path", "")
+            if not fpath or not os.path.exists(fpath):
+                continue
+            try:
+                with open(fpath, "r") as f:
+                    raw = f.read(2000)
+                fm, _ = _brain._parse_frontmatter(raw)
+            except Exception:
+                continue
+            # Parse related field (simple YAML list parsing)
+            related_raw = fm.get("related", "")
+            if not related_raw:
+                continue
+            # related is stored as multi-line YAML in frontmatter, parse linked files
+            related_files = re.findall(r'file:\s*(\S+\.md)', raw)
+            for rel_file in related_files:
+                # Try ingest_dir first, then base_dir
+                for search_dir in (ingest_dir, base_dir):
+                    rel_path = os.path.join(search_dir, rel_file)
+                    if rel_path in seen_files or not os.path.exists(rel_path):
+                        continue
+                    seen_files.add(rel_path)
+                    try:
+                        with open(rel_path, "r") as f:
+                            rel_raw = f.read()
+                        rel_fm, rel_body = _brain._parse_frontmatter(rel_raw)
+                        mem = {
+                            "id": hashlib.sha256(rel_fm.get("name", rel_file).encode()).hexdigest()[:12],
+                            "name": rel_fm.get("name", rel_fm.get("title", rel_file.replace(".md", ""))),
+                            "description": rel_fm.get("description", ""),
+                            "type": rel_fm.get("type", "general"),
+                            "content": rel_body,
+                            "file_path": rel_path,
+                            "score": max(0, (r.get("score", 0.5) - 0.2)),
+                            "source_scope": "related",
+                        }
+                        expanded.append(mem)
+                        next_frontier.append(mem)
+                    except Exception:
+                        continue
+                    break  # found in one dir, skip the other
+        frontier = next_frontier
+    return expanded
+
+
+def tool_memory_store(args: dict) -> str:
+    """Store a memory. When a project is active, writes to project directory."""
+    ms = _brain._get_memory_store()
+    if not ms:
+        return _err("Memory store not initialized")
+    name = args.get("name", "")
+    content = args.get("content", "")
+    description = args.get("description", "")
+    mem_type = args.get("type", "general")
+    if not name or not content:
+        return _err("memory_store: name and content are required")
+    # If project is active, store in project directory
+    project = getattr(_thread_local, 'project', None)
+    if project:
+        agent_id = ms.agent_id
+        proj_dir = os.path.join(_brain.AGENTS_DIR, agent_id, "projects", project)
+        if os.path.isdir(proj_dir):
+            proj_store = _brain.MemoryStore(agent_id=f"{agent_id}/{project}", base_dir=proj_dir)
+            result = proj_store.store(name, content, description, mem_type)
+            result["project"] = project
+            return _ok(result)
+    result = ms.store(name, content, description, mem_type)
+    # Trigger near-term memory summary refresh when user-facing memories are stored
+    # (skip if this IS the memory summary being written)
+    if name != "Memory Summary" and mem_type in ("user", "feedback", "project"):
+        try:
+            agent_id = ms.agent_id if hasattr(ms, 'agent_id') else "main"
+            _brain.trigger_memory_summary_refresh(agent_id)
+        except Exception:
+            pass
+    return _ok(result)
+
+
+def tool_memory_recall(args: dict) -> str:
+    """Recall memories by searching. When a project is active, searches project first."""
+    ms = _brain._get_memory_store()
+    if not ms:
+        return _err("Memory store not initialized")
+    query = args.get("query", "")
+    limit = args.get("limit", 10)
+    mem_type = args.get("type")
+    mode = args.get("mode", "")
+
+    # Project-scoped search: search project collection first, then agent
+    project = getattr(_thread_local, 'project', None)
+    if project and query:
+        agent_id = ms.agent_id
+        proj_dir = os.path.join(_brain.AGENTS_DIR, agent_id, "projects", project)
+        if os.path.isdir(proj_dir):
+            proj_store = _brain.MemoryStore(agent_id=f"{agent_id}/{project}", base_dir=proj_dir)
+            # Also search ingested subdir
+            ingest_dir = os.path.join(proj_dir, "ingested")
+            proj_results = proj_store.recall(query, limit, mem_type)
+            # Tag project results
+            for r in proj_results:
+                r["source_scope"] = "project"
+            # Then agent-level results
+            agent_results = ms.recall(query, max(2, limit - len(proj_results)), mem_type)
+            for r in agent_results:
+                r["source_scope"] = "agent"
+            results = proj_results + agent_results
+            # Always expand via graph relationships (follow related links 1 hop)
+            if results:
+                results = _graph_expand_results(results, proj_dir, ingest_dir,
+                                                max_hops=2 if mode == "graph" else 1)
+            for r in results:
+                if r.get("content") and len(r["content"]) > 4000:
+                    r["content"] = r["content"][:4000] + "..."
+            return _ok({"query": query, "project": project, "results": results[:limit], "count": len(results[:limit])})
+
+    if not query:
+        results = ms.list_all(mem_type)
+        return _ok({"query": "", "results": results, "count": len(results)})
+    results = ms.recall(query, limit, mem_type)
+
+    # Always expand via graph relationships (1 hop default, 2 hops for explicit graph mode)
+    if results:
+        agent_id = ms.agent_id
+        agent_dir = os.path.join(_brain.AGENTS_DIR, agent_id)
+        ingest_dir = os.path.join(agent_dir, "ingested")
+        results = _graph_expand_results(results, agent_dir, ingest_dir,
+                                        max_hops=2 if mode == "graph" else 1)
+
+    for r in results:
+        if r.get("content") and len(r["content"]) > 4000:
+            r["content"] = r["content"][:4000] + "..."
+
+    # --- Co-recall tracking (Mechanism 3) ---
+    if query and len(results) >= 2:
+        try:
+            result_files = [os.path.basename(r.get("file_path", "")) for r in results if r.get("file_path")]
+            agent_id = ms.agent_id
+            agent_dir = os.path.join(_brain.AGENTS_DIR, agent_id)
+            threading.Thread(
+                target=_brain._record_recall_cooccurrence,
+                args=(result_files, agent_id, agent_dir),
+                daemon=True,
+            ).start()
+        except Exception:
+            pass  # Co-recall tracking is best-effort
+
+    return _ok({"query": query, "results": results, "count": len(results)})
+
+
+def tool_memory_delete(args: dict) -> str:
+    """Delete a memory."""
+    ms = _brain._get_memory_store()
+    if not ms:
+        return _err("Memory store not initialized")
+    name = args.get("name", "")
+    if not name:
+        return _err("memory_delete: name is required")
+    result = ms.delete(name)
+    return _ok(result)
+
+
+def tool_memory_shared(args: dict) -> str:
+    """Access shared memory — global (main) or team (team head) scope."""
+    action = args.get("action", "recall")
+    scope = args.get("scope", "global")
+
+    # Determine which agent's memory to use
+    if scope == "team":
+        # Find the team head for the calling agent
+        caller_id = getattr(_thread_local, "delegate_agent_id", None)
+        if not caller_id:
+            agent = getattr(_thread_local, 'current_agent', None) or _brain._current_agent
+            caller_id = agent.agent_id if agent else "main"
+        team_info = _brain._get_agent_team_info(caller_id)
+        if not team_info:
+            return _err("memory_shared: agent is not in any team — use scope='global' instead")
+        team_head_id = team_info["head"]
+        target_agent = _brain.AgentConfig(team_head_id)
+        source_label = f"{team_info['name']} (team)"
+    else:
+        target_agent = _brain.AgentConfig("main")
+        source_label = "main (shared)"
+
+    shared_store = _brain.MemoryStore(agent_id=target_agent.agent_id, base_dir=target_agent.memory_dir)
+
+    if action == "store":
+        name = args.get("name", "")
+        content = args.get("content", "")
+        description = args.get("description", "")
+        mem_type = args.get("type", "general")
+        if not name or not content:
+            return _err("memory_shared store: name and content are required")
+        result = shared_store.store(name, content, description, mem_type)
+        result["source"] = source_label
+        return _ok(result)
+    else:  # recall
+        query = args.get("query", "")
+        limit = args.get("limit", 10)
+        mem_type = args.get("type")
+        if not query:
+            results = shared_store.list_all(mem_type)
+        else:
+            results = shared_store.recall(query, limit, mem_type)
+            # Graph expansion on shared memory too
+            if results:
+                shared_dir = os.path.join(_brain.AGENTS_DIR, target_agent.agent_id)
+                shared_ingest = os.path.join(shared_dir, "ingested")
+                results = _graph_expand_results(results, shared_dir, shared_ingest, max_hops=1)
+            for r in results:
+                if r.get("content") and len(r["content"]) > 4000:
+                    r["content"] = r["content"][:4000] + "..."
+        return _ok({"query": query, "source": source_label, "results": results[:limit], "count": len(results[:limit])})
+
+
+# ─── Project Knowledge-Graph tools + helper cluster ──────────────────────────
+
+def _kg_resolve_project_scope() -> tuple[str, list[str], str | None]:
+    """Return (palace_path, source_prefixes, error_msg) for the current
+    project, or ("",[], "<reason>") if scoping fails. source_prefixes is
+    the union of (project_dir, every input_folder.path) — drawers carrying
+    any of these prefixes belong to this project.
+    """
+    cfg = _load_mempalace_config()
+    if not cfg.get("enabled", True):
+        return "", [], "mempalace: disabled in config.json"
+    if not (cfg.get("kg") or {}).get("enabled", True):
+        return "", [], (
+            "mempalace_kg: knowledge-graph extraction is disabled in "
+            "config.json (mempalace.kg.enabled=false). Use mempalace_query "
+            "to retrieve drawers and read_document on the source files for "
+            "verbatim policy text instead.")
+    palace_path = cfg.get("palace_path", "")
+    if not palace_path or not os.path.isdir(palace_path):
+        return "", [], f"mempalace: palace_path missing: {palace_path}"
+
+    current_project = getattr(_thread_local, "project", None) or ""
+    if not current_project:
+        return "", [], (
+            "mempalace_kg: this tool requires a project context. "
+            "Step 1 supports only project-scoped queries.")
+
+    _ag = getattr(_thread_local, "current_agent", None)
+    current_agent_id = getattr(_ag, "agent_id", None) or (
+        _ag if isinstance(_ag, str) else "main") or "main"
+    proj_cfg = _brain.ProjectManager.get_project(current_agent_id, current_project)
+    if not proj_cfg:
+        return "", [], f"project not found: {current_project}"
+    pid = proj_cfg.get("id") or ""
+    if not pid:
+        return "", [], "project has no id (run a sync first)"
+
+    pdir = proj_cfg.get("dir") or ""
+    prefixes: list[str] = []
+    def _norm(p: str) -> str:
+        # Resolve symlinks so the prefix filter matches what the miner stored
+        # in drawer source_file (macOS /tmp → /private/tmp, etc.).
+        try:
+            r = os.path.realpath(p)
+        except OSError:
+            r = p
+        if r and not r.endswith(os.sep):
+            r += os.sep
+        return r
+    if pdir:
+        prefixes.append(_norm(pdir))
+    for entry in (proj_cfg.get("input_folders") or []):
+        fp = (entry.get("path") or "").strip()
+        if fp:
+            prefixes.append(_norm(fp))
+    if not prefixes:
+        return "", [], "project has no input folders or attachments to scope by"
+    return palace_path, prefixes, None
+
+
+def _kg_open(palace_path: str):
+    """Lazy-open the KG. Returns (kg, error_msg)."""
+    ok, err = _ensure_mempalace_importable()
+    if not ok:
+        return None, err
+    try:
+        from mempalace.knowledge_graph import KnowledgeGraph
+    except Exception as e:
+        return None, f"import KnowledgeGraph: {type(e).__name__}: {e}"
+    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
+    if not os.path.isfile(kg_path):
+        return None, "knowledge_graph.sqlite3 not yet created (no extractions run)"
+    try:
+        return KnowledgeGraph(db_path=kg_path), None
+    except Exception as e:
+        return None, f"open KG: {type(e).__name__}: {e}"
+
+
+def _kg_source_in_scope(source_file: str, prefixes: list[str]) -> bool:
+    if not source_file:
+        return False
+    return any(source_file.startswith(p) for p in prefixes)
+
+
+def _kg_has_adapter_column(palace_path: str) -> bool:
+    """Cheap one-time PRAGMA check for adapter_name. Cached on the module."""
+    cache_key = f"_kg_adapter_col_{palace_path}"
+    cached = globals().get(cache_key)
+    if cached is not None:
+        return cached
+    import sqlite3 as _sql
+    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
+    if not os.path.isfile(kg_path):
+        return False
+    try:
+        c = _sql.connect(kg_path, timeout=5, check_same_thread=False)
+        try:
+            cols = {r[1] for r in c.execute("PRAGMA table_info(triples)")}
+        finally:
+            c.close()
+        out = "adapter_name" in cols
+    except Exception:
+        out = False
+    globals()[cache_key] = out
+    return out
+
+
+def _kg_has_span_column(palace_path: str) -> bool:
+    """Cheap one-time PRAGMA check for span column. Cached on the module."""
+    cache_key = f"_kg_span_col_{palace_path}"
+    cached = globals().get(cache_key)
+    if cached is not None:
+        return cached
+    import sqlite3 as _sql
+    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
+    if not os.path.isfile(kg_path):
+        return False
+    try:
+        c = _sql.connect(kg_path, timeout=5, check_same_thread=False)
+        try:
+            cols = {r[1] for r in c.execute("PRAGMA table_info(triples)")}
+        finally:
+            c.close()
+        out = "span" in cols
+    except Exception:
+        out = False
+    globals()[cache_key] = out
+    return out
+
+
+def tool_mempalace_kg_query(args: dict) -> str:
+    """Entity-first KG lookup, scoped to the caller's current project."""
+    palace_path, prefixes, err = _kg_resolve_project_scope()
+    if err:
+        return _err(err)
+    entity = (args.get("entity") or "").strip()
+    if not entity:
+        return _err("mempalace_kg_query: 'entity' is required")
+    direction = (args.get("direction") or "outgoing").strip().lower()
+    if direction not in {"outgoing", "incoming", "both"}:
+        direction = "outgoing"
+    as_of = (args.get("as_of") or "").strip() or None
+
+    kg, err = _kg_open(palace_path)
+    if err or kg is None:
+        return _err(err or "kg unavailable")
+    try:
+        triples = kg.query_entity(entity, as_of=as_of, direction=direction) or []
+    except Exception as e:
+        return _err(f"kg.query_entity: {type(e).__name__}: {e}")
+    finally:
+        try: kg.close()
+        except Exception: pass
+
+    # Post-filter by project source prefix. Only triples whose source_file
+    # falls under one of the project's known prefixes are returned.
+    in_scope = []
+    for t in triples:
+        if not isinstance(t, dict):
+            continue
+        sf = t.get("source_file", "") or ""
+        if _kg_source_in_scope(sf, prefixes):
+            in_scope.append(t)
+    return _ok({
+        "entity": entity,
+        "direction": direction,
+        "as_of": as_of,
+        "count": len(in_scope),
+        "total_before_scope_filter": len(triples),
+        "triples": in_scope[:200],
+    })
+
+
+def tool_mempalace_kg_search(args: dict) -> str:
+    """Find triples in the project KG.
+
+    Two modes — pick by intent:
+
+    1) **Structured mode** (`predicate` set): exact predicate match, optionally
+       narrowed by `subject_contains` / `object_contains`. Use this for
+       contradiction- and coverage-detection: 'every requires triple about
+       retention', 'every cites triple referencing GDPR'.
+
+    2) **Free-text mode** (`query` set, no `predicate`): substring match across
+       subject OR predicate OR object. Use this when you don't know which
+       predicate to ask for and just want any triple mentioning a topic.
+
+    Either `predicate` or `query` must be set. Both can be combined: when
+    `predicate` is set, `query` is ignored.
+    """
+    palace_path, prefixes, err = _kg_resolve_project_scope()
+    if err:
+        return _err(err)
+    predicate = (args.get("predicate") or "").strip().lower().replace(" ", "_")
+    free_query = (args.get("query") or "").strip()
+    if not predicate and not free_query:
+        return _err(
+            "mempalace_kg_search: one of 'predicate' (structured mode) or "
+            "'query' (free-text substring mode) is required")
+    subj_q = (args.get("subject_contains") or "").strip().lower()
+    obj_q = (args.get("object_contains") or "").strip().lower()
+    try:
+        limit = max(1, min(200, int(args.get("limit") or 25)))
+    except (TypeError, ValueError):
+        limit = 25
+
+    ok, err_imp = _ensure_mempalace_importable()
+    if not ok:
+        return _err(err_imp)
+
+    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
+    if not os.path.isfile(kg_path):
+        return _err("knowledge_graph.sqlite3 not yet created")
+
+    import sqlite3 as _sql
+    has_adapter = _kg_has_adapter_column(palace_path)
+    has_span = _kg_has_span_column(palace_path)
+    conn = _sql.connect(kg_path, timeout=5, check_same_thread=False)
+    conn.row_factory = _sql.Row
+    try:
+        # Build source_file scope filter from the project's prefixes.
+        scope_clause = " OR ".join(["source_file LIKE ? || '%'"] * len(prefixes))
+        sql_head = (
+            "SELECT t.subject AS sub_id, e1.name AS sub_name, "
+            "       t.predicate, "
+            "       t.object AS obj_id, e2.name AS obj_name, "
+            "       t.confidence, t.source_file, "
+            f"       {'t.source_drawer_id' if has_adapter else 'NULL'} AS source_drawer_id, "
+            f"       {'t.adapter_name' if has_adapter else 'NULL'} AS adapter_name, "
+            f"       {'t.span' if has_span else 'NULL'} AS span, "
+            "       t.valid_from, t.valid_to "
+            "FROM triples t "
+            "LEFT JOIN entities e1 ON t.subject = e1.id "
+            "LEFT JOIN entities e2 ON t.object = e2.id "
+        )
+        if predicate:
+            # Structured mode — exact predicate match.
+            sql = sql_head + (
+                f"WHERE t.predicate = ? AND ({scope_clause}) "
+                "AND t.valid_to IS NULL "
+            )
+            params: list = [predicate] + list(prefixes)
+            if subj_q:
+                sql += " AND LOWER(e1.name) LIKE ? "
+                params.append(f"%{subj_q}%")
+            if obj_q:
+                sql += " AND LOWER(e2.name) LIKE ? "
+                params.append(f"%{obj_q}%")
+        else:
+            # Free-text mode — substring across subject_name / predicate / object_name.
+            # COALESCE so entity-table absence (rows where t.subject is the literal
+            # string itself rather than an entity id) still scans.
+            like = f"%{free_query.lower()}%"
+            sql = sql_head + (
+                f"WHERE ({scope_clause}) AND t.valid_to IS NULL "
+                "AND (LOWER(COALESCE(e1.name, t.subject)) LIKE ? "
+                "     OR LOWER(t.predicate) LIKE ? "
+                "     OR LOWER(COALESCE(e2.name, t.object)) LIKE ?) "
+            )
+            params = list(prefixes) + [like, like, like]
+        sql += " ORDER BY t.confidence DESC, t.extracted_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+
+    triples = []
+    for r in rows:
+        triples.append({
+            "subject": r["sub_name"] or r["sub_id"],
+            "predicate": r["predicate"],
+            "object": r["obj_name"] or r["obj_id"],
+            "confidence": r["confidence"],
+            "source_file": r["source_file"] or "",
+            "source_drawer_id": r["source_drawer_id"] or "",
+            "span": r["span"] or "",
+            "valid_from": r["valid_from"] or "",
+        })
+    return _ok({
+        "mode": "structured" if predicate else "free_text",
+        "predicate": predicate or None,
+        "query": free_query or None,
+        "subject_contains": subj_q or None,
+        "object_contains": obj_q or None,
+        "count": len(triples),
+        "triples": triples,
+    })
+
+
+def tool_mempalace_kg_neighbors(args: dict) -> str:
+    """BFS in the project's KG. Returns reachable entities + connecting triples."""
+    palace_path, prefixes, err = _kg_resolve_project_scope()
+    if err:
+        return _err(err)
+    entity = (args.get("entity") or "").strip()
+    if not entity:
+        return _err("mempalace_kg_neighbors: 'entity' is required")
+    try:
+        depth = max(1, min(3, int(args.get("depth") or 1)))
+    except (TypeError, ValueError):
+        depth = 1
+    pred_filter = (args.get("predicate") or "").strip().lower().replace(" ", "_") or None
+
+    kg, err = _kg_open(palace_path)
+    if err or kg is None:
+        return _err(err or "kg unavailable")
+
+    visited: set[str] = set()
+    frontier: list[str] = [entity]
+    edges: list[dict] = []
+    try:
+        for hop in range(depth):
+            next_frontier: list[str] = []
+            for ent in frontier:
+                if ent in visited:
+                    continue
+                visited.add(ent)
+                try:
+                    triples = kg.query_entity(ent, direction="both") or []
+                except Exception:
+                    triples = []
+                for t in triples:
+                    if not isinstance(t, dict):
+                        continue
+                    if not _kg_source_in_scope(t.get("source_file", "") or "",
+                                                prefixes):
+                        continue
+                    if pred_filter and t.get("predicate") != pred_filter:
+                        continue
+                    edges.append({
+                        "subject": t.get("subject", ""),
+                        "predicate": t.get("predicate", ""),
+                        "object": t.get("object", ""),
+                        "confidence": t.get("confidence"),
+                        "source_file": t.get("source_file", "") or "",
+                        "span": t.get("span") or "",
+                        "hop": hop + 1,
+                    })
+                    other = t.get("object") if t.get("subject") == ent \
+                            else t.get("subject")
+                    if other and other not in visited:
+                        next_frontier.append(other)
+            frontier = next_frontier
+            if not frontier:
+                break
+    finally:
+        try: kg.close()
+        except Exception: pass
+
+    return _ok({
+        "entity": entity,
+        "depth": depth,
+        "predicate_filter": pred_filter,
+        "entities_reached": sorted(visited),
+        "edge_count": len(edges),
+        "edges": edges[:300],
+    })

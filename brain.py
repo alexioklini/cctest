@@ -1319,29 +1319,10 @@ def resolve_tool_deferred(name: str, agent_id: str | None = None) -> bool:
     return deferred
 
 
-def tool_passes_purpose(name: str, purpose: str) -> bool:
-    """A tool passes the purpose filter when:
-      - its global purposes list is empty (= all purposes), OR
-      - the call's purpose is in its purposes list.
-
-    Purpose filter is global-only — agents cannot override it (the purpose
-    of a call is a property of the call, not the agent).
-    """
-    purposes = _global_tool_purposes(name)
-    if not purposes:
-        return True
-    return purpose in purposes
-
-
-# Legacy aliases — deprecated, kept for callers that haven't migrated yet.
-# Will be removed in C2 along with the resolver consolidation.
-def tool_is_enabled(name: str) -> bool:
-    return _global_tool_enabled(name)
-
-
-def tool_is_deferred(name: str) -> bool:
-    return _global_tool_deferred(name)
-
+# tool_passes_purpose / tool_is_enabled / tool_is_deferred (the tool
+# resolver predicates — NOT TOOL_DISPATCH entries) moved to
+# engine/tools/misc_tools.py (refactor E4); re-exported below near
+# TOOL_DISPATCH.
 
 def seed_tool_settings_purposes(settings: dict) -> dict:
     """Ensure every tool in TOOL_DISPATCH has a `purposes` field on its
@@ -1714,566 +1695,23 @@ def _maybe_qmd_reindex(path: str) -> None:
 # (refactor E1); re-exported near TOOL_DISPATCH.
 
 
-def tool_ask_llm(args: dict) -> str:
-    """One-shot LLM call without an agentic loop. For workflows / chats that need
-    a quick text-in / text-out transformation. No tools, no memory, no streaming.
-
-    Args:
-        prompt: user message
-        system: optional system prompt (defaults to a generic helpful assistant)
-        model:  model id (defaults to refinement.model from tools_config.json,
-                falling back to the agent's preferred model)
-    """
-    prompt = args.get("prompt") or ""
-    if not prompt:
-        return _err("ask_llm: 'prompt' is required")
-    system_prompt = args.get("system") or (
-        "You are a helpful assistant. Answer concisely and directly."
-    )
-    model = args.get("model") or ""
-    # Resolution order: explicit kwarg → workflow MODEL header → workflow AGENT.preferred_model
-    # → refinement model → current agent → server fallback.
-    if not model:
-        model = (getattr(_thread_local, "workflow_default_model", "") or "").strip()
-    if not model:
-        wf_agent = getattr(_thread_local, "workflow_agent_id", "") or ""
-        if wf_agent:
-            try:
-                _ag = AgentConfig(wf_agent)
-                model = (_ag.preferred_model or "").strip()
-            except Exception:
-                pass
-    if not model:
-        try:
-            tcfg = _load_tools_config() or {}
-            model = ((tcfg.get("refinement") or {}).get("model") or "").strip()
-        except Exception:
-            model = ""
-    if not model:
-        agent = getattr(_thread_local, "current_agent", None) or _current_agent
-        if agent:
-            model = agent.preferred_model or ""
-    if not model:
-        model = _delegate_fallback_model or ""
-    if not model:
-        return _err("ask_llm: no model configured")
-    # Inherit the workflow's synthetic session_id ("wf-<execution_id>") so the
-    # cost log can attribute this LLM call back to the workflow run.
-    sid = getattr(_thread_local, "current_session_id", None) or ""
-    try:
-        from handlers import sidecar_proxy as _sidecar_proxy
-        _agent_id = ""
-        _ag = getattr(_thread_local, "current_agent", None) or _current_agent
-        if _ag is not None:
-            _agent_id = getattr(_ag, "agent_id", "") or ""
-        _res = _sidecar_proxy.background_call(
-            messages=[{"role": "user", "content": prompt}],
-            model=model,
-            system_prompt=system_prompt,
-            agent_id=(_agent_id or "main"),
-            session_id=(sid or ""),
-        )
-        text = _res.get("reply") or ""
-        return _ok({"text": text.strip(), "model": model})
-    except Exception as e:
-        return _err(f"ask_llm: {e}")
-
+# tool_ask_llm moved to engine/tools/ask_tools.py (refactor E4);
+# re-exported below near TOOL_DISPATCH.
 
 _WHISPER_PROVIDER = "local-mlx-whisper"
 
 
-def _whisper_repo_for(model_id: str) -> str:
-    """Map a whisper model id (e.g. 'whisper-base', 'whisper-large-v3') to the
-    HuggingFace mlx-community repo id. The id-to-repo derivation is mechanical:
-    'whisper-<size>' → 'mlx-community/whisper-<size>-mlx'."""
-    base = model_id.split("/")[-1]  # tolerate scoped ids
-    if not base.startswith("whisper-"):
-        raise ValueError(f"not a whisper model id: '{model_id}'")
-    return f"mlx-community/{base}-mlx"
+# transcribe_audio + its private transcription-helper cluster
+# (_whisper_repo_for / _transcription_config / _transcribe_with_whisper /
+# _transcribe_with_voxtral / _normalize_legacy_audio_id /
+# _transcription_resolve) moved to engine/tools/translate_tools.py
+# (refactor E4); all re-exported below near TOOL_DISPATCH. server_lib/
+# translate/{media,live}.py reach the helpers via brain.<name>.
 
-
-def _transcription_config() -> dict:
-    """Read the transcribe_audio block from tools_config.json (merged with defaults)."""
-    try:
-        return get_tool_config().get("transcribe_audio", {}) or {}
-    except Exception:
-        return {}
-
-
-def _transcribe_with_whisper(file_path: str, model_id: str, language: str | None,
-                             with_segments: bool = False) -> dict:
-    """Run local mlx-whisper. Raises on import / runtime failure."""
-    repo = _whisper_repo_for(model_id)
-    import mlx_whisper  # type: ignore
-    kwargs = {"path_or_hf_repo": repo}
-    if language:
-        kwargs["language"] = language
-    result = mlx_whisper.transcribe(file_path, **kwargs) or {}
-    transcript = (result.get("text") or "").strip()
-    detected_language = result.get("language") or language or ""
-    segments = result.get("segments") or []
-    duration_s = 0.0
-    if segments:
-        try:
-            duration_s = float(segments[-1].get("end", 0.0))
-        except (TypeError, ValueError):
-            duration_s = 0.0
-    out = {
-        "transcript": transcript,
-        "language": detected_language,
-        "duration_s": round(duration_s, 2),
-    }
-    if with_segments:
-        norm: list[dict] = []
-        for s in segments:
-            if not isinstance(s, dict):
-                continue
-            try:
-                norm.append({
-                    "text": (s.get("text") or "").strip(),
-                    "start": float(s.get("start") or 0.0),
-                    "end": float(s.get("end") or 0.0),
-                })
-            except (TypeError, ValueError):
-                pass
-        out["segments"] = norm
-    return out
-
-
-def _transcribe_with_voxtral(file_path: str, model_id: str, provider_name: str,
-                             language: str | None, with_segments: bool = False) -> dict:
-    """POST audio to Mistral Voxtral /audio/transcriptions (OpenAI-compatible multipart).
-    Raises on HTTP error so the caller can decide whether to fall back.
-
-    When `with_segments=True`, the returned dict carries a `segments` list of
-    `{text, start, end}` (Voxtral always returns these — the flag just controls
-    whether we expose them upward). Used for SRT/VTT generation.
-    """
-    try:
-        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        with open(cfg_path) as f:
-            prov = json.load(f).get("providers", {}).get(provider_name, {}) or {}
-    except Exception as e:
-        raise RuntimeError(f"could not load provider '{provider_name}': {e}")
-    base_url = (prov.get("base_url") or "").rstrip("/")
-    api_key = prov.get("api_key") or ""
-    if not base_url or not api_key:
-        raise RuntimeError(f"provider '{provider_name}' missing base_url or api_key")
-
-    # Build multipart body manually (stdlib only — keeps install footprint identical).
-    boundary = f"----brainagentboundary{int(time.time()*1000)}"
-    with open(file_path, "rb") as f:
-        file_bytes = f.read()
-    filename = os.path.basename(file_path)
-    ext = os.path.splitext(filename)[1].lstrip(".").lower() or "bin"
-    mime_map = {
-        "wav": "audio/wav", "mp3": "audio/mpeg", "m4a": "audio/mp4",
-        "mp4": "audio/mp4", "ogg": "audio/ogg", "flac": "audio/flac",
-        "aac": "audio/aac", "webm": "audio/webm",
-    }
-    mime = mime_map.get(ext, "application/octet-stream")
-
-    parts: list[bytes] = []
-    def _field(name: str, value: str):
-        parts.append(f"--{boundary}\r\n".encode())
-        parts.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
-        parts.append(value.encode("utf-8"))
-        parts.append(b"\r\n")
-    _field("model", model_id)
-    if language:
-        _field("language", language)
-    if with_segments:
-        # Mistral OpenAI-compat: array fields use repeated key with []. Voxtral
-        # returns segments unconditionally, but we still pass this so the wire
-        # is explicit about what we expect — future-proofs against a default
-        # change to text-only.
-        _field("timestamp_granularities[]", "segment")
-    parts.append(f"--{boundary}\r\n".encode())
-    parts.append(
-        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode()
-    )
-    parts.append(f"Content-Type: {mime}\r\n\r\n".encode())
-    parts.append(file_bytes)
-    parts.append(b"\r\n")
-    parts.append(f"--{boundary}--\r\n".encode())
-    body = b"".join(parts)
-
-    url = f"{base_url}/audio/transcriptions"
-    req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            raw = resp.read()
-    except urllib.error.HTTPError as e:
-        try:
-            err_body = e.read().decode("utf-8", errors="replace")[:500]
-        except Exception:
-            err_body = ""
-        raise RuntimeError(f"HTTP {e.code} from {url}: {err_body}")
-
-    try:
-        data = json.loads(raw.decode("utf-8"))
-    except Exception as e:
-        raise RuntimeError(f"voxtral: bad JSON response: {e}")
-
-    transcript = (data.get("text") or "").strip()
-    detected_language = data.get("language") or language or ""
-    # Voxtral returns usage.prompt_audio_seconds; older / OpenAI-shape APIs use usage.seconds.
-    duration_s = 0.0
-    usage = data.get("usage") or {}
-    if isinstance(usage, dict):
-        for key in ("prompt_audio_seconds", "seconds", "audio_seconds"):
-            try:
-                v = float(usage.get(key) or 0.0)
-            except (TypeError, ValueError):
-                v = 0.0
-            if v:
-                duration_s = v
-                break
-    raw_segments = data.get("segments") or []
-    if not duration_s and raw_segments:
-        try:
-            duration_s = float(raw_segments[-1].get("end", 0.0))
-        except (TypeError, ValueError):
-            duration_s = 0.0
-    out = {
-        "transcript": transcript,
-        "language": detected_language,
-        "duration_s": round(duration_s, 2),
-    }
-    if with_segments:
-        # Normalize to a stable shape — drop speaker_id/type/etc., enforce floats.
-        norm: list[dict] = []
-        for s in raw_segments:
-            if not isinstance(s, dict):
-                continue
-            try:
-                norm.append({
-                    "text": (s.get("text") or "").strip(),
-                    "start": float(s.get("start") or 0.0),
-                    "end": float(s.get("end") or 0.0),
-                })
-            except (TypeError, ValueError):
-                pass
-        out["segments"] = norm
-    return out
-
-
-def _normalize_legacy_audio_id(requested: str) -> str:
-    """Back-compat: pre-capability ids stored in tools_config.json or passed by
-    older callers. Maps to the new canonical model_config ids.
-
-      - 'whisper:base' (and other sizes) → 'whisper-base'
-      - bare 'tiny'/'base'/'small'/'medium'/'large-v3' → 'whisper-base' etc.
-      - bare 'voxtral-mini-latest' / 'voxtral-small-latest' → scoped 'mistral-experimental/voxtral-*-latest'
-    """
-    r = (requested or "").strip()
-    if not r:
-        return r
-    low = r.lower()
-    legacy_whisper_sizes = {"tiny", "base", "small", "medium", "large-v3"}
-    if low.startswith("whisper:"):
-        size = low.split(":", 1)[1]
-        return f"whisper-{size}"
-    if low in legacy_whisper_sizes:
-        return f"whisper-{low}"
-    if low in ("voxtral-mini-latest", "voxtral-small-latest"):
-        return f"mistral-experimental/{low}"
-    return r
-
-
-def _transcription_resolve(model_arg: str | None) -> tuple[str, dict]:
-    """Resolve a model arg to (canonical_id, route_dict). route_dict has {wire, provider}.
-
-    The model registry is _models_config: any entry whose capabilities list
-    includes 'audio' is selectable here. The provider field on the model
-    determines the wire:
-      - provider == 'local-mlx-whisper' → wire 'mlx_whisper' (in-process)
-      - everything else → wire 'openai_audio' (multipart POST to <base_url>/audio/transcriptions)
-
-    The configured id MUST match an entry in _models_config exactly. Pre-
-    capability legacy ids ('whisper:base', bare 'voxtral-mini-latest', bare
-    sizes) are normalised once via _normalize_legacy_audio_id before lookup
-    — that's the only mapping layer. No fuzzy / case-insensitive / suffix
-    fallback: if the configured id doesn't resolve, raise so the admin
-    notices instead of silently dispatching to a near-match.
-    """
-    cfg = _transcription_config()
-    requested = (model_arg or "").strip()
-    if not requested:
-        requested = (cfg.get("default_model") or "").strip()
-    if not requested:
-        audio_ids = sorted([
-            mid for mid, c in _models_config.items()
-            if "audio" in (c.get("capabilities") or [])
-        ])
-        raise ValueError(
-            "no transcription model configured. Set transcribe_audio.default_model "
-            f"in the Tools tab. Configured (capability=audio): {', '.join(audio_ids) or '(none)'}"
-        )
-    # The configured id is used verbatim. No legacy normalisation, no
-    # fuzzy match — what the admin sets in the Tools tab is what the tool
-    # uses. If it doesn't match _models_config exactly, we raise below.
-    entry = _models_config.get(requested)
-    if not entry:
-        audio_ids = sorted([
-            mid for mid, c in _models_config.items()
-            if "audio" in (c.get("capabilities") or [])
-        ])
-        raise ValueError(
-            f"unknown transcription model '{requested}'. "
-            f"Configured (capability=audio): {', '.join(audio_ids) or '(none)'}"
-        )
-
-    if "audio" not in (entry.get("capabilities") or []):
-        raise ValueError(
-            f"model '{requested}' is not flagged with the 'audio' capability. "
-            "Add 'audio' to its capabilities in the Models tab."
-        )
-
-    provider = (entry.get("provider") or "").strip()
-    if provider == _WHISPER_PROVIDER:
-        return requested, {"wire": "mlx_whisper", "provider": provider}
-    return requested, {"wire": "openai_audio", "provider": provider}
-
-
-def tool_transcribe_audio(args: dict) -> str:
-    file_path = args.get("file", "")
-    language = args.get("language") or None
-    if not file_path:
-        return _err("transcribe_audio: 'file' is required")
-    file_path = os.path.expanduser(file_path)
-    if not os.path.isabs(file_path):
-        file_path = os.path.abspath(file_path)
-    if not os.path.exists(file_path):
-        return _err(f"transcribe_audio: file not found: {file_path}")
-
-    try:
-        model_id, route = _transcription_resolve(args.get("model"))
-    except ValueError as e:
-        return _err(f"transcribe_audio: {e}")
-    wire = (route.get("wire") or "").lower()
-
-    # GDPR gate: when server_block is master-on and the chosen backend is cloud
-    # (i.e. not mlx_whisper), swap to the configured local fallback. We can't scan
-    # audio content, so this is a conservative blanket policy — voice notes can
-    # carry PII the scanner would otherwise catch in text.
-    fallback_used_reason = ""
-    if wire != "mlx_whisper":
-        try:
-            cfg_root = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")))
-            gdpr = cfg_root.get("gdpr_scanner") or {}
-            if gdpr.get("enabled") and gdpr.get("server_block"):
-                fb_id = (_transcription_config().get("fallback_model") or "whisper-base")
-                model_id, route = _transcription_resolve(fb_id)
-                wire = (route.get("wire") or "").lower()
-                fallback_used_reason = "gdpr_server_block"
-                try:
-                    if _audit_log:
-                        _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-                        _audit_log.log_action(
-                            agent=(_agent.agent_id if _agent else "main"),
-                            action_type="pii_auto_fallback",
-                            tool_name="transcribe_audio",
-                            args_summary=f"cloud -> {model_id}",
-                            result_summary="audio file, content not scannable",
-                            result_status="ok",
-                            session_id=getattr(_thread_local, 'current_session_id', None) or None,
-                            source="background",
-                        )
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-    # Dispatch.
-    try:
-        if wire == "mlx_whisper":
-            try:
-                result = _transcribe_with_whisper(file_path, model_id, language)
-            except ImportError:
-                return _err("transcribe_audio: mlx-whisper is not installed. Run: pip3 install --user mlx-whisper")
-        elif wire == "openai_audio":
-            provider = route.get("provider") or ""
-            if not provider:
-                return _err(f"transcribe_audio: model '{model_id}' has no provider configured")
-            api_model_id = get_api_model_id(model_id)
-            try:
-                result = _transcribe_with_voxtral(file_path, api_model_id, provider, language)
-            except Exception as cloud_err:
-                fb_id = (_transcription_config().get("fallback_model") or "whisper-base")
-                try:
-                    fb_model_id, _ = _transcription_resolve(fb_id)
-                    result = _transcribe_with_whisper(file_path, fb_model_id, language)
-                    fallback_used_reason = f"cloud_error: {cloud_err}"[:200]
-                    model_id = fb_model_id
-                except Exception:
-                    return _err(f"transcribe_audio: {cloud_err}")
-        else:
-            return _err(f"transcribe_audio: unknown wire '{wire}' for model '{model_id}'")
-    except Exception as e:
-        return _err(f"transcribe_audio: {e}")
-
-    out = {
-        "transcript": result["transcript"],
-        "language": result["language"],
-        "duration_s": result["duration_s"],
-        "model": model_id,
-        "file": file_path,
-    }
-    if fallback_used_reason:
-        out["fallback_used"] = fallback_used_reason
-
-    # Optional chained translation step.
-    translate_to = (args.get("translate_to") or "").strip().lower()
-    if translate_to and result["transcript"].strip():
-        try:
-            from server_lib.translate import translate_text as _tt
-            tr = _tt(
-                result["transcript"],
-                translate_to,
-                source_lang=result["language"] or "",
-                glossary_slug=args.get("glossary") or "",
-            )
-            out["translation"] = tr["translation"]
-            out["target_lang"] = tr["target_lang"]
-            out["translation_model"] = tr["model"]
-        except Exception as e:
-            out["translation_error"] = str(e)[:200]
-
-    try:
-        print(f"[transcribe_audio] model={model_id} duration_s={result['duration_s']} "
-              f"chars={len(result['transcript'])} fallback={fallback_used_reason or '-'} "
-              f"translate_to={translate_to or '-'}", flush=True)
-    except Exception:
-        pass
-    return _ok(out)
-
-
-# ─── Translation tools ──────────────────────────────────────────────────────
-
-def tool_translate_text(args: dict) -> str:
-    text = args.get("text") or ""
-    target_lang = (args.get("target_lang") or "").strip().lower()
-    if not text:
-        return _err("translate_text: 'text' is required")
-    if not target_lang:
-        return _err("translate_text: 'target_lang' is required")
-    try:
-        from server_lib.translate import translate_text as _tt
-        result = _tt(
-            text,
-            target_lang,
-            source_lang=(args.get("source_lang") or "").strip().lower(),
-            glossary_slug=(args.get("glossary") or "").strip(),
-            model=(args.get("model") or "").strip(),
-            tone=(args.get("tone") or "").strip(),
-        )
-        return _ok(result)
-    except ValueError as e:
-        return _err(f"translate_text: {e}")
-    except Exception as e:
-        return _err(f"translate_text: {e}")
-
-
-def tool_detect_language(args: dict) -> str:
-    text = args.get("text") or ""
-    if not text:
-        return _err("detect_language: 'text' is required")
-    try:
-        from server_lib.translate import detect_language as _dl
-        return _ok(_dl(text))
-    except Exception as e:
-        return _err(f"detect_language: {e}")
-
-
-def tool_list_glossaries(args: dict) -> str:
-    try:
-        from server_lib.translate import list_glossaries as _lg
-        return _ok({"glossaries": _lg()})
-    except Exception as e:
-        return _err(f"list_glossaries: {e}")
-
-
-def tool_get_glossary(args: dict) -> str:
-    slug = (args.get("slug") or "").strip()
-    if not slug:
-        return _err("get_glossary: 'slug' is required")
-    try:
-        from server_lib.translate import load_glossary as _ld
-        g = _ld(slug)
-        if not g:
-            return _err(f"get_glossary: not found '{slug}'")
-        return _ok({"glossary": g})
-    except Exception as e:
-        return _err(f"get_glossary: {e}")
-
-
-def tool_translate_document(args: dict) -> str:
-    path = (args.get("path") or "").strip()
-    target_lang = (args.get("target_lang") or "").strip().lower()
-    if not path:
-        return _err("translate_document: 'path' is required")
-    if not target_lang:
-        return _err("translate_document: 'target_lang' is required")
-
-    # Resolve relative paths against the current artifact folder so the agent
-    # can pass a bare filename of something it just wrote — same convention
-    # write_file uses.
-    src_path = os.path.expanduser(path)
-    if not os.path.isabs(src_path):
-        session_id = getattr(_thread_local, "current_session_id", None)
-        agent = getattr(_thread_local, "current_agent", None) or _current_agent
-        if session_id and agent:
-            folder = _get_artifact_session_folder(session_id)
-            artifact_dir = os.path.join(AGENTS_DIR, agent.agent_id, "artifacts", folder)
-            candidate = os.path.join(artifact_dir, src_path)
-            src_path = candidate if os.path.exists(candidate) else os.path.abspath(src_path)
-        else:
-            src_path = os.path.abspath(src_path)
-    if not os.path.isfile(src_path):
-        return _err(f"translate_document: file not found: {src_path}")
-
-    # Output goes into the artifact folder so it auto-promotes.
-    session_id = getattr(_thread_local, "current_session_id", None)
-    agent = getattr(_thread_local, "current_agent", None) or _current_agent
-    if session_id and agent:
-        folder = _get_artifact_session_folder(session_id)
-        out_dir = os.path.join(AGENTS_DIR, agent.agent_id, "artifacts", folder)
-        os.makedirs(out_dir, exist_ok=True)
-    else:
-        out_dir = os.path.dirname(src_path) or "."
-
-    try:
-        from server_lib.translate import translate_document_file
-        result = translate_document_file(
-            src_path,
-            target_lang=target_lang,
-            source_lang=(args.get("source_lang") or "").strip().lower(),
-            glossary_slug=(args.get("glossary") or "").strip(),
-            model=(args.get("model") or "").strip(),
-            output_dir=out_dir,
-        )
-    except FileNotFoundError as e:
-        return _err(f"translate_document: file not found: {e}")
-    except ValueError as e:
-        return _err(f"translate_document: {e}")
-    except Exception as e:
-        return _err(f"translate_document: {e}")
-
-    # Register the output as an artifact write so the panel picks it up.
-    try:
-        _after_file_write(result["output_path"], "created",
-                          agent.agent_id if agent else "main")
-    except Exception:
-        pass
-    return _ok(result)
-
+# The translation tools (translate_text / detect_language /
+# list_glossaries / get_glossary / translate_document) moved to
+# engine/tools/translate_tools.py (refactor E4); re-exported below near
+# TOOL_DISPATCH.
 
 def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: str) -> str:
     """Use a vision-capable model to describe an image attachment."""
@@ -2384,62 +1822,8 @@ def _html_to_markdown(html: str) -> str:
         return ""
 
 
-def tool_web_fetch(args: dict) -> str:
-    url = args.get("url", "")
-    method = args.get("method", "GET")
-    headers = args.get("headers", {})
-    body = args.get("body")
-    max_length = args.get("max_length", 50000)
-    force_fresh = args.get("force_fresh", False)
-    # Read timeout and max_size from tools_config
-    _wf_cfg = get_tool_config().get("web_fetch", {})
-    _wf_timeout = _wf_cfg.get("timeout", 30)
-    _wf_max_size_mb = _wf_cfg.get("max_size_mb", 10)
-
-    # Check cache for GET requests without body
-    cache_key = url if method == "GET" and not body else None
-    if cache_key and not force_fresh:
-        cached = _web_cache.get(cache_key)
-        if cached is not None:
-            cached["cached"] = True
-            return _ok(cached)
-
-    try:
-        req_headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        }
-        req_headers.update(headers)
-        data = body.encode("utf-8") if body else None
-        req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
-        with urllib.request.urlopen(req, timeout=_wf_timeout) as resp:
-            raw = resp.read(_wf_max_size_mb * 1024 * 1024)
-            encoding = resp.headers.get("Content-Encoding", "")
-            if encoding == "gzip":
-                import gzip
-                raw = gzip.decompress(raw)
-            charset = resp.headers.get_content_charset() or "utf-8"
-            text = raw.decode(charset, errors="replace")
-        final_url = resp.url if hasattr(resp, 'url') else url
-        content_type = resp.headers.get_content_type() or ""
-        if "html" in content_type or text.lstrip().startswith(("<html", "<!doc", "<!DOC")):
-            text = _html_to_markdown(text) or text
-        if len(text) > max_length:
-            text = text[:max_length] + "\n... (truncated)"
-        result = {"url": final_url, "status": resp.status, "length": len(text), "content": text}
-        if cache_key:
-            _web_cache.put(cache_key, dict(result))
-        return _ok(result)
-    except urllib.error.HTTPError as e:
-        body_text = ""
-        try:
-            body_text = e.read().decode("utf-8", errors="replace")[:5000]
-        except Exception:
-            pass
-        return _err(f"web_fetch: HTTP {e.code} {e.reason}\n{body_text}")
-    except Exception as e:
-        return _err(f"web_fetch: {e}")
-
+# tool_web_fetch moved to engine/tools/misc_tools.py (refactor E4);
+# re-exported below near TOOL_DISPATCH.
 
 def exa_search(query: str, num_results: int = 5, category: str | None = None,
                force_fresh: bool = False) -> str:
@@ -2542,362 +1926,11 @@ def exa_search(query: str, num_results: int = 5, category: str | None = None,
 # scoping uses (source_file LIKE <input_folder>%) plus adapter_name when
 # the KG schema has it (3.3.3+).
 
-def _kg_resolve_project_scope() -> tuple[str, list[str], str | None]:
-    """Return (palace_path, source_prefixes, error_msg) for the current
-    project, or ("",[], "<reason>") if scoping fails. source_prefixes is
-    the union of (project_dir, every input_folder.path) — drawers carrying
-    any of these prefixes belong to this project.
-    """
-    cfg = _load_mempalace_config()
-    if not cfg.get("enabled", True):
-        return "", [], "mempalace: disabled in config.json"
-    if not (cfg.get("kg") or {}).get("enabled", True):
-        return "", [], (
-            "mempalace_kg: knowledge-graph extraction is disabled in "
-            "config.json (mempalace.kg.enabled=false). Use mempalace_query "
-            "to retrieve drawers and read_document on the source files for "
-            "verbatim policy text instead.")
-    palace_path = cfg.get("palace_path", "")
-    if not palace_path or not os.path.isdir(palace_path):
-        return "", [], f"mempalace: palace_path missing: {palace_path}"
-
-    current_project = getattr(_thread_local, "project", None) or ""
-    if not current_project:
-        return "", [], (
-            "mempalace_kg: this tool requires a project context. "
-            "Step 1 supports only project-scoped queries.")
-
-    _ag = getattr(_thread_local, "current_agent", None)
-    current_agent_id = getattr(_ag, "agent_id", None) or (
-        _ag if isinstance(_ag, str) else "main") or "main"
-    proj_cfg = ProjectManager.get_project(current_agent_id, current_project)
-    if not proj_cfg:
-        return "", [], f"project not found: {current_project}"
-    pid = proj_cfg.get("id") or ""
-    if not pid:
-        return "", [], "project has no id (run a sync first)"
-
-    pdir = proj_cfg.get("dir") or ""
-    prefixes: list[str] = []
-    def _norm(p: str) -> str:
-        # Resolve symlinks so the prefix filter matches what the miner stored
-        # in drawer source_file (macOS /tmp → /private/tmp, etc.).
-        try:
-            r = os.path.realpath(p)
-        except OSError:
-            r = p
-        if r and not r.endswith(os.sep):
-            r += os.sep
-        return r
-    if pdir:
-        prefixes.append(_norm(pdir))
-    for entry in (proj_cfg.get("input_folders") or []):
-        fp = (entry.get("path") or "").strip()
-        if fp:
-            prefixes.append(_norm(fp))
-    if not prefixes:
-        return "", [], "project has no input folders or attachments to scope by"
-    return palace_path, prefixes, None
-
-
-def _kg_open(palace_path: str):
-    """Lazy-open the KG. Returns (kg, error_msg)."""
-    ok, err = _ensure_mempalace_importable()
-    if not ok:
-        return None, err
-    try:
-        from mempalace.knowledge_graph import KnowledgeGraph
-    except Exception as e:
-        return None, f"import KnowledgeGraph: {type(e).__name__}: {e}"
-    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
-    if not os.path.isfile(kg_path):
-        return None, "knowledge_graph.sqlite3 not yet created (no extractions run)"
-    try:
-        return KnowledgeGraph(db_path=kg_path), None
-    except Exception as e:
-        return None, f"open KG: {type(e).__name__}: {e}"
-
-
-def _kg_source_in_scope(source_file: str, prefixes: list[str]) -> bool:
-    if not source_file:
-        return False
-    return any(source_file.startswith(p) for p in prefixes)
-
-
-def _kg_has_adapter_column(palace_path: str) -> bool:
-    """Cheap one-time PRAGMA check for adapter_name. Cached on the module."""
-    cache_key = f"_kg_adapter_col_{palace_path}"
-    cached = globals().get(cache_key)
-    if cached is not None:
-        return cached
-    import sqlite3 as _sql
-    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
-    if not os.path.isfile(kg_path):
-        return False
-    try:
-        c = _sql.connect(kg_path, timeout=5, check_same_thread=False)
-        try:
-            cols = {r[1] for r in c.execute("PRAGMA table_info(triples)")}
-        finally:
-            c.close()
-        out = "adapter_name" in cols
-    except Exception:
-        out = False
-    globals()[cache_key] = out
-    return out
-
-
-def _kg_has_span_column(palace_path: str) -> bool:
-    """Cheap one-time PRAGMA check for span column. Cached on the module."""
-    cache_key = f"_kg_span_col_{palace_path}"
-    cached = globals().get(cache_key)
-    if cached is not None:
-        return cached
-    import sqlite3 as _sql
-    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
-    if not os.path.isfile(kg_path):
-        return False
-    try:
-        c = _sql.connect(kg_path, timeout=5, check_same_thread=False)
-        try:
-            cols = {r[1] for r in c.execute("PRAGMA table_info(triples)")}
-        finally:
-            c.close()
-        out = "span" in cols
-    except Exception:
-        out = False
-    globals()[cache_key] = out
-    return out
-
-
-def tool_mempalace_kg_query(args: dict) -> str:
-    """Entity-first KG lookup, scoped to the caller's current project."""
-    palace_path, prefixes, err = _kg_resolve_project_scope()
-    if err:
-        return _err(err)
-    entity = (args.get("entity") or "").strip()
-    if not entity:
-        return _err("mempalace_kg_query: 'entity' is required")
-    direction = (args.get("direction") or "outgoing").strip().lower()
-    if direction not in {"outgoing", "incoming", "both"}:
-        direction = "outgoing"
-    as_of = (args.get("as_of") or "").strip() or None
-
-    kg, err = _kg_open(palace_path)
-    if err or kg is None:
-        return _err(err or "kg unavailable")
-    try:
-        triples = kg.query_entity(entity, as_of=as_of, direction=direction) or []
-    except Exception as e:
-        return _err(f"kg.query_entity: {type(e).__name__}: {e}")
-    finally:
-        try: kg.close()
-        except Exception: pass
-
-    # Post-filter by project source prefix. Only triples whose source_file
-    # falls under one of the project's known prefixes are returned.
-    in_scope = []
-    for t in triples:
-        if not isinstance(t, dict):
-            continue
-        sf = t.get("source_file", "") or ""
-        if _kg_source_in_scope(sf, prefixes):
-            in_scope.append(t)
-    return _ok({
-        "entity": entity,
-        "direction": direction,
-        "as_of": as_of,
-        "count": len(in_scope),
-        "total_before_scope_filter": len(triples),
-        "triples": in_scope[:200],
-    })
-
-
-def tool_mempalace_kg_search(args: dict) -> str:
-    """Find triples in the project KG.
-
-    Two modes — pick by intent:
-
-    1) **Structured mode** (`predicate` set): exact predicate match, optionally
-       narrowed by `subject_contains` / `object_contains`. Use this for
-       contradiction- and coverage-detection: 'every requires triple about
-       retention', 'every cites triple referencing GDPR'.
-
-    2) **Free-text mode** (`query` set, no `predicate`): substring match across
-       subject OR predicate OR object. Use this when you don't know which
-       predicate to ask for and just want any triple mentioning a topic.
-
-    Either `predicate` or `query` must be set. Both can be combined: when
-    `predicate` is set, `query` is ignored.
-    """
-    palace_path, prefixes, err = _kg_resolve_project_scope()
-    if err:
-        return _err(err)
-    predicate = (args.get("predicate") or "").strip().lower().replace(" ", "_")
-    free_query = (args.get("query") or "").strip()
-    if not predicate and not free_query:
-        return _err(
-            "mempalace_kg_search: one of 'predicate' (structured mode) or "
-            "'query' (free-text substring mode) is required")
-    subj_q = (args.get("subject_contains") or "").strip().lower()
-    obj_q = (args.get("object_contains") or "").strip().lower()
-    try:
-        limit = max(1, min(200, int(args.get("limit") or 25)))
-    except (TypeError, ValueError):
-        limit = 25
-
-    ok, err_imp = _ensure_mempalace_importable()
-    if not ok:
-        return _err(err_imp)
-
-    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
-    if not os.path.isfile(kg_path):
-        return _err("knowledge_graph.sqlite3 not yet created")
-
-    import sqlite3 as _sql
-    has_adapter = _kg_has_adapter_column(palace_path)
-    has_span = _kg_has_span_column(palace_path)
-    conn = _sql.connect(kg_path, timeout=5, check_same_thread=False)
-    conn.row_factory = _sql.Row
-    try:
-        # Build source_file scope filter from the project's prefixes.
-        scope_clause = " OR ".join(["source_file LIKE ? || '%'"] * len(prefixes))
-        sql_head = (
-            "SELECT t.subject AS sub_id, e1.name AS sub_name, "
-            "       t.predicate, "
-            "       t.object AS obj_id, e2.name AS obj_name, "
-            "       t.confidence, t.source_file, "
-            f"       {'t.source_drawer_id' if has_adapter else 'NULL'} AS source_drawer_id, "
-            f"       {'t.adapter_name' if has_adapter else 'NULL'} AS adapter_name, "
-            f"       {'t.span' if has_span else 'NULL'} AS span, "
-            "       t.valid_from, t.valid_to "
-            "FROM triples t "
-            "LEFT JOIN entities e1 ON t.subject = e1.id "
-            "LEFT JOIN entities e2 ON t.object = e2.id "
-        )
-        if predicate:
-            # Structured mode — exact predicate match.
-            sql = sql_head + (
-                f"WHERE t.predicate = ? AND ({scope_clause}) "
-                "AND t.valid_to IS NULL "
-            )
-            params: list = [predicate] + list(prefixes)
-            if subj_q:
-                sql += " AND LOWER(e1.name) LIKE ? "
-                params.append(f"%{subj_q}%")
-            if obj_q:
-                sql += " AND LOWER(e2.name) LIKE ? "
-                params.append(f"%{obj_q}%")
-        else:
-            # Free-text mode — substring across subject_name / predicate / object_name.
-            # COALESCE so entity-table absence (rows where t.subject is the literal
-            # string itself rather than an entity id) still scans.
-            like = f"%{free_query.lower()}%"
-            sql = sql_head + (
-                f"WHERE ({scope_clause}) AND t.valid_to IS NULL "
-                "AND (LOWER(COALESCE(e1.name, t.subject)) LIKE ? "
-                "     OR LOWER(t.predicate) LIKE ? "
-                "     OR LOWER(COALESCE(e2.name, t.object)) LIKE ?) "
-            )
-            params = list(prefixes) + [like, like, like]
-        sql += " ORDER BY t.confidence DESC, t.extracted_at DESC LIMIT ?"
-        params.append(limit)
-        rows = conn.execute(sql, params).fetchall()
-    finally:
-        conn.close()
-
-    triples = []
-    for r in rows:
-        triples.append({
-            "subject": r["sub_name"] or r["sub_id"],
-            "predicate": r["predicate"],
-            "object": r["obj_name"] or r["obj_id"],
-            "confidence": r["confidence"],
-            "source_file": r["source_file"] or "",
-            "source_drawer_id": r["source_drawer_id"] or "",
-            "span": r["span"] or "",
-            "valid_from": r["valid_from"] or "",
-        })
-    return _ok({
-        "mode": "structured" if predicate else "free_text",
-        "predicate": predicate or None,
-        "query": free_query or None,
-        "subject_contains": subj_q or None,
-        "object_contains": obj_q or None,
-        "count": len(triples),
-        "triples": triples,
-    })
-
-
-def tool_mempalace_kg_neighbors(args: dict) -> str:
-    """BFS in the project's KG. Returns reachable entities + connecting triples."""
-    palace_path, prefixes, err = _kg_resolve_project_scope()
-    if err:
-        return _err(err)
-    entity = (args.get("entity") or "").strip()
-    if not entity:
-        return _err("mempalace_kg_neighbors: 'entity' is required")
-    try:
-        depth = max(1, min(3, int(args.get("depth") or 1)))
-    except (TypeError, ValueError):
-        depth = 1
-    pred_filter = (args.get("predicate") or "").strip().lower().replace(" ", "_") or None
-
-    kg, err = _kg_open(palace_path)
-    if err or kg is None:
-        return _err(err or "kg unavailable")
-
-    visited: set[str] = set()
-    frontier: list[str] = [entity]
-    edges: list[dict] = []
-    try:
-        for hop in range(depth):
-            next_frontier: list[str] = []
-            for ent in frontier:
-                if ent in visited:
-                    continue
-                visited.add(ent)
-                try:
-                    triples = kg.query_entity(ent, direction="both") or []
-                except Exception:
-                    triples = []
-                for t in triples:
-                    if not isinstance(t, dict):
-                        continue
-                    if not _kg_source_in_scope(t.get("source_file", "") or "",
-                                                prefixes):
-                        continue
-                    if pred_filter and t.get("predicate") != pred_filter:
-                        continue
-                    edges.append({
-                        "subject": t.get("subject", ""),
-                        "predicate": t.get("predicate", ""),
-                        "object": t.get("object", ""),
-                        "confidence": t.get("confidence"),
-                        "source_file": t.get("source_file", "") or "",
-                        "span": t.get("span") or "",
-                        "hop": hop + 1,
-                    })
-                    other = t.get("object") if t.get("subject") == ent \
-                            else t.get("subject")
-                    if other and other not in visited:
-                        next_frontier.append(other)
-            frontier = next_frontier
-            if not frontier:
-                break
-    finally:
-        try: kg.close()
-        except Exception: pass
-
-    return _ok({
-        "entity": entity,
-        "depth": depth,
-        "predicate_filter": pred_filter,
-        "entities_reached": sorted(visited),
-        "edge_count": len(edges),
-        "edges": edges[:300],
-    })
-
+# The project Knowledge-Graph tools (mempalace_kg_query / mempalace_kg_search /
+# mempalace_kg_neighbors) and their private helper cluster
+# (_kg_resolve_project_scope / _kg_open / _kg_source_in_scope /
+# _kg_has_adapter_column / _kg_has_span_column) moved to
+# engine/mempalace_glue.py (refactor E4); re-exported below near TOOL_DISPATCH.
 
 # `tool_save_chat_to_memory` + `_save_chat_to_memory_callback` moved to
 # engine/mempalace_glue.py (refactor C3). server.py still rebinds
@@ -5571,244 +4604,13 @@ def _get_memory_store() -> MemoryStore | None:
     return getattr(_thread_local, 'memory_store', None) or _memory_store
 
 
-def tool_memory_store(args: dict) -> str:
-    """Store a memory. When a project is active, writes to project directory."""
-    ms = _get_memory_store()
-    if not ms:
-        return _err("Memory store not initialized")
-    name = args.get("name", "")
-    content = args.get("content", "")
-    description = args.get("description", "")
-    mem_type = args.get("type", "general")
-    if not name or not content:
-        return _err("memory_store: name and content are required")
-    # If project is active, store in project directory
-    project = getattr(_thread_local, 'project', None)
-    if project:
-        agent_id = ms.agent_id
-        proj_dir = os.path.join(AGENTS_DIR, agent_id, "projects", project)
-        if os.path.isdir(proj_dir):
-            proj_store = MemoryStore(agent_id=f"{agent_id}/{project}", base_dir=proj_dir)
-            result = proj_store.store(name, content, description, mem_type)
-            result["project"] = project
-            return _ok(result)
-    result = ms.store(name, content, description, mem_type)
-    # Trigger near-term memory summary refresh when user-facing memories are stored
-    # (skip if this IS the memory summary being written)
-    if name != "Memory Summary" and mem_type in ("user", "feedback", "project"):
-        try:
-            agent_id = ms.agent_id if hasattr(ms, 'agent_id') else "main"
-            trigger_memory_summary_refresh(agent_id)
-        except Exception:
-            pass
-    return _ok(result)
+# tool_memory_store / tool_memory_recall / tool_memory_delete /
+# tool_memory_shared (and the private `_graph_expand_results` helper) moved to
+# engine/mempalace_glue.py (refactor E4); re-exported below near TOOL_DISPATCH.
 
 
-def _graph_expand_results(results: list[dict], base_dir: str, ingest_dir: str,
-                          max_hops: int = 1) -> list[dict]:
-    """Follow 'related' frontmatter links from matched results for context expansion."""
-    seen_files = {r.get("file_path", "") for r in results}
-    expanded = list(results)
-    frontier = list(results)
-    for _hop in range(max_hops):
-        next_frontier = []
-        for r in frontier:
-            fpath = r.get("file_path", "")
-            if not fpath or not os.path.exists(fpath):
-                continue
-            try:
-                with open(fpath, "r") as f:
-                    raw = f.read(2000)
-                fm, _ = _parse_frontmatter(raw)
-            except Exception:
-                continue
-            # Parse related field (simple YAML list parsing)
-            related_raw = fm.get("related", "")
-            if not related_raw:
-                continue
-            # related is stored as multi-line YAML in frontmatter, parse linked files
-            related_files = re.findall(r'file:\s*(\S+\.md)', raw)
-            for rel_file in related_files:
-                # Try ingest_dir first, then base_dir
-                for search_dir in (ingest_dir, base_dir):
-                    rel_path = os.path.join(search_dir, rel_file)
-                    if rel_path in seen_files or not os.path.exists(rel_path):
-                        continue
-                    seen_files.add(rel_path)
-                    try:
-                        with open(rel_path, "r") as f:
-                            rel_raw = f.read()
-                        rel_fm, rel_body = _parse_frontmatter(rel_raw)
-                        mem = {
-                            "id": hashlib.sha256(rel_fm.get("name", rel_file).encode()).hexdigest()[:12],
-                            "name": rel_fm.get("name", rel_fm.get("title", rel_file.replace(".md", ""))),
-                            "description": rel_fm.get("description", ""),
-                            "type": rel_fm.get("type", "general"),
-                            "content": rel_body,
-                            "file_path": rel_path,
-                            "score": max(0, (r.get("score", 0.5) - 0.2)),
-                            "source_scope": "related",
-                        }
-                        expanded.append(mem)
-                        next_frontier.append(mem)
-                    except Exception:
-                        continue
-                    break  # found in one dir, skip the other
-        frontier = next_frontier
-    return expanded
-
-
-def tool_memory_recall(args: dict) -> str:
-    """Recall memories by searching. When a project is active, searches project first."""
-    ms = _get_memory_store()
-    if not ms:
-        return _err("Memory store not initialized")
-    query = args.get("query", "")
-    limit = args.get("limit", 10)
-    mem_type = args.get("type")
-    mode = args.get("mode", "")
-
-    # Project-scoped search: search project collection first, then agent
-    project = getattr(_thread_local, 'project', None)
-    if project and query:
-        agent_id = ms.agent_id
-        proj_dir = os.path.join(AGENTS_DIR, agent_id, "projects", project)
-        if os.path.isdir(proj_dir):
-            proj_store = MemoryStore(agent_id=f"{agent_id}/{project}", base_dir=proj_dir)
-            # Also search ingested subdir
-            ingest_dir = os.path.join(proj_dir, "ingested")
-            proj_results = proj_store.recall(query, limit, mem_type)
-            # Tag project results
-            for r in proj_results:
-                r["source_scope"] = "project"
-            # Then agent-level results
-            agent_results = ms.recall(query, max(2, limit - len(proj_results)), mem_type)
-            for r in agent_results:
-                r["source_scope"] = "agent"
-            results = proj_results + agent_results
-            # Always expand via graph relationships (follow related links 1 hop)
-            if results:
-                results = _graph_expand_results(results, proj_dir, ingest_dir,
-                                                max_hops=2 if mode == "graph" else 1)
-            for r in results:
-                if r.get("content") and len(r["content"]) > 4000:
-                    r["content"] = r["content"][:4000] + "..."
-            return _ok({"query": query, "project": project, "results": results[:limit], "count": len(results[:limit])})
-
-    if not query:
-        results = ms.list_all(mem_type)
-        return _ok({"query": "", "results": results, "count": len(results)})
-    results = ms.recall(query, limit, mem_type)
-
-    # Always expand via graph relationships (1 hop default, 2 hops for explicit graph mode)
-    if results:
-        agent_id = ms.agent_id
-        agent_dir = os.path.join(AGENTS_DIR, agent_id)
-        ingest_dir = os.path.join(agent_dir, "ingested")
-        results = _graph_expand_results(results, agent_dir, ingest_dir,
-                                        max_hops=2 if mode == "graph" else 1)
-
-    for r in results:
-        if r.get("content") and len(r["content"]) > 4000:
-            r["content"] = r["content"][:4000] + "..."
-
-    # --- Co-recall tracking (Mechanism 3) ---
-    if query and len(results) >= 2:
-        try:
-            result_files = [os.path.basename(r.get("file_path", "")) for r in results if r.get("file_path")]
-            agent_id = ms.agent_id
-            agent_dir = os.path.join(AGENTS_DIR, agent_id)
-            threading.Thread(
-                target=_record_recall_cooccurrence,
-                args=(result_files, agent_id, agent_dir),
-                daemon=True,
-            ).start()
-        except Exception:
-            pass  # Co-recall tracking is best-effort
-
-    return _ok({"query": query, "results": results, "count": len(results)})
-
-
-def tool_memory_delete(args: dict) -> str:
-    """Delete a memory."""
-    ms = _get_memory_store()
-    if not ms:
-        return _err("Memory store not initialized")
-    name = args.get("name", "")
-    if not name:
-        return _err("memory_delete: name is required")
-    result = ms.delete(name)
-    return _ok(result)
-
-
-def tool_memory_shared(args: dict) -> str:
-    """Access shared memory — global (main) or team (team head) scope."""
-    action = args.get("action", "recall")
-    scope = args.get("scope", "global")
-
-    # Determine which agent's memory to use
-    if scope == "team":
-        # Find the team head for the calling agent
-        caller_id = getattr(_thread_local, "delegate_agent_id", None)
-        if not caller_id:
-            agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-            caller_id = agent.agent_id if agent else "main"
-        team_info = _get_agent_team_info(caller_id)
-        if not team_info:
-            return _err("memory_shared: agent is not in any team — use scope='global' instead")
-        team_head_id = team_info["head"]
-        target_agent = AgentConfig(team_head_id)
-        source_label = f"{team_info['name']} (team)"
-    else:
-        target_agent = AgentConfig("main")
-        source_label = "main (shared)"
-
-    shared_store = MemoryStore(agent_id=target_agent.agent_id, base_dir=target_agent.memory_dir)
-
-    if action == "store":
-        name = args.get("name", "")
-        content = args.get("content", "")
-        description = args.get("description", "")
-        mem_type = args.get("type", "general")
-        if not name or not content:
-            return _err("memory_shared store: name and content are required")
-        result = shared_store.store(name, content, description, mem_type)
-        result["source"] = source_label
-        return _ok(result)
-    else:  # recall
-        query = args.get("query", "")
-        limit = args.get("limit", 10)
-        mem_type = args.get("type")
-        if not query:
-            results = shared_store.list_all(mem_type)
-        else:
-            results = shared_store.recall(query, limit, mem_type)
-            # Graph expansion on shared memory too
-            if results:
-                shared_dir = os.path.join(AGENTS_DIR, target_agent.agent_id)
-                shared_ingest = os.path.join(shared_dir, "ingested")
-                results = _graph_expand_results(results, shared_dir, shared_ingest, max_hops=1)
-            for r in results:
-                if r.get("content") and len(r["content"]) > 4000:
-                    r["content"] = r["content"][:4000] + "..."
-        return _ok({"query": query, "source": source_label, "results": results[:limit], "count": len(results[:limit])})
-
-
-def tool_use_skill(args: dict) -> str:
-    """Load a skill's instructions into context."""
-    skill_name = args.get("skill", "")
-    if not skill_name:
-        return _err("use_skill: skill name is required")
-    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-    if not agent:
-        return _err("use_skill: no active agent")
-
-    body = agent.load_skill(skill_name)
-    if body is None:
-        available = [s.get("slug", s["name"]) for s in agent.list_skills()]
-        return _err(f"use_skill: skill '{skill_name}' not found. Available: {', '.join(available) or 'none'}")
-
-    return _ok({"skill": skill_name, "instructions": body})
+# tool_use_skill moved to engine/tools/misc_tools.py (refactor E4);
+# re-exported below near TOOL_DISPATCH.
 
 
 # ─── Memory Summary ────────────────────────────────────────────────
@@ -8636,89 +7438,9 @@ def workflow_cleanup_old(max_age_hours: int = 24) -> None:
             del _workflow_executions[eid]
 
 
-def tool_delegate_task(args: dict) -> str:
-    """Delegate a task to another agent — runs in a background thread."""
-    agent_id = args.get("agent", "")
-    task = args.get("task", "")
-    wait = args.get("wait", True)
-    if not agent_id or not task:
-        return _err("delegate_task: agent and task are required")
-
-    available = list_agents()
-    if agent_id not in available:
-        return _err(f"delegate_task: agent '{agent_id}' not found. Available: {', '.join(available)}")
-
-    # Team-aware delegation scoping (prefer thread-local for concurrent requests)
-    caller_id = getattr(_thread_local, "delegate_agent_id", None)
-    if not caller_id:
-        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-        caller_id = agent.agent_id if agent else None
-    if caller_id:
-        scope = _get_delegation_scope(caller_id)
-        if agent_id not in scope:
-            return _err(f"delegate_task: '{caller_id}' cannot delegate to '{agent_id}'. Allowed: {', '.join(scope)}")
-
-    if not _task_runner:
-        return _err("Task runner not initialized")
-
-    task_id = _task_runner.submit(agent_id, task, args.get("model"))
-
-    if wait:
-        # Synchronous: wait for result
-        result = _task_runner.get_result(task_id)
-        if result and result.get("status") == "completed":
-            return _ok({
-                "task_id": task_id,
-                "agent": agent_id,
-                "task": task,
-                "response": result.get("result", ""),
-            })
-        elif result:
-            return _err(f"delegate_task: {result.get('status')} — {result.get('error', '')}")
-        return _err("delegate_task: no result")
-    else:
-        # Async: return task_id immediately
-        return _ok({
-            "task_id": task_id,
-            "agent": agent_id,
-            "task": task,
-            "status": "running",
-            "message": f"Task submitted. Use task_status(task_id='{task_id}') to check progress.",
-        })
-
-
-def tool_task_status(args: dict) -> str:
-    """Check status of a background task."""
-    if not _task_runner:
-        return _err("Task runner not initialized")
-    task_id = args.get("task_id", "")
-    if task_id:
-        status = _task_runner.get_status(task_id)
-        if not status:
-            return _err(f"Task '{task_id}' not found")
-        # Truncate long results
-        if status.get("result") and len(status["result"]) > 2000:
-            status["result"] = status["result"][:2000] + "..."
-        return _ok(status)
-    else:
-        # List all tasks
-        tasks = _task_runner.list_tasks()
-        for t in tasks:
-            if t.get("result") and len(t["result"]) > 200:
-                t["result"] = t["result"][:200] + "..."
-        return _ok({"tasks": tasks, "count": len(tasks)})
-
-
-def tool_task_cancel(args: dict) -> str:
-    """Cancel a running background task."""
-    if not _task_runner:
-        return _err("Task runner not initialized")
-    task_id = args.get("task_id", "")
-    if not task_id:
-        return _err("task_cancel: task_id is required")
-    if _task_runner.cancel(task_id):
-        return _ok({"task_id": task_id, "status": "cancelled"})
-    return _err(f"Cannot cancel task '{task_id}' — not found or not running")
+# tool_delegate_task / tool_task_status / tool_task_cancel moved to
+# engine/tools/delegation_tools.py (refactor E4); re-exported below near
+# TOOL_DISPATCH.
 
 
 # --- Scheduler ---
@@ -9186,138 +7908,13 @@ def _pii_worst_action(findings: list[dict]) -> str:
 # engine/quotas.py, B4 — re-exported via the cost/quota block above.)
 
 
-def tool_list_nodes(args: dict) -> str:
-    """List all registered remote nodes."""
-    try:
-        import urllib.request
-        req = urllib.request.Request("http://127.0.0.1:8420/v1/nodes", method="GET")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        nodes = data.get("nodes", [])
-        if not nodes:
-            return _ok({"nodes": [], "count": 0, "message": "No nodes registered"})
-        return _ok({"nodes": nodes, "count": len(nodes)})
-    except Exception as e:
-        return _err(f"Failed to list nodes: {e}")
-
-
-def tool_context_search(args: dict) -> str:
-    """Search compacted conversation history."""
-    if not _context_manager:
-        return _err("Context manager not initialized")
-    session_id = getattr(_thread_local, 'current_session_id', None) or ""
-    if not session_id:
-        return _err("No active session")
-    query = args.get("query", "")
-    if not query:
-        return _err("Missing query")
-    limit = args.get("limit", 10)
-    results = _context_manager.search(session_id, query, limit=limit)
-    return _ok({"results": results, "count": len(results), "query": query})
-
-
-def tool_context_detail(args: dict) -> str:
-    """Expand a summary to see original messages."""
-    if not _context_manager:
-        return _err("Context manager not initialized")
-    summary_id = args.get("summary_id", "")
-    if not summary_id:
-        return _err("Missing summary_id")
-    detail = _context_manager.get_detail(summary_id)
-    return _ok(detail) if "error" not in detail else _err(detail["error"])
-
-
-def tool_context_recall(args: dict) -> str:
-    """Deep recall from compacted conversation history."""
-    if not _context_manager:
-        return _err("Context manager not initialized")
-    session_id = getattr(_thread_local, 'current_session_id', None) or ""
-    if not session_id:
-        return _err("No active session")
-    query = args.get("query", "")
-    if not query:
-        return _err("Missing query")
-    # Get API credentials from thread local or delegate globals
-    model = getattr(_thread_local, 'current_model', None) or _delegate_fallback_model or ""
-    api_key = _delegate_api_key or ""
-    base_url = _delegate_base_url or ""
-    result = _context_manager.recall(session_id, query, model, api_key, base_url)
-    return _ok({"answer": result, "query": query})
-
-
+# tool_list_nodes + the MCP client tools (mcp_connect / mcp_disconnect /
+# mcp_servers) moved to engine/tools/misc_tools.py and the LCM tools
+# (context_search / context_detail / context_recall) moved to
+# engine/tools/context_tools.py (refactor E4); all re-exported below near
+# TOOL_DISPATCH.
 # tool_schedule_list / tool_schedule_history moved to engine/scheduler.py
 # (refactor B2); re-exported below near the Scheduler alias block.
-
-
-# --- MCP Client Tools ---
-
-def tool_mcp_connect(args: dict) -> str:
-    """Connect to an MCP server at runtime."""
-    url = args.get("url", "")
-    name = args.get("name", "")
-    transport = args.get("transport", "sse")
-    persist = args.get("persist", False)
-
-    if not url or not name:
-        return _err("Both 'url' and 'name' are required")
-
-    # Use thread-local MCP manager if available, otherwise global
-    mcp = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
-    if not mcp:
-        mcp = MCPManager()
-        _thread_local.mcp_manager = mcp
-
-    result = mcp.connect_runtime(url, name, transport)
-    if result.get("error"):
-        return _err(result["error"])
-
-    # Persist to mcp.json if requested
-    if persist:
-        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-        agent_id = agent.agent_id if agent else "main"
-        mcp_json_path = os.path.join(AGENTS_DIR, agent_id, "mcp.json")
-        try:
-            existing = {}
-            if os.path.exists(mcp_json_path):
-                with open(mcp_json_path, "r") as f:
-                    existing = json.load(f)
-            if transport == "stdio":
-                parts = url.split()
-                existing[name] = {"transport": "stdio", "command": parts[0], "args": parts[1:] if len(parts) > 1 else []}
-            else:
-                existing[name] = {"transport": "sse", "url": url}
-            with open(mcp_json_path, "w") as f:
-                json.dump(existing, f, indent=2)
-            result["persisted"] = True
-        except Exception as e:
-            result["persist_error"] = str(e)
-
-    return _ok(result)
-
-
-def tool_mcp_disconnect(args: dict) -> str:
-    """Disconnect from an MCP server."""
-    name = args.get("name", "")
-    if not name:
-        return _err("'name' is required")
-
-    mcp = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
-    if not mcp:
-        return _err("No MCP manager available")
-
-    result = mcp.disconnect_runtime(name)
-    if result.get("error"):
-        return _err(result["error"])
-    return _ok(result)
-
-
-def tool_mcp_servers(args: dict) -> str:
-    """List all connected MCP servers."""
-    mcp = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
-    if not mcp:
-        return _ok({"servers": [], "count": 0})
-    servers = mcp.list_servers()
-    return _ok({"servers": servers, "count": len(servers)})
 
 
 # --- Code Structure Graph (extracted to engine/code_graph.py, A2) ---
@@ -12268,157 +10865,22 @@ def _display_tool_result(name: str, result_str: str) -> None:
 
 # --- Worker Subagent Tool Handlers (v8.0.0) ---
 
-def tool_get_artifact_detail(args: dict) -> str:
-    """Retrieve raw content from a worker artifact."""
-    artifact_id = args.get("artifact_id", "")
-    query = args.get("query", "")
-    offset = args.get("offset", 0)
-    limit = args.get("limit", 16384)
-    if not artifact_id:
-        return _err("artifact_id is required")
-
-    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-    agent_id = agent.agent_id if agent else "main"
-    artifacts_root = os.path.join(AGENTS_DIR, agent_id, "artifacts")
-
-    # Search for the artifact file
-    artifact_path = None
-    if os.path.exists(artifacts_root):
-        for root, dirs, files in os.walk(artifacts_root):
-            if artifact_id in files:
-                artifact_path = os.path.join(root, artifact_id)
-                break
-    if not artifact_path or not os.path.exists(artifact_path):
-        return _err(f"Artifact '{artifact_id}' not found")
-
-    try:
-        with open(artifact_path) as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        return _err(f"Failed to read artifact: {e}")
-
-    raw = data.get("raw_result", "")
-
-    if query:
-        lines = raw.splitlines()
-        matches = []
-        for i, line in enumerate(lines):
-            if query.lower() in line.lower():
-                start = max(0, i - 2)
-                end = min(len(lines), i + 3)
-                for j in range(start, end):
-                    if j not in [m[0] for m in matches]:
-                        matches.append((j, lines[j]))
-        if matches:
-            raw = "\n".join(f"{m[0]+1}: {m[1]}" for m in matches)
-        else:
-            raw = f"(no matches for '{query}' in {len(lines)} lines)"
-
-    if offset:
-        raw = raw[offset:]
-    if len(raw) > limit:
-        raw = raw[:limit] + f"\n\n[... truncated at {limit} chars, {len(data.get('raw_result',''))} total]"
-
-    return _ok({
-        "artifact_id": artifact_id,
-        "tool": data.get("tool", ""),
-        "content": raw,
-        "total_size": data.get("size_bytes", len(raw)),
-    })
+# tool_get_artifact_detail moved to engine/tools/misc_tools.py and the worker
+# control tools (worker_status / worker_abort / worker_pause / worker_resume /
+# worker_send) moved to engine/tools/delegation_tools.py (refactor E4);
+# all re-exported below near TOOL_DISPATCH.
 
 
-def tool_worker_status(args: dict) -> str:
-    """Get current state of worker subagents."""
-    from execution import get_worker_registry
-    registry = get_worker_registry()
-    worker_id = args.get("worker_id")
-    if worker_id:
-        w = registry.get(worker_id)
-        if not w:
-            return _err(f"Worker '{worker_id}' not found")
-        return _ok({"workers": [registry.to_status_dict(w)]})
-    session_id = getattr(_thread_local, 'current_session_id', None) or ""
-    workers = registry.list_session(session_id)
-    return _ok({"workers": [registry.to_status_dict(w) for w in workers]})
-
-
-def tool_worker_abort(args: dict) -> str:
-    """Abort a running worker."""
-    from execution import get_worker_registry
-    worker_id = args.get("worker_id", "")
-    reason = args.get("reason", "user requested abort")
-    if not worker_id:
-        return _err("worker_id is required")
-    ok = get_worker_registry().cancel(worker_id, reason)
-    return _ok({"aborted": ok, "worker_id": worker_id})
-
-
-def tool_worker_pause(args: dict) -> str:
-    """Pause a running worker."""
-    from execution import get_worker_registry
-    worker_id = args.get("worker_id", "")
-    reason = args.get("reason", "")
-    if not worker_id:
-        return _err("worker_id is required")
-    ok = get_worker_registry().pause(worker_id, reason)
-    if not ok:
-        return _err(f"Cannot pause worker '{worker_id}' (not running or not found)")
-    return _ok({"paused": True, "worker_id": worker_id})
-
-
-def tool_worker_resume(args: dict) -> str:
-    """Resume a paused worker."""
-    from execution import get_worker_registry
-    worker_id = args.get("worker_id", "")
-    if not worker_id:
-        return _err("worker_id is required")
-    ok = get_worker_registry().resume(worker_id)
-    if not ok:
-        return _err(f"Cannot resume worker '{worker_id}' (not paused or not found)")
-    return _ok({"resumed": True, "worker_id": worker_id})
-
-
-def tool_worker_send(args: dict) -> str:
-    """Send input to a running or paused worker."""
-    from execution import get_worker_registry
-    worker_id = args.get("worker_id", "")
-    message = args.get("message", "")
-    role = args.get("role", "user")
-    if not worker_id or not message:
-        return _err("worker_id and message are required")
-    ok = get_worker_registry().send(worker_id, message, role)
-    if not ok:
-        return _err(f"Cannot send to worker '{worker_id}' (terminal state or not found)")
-    return _ok({"sent": True, "worker_id": worker_id})
-
-
-def tool_worker_ask_user(args: dict) -> str:
-    """Ask the user a question from within a worker subagent.
-
-    Accepts single-question (`question` str) or a 1-item `questions` array.
-    Multi-question batches are not supported inside workers — call once per question.
-    """
-    from execution import get_worker_registry
-    worker_id = getattr(_thread_local, 'current_worker_id', None)
-    if not worker_id:
-        return _err("worker_ask_user can only be called from within a worker subagent")
-    questions, _ = _normalize_ask_questions(args)
-    if not questions:
-        return _err("question or questions is required")
-    if len(questions) > 1:
-        return _err("worker_ask_user does not support question batches yet — call once per question")
-    q0 = questions[0]
-    context_summary = args.get("context_summary", "")
-    timeout = args.get("timeout_seconds", 300)
-    answer = get_worker_registry().ask_user(
-        worker_id, q0["question"], q0.get("options"), context_summary, timeout
-    )
-    if answer is None:
-        return _err("No answer received (timed out or worker was aborted)")
-    return _ok({"answer": answer})
+# tool_worker_ask_user moved to engine/tools/ask_tools.py (refactor E4);
+# re-exported below near TOOL_DISPATCH.
 
 
 # --- Native-loop ask_user: session-scoped pending-answer registry ---
+# NOTE: the blocking-state registries below (_ask_user_pending /
+# _ask_user_lock / _workflow_file_pending / _workflow_file_lock) and their
+# register/clear/deliver helpers STAY in brain — handlers/* mutate them via
+# brain.deliver_* under these locks. The ask_* TOOL bodies that block on them
+# moved to engine/tools/ask_tools.py and reach these via `_brain.`.
 
 _ask_user_pending: dict[str, dict] = {}
 _ask_user_lock = threading.Lock()
@@ -12454,54 +10916,7 @@ def deliver_workflow_file_answer(execution_id: str, payload: dict | None) -> boo
     return True
 
 
-def tool_ask_user_for_file(args: dict) -> str:
-    """Pause and request a file upload from the user.
-
-    Routes the request via the active event_callback as a 'file_upload_needed' SSE event,
-    then blocks on a pending-file slot keyed by execution_id (workflow) or session_id (chat).
-    Frontend uploads the file to /v1/workflows/upload-pending which delivers the answer.
-    """
-    prompt = args.get("prompt") or "Please upload a file"
-    accept = args.get("accept") or ""
-    timeout = int(args.get("timeout_seconds", 600))
-
-    # Prefer workflow execution_id; fall back to session_id for chat use.
-    execution_id = getattr(_thread_local, "workflow_execution_id", None)
-    session_id = getattr(_thread_local, "current_session_id", None)
-    key = execution_id or session_id
-    if not key:
-        return _err("ask_user_for_file requires an active workflow execution or chat session")
-
-    cb = getattr(_thread_local, "event_callback", None)
-    if cb:
-        try:
-            cb("file_upload_needed", {
-                "execution_id": execution_id or "",
-                "session_id": session_id or "",
-                "prompt": prompt,
-                "accept": accept,
-                "timeout_seconds": timeout,
-            })
-        except Exception:
-            pass
-
-    event = _workflow_file_register(key)
-    try:
-        got = event.wait(timeout=timeout)
-        if not got:
-            return _err("ask_user_for_file: timed out waiting for upload")
-        with _workflow_file_lock:
-            slot = _workflow_file_pending.get(key) or {}
-            payload = slot.get("result")
-        if not payload:
-            return _err("ask_user_for_file: cancelled by user")
-        return _ok({
-            "path": payload.get("path", ""),
-            "filename": payload.get("filename", ""),
-            "size_bytes": int(payload.get("size_bytes") or 0),
-        })
-    finally:
-        _workflow_file_clear(key)
+# tool_ask_user_for_file moved to engine/tools/ask_tools.py (refactor E4).
 
 
 def _ask_user_register(session_id: str) -> threading.Event:
@@ -12534,88 +10949,8 @@ def deliver_ask_user_answer(session_id: str, answer=None, answers=None) -> bool:
     return True
 
 
-def _normalize_ask_questions(args: dict):
-    """Return (questions_list, is_batch) from args.
-
-    - `questions: [{question, options?}, ...]` → batch
-    - `question: "..."` (+ optional `options`) → single, wrapped
-    Returns ([], False) on invalid input.
-    """
-    qs = args.get("questions")
-    if isinstance(qs, list) and qs:
-        out = []
-        for q in qs:
-            if isinstance(q, dict) and q.get("question"):
-                out.append({
-                    "question": str(q["question"]),
-                    "options": q.get("options") if isinstance(q.get("options"), list) else None,
-                })
-        return out, True
-    q = args.get("question")
-    if isinstance(q, str) and q:
-        return [{"question": q, "options": args.get("options") if isinstance(args.get("options"), list) else None}], False
-    return [], False
-
-
-def tool_ask_user(args: dict) -> str:
-    """Ask the user one or more questions from the main chat loop (not inside a worker)."""
-    session_id = getattr(_thread_local, 'current_session_id', None)
-    if not session_id:
-        return _err("ask_user requires an active session")
-    questions, is_batch = _normalize_ask_questions(args)
-    if not questions:
-        return _err("question or questions is required")
-    context_summary = args.get("context_summary", "")
-    timeout = int(args.get("timeout_seconds", 300))
-
-    cb = getattr(_thread_local, 'event_callback', None)
-    if cb:
-        try:
-            payload = {
-                "session_id": session_id,
-                "questions": questions,
-                "context_summary": context_summary,
-                "timeout_seconds": timeout,
-            }
-            if not is_batch:
-                # Keep legacy fields for single-question consumers
-                payload["question"] = questions[0]["question"]
-                payload["options"] = questions[0]["options"]
-            cb("user_input_needed", payload)
-        except Exception:
-            pass
-
-    event = _ask_user_register(session_id)
-    try:
-        got = event.wait(timeout=timeout)
-        if not got:
-            return _err("No answer received (timed out)")
-        with _ask_user_lock:
-            slot = _ask_user_pending.get(session_id) or {}
-            answers_map = slot.get("answers")
-            answer_str = slot.get("answer")
-        if is_batch:
-            if not isinstance(answers_map, dict) or not answers_map:
-                return _err("No answers received")
-            if cb:
-                try:
-                    cb("user_input_received", {"session_id": session_id, "answers": answers_map})
-                except Exception:
-                    pass
-            return _ok({"answers": answers_map})
-        # Single-question path. Prefer explicit answer, fall back to first value in answers map.
-        if answer_str is None and isinstance(answers_map, dict) and answers_map:
-            answer_str = next(iter(answers_map.values()))
-        if answer_str is None:
-            return _err("No answer received")
-        if cb:
-            try:
-                cb("user_input_received", {"session_id": session_id, "answer": answer_str})
-            except Exception:
-                pass
-        return _ok({"answer": answer_str})
-    finally:
-        _ask_user_clear(session_id)
+# _normalize_ask_questions + tool_ask_user moved to engine/tools/ask_tools.py
+# (refactor E4); re-exported below near TOOL_DISPATCH.
 
 
 from engine.tools.image_gen import tool_generate_image  # noqa: E402
@@ -12657,6 +10992,70 @@ from engine.mempalace_glue import (  # noqa: E402
     _reranker_lock,
     _reranker_cache,
     _get_reranker_model,
+    # E4 — memory + project-KG tools folded into mempalace_glue.
+    _graph_expand_results,
+    tool_memory_store,
+    tool_memory_recall,
+    tool_memory_delete,
+    tool_memory_shared,
+    _kg_resolve_project_scope,
+    _kg_open,
+    _kg_source_in_scope,
+    _kg_has_adapter_column,
+    _kg_has_span_column,
+    tool_mempalace_kg_query,
+    tool_mempalace_kg_search,
+    tool_mempalace_kg_neighbors,
+)
+# E4 — remaining tool bodies extracted into engine/tools/ submodules.
+from engine.tools.context_tools import (  # noqa: E402
+    tool_context_search,
+    tool_context_detail,
+    tool_context_recall,
+)
+from engine.tools.translate_tools import (  # noqa: E402
+    tool_transcribe_audio,
+    tool_translate_text,
+    tool_translate_document,
+    tool_detect_language,
+    tool_get_glossary,
+    tool_list_glossaries,
+    # transcription helpers (server_lib/translate reaches these via brain.X)
+    _whisper_repo_for,
+    _transcription_config,
+    _transcribe_with_whisper,
+    _transcribe_with_voxtral,
+    _normalize_legacy_audio_id,
+    _transcription_resolve,
+)
+from engine.tools.delegation_tools import (  # noqa: E402
+    tool_delegate_task,
+    tool_task_status,
+    tool_task_cancel,
+    tool_worker_status,
+    tool_worker_abort,
+    tool_worker_pause,
+    tool_worker_resume,
+    tool_worker_send,
+)
+from engine.tools.misc_tools import (  # noqa: E402
+    tool_use_skill,
+    tool_list_nodes,
+    tool_mcp_connect,
+    tool_mcp_disconnect,
+    tool_mcp_servers,
+    tool_get_artifact_detail,
+    tool_web_fetch,
+    tool_passes_purpose,
+    tool_is_enabled,
+    tool_is_deferred,
+)
+from engine.tools.ask_tools import (  # noqa: E402
+    _normalize_ask_questions,
+    tool_ask_llm,
+    tool_ask_user,
+    tool_ask_user_for_file,
+    tool_worker_ask_user,
 )
 TOOL_DISPATCH = {
     "read_file": tool_read_file,
@@ -12681,9 +11080,9 @@ TOOL_DISPATCH = {
         category=args.get("category"),
     ),
     "mempalace_query": tool_mempalace_query,
-    "mempalace_kg_query": lambda args: tool_mempalace_kg_query(args),
-    "mempalace_kg_search": lambda args: tool_mempalace_kg_search(args),
-    "mempalace_kg_neighbors": lambda args: tool_mempalace_kg_neighbors(args),
+    "mempalace_kg_query": tool_mempalace_kg_query,
+    "mempalace_kg_search": tool_mempalace_kg_search,
+    "mempalace_kg_neighbors": tool_mempalace_kg_neighbors,
     "save_chat_to_memory": tool_save_chat_to_memory,
     "memory_store": tool_memory_store,
     "memory_recall": tool_memory_recall,
