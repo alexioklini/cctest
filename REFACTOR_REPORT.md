@@ -23,7 +23,7 @@ so the run survives context compaction and fresh sessions). Protocol: see `REFAC
 | 1 | Tier-D audit + Tier A pure wins + admin/workflows + db splits | ✅ DONE — D-audit (D1/D3 clean), D2, A1–A5, db node-registry+mempalace-sync, admin workflows. brain.py −3,420 |
 | 2 | B1 `engine/context.py` (relocate only, NOT DI) + U1/U2/U4 utilities | ✅ DONE — B1 ✅, U1 ✅(partial), U2 ✅(already-satisfied), U4 🚫 SKIP(not-applicable) |
 | 3 | B2 scheduler (⚠️ chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (⚠️ daemons nested in main()) · chat.py split | ✅ DONE — B2✅ B3✅ B4✅ admin-full✅ server_daemons✅ chat-split✅ (+U3✅). MemPalaceClient + server_init deferred/optional |
-| 4 | Tier C (C1/C2/C3, ⚠️ chars-tests + eval before C2) + finish D1–D3 | ⛔ **HARD STOP — Phases 1–3 complete; Tier C needs user review (eval-gated + KV-cache-sensitive) before starting** |
+| 4 | Tier C (C1/C2/C3, ⚠️ chars-tests + eval before C2) + finish D1–D3 | ⛔ **GATED — user APPROVED "full Tier C, gated per-step" (2026-05-23). Resume in a fresh session: C2 chars-test first; per-sub-step gate = eval Δ<0.10 + warmup byte-identical (C1) + wing-isolation (C3); stop on any eval regression. See REFACTOR_HANDOVER.md "RESUME POINT".** |
 
 **⚠️ markers** = a characterization test must be written+committed for that path BEFORE the extraction (plan §1.5). Core paths have no existing tests, so the gate alone can't catch regressions there.
 

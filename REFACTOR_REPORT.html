@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 10:24 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 14:19 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -33,7 +33,7 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <tr><td>1</td><td>Tier-D audit + Tier A pure wins + admin/workflows + db splits</td><td><span class="badge done" title="done">✅</span> DONE — D-audit (D1/D3 clean), D2, A1–A5, db node-registry+mempalace-sync, admin workflows. brain.py −3,420</td></tr>
 <tr><td>2</td><td>B1 <code>engine/context.py</code> (relocate only, NOT DI) + U1/U2/U4 utilities</td><td><span class="badge done" title="done">✅</span> DONE — B1 <span class="badge done" title="done">✅</span>, U1 <span class="badge done" title="done">✅</span>(partial), U2 <span class="badge done" title="done">✅</span>(already-satisfied), U4 <span class="badge excluded" title="excluded">🚫</span> SKIP(not-applicable)</td></tr>
 <tr><td>3</td><td>B2 scheduler (<span class="badge warn" title="attention">⚠️</span> chars-tests first) · B3 PII(+U5) · B4 quotas · full admin/ split · server_daemons (<span class="badge warn" title="attention">⚠️</span> daemons nested in main()) · chat.py split</td><td><span class="badge done" title="done">✅</span> DONE — B2<span class="badge done" title="done">✅</span> B3<span class="badge done" title="done">✅</span> B4<span class="badge done" title="done">✅</span> admin-full<span class="badge done" title="done">✅</span> server_daemons<span class="badge done" title="done">✅</span> chat-split<span class="badge done" title="done">✅</span> (+U3<span class="badge done" title="done">✅</span>). MemPalaceClient + server_init deferred/optional</td></tr>
-<tr><td>4</td><td>Tier C (C1/C2/C3, <span class="badge warn" title="attention">⚠️</span> chars-tests + eval before C2) + finish D1–D3</td><td><span class="badge gated" title="gated">⛔</span> <strong>HARD STOP — Phases 1–3 complete; Tier C needs user review (eval-gated + KV-cache-sensitive) before starting</strong></td></tr>
+<tr><td>4</td><td>Tier C (C1/C2/C3, <span class="badge warn" title="attention">⚠️</span> chars-tests + eval before C2) + finish D1–D3</td><td><span class="badge gated" title="gated">⛔</span> <strong>GATED — user APPROVED "full Tier C, gated per-step" (2026-05-23). Resume in a fresh session: C2 chars-test first; per-sub-step gate = eval Δ&lt;0.10 + warmup byte-identical (C1) + wing-isolation (C3); stop on any eval regression. See REFACTOR_HANDOVER.md "RESUME POINT".</strong></td></tr>
 </tbody></table>
 <p><strong><span class="badge warn" title="attention">⚠️</span> markers</strong> = a characterization test must be written+committed for that path BEFORE the extraction (plan §1.5). Core paths have no existing tests, so the gate alone can't catch regressions there.</p>
 <hr>
