@@ -37,7 +37,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import brain  # noqa: E402
-from engine.context import _thread_local  # noqa: E402
+from engine.context import request_context, get_request_context  # noqa: E402
 
 
 # The visibility predicate. Pre-C3 it's a closure (not importable); post-C3 it
@@ -62,30 +62,16 @@ class _MPFixture(unittest.TestCase):
     branches run without a live palace."""
 
     def setUp(self):
-        self._saved = {k: getattr(_thread_local, k, None) for k in
-                       ("project", "current_user_id", "current_team_ids", "current_agent")}
-
-    def tearDown(self):
-        for k, v in self._saved.items():
-            if v is None:
-                try:
-                    delattr(_thread_local, k)
-                except AttributeError:
-                    pass
-            else:
-                setattr(_thread_local, k, v)
+        # Enter a fresh request context for the test; auto-torn-down (restoring
+        # the prior context) when the test ends.
+        self.enterContext(request_context())
 
     def _ctx(self, *, project=None, user_id="", team_ids=None, agent_id="main"):
-        if project is None:
-            try:
-                delattr(_thread_local, "project")
-            except AttributeError:
-                pass
-        else:
-            _thread_local.project = project
-        _thread_local.current_user_id = user_id
-        _thread_local.current_team_ids = team_ids or []
-        _thread_local.current_agent = agent_id  # string form accepted by the resolver
+        ctx = get_request_context()
+        ctx.project = project  # None is the unset/default value
+        ctx.current_user_id = user_id
+        ctx.current_team_ids = team_ids or []
+        ctx.current_agent = agent_id  # string form accepted by the resolver
 
 
 class TestRefuseOnMissingProjectId(_MPFixture):

@@ -69,7 +69,7 @@ def compute_prefix_hashes() -> dict:
     finally:
         # Don't let _current_model leak to any subsequent caller.
         try:
-            brain._thread_local._current_model = None
+            brain.get_request_context()._current_model = None
         except Exception:
             pass
         brain.clear_thread_context()

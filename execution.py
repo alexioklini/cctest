@@ -117,8 +117,8 @@ def _resolve_heaviness(tool_name: str, args: dict) -> str:
 
     Resolution order: agent override > config profiles > DEFAULT_PROFILES > "auto".
     """
-    from brain import _thread_local
-    agent_overrides = getattr(_thread_local, 'execution_overrides', None) or {}
+    from brain import get_request_context
+    agent_overrides = get_request_context().execution_overrides or {}
     if tool_name in agent_overrides:
         value = agent_overrides[tool_name]
         if isinstance(value, bool):
@@ -509,10 +509,10 @@ def _store_worker_artifact(
     artifact metadata dict."""
     from brain import (
         _get_artifact_session_folder,
-        AGENTS_DIR, _thread_local,
+        AGENTS_DIR, get_request_context,
     )
 
-    agent = getattr(_thread_local, 'current_agent', None)
+    agent = get_request_context().current_agent
     agent_id = agent.agent_id if agent else "main"
 
     folder = _get_artifact_session_folder(session_id)
@@ -553,8 +553,8 @@ def _store_worker_artifact(
 def _emit_worker_event(event_type: str, payload: dict) -> None:
     """Emit an SSE event through the current session's event callback.
     No-op if no callback is registered."""
-    from brain import _thread_local
-    cb = getattr(_thread_local, 'event_callback', None)
+    from brain import get_request_context
+    cb = get_request_context().event_callback
     if cb:
         try:
             cb(event_type, payload)
@@ -702,10 +702,10 @@ def run_worker_subagent(tool_name: str, args: dict, inner_fn: Callable[[str, dic
     Returns a JSON envelope with LLM-generated summary and artifact references.
     inner_fn is claude_cli._execute_tool_inner, passed to avoid circular import.
     """
-    from brain import _thread_local, _err, _ok
+    from brain import get_request_context, _err, _ok
 
-    session_id = getattr(_thread_local, 'current_session_id', None) or ""
-    tool_use_id = getattr(_thread_local, 'tool_use_id', None) or f"local_{uuid.uuid4().hex[:8]}"
+    session_id = get_request_context().current_session_id or ""
+    tool_use_id = get_request_context().tool_use_id or f"local_{uuid.uuid4().hex[:8]}"
     key = (session_id, tool_use_id)
 
     event, is_runner = _acquire_worker_slot(key)
@@ -729,7 +729,7 @@ def run_worker_subagent(tool_name: str, args: dict, inner_fn: Callable[[str, dic
         return _dedup_results[key]
 
     # Register in WorkerRegistry
-    agent = getattr(_thread_local, 'current_agent', None)
+    agent = get_request_context().current_agent
     agent_id = agent.agent_id if agent else "main"
     worker_id = _generate_worker_id()
     worker = Worker(
@@ -752,8 +752,8 @@ def run_worker_subagent(tool_name: str, args: dict, inner_fn: Callable[[str, dic
     })
 
     # Store worker_id in thread-local so worker_ask_user can find it
-    _thread_local.in_worker_subagent = True
-    _thread_local.current_worker_id = worker_id
+    get_request_context().in_worker_subagent = True
+    get_request_context().current_worker_id = worker_id
     start = time.time()
     try:
         # Safepoint: check cancel before execution
@@ -767,8 +767,8 @@ def run_worker_subagent(tool_name: str, args: dict, inner_fn: Callable[[str, dic
                                        message=str(e))
         _append_flow(worker, "error", message=str(e))
     finally:
-        _thread_local.in_worker_subagent = False
-        _thread_local.current_worker_id = None
+        get_request_context().in_worker_subagent = False
+        get_request_context().current_worker_id = None
     duration = time.time() - start
     worker.duration = duration
 
@@ -868,11 +868,11 @@ def maybe_retroactive_isolate(tool_name: str, args: dict, result: str) -> str:
     if len(result.encode("utf-8")) <= threshold:
         return result
 
-    from brain import _thread_local, _ok
+    from brain import get_request_context, _ok
 
-    session_id = getattr(_thread_local, 'current_session_id', None) or ""
-    tool_use_id = getattr(_thread_local, 'tool_use_id', None) or f"auto_{uuid.uuid4().hex[:8]}"
-    agent_id = getattr(_thread_local, 'current_agent', None)
+    session_id = get_request_context().current_session_id or ""
+    tool_use_id = get_request_context().tool_use_id or f"auto_{uuid.uuid4().hex[:8]}"
+    agent_id = get_request_context().current_agent
     agent_id = agent_id.agent_id if agent_id else "main"
 
     # Extract images before storing the JSON artifact

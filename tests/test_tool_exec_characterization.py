@@ -48,20 +48,21 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import brain  # noqa: E402
-from engine.context import _thread_local  # noqa: E402
+from engine.context import request_context, get_request_context  # noqa: E402
 
 
 class _ThreadLocalFixture(unittest.TestCase):
     """Base: give every test a clean, known session-id scope and restore it.
 
-    The dedup + read-path stores key off `_thread_local.current_session_id`
-    (falling back to a per-thread sentinel). Pinning a fixed session id makes
-    the scope deterministic; clearing the shared dicts in setUp/tearDown keeps
-    tests independent (the stores are process-wide module globals)."""
+    The dedup + read-path stores key off the request context's
+    `current_session_id` (falling back to a per-thread sentinel). Pinning a
+    fixed session id makes the scope deterministic; clearing the shared dicts in
+    setUp/tearDown keeps tests independent (the stores are process-wide module
+    globals). `request_context(...)` is entered via `enterContext` so it tears
+    down automatically when the test ends."""
 
     def setUp(self):
-        self._prev_sid = getattr(_thread_local, "current_session_id", None)
-        _thread_local.current_session_id = "chartest-sid"
+        self.enterContext(request_context(current_session_id="chartest-sid"))
         # Clear process-wide stores so a prior test can't leak in.
         with brain._tool_dedup_lock:
             brain._tool_dedup.clear()
@@ -73,13 +74,6 @@ class _ThreadLocalFixture(unittest.TestCase):
             brain._tool_dedup.clear()
         with brain._session_read_paths_lock:
             brain._session_read_paths.clear()
-        if self._prev_sid is None:
-            try:
-                del _thread_local.current_session_id
-            except AttributeError:
-                pass
-        else:
-            _thread_local.current_session_id = self._prev_sid
 
 
 class TestEnvelopes(unittest.TestCase):
@@ -124,11 +118,11 @@ class TestDedupSid(_ThreadLocalFixture):
     a dedup bucket."""
 
     def test_uses_session_id_when_set(self):
-        _thread_local.current_session_id = "sid_xyz"
+        get_request_context().current_session_id = "sid_xyz"
         self.assertEqual(brain._dedup_sid(), "sid_xyz")
 
     def test_falls_back_to_thread_sentinel(self):
-        _thread_local.current_session_id = None
+        get_request_context().current_session_id = None
         self.assertEqual(brain._dedup_sid(), f"_thread:{threading.get_ident()}")
 
 
@@ -329,7 +323,7 @@ class TestSessionReadPaths(_ThreadLocalFixture):
 
     def test_scoped_per_session(self):
         brain._record_session_read_path("/tmp/a.txt")
-        _thread_local.current_session_id = "other-sid"
+        get_request_context().current_session_id = "other-sid"
         self.assertEqual(brain._read_doc_cache_session_paths(), [])
 
     def test_soft_cap_stops_new_paths(self):

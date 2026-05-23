@@ -57,6 +57,9 @@ class RequestContext:
     # --- delegation ---
     delegate_agent_id: object = None
     current_worker_id: object = None
+    # Written (never read) in execution.py worker-subagent path. Declared so the
+    # typed accessor resolves; behaviour-identical to the old bare attr write.
+    in_worker_subagent: bool = False
     # --- model select ---
     _current_model: object = None
     current_model: object = None

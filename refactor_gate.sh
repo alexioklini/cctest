@@ -50,7 +50,7 @@ if [ "${1:-}" = "tlgrep" ]; then
   # accessor. A surviving raw access = NOT DONE for that attr -> finish or revert.
   echo "=== Tier-G: raw _thread_local.$attr must be gone from live code (engine/context.py exempt) ==="
   hits=$(grep -rnE "_thread_local\.$attr\b|getattr\(_thread_local, ['\"]$attr['\"]|setattr\(_thread_local, ['\"]$attr['\"]" \
-           brain.py engine/ handlers/ server_lib/ server.py server_daemons.py 2>/dev/null \
+           brain.py execution.py engine/ handlers/ server_lib/ server.py server_daemons.py 2>/dev/null \
            | grep -v '^engine/context\.py:' \
            | grep -vE '^\S+:[0-9]+:\s*#')
   if [ -n "$hits" ]; then
@@ -69,7 +69,7 @@ fail=0
 echo "=== Gate 4: import sanity (catches missed re-exports) ==="
 $PY - <<'EOF'
 import importlib, sys
-mods = ["brain","server",
+mods = ["brain","server","execution",
         "handlers.chat","handlers.admin","handlers.projects","handlers.sessions_handler",
         "handlers.providers","handlers.translate","handlers.auth","handlers.favourites",
         "handlers.share","handlers.sidecar_proxy","handlers.classification",

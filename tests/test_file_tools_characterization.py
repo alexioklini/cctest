@@ -48,7 +48,7 @@ import uuid
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import brain  # noqa: E402
-from engine.context import _thread_local  # noqa: E402
+from engine.context import request_context, get_request_context  # noqa: E402
 
 
 class _FakeAgent:
@@ -65,27 +65,19 @@ class _FileToolFixture(unittest.TestCase):
 
     def setUp(self):
         self._prev_cwd = os.getcwd()
-        self._prev = {k: getattr(_thread_local, k, None) for k in
-                      ("current_session_id", "current_agent")}
         self._tmp = tempfile.mkdtemp(prefix="filetool_chartest_")
         os.chdir(self._tmp)
         # Unique session id per test so the artifact folder is fresh — write_file
         # / python_exec route into agents/<a>/artifacts/<date>_<sid>/ and the
         # script_N.py counter would otherwise accrue across runs (order-dependent).
+        # request_context(...) is entered via enterContext so it tears down
+        # automatically (restoring the prior context) when the test ends.
         self._sid = "filetool-chartest-" + uuid.uuid4().hex[:8]
-        _thread_local.current_session_id = self._sid
-        _thread_local.current_agent = _FakeAgent()
+        self.enterContext(request_context(
+            current_session_id=self._sid, current_agent=_FakeAgent()))
 
     def tearDown(self):
         os.chdir(self._prev_cwd)
-        for k, v in self._prev.items():
-            if v is None:
-                try:
-                    delattr(_thread_local, k)
-                except AttributeError:
-                    pass
-            else:
-                setattr(_thread_local, k, v)
 
     def _write(self, name, content):
         with open(os.path.join(self._tmp, name), "w") as f:
@@ -137,7 +129,7 @@ class TestEditFile(_FileToolFixture):
         # Pin the contract: current_agent MUST be an AgentConfig (has .agent_id).
         # A bare string is caught and surfaced as a tool error, not a raw crash.
         self._write("f.txt", "a\n")
-        _thread_local.current_agent = "main"  # wrong type on purpose
+        get_request_context().current_agent = "main"  # wrong type on purpose
         out = json.loads(brain.tool_edit_file(
             {"path": "f.txt", "old_string": "a", "new_string": "b"}))
         self.assertIn("error", out)

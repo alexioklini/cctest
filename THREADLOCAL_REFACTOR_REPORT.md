@@ -52,7 +52,14 @@ here keeps the single-instance-identity invariant trivially true and adds no new
   `_tool_results_tokens`, `audit_source`, `current_model`, `current_trace_span`,
   `workflow_allowed_tools`. The plan explicitly states the measured inventory is authoritative;
   these are recorded here (not a feature-scope change — all are per-request execution state).
-  Plan-listed `in_worker_subagent` has ZERO refs in live code (removed by SDK Phase 5) — dropped.
+  Plan-listed `in_worker_subagent` has ZERO refs in the SCANNED dirs — dropped (CORRECTED in 3b: it
+  lives in `execution.py`, which the scan dirs excluded; re-added).
+- **2026-05-23 (Phase 3b scope correction)** — `execution.py` is a 19th LIVE file with request-context
+  access that the plan's "18 files" + the gate's scan dirs both missed. Migrated it, re-added
+  `in_worker_subagent` (dead write), widened `refactor_gate.sh` scan + import check to include
+  `execution.py`. User-approved scope expansion. Two discovered DEAD attrs total
+  (`_fallback_model_used` read-only-always-None, `in_worker_subagent` write-only) — both kept as
+  declared fields for accessor-resolution, behaviour-identical.
 
 ---
 
@@ -73,6 +80,7 @@ via combined dotted-access + `getattr` + `setattr` scan. Counts are indicative o
 | `project` | core request | `""` / `None` | ✅ |
 | `delegate_agent_id` | delegation | `None` | ✅ |
 | `current_worker_id` | delegation | `None` | ✅ |
+| `in_worker_subagent` | delegation | `False` (write-only in execution.py — added Phase 3b) | ✅ |
 | `_current_model` | model select | `None` | ✅ |
 | `current_model` | model select | `None` | ✅ |
 | `_fallback_model_used` | model select | `None` (read-only, always None — added Phase 3) | ✅ |
@@ -104,9 +112,9 @@ via combined dotted-access + `getattr` + `setattr` scan. Counts are indicative o
 | `workflow_allowed_tools` | workflow | `None` | ✅ |
 | `_artifact_folder_*` (dynamic) | tool exec | `None` | ✅ |
 
-**38 typed attributes + 1 dynamic pattern.** (37 from the Phase-0 inventory + `_fallback_model_used`,
-the one discovered-during-Phase-3 addition — a dead read-only attr, see the Phase-3 record + decision
-log.) This is the complete, fixed scope.
+**39 typed attributes + 1 dynamic pattern.** (37 from the Phase-0 inventory + `_fallback_model_used`
++ `in_worker_subagent` — two discovered additions, both DEAD state, see Phase-3 / Phase-3b records +
+decision log.) This is the complete, fixed scope.
 
 ---
 
@@ -144,6 +152,31 @@ mentions (docstrings/changelog). Phase 4 removes the shim.
   independently of the broad `unittest discover`).
 - Full `./refactor_gate.sh` GREEN: 18/18 imports, PII parity OK, no new unittest fails beyond the 3
   known spaCy ones, Gate 5b OK.
+
+### Phase 3b — SCOPE CORRECTION: execution.py + gate-scope widening ✅ (commit: this)
+**The plan's "18 files" was incomplete + the gate had a blind spot.** `execution.py` (the
+worker-subagent module — LIVE: imported by `brain.py:11995` `from execution import
+route_tool_execution` + `delegation_tools.py:120` `get_worker_registry`) has 11 raw `_thread_local`
+accesses across 7 attrs (`execution_overrides`, `current_agent`, `event_callback`,
+`current_session_id`, `tool_use_id`, `current_worker_id`, **`in_worker_subagent`**). It uses
+`from brain import _thread_local` lazily. The `refactor_gate.sh` scan dirs
+(`brain.py engine/ handlers/ server_lib/ server.py server_daemons.py`) EXCLUDED it, so `tlgrep`
+reported false "all clean". Surfaced to the user (chose "migrate + widen gate"). Fixes:
+- **Migrated execution.py** — all 11 reads/writes → `get_request_context().X` (lazy
+  `from brain import get_request_context`); 0 raw refs remain.
+- **`in_worker_subagent` added to the dataclass** (`bool = False`) — it's WRITTEN in execution.py
+  (set True/False around the worker run) but READ nowhere → another dead attr (like
+  `_fallback_model_used`). Plan-listed originally; I'd wrongly dropped it as "0 refs" because the
+  scanned dirs missed execution.py. Behaviour-identical.
+- **Widened the gate**: `refactor_gate.sh` `tlgrep` scan + Gate-4 import check now include
+  `execution.py` (19/19 imports). Repo-wide sweep confirmed the only OTHER unscanned live access was
+  the diagnostic `tools/check_warmup_prefix_stable.py` (1 write — migrated). `sidecar/`, `telegram.py`,
+  `tui.py` are clean (the plan's Telegram concern is moot).
+- **Migrated the 3 test fixtures** that drove context via the shim
+  (`test_tool_exec_characterization`, `test_file_tools_characterization`,
+  `test_mempalace_wing_isolation`) to `request_context()` via `self.enterContext(...)` (Py3.11+)
+  + `get_request_context()` — so they survive Phase-4 shim removal. All pass.
+- `tlgrep` over execution.py's attrs → clean. Full gate GREEN (19/19 imports).
 
 ### Phase 3 — migrate reads to typed accessors ✅ (commit: this)
 **Accessor pattern:** `from engine.context import get_request_context`; replace
