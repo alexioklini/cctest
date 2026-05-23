@@ -51,6 +51,12 @@ hazard. Findings:
   prose references naming a symbol that no longer exists — updated to `get_request_context()` / "the
   request context", added the RequestContext model + the bleed invariant, clarified the SQLite
   `threading.local()` pools are a SEPARATE correct pattern (untouched by Tier-G).
+- **Follow-up ("is the dead thread-local storage gone?"):** confirmed the request-context
+  `threading.local()` storage + the `_RequestContextShim` + the `_thread_local` instance are all
+  deleted (Phase 4). BUT `engine/context.py`'s OWN module docstring + comments still *described* the
+  removed shim as live + "load-bearing", and `import threading` was left unused. Scrubbed the header
+  to describe the actual RequestContext/contextvars model + dropped the dead import (no code change).
+  The 8 DB-connection `threading.local()` pools remain by design (out of scope).
 - Re-verified: full gate green, 157 tests (3 known spaCy fails only), 19/19 imports, all 40 attrs
   tlgrep-clean, `_thread_local` gone from both `engine.context` + `brain`, live daemon clean boot.
 
