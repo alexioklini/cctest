@@ -19,6 +19,22 @@
 
 ---
 
+## ✅ RESUME POINT (2026-05-23): Phases 1–3 DONE — start here with Tier C
+
+**Phases 1–3 complete** (17 extractions, 0 reverts, gate green). brain.py 25,182→18,814 (−25.3%), handlers/admin.py 5,416→79, server.py 5,827→3,895. Full per-domain status in `REFACTOR_REPORT.md`. HEAD `746ed54` + report commit on `main`.
+
+**Tier C decision — USER-APPROVED 2026-05-23: "Full Tier C, gated per-step."** Do C1 + C2 + C3, but:
+- **C2 prerequisite (hard):** write + commit a characterization test for the tool-exec path FIRST (mirror what `tests/test_scheduler_characterization.py` did for B2). The tool-exec layer has no existing tests.
+- **The Tier C gate is heavier than `./refactor_gate.sh`** — each sub-step must additionally pass: **(C1)** eval harness within noise (Δ < 0.10 of baseline) + warmup **byte-identical** KV-prefix check; **(C2)** the new characterization test + eval; **(C3)** project-wing isolation test (`project__*` must not leak — security).
+- **Stop on ANY eval regression** (Δ ≥ 0.10) — revert that sub-step, log BLOCKED, surface to user. Do NOT push through eval noise.
+- Eval harness lives in `eval/` (`judge_mistral.py`, `harness/`, `questions.json`). It consumes provider quota — that's expected and approved for Tier C.
+- Same per-extraction discipline as Phases 1–3: subagent-per-extraction, gate-2 (old `def`/`class` GONE), commit per green sub-step, update + publish `REFACTOR_REPORT.md` each time, flip the ⛔ rows in the Master domain map.
+- D2 already done in Phase 1; **D1/D3 confirmed clean** (audit). The only Tier-D remnant for Phase 4 is finishing-as-needed alongside C2/C3 — verify, don't redo.
+
+**First steps for the new session:** read `REFACTOR_REPORT.md` (source of truth), run `./refactor_gate.sh` (confirm still green), then start C2's characterization test (the prerequisite) OR C1 — your pick, but C1/C2 one-at-a-time with the full eval gate between.
+
+---
+
 ## Execution protocol (how to run this autonomously — user-approved 2026-05-23)
 
 **Driver:** continuous single session held open by a goal-condition until *Phases 1–3 complete + gate green + report pushed*. Run extraction-after-extraction without pausing for the user; clean context via subagent-per-extraction + disk-state. Hard-stop before Tier C (Phase 4).
