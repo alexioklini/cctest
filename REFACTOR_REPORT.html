@@ -17,7 +17,7 @@ blockquote{background:#f7f8fa;border-left:4px solid #c5c9d0;margin:.8rem 0;
 hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 .badge{font-style:normal}
 .meta{color:#888;font-size:.82rem}
-</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:13 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
+</style></head><body><p class=meta>Generated from REFACTOR_REPORT.md · 2026-05-23 09:17 · this HTML is a view; the .md is the source of truth.</p><h1>Refactor Progress Report</h1>
 <p>Living record of the module-extraction refactor. **This file is the source of truth for</p>
 <p>"what's done" — read it first on resume.** Updated after every extraction (disk = memory,</p>
 <p>so the run survives context compaction and fresh sessions). Protocol: see <code>REFACTOR_HANDOVER.md</code></p>
@@ -71,8 +71,8 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <tr><td>server: bootstrap/init (optional)</td><td><code>server.py</code> ~3,033–3,500</td><td><code>server_init.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>optional; <code>main()</code> may stay</td></tr>
 <tr><td>chat: SSE streaming (format/keepalive/replay)</td><td><code>handlers/chat.py</code></td><td><code>server_lib/sse_stream.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>reusable by future SSE endpoints (folds U3)</td></tr>
 <tr><td>chat: GDPR-recovery modal state machine</td><td><code>handlers/chat.py</code> ~51–200</td><td><code>handlers/gdpr_recovery.py</code></td><td>3</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
-<tr><td>db: node registry</td><td><code>server_lib/db.py</code> ~54–130</td><td><code>server_lib/node_registry.py</code></td><td>1</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td></td></tr>
-<tr><td>db: MemPalace sync cursor</td><td><code>server_lib/db.py</code> ~1,750+</td><td><code>server_lib/mempalace_sync.py</code></td><td>1</td><td><span class="badge planned" title="planned">⬜</span> planned</td><td>(<code>ChatDB</code> core stays in db.py)</td></tr>
+<tr><td>db: node registry</td><td><code>server_lib/db.py</code> 54–163</td><td><code>server_lib/node_registry.py</code></td><td>1</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>92c4a24</code>; module-level fns+state, zero DB dep; shared dict identity preserved</td></tr>
+<tr><td>db: MemPalace sync cursor</td><td><code>server_lib/db.py</code> ~1,324–1,422</td><td><code>server_lib/mempalace_sync.py</code></td><td>1</td><td><span class="badge done" title="done">✅</span> done</td><td>commit <code>92c4a24</code>; ChatDB keeps delegating staticmethods; cycle avoided (local _db_safe + call-time _db_conn)</td></tr>
 </tbody></table>
 <h3>C. Cross-cutting reusable utilities (de-duplication)</h3>
 <table><thead><tr><th>Utility</th><th>Copies today</th><th>→ Target</th><th>Phase</th><th>Status</th><th>Note</th></tr></thead><tbody>
@@ -97,9 +97,10 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 <blockquote><strong>Coverage promise:</strong> every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.</blockquote>
 <h3>Running totals</h3>
 <ul>
-<li>Extractions completed: <strong>6</strong> (D2, A1, A2, A3, A4, A5)</li>
+<li>Extractions completed: <strong>7</strong> (D2, A1, A2, A3, A4, A5, db-splits)</li>
 <li><code>brain.py</code> line count: <strong>25,182</strong> (baseline) → _current: 21,762_ (−3,420, −13.6%)</li>
-<li>Net new modules created: <strong>5</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>, <code>engine/tools/git_tools.py</code>, <code>engine/tools/gmail_tools.py</code>, <code>server_lib/trace_audit.py</code>; D2 merged into existing engine/classification.py)</li>
+<li><code>server_lib/db.py</code> line count: <strong>1,985</strong> → _current: 1,778_ (−207)</li>
+<li>Net new modules created: <strong>7</strong> (<code>engine/workflow.py</code>, <code>engine/code_graph.py</code>, <code>engine/tools/git_tools.py</code>, <code>engine/tools/gmail_tools.py</code>, <code>server_lib/trace_audit.py</code>, <code>server_lib/node_registry.py</code>, <code>server_lib/mempalace_sync.py</code>; D2 merged into existing engine/classification.py)</li>
 <li>Live duplicate definitions (brain.py ∩ engine/): <strong>0</strong> — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean</li>
 </ul>
 <hr>
@@ -122,6 +123,19 @@ hr{border:none;border-top:1px solid #e3e3e3;margin:1.6rem 0}
 </ul>
 <p>```</p>
 <hr>
+<h3>7 db.py splits — node-registry + mempalace-sync — DONE</h3>
+<ul>
+<li><strong>Commit:</strong> <code>92c4a24</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (db splits)</li>
+<li><strong>Symbol(s):</strong> *node_registry:* <code>_node_registry</code>/<code>_node_commands</code>/<code>_node_lock</code>, <code>_load_node_config</code>/<code>_save_node_config</code>/<code>_init_node_registry</code>/<code>_node_submit_command</code>. *mempalace_sync:* <code>mempalace_sessions_needing_sync</code>/<code>load_new_messages</code>/<code>last_user_id_before</code>/<code>update_cursor</code></li>
+<li><strong>Moved FROM:</strong> server_lib/db.py:54–163 (node registry, module-level fns+state) + ~1,324–1,422 (mempalace cursor, ChatDB <code>@staticmethod</code>s)</li>
+<li><strong>Moved TO:</strong> server_lib/node_registry.py (117 lines) + server_lib/mempalace_sync.py (135 lines), both NEW</li>
+<li><strong>Old code deleted?</strong> YES — Gate-2 grep: <code>_node_registry</code> def + <code>mempalace_update_cursor</code> def gone from db.py; alias re-exports + thin delegating staticmethods only.</li>
+<li><strong>Callers re-pointed:</strong> 0 — node-registry's 12 admin.py + 2 server.py sites resolve via re-export/globals-injection (shared dict identity preserved → in-place mutations still land); mempalace's 10 <code>ChatDB.mempalace_*()</code> sites preserved by delegating staticmethods.</li>
+<li><strong>Tests:</strong> Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS</li>
+<li><strong>Characterization test added?</strong> n/a (peripheral, self-contained)</li>
+<li><strong>db.py delta:</strong> 1,985 → 1,778 (−207). <code>ChatDB</code> core untouched, stays in db.py.</li>
+<li><strong>Notes:</strong> node-registry touches only config.json + in-memory dicts (zero DB dep). mempalace-sync: a naive top-level <code>from server_lib.db import _db_conn,_db_safe</code> created a real import cycle (db.py class body re-enters the half-built module) — resolved by a local <code>_db_safe</code> copy + call-time <code>_db_conn</code> import; <strong>verified clean in BOTH import orders</strong>. The <code>chat_mempalace_sync</code> CREATE TABLE stays in ChatDB init (schema bootstrap belongs with the DB).</li>
+</ul>
 <h3>6 A5 trace manager + audit trail — DONE</h3>
 <ul>
 <li><strong>Commit:</strong> <code>fa146c3</code>  ·  <strong>Date:</strong> 2026-05-23  ·  <strong>Phase:</strong> 1 (Tier A — riskiest, widely-called <code>_audit_log</code>)</li>

@@ -68,8 +68,8 @@ Every functional domain the full refactor touches is listed here from day one �
 | server: bootstrap/init (optional) | `server.py` ~3,033–3,500 | `server_init.py` | 3 | ⬜ planned | optional; `main()` may stay |
 | chat: SSE streaming (format/keepalive/replay) | `handlers/chat.py` | `server_lib/sse_stream.py` | 3 | ⬜ planned | reusable by future SSE endpoints (folds U3) |
 | chat: GDPR-recovery modal state machine | `handlers/chat.py` ~51–200 | `handlers/gdpr_recovery.py` | 3 | ⬜ planned | |
-| db: node registry | `server_lib/db.py` ~54–130 | `server_lib/node_registry.py` | 1 | ⬜ planned | |
-| db: MemPalace sync cursor | `server_lib/db.py` ~1,750+ | `server_lib/mempalace_sync.py` | 1 | ⬜ planned | (`ChatDB` core stays in db.py) |
+| db: node registry | `server_lib/db.py` 54–163 | `server_lib/node_registry.py` | 1 | ✅ done | commit `92c4a24`; module-level fns+state, zero DB dep; shared dict identity preserved |
+| db: MemPalace sync cursor | `server_lib/db.py` ~1,324–1,422 | `server_lib/mempalace_sync.py` | 1 | ✅ done | commit `92c4a24`; ChatDB keeps delegating staticmethods; cycle avoided (local _db_safe + call-time _db_conn) |
 
 ### C. Cross-cutting reusable utilities (de-duplication)
 
@@ -98,9 +98,10 @@ Every functional domain the full refactor touches is listed here from day one �
 > **Coverage promise:** every domain above is accounted for — done, planned-with-phase, gated, or excluded-with-reason. If a domain isn't in this table, it's an omission to fix, not silent scope.
 
 ### Running totals
-- Extractions completed: **6** (D2, A1, A2, A3, A4, A5)
+- Extractions completed: **7** (D2, A1, A2, A3, A4, A5, db-splits)
 - `brain.py` line count: **25,182** (baseline) → _current: 21,762_ (−3,420, −13.6%)
-- Net new modules created: **5** (`engine/workflow.py`, `engine/code_graph.py`, `engine/tools/git_tools.py`, `engine/tools/gmail_tools.py`, `server_lib/trace_audit.py`; D2 merged into existing engine/classification.py)
+- `server_lib/db.py` line count: **1,985** → _current: 1,778_ (−207)
+- Net new modules created: **7** (`engine/workflow.py`, `engine/code_graph.py`, `engine/tools/git_tools.py`, `engine/tools/gmail_tools.py`, `server_lib/trace_audit.py`, `server_lib/node_registry.py`, `server_lib/mempalace_sync.py`; D2 merged into existing engine/classification.py)
 - Live duplicate definitions (brain.py ∩ engine/): **0** — D2 audit found 3 stranded classification fns, now extracted; D1/D3 confirmed already clean
 
 ---
@@ -125,6 +126,18 @@ One block per extraction, newest first. Every block answers the four questions: 
 ```
 
 ---
+
+### 7 db.py splits — node-registry + mempalace-sync — DONE
+- **Commit:** `92c4a24`  ·  **Date:** 2026-05-23  ·  **Phase:** 1 (db splits)
+- **Symbol(s):** *node_registry:* `_node_registry`/`_node_commands`/`_node_lock`, `_load_node_config`/`_save_node_config`/`_init_node_registry`/`_node_submit_command`. *mempalace_sync:* `mempalace_sessions_needing_sync`/`load_new_messages`/`last_user_id_before`/`update_cursor`
+- **Moved FROM:** server_lib/db.py:54–163 (node registry, module-level fns+state) + ~1,324–1,422 (mempalace cursor, ChatDB `@staticmethod`s)
+- **Moved TO:** server_lib/node_registry.py (117 lines) + server_lib/mempalace_sync.py (135 lines), both NEW
+- **Old code deleted?** YES — Gate-2 grep: `_node_registry` def + `mempalace_update_cursor` def gone from db.py; alias re-exports + thin delegating staticmethods only.
+- **Callers re-pointed:** 0 — node-registry's 12 admin.py + 2 server.py sites resolve via re-export/globals-injection (shared dict identity preserved → in-place mutations still land); mempalace's 10 `ChatDB.mempalace_*()` sites preserved by delegating staticmethods.
+- **Tests:** Gate 4 imports 18/18 · Gate 5 80 pass / 3 known-NER fail · verdict PASS
+- **Characterization test added?** n/a (peripheral, self-contained)
+- **db.py delta:** 1,985 → 1,778 (−207). `ChatDB` core untouched, stays in db.py.
+- **Notes:** node-registry touches only config.json + in-memory dicts (zero DB dep). mempalace-sync: a naive top-level `from server_lib.db import _db_conn,_db_safe` created a real import cycle (db.py class body re-enters the half-built module) — resolved by a local `_db_safe` copy + call-time `_db_conn` import; **verified clean in BOTH import orders**. The `chat_mempalace_sync` CREATE TABLE stays in ChatDB init (schema bootstrap belongs with the DB).
 
 ### 6 A5 trace manager + audit trail — DONE
 - **Commit:** `fa146c3`  ·  **Date:** 2026-05-23  ·  **Phase:** 1 (Tier A — riskiest, widely-called `_audit_log`)
