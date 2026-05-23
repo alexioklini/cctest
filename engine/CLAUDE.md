@@ -10,14 +10,14 @@ for most domains; `brain.py` (≈12.3k LOC, down from 25.2k) is the **orchestrat
 `import brain as engine` still resolve — but the live code runs from the engine
 module. **Invariant: engine modules must NOT top-level `import brain`** (cycle —
 brain imports them for the re-export); they reach brain runtime via lazy
-`import brain as _brain` inside functions, and shared low-level state via
-`from engine.context import _thread_local`.
+`import brain as _brain` inside functions, and request state via
+`from engine.context import get_request_context` (Tier-G; the old `_thread_local` is gone).
 
 **Live engine/ modules:**
 
 | File | Owns |
 |------|------|
-| `context.py` | `_thread_local` + `ExecutionContext` (the shared-state base; cycle-free, no `import brain`) |
+| `context.py` | `RequestContext` (contextvars-backed) + `get_request_context()` + `request_context()` ctx-manager + `ExecutionContext` (the shared request-state base; cycle-free, no `import brain`) |
 | `tool_schemas.py` | `TOOL_DEFINITIONS` (Anthropic schema list) + OPENAI mirror + indices |
 | `tool_exec.py` | tool-exec helpers: `_ok`/`_err`, dedup (`_check_tool_dedup`), sanitise/compress/microcompact, read-path tracker, `_get_artifact_session_folder` |
 | `prompt_build.py` | `_build_system_prompt` + postprocess + the `*_preamble_text` helpers (+ per-session prompt cache) |
@@ -65,7 +65,7 @@ text deltas back over SSE.
 
 - **Tool dispatch path**: sidecar emits a `tool_use` block → POSTs
   `/v1/tools/call` to Brain → `server_lib/tool_mcp.handle_tools_call`
-  rebuilds thread-locals from the sidecar's `context` payload, dispatches
+  rebuilds the request context from the sidecar's `context` payload, dispatches
   to `engine.TOOL_DISPATCH` (or MCP fallback), captures the result via
   `sidecar_proxy.capture_tool_result(...)`, returns. Synchronous by
   design — `tool_dispatch_done` SSE event from the sidecar is emitted
@@ -120,9 +120,9 @@ this queue — production rounds bypass `LocalProviderQueue` entirely.
 
 ## Concurrency & Thread Safety
 
-- **Thread-locals required** for every request/background thread: `current_agent`, `mcp_manager`, `current_session_id`, `current_user_id`, `project`. Never fall back to globals — concurrent requests bleed. The sidecar's `/v1/tools/call` callback re-establishes them per call from the request body.
+- **Request context = `RequestContext` in a `contextvars.ContextVar`** (`engine/context.py`), read/written via `get_request_context().<field>`, entered + torn down ONLY via `with request_context(**overrides):` (token-reset = automatic total teardown). The old `_thread_local = threading.local()` bag + its name are GONE (Tier-G). The sidecar's `/v1/tools/call` callback (`tool_mcp._apply_context`) rebuilds the context per call from the request body, inside its own `with`. See root CLAUDE.md §"Concurrency & Thread Safety" for the contextvars reused-thread bleed invariant (never set request context bare on a pooled thread).
 - **MCPManager** (`brain.py`): `clients`, `_tool_to_server` under `self._lock`; iteration via snapshot.
-- **Background threads** (scheduler, TaskRunner, workflow engine): set + clean thread-locals in try/finally before each `sidecar_proxy.background_call(...)` so the dispatch callback sees the right scope.
+- **Background threads** (scheduler, TaskRunner, workflow engine): wrap each task's work in `with request_context(...)` (or `with request_context(): init_thread_context(...)`) so the dispatch callback sees the right scope and teardown is automatic.
 
 ## Scheduled Tasks (brain.py)
 

@@ -19,10 +19,40 @@ single context-manager (no scattered `=None` teardown); a new concurrency/bleed 
 | 2 | Migrate enter/exit sites to `request_context(...)` ctx-manager | ✅ done |
 | 3 | Migrate reads to typed accessors (kill raw getattr) | ✅ done |
 | 4 | Remove the shim | ✅ done |
-| 5 | Final source-validation | ✅ done — HARD STOP for user review |
+| 5 | Final source-validation | ✅ done |
+| 6 | Source-code review (by Claude, at user request) | ✅ done — 1 dead-code bug fixed, docs updated |
 
-**RESUME POINT:** ALL PHASES DONE. Phase 5 audit passed (8/8 checks). **HARD STOP** — awaiting user
-review before declaring the tier complete (per the plan's close-out protocol).
+**RESUME POINT:** ALL PHASES DONE + reviewed. Phase 5 audit (8/8) + a follow-up source-code review
+(user asked me to review via source). Review found + fixed one real defect (a semantic bug in DEAD
+code) and surfaced the contextvars reused-thread bleed invariant (now in CLAUDE.md). Tier complete.
+
+### Review record (2026-05-23, source-code review)
+The user asked me to do the close-out review myself against source (not trust the report). Read the
+real implementations + audited every live `with request_context()` site for the fresh-context
+hazard. Findings:
+- **DEFECT FOUND + FIXED (dead code):** `brain._execute_tools_batch` had been migrated to
+  `with request_context(event_callback=…, tool_use_id=…): _execute_tool(...)`. That's a SEMANTIC
+  CHANGE — `request_context()` enters a FRESH context, resetting `current_agent`/`current_session_id`/
+  etc. to defaults, whereas the original set ONLY those 2 fields and left the rest intact. The tool
+  dispatch underneath needs the surrounding context. `_execute_tools_batch` has ZERO live callers
+  (native-loop relic; the sidecar owns dispatch), so no runtime impact — but it was a latent landmine
+  if ever revived. Fixed to set the 2 fields on the CURRENT context + clear them in `finally`
+  (behavior-faithful to the original). The gate's import-check couldn't catch this (it only imports;
+  doesn't execute the function).
+- **contextvars bleed invariant surfaced + documented:** verified that with contextvars, a fresh
+  thread starts EMPTY (so the HTTP `ThreadingMixIn` thread-per-request path + per-task
+  `threading.Thread().start()` paths are bleed-free), but a context-set WITHOUT `with request_context()`
+  on a REUSED thread (a `ThreadPoolExecutor`) WOULD bleed — the one footgun contextvars adds over the
+  old `threading.local()`. Audited all live sites: every reused-thread-capable setter is inside a
+  `with`; the only real `ThreadPoolExecutor` (`engine/kg_extract.py`) never touches request context.
+  No production bleed. Added this invariant to CLAUDE.md §"Concurrency & Thread Safety" so the next
+  dev knows.
+- **Docs updated:** root + engine `CLAUDE.md` had ~10 stale `_thread_local.<field>` / "thread-locals"
+  prose references naming a symbol that no longer exists — updated to `get_request_context()` / "the
+  request context", added the RequestContext model + the bleed invariant, clarified the SQLite
+  `threading.local()` pools are a SEPARATE correct pattern (untouched by Tier-G).
+- Re-verified: full gate green, 157 tests (3 known spaCy fails only), 19/19 imports, all 40 attrs
+  tlgrep-clean, `_thread_local` gone from both `engine.context` + `brain`, live daemon clean boot.
 
 ---
 

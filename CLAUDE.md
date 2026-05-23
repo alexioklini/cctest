@@ -125,7 +125,7 @@ LLM rounds itself.
   a thin synchronous wrapper around `run_turn_blocking`.
 - **Tool dispatch**: sidecar emits `tool_use` blocks → POSTs to Brain at
   `/v1/tools/call` (auth-exempt, nonce-protected, localhost-only). Handler
-  in `server_lib/tool_mcp.py` reconstitutes thread-locals from the
+  in `server_lib/tool_mcp.py` reconstitutes the request context from the
   sidecar's `context` payload, dispatches to `engine.TOOL_DISPATCH` (or
   MCP fallback), returns the result. Sidecar then continues the loop.
 - **Resumable**: see "Resumable Streaming" below — Brain attaches a
@@ -243,7 +243,7 @@ Two settings, independent, compose:
 - **System** (`caveman_system` per model, 0–3): compresses system prompt via `_caveman_compress_text()`
 - **Chat** (`caveman_mode` in sessions DB, 0–3): appends `CAVEMAN_CHAT_PROMPTS` response-style instruction
 
-Thread-locals set in chat worker, cleaned in `finally`. **Cache key for `_build_system_prompt` includes both.**
+`caveman_chat`/`caveman_system` set on the request context in the chat worker (inside its `with request_context()`; torn down automatically on exit). **Cache key for `_build_system_prompt` includes both.**
 
 ## Token Optimization
 
@@ -267,7 +267,7 @@ System prompt cached per-session (60s TTL).
 
 - **Pre-flight gate** in `send_message` round 0, after GDPR. `is_model_local(model)` always bypasses.
 - Modes (`quotas.enforce_red`): `warn_only` (default), `force_local` (silent swap to `default_local_fallback_model`), `hard_block` (`QuotaExceededError`).
-- `_log_call_cost` captures `_thread_local.current_user_id`. Empty `user_id` rows are pre-quota legacy.
+- `_log_call_cost` captures `get_request_context().current_user_id`. Empty `user_id` rows are pre-quota legacy.
 - Limit `0` = "no limit" on that axis.
 
 ## GDPR / PII Pre-Submit Scanner
@@ -392,7 +392,7 @@ scheduler, warmup, sidecar background calls, and the settings UI.
 2. Sidecar POSTs to Brain `POST /v1/tools/call` (auth-exempt,
    nonce-protected via `sidecar.tool_endpoint_internal`, localhost-only).
 3. `server_lib/tool_mcp.handle_tools_call` validates the nonce, rebuilds
-   thread-locals from the sidecar's `context` payload (current_agent,
+   the request context from the sidecar's `context` payload (current_agent,
    mcp_manager, current_session_id, current_user_id, project), dispatches
    to `engine.TOOL_DISPATCH` (or MCP fallback for unknown names), captures
    the result via `sidecar_proxy.capture_tool_result(turn_id, tool_use_id, ...)`
@@ -553,8 +553,9 @@ Port 8420. Source of truth: grep `@app.route` / `self.path` dispatch in `server.
 
 - **`Session.lock`**: all field mutations under it
 - **`SessionManager.get()`**: `_LOADING_SENTINEL` + `Event` prevents duplicate Sessions for same id. `peek()` for cache-only reads.
-- **Thread-locals required** for every request/background thread: `current_agent`, `mcp_manager`, `current_session_id`, `current_user_id`. Never fall back to globals — concurrent requests bleed.
-- **SQLite**: connections via `threading.local()` pools — **not** dict-keyed-by-ident (leaks FDs under `ThreadingMixIn`). All ChatDB methods wrapped with `@_db_safe`.
+- **Request context = typed `RequestContext` in a `contextvars.ContextVar`** (`engine/context.py`; Tier-G refactor, replaced the old `_thread_local = threading.local()` bag — that name is GONE). Read/write via `get_request_context().<field>` (≈40 typed fields: `current_agent`, `mcp_manager`, `current_session_id`, `current_user_id`, `project`, `caveman_*`, `event_callback`, `_gdpr_*`, `workflow_*`, …; arbitrary `_artifact_folder_*`-style keys live in `._dynamic`). **Enter + tear down ONLY via `with request_context(**overrides):`** — entering pushes a fresh context, exit token-resets it (total automatic teardown; no per-attr `=None`). Nested binds (delegate/sub-call) stack + pop. `init_thread_context(ExecutionContext)` still exists as a bulk-setter used *inside* a `with` (warmup/scheduler/TaskRunner/workflow). The sidecar's `/v1/tools/call` callback (`tool_mcp._apply_context`) rebuilds the context per call from the request body, inside its own `with`.
+  - **contextvars bleed invariant (NEW vs the old `threading.local()`):** a fresh thread starts with an EMPTY context, so the HTTP path (`ThreadingMixIn` = thread-per-request) and the per-task `threading.Thread(...).start()` paths (scheduler/workflow) are bleed-free without ceremony. BUT on a **reused thread** (a `ThreadPoolExecutor`), a context-set NOT wrapped in `with request_context()` would persist to the next task on that worker — the one footgun contextvars adds. Rule: any code that sets request context MUST be inside a `with request_context()`; never set bare on a pooled/reused thread. (`engine/kg_extract.py`'s pool is safe — it never touches request context.) Guarded by `tests/test_request_context_isolation.py` (the headline no-bleed gate; its negative control reproduces exactly this bleed).
+- **SQLite**: connections via `threading.local()` pools — **not** dict-keyed-by-ident (leaks FDs under `ThreadingMixIn`). This is a SEPARATE, correct use of `threading.local()` (DB-connection pooling, NOT request context — deliberately left untouched by Tier-G). All ChatDB methods wrapped with `@_db_safe`.
 - **Client proxy SSE**: line buffering carries incomplete lines across TCP chunks.
 
 ## Key Invariants
@@ -606,7 +607,7 @@ of the `instructions` field. Per-session `sessions.research_mode_override`
 (sticky NULL/0/1) layers on top — set from the composer button or session
 settings; null = use project default.
 
-Effective mode = `session.research_mode_override if not None else project.research_mode`. Resolution lives in `_build_system_prompt` (sets `_thread_local.research_mode_override` upstream so `handlers/chat.py` reads the same value when gating the citation validator + re-round).
+Effective mode = `session.research_mode_override if not None else project.research_mode`. Resolution lives in `_build_system_prompt` (sets `get_request_context().research_mode_override` upstream so `handlers/chat.py` reads the same value when gating the citation validator + re-round).
 
 **The split** (Topic A / B, v9.0.x):
 
@@ -664,7 +665,7 @@ Each project specifies on-disk folders mined into its private MemPalace wing. Wi
 - **Path-traversal guard**: realpath-resolved; refuses paths inside `agents/`, `/etc`, `/var`, `/usr`, `/bin`, `/sbin`, `/System`, `/Library/Keychains`.
 - **Daemon** (`mempalace-project-sync`): polls every 6h default. Per project: ensure `mempalace.yaml` matches expected wing (auto-rewrite), mine `ingested/` then each input folder. Per-folder cap default 5000. **`total_indexed` cumulative** (survives dedup-only re-runs). **Single-threaded** — multi-project cycles strictly sequential; long projects block all others. `auto_sync=false` skipped on scheduled cycles, bypassed for manual "Sync now".
 - **Startup wipe**: drops every drawer in any `project__*` wing AND clears every project's `sync_status`. Currently runs on every restart — needs marker-file gate (see backlog).
-- **System prompt** when `_thread_local.project` is set: prepends PROJECT MEMORY block + PROJECT INPUT FOLDERS block (absolute paths + path-join example to resolve `source_file` against folder root before `read_file`/`read_document`).
+- **System prompt** when `get_request_context().project` is set: prepends PROJECT MEMORY block + PROJECT INPUT FOLDERS block (absolute paths + path-join example to resolve `source_file` against folder root before `read_file`/`read_document`).
 
 ## Empty-Session Cleanup
 
@@ -684,7 +685,7 @@ LLM-driven document → triples extraction over project input folders + attachme
 
 **Source-change invalidation**: snapshots `kg_extraction_source_state`. On diff → DELETEs `triples` rows matching **exact** `source_file` (not LIKE prefix — siblings stay safe) + progress rows + orphan-entity sweep.
 
-**Agent KG tools**: auto-scope to caller's project via `_thread_local.project`. Refused outside project context.
+**Agent KG tools**: auto-scope to caller's project via `get_request_context().project`. Refused outside project context.
 
 ### Known constraints
 
@@ -741,7 +742,7 @@ Memory powered by MemPalace, imported as Python package — no MCP, no subproces
 
 `_resolve_session_wing` priority: project → team → user → empty. Anonymous sessions return `""` and skipped by chat-sync.
 
-`mempalace_query`: when `_thread_local.project` set, **force-scopes** to `project__<id>` (refuses if id missing rather than leak). Otherwise defaults to `user__<current_user_id>`. Visibility filter for unspecified-wing searches: drops `project__*` (always private), matches `user__/team__` against caller, treats untyped as shared.
+`mempalace_query`: when `get_request_context().project` set, **force-scopes** to `project__<id>` (refuses if id missing rather than leak). Otherwise defaults to `user__<current_user_id>`. Visibility filter for unspecified-wing searches: drops `project__*` (always private), matches `user__/team__` against caller, treats untyped as shared.
 
 **Chat sync classifier gate**: LLM classifies message pairs before filing. `fact`/`preference`/`decision`/`reference` filed vs `generic`/`refusal`/`chitchat` skipped. Non-streaming, `max_tokens: 20`, fail-open. Per-session 3-state mode: `0=off`, `1=on`, `2=auto`. `save_chat_to_memory` tool lets model explicitly enable on "remember this". Per-turn control via palace-icon menu (memorise/remove × complete/this/above/below) → `memorize_turns`/`purge_turns` accepting `turn_ids` or `{scope, anchor_turn_id}`. Disable-with-purge prompt when toggling on/auto → off and drawers exist.
 

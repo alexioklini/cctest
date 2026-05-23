@@ -11979,8 +11979,18 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None, tool_round
         _display_tool_call(tc["name"], tc["input"])
         if event_callback:
             event_callback("tool_call", {"name": tc["name"], "args": tc["input"], "tool_round": tool_round})
-        with request_context(event_callback=event_callback, tool_use_id=tc["id"]):
+        # NOTE: dead code (no live caller — the sidecar owns tool dispatch).
+        # Set only event_callback + tool_use_id on the CURRENT context (the tool
+        # needs the surrounding current_agent/session_id to stay intact — a fresh
+        # request_context() would reset them), then clear the two afterward.
+        _ctx = get_request_context()
+        _ctx.event_callback = event_callback
+        _ctx.tool_use_id = tc["id"]
+        try:
             result = _execute_tool(tc["name"], tc["input"])
+        finally:
+            _ctx.event_callback = None
+            _ctx.tool_use_id = None
         _display_tool_result(tc["name"], result)
         if event_callback:
             event_callback("tool_result", {"name": tc["name"], "result": result, "tool_round": tool_round})
