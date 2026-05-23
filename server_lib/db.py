@@ -52,115 +52,18 @@ def _db_safe(default=None):
 
 
 # --- Node Manager (in-memory registry for remote nodes) ---
-# State + helpers; re-exported by server.py for handler mixins.
+# Extracted to server_lib/node_registry.py. Re-exported here (and from there
+# by server.py) so handler mixins resolving names via globals keep working.
+from server_lib.node_registry import (  # noqa: F401
+    _node_registry,
+    _node_commands,
+    _node_lock,
+    _load_node_config,
+    _save_node_config,
+    _init_node_registry,
+    _node_submit_command,
+)
 
-_node_registry: dict[str, dict] = {}  # token -> node info
-_node_commands: dict[str, dict] = {}  # command_id -> {command, result_event, result}
-_node_lock = threading.Lock()
-
-
-def _load_node_config() -> dict:
-    """Load nodes config from config.json (repo root, one level up from server_lib/)."""
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.json")
-    try:
-        with open(config_path) as f:
-            config = json.load(f)
-        return config.get("nodes", {})
-    except Exception:
-        return {}
-
-
-def _save_node_config(nodes: dict):
-    """Save nodes config to config.json (repo root, one level up from server_lib/)."""
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.json")
-    try:
-        config = {}
-        if os.path.exists(config_path):
-            with open(config_path) as f:
-                config = json.load(f)
-        config["nodes"] = nodes
-        with open(config_path, "w") as f:
-            json.dump(config, f, indent=2)
-    except Exception as e:
-        print(f"Failed to save node config: {e}", flush=True)
-
-
-def _init_node_registry():
-    """Initialize node registry from config."""
-    global _node_registry
-    nodes_cfg = _load_node_config()
-    with _node_lock:
-        for name, cfg in nodes_cfg.items():
-            token = cfg.get("token", "")
-            if token:
-                _node_registry[token] = {
-                    "name": name,
-                    "config": cfg,
-                    "status": "disconnected",
-                    "last_heartbeat": None,
-                    "hostname": "",
-                    "os": "",
-                    "cpu_percent": None,
-                    "mem_used_gb": None,
-                    "mem_total_gb": None,
-                    "disk_free_gb": None,
-                    "uptime_seconds": None,
-                    "active_commands": 0,
-                    "total_commands": 0,
-                    "connected_since": None,
-                    "pending_commands": [],
-                }
-
-
-def _node_submit_command(node_selector: str, tool: str, params: dict) -> dict:
-    """Submit a command to a remote node. Returns the result."""
-    with _node_lock:
-        target_node = None
-        target_token = None
-
-        if node_selector.startswith("tag:"):
-            tag = node_selector[4:]
-            candidates = []
-            for token, info in _node_registry.items():
-                cfg = info.get("config", {})
-                if tag in cfg.get("tags", []) and info["status"] == "connected" and not cfg.get("paused"):
-                    if tool in cfg.get("allowed_tools", []):
-                        candidates.append((token, info))
-            if candidates:
-                candidates.sort(key=lambda x: x[1].get("active_commands", 0))
-                target_token, target_node = candidates[0]
-        else:
-            for token, info in _node_registry.items():
-                if info["name"] == node_selector:
-                    target_token = token
-                    target_node = info
-                    break
-
-        if not target_node:
-            return {"error": f"Node '{node_selector}' not found"}
-        if target_node["status"] != "connected":
-            return {"error": f"Node '{node_selector}' is not connected"}
-        cfg = target_node.get("config", {})
-        if cfg.get("paused"):
-            return {"error": f"Node '{node_selector}' is paused"}
-        if tool not in cfg.get("allowed_tools", []):
-            return {"error": f"Tool '{tool}' not allowed on node '{node_selector}'"}
-
-        command_id = uuid.uuid4().hex[:12]
-        cmd = {"id": command_id, "tool": tool, "params": params}
-        result_event = threading.Event()
-        _node_commands[command_id] = {"command": cmd, "result_event": result_event, "result": None}
-        target_node["pending_commands"].append(cmd)
-
-    timeout = params.get("timeout", 120)
-    if result_event.wait(timeout=timeout + 5):
-        with _node_lock:
-            entry = _node_commands.pop(command_id, {})
-            return entry.get("result", {"error": "No result"})
-    else:
-        with _node_lock:
-            _node_commands.pop(command_id, None)
-        return {"error": f"Timeout waiting for node '{node_selector}'"}
 
 # --- MemPalace wing/purge helpers ---
 # Re-exported by server.py for handler mixins. _mp singleton stays in server.py;
@@ -420,6 +323,12 @@ def session_share_block(info: dict) -> dict:
         "extra_member_user_ids": _list(info.get("extra_member_user_ids")),
         "excluded_user_ids": _list(info.get("excluded_user_ids")),
     }
+
+
+# MemPalace chat-sync cursor helpers extracted here. Imported AFTER _db_conn /
+# _db_safe are defined above so mempalace_sync's `from server_lib.db import
+# _db_conn, _db_safe` resolves (db.py is already in sys.modules at this point).
+from server_lib import mempalace_sync as _mp_sync  # noqa: E402
 
 
 class ChatDB:
@@ -1321,105 +1230,12 @@ class ChatDB:
             ).fetchone()
             return row[0] if row else ""
 
-    @staticmethod
-    @_db_safe(default=list)
-    def mempalace_sessions_needing_sync():
-        """Return sessions whose max(messages.id) > last synced id (or have never been synced).
-
-        Returns a list of dicts: {session_id, agent_id, user_id, summary, last_message_id_filed, max_message_id}.
-        Uses a left join so sessions with no prior cursor row show up as last_message_id_filed=0.
-        """
-        with _db_conn() as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute("""
-                SELECT s.id as session_id,
-                       s.agent_id as agent_id,
-                       COALESCE(s.user_id, '') as user_id,
-                       COALESCE(s.team_id, '') as team_id,
-                       COALESCE(s.visibility, 'user') as visibility,
-                       COALESCE(s.project, '') as project,
-                       COALESCE(s.summary, '') as summary,
-                       COALESCE(s.save_to_memory, 0) as save_to_memory,
-                       COALESCE(c.last_message_id, 0) as last_message_id_filed,
-                       COALESCE(c.last_summary_hash, '') as last_summary_hash,
-                       (SELECT MAX(id) FROM messages WHERE session_id = s.id) as max_message_id,
-                       (SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count
-                FROM sessions s
-                LEFT JOIN chat_mempalace_sync c ON c.session_id = s.id
-                WHERE s.status != 'incognito'
-            """).fetchall()
-            out = []
-            for r in rows:
-                d = dict(r)
-                if (d.get("max_message_id") or 0) > (d.get("last_message_id_filed") or 0):
-                    out.append(d)
-                elif d.get("summary") and not d.get("last_summary_hash"):
-                    # Summary was generated after the last sync — still needs one pass.
-                    out.append(d)
-            return out
-
-    @staticmethod
-    @_db_safe(default=list)
-    def mempalace_load_new_messages(session_id, after_id):
-        """Return messages with id > after_id for a session, including compacted rows
-        (we want a lossless mirror, not a live-context view)."""
-        with _db_conn() as conn:
-            rows = conn.execute(
-                "SELECT id, role, content, metadata FROM messages "
-                "WHERE session_id = ? AND id > ? ORDER BY id",
-                (session_id, after_id)
-            ).fetchall()
-            out = []
-            for mid, role, content, metadata in rows:
-                try:
-                    parsed = json.loads(content)
-                except (json.JSONDecodeError, TypeError):
-                    parsed = content
-                meta = None
-                if metadata:
-                    try:
-                        meta = json.loads(metadata)
-                    except (json.JSONDecodeError, TypeError):
-                        meta = None
-                out.append({"id": mid, "role": role, "content": parsed, "metadata": meta})
-            return out
-
-    @staticmethod
-    @_db_safe(default=0)
-    def mempalace_last_user_id_before(session_id, before_id):
-        """Return the id of the most recent user message in this session with id <= before_id.
-        Used by the chat-sync loop to attach orphan assistant/tool rows to the turn
-        they belong to when the sync cursor advances past a user message boundary."""
-        with _db_conn() as conn:
-            row = conn.execute(
-                "SELECT id FROM messages WHERE session_id = ? AND role = 'user' AND id <= ? "
-                "ORDER BY id DESC LIMIT 1",
-                (session_id, before_id)
-            ).fetchone()
-            return int(row[0]) if row else 0
-
-    @staticmethod
-    @_db_safe(default=None)
-    def mempalace_update_cursor(session_id, last_message_id, last_summary_hash=None):
-        with _db_conn() as conn:
-            if last_summary_hash is None:
-                conn.execute("""
-                    INSERT INTO chat_mempalace_sync (session_id, last_message_id, updated_at)
-                    VALUES (?, ?, strftime('%s','now'))
-                    ON CONFLICT(session_id) DO UPDATE SET
-                        last_message_id = excluded.last_message_id,
-                        updated_at = excluded.updated_at
-                """, (session_id, int(last_message_id)))
-            else:
-                conn.execute("""
-                    INSERT INTO chat_mempalace_sync (session_id, last_message_id, last_summary_hash, updated_at)
-                    VALUES (?, ?, ?, strftime('%s','now'))
-                    ON CONFLICT(session_id) DO UPDATE SET
-                        last_message_id = excluded.last_message_id,
-                        last_summary_hash = excluded.last_summary_hash,
-                        updated_at = excluded.updated_at
-                """, (session_id, int(last_message_id), last_summary_hash))
-            conn.commit()
+    # MemPalace chat-sync cursor methods extracted to server_lib/mempalace_sync.py.
+    # Thin staticmethod wrappers delegate so ChatDB.mempalace_* callers are untouched.
+    mempalace_sessions_needing_sync = staticmethod(_mp_sync.mempalace_sessions_needing_sync)
+    mempalace_load_new_messages = staticmethod(_mp_sync.mempalace_load_new_messages)
+    mempalace_last_user_id_before = staticmethod(_mp_sync.mempalace_last_user_id_before)
+    mempalace_update_cursor = staticmethod(_mp_sync.mempalace_update_cursor)
 
     @staticmethod
     @_db_safe(default=list)
