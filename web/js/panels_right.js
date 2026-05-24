@@ -39,7 +39,16 @@ function openRightPanel(tab) {
   state.userClosedRightPanel = false;
   switchRightTab(tab || state.rightPanelTab || 'attachments');
   initRightPanelResize();
+  setRightPanelGlow(false);
   syncRightPanelToggle();
+}
+
+// Pulse the toggle button to signal new panel data (any type) while the
+// panel is closed. No-op when the panel is open. Cleared on open.
+function setRightPanelGlow(on) {
+  const btn = document.getElementById('toggle-right-panel-btn');
+  if (!btn) return;
+  btn.classList.toggle('glow', !!on && !state.rightPanelOpen);
 }
 
 function toggleRightPanel() {

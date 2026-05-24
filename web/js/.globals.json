@@ -623,6 +623,7 @@
     "setChatFilter": "writable",
     "setProjectChatsFilter": "writable",
     "setProjectFilter": "writable",
+    "setRightPanelGlow": "writable",
     "setScheduledFilter": "writable",
     "setTheme": "writable",
     "setTurnsCollapsedRelativeTo": "writable",

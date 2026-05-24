@@ -446,7 +446,8 @@ function buildStreamCallbacks(chat, isActive) {
           if (!allLinks.has(ref.link)) { cache.searched.push(ref); allLinks.add(ref.link); added = true; }
         }
         if (added && isActive()) {
-          if (!state.userClosedRightPanel) openRightPanel('references');
+          // References never auto-open the panel — just glow the button.
+          if (!state.rightPanelOpen) setRightPanelGlow(true);
           updateRightPanelBadges();
         }
       },
@@ -470,7 +471,8 @@ function buildStreamCallbacks(chat, isActive) {
             if (!allLinks.has(ref.link)) { cache.searched.push(ref); allLinks.add(ref.link); newRefAdded = true; }
           }
           if (newRefAdded && isActive()) {
-            if (!state.userClosedRightPanel) openRightPanel('references');
+            // References never auto-open the panel — just glow the button.
+            if (!state.rightPanelOpen) setRightPanelGlow(true);
             updateRightPanelBadges();
           }
         }
@@ -559,8 +561,16 @@ function buildStreamCallbacks(chat, isActive) {
             sel.value = d.artifact_version;
           }
           loadArtifactVersion(d.artifact_version);
-        } else if (d.artifact_role !== 'intermediate' && !state.userClosedRightPanel) {
-          openArtifactPanel(d.artifact_id, d.artifact_version);
+        } else if (d.artifact_role === 'output') {
+          // Only real output artifacts auto-open the panel — never intermediate
+          // / technical artifacts. A user-closed panel stays closed for the
+          // session; the button glows instead so the new artifact is noticed.
+          if (!state.userClosedRightPanel) openArtifactPanel(d.artifact_id, d.artifact_version);
+          else if (!state.rightPanelOpen) setRightPanelGlow(true);
+        } else if (!state.rightPanelOpen) {
+          // Intermediate / technical artifacts never auto-open, but new panel
+          // data should still glow the button.
+          setRightPanelGlow(true);
         }
         updateRightPanelBadges();
       },

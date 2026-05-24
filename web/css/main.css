@@ -1485,6 +1485,11 @@ textarea { resize: none; }
 }
 .right-panel-toggle-btn:hover { background: var(--bg-200); color: var(--text-200); border-color: var(--border-200); }
 .right-panel-toggle-btn.active { color: var(--accent-brand); border-color: var(--accent-brand); background: color-mix(in srgb, var(--accent-brand) 8%, transparent); }
+.right-panel-toggle-btn.glow { color: var(--accent-brand); border-color: var(--accent-brand); animation: right-panel-glow 1.4s ease-in-out infinite; }
+@keyframes right-panel-glow {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-brand) 45%, transparent); }
+  50%      { box-shadow: 0 0 6px 1px color-mix(in srgb, var(--accent-brand) 55%, transparent); }
+}
 .right-tab-pane { display: none; flex: 1; flex-direction: column; overflow: hidden; }
 .right-tab-pane.active { display: flex; }
 
