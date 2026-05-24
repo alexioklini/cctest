@@ -370,7 +370,8 @@ function buildToolResultBlock(toolName, args, resultStr) {
   const terminal = lang === 'shell';
   const id = `tres-${++_toolResultSeq}`;
   // Cap actual rendering at MAX so a 5MB blob doesn't lock the browser; copy
-  // still gets the full string.
+  // still gets the rendered slice, but Download always gets the complete,
+  // uncapped output (full).
   const renderable = fullLen > TOOL_RESULT_MAX_RENDER
     ? resultStr.substring(0, TOOL_RESULT_MAX_RENDER)
     : resultStr;
@@ -379,24 +380,25 @@ function buildToolResultBlock(toolName, args, resultStr) {
   const initial = truncatedInitial
     ? renderable.substring(0, TOOL_RESULT_INITIAL_CHARS)
     : renderable;
-  _toolResultStore.set(id, { full: renderable, lang, terminal, fullLen, truncatedAtRender });
+  _toolResultStore.set(id, { full: renderable, complete: resultStr, toolName, lang, terminal, fullLen, truncatedAtRender });
   const langBadge = lang ? `<span class="tool-result-lang">${esc(lang)}</span>` : '';
   const sizeBadge = `<span class="tool-result-lang">${formatBytes(fullLen)}</span>`;
   const expandLabel = truncatedInitial ? 'Show full' : 'Expand';
   const expandBtn = `<button type="button" class="tool-result-btn" data-tres-expand="${id}" onclick="event.stopPropagation(); expandToolResult('${id}', this)">${expandLabel}</button>`;
   const copyBtn = `<button type="button" class="tool-result-btn" onclick="event.stopPropagation(); copyToolResult('${id}', this)">Copy</button>`;
+  const downloadBtn = `<button type="button" class="tool-result-btn" onclick="event.stopPropagation(); downloadToolResult('${id}', this)">Download</button>`;
   const highlighted = highlightToolResult(initial, lang);
   const langCls = lang ? ` language-${lang}` : '';
   const termCls = terminal ? ' terminal' : '';
   const truncNote = truncatedAtRender
-    ? `<div class="tool-result-truncated-note">Output exceeds ${formatBytes(TOOL_RESULT_MAX_RENDER)}; rendering capped. Copy still returns the rendered slice.</div>`
+    ? `<div class="tool-result-truncated-note">Output exceeds ${formatBytes(TOOL_RESULT_MAX_RENDER)}; rendering capped. Copy returns the rendered slice; Download returns the complete output.</div>`
     : '';
   return `<div class="tool-result-section">
     <div class="tool-result-header">
       <span class="tool-result-label">Response</span>
       ${langBadge}
       ${sizeBadge}
-      <span class="tool-result-actions">${expandBtn}${copyBtn}</span>
+      <span class="tool-result-actions">${expandBtn}${copyBtn}${downloadBtn}</span>
     </div>
     <pre class="tool-result-pre${termCls}" data-tres-id="${id}"><code class="hljs${langCls}">${highlighted}</code></pre>
     ${truncNote}
@@ -432,6 +434,39 @@ function copyToolResult(id, btn) {
     navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
   } else {
     fallbackCopy(text, done);
+  }
+}
+// Download the COMPLETE, uncapped tool output (entry.complete), not the
+// render-capped slice. Extension follows the detected language.
+const _LANG_TO_EXT = {
+  python: 'py', javascript: 'js', typescript: 'ts', tsx: 'tsx', jsx: 'jsx',
+  go: 'go', rust: 'rs', java: 'java', c: 'c', cpp: 'cpp', csharp: 'cs',
+  ruby: 'rb', php: 'php', swift: 'swift', kotlin: 'kt', bash: 'sh',
+  json: 'json', yaml: 'yaml', toml: 'toml', ini: 'ini', xml: 'xml',
+  css: 'css', scss: 'scss', markdown: 'md', sql: 'sql', dockerfile: 'dockerfile',
+  shell: 'txt',
+};
+function downloadToolResult(id, btn) {
+  const entry = _toolResultStore.get(id);
+  if (!entry) return;
+  const text = entry.complete != null ? entry.complete : entry.full;
+  const ext = _LANG_TO_EXT[entry.lang] || 'txt';
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const base = (entry.toolName || 'tool-output').replace(/[^a-z0-9_-]+/gi, '_');
+  const filename = `${base}_${ts}.${ext}`;
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  if (btn) {
+    const orig = btn.textContent;
+    btn.textContent = 'Saved';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
   }
 }
 function fallbackCopy(text, cb) {
