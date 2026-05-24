@@ -609,6 +609,7 @@
     "resetGdprCategories": "writable",
     "resetResearchModeDiscipline": "writable",
     "resetToolPromptSettings": "writable",
+    "restartCrawl4ai": "writable",
     "restartSearxng": "writable",
     "restartSidecar": "writable",
     "restoreCitationPins": "writable",

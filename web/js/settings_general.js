@@ -108,6 +108,25 @@ async function restartSearxng(btn) {
   }
 }
 
+async function restartCrawl4ai(btn) {
+  if (!confirm('Hard-restart the crawl4ai render service?\n\nJS-rendered fetches briefly fall back to plain HTTP until it comes back up.')) return;
+  const orig = btn?.textContent || 'Restart crawl4ai';
+  if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
+  try {
+    const r = await API.post('/v1/crawl4ai/restart', {});
+    if (r && r.ok) showToast('crawl4ai restarting');
+    else showToast(r?.error || 'Restart failed', true);
+  } catch (e) {
+    showToast('Restart failed: ' + (e?.message || e), true);
+  } finally {
+    setTimeout(() => {
+      const t = document.querySelector('.modal-tab.active[onclick*="server"]');
+      if (t) switchGeneralTab('server', t);
+      else if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }, 1500);
+  }
+}
+
 // Renders the per-engine SearXNG health panel: one row per enabled search
 // engine with its last-test state + latency, the time of the last probe, the
 // next scheduled automatic probe (every 4h, anchored to server startup), and a
