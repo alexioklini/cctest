@@ -7,10 +7,13 @@ async function saveToolsConfig() {
   const cfg = {
     exa_search: {
       enabled: document.getElementById('tool-exa_search-enabled')?.checked ?? true,
-      backend: document.getElementById('tool-exa-backend')?.value || 'exa',
       api_key: document.getElementById('tool-exa-key')?.value || '',
-      searxng_url: document.getElementById('tool-exa-searxng-url')?.value?.trim() || '',
       default_num_results: parseInt(document.getElementById('tool-exa-num')?.value) || 5,
+    },
+    searxng_search: {
+      enabled: document.getElementById('tool-searxng_search-enabled')?.checked ?? false,
+      url: document.getElementById('tool-searxng-url')?.value?.trim() || '',
+      default_num_results: parseInt(document.getElementById('tool-searxng-num')?.value) || 5,
     },
     gmail: {
       enabled: document.getElementById('tool-gmail-enabled')?.checked ?? true,
@@ -224,19 +227,15 @@ function renderToolIntegrationFields(name, cfg) {
     return `<select id="${id}" class="form-select" style="font-size:11px;width:100%">${opts}</select>`;
   };
   switch (name) {
-    case 'exa_search': {
-      const be = (cfg.backend || 'exa');
-      return `${lbl('Backend')}
-        <select id="tool-exa-backend" class="form-select" style="font-size:11px;width:100%">
-          <option value="exa"${be === 'exa' ? ' selected' : ''}>Exa AI (cloud, API key)</option>
-          <option value="searxng"${be === 'searxng' ? ' selected' : ''}>SearXNG (self-hosted, no key)</option>
-        </select>
-        ${lbl('API Key')}<div style="font-size:10px;color:var(--text-400);margin-bottom:2px">Used by the Exa backend.</div>${maskF('tool-exa-key', cfg.api_key)}
-        ${lbl('SearXNG URL')}<div style="font-size:10px;color:var(--text-400);margin-bottom:2px">Base URL of a self-hosted SearXNG instance, e.g. http://localhost:8888 (its settings.yml must enable the json format).</div>
-        <input id="tool-exa-searxng-url" type="text" value="${esc(cfg.searxng_url||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px" placeholder="http://localhost:8888">
+    case 'exa_search':
+      return `${lbl('API Key')}${maskF('tool-exa-key', cfg.api_key)}
         ${lbl('Default Results Per Query')}
         <input id="tool-exa-num" type="number" min="1" max="50" value="${cfg.default_num_results||5}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px">`;
-    }
+    case 'searxng_search':
+      return `${lbl('SearXNG URL')}<div style="font-size:10px;color:var(--text-400);margin-bottom:2px">Base URL of a self-hosted SearXNG instance, e.g. http://localhost:8888 (its settings.yml must enable the json format).</div>
+        <input id="tool-searxng-url" type="text" value="${esc(cfg.url||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px" placeholder="http://localhost:8888">
+        ${lbl('Default Results Per Query')}
+        <input id="tool-searxng-num" type="number" min="1" max="50" value="${cfg.default_num_results||5}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px">`;
     case 'gmail':
       return `${lbl('Email')}
         <input id="tool-gmail-email" type="email" value="${esc(cfg.email||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
@@ -418,10 +417,15 @@ async function saveToolIntegration(toolName) {
     case 'exa_search':
       rec = {
         enabled: window._toolConfigCache?.exa_search?.enabled !== false,
-        backend: document.getElementById('tool-exa-backend')?.value || 'exa',
         api_key: document.getElementById('tool-exa-key')?.value || '',
-        searxng_url: document.getElementById('tool-exa-searxng-url')?.value?.trim() || '',
         default_num_results: parseInt(document.getElementById('tool-exa-num')?.value) || 5,
+      };
+      break;
+    case 'searxng_search':
+      rec = {
+        enabled: window._toolConfigCache?.searxng_search?.enabled === true,
+        url: document.getElementById('tool-searxng-url')?.value?.trim() || '',
+        default_num_results: parseInt(document.getElementById('tool-searxng-num')?.value) || 5,
       };
       break;
     case 'gmail':

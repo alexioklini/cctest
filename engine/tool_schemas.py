@@ -382,7 +382,7 @@ TOOL_DEFINITIONS = [
     {
         "name": "exa_search",
         "description": (
-            "Search the web for current, relevant information. "
+            "Search the web using Exa AI for current, relevant information. "
             "Use this tool whenever the user asks to search the web, look something up, "
             "find recent news, or get current information about any topic."
         ),
@@ -403,6 +403,38 @@ TOOL_DEFINITIONS = [
                     "type": "string",
                     "description": "Optional category: news, research paper, tweet, company, people",
                     "enum": ["news", "research paper", "tweet", "company", "people"],
+                },
+            },
+            "required": ["query"],
+        },
+        "minimal": True,
+        "minimal_role": "to find relevant sources",
+    },
+    {
+        "name": "searxng_search",
+        "description": (
+            "Search the web via a self-hosted SearXNG metasearch instance for "
+            "current, relevant information. Use this tool whenever the user asks "
+            "to search the web, look something up, find recent news, or get "
+            "current information about any topic."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query or topic to look up",
+                },
+                "num_results": {
+                    "type": "integer",
+                    "description": "Number of search results to return (default: 5)",
+                    "minimum": 1,
+                    "maximum": 20,
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Optional category. Only 'news' is supported.",
+                    "enum": ["news"],
                 },
             },
             "required": ["query"],

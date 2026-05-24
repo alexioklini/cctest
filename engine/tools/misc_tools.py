@@ -7,6 +7,8 @@
 #   - mcp_connect / mcp_disconnect / mcp_servers — runtime MCP client control
 #   - get_artifact_detail  — read a worker artifact's raw_result
 #   - web_fetch            — HTTP GET/POST with HTML→markdown + cache
+#   - exa_search           — web search via Exa AI (cloud, API key)
+#   - searxng_search       — web search via self-hosted SearXNG (no key)
 #   - tool_passes_purpose / tool_is_enabled / tool_is_deferred — the tool
 #     resolver PREDICATES (NOT in TOOL_DISPATCH; despite the `tool_` prefix
 #     they are not agent-callable tools — they answer "is this tool allowed
@@ -297,28 +299,43 @@ def tool_web_fetch(args: dict) -> str:
         return _err(f"web_fetch: {e}")
 
 
-# ─── exa_search (web search; backend = exa | searxng) ─────────────────────────
+# ─── exa_search / searxng_search (two independent web-search tools) ───────────
 #
-# Unlike most tools here, exa_search returns raw JSON strings (not _ok/_err
-# envelopes) — this is the pre-existing contract every caller + the UI
-# reference-extraction relies on. Preserved verbatim on relocation.
+# Both return raw JSON strings (not _ok/_err envelopes) — the pre-existing
+# {query, results:[{title,link}], result_count} contract every caller + the UI
+# reference-extraction relies on. They are SEPARATE tools, each with its own
+# tools_config block; the admin enables exa, searxng, or both via
+# tool_settings.enabled and the LLM picks from whatever is in its tool list.
+# No backend flag, no cross-tool routing.
 
-def _searxng_search(query: str, num_results: int, category: str | None,
-                    tcfg: dict, cache_key: str) -> str:
-    """SearXNG backend for exa_search. Self-hosted metasearch, no API key.
+def tool_searxng_search(args: dict) -> str:
+    """Web search via a self-hosted SearXNG instance. No API key, on-prem.
 
-    Hits <searxng_url>/search?format=json and maps results to the same
-    {title, link} shape exa() returns. Only SearXNG's real `news` category
-    is mapped; Exa-specific categories (research paper / tweet / company /
-    people) have no SearXNG equivalent and are dropped rather than passed
-    through (passing an unknown category returns zero results)."""
+    Reads tools_config.searxng_search.url (base URL) and hits
+    <url>/search?format=json, mapping results to the same {title, link} shape
+    exa_search returns. Only SearXNG's real `news` category is mapped;
+    other categories have no SearXNG equivalent and are dropped (passing an
+    unknown category returns zero results)."""
     import brain as _brain
-    base = (tcfg.get("searxng_url") or "").rstrip("/")
+    query = args.get("query", "")
+    num_results = args.get("num_results", 5)
+    category = args.get("category")
+    force_fresh = args.get("force_fresh", False)
+
+    _tcfg = _brain.get_tool_config().get("searxng_search", {})
+    base = (_tcfg.get("url") or "").rstrip("/")
     if not base:
         return json.dumps({
             "query": query, "results": [],
-            "error": "SearXNG backend selected but searxng_url is not set in tools_config.exa_search",
+            "error": "searxng_search: url is not set in tools_config.searxng_search",
         })
+
+    cache_key = f"searxng:{base}:{query}:{num_results}:{category or ''}"
+    if not force_fresh:
+        cached = _brain._web_cache.get(cache_key)
+        if cached is not None:
+            cached["cached"] = True
+            return json.dumps(cached, indent=1)
 
     params = {"q": query, "format": "json"}
     if category == "news":
@@ -367,28 +384,19 @@ def _searxng_search(query: str, num_results: int, category: str | None,
 
 def exa_search(query: str, num_results: int = 5, category: str | None = None,
                force_fresh: bool = False) -> str:
-    """Execute a web search and return JSON results ({title, link} per result).
-
-    Backend is chosen by tools_config.exa_search.backend ("exa" default, or
-    "searxng" for a self-hosted SearXNG instance). Output shape is identical
-    across backends so nothing downstream changes. Uses stdlib only."""
+    """Execute an Exa web search and return JSON results ({title, link} per
+    result). Uses stdlib only."""
     import brain as _brain
-    # Check cache (shared across backends — backend baked into key so a config
-    # switch can't serve a stale cross-backend result)
-    _tcfg = _brain.get_tool_config().get("exa_search", {})
-    backend = (_tcfg.get("backend") or "exa").lower()
-    cache_key = f"{backend}:{query}:{num_results}:{category or ''}"
+    cache_key = f"exa:{query}:{num_results}:{category or ''}"
     if not force_fresh:
         cached = _brain._web_cache.get(cache_key)
         if cached is not None:
             cached["cached"] = True
             return json.dumps(cached, indent=1)
 
-    if backend == "searxng":
-        return _searxng_search(query, num_results, category, _tcfg, cache_key)
-
     # Read API key from tools_config, fall back to env var. No hardcoded
     # default — an unconfigured key surfaces as an Exa 401 the model sees.
+    _tcfg = _brain.get_tool_config().get("exa_search", {})
     api_key = _tcfg.get("api_key") or os.environ.get("EXA_API_KEY", "")
 
     body = {

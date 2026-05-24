@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.13.0"
+VERSION = "9.13.1"
 VERSION_DATE = "2026-05-24"
 CHANGELOG = [
+    ("9.13.1", "2026-05-24", "refactor(web-search): SearXNG is now its own tool, not an exa_search backend flag. Reworked the v9.13.0 design — the `backend` config switch + cross-tool routing didn't scale and conflated two services behind one tool. Now there are **two independent search tools**, `exa_search` (Exa cloud, API key) and `searxng_search` (self-hosted SearXNG, no key), each with its own `tools_config` block (`exa_search.api_key` / `searxng_search.url`). The admin enables exa, searxng, or both via the standard `tool_settings.enabled` gate; the LLM picks from whatever is in its active tool list — no `backend` field, no mapping, the enabled-tools list is the only thing that decides what gets called (the existing resolver hierarchy, no special-casing). `searxng_search` is a normal 4-site tool (schema in `tool_schemas.py` with category enum restricted to the only one SearXNG supports — `news`; `TOOL_GROUPS['web']`; `tool_searxng_search(args)` in `engine/tools/misc_tools.py`; direct-ref `TOOL_DISPATCH` entry). `exa_search` reverted to Exa-only (dropped the `backend`/`searxng_url` keys + the `_searxng_search` helper). Default `searxng_search.enabled=False` (self-hosted; off until an admin sets `url`). GUI: removed the exa backend dropdown; added a dedicated `searxng_search` integration panel (URL + default-results) in Settings → Tools. Also fixed a stale `get_tool_status()` branch that still referenced the deleted hardcoded Exa key as a 'built-in default'. tools_config.sample.json updated to the two-tool shape."),
     ("9.13.0", "2026-05-24", "feat(web-search): SearXNG backend for exa_search + secret-handling hardening. (1) **Config-selectable backend** — `exa_search` gains `tools_config.exa_search.backend` (`exa` default | `searxng`) so production deployments that can't use the paid Exa API can point at a self-hosted SearXNG instance (`searxng_url`, no API key, on-prem). The model still sees a single `exa_search` tool; the backend is an admin/config choice, not a tool the model picks between. New `_searxng_search` helper hits `<searxng_url>/search?format=json` and maps results to the identical `{title, link}` shape Exa returns, so nothing downstream (dispatch, reference badges, audit, prompt prose) changes. Only SearXNG's real `news` category is mapped; Exa-specific categories (research paper / tweet / company / people) have no SearXNG equivalent and are dropped. Cache key now includes the backend so a config switch can't serve a stale cross-backend hit. Missing `searxng_url` surfaces a clear error envelope, not a crash. (2) **Finished the refactor extraction** — moved `exa_search` (+ `_searxng_search`) from brain.py into `engine/tools/misc_tools.py` next to `tool_web_fetch` (the one web tool the Tier-A–E refactor left behind in brain.py); re-exported on `brain` + wired in `TOOL_DISPATCH` unchanged. Schema description de-branded (`Search the web…`, was `Search the web using Exa AI…`). (3) **Secret hardening** — removed the hardcoded Exa API key fallback that was baked into the source (now falls back to `EXA_API_KEY` env then empty → a clean Exa 401 the model sees, never a silent baked-in key); added `tools_config.json` to `.gitignore` and `git rm --cached`'d it (it was tracked — a GUI-saved key would have been committed); added a scrubbed `tools_config.sample.json` template (empty secrets, documents the new `backend`/`searxng_url` knobs). NOTE: the old hardcoded key remains in prior git history — rotate on Exa's side if it was ever live."),
     ("9.12.0", "2026-05-23", "refactor(tl): Tier G — request-context thread-local → typed RequestContext + contextvars (THREADLOCAL_REFACTOR_PLAN/REPORT.md). Replaced the ad-hoc `_thread_local = threading.local()` attribute bag (~40 request-scoped attrs, ~270 raw `getattr(_thread_local, x, DEF)` / `_thread_local.x = v` accesses across 19 files) with a single typed `RequestContext` dataclass stored in a `contextvars.ContextVar` (`engine/context.py`). State is now read/written ONLY via `get_request_context().<field>` and entered/torn-down ONLY via `with request_context(**overrides):` — entering pushes a fresh context, exit token-resets it (total automatic teardown; the scattered hand-written `finally: _thread_local.x = None` blocks — ~10 in handlers/chat.py alone, plus tool_mcp's 19-attr `_clear_context` loop and WorkflowExecution's dynamic teardown loop — are all gone). Nested binds (delegate / sidecar-reconstitute / background sub-calls) stack + pop correctly. **6 gated phases**: (0) built the no-bleed gate FIRST — `tests/test_request_context_isolation.py` (overlapping tasks on a shared pool each read only their own ctx + a teardown-residue assertion + a negative control proving the bleed is observable when teardown is skipped), wired as `refactor_gate.sh` Gate 5b + a `tlgrep <attr>` mode proving zero raw access per attr; (1) stood up RequestContext + ContextVar + a back-compat `_thread_local` shim (no call-site changes); (2) migrated every enter/exit site to `with request_context()`; (3) migrated every read/write to the accessor; (4) deleted the shim — `_thread_local` no longer resolves on `engine.context` or `brain`; (5) 8/8 source-validation audit. **Two DEAD attrs discovered + declared** (`_fallback_model_used` read-only-always-None, `in_worker_subagent` write-only) — both vestiges of the deleted native loop, kept as fields for accessor-resolution (behaviour-identical). **Scope corrections surfaced during the run**: the plan's '18 files' missed `execution.py` (a 19th live file) + 3 more (`classification.py`/`gmail_tools.py`/`image_gen.py`) reached via `_brain._thread_local` prefix that the gate's regex didn't match — migrated all, hardened `tlgrep` to `(\\w+\\.)?_thread_local` + widened scan dirs. **Two latent bugs caught**: `engine/scheduler.py` used `request_context()` without importing it (a NameError that would fire at task-execution time, invisible to the import-check); and a self-review found `_execute_tools_batch` (dead code) had been migrated to a fresh `request_context()` that would have reset the surrounding `current_agent`/`session_id` the tool needs — reverted to current-context set+clear. **contextvars bleed invariant** documented in CLAUDE.md: a fresh thread starts empty (so the HTTP `ThreadingMixIn` thread-per-request + per-task `Thread().start()` paths are bleed-free), but a bare context-set on a REUSED pool thread would persist to the next task — the one footgun vs `threading.local()`; all live reused-thread setters are inside a `with`, and the only real `ThreadPoolExecutor` (`engine/kg_extract.py`) never touches request context. The 8 DB-connection `threading.local()` pools are a separate correct pattern, deliberately untouched. Verified: full gate green, 157 tests (3 known spaCy-env fails only), 19/19 imports, all 40 attrs tlgrep-clean, live daemon clean boot + in-process smoke of the 4 migrated paths."),
     ("9.11.0", "2026-05-22", "feat(chat): live sidebar synopsis that tracks the whole conversation. The per-chat summary (collapsible Zusammenfassung above turn 1 + page-title tooltip) used to fire exactly once — `_generate_chat_summary` was gated by `not session.summary` in the chat worker, so it reflected only the opening turn and never changed. Three changes in `handlers/chat.py`: (1) **Regenerate every turn** — dropped the `not session.summary` gate; the background summary thread now spawns after every turn with ≥2 messages and overwrites the prior synopsis. Per-turn cost stays low because the input is small (see #2) and the cheap `chat_summary_model` / background-default model is used; cheaper than one big call summarizing question+response. (2) **User questions only** — `_generate_chat_summary` now samples only `role=='user'` messages (was first-3-mixed-roles + last-2), keeping the first question (sets the topic) plus the 3 most recent once there are >4; assistant replies are excluded by design so the synopsis reflects what was asked. (3) **Span all topics, not just the latest** — the original `\"ONE short sentence, max 60 chars\"` prompt forced the model to collapse to the dominant/most-recent topic even though it received every question; reworded to cover multiple distinct topics across the conversation, cap relaxed to ~100 chars, `max_tokens` 80→120 and result truncation 80→120 so a longer line isn't clipped. (4) **Strip round-0 preamble** — the first user message carries the `[Session artifact folder…]` preamble in its `content`; it was leaking into the summary input. Now stripped via `metadata.preamble` (mirrors `add_message`'s auto-title strip) so only the actual question text feeds the synopsis. The session **title** is unchanged — still a deterministic first-message truncation (`_derive_session_title`), no LLM, per the earlier anti-hallucination decision."),
@@ -580,7 +581,7 @@ TOOL_GROUPS = {
                "mempalace_kg_query", "mempalace_kg_search",
                "mempalace_kg_neighbors"},
     "context": {"context_search", "context_detail", "context_recall"},
-    "web": {"web_fetch", "exa_search"},
+    "web": {"web_fetch", "exa_search", "searxng_search"},
     "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
     "documents": {"read_document", "write_document", "edit_document"},
     "delegation": {"delegate_task", "task_status", "task_cancel"},
@@ -1825,7 +1826,7 @@ def _html_to_markdown(html: str) -> str:
         return ""
 
 
-# tool_web_fetch + exa_search (+ _searxng_search backend) moved to
+# tool_web_fetch + exa_search + tool_searxng_search moved to
 # engine/tools/misc_tools.py; re-exported below near TOOL_DISPATCH.
 
 
@@ -2347,9 +2348,12 @@ _TOOLS_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "t
 _TOOLS_CONFIG_DEFAULTS = {
     "exa_search": {
         "enabled": True,
-        "backend": "exa",        # "exa" (default) or "searxng"
         "api_key": "",
-        "searxng_url": "",       # base URL of a self-hosted SearXNG instance, e.g. http://localhost:8888
+        "default_num_results": 5,
+    },
+    "searxng_search": {
+        "enabled": False,        # self-hosted; off until an admin sets `url`
+        "url": "",               # base URL of a SearXNG instance, e.g. http://localhost:8888
         "default_num_results": 5,
     },
     "gmail": {
@@ -2458,13 +2462,11 @@ def get_tool_status() -> dict:
             s = "disabled"
         elif tool_name == "exa_search":
             exa_key = tool_cfg.get("api_key") or os.environ.get("EXA_API_KEY", "")
-            # Check hardcoded fallback in tool function
-            if not exa_key:
-                exa_key = "97dbd594-f7b4-4866-9a8e-6a297e3df576"  # built-in default
-                tool_cfg["_source"] = "built-in default"
-            elif not tool_cfg.get("api_key") and os.environ.get("EXA_API_KEY"):
+            if not tool_cfg.get("api_key") and os.environ.get("EXA_API_KEY"):
                 tool_cfg["_source"] = "environment variable"
             s = "configured" if exa_key else "not configured"
+        elif tool_name == "searxng_search":
+            s = "configured" if tool_cfg.get("url") else "not configured"
         elif tool_name == "gmail":
             has_gmail = bool(tool_cfg.get("email") and tool_cfg.get("app_password"))
             if not has_gmail:
@@ -10968,6 +10970,7 @@ from engine.tools.misc_tools import (  # noqa: E402
     tool_get_artifact_detail,
     tool_web_fetch,
     exa_search,
+    tool_searxng_search,
     tool_passes_purpose,
     tool_is_enabled,
     tool_is_deferred,
@@ -11001,6 +11004,7 @@ TOOL_DISPATCH = {
         num_results=args.get("num_results", 5),
         category=args.get("category"),
     ),
+    "searxng_search": tool_searxng_search,
     "mempalace_query": tool_mempalace_query,
     "mempalace_kg_query": tool_mempalace_kg_query,
     "mempalace_kg_search": tool_mempalace_kg_search,

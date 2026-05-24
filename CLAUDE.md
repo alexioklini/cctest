@@ -462,7 +462,7 @@ agent supplies layer 2. The call's `purpose` is decided by the task's
 `interactive`) or by name prefix (`_memory_summary_*` → `memory_summary`).
 
 **Endpoints**:
-- `GET /v1/tools/settings` — admin-only. Returns all 63 tools (sorted)
+- `GET /v1/tools/settings` — admin-only. Returns all 64 tools (sorted)
   merged with their settings + reverse-indexed `group` string + canonical
   `purposes` list at the top level. Tools without a record get safe
   defaults so the UI can render a single affordance per tool.
@@ -502,7 +502,7 @@ short "this is a project chat with its own memory" paragraph from the
 prompt; everything tool-related is in tool config.
 
 **Admin UI** (`web/js/settings_tools.js` — General Settings → Tools tab):
-grouped collapsible registry showing all 63 tools. Per-tool expanded
+grouped collapsible registry showing all 64 tools. Per-tool expanded
 panel exposes: enabled/deferred toggles, group label (read-only),
 optional integration knobs (for the ~13 tools with `tool_config` entries
 — API keys, timeouts, model selectors), 4 prose textareas, applies_with
