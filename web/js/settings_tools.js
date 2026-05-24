@@ -6,12 +6,10 @@ async function saveToolsConfig() {
   const banned = bannedRaw.split(',').map(s => s.trim()).filter(Boolean);
   const cfg = {
     exa_search: {
-      enabled: document.getElementById('tool-exa_search-enabled')?.checked ?? true,
       api_key: document.getElementById('tool-exa-key')?.value || '',
       default_num_results: parseInt(document.getElementById('tool-exa-num')?.value) || 5,
     },
     searxng_search: {
-      enabled: document.getElementById('tool-searxng_search-enabled')?.checked ?? false,
       url: document.getElementById('tool-searxng-url')?.value?.trim() || '',
       default_num_results: parseInt(document.getElementById('tool-searxng-num')?.value) || 5,
     },
@@ -416,14 +414,12 @@ async function saveToolIntegration(toolName) {
   switch (toolName) {
     case 'exa_search':
       rec = {
-        enabled: window._toolConfigCache?.exa_search?.enabled !== false,
         api_key: document.getElementById('tool-exa-key')?.value || '',
         default_num_results: parseInt(document.getElementById('tool-exa-num')?.value) || 5,
       };
       break;
     case 'searxng_search':
       rec = {
-        enabled: window._toolConfigCache?.searxng_search?.enabled === true,
         url: document.getElementById('tool-searxng-url')?.value?.trim() || '',
         default_num_results: parseInt(document.getElementById('tool-searxng-num')?.value) || 5,
       };
