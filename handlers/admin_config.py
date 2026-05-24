@@ -570,10 +570,8 @@ class AdminConfigHandlers:
             if env_key:
                 exa_cfg["api_key"] = env_key
                 exa_cfg["_source"] = "environment variable"
-            else:
-                # Check built-in default (hardcoded in tool function)
-                exa_cfg["api_key"] = "97dbd594-f7b4-4866-9a8e-6a297e3df576"
-                exa_cfg["_source"] = "built-in default"
+            # No hardcoded built-in default anymore — an unset key stays unset
+            # (the Exa backend then returns a 401 the model sees).
         gmail_cfg = cfg.get("gmail", {})
         if not gmail_cfg.get("email") or not gmail_cfg.get("app_password"):
             fb = engine._gmail_config()
