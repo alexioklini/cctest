@@ -38,6 +38,7 @@ function _rightPanelTabCounts() {
     attachments: (typeof collectChatAttachments === 'function') ? collectChatAttachments().length : 0,
     references: (refs.cited.length + refs.searched.length),
     artifacts: sessionId ? ((state.artifacts[sessionId] || []).length) : 0,
+    websuche: (typeof webBasketCount === 'function') ? webBasketCount() : 0,
   };
 }
 
@@ -135,6 +136,7 @@ function switchRightTab(tabName) {
   if (tabName === 'attachments') renderAttachmentsPane();
   if (tabName === 'references') renderReferencesPane();
   if (tabName === 'artifacts' && !state.activeArtifactId) showArtifactList();
+  if (tabName === 'websuche' && typeof renderWebsuchePane === 'function') renderWebsuchePane();
   updateRightPanelBadges();
   // Re-apply the active-turn focus to the freshly rendered pane.
   if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);
@@ -238,6 +240,9 @@ function updateRightPanelBadges() {
   const artifactCount = sessionId ? (state.artifacts[sessionId] || []).length : 0;
   const artBadge = document.getElementById('tab-badge-artifacts');
   if (artBadge) artBadge.textContent = artifactCount || '0';
+  // Websuche basket count
+  const webBadge = document.getElementById('tab-badge-websuche');
+  if (webBadge) webBadge.textContent = (typeof webBasketCount === 'function' ? webBasketCount() : 0) || '0';
 }
 
 /* ───────────────────────────────────────────────────────────

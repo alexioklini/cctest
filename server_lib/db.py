@@ -458,6 +458,16 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN research_mode_override INTEGER DEFAULT NULL")
             except sqlite3.OperationalError:
                 pass
+            # Manual-web-search escape hatch: when the user supplies a curated
+            # source set, web_search/web_fetch are hard-disabled for the turn.
+            # This sticky per-session flag (0=locked, 1=allow) lets the user
+            # opt back into additional autonomous web access on top of the
+            # curated sources. Default 0 (locked). Only relevant when the turn
+            # carries enabled curated URLs.
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN allow_further_web INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             # Add team_id + visibility for session team-scoping
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN team_id TEXT DEFAULT ''")
@@ -940,6 +950,16 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET research_mode_override = ? WHERE id = ?",
                         (stored, session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_allow_further_web(session_id, value):
+        """Per-session 'allow further web search/fetch' flag (manual-search
+        escape hatch). value: truthy -> 1 (allow), falsy -> 0 (locked)."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET allow_further_web = ? WHERE id = ?",
+                        (1 if value else 0, session_id))
             conn.commit()
 
     @staticmethod

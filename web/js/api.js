@@ -85,6 +85,7 @@ class API {
     return this.get(`/v1/sessions/${encodeURIComponent(id)}/pii-history-summary`);
   }
   static manageSession(body) { return this.post('/v1/sessions/manage', body); }
+  static webSearch(query) { return this.post('/v1/web/search', { query }); }
   static inspectSession(sessionId) { return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/inspect`); }
   static cancelChat(sessionId) { return this.post('/v1/chat/cancel', {session_id: sessionId}); }
   // Transparent anonymisation: deliver the user's choice on the
@@ -243,6 +244,17 @@ class API {
     // GDPR modal so the chat worker can pseudonymise / model-swap / pass
     // through. Server validates; unknown values are treated as null.
     if (gdprAction) body.gdpr_action = gdprAction;
+
+    // Manual web-search: the enabled entries of the Websuche basket. The
+    // server pre-fetches these URLs and injects their content, and (unless
+    // the session's allow_further_web flag is on) hard-disables web_search/
+    // web_fetch for the turn. Basket persists across sends (not cleared here).
+    if (typeof webBasketEnabled === 'function') {
+      const _web = webBasketEnabled();
+      if (_web.length) {
+        body.web_urls_to_fetch = _web.map(e => ({ url: e.url, title: e.title }));
+      }
+    }
 
     try {
       const resp = await fetch(`${BASE_URL}/v1/chat`, {

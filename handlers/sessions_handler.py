@@ -134,6 +134,7 @@ class SessionsHandlerMixin:
             resp["workflow_run_id"] = getattr(session, "workflow_run_id", "") or ""
             _rmo = getattr(session, "research_mode_override", None)
             resp["research_mode_override"] = (None if _rmo is None else bool(_rmo))
+            resp["allow_further_web"] = bool(getattr(session, "allow_further_web", False))
             resp["gdpr_action_pref"] = getattr(session, "gdpr_action_pref", "") or ""
             resp["has_gdpr_mapping"] = bool(
                 getattr(session, "_gdpr_mapping_id", "") or "")
@@ -156,6 +157,7 @@ class SessionsHandlerMixin:
                 _rmo_db = info.get("research_mode_override", None)
                 resp["research_mode_override"] = (None if _rmo_db is None
                                                    else bool(_rmo_db))
+                resp["allow_further_web"] = bool(info.get("allow_further_web", 0))
                 _pref_db = info.get("gdpr_action_pref", "") or ""
                 resp["gdpr_action_pref"] = (_pref_db if _pref_db in
                     ("anonymise", "local_model", "continue") else "")
@@ -1004,5 +1006,12 @@ class SessionsHandlerMixin:
             # Cache invalidation no longer needed: caveman level lives outside
             # the cache key as post-processing on the cached base prose.
             self._send_json({"status": "ok", "caveman_mode": mode, "session_id": sid})
+        elif action == "allow_further_web":
+            allow = bool(body.get("value"))
+            ChatDB.update_session_allow_further_web(sid, allow)
+            s = sessions.get(sid)
+            if s:
+                s.allow_further_web = allow
+            self._send_json({"status": "ok", "allow_further_web": allow, "session_id": sid})
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)

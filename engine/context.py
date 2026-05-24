@@ -85,6 +85,12 @@ class RequestContext:
     tool_round: object = None
     _tool_results_tokens: int = 0
     _discovered_tools: object = None
+    # Per-turn tool exclusion. Names listed here are dropped from the resolved
+    # tool set for this turn (resolve_active_tools subtracts them), even when
+    # otherwise enabled. Set on the chat worker's request context; read by the
+    # resolver. Generic — used by the manual-web-search flow to hard-disable
+    # web_search/web_fetch when the user supplies a curated source set.
+    exclude_tools: object = None
     # --- exec ---
     execution_overrides: object = None
     _intent_action_recovery_count: object = None

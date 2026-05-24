@@ -1196,6 +1196,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         Files <span class="right-panel-tab-badge" id="tab-badge-artifacts">0</span>
       </button>
+      <button class="right-panel-tab" data-tab="websuche" onclick="selectRightTab('websuche')">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+        Websuche <span class="right-panel-tab-badge" id="tab-badge-websuche">0</span>
+      </button>
     </div>
     <button class="right-panel-close-btn" onclick="closeRightPanel(true)" title="Close">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -1245,6 +1249,40 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/></svg>
         Share
       </button>
+    </div>
+  </div>
+
+  <!-- Websuche (manual web search) pane -->
+  <div class="right-tab-pane" id="tab-pane-websuche">
+    <div class="websuche-search">
+      <input type="text" id="websuche-query" class="websuche-input" placeholder="Web durchsuchen…"
+             onkeydown="if(event.key==='Enter')runWebSearch()">
+      <button class="websuche-search-btn" onclick="runWebSearch()" title="Suchen">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+      </button>
+    </div>
+    <div class="websuche-results" id="websuche-results"></div>
+
+    <div class="websuche-basket-header">
+      <span class="websuche-basket-title">Auswahl <span id="websuche-basket-count">(0)</span></span>
+      <span class="websuche-basket-tokens" id="websuche-basket-tokens" title="Geschätzte Token-Last der aktivierten Quellen (Schätzung, bis zum Abruf)"></span>
+    </div>
+    <div class="websuche-bulk">
+      <button class="websuche-bulk-btn" onclick="webBasketBulk('enable')">Alle aktivieren</button>
+      <button class="websuche-bulk-btn" onclick="webBasketBulk('disable')">Alle deaktivieren</button>
+      <button class="websuche-bulk-btn websuche-bulk-danger" onclick="webBasketBulk('clear')">Alle entfernen</button>
+    </div>
+    <label class="websuche-allow-row" id="websuche-allow-row" title="Erlaubt dem Modell, zusätzlich selbst zu suchen/abzurufen">
+      <input type="checkbox" id="websuche-allow-further" onchange="toggleAllowFurtherWeb(this.checked)">
+      <span>Weitere Websuche / Webabruf erlauben</span>
+    </label>
+    <div class="websuche-manual">
+      <input type="text" id="websuche-manual-url" class="websuche-input" placeholder="URL manuell hinzufügen…"
+             onkeydown="if(event.key==='Enter')addManualWebUrl()">
+      <button class="websuche-search-btn" onclick="addManualWebUrl()" title="Hinzufügen">+</button>
+    </div>
+    <div class="websuche-basket" id="websuche-basket"
+         ondragover="onWebBasketDragOver(event)" ondragleave="onWebBasketDragLeave(event)" ondrop="onWebBasketDrop(event)">
     </div>
   </div>
 </div>
@@ -1350,6 +1388,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/panels_projects.js"></script>
 <script src="js/panels_project_sync.js"></script>
 <script src="js/panels_right.js"></script>
+<script src="js/panels_websuche.js"></script>
 <script src="js/panels_artifacts.js"></script>
 <script src="js/settings_teams.js"></script>
 <script src="js/settings_general.js"></script>

@@ -345,6 +345,11 @@ class Session:
         # True/False = force the override for this chat. Set from the composer
         # button or session settings; persists in chats.db sessions table.
         self.research_mode_override: bool | None = None
+        # Manual-web-search escape hatch (sticky per session). False = curated
+        # sources only, web_search/web_fetch hard-disabled when a turn carries
+        # them. True = also permit autonomous web access on top. Only bites
+        # when the turn carries enabled curated URLs. Persists in sessions DB.
+        self.allow_further_web: bool = False
         # Transparent anonymisation sticky preference (step 6.2). When non-
         # empty, the web modal is skipped on every send and this value is
         # forwarded as body.gdpr_action. Allowed: '', 'anonymise',
@@ -429,6 +434,7 @@ class Session:
                 _rmo = info.get("research_mode_override", None)
                 self.research_mode_override = (None if _rmo is None
                                                 else bool(_rmo))
+                self.allow_further_web = bool(info.get("allow_further_web", 0))
                 _pref = info.get("gdpr_action_pref", "") or ""
                 self.gdpr_action_pref = (_pref if _pref in
                     ("anonymise", "local_model", "continue") else "")
@@ -1725,6 +1731,8 @@ class BrainAgentHandler(
             self._handle_chat()
         elif path == "/v1/chat/cancel":
             self._handle_cancel()
+        elif path == "/v1/web/search":
+            self._handle_web_search()
         elif path == "/v1/tools/call":
             _tool_mcp_mod.handle_tools_call(self)
         elif path == "/v1/sessions/manage":

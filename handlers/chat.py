@@ -1544,6 +1544,37 @@ class ChatHandlerMixin:
         session.cancel_token.cancel()
         self._send_json({"status": "cancelled"})
 
+    def _handle_web_search(self):
+        """POST /v1/web/search — run a SearXNG web search and return results.
+
+        Search ONLY: no fetch, no LLM. Powers the composer's manual-curation
+        web-search flow (the Websuche right-panel tab). The user inspects these
+        results, marks the ones to keep, and a later chat turn pre-fetches the
+        marked URLs server-side. Pure passthrough to the existing
+        `tool_searxng_search` so search behavior (scoring, dedup, the v9.16.0
+        per-engine health work) stays single-sourced.
+        """
+        body = self._read_json()
+        query = (body.get("query") or "").strip()
+        if not query:
+            self._send_json({"error": "No query"}, 400)
+            return
+        num_results = body.get("num_results", 10)
+        try:
+            num_results = max(1, min(int(num_results), 30))
+        except (TypeError, ValueError):
+            num_results = 10
+        raw = engine.tool_searxng_search({
+            "query": query,
+            "num_results": num_results,
+            "force_fresh": bool(body.get("force_fresh")),
+        })
+        try:
+            self._send_json(json.loads(raw))
+        except (ValueError, TypeError):
+            self._send_json({"query": query, "results": [],
+                             "error": "search returned a non-JSON result"}, 502)
+
     def _handle_chat(self):
         """Handle chat request with SSE streaming."""
         body = self._read_json()
@@ -1714,6 +1745,49 @@ class ChatHandlerMixin:
                 else:
                     # Route to disk — agent uses read_document/read_file
                     disk_files.append(f)
+
+        # ── Manual web-search: pre-fetch the user-curated source set ──
+        # The composer's Websuche tab lets the user run searches, mark URLs, and
+        # accumulate them into a basket. On send the client passes the enabled
+        # entries in `web_urls_to_fetch`. We fetch each one HERE (server-side,
+        # deterministic — no reliance on the model calling web_fetch, which
+        # local models skip) and prepend the markdown as a user-message
+        # preamble. When this set is non-empty, the web tools are
+        # hard-disabled for the turn (see `exclude_tools` in the worker) unless
+        # the session's allow_further_web escape hatch is on.
+        web_urls = body.get("web_urls_to_fetch") or []
+        web_locked = False  # True → disable web tools for this turn
+        if web_urls:
+            web_locked = not bool(getattr(session, "allow_further_web", False))
+            fetched_blocks = []
+            for u in web_urls:
+                _url = (u.get("url") or "").strip() if isinstance(u, dict) else ""
+                if not _url:
+                    continue
+                _title = (u.get("title") or "").strip() if isinstance(u, dict) else ""
+                raw = engine.tool_web_fetch({"url": _url})
+                try:
+                    parsed = json.loads(raw)
+                except (ValueError, TypeError):
+                    parsed = {}
+                if parsed.get("error") or "content" not in parsed:
+                    fetched_blocks.append(
+                        f"### {_title or _url}\nURL: {_url}\n"
+                        f"(could not be fetched: {parsed.get('error', 'unknown error')})")
+                else:
+                    fetched_blocks.append(
+                        f"### {_title or parsed.get('url', _url)}\n"
+                        f"URL: {parsed.get('url', _url)}\n\n{parsed['content']}")
+            if fetched_blocks:
+                web_preamble = (
+                    "[The user selected the following web sources for this "
+                    "task. Their full fetched content is provided below — base "
+                    "your answer on these sources. "
+                    + ("Do NOT search the web or fetch other URLs.]"
+                       if web_locked else
+                       "You may also search or fetch more if needed.]")
+                    + "\n\n" + "\n\n---\n\n".join(fetched_blocks))
+                message = f"{web_preamble}\n\n{message}"
 
         # First-turn preamble: the per-session artifact-folder pointer. It used
         # to live in the system prompt, but that made the prompt session-
@@ -1998,6 +2072,15 @@ class ChatHandlerMixin:
 
                 # Set plan mode if requested
                 engine.get_request_context().plan_mode = (chat_mode == "plan")
+
+                # Manual web-search lockout: when the user supplied a curated
+                # source set (pre-fetched above) and didn't enable the
+                # allow_further_web escape hatch, hard-disable the web tools for
+                # this turn. resolve_active_tools subtracts these names.
+                if web_locked:
+                    engine.get_request_context().exclude_tools = [
+                        "web_fetch", "exa_search", "searxng_search",
+                    ]
 
                 # Set project scope if provided
                 if project_name:

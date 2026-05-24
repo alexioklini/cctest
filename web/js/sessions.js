@@ -138,6 +138,8 @@ async function openSession(sessionId, agentId) {
                                   || data.research_mode_override === undefined)
       ? null
       : !!data.research_mode_override;
+    // Sticky 'allow further web search/fetch' escape hatch (Websuche tab).
+    chat.allowFurtherWeb = !!data.allow_further_web;
     // Sticky transparent-anonymisation preference (step 6.2). Empty string =
     // ask each time. Other allowed values map 1:1 to body.gdpr_action.
     chat.gdprActionPref = ['anonymise', 'local_model', 'continue']
