@@ -1569,6 +1569,68 @@ class AdminArtifactsHandlers:
         self.end_headers()
         self.wfile.write(data)
 
+    def _handle_tool_result_download(self):
+        """GET /v1/tools/result?session_id=X&tool_use_id=Y — serve the complete,
+        uncapped tool result text that _apply_tool_result_budget spilled to disk
+        when it exceeded the in-context budget (>50KB). The client falls back to
+        this when its in-DOM copy is the truncated preview stub (after reload)."""
+        import glob as _glob
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        session_id = (qs.get("session_id", [""])[0] or "").strip()
+        tool_use_id = (qs.get("tool_use_id", [""])[0] or "").strip()
+        if not session_id or not tool_use_id:
+            self._send_json({"error": "session_id and tool_use_id required"}, 400)
+            return
+        # Reject path-traversal in the ids before they hit a glob/join.
+        if any(c in session_id + tool_use_id for c in ("/", "\\", "..")):
+            self._send_json({"error": "invalid id"}, 400)
+            return
+
+        info = ChatDB.get_session_info(session_id)
+        # Scheduled-run results live under a synthetic sched-<run> session that
+        # has no sessions row; allow it through (folder is owned by the agent).
+        is_sched = session_id.startswith("sched-")
+        if not info and not is_sched:
+            self._send_json({"error": "Session not found"}, 404)
+            return
+
+        # Ownership: non-admins may only fetch results for sessions they can see.
+        user = self._get_auth_user()
+        if user and not user.get("is_admin") and info:
+            visible = set(_auth_mod.get_visible_user_ids(user) or [])
+            owner = info.get("user_id") or ""
+            if owner and owner not in visible:
+                self._send_json({"error": "forbidden"}, 403)
+                return
+
+        agent_id = (info or {}).get("agent_id") or "main"
+        # The spill folder is <date>_<session_id>; the date isn't recoverable
+        # here, so glob across all dated folders for this session.
+        pattern = os.path.join(engine.AGENTS_DIR, agent_id, "artifacts",
+                               f"*_{session_id}", "tool-results", f"{tool_use_id}.txt")
+        matches = _glob.glob(pattern)
+        if not matches:
+            self._send_json({"error": "No persisted result for this tool call"}, 404)
+            return
+        # If somehow >1 (re-run on a new day), serve the newest.
+        filepath = max(matches, key=os.path.getmtime)
+        try:
+            with open(filepath, "rb") as f:
+                data = f.read()
+        except OSError:
+            self._send_json({"error": "File not readable"}, 404)
+            return
+
+        filename = f"{tool_use_id}.txt"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", len(data))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(data)
+
     # --- Sidecar supervisor (admin) ---
 
     def _handle_sidecar_status(self):

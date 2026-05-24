@@ -1644,6 +1644,8 @@ class BrainAgentHandler(
             self._handle_artifact_content(path)
         elif path.startswith("/v1/artifacts/") and path.endswith("/download"):
             self._handle_artifact_download(path)
+        elif path == "/v1/tools/result":
+            self._handle_tool_result_download()
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico", ".woff2", ".woff")):
             self._serve_static(path)
         else:

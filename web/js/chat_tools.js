@@ -363,12 +363,19 @@ function highlightToolResult(text, lang) {
   } catch(e) {}
   return esc(text);
 }
-function buildToolResultBlock(toolName, args, resultStr) {
+// Detects the server's _apply_tool_result_budget preview stub — when a >50KB
+// result was spilled to disk and replaced with a preview after a turn/reload.
+// Shape: "[Output too large (NkB). Full output saved to: PATH]\nPreview ...".
+function _isToolResultStub(s) {
+  return typeof s === 'string' && /^\[Output too large \(\d+KB\)\. Full output saved to:/.test(s);
+}
+function buildToolResultBlock(toolName, args, resultStr, toolUseId) {
   if (!resultStr) return '';
   const fullLen = resultStr.length;
   const lang = detectToolResultLang(toolName, args, resultStr);
   const terminal = lang === 'shell';
   const id = `tres-${++_toolResultSeq}`;
+  const isStub = _isToolResultStub(resultStr);
   // Cap actual rendering at MAX so a 5MB blob doesn't lock the browser; copy
   // still gets the rendered slice, but Download always gets the complete,
   // uncapped output (full).
@@ -380,7 +387,15 @@ function buildToolResultBlock(toolName, args, resultStr) {
   const initial = truncatedInitial
     ? renderable.substring(0, TOOL_RESULT_INITIAL_CHARS)
     : renderable;
-  _toolResultStore.set(id, { full: renderable, complete: resultStr, toolName, lang, terminal, fullLen, truncatedAtRender });
+  _toolResultStore.set(id, {
+    full: renderable, complete: resultStr, toolName, lang, terminal, fullLen, truncatedAtRender,
+    // When the in-DOM copy is the server's preview stub (>50KB result spilled
+    // to disk on a prior turn/reload), Download fetches the complete output
+    // from the server by (session, tool_use_id) instead of saving the stub.
+    stub: isStub,
+    sessionId: state.activeChat?.sessionId || '',
+    toolUseId: toolUseId || '',
+  });
   const langBadge = lang ? `<span class="tool-result-lang">${esc(lang)}</span>` : '';
   const sizeBadge = `<span class="tool-result-lang">${formatBytes(fullLen)}</span>`;
   const expandLabel = truncatedInitial ? 'Show full' : 'Expand';
@@ -446,15 +461,7 @@ const _LANG_TO_EXT = {
   css: 'css', scss: 'scss', markdown: 'md', sql: 'sql', dockerfile: 'dockerfile',
   shell: 'txt',
 };
-function downloadToolResult(id, btn) {
-  const entry = _toolResultStore.get(id);
-  if (!entry) return;
-  const text = entry.complete != null ? entry.complete : entry.full;
-  const ext = _LANG_TO_EXT[entry.lang] || 'txt';
-  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const base = (entry.toolName || 'tool-output').replace(/[^a-z0-9_-]+/gi, '_');
-  const filename = `${base}_${ts}.${ext}`;
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+function _saveBlobAs(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
@@ -462,12 +469,48 @@ function downloadToolResult(id, btn) {
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  if (btn) {
-    const orig = btn.textContent;
-    btn.textContent = 'Saved';
+}
+async function downloadToolResult(id, btn) {
+  const entry = _toolResultStore.get(id);
+  if (!entry) return;
+  const ext = _LANG_TO_EXT[entry.lang] || 'txt';
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const base = (entry.toolName || 'tool-output').replace(/[^a-z0-9_-]+/gi, '_');
+  const filename = `${base}_${ts}.${ext}`;
+  const flash = (label) => {
+    if (!btn) return;
+    const orig = btn._origLabel || (btn._origLabel = btn.textContent);
+    btn.textContent = label;
     btn.classList.add('copied');
     setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
+  };
+
+  // When the in-DOM copy is the server's >50KB preview stub, fetch the complete
+  // output the budget pass spilled to disk (reload-stable full download).
+  if (entry.stub && entry.sessionId && entry.toolUseId) {
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    try {
+      const t = localStorage.getItem('auth-token');
+      const r = await fetch(
+        `${BASE_URL}/v1/tools/result?session_id=${encodeURIComponent(entry.sessionId)}&tool_use_id=${encodeURIComponent(entry.toolUseId)}`,
+        { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+      if (r.ok) {
+        _saveBlobAs(await r.blob(), filename);
+        if (btn) { btn.disabled = false; }
+        flash('Saved');
+        return;
+      }
+      // Fall through to saving the stub if the server has no persisted copy.
+      if (typeof showToast === 'function') showToast('Full output not on server — saving preview', true);
+    } catch (e) {
+      if (typeof showToast === 'function') showToast('Download failed — saving preview', true);
+    }
+    if (btn) { btn.disabled = false; }
   }
+
+  const text = entry.complete != null ? entry.complete : entry.full;
+  _saveBlobAs(new Blob([text], { type: 'text/plain;charset=utf-8' }), filename);
+  flash('Saved');
 }
 function fallbackCopy(text, cb) {
   const ta = document.createElement('textarea');
@@ -529,7 +572,7 @@ function renderToolCall(msg, idx) {
     } else {
       try { const rj = JSON.parse(resultStr); if (rj && rj.worker) isWorker = true; } catch(e) {}
     }
-    bodyHtml += buildToolResultBlock(msg.name, args, resultStr);
+    bodyHtml += buildToolResultBlock(msg.name, args, resultStr, resultMsg.tool_use_id || msg.tool_use_id || '');
   }
   // Worker flow: shown when the tool ran (or is running) via a worker
   if (isWorker || isRunningWorker) {
