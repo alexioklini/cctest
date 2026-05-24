@@ -346,6 +346,12 @@ class SessionsHandlerMixin:
                         "wire_content": asst_wire_str,
                         "gdpr_mapping_id": meta.get("gdpr_mapping_id") or "",
                         "gdpr_restored": int(meta.get("gdpr_restored") or 0),
+                        # Manual web-search: structured per-source records
+                        # [{title,url,content,error}] this turn fetched
+                        # (ephemeral on the wire, recorded here for audit). Lets
+                        # the inspector show each source's FULL content per turn
+                        # — distinct fetches across re-sends.
+                        "web_sources": meta.get("web_sources") or [],
                     } if assistant_msg else None,
                     "compacted": bool(m.get("compacted")),
                 })

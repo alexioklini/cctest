@@ -1404,6 +1404,26 @@ async function openInspectModal() {
             <pre style="${PRE};margin:0">${esc(a.wire_content)}</pre>
           </details>`;
         }
+        // Manual web-search: the fetched sources this turn used, each with its
+        // FULL content. Per-turn — re-sending the same prompt later shows a
+        // DIFFERENT fetch here (e.g. today's vs tomorrow's weather), since the
+        // content is re-fetched fresh each turn and never replayed from history.
+        if (Array.isArray(a.web_sources) && a.web_sources.length) {
+          const srcItems = a.web_sources.map(s => {
+            const body = s.error
+              ? `<div style="padding:6px 10px;color:#b91c1c;font-size:11.5px">⚠ ${esc(s.error)}</div>`
+              : `<pre style="${PRE};margin:0">${esc(s.content || '')}</pre>`;
+            return `<details style="margin:0;border-top:1px solid var(--border-100)">
+              <summary style="padding:5px 10px;cursor:pointer;font-size:11.5px;color:var(--text-200)">
+                ${esc(s.title || s.url)} <span style="color:var(--text-400)">— ${esc(s.url)}</span>
+              </summary>${body}</details>`;
+          }).join('');
+          html += `<details style="margin:0 16px 8px;border:1px solid var(--border-100);border-radius:8px;overflow:hidden">
+            <summary style="padding:6px 10px;cursor:pointer;background:#eff6ff;color:#1d4ed8;font-size:11.5px;font-weight:500">
+              Web sources used this turn (${a.web_sources.length}, fetched fresh)
+            </summary>${srcItems}
+          </details>`;
+        }
         html += `<pre style="${PRE}">${esc(a.content || '')}</pre>
           </div>
         </details>`;

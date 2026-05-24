@@ -130,6 +130,75 @@ def _split_attachment_notice(text: str) -> tuple[str, str]:
     return text, ""
 
 
+def _build_web_sources(web_urls, web_locked):
+    """Fetch the user-curated web sources NOW (fresh, per turn).
+
+    Called at TURN time (worker, just before the wire build) so each send
+    re-fetches the marked URLs fresh. Returns `(wire_text, sources)` where:
+      - `wire_text` is the markdown preamble prepended to the transient wire
+        copy of the last user message (the model's view; never persisted).
+      - `sources` is the structured per-source record
+        `[{title, url, content, error}]` stored on the assistant turn's
+        metadata so the chat view + inspector can show each source's FULL
+        fetched content individually, like a web_fetch tool-call result.
+    Both empty when nothing was fetchable.
+    """
+    import brain as _engine
+    sources = []
+    blocks = []
+    for u in web_urls:
+        url = (u.get("url") or "").strip() if isinstance(u, dict) else ""
+        if not url:
+            continue
+        title = (u.get("title") or "").strip() if isinstance(u, dict) else ""
+        try:
+            parsed = json.loads(_engine.tool_web_fetch({"url": url, "force_fresh": True}))
+        except (ValueError, TypeError):
+            parsed = {}
+        if parsed.get("error") or "content" not in parsed:
+            err = parsed.get("error", "unknown error")
+            sources.append({"title": title or url, "url": url, "content": "", "error": err})
+            blocks.append(f"### {title or url}\nURL: {url}\n(could not be fetched: {err})")
+        else:
+            final_url = parsed.get("url", url)
+            content = parsed["content"]
+            sources.append({"title": title or final_url, "url": final_url,
+                            "content": content, "error": ""})
+            blocks.append(f"### {title or final_url}\nURL: {final_url}\n\n{content}")
+    if not blocks:
+        return "", []
+    head = ("[The user selected the following web sources for this task. Their "
+            "full fetched content is provided below — base your answer on these "
+            "sources. "
+            + ("Do NOT search the web or fetch other URLs.]" if web_locked
+               else "You may also search or fetch more if needed.]"))
+    return head + "\n\n" + "\n\n---\n\n".join(blocks), sources
+
+
+def _inject_web_preamble_into_wire(messages, preamble):
+    """Return a transient wire copy of `messages` with `preamble` prepended to
+    the LAST user message's content. The original list + message dicts are NOT
+    mutated (shallow-copies the one message it touches), so session.messages /
+    the DB stay clean and the fetched content never enters history."""
+    if not preamble or not messages:
+        return messages
+    wire = list(messages)
+    for i in range(len(wire) - 1, -1, -1):
+        if wire[i].get("role") == "user":
+            msg = dict(wire[i])
+            content = msg.get("content")
+            if isinstance(content, str):
+                msg["content"] = f"{preamble}\n\n{content}"
+            elif isinstance(content, list):
+                # Multimodal: prepend a text block (keeps image blocks intact).
+                msg["content"] = [{"type": "text", "text": preamble}] + content
+            else:
+                msg["content"] = preamble
+            wire[i] = msg
+            break
+    return wire
+
+
 def _pseudonymize_history_for_wire(messages, mapping, scanner_cfg):
     """Walk prior `session.messages` and produce a wire-only pseudonymised
     copy. The reused mapping's `forward` table short-circuits already-known
@@ -1746,48 +1815,21 @@ class ChatHandlerMixin:
                     # Route to disk — agent uses read_document/read_file
                     disk_files.append(f)
 
-        # ── Manual web-search: pre-fetch the user-curated source set ──
+        # ── Manual web-search: capture the user-curated source set ──
         # The composer's Websuche tab lets the user run searches, mark URLs, and
-        # accumulate them into a basket. On send the client passes the enabled
-        # entries in `web_urls_to_fetch`. We fetch each one HERE (server-side,
-        # deterministic — no reliance on the model calling web_fetch, which
-        # local models skip) and prepend the markdown as a user-message
-        # preamble. When this set is non-empty, the web tools are
-        # hard-disabled for the turn (see `exclude_tools` in the worker) unless
-        # the session's allow_further_web escape hatch is on.
+        # accumulate them into a basket; on send the enabled entries arrive in
+        # `web_urls_to_fetch`. The actual fetch + injection happens at TURN time
+        # (in the worker, just before the wire build) — NOT here and NOT into
+        # the persisted user message. Two reasons: (1) the fetched content must
+        # be EPHEMERAL — present only on the wire for this turn, never written
+        # to session.messages/DB — so re-sending the same prompt tomorrow
+        # re-fetches the URLs fresh instead of replaying yesterday's frozen
+        # page from history (a weather page would be permanently stale
+        # otherwise). (2) it would bloat the user message by tens of KB. When
+        # the set is non-empty the web tools are hard-disabled for the turn
+        # (see `exclude_tools` in the worker) unless allow_further_web is on.
         web_urls = body.get("web_urls_to_fetch") or []
-        web_locked = False  # True → disable web tools for this turn
-        if web_urls:
-            web_locked = not bool(getattr(session, "allow_further_web", False))
-            fetched_blocks = []
-            for u in web_urls:
-                _url = (u.get("url") or "").strip() if isinstance(u, dict) else ""
-                if not _url:
-                    continue
-                _title = (u.get("title") or "").strip() if isinstance(u, dict) else ""
-                raw = engine.tool_web_fetch({"url": _url})
-                try:
-                    parsed = json.loads(raw)
-                except (ValueError, TypeError):
-                    parsed = {}
-                if parsed.get("error") or "content" not in parsed:
-                    fetched_blocks.append(
-                        f"### {_title or _url}\nURL: {_url}\n"
-                        f"(could not be fetched: {parsed.get('error', 'unknown error')})")
-                else:
-                    fetched_blocks.append(
-                        f"### {_title or parsed.get('url', _url)}\n"
-                        f"URL: {parsed.get('url', _url)}\n\n{parsed['content']}")
-            if fetched_blocks:
-                web_preamble = (
-                    "[The user selected the following web sources for this "
-                    "task. Their full fetched content is provided below — base "
-                    "your answer on these sources. "
-                    + ("Do NOT search the web or fetch other URLs.]"
-                       if web_locked else
-                       "You may also search or fetch more if needed.]")
-                    + "\n\n" + "\n\n---\n\n".join(fetched_blocks))
-                message = f"{web_preamble}\n\n{message}"
+        web_locked = bool(web_urls) and not bool(getattr(session, "allow_further_web", False))
 
         # First-turn preamble: the per-session artifact-folder pointer. It used
         # to live in the system prompt, but that made the prompt session-
@@ -2613,6 +2655,22 @@ class ChatHandlerMixin:
                                         _m, session_id=sid, turn_id=_gmid)
                                 except Exception:
                                     pass
+                    # Manual web-search: fetch the curated URLs FRESH now and
+                    # prepend their content to the wire copy of the last user
+                    # message only — ephemeral, never persisted into history, so
+                    # a re-send tomorrow re-fetches instead of replaying a stale
+                    # page. The fetched text IS recorded on the assistant turn's
+                    # metadata.web_sources (below) so the session inspector can
+                    # show exactly which content each turn used — today's
+                    # weather on today's turn, tomorrow's on tomorrow's —
+                    # without that content ever re-entering the conversation
+                    # (metadata is stripped before the wire by _ALLOWED_MSG_KEYS).
+                    _web_sources_used = []
+                    if web_urls:
+                        _web_pre, _web_sources_used = _build_web_sources(web_urls, web_locked)
+                        if _web_pre:
+                            _wire_messages = _inject_web_preamble_into_wire(
+                                _wire_messages, _web_pre)
                     _result = sidecar_proxy.run_turn(
                         messages=_wire_messages,
                         model=session.model,
@@ -2686,6 +2744,13 @@ class ChatHandlerMixin:
                             msg_metadata["cost"] = session_cost
                         if created_files:
                             msg_metadata["files"] = created_files
+                        # Manual web-search: record the exact fetched source text
+                        # this turn used (the freshly-fetched, ephemeral wire
+                        # preamble). Stored on the assistant turn's metadata so
+                        # the session inspector can show per-turn which content
+                        # was used; stripped before the wire so it never replays.
+                        if _web_sources_used:
+                            msg_metadata["web_sources"] = _web_sources_used
                         if _partial_tools:
                             msg_metadata["tools"] = _partial_tools
                         # Leftover thinking deltas that never got a thinking_done (truncated

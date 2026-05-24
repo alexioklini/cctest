@@ -727,6 +727,43 @@ function renderAssistantMessage(msg, idx) {
     filesHtml += '</div>';
   }
 
+  // Manual web-search: the curated sources this turn used, each with its FULL
+  // fetched content — fetched fresh per turn and ephemeral on the wire (never
+  // replayed from history), surfaced here from metadata.web_sources. Each
+  // source renders as its own expandable result (title → URL → content), like
+  // a web_fetch tool-call result. Re-sending the same prompt later shows a
+  // DIFFERENT block (e.g. today's vs tomorrow's weather).
+  let webSourcesHtml = '';
+  const webSrc = msg.metadata?.web_sources;
+  if (Array.isArray(webSrc) && webSrc.length) {
+    const items = webSrc.map(s => {
+      let host = s.url || '';
+      try { host = new URL(s.url).hostname.replace(/^www\./, ''); } catch (e) {}
+      const inner = s.error
+        ? `<div class="msg-web-source-error">⚠ Abruf fehlgeschlagen: ${esc(s.error)}</div>`
+        : `<pre class="msg-web-source-content">${esc(s.content || '')}</pre>`;
+      const chars = s.content ? ` · ${(s.content.length).toLocaleString()} Zeichen` : '';
+      return `
+        <details class="msg-web-source">
+          <summary class="msg-web-source-summary">
+            <span class="msg-web-source-title">${esc(s.title || s.url)}</span>
+            <a class="msg-web-source-host" href="${esc(s.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(host)}↗</a>
+          </summary>
+          <div class="msg-web-source-meta">${esc(s.url)}${chars}</div>
+          ${inner}
+        </details>`;
+    }).join('');
+    webSourcesHtml = `
+      <details class="msg-web-sources">
+        <summary class="msg-web-sources-summary">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+          <span>Webquellen dieser Anfrage</span>
+          <span class="msg-web-sources-count">${webSrc.length}</span>
+        </summary>
+        <div class="msg-web-sources-body">${items}</div>
+      </details>`;
+  }
+
   // Reference badges — split into Zitiert (always visible) and Durchsucht
   // (collapsed via <details>). Zitiert pulls from `[Quelle: <basename>...]`
   // markers in this assistant message's text; Durchsucht is the rest of the
@@ -825,6 +862,7 @@ function renderAssistantMessage(msg, idx) {
       ${thinkingHtml}
       <div class="msg-assistant msg-content">${rendered}</div>
       ${filesHtml}
+      ${webSourcesHtml}
       ${refsHtml}
       <div class="msg-actions-bar">
         ${turnStatsHtml}
