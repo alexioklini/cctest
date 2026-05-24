@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.15.1"
+VERSION = "9.15.2"
 VERSION_DATE = "2026-05-24"
 CHANGELOG = [
     ("9.14.0", "2026-05-24", "feat(web-search): bundle + supervise a self-hosted SearXNG instance, managed by brain-agent like the sidecar. (1) **Install** — cloned searxng/searxng into searxng/ with a dedicated .venv_searxng (Python 3.13; the system 3.14 isn't supported by SearXNG) + a minimal searxng_settings.yml override (use_default_settings:true) that enables the json format (off by default — the real reason a live instance still 404s on /search?format=json), binds 127.0.0.1:8088, and sets a generated secret_key. All three gitignored (searxng/ is a 29MB nested repo, the venv 108MB, the settings file holds the secret). (2) **Supervisor** — refactored SidecarSupervisor into a generic ProcessSupervisor base (spawn / monitor / 3-crash-in-60s circuit breaker / HTTP health probe / manual restart); SidecarSupervisor + new SearxngSupervisor are thin subclasses describing only their launch argv/env/cwd + health URL. Sidecar log output stays byte-identical (PREFIX_LOGS=False → verbatim); SearXNG output is tagged. Both module-level singletons (sidecar_supervisor, searxng_supervisor). Wired into server.py (start() next to the sidecar, server_config['searxng'] copy line) with admin-gated GET /v1/searxng/status + POST /v1/searxng/restart mirroring the sidecar endpoints. (3) **Single source of truth for the URL** — new brain._searxng_base_url() resolves config.json→searxng.url (the bundled instance); tool_searxng_search reads it instead of its own tools_config.searxng_search.url. A hand-set tools_config url still acts as an external-instance override but is no longer a surfaced setting. Removed url from _TOOLS_CONFIG_DEFAULTS.searxng_search, the get_tool_status branch, the live + sample tools_config.json, and the Tools-tab integration panel (now points to Settings→Server→Web Search). (4) **Settings UI** — new 'Web Search (SearXNG)' monitor in General Settings→Server (status/pid/uptime/health/breaker + restart), via a shared _renderSupervisorStatus() helper that the Sidecar block now also uses (de-duplicated ~35 lines); + restartSearxng(). js_gate green (smoke 5/5), net-globals baseline 899→901. Verified live: SearXNG runs as a child of the server process, tool resolves the instance URL with zero tool config and returns real results."),
@@ -12152,13 +12152,11 @@ def _run_middleware(messages, tool_round, event_callback, **ctx):
         if not should_continue:
             return messages, False
     return messages, True
-MAX_TOOL_RESULT_CHARS = 30000  # ~7,500 tokens — truncate individual tool results beyond this
 MAX_TOOL_RESULTS_TOKENS = 50000  # Cap accumulated tool results per turn before compressing old ones
 
 # Per-agent runtime limits (overridable via agent.json "limits" block)
 AGENT_LIMITS_DEFAULTS = {
     "max_tool_rounds": MAX_TOOL_ROUNDS,
-    "tool_result_char_limit": MAX_TOOL_RESULT_CHARS,
     "tool_results_total_tokens": MAX_TOOL_RESULTS_TOKENS,
     "context_safety_ratio": 0.95,
 }

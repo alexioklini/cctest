@@ -73,7 +73,6 @@ MODEL_PROFILES = {
         },
         "limits": {
             "max_tool_rounds": 15,
-            "tool_result_char_limit": 60000,
             "tool_results_total_tokens": 80000,
             "context_safety_ratio": 0.95,
         },
@@ -90,7 +89,6 @@ MODEL_PROFILES = {
         },
         "limits": {
             "max_tool_rounds": 15,
-            "tool_result_char_limit": 30000,
             "tool_results_total_tokens": 50000,
             "context_safety_ratio": 0.95,
         },
@@ -110,7 +108,6 @@ MODEL_PROFILES = {
         },
         "limits": {
             "max_tool_rounds": 8,
-            "tool_result_char_limit": 15000,
             "tool_results_total_tokens": 25000,
             "context_safety_ratio": 0.90,
         },

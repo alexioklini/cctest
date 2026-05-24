@@ -274,9 +274,9 @@ def tool_read_document(args: dict) -> str:
             # silently — on the kg-real-policies ISMS Handbuch (1903 lines)
             # the section 2.13 percent-to-score table sits at line 1267,
             # WAY past line 500, so the model never saw the table even when
-            # it correctly chose read_document on the .md companion. The
-            # tool_result_char_limit middleware will compact downstream if
-            # the content is too large for the round budget.
+            # it correctly chose read_document on the .md companion. Oversized
+            # results are spilled to disk + previewed by _apply_tool_result_budget
+            # on subsequent turns if they exceed the round budget.
             offset = int(args.get("offset", 1) or 1)
             limit = args.get("limit")
             with open(path, "r", errors="replace") as f:
