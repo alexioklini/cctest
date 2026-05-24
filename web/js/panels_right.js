@@ -30,6 +30,26 @@ function initRightPanelResize() {
   if (saved) panel.style.width = saved;
 }
 
+// Counts of items per pane, in tab display order.
+function _rightPanelTabCounts() {
+  const sessionId = state.activeChat?.sessionId;
+  const refs = (typeof collectChatReferences === 'function') ? collectChatReferences() : { cited: [], searched: [] };
+  return {
+    attachments: (typeof collectChatAttachments === 'function') ? collectChatAttachments().length : 0,
+    references: (refs.cited.length + refs.searched.length),
+    artifacts: sessionId ? ((state.artifacts[sessionId] || []).length) : 0,
+  };
+}
+
+// First tab (in display order) that has data, or null if all empty.
+function firstTabWithData() {
+  const c = _rightPanelTabCounts();
+  for (const tab of ['attachments', 'references', 'artifacts']) {
+    if (c[tab] > 0) return tab;
+  }
+  return null;
+}
+
 function openRightPanel(tab) {
   const panel = document.getElementById('right-panel');
   if (!panel) return;
@@ -37,7 +57,14 @@ function openRightPanel(tab) {
   state.rightPanelOpen = true;
   // Any explicit open re-arms auto-open for subsequent new refs/artifacts.
   state.userClosedRightPanel = false;
-  switchRightTab(tab || state.rightPanelTab || 'attachments');
+  // Tab selection priority: explicit arg (e.g. artifact auto-open) wins;
+  // else the user's last chosen tab if they've picked one this session;
+  // else the first tab that has data; else fall back to attachments.
+  const chosen = tab
+    || (state.userPickedTab ? state.rightPanelTab : null)
+    || firstTabWithData()
+    || 'attachments';
+  switchRightTab(chosen);
   initRightPanelResize();
   setRightPanelGlow(false);
   syncRightPanelToggle();
@@ -85,6 +112,13 @@ function refreshRightPanelContent() {
   else if (tab === 'references') renderReferencesPane();
   else if (tab === 'artifacts' && !state.activeArtifactId) showArtifactList();
   if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);
+}
+
+// User clicked a panel tab — record the explicit choice so reopening restores
+// it (vs. the auto "first tab with data" on a fresh session).
+function selectRightTab(tabName) {
+  state.userPickedTab = true;
+  switchRightTab(tabName);
 }
 
 function switchRightTab(tabName) {

@@ -49,6 +49,10 @@ const state = {
   // Right panel (unified: attachments, references, artifacts)
   rightPanelOpen: false,
   rightPanelTab: 'attachments',
+  // True once the user has explicitly clicked a panel tab this page session.
+  // While false, opening the panel auto-selects the first tab that has data.
+  // Once true, reopening restores the user's last chosen tab. Reset on reload.
+  userPickedTab: false,
   // Set true when the user deliberately closes the right panel. Suppresses
   // auto-open on new references/artifacts for the rest of the page session
   // (reset only on reload). User-initiated opens still work.
