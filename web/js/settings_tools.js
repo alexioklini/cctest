@@ -67,9 +67,6 @@ function renderToolPanelBody(toolName) {
           ${status ? `<span style="font-size:10px;color:var(--text-400)">${esc(status.status||'')}</span>` : ''}
         </div>
         ${renderToolIntegrationFields(toolName, cfg)}
-        <div style="margin-top:8px;display:flex;justify-content:flex-end">
-          <button class="btn-secondary" onclick="saveToolIntegration('${esc(toolName)}')" style="padding:4px 12px;font-size:11px">Save integration</button>
-        </div>
       </div>`;
   }
 
@@ -81,7 +78,10 @@ function renderToolPanelBody(toolName) {
       <div style="font-size:11px;color:var(--text-400);margin-bottom:10px">
         Integration-only — this entry configures a service used by the server (no agent-callable tool).
       </div>
-      ${integHTML || '<div style="color:var(--error);font-size:11px">No integration fields registered for this entry.</div>'}`;
+      ${integHTML || '<div style="color:var(--error);font-size:11px">No integration fields registered for this entry.</div>'}
+      <div style="display:flex;justify-content:flex-end">
+        <button class="btn-primary" onclick="saveTool('${esc(toolName)}')" style="padding:6px 14px;font-size:12px">Save</button>
+      </div>`;
   }
 
   return `
@@ -128,13 +128,13 @@ function renderToolPanelBody(toolName) {
 
     <div style="display:flex;justify-content:flex-end;gap:8px">
       <button class="btn-secondary" onclick="resetToolPromptSettings('${esc(toolName)}')" style="padding:6px 14px;font-size:12px" title="Clear all prose fields and applies_with (does NOT touch enabled/deferred)">Clear prose</button>
-      <button class="btn-primary" onclick="saveToolPromptSettings('${esc(toolName)}')" style="padding:6px 14px;font-size:12px">Save</button>
+      <button class="btn-primary" onclick="saveTool('${esc(toolName)}')" style="padding:6px 14px;font-size:12px">Save</button>
     </div>`;
 }
 
 // Renders the integration-knob form for the ~10 tools that have entries in
-// /v1/tools/config. Reuses the same field IDs as the legacy bulk save so
-// saveToolIntegration can pick them up via document.getElementById.
+// /v1/tools/config. Field IDs match what buildToolIntegrationRec reads back
+// via document.getElementById when the single per-tool Save fires.
 function renderToolIntegrationFields(name, cfg) {
   const lbl = (t) => `<div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px">${t}</div>`;
   const maskF = (id, val) => `<div style="display:flex;gap:6px;align-items:center">
@@ -240,57 +240,75 @@ function renderToolIntegrationFields(name, cfg) {
   }
 }
 
-async function saveToolPromptSettings(toolName) {
+// Single Save per tool panel: persists the per-tool settings record
+// (enabled/deferred/prose/purposes via /v1/tools/settings) AND the integration
+// knobs (api_key/url/timeouts via /v1/tools/config) in one click. Either part
+// is skipped when the tool doesn't have that form (integration-only tools have
+// no settings form; tools without tool_config have no integration record).
+async function saveTool(toolName) {
   const t = (window._toolSettingsCache || {})[toolName];
   if (!t) { showToast('No cached record for ' + toolName, true); return; }
   const get = (suffix) => document.getElementById('ts-' + toolName + '-' + suffix);
-  const aw = [...(get('applies_with')?.selectedOptions || [])].map(o => o.value);
-  // Purposes: read the checked checkboxes inside the wrapper.
-  const purposesWrap = document.getElementById('ts-' + toolName + '-purposes-wrap');
-  const purposes = purposesWrap
-    ? [...purposesWrap.querySelectorAll('.ts-purpose:checked')].map(cb => cb.dataset.purpose)
-    : (t.purposes || []);
-  const body = {
-    name: toolName,
-    enabled: !!get('enabled')?.checked,
-    deferred: !!get('deferred')?.checked,
-    description: get('description')?.value || '',
-    when_to_use: get('when_to_use')?.value || '',
-    warnings: get('warnings')?.value || '',
-    examples: get('examples')?.value || '',
-    applies_with: aw,
-    purposes: purposes,
-  };
+
+  // --- Part 1: per-tool settings (skipped for integration-only pseudo-tools,
+  //     which have no ts- form rendered). ---
+  let body = null;
+  if (!t.integration_only) {
+    const aw = [...(get('applies_with')?.selectedOptions || [])].map(o => o.value);
+    const purposesWrap = document.getElementById('ts-' + toolName + '-purposes-wrap');
+    const purposes = purposesWrap
+      ? [...purposesWrap.querySelectorAll('.ts-purpose:checked')].map(cb => cb.dataset.purpose)
+      : (t.purposes || []);
+    body = {
+      name: toolName,
+      enabled: !!get('enabled')?.checked,
+      deferred: !!get('deferred')?.checked,
+      description: get('description')?.value || '',
+      when_to_use: get('when_to_use')?.value || '',
+      warnings: get('warnings')?.value || '',
+      examples: get('examples')?.value || '',
+      applies_with: aw,
+      purposes: purposes,
+    };
+  }
+
+  // --- Part 2: integration knobs (only when the tool has a tool_config rec). ---
+  const rec = buildToolIntegrationRec(toolName);
+
   try {
-    const resp = await API.post('/v1/tools/settings', body);
-    showToast('Saved ' + toolName);
-    // Update local cache so the row badges + collapse state reflect new flags
-    if (window._toolSettingsCache && resp.tool) {
-      window._toolSettingsCache[toolName] = { ...window._toolSettingsCache[toolName], ...resp.tool };
-    }
-    // Refresh deferred badge inline
-    const badge = document.getElementById('defer-badge-' + toolName);
-    if (badge) badge.style.display = body.deferred ? 'inline' : 'none';
-    // Refresh prose badge inline (★ in the collapsed row header)
-    const row = document.querySelector('.tool-row[data-tool="' + toolName + '"]');
-    if (row) {
-      const headerSpans = row.querySelectorAll(':scope > div > span');
-      const proseSpan = [...headerSpans].find(s => s.textContent.trim().startsWith('★'));
-      const hasProse = !!(body.description || body.when_to_use || body.warnings || body.examples);
-      if (hasProse && !proseSpan) {
-        // Insert a new prose badge after the name span
-        const nameSpan = headerSpans[0];
-        if (nameSpan) {
-          const star = document.createElement('span');
-          star.title = 'Custom prompt prose configured';
-          star.style.cssText = 'font-size:10px;color:var(--accent)';
-          star.textContent = '★ prose';
-          nameSpan.parentNode.insertBefore(star, nameSpan.nextSibling);
+    if (body) {
+      const resp = await API.post('/v1/tools/settings', body);
+      if (window._toolSettingsCache && resp.tool) {
+        window._toolSettingsCache[toolName] = { ...window._toolSettingsCache[toolName], ...resp.tool };
+      }
+      // Refresh deferred badge inline
+      const badge = document.getElementById('defer-badge-' + toolName);
+      if (badge) badge.style.display = body.deferred ? 'inline' : 'none';
+      // Refresh prose badge inline (★ in the collapsed row header)
+      const row = document.querySelector('.tool-row[data-tool="' + toolName + '"]');
+      if (row) {
+        const headerSpans = row.querySelectorAll(':scope > div > span');
+        const proseSpan = [...headerSpans].find(s => s.textContent.trim().startsWith('★'));
+        const hasProse = !!(body.description || body.when_to_use || body.warnings || body.examples);
+        if (hasProse && !proseSpan) {
+          const nameSpan = headerSpans[0];
+          if (nameSpan) {
+            const star = document.createElement('span');
+            star.title = 'Custom prompt prose configured';
+            star.style.cssText = 'font-size:10px;color:var(--accent)';
+            star.textContent = '★ prose';
+            nameSpan.parentNode.insertBefore(star, nameSpan.nextSibling);
+          }
+        } else if (!hasProse && proseSpan) {
+          proseSpan.remove();
         }
-      } else if (!hasProse && proseSpan) {
-        proseSpan.remove();
       }
     }
+    if (rec) {
+      await API.post('/v1/tools/config', { [toolName]: rec });
+      if (window._toolConfigCache) window._toolConfigCache[toolName] = rec;
+    }
+    showToast('Saved ' + toolName);
   } catch(e) {
     showToast('Save failed: ' + (e.message || e), true);
   }
@@ -336,10 +354,11 @@ async function saveResearchModeDisciplines() {
   }
 }
 
-async function saveToolIntegration(toolName) {
-  // Reuse the legacy field IDs that saveToolsConfig built around. Each branch
-  // here mirrors that function's per-tool block, but POSTs only this one
-  // tool's record so the server's full-replacement-per-tool semantics work.
+// Build the /v1/tools/config integration record for one tool from its form
+// fields. Returns the record, or null if the tool has no integration form.
+// (Integration-only pseudo-tools keep their own `enabled` — the integration
+// record IS their gate; dispatch tools omit it — their gate is tool_settings.)
+function buildToolIntegrationRec(toolName) {
   let rec;
   switch (toolName) {
     case 'exa_search':
@@ -413,16 +432,9 @@ async function saveToolIntegration(toolName) {
       };
       break;
     default:
-      showToast('No integration save handler for ' + toolName, true);
-      return;
+      return null;
   }
-  try {
-    await API.post('/v1/tools/config', { [toolName]: rec });
-    showToast('Integration saved for ' + toolName);
-    if (window._toolConfigCache) window._toolConfigCache[toolName] = rec;
-  } catch(e) {
-    showToast('Save failed: ' + (e.message || e), true);
-  }
+  return rec;
 }
 
 async function saveMpClassifier() {
