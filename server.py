@@ -928,7 +928,7 @@ class WarmSessionPool:
 warm_pool = WarmSessionPool()
 
 
-from server_lib.sidecar_supervisor import sidecar_supervisor
+from server_lib.sidecar_supervisor import sidecar_supervisor, searxng_supervisor
 
 
 from handlers.auth import AuthHandlerMixin
@@ -1162,6 +1162,7 @@ class BrainAgentHandler(
         "/v1/quotas/config",
         "/v1/quotas/admin/users",
         "/v1/sidecar/status",
+        "/v1/searxng/status",
         "/v1/gdpr/ner-models",
         "/v1/classification/config",
     }
@@ -1200,6 +1201,7 @@ class BrainAgentHandler(
         "/v1/commands/expand",
         "/v1/nodes",
         "/v1/sidecar/restart",
+        "/v1/searxng/restart",
         "/v1/gdpr/ner-models",
         "/v1/classification/config",
     }
@@ -1536,6 +1538,8 @@ class BrainAgentHandler(
             self._handle_warmup_status()
         elif path == "/v1/sidecar/status":
             self._handle_sidecar_status()
+        elif path == "/v1/searxng/status":
+            self._handle_searxng_status()
         elif path == "/v1/queue/status":
             self._handle_queue_status()
         elif path == "/v1/traces" or path.startswith("/v1/traces?"):
@@ -1747,6 +1751,8 @@ class BrainAgentHandler(
             self._handle_warmup_trigger()
         elif path == "/v1/sidecar/restart":
             self._handle_sidecar_restart()
+        elif path == "/v1/searxng/restart":
+            self._handle_searxng_restart()
         elif path == "/v1/skills/install-zip":
             self._handle_install_skill_zip()
         elif path == "/v1/schedule/cancel":
@@ -3081,6 +3087,7 @@ def main():
     server_config["classification"] = file_config.get("classification", {}) or {}
     server_config["classification_scanner"] = file_config.get("classification_scanner", {}) or {}
     server_config["sidecar"] = file_config.get("sidecar", {}) or {}
+    server_config["searxng"] = file_config.get("searxng", {}) or {}
 
     # Per-tool prompt settings (admin-editable prose appended to system prompt
     # when the tool is in the active set). Migrate from legacy tools.md the
@@ -3718,6 +3725,13 @@ def main():
     # auto-restart with a 3-crashes-in-60s circuit breaker, manual restart via
     # POST /v1/sidecar/restart. State exposed via GET /v1/sidecar/status.
     sidecar_supervisor.start(server_config)
+
+    # --- SearXNG supervisor ---
+    # Brain owns the bundled SearXNG metasearch subprocess (.venv_searxng,
+    # `python -m searx.webapp`), same spawn/monitor/circuit-breaker machinery
+    # as the sidecar. Powers the searxng_search tool. Manual restart via
+    # POST /v1/searxng/restart; state via GET /v1/searxng/status.
+    searxng_supervisor.start(server_config)
 
     def _kick_turn_recovery():
         # Phase 5 stage 1c: re-attach to in-flight sidecar turns from the prior

@@ -89,6 +89,69 @@ async function restartSidecar(btn) {
   }
 }
 
+async function restartSearxng(btn) {
+  if (!confirm('Hard-restart the bundled SearXNG instance?\n\nWeb searches will briefly fail until it comes back up.')) return;
+  const orig = btn?.textContent || 'Restart SearXNG';
+  if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
+  try {
+    const r = await API.post('/v1/searxng/restart', {});
+    if (r && r.ok) showToast('SearXNG restarting');
+    else showToast(r?.error || 'Restart failed', true);
+  } catch (e) {
+    showToast('Restart failed: ' + (e?.message || e), true);
+  } finally {
+    setTimeout(() => {
+      const t = document.querySelector('.modal-tab.active[onclick*="server"]');
+      if (t) switchGeneralTab('server', t);
+      else if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }, 1500);
+  }
+}
+
+// Shared renderer for a ProcessSupervisor status block (sidecar + searxng share
+// the same status dict shape). `opts.restartFn` is the onclick handler name,
+// `opts.note` the warning shown next to the restart button, `opts.disabledHint`
+// the config key shown when auto_start is off.
+function _renderSupervisorStatus(sc, opts) {
+  const ROW = 'display:flex;align-items:center;gap:8px;padding:6px 12px';
+  const MONO = 'font-family:var(--font-mono);font-size:11px;color:var(--text-300)';
+  if (!sc) {
+    return `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">Status unavailable</span></div>`;
+  }
+  if (!sc.enabled) {
+    return `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">Supervisor disabled</span><span style="font-size:11px;color:var(--text-400)">${esc(opts.disabledHint||'')}</span></div>`;
+  }
+  const running = !!sc.running;
+  const healthOk = !!sc.last_health_ok;
+  const breaker = !!sc.breaker_open;
+  const uptime = running && sc.started_at ? Math.max(0, Math.round(Date.now()/1000 - sc.started_at)) : 0;
+  const fmtAgo = (t) => !t ? 'never' : (function(s){
+    if (s<60) return s+'s ago';
+    if (s<3600) return Math.round(s/60)+'m ago';
+    return Math.round(s/3600)+'h ago';
+  })(Math.max(0, Math.round(Date.now()/1000 - t)));
+  const statusLabel = breaker ? 'breaker open' : (running ? (healthOk ? 'running' : 'unresponsive') : 'stopped');
+  const statusColor = breaker ? 'var(--error)' : (running && healthOk ? 'var(--success)' : 'var(--warning, #b45309)');
+  return `
+    <div style="${ROW}">
+      ${DOT(running && healthOk && !breaker)}
+      <span style="font-size:13px;color:var(--text-100);flex:1">${esc(sc.url||'')}</span>
+      ${running ? `<span style="${MONO}">PID ${sc.pid}</span>` : ''}
+      <span style="font-size:11px;color:${statusColor}">${esc(statusLabel)}</span>
+    </div>
+    <div style="font-size:11px;color:var(--text-400);padding:0 12px;display:grid;grid-template-columns:auto auto;gap:4px 18px">
+      ${running ? `<span>Uptime</span><span style="${MONO}">${uptime}s</span>` : ''}
+      <span>Last health probe</span><span style="${MONO}">${healthOk?'ok':'fail'} &middot; ${fmtAgo(sc.last_health_at)}</span>
+      <span>Crashes (last 60s)</span><span style="${MONO}">${sc.crash_count_60s||0} / ${sc.crash_limit||3}</span>
+      ${sc.last_exit_rc !== null && sc.last_exit_rc !== undefined ? `<span>Last exit</span><span style="${MONO}">rc=${sc.last_exit_rc} &middot; ${fmtAgo(sc.last_exit_at)}</span>` : ''}
+      ${breaker ? `<span style="color:var(--error)">Circuit breaker</span><span style="${MONO};color:var(--error)">open — auto-restart halted</span>` : ''}
+    </div>
+    <div style="display:flex;gap:8px;padding:0 12px;margin-top:6px">
+      <button class="btn-secondary" onclick="${opts.restartFn}(this)">${breaker ? 'Restart & clear breaker' : (opts.restartLabel||'Restart')}</button>
+      <span style="font-size:11px;color:var(--text-400);align-self:center">${esc(opts.note||'')}</span>
+    </div>`;
+}
+
 /* ═══════════════════════════════════════════════════════════
    GENERAL SETTINGS TAB SWITCHER
    ═══════════════════════════════════════════════════════════ */

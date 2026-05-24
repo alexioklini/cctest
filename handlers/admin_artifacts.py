@@ -1598,3 +1598,32 @@ class AdminArtifactsHandlers:
             pass
         status_code = 200 if result.get("ok") else 409
         self._send_json(result, status_code)
+
+    # --- SearXNG supervisor (admin) ---
+
+    def _handle_searxng_status(self):
+        """GET /v1/searxng/status — current SearXNG process state."""
+        from server_lib.sidecar_supervisor import searxng_supervisor
+        self._send_json(searxng_supervisor.status())
+
+    def _handle_searxng_restart(self):
+        """POST /v1/searxng/restart — hard-restart the bundled SearXNG instance.
+        Clears the circuit breaker so a manual restart recovers from it."""
+        from server_lib.sidecar_supervisor import searxng_supervisor
+        user = self._get_auth_user() or {}
+        result = searxng_supervisor.restart(
+            reason=f"manual by={user.get('username','')}")
+        try:
+            import engine as _eng
+            if _eng._audit_log:
+                _eng._audit_log.log_action(
+                    agent="main",
+                    action_type="searxng_restart",
+                    tool_name="searxng",
+                    args_summary=f"by={user.get('username','')}",
+                    result_status="ok" if result.get("ok") else "error",
+                )
+        except Exception:
+            pass
+        status_code = 200 if result.get("ok") else 409
+        self._send_json(result, status_code)

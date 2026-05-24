@@ -4,9 +4,10 @@
 async function _genTab_server(C) {
   /* ─── SERVER ─── */
     try {
-      const [svc, sc] = await Promise.all([
+      const [svc, sc, sx] = await Promise.all([
         API.getServices(),
         API.get('/v1/sidecar/status').catch(() => null),
+        API.get('/v1/searxng/status').catch(() => null),
       ]);
       const srv = svc.server || {};
       applyGdprConfigToScanner(srv.gdpr_scanner);
@@ -63,43 +64,19 @@ async function _genTab_server(C) {
         </div>
         <div style="font-size:11px;color:var(--text-400);margin-top:2px">Background model that generates the per-chat synopsis (hover tooltip + collapsible block) and the auto-maintained user profile. Leave on Auto unless you want a specific model.</div>
         ${SEC('Sidecar')}
-        ${(() => {
-          if (!sc) {
-            return `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">Status unavailable</span></div>`;
-          }
-          if (!sc.enabled) {
-            return `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">Supervisor disabled</span><span style="font-size:11px;color:var(--text-400)">sidecar.auto_start=false</span></div>`;
-          }
-          const running = !!sc.running;
-          const healthOk = !!sc.last_health_ok;
-          const breaker = !!sc.breaker_open;
-          const uptime = running && sc.started_at ? Math.max(0, Math.round(Date.now()/1000 - sc.started_at)) : 0;
-          const fmtAgo = (t) => !t ? 'never' : (function(s){
-            if (s<60) return s+'s ago';
-            if (s<3600) return Math.round(s/60)+'m ago';
-            return Math.round(s/3600)+'h ago';
-          })(Math.max(0, Math.round(Date.now()/1000 - t)));
-          const statusLabel = breaker ? 'breaker open' : (running ? (healthOk ? 'running' : 'unresponsive') : 'stopped');
-          const statusColor = breaker ? 'var(--error)' : (running && healthOk ? 'var(--success)' : 'var(--warning, #b45309)');
-          return `
-            <div style="${ROW}">
-              ${DOT(running && healthOk && !breaker)}
-              <span style="font-size:13px;color:var(--text-100);flex:1">${esc(sc.url||'')}</span>
-              ${running ? `<span style="${MONO}">PID ${sc.pid}</span>` : ''}
-              <span style="font-size:11px;color:${statusColor}">${esc(statusLabel)}</span>
-            </div>
-            <div style="font-size:11px;color:var(--text-400);padding:0 12px;display:grid;grid-template-columns:auto auto;gap:4px 18px">
-              ${running ? `<span>Uptime</span><span style="${MONO}">${uptime}s</span>` : ''}
-              <span>Last health probe</span><span style="${MONO}">${healthOk?'ok':'fail'} &middot; ${fmtAgo(sc.last_health_at)}</span>
-              <span>Crashes (last 60s)</span><span style="${MONO}">${sc.crash_count_60s||0} / ${sc.crash_limit||3}</span>
-              ${sc.last_exit_rc !== null && sc.last_exit_rc !== undefined ? `<span>Last exit</span><span style="${MONO}">rc=${sc.last_exit_rc} &middot; ${fmtAgo(sc.last_exit_at)}</span>` : ''}
-              ${breaker ? `<span style="color:var(--error)">Circuit breaker</span><span style="${MONO};color:var(--error)">open — auto-restart halted</span>` : ''}
-            </div>
-            <div style="display:flex;gap:8px;padding:0 12px;margin-top:6px">
-              <button class="btn-secondary" onclick="restartSidecar(this)">${breaker ? 'Restart & clear breaker' : 'Restart sidecar'}</button>
-              <span style="font-size:11px;color:var(--text-400);align-self:center">In-flight turns will fail with a sidecar error.</span>
-            </div>`;
-        })()}
+        ${_renderSupervisorStatus(sc, {
+          restartFn: 'restartSidecar',
+          restartLabel: 'Restart sidecar',
+          note: 'In-flight turns will fail with a sidecar error.',
+          disabledHint: 'sidecar.auto_start=false',
+        })}
+        ${SEC('Web Search (SearXNG)')}
+        ${_renderSupervisorStatus(sx, {
+          restartFn: 'restartSearxng',
+          restartLabel: 'Restart SearXNG',
+          note: 'Powers the searxng_search tool. Web searches briefly fail during restart.',
+          disabledHint: 'searxng.auto_start=false',
+        })}
         ${SEC('Cost Quotas')}
         <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
           <span style="font-size:12px;color:var(--text-200);flex:1">Per-user, per-role limits with billing-cycle reset.</span>

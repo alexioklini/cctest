@@ -160,8 +160,7 @@ function renderToolIntegrationFields(name, cfg) {
         ${lbl('Default Results Per Query')}
         <input id="tool-exa-num" type="number" min="1" max="50" value="${cfg.default_num_results||5}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px">`;
     case 'searxng_search':
-      return `${lbl('SearXNG URL')}<div style="font-size:10px;color:var(--text-400);margin-bottom:2px">Base URL of a self-hosted SearXNG instance, e.g. http://localhost:8888 (its settings.yml must enable the json format).</div>
-        <input id="tool-searxng-url" type="text" value="${esc(cfg.url||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px" placeholder="http://localhost:8888">
+      return `<div style="font-size:11px;color:var(--text-400);margin-bottom:6px">Uses the bundled self-hosted SearXNG instance. Manage it (URL, status, restart) under <b>Settings &rarr; Server &rarr; Web Search</b>.</div>
         ${lbl('Default Results Per Query')}
         <input id="tool-searxng-num" type="number" min="1" max="50" value="${cfg.default_num_results||5}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px">`;
     case 'gmail':
@@ -369,7 +368,6 @@ function buildToolIntegrationRec(toolName) {
       break;
     case 'searxng_search':
       rec = {
-        url: document.getElementById('tool-searxng-url')?.value?.trim() || '',
         default_num_results: parseInt(document.getElementById('tool-searxng-num')?.value) || 5,
       };
       break;

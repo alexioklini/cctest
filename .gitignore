@@ -2,6 +2,12 @@ config.json
 tools_config.json
 gmail.json
 .DS_Store
+
+# Bundled SearXNG (cloned upstream repo + its venv) — not vendored into git.
+# Recreate via the SearxngSupervisor's FATAL-message instructions.
+searxng/
+.venv_searxng/
+searxng_settings.yml
 __pycache__/
 *.pyc
 *.db

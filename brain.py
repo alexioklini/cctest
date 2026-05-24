@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.13.4"
+VERSION = "9.14.0"
 VERSION_DATE = "2026-05-24"
 CHANGELOG = [
+    ("9.14.0", "2026-05-24", "feat(web-search): bundle + supervise a self-hosted SearXNG instance, managed by brain-agent like the sidecar. (1) **Install** — cloned searxng/searxng into searxng/ with a dedicated .venv_searxng (Python 3.13; the system 3.14 isn't supported by SearXNG) + a minimal searxng_settings.yml override (use_default_settings:true) that enables the json format (off by default — the real reason a live instance still 404s on /search?format=json), binds 127.0.0.1:8088, and sets a generated secret_key. All three gitignored (searxng/ is a 29MB nested repo, the venv 108MB, the settings file holds the secret). (2) **Supervisor** — refactored SidecarSupervisor into a generic ProcessSupervisor base (spawn / monitor / 3-crash-in-60s circuit breaker / HTTP health probe / manual restart); SidecarSupervisor + new SearxngSupervisor are thin subclasses describing only their launch argv/env/cwd + health URL. Sidecar log output stays byte-identical (PREFIX_LOGS=False → verbatim); SearXNG output is tagged. Both module-level singletons (sidecar_supervisor, searxng_supervisor). Wired into server.py (start() next to the sidecar, server_config['searxng'] copy line) with admin-gated GET /v1/searxng/status + POST /v1/searxng/restart mirroring the sidecar endpoints. (3) **Single source of truth for the URL** — new brain._searxng_base_url() resolves config.json→searxng.url (the bundled instance); tool_searxng_search reads it instead of its own tools_config.searxng_search.url. A hand-set tools_config url still acts as an external-instance override but is no longer a surfaced setting. Removed url from _TOOLS_CONFIG_DEFAULTS.searxng_search, the get_tool_status branch, the live + sample tools_config.json, and the Tools-tab integration panel (now points to Settings→Server→Web Search). (4) **Settings UI** — new 'Web Search (SearXNG)' monitor in General Settings→Server (status/pid/uptime/health/breaker + restart), via a shared _renderSupervisorStatus() helper that the Sidecar block now also uses (de-duplicated ~35 lines); + restartSearxng(). js_gate green (smoke 5/5), net-globals baseline 899→901. Verified live: SearXNG runs as a child of the server process, tool resolves the instance URL with zero tool config and returns real results."),
     ("9.13.4", "2026-05-24", "ux(tools): one Save button per tool panel. The per-tool Tools-settings panel had two save buttons — 'Save' (enabled/deferred/prose/purposes → /v1/tools/settings) and 'Save integration' (api_key/url/timeouts → /v1/tools/config) — a sharp edge where saving one didn't persist the other. Unified into a single `saveTool(toolName)` that POSTs both in one click: it builds the settings body (skipped for integration-only pseudo-tools, which have no ts- form) and the integration record (skipped for tools with no tool_config entry), then fires the relevant POST(s). Refactored the old `saveToolIntegration` switch into a pure `buildToolIntegrationRec(toolName)` rec-builder reused by the unified saver; removed the 'Save integration' button; gave integration-only tools (gmail/refinement/code_graph/translation/text_to_speech) their own single Save (they previously relied on the now-removed button). JS-only; net-globals unchanged at 899 (two old save fns swapped for saveTool + buildToolIntegrationRec). js_gate green (smoke 5/5)."),
     ("9.13.3", "2026-05-24", "cleanup(tools): make 'enabled = the gate the LLM gets' hold for EVERY tool, not just searxng. Follow-through on 9.13.2. (1) Stripped the phantom `enabled` field from all 9 TOOL_DISPATCH tools' `tools_config` integration defaults (exa_search, searxng_search, execute_command, web_fetch, read_document, write_document, edit_document, python_exec, transcribe_audio) — their real gate is `tool_settings.<name>.enabled` via `_global_tool_enabled`, and the vestigial integration `enabled` only fed the misleading status display (latent searxng-style bug for all of them). The 5 integration-only pseudo-tools (gmail, refinement, code_graph, translation, text_to_speech) KEEP `enabled` — they have no TOOL_DISPATCH entry so the integration field genuinely IS their gate. Stripped the stale field from live + sample tools_config.json too. (2) Deleted dead code: `_genTab_tools_legacy` (~236-line unreachable flat Tools-tab renderer — the router maps `tools` → `_genTab_tools`, never the legacy one) + the orphaned `saveToolsConfig` bulk-saver it was the only caller of, both in web/js. Dropped the per-tool integration `enabled` writers for the 4 dispatch tools that still had them in `saveToolIntegration` (execute_command/web_fetch/read_document/transcribe_audio). net-globals baseline 901→899 (two dead globals removed). Verified: get_tool_status matches `_global_tool_enabled` for every dispatch tool; js_gate green (smoke 5/5)."),
     ("9.13.2", "2026-05-24", "fix(tools-status): tool status display read the wrong `enabled` field. There were two `enabled` values for a tool — `tool_settings.<name>.enabled` (the real gate the LLM resolver uses via `_global_tool_enabled`) and a legacy `enabled` field in the `tools_config` integration record. `get_tool_status()` reported the latter, so a tool enabled via the per-tool Save toggle (which writes `tool_settings`) still showed 'disabled' if its integration record's stale `enabled` was false — exactly what happened to `searxng_search` (enabled in `tool_settings`, but `tools_config.searxng_search.enabled` defaulted false). Fix at the single choke point: `get_tool_status()` now defers to `_global_tool_enabled()` for any tool with a `TOOL_DISPATCH` entry (integration-only pseudo-tools keep their own `enabled`). Dropped the redundant `enabled` field from the `exa_search`/`searxng_search` integration defaults + the JS save collectors (bulk + per-tool) so the GUI stops writing a field that never gated anything; stripped it from the live + sample `tools_config.json`. Also removed the THIRD stale hardcoded-Exa-key copy (in `GET /v1/tools/config`'s fallback-merge) missed in 9.13.0/.1 — it re-leaked the key into the API response."),
@@ -2357,7 +2358,11 @@ _TOOLS_CONFIG_DEFAULTS = {
         "default_num_results": 5,
     },
     "searxng_search": {
-        "url": "",               # base URL of a SearXNG instance, e.g. http://localhost:8888
+        # No `url` here by default — the base URL is owned by the bundled
+        # self-hosted instance (config.json -> searxng.url) and resolved via
+        # brain._searxng_base_url(). A hand-set `url` in tools_config still
+        # acts as an external-instance override, but it's not a surfaced
+        # setting (configure the instance under Settings -> Server instead).
         "default_num_results": 5,
     },
     "gmail": {
@@ -2429,6 +2434,31 @@ def get_tool_config() -> dict:
     return merged
 
 
+def _searxng_base_url() -> str:
+    """Single source of truth for the SearXNG base URL used by searxng_search.
+
+    The bundled self-hosted instance is managed by the SearxngSupervisor and
+    binds to `config.json -> searxng.url`; the tool talks to that same
+    instance. An admin can still point at an EXTERNAL SearXNG by setting
+    `tools_config.searxng_search.url` (override) — but the common case needs
+    no tool config at all. Returns "" if neither is configured."""
+    override = (get_tool_config().get("searxng_search", {}).get("url") or "").strip()
+    if override:
+        return override.rstrip("/")
+    inst = ""
+    try:
+        import sys as _sys
+        for _name in ("__main__", "server"):
+            _srv_mod = _sys.modules.get(_name)
+            _sc = getattr(_srv_mod, "server_config", None) if _srv_mod else None
+            if _sc:
+                inst = (_sc.get("searxng") or {}).get("url") or ""
+                break
+    except Exception:
+        inst = ""
+    return inst.rstrip("/")
+
+
 def save_tool_config(cfg: dict) -> dict:
     """Save tool configuration to tools_config.json. Returns saved config."""
     # Merge with existing to preserve fields not in the incoming payload
@@ -2469,7 +2499,10 @@ def get_tool_status() -> dict:
                 tool_cfg["_source"] = "environment variable"
             s = "configured" if exa_key else "not configured"
         elif tool_name == "searxng_search":
-            s = "configured" if tool_cfg.get("url") else "not configured"
+            _resolved = _searxng_base_url()
+            if _resolved and not tool_cfg.get("url"):
+                tool_cfg["_source"] = "bundled instance (searxng.url)"
+            s = "configured" if _resolved else "not configured"
         elif tool_name == "gmail":
             has_gmail = bool(tool_cfg.get("email") and tool_cfg.get("app_password"))
             if not has_gmail:

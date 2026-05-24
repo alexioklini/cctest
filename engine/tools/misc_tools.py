@@ -311,7 +311,9 @@ def tool_web_fetch(args: dict) -> str:
 def tool_searxng_search(args: dict) -> str:
     """Web search via a self-hosted SearXNG instance. No API key, on-prem.
 
-    Reads tools_config.searxng_search.url (base URL) and hits
+    Talks to the bundled self-hosted SearXNG instance (config.json ->
+    searxng.url, managed by the SearxngSupervisor); an admin can override to
+    an external instance via tools_config.searxng_search.url. Hits
     <url>/search?format=json, mapping results to the same {title, link} shape
     exa_search returns. Only SearXNG's real `news` category is mapped;
     other categories have no SearXNG equivalent and are dropped (passing an
@@ -323,11 +325,13 @@ def tool_searxng_search(args: dict) -> str:
     force_fresh = args.get("force_fresh", False)
 
     _tcfg = _brain.get_tool_config().get("searxng_search", {})
-    base = (_tcfg.get("url") or "").rstrip("/")
+    base = _brain._searxng_base_url()
     if not base:
         return json.dumps({
             "query": query, "results": [],
-            "error": "searxng_search: url is not set in tools_config.searxng_search",
+            "error": "searxng_search: no SearXNG instance configured "
+                     "(set config.json -> searxng.url, or override with "
+                     "tools_config.searxng_search.url for an external instance)",
         })
 
     cache_key = f"searxng:{base}:{query}:{num_results}:{category or ''}"
