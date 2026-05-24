@@ -88,6 +88,17 @@ Files → `state._pendingFiles[]` as base64, sent as `body.files` (legacy `body.
 - **Disk**: else → `/tmp/brain-attachments/{session_id}/`, agent uses `read_document`
 - **Image fallback on non-vision models**: `attachments.image_model` describes via vision LLM; unconfigured → metadata only
 
+## Web Fetch — conversion, headless rendering, provenance
+
+`tool_web_fetch` returns content the LLM sees, tagged with `fetch_method` (surfaced as a chat-view badge): `raw` (non-HTML, or HTML where nothing converted), `markitdown` (our `_html_to_markdown` HTML→md), `crawl4ai` (headless-browser render — itself markdown).
+- **Conversion is conditional**: `_html_to_markdown` = `markitdown(text) or text` — on a JS-rendered shell markitdown yields nothing → would fall back to raw. NOT "always markdown" (a past wrong assumption).
+- **crawl4ai render service** (own supervised subprocess, like sidecar/SearXNG): `.venv_crawl4ai` (Py 3.13, gitignored) + headless Chromium; `crawl4ai/render_service.py` (stdlib HTTP, port 8422, `POST /render {url}`). `Crawl4aiSupervisor` singleton `crawl4ai_supervisor`, wired in server.py main() + `server_config['crawl4ai']`. Admin `/v1/crawl4ai/{status,restart}`. **Needs `config.json → crawl4ai {auto_start:true,…}`** (gitignored, per-machine) — supervisor no-ops without `auto_start`. Render needs `wait_until='networkidle'+delay` or JS pages return empty.
+- **Fallback trigger**: `web_fetch` tries markitdown first; calls crawl4ai only when the converted text is empty (`<30` chars) on an HTML GET — static pages never pay the browser cost. `brain._crawl4ai_render()` degrades gracefully (service down → keep HTTP result).
+
+## Project Web URLs (mined, not injected)
+
+Per-project `project.json → web_urls` [{url,title}] (editor: project-settings 'Web URLs' section; whitelisted in `ProjectManager.update_project`). The project-sync daemon fetches each fresh per cycle (JS-rendered via the crawl4ai fallback) into `pdir/web-urls/weburl-<hash>.md`, **hash-gated** (rewrite→re-mine only on content change), then mines them into the project's MemPalace wing + KG (`_sync_project_web_urls` + sync-loop branch 1b) — reached via `mempalace_query`/KG like any project knowledge. Removed-URL drawers purged via `_is_stale_src` (web-urls/ files are under pdir, so need a file-existence check, not just prefix). **DIFFERENT mechanism** from the per-chat Websuche basket (which is ephemeral per-turn injection) — do not merge them.
+
 ## Manual Web Search (Websuche tab)
 
 Human-curated retrieval: the user searches, marks URLs, then the turn works strictly from the marked set.

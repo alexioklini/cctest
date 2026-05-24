@@ -497,6 +497,15 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           Sync now
         </button>
       </div>
+      <div class="project-panel-section">
+        <div class="project-panel-section-header">
+          <span class="project-panel-section-title">Web URLs</span>
+          <span class="project-panel-section-action" onclick="addProjectWebUrl()">+ Add</span>
+        </div>
+        <div id="project-panel-web-urls">
+          <span class="project-panel-placeholder">Add URLs to fetch fresh and inject into every chat in this project (no indexing — fetched live each turn). Separate from input folders / memory.</span>
+        </div>
+      </div>
     </div>
   </div>
 

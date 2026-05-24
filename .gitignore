@@ -75,3 +75,6 @@ wpb_2025_*.pdf
 wpb_2025_*.txt
 sidecar_sdk_report.html
 reports/
+
+# crawl4ai render service venv (heavy: browser + deps)
+.venv_crawl4ai/

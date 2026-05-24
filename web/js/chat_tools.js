@@ -369,9 +369,22 @@ function highlightToolResult(text, lang) {
 function _isToolResultStub(s) {
   return typeof s === 'string' && /^\[Output too large \(\d+KB\)\. Full output saved to:/.test(s);
 }
+// For web_fetch results, pull out how the content was produced so the chat
+// view can badge it: crawl4ai (headless render) / markitdown (HTML→md) / raw.
+// Lets the user see what transform the LLM's content went through, instead of
+// guessing from raw-looking text.
+function _extractFetchMethod(toolName, resultStr) {
+  if (toolName !== 'web_fetch' || typeof resultStr !== 'string') return '';
+  try {
+    const m = resultStr.match(/"fetch_method"\s*:\s*"(crawl4ai|markitdown|raw)"/);
+    return m ? m[1] : '';
+  } catch (e) { return ''; }
+}
+
 function buildToolResultBlock(toolName, args, resultStr, toolUseId) {
   if (!resultStr) return '';
   const fullLen = resultStr.length;
+  const fetchMethod = _extractFetchMethod(toolName, resultStr);
   const lang = detectToolResultLang(toolName, args, resultStr);
   const terminal = lang === 'shell';
   const id = `tres-${++_toolResultSeq}`;
@@ -398,6 +411,15 @@ function buildToolResultBlock(toolName, args, resultStr, toolUseId) {
   });
   const langBadge = lang ? `<span class="tool-result-lang">${esc(lang)}</span>` : '';
   const sizeBadge = `<span class="tool-result-lang">${formatBytes(fullLen)}</span>`;
+  // Fetch-method badge (web_fetch only): how the content reached the LLM.
+  const _fmTip = {
+    crawl4ai: 'Rendered in a headless browser (page needs JavaScript)',
+    markitdown: 'HTML converted to markdown',
+    raw: 'Raw content, no conversion',
+  }[fetchMethod] || '';
+  const fetchBadge = fetchMethod
+    ? `<span class="tool-result-fetch-badge" data-fm="${fetchMethod}" title="${esc(_fmTip)}">${esc(fetchMethod)}</span>`
+    : '';
   const expandLabel = truncatedInitial ? 'Show full' : 'Expand';
   const expandBtn = `<button type="button" class="tool-result-btn" data-tres-expand="${id}" onclick="event.stopPropagation(); expandToolResult('${id}', this)">${expandLabel}</button>`;
   const copyBtn = `<button type="button" class="tool-result-btn" onclick="event.stopPropagation(); copyToolResult('${id}', this)">Copy</button>`;
@@ -411,6 +433,7 @@ function buildToolResultBlock(toolName, args, resultStr, toolUseId) {
   return `<div class="tool-result-section">
     <div class="tool-result-header">
       <span class="tool-result-label">Response</span>
+      ${fetchBadge}
       ${langBadge}
       ${sizeBadge}
       <span class="tool-result-actions">${expandBtn}${copyBtn}${downloadBtn}</span>

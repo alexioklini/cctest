@@ -934,7 +934,7 @@ class WarmSessionPool:
 warm_pool = WarmSessionPool()
 
 
-from server_lib.sidecar_supervisor import sidecar_supervisor, searxng_supervisor
+from server_lib.sidecar_supervisor import sidecar_supervisor, searxng_supervisor, crawl4ai_supervisor
 
 
 from handlers.auth import AuthHandlerMixin
@@ -1170,6 +1170,7 @@ class BrainAgentHandler(
         "/v1/sidecar/status",
         "/v1/searxng/status",
         "/v1/searxng/engines",
+        "/v1/crawl4ai/status",
         "/v1/gdpr/ner-models",
         "/v1/classification/config",
     }
@@ -1210,6 +1211,7 @@ class BrainAgentHandler(
         "/v1/sidecar/restart",
         "/v1/searxng/restart",
         "/v1/searxng/test-engines",
+        "/v1/crawl4ai/restart",
         "/v1/gdpr/ner-models",
         "/v1/classification/config",
     }
@@ -1548,6 +1550,8 @@ class BrainAgentHandler(
             self._handle_sidecar_status()
         elif path == "/v1/searxng/status":
             self._handle_searxng_status()
+        elif path == "/v1/crawl4ai/status":
+            self._handle_crawl4ai_status()
         elif path == "/v1/searxng/engines":
             self._handle_searxng_engines()
         elif path == "/v1/queue/status":
@@ -1767,6 +1771,8 @@ class BrainAgentHandler(
             self._handle_sidecar_restart()
         elif path == "/v1/searxng/restart":
             self._handle_searxng_restart()
+        elif path == "/v1/crawl4ai/restart":
+            self._handle_crawl4ai_restart()
         elif path == "/v1/searxng/test-engines":
             self._handle_searxng_test_engines()
         elif path == "/v1/skills/install-zip":
@@ -3104,6 +3110,7 @@ def main():
     server_config["classification_scanner"] = file_config.get("classification_scanner", {}) or {}
     server_config["sidecar"] = file_config.get("sidecar", {}) or {}
     server_config["searxng"] = file_config.get("searxng", {}) or {}
+    server_config["crawl4ai"] = file_config.get("crawl4ai", {}) or {}
 
     # Per-tool prompt settings (admin-editable prose appended to system prompt
     # when the tool is in the active set). Migrate from legacy tools.md the
@@ -3748,6 +3755,14 @@ def main():
     # as the sidecar. Powers the searxng_search tool. Manual restart via
     # POST /v1/searxng/restart; state via GET /v1/searxng/status.
     searxng_supervisor.start(server_config)
+
+    # --- crawl4ai render-service supervisor ---
+    # Headless-Chromium HTML→markdown for JS-rendered pages (.venv_crawl4ai,
+    # crawl4ai/render_service.py). Same supervisor machinery; web_fetch +
+    # project-URL mining call it as a fallback when the cheap HTTP fetch yields
+    # an empty / JS-shell result. Manual restart via POST /v1/crawl4ai/restart;
+    # state via GET /v1/crawl4ai/status.
+    crawl4ai_supervisor.start(server_config)
 
     def _kick_turn_recovery():
         # Phase 5 stage 1c: re-attach to in-flight sidecar turns from the prior

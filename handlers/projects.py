@@ -190,6 +190,23 @@ class ProjectsHandlerMixin:
             body["excluded_user_ids"] = (
                 _filter_known_user_ids(body["excluded_user_ids"]) if scope == "global" else []
             )
+        # Project-level web URLs (fetched + injected into every chat turn in
+        # the project; no MemPalace/KG involvement). Normalise to a clean
+        # [{url,title}] list so a malformed body can't corrupt project.json.
+        if "web_urls" in body:
+            _clean = []
+            _seen = set()
+            for u in (body.get("web_urls") or []):
+                if not isinstance(u, dict):
+                    continue
+                url = (u.get("url") or "").strip()
+                if not url or url in _seen:
+                    continue
+                if not url.lower().startswith(("http://", "https://")):
+                    url = "https://" + url
+                _seen.add(url)
+                _clean.append({"url": url, "title": (u.get("title") or "").strip()})
+            body["web_urls"] = _clean
         result = engine.ProjectManager.update_project(agent_id, proj_name, body)
         if "error" in result:
             self._send_json(result, 400)

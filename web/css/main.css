@@ -1350,6 +1350,12 @@ textarea { resize: none; }
 .tool-result-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-400); }
 .tool-result-lang { font-size: 10px; font-family: var(--font-mono); color: var(--text-400); padding: 1px 5px; border: 1px solid var(--border-100); border-radius: 3px; }
 .tool-result-actions { margin-left: auto; display: flex; gap: 4px; }
+/* web_fetch content-provenance badge: how the LLM's content was produced. */
+.tool-result-fetch-badge { font-size: 10px; font-family: var(--font-mono);
+  padding: 1px 6px; border-radius: 3px; border: 1px solid transparent; font-weight: 600; }
+.tool-result-fetch-badge[data-fm="crawl4ai"]  { color: #1d4ed8; background: #eff6ff; border-color: #bfdbfe; }
+.tool-result-fetch-badge[data-fm="markitdown"] { color: #047857; background: #ecfdf5; border-color: #a7f3d0; }
+.tool-result-fetch-badge[data-fm="raw"]        { color: #b45309; background: #fffbeb; border-color: #fde68a; }
 .tool-result-btn { font-size: 10px; font-family: var(--font-ui); color: var(--text-300); background: transparent; border: 1px solid var(--border-100); border-radius: 4px; padding: 2px 7px; cursor: pointer; transition: all 0.12s; }
 .tool-result-btn:hover { background: var(--bg-200); color: var(--text-100); border-color: var(--border-200); }
 .tool-result-btn.copied { color: var(--success, #10b981); border-color: currentColor; }

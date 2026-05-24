@@ -352,9 +352,52 @@ class SearxngSupervisor(ProcessSupervisor):
         return True
 
 
+class Crawl4aiSupervisor(ProcessSupervisor):
+    """crawl4ai render service: a Python script under a dedicated venv that
+    renders JS-heavy pages in headless Chromium → markdown (what plain HTTP
+    web_fetch can't get). Health = /health."""
+
+    LABEL = "crawl4ai"
+    CONFIG_KEY = "crawl4ai"
+    DEFAULT_URL = "http://127.0.0.1:8422"
+    PREFIX_LOGS = True
+
+    def _resolve(self, cfg: dict) -> bool:
+        url = (cfg.get("url") or self.DEFAULT_URL).rstrip("/")
+        try:
+            from urllib.parse import urlparse
+            port = urlparse(url).port or 8422
+        except Exception:
+            port = 8422
+
+        venv_python = cfg.get("venv_python") or ".venv_crawl4ai/bin/python"
+        venv_python_abs = (venv_python if os.path.isabs(venv_python)
+                           else os.path.join(self._repo_root, venv_python))
+        service_script = os.path.join(self._repo_root, "crawl4ai", "render_service.py")
+
+        if not os.path.isfile(venv_python_abs):
+            print(f"[{self.LABEL}] FATAL: venv python not found at {venv_python_abs}",
+                  flush=True)
+            print(f"[{self.LABEL}]   create it:  python3.13 -m venv .venv_crawl4ai && "
+                  f".venv_crawl4ai/bin/pip install crawl4ai && "
+                  f".venv_crawl4ai/bin/python -m playwright install chromium", flush=True)
+            return False
+        if not os.path.isfile(service_script):
+            print(f"[{self.LABEL}] FATAL: render_service.py missing at {service_script}",
+                  flush=True)
+            return False
+
+        self._argv = [venv_python_abs, service_script, "--port", str(port)]
+        self._proc_cwd = self._repo_root
+        self._proc_env = None  # inherit
+        self._health_url = url + "/health"
+        return True
+
+
 # Module-level singletons. Both server.py and handlers import these instances
 # via `from server_lib.sidecar_supervisor import sidecar_supervisor`, which
 # Python resolves to the same module identity regardless of whether `server`
 # was loaded as `__main__` or as a regular import.
 sidecar_supervisor = SidecarSupervisor()
 searxng_supervisor = SearxngSupervisor()
+crawl4ai_supervisor = Crawl4aiSupervisor()

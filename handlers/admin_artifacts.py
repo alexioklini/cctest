@@ -1690,6 +1690,35 @@ class AdminArtifactsHandlers:
         status_code = 200 if result.get("ok") else 409
         self._send_json(result, status_code)
 
+    # --- crawl4ai render-service supervisor (admin) ---
+
+    def _handle_crawl4ai_status(self):
+        """GET /v1/crawl4ai/status — current crawl4ai render-service state."""
+        from server_lib.sidecar_supervisor import crawl4ai_supervisor
+        self._send_json(crawl4ai_supervisor.status())
+
+    def _handle_crawl4ai_restart(self):
+        """POST /v1/crawl4ai/restart — hard-restart the render service.
+        Clears the circuit breaker so a manual restart recovers from it."""
+        from server_lib.sidecar_supervisor import crawl4ai_supervisor
+        user = self._get_auth_user() or {}
+        result = crawl4ai_supervisor.restart(
+            reason=f"manual by={user.get('username','')}")
+        try:
+            import engine as _eng
+            if _eng._audit_log:
+                _eng._audit_log.log_action(
+                    agent="main",
+                    action_type="crawl4ai_restart",
+                    tool_name="crawl4ai",
+                    args_summary=f"by={user.get('username','')}",
+                    result_status="ok" if result.get("ok") else "error",
+                )
+        except Exception:
+            pass
+        status_code = 200 if result.get("ok") else 409
+        self._send_json(result, status_code)
+
     def _handle_searxng_engines(self):
         """GET /v1/searxng/engines — last per-engine health snapshot (state +
         latency per search engine), as gathered by the hourly probe or the

@@ -280,11 +280,44 @@ def tool_web_fetch(args: dict) -> str:
             text = raw.decode(charset, errors="replace")
         final_url = resp.url if hasattr(resp, 'url') else url
         content_type = resp.headers.get_content_type() or ""
-        if "html" in content_type or text.lstrip().startswith(("<html", "<!doc", "<!DOC")):
-            text = _brain._html_to_markdown(text) or text
+        # fetch_method records how the returned content was produced, surfaced
+        # as a badge in the chat view so it's clear what the LLM actually saw:
+        #   "raw"       — non-HTML, or HTML returned verbatim (no conversion)
+        #   "markitdown"— HTML converted to markdown by _html_to_markdown
+        #   "crawl4ai"  — rendered in a headless browser (JS-built pages)
+        fetch_method = "raw"
+        is_html = "html" in content_type or text.lstrip().startswith(("<html", "<!doc", "<!DOC"))
+        # `usable` = the text we'd actually hand the model. For HTML that's the
+        # markdown conversion; raw HTML doesn't count as usable content (it's
+        # what we fall back to only when nothing better exists). This is what
+        # the JS-shell gate measures — NOT the raw byte length.
+        usable = text
+        if is_html:
+            md = _brain._html_to_markdown(text)
+            if md:
+                text = md
+                usable = md
+                fetch_method = "markitdown"
+            else:
+                usable = ""  # conversion produced nothing — raw HTML isn't usable
+
+        # JS-rendered fallback: when an HTML page yields essentially NO usable
+        # text (client-rendered SvelteKit/React shells — markitdown returns
+        # empty/whitespace), re-fetch through the crawl4ai headless render
+        # service. Gated on markitdown having failed (empty `usable`), NOT a
+        # length threshold — a page that converts to even a short real snippet
+        # is fine and shouldn't pay the browser cost. Graceful: if the service
+        # is down/unconfigured, we keep the HTTP result.
+        if is_html and len(usable.strip()) < 30 and method == "GET" and not body:
+            rendered = _brain._crawl4ai_render(final_url)
+            if rendered.get("success") and rendered.get("markdown", "").strip():
+                text = rendered["markdown"]
+                fetch_method = "crawl4ai"
+
         if len(text) > max_length:
             text = text[:max_length] + "\n... (truncated)"
-        result = {"url": final_url, "status": resp.status, "length": len(text), "content": text}
+        result = {"url": final_url, "status": resp.status, "length": len(text),
+                  "content": text, "fetch_method": fetch_method}
         if cache_key:
             _brain._web_cache.put(cache_key, dict(result))
         return _ok(result)

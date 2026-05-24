@@ -828,6 +828,84 @@ def _mempalace_chat_sync_loop(srv):
         time.sleep(max(15, next_interval))
 
 
+def _sync_project_web_urls(pdir, web_urls):
+    """Fetch the project's configured web URLs into a `web-urls/` subfolder as
+    hash-gated `.md` companion files, so the existing project-sync mine + KG
+    pass treats each URL's content like any other project source file.
+
+    Change detection mirrors the file path: re-fetch every cycle, but only
+    rewrite the `.md` (→ re-mine + re-extract) when the fetched content's hash
+    differs from what's on disk. Files for URLs no longer configured are
+    deleted (the loop's stale-path purge then drops their drawers/triples).
+
+    Returns the absolute path of the `web-urls/` folder (created on demand), or
+    "" when there are no URLs configured.
+    """
+    import hashlib as _hl
+    folder = os.path.join(pdir, "web-urls")
+    urls = [(u.get("url") or "").strip() for u in (web_urls or []) if isinstance(u, dict)]
+    urls = [u for u in urls if u]
+    if not urls:
+        # No URLs: drop the folder's contents so stale-purge removes any
+        # previously-mined URL drawers.
+        if os.path.isdir(folder):
+            for fn in os.listdir(folder):
+                if fn.startswith("weburl-") and fn.endswith(".md"):
+                    try:
+                        os.remove(os.path.join(folder, fn))
+                    except OSError:
+                        pass
+        return folder if os.path.isdir(folder) else ""
+    os.makedirs(folder, exist_ok=True)
+    # Map of expected filenames so we can prune removed URLs.
+    expected = set()
+    for entry in (web_urls or []):
+        if not isinstance(entry, dict):
+            continue
+        url = (entry.get("url") or "").strip()
+        if not url:
+            continue
+        title = (entry.get("title") or "").strip()
+        uh = _hl.sha256(url.encode("utf-8")).hexdigest()[:16]
+        fname = f"weburl-{uh}.md"
+        expected.add(fname)
+        fpath = os.path.join(folder, fname)
+        try:
+            parsed = json.loads(engine.tool_web_fetch({"url": url, "force_fresh": True}))
+        except (ValueError, TypeError):
+            parsed = {}
+        if parsed.get("error") or "content" not in parsed:
+            # Leave any prior good copy in place on a transient fetch failure.
+            print(f"[project-sync.weburl] fetch failed {url}: "
+                  f"{parsed.get('error', 'unknown')}", flush=True)
+            continue
+        body = (f"<!-- brain-source: {url} -->\n"
+                f"# {title or parsed.get('url', url)}\n\n"
+                f"Source URL: {parsed.get('url', url)}\n\n{parsed['content']}\n")
+        new_hash = _hl.sha256(body.encode('utf-8')).hexdigest()
+        old_hash = ""
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                    old_hash = _hl.sha256(f.read().encode('utf-8')).hexdigest()
+            except OSError:
+                pass
+        if new_hash != old_hash:
+            try:
+                with open(fpath, "w", encoding="utf-8") as f:
+                    f.write(body)
+            except OSError as e:
+                print(f"[project-sync.weburl] write failed {fpath}: {e}", flush=True)
+    # Prune files for URLs no longer configured.
+    for fn in os.listdir(folder):
+        if fn.startswith("weburl-") and fn.endswith(".md") and fn not in expected:
+            try:
+                os.remove(os.path.join(folder, fn))
+            except OSError:
+                pass
+    return folder
+
+
 def _project_sync_loop(srv):
     from engine import sync_log as _sync_log
     mcfg = engine._load_mempalace_config()
@@ -1190,6 +1268,20 @@ def _project_sync_loop(srv):
                     continue
                 wing = _project_wing(project_id)
 
+                # Project-level web URLs → fetch fresh into pdir/web-urls/ as
+                # hash-gated .md files BEFORE mining, so they ride the same
+                # convert→mine→KG pass as uploaded files. (web_fetch handles
+                # JS-rendered pages via the crawl4ai fallback.) Removed URLs'
+                # files are pruned here; their drawers get purged by the
+                # stale-path sweep below (web-urls/ files that no longer exist).
+                _weburl_folder = ""
+                try:
+                    _weburl_folder = _sync_project_web_urls(
+                        pdir, project.get("web_urls") or [])
+                except Exception as _e_wu:
+                    print(f"[project-sync.weburl] {agent_id}/{proj_name}: "
+                          f"{type(_e_wu).__name__}: {_e_wu}", flush=True)
+
                 _run_id = _sync_log.start_run(
                     chats_db_path, project_id, triggered_by=_trigger)
                 started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -1231,7 +1323,8 @@ def _project_sync_loop(srv):
                             _r = os.path.realpath(os.path.expanduser(_fp))
                             _current_folder_prefixes.add(
                                 _r if _r.endswith(os.sep) else _r + os.sep)
-                    # Also allow pdir itself (ingested attachments).
+                    # Also allow pdir itself (ingested attachments + the
+                    # web-urls/ subfolder, both under pdir).
                     _pdir_real = os.path.realpath(pdir)
                     _current_folder_prefixes.add(
                         _pdir_real if _pdir_real.endswith(os.sep)
@@ -1247,6 +1340,22 @@ def _project_sync_loop(srv):
                                 get_closets_collection as _get_ccol_sp,
                             )
                             _wing_sp = wing
+                            # A drawer is stale if its source_file is outside
+                            # every current input folder/pdir prefix, OR it's a
+                            # web-urls/ companion whose .md no longer exists
+                            # (the URL was removed from the project). The latter
+                            # can't be caught by prefix alone since web-urls/ is
+                            # under pdir (a kept prefix).
+                            _weburl_dir_real = (os.path.realpath(_weburl_folder) + os.sep
+                                                if _weburl_folder else None)
+                            def _is_stale_src(_src):
+                                _src = _src or ""
+                                if not any(_src.startswith(_p) for _p in _current_folder_prefixes):
+                                    return True
+                                if (_weburl_dir_real and _src.startswith(_weburl_dir_real)
+                                        and not os.path.exists(_src)):
+                                    return True
+                                return False
                             _col_sp = _get_col_sp(_palace_sp, create=False)
                             if _col_sp:
                                 _res_sp = _col_sp.get(
@@ -1255,9 +1364,7 @@ def _project_sync_loop(srv):
                                 _stale_ids = [
                                     _did for _did, _m in zip(
                                         _res_sp["ids"], _res_sp["metadatas"])
-                                    if not any(
-                                        (_m.get("source_file") or "").startswith(_p)
-                                        for _p in _current_folder_prefixes)
+                                    if _is_stale_src(_m.get("source_file"))
                                 ]
                                 if _stale_ids:
                                     _col_sp.delete(ids=_stale_ids)
@@ -1274,9 +1381,7 @@ def _project_sync_loop(srv):
                                 _stale_cids = [
                                     _cid for _cid, _m in zip(
                                         _res_sp["ids"], _res_sp["metadatas"])
-                                    if not any(
-                                        (_m.get("source_file") or "").startswith(_p)
-                                        for _p in _current_folder_prefixes)
+                                    if _is_stale_src(_m.get("source_file"))
                                 ]
                                 if _stale_cids:
                                     _ccol_sp.delete(ids=_stale_cids)
@@ -1527,6 +1632,63 @@ def _project_sync_loop(srv):
                                 state="error",
                                 error="failed to write mempalace.yaml")
                         _bump_processed(len(hashes))
+
+                # 1b. Project web URLs — fetched into pdir/web-urls/ as .md
+                #     above (_sync_project_web_urls). Already markdown, so no
+                #     convert pass — just mine + KG, same as ingested. Each URL
+                #     is a weburl-<hash>.md file; mine the folder in one pass,
+                #     then run KG scoped to the whole folder.
+                if _weburl_folder and os.path.isdir(_weburl_folder):
+                    _wu_files = [fn for fn in os.listdir(_weburl_folder)
+                                 if fn.startswith("weburl-") and fn.endswith(".md")]
+                    if _wu_files and _ensure_mempalace_yaml(_weburl_folder, wing):
+                        folders_seen += 1
+                        _wu_err = ""
+                        if _run_id:
+                            _sync_log.step_start(chats_db_path, _run_id,
+                                                 "indexing", folder=_weburl_folder)
+                        _wu_t0 = time.time()
+                        _wu_filed = 0
+                        _wu_buf = io.StringIO()
+                        try:
+                            with contextlib.redirect_stdout(_wu_buf):
+                                mp_miner.mine(
+                                    project_dir=_weburl_folder,
+                                    palace_path=palace_path,
+                                    wing_override=wing,
+                                    agent="brain-project-sync",
+                                    respect_gitignore=False,
+                                )
+                            for line in _wu_buf.getvalue().splitlines():
+                                s = line.strip()
+                                if s.startswith("Drawers filed"):
+                                    try:
+                                        _wu_filed = int(s.split(":")[-1].strip().split()[0])
+                                    except Exception:
+                                        pass
+                                    break
+                        except SystemExit:
+                            pass
+                        except Exception as e:
+                            _wu_err = f"{type(e).__name__}: {e}"
+                            last_error = _wu_err
+                            print(f"[project-sync] {agent_id}/{proj_name} "
+                                  f"web-urls: {_wu_err}", flush=True)
+                        if _run_id:
+                            _sync_log.step_finish(
+                                chats_db_path, _run_id, "indexing",
+                                folder=_weburl_folder,
+                                drawers_created=_wu_filed,
+                                elapsed_s=round(time.time() - _wu_t0, 2),
+                                errors=[_wu_err] if _wu_err else [])
+                        files_filed += _wu_filed
+                        _bump_processed(len(_wu_files))
+                        if not _wu_err:
+                            _run_kg_for(
+                                wing=wing,
+                                source_prefix=os.path.realpath(_weburl_folder) + os.sep,
+                                item_set_fn=_set_item,
+                                item_kind="weburls", item_id="web-urls")
 
                 # 2. User-specified input folders — each entry has its own
                 #    mempalace.yaml, scanned recursively or top-level only.

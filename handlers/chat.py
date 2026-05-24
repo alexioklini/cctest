@@ -1828,6 +1828,10 @@ class ChatHandlerMixin:
         # otherwise). (2) it would bloat the user message by tens of KB. When
         # the set is non-empty the web tools are hard-disabled for the turn
         # (see `exclude_tools` in the worker) unless allow_further_web is on.
+        # Per-chat Websuche basket only. (Project-level URLs are a DIFFERENT
+        # mechanism — they're mined into the project's MemPalace wing + KG by
+        # the project-sync daemon, reached via mempalace_query/KG like any
+        # project knowledge, NOT injected per-turn here.)
         web_urls = body.get("web_urls_to_fetch") or []
         web_locked = bool(web_urls) and not bool(getattr(session, "allow_further_web", False))
 

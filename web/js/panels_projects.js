@@ -357,6 +357,10 @@ async function loadProjectDetail(agentId, projectName) {
     // Load project files
     loadProjectFiles(agentId, projectName);
 
+    // Render project-level web URLs (fetched + injected into every chat turn;
+    // no indexing). Read straight off the loaded config.
+    renderProjectWebUrls(project.web_urls || []);
+
     // Load input folders + start polling sync status.
     loadProjectInputFolders(agentId, projectName);
     startProjectSyncPoll(agentId, projectName);
@@ -748,6 +752,66 @@ async function toggleProjectResearchMode(enabled) {
     const cb = document.getElementById('project-research-mode-checkbox');
     if (cb) cb.checked = !enabled;
   }
+}
+
+// ── Project-level web URLs ──────────────────────────────────
+// A project-wide curated source set: URLs fetched fresh and injected into
+// EVERY chat turn in the project (merged with each chat's own Websuche
+// basket). NO MemPalace/KG indexing — purely fetch + inject, like the basket.
+// Stored in project.json → web_urls as [{url,title}].
+function renderProjectWebUrls(urls) {
+  const el = document.getElementById('project-panel-web-urls');
+  if (!el) return;
+  if (!urls.length) {
+    el.innerHTML = '<span class="project-panel-placeholder">Add URLs to fetch fresh and inject into every chat in this project (no indexing — fetched live each turn). Separate from input folders / memory.</span>';
+    return;
+  }
+  el.innerHTML = urls.map((u, idx) => {
+    let host = u.url || '';
+    try { host = new URL(u.url).hostname.replace(/^www\./, ''); } catch (e) {}
+    return `
+      <div class="project-input-folder-row">
+        <div class="pif-row-head">
+          <svg class="pif-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+          <span class="pif-name" title="${esc(u.url)}">${esc(u.title || host)}</span>
+          <button class="pif-action-btn pif-delete" onclick="removeProjectWebUrl(${idx})" title="Remove URL" aria-label="Remove">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+          </button>
+        </div>
+        <div class="pif-path" dir="ltr" title="${esc(u.url)}"><a href="${esc(u.url)}" target="_blank" rel="noopener" style="color:inherit">${esc(u.url)}</a></div>
+      </div>`;
+  }).join('');
+}
+
+async function _saveProjectWebUrls(urls) {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  try {
+    await API.updateProject(agentId, projectName, { web_urls: urls });
+    if (state._projectDetail) state._projectDetail.web_urls = urls;
+    renderProjectWebUrls(urls);
+  } catch (e) {
+    showToast('Could not save project URLs', true);
+  }
+}
+
+function addProjectWebUrl() {
+  let url = (prompt('URL to add (fetched into every chat in this project):') || '').trim();
+  if (!url) return;
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  const title = (prompt('Optional label (leave blank to use the domain):') || '').trim();
+  const urls = (state._projectDetail?.web_urls || []).slice();
+  if (urls.some(u => u.url === url)) { showToast('That URL is already added'); return; }
+  urls.push({ url, title });
+  _saveProjectWebUrls(urls);
+}
+
+function removeProjectWebUrl(idx) {
+  const urls = (state._projectDetail?.web_urls || []).slice();
+  if (idx < 0 || idx >= urls.length) return;
+  urls.splice(idx, 1);
+  _saveProjectWebUrls(urls);
 }
 
 async function saveProjectInstructions() {
