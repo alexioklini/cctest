@@ -447,7 +447,9 @@ function buildStreamCallbacks(chat, isActive) {
         }
         if (added && isActive()) {
           // References never auto-open the panel — just glow the button.
+          // If it's already open on the refs tab, re-render it live.
           if (!state.rightPanelOpen) setRightPanelGlow(true);
+          else if (state.rightPanelTab === 'references') renderReferencesPane();
           updateRightPanelBadges();
         }
       },
@@ -473,6 +475,7 @@ function buildStreamCallbacks(chat, isActive) {
           if (newRefAdded && isActive()) {
             // References never auto-open the panel — just glow the button.
             if (!state.rightPanelOpen) setRightPanelGlow(true);
+            else if (state.rightPanelTab === 'references') renderReferencesPane();
             updateRightPanelBadges();
           }
         }
@@ -939,6 +942,10 @@ function buildStreamCallbacks(chat, isActive) {
           updateStreamingUI(false);
           updateStatusBar();
           schedulePIIBadgeUpdate();
+          // Turn done — refresh the open panel so refs/attachments/artifacts
+          // gathered this turn appear (streaming events only refreshed it
+          // opportunistically; references no longer auto-open the pane).
+          if (typeof refreshRightPanelContent === 'function') refreshRightPanelContent();
         }
 
         // Desktop notification when window not focused

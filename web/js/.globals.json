@@ -514,6 +514,7 @@
     "refreshMemorizedTurns": "writable",
     "refreshProjectSyncStatus": "writable",
     "refreshResearchModeButton": "writable",
+    "refreshRightPanelContent": "writable",
     "refreshStarButton": "writable",
     "refreshThinkingButton": "writable",
     "refreshWelcomeGreeting": "writable",

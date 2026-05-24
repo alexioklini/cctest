@@ -74,6 +74,19 @@ function closeRightPanel(userInitiated = false) {
   syncRightPanelToggle();
 }
 
+// Re-render the currently open pane's content + badges. Used after a turn
+// finishes so the panel reflects refs/attachments/artifacts gathered during
+// the turn (the streaming events only opportunistically refreshed it).
+function refreshRightPanelContent() {
+  updateRightPanelBadges();
+  if (!state.rightPanelOpen) return;
+  const tab = state.rightPanelTab;
+  if (tab === 'attachments') renderAttachmentsPane();
+  else if (tab === 'references') renderReferencesPane();
+  else if (tab === 'artifacts' && !state.activeArtifactId) showArtifactList();
+  if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);
+}
+
 function switchRightTab(tabName) {
   state.rightPanelTab = tabName;
   // Toggle tab buttons
