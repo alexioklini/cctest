@@ -13,7 +13,6 @@
     "app_password": ""
   },
   "execute_command": {
-    "enabled": true,
     "timeout": 120,
     "banned_commands": [
       "rm -rf /",
@@ -24,7 +23,6 @@
     "shell_path": ""
   },
   "web_fetch": {
-    "enabled": true,
     "timeout": 30,
     "max_size_mb": 10
   },
@@ -33,29 +31,22 @@
     "model": "CLIProxyAPI/mistral-small-latest"
   },
   "read_document": {
-    "enabled": true,
     "max_file_size_mb": 50,
     "vision_model": "Mistral/mistral-medium-3.5"
   },
-  "write_document": {
-    "enabled": true
-  },
-  "edit_document": {
-    "enabled": true
-  },
+  "write_document": {},
+  "edit_document": {},
   "code_graph": {
     "enabled": true,
     "exclude_dirs": "node_modules,.git,__pycache__,venv,.venv,dist,build",
     "max_file_size_kb": 500
   },
   "python_exec": {
-    "enabled": true,
     "timeout": 30,
     "max_output_chars": 50000,
     "venv_path": ""
   },
   "transcribe_audio": {
-    "enabled": true,
     "default_model": "voxtral-mini-latest",
     "fallback_model": "whisper-base"
   },

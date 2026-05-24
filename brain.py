@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.13.2"
+VERSION = "9.13.3"
 VERSION_DATE = "2026-05-24"
 CHANGELOG = [
+    ("9.13.3", "2026-05-24", "cleanup(tools): make 'enabled = the gate the LLM gets' hold for EVERY tool, not just searxng. Follow-through on 9.13.2. (1) Stripped the phantom `enabled` field from all 9 TOOL_DISPATCH tools' `tools_config` integration defaults (exa_search, searxng_search, execute_command, web_fetch, read_document, write_document, edit_document, python_exec, transcribe_audio) — their real gate is `tool_settings.<name>.enabled` via `_global_tool_enabled`, and the vestigial integration `enabled` only fed the misleading status display (latent searxng-style bug for all of them). The 5 integration-only pseudo-tools (gmail, refinement, code_graph, translation, text_to_speech) KEEP `enabled` — they have no TOOL_DISPATCH entry so the integration field genuinely IS their gate. Stripped the stale field from live + sample tools_config.json too. (2) Deleted dead code: `_genTab_tools_legacy` (~236-line unreachable flat Tools-tab renderer — the router maps `tools` → `_genTab_tools`, never the legacy one) + the orphaned `saveToolsConfig` bulk-saver it was the only caller of, both in web/js. Dropped the per-tool integration `enabled` writers for the 4 dispatch tools that still had them in `saveToolIntegration` (execute_command/web_fetch/read_document/transcribe_audio). net-globals baseline 901→899 (two dead globals removed). Verified: get_tool_status matches `_global_tool_enabled` for every dispatch tool; js_gate green (smoke 5/5)."),
     ("9.13.2", "2026-05-24", "fix(tools-status): tool status display read the wrong `enabled` field. There were two `enabled` values for a tool — `tool_settings.<name>.enabled` (the real gate the LLM resolver uses via `_global_tool_enabled`) and a legacy `enabled` field in the `tools_config` integration record. `get_tool_status()` reported the latter, so a tool enabled via the per-tool Save toggle (which writes `tool_settings`) still showed 'disabled' if its integration record's stale `enabled` was false — exactly what happened to `searxng_search` (enabled in `tool_settings`, but `tools_config.searxng_search.enabled` defaulted false). Fix at the single choke point: `get_tool_status()` now defers to `_global_tool_enabled()` for any tool with a `TOOL_DISPATCH` entry (integration-only pseudo-tools keep their own `enabled`). Dropped the redundant `enabled` field from the `exa_search`/`searxng_search` integration defaults + the JS save collectors (bulk + per-tool) so the GUI stops writing a field that never gated anything; stripped it from the live + sample `tools_config.json`. Also removed the THIRD stale hardcoded-Exa-key copy (in `GET /v1/tools/config`'s fallback-merge) missed in 9.13.0/.1 — it re-leaked the key into the API response."),
     ("9.13.1", "2026-05-24", "refactor(web-search): SearXNG is now its own tool, not an exa_search backend flag. Reworked the v9.13.0 design — the `backend` config switch + cross-tool routing didn't scale and conflated two services behind one tool. Now there are **two independent search tools**, `exa_search` (Exa cloud, API key) and `searxng_search` (self-hosted SearXNG, no key), each with its own `tools_config` block (`exa_search.api_key` / `searxng_search.url`). The admin enables exa, searxng, or both via the standard `tool_settings.enabled` gate; the LLM picks from whatever is in its active tool list — no `backend` field, no mapping, the enabled-tools list is the only thing that decides what gets called (the existing resolver hierarchy, no special-casing). `searxng_search` is a normal 4-site tool (schema in `tool_schemas.py` with category enum restricted to the only one SearXNG supports — `news`; `TOOL_GROUPS['web']`; `tool_searxng_search(args)` in `engine/tools/misc_tools.py`; direct-ref `TOOL_DISPATCH` entry). `exa_search` reverted to Exa-only (dropped the `backend`/`searxng_url` keys + the `_searxng_search` helper). Default `searxng_search.enabled=False` (self-hosted; off until an admin sets `url`). GUI: removed the exa backend dropdown; added a dedicated `searxng_search` integration panel (URL + default-results) in Settings → Tools. Also fixed a stale `get_tool_status()` branch that still referenced the deleted hardcoded Exa key as a 'built-in default'. tools_config.sample.json updated to the two-tool shape."),
     ("9.13.0", "2026-05-24", "feat(web-search): SearXNG backend for exa_search + secret-handling hardening. (1) **Config-selectable backend** — `exa_search` gains `tools_config.exa_search.backend` (`exa` default | `searxng`) so production deployments that can't use the paid Exa API can point at a self-hosted SearXNG instance (`searxng_url`, no API key, on-prem). The model still sees a single `exa_search` tool; the backend is an admin/config choice, not a tool the model picks between. New `_searxng_search` helper hits `<searxng_url>/search?format=json` and maps results to the identical `{title, link}` shape Exa returns, so nothing downstream (dispatch, reference badges, audit, prompt prose) changes. Only SearXNG's real `news` category is mapped; Exa-specific categories (research paper / tweet / company / people) have no SearXNG equivalent and are dropped. Cache key now includes the backend so a config switch can't serve a stale cross-backend hit. Missing `searxng_url` surfaces a clear error envelope, not a crash. (2) **Finished the refactor extraction** — moved `exa_search` (+ `_searxng_search`) from brain.py into `engine/tools/misc_tools.py` next to `tool_web_fetch` (the one web tool the Tier-A–E refactor left behind in brain.py); re-exported on `brain` + wired in `TOOL_DISPATCH` unchanged. Schema description de-branded (`Search the web…`, was `Search the web using Exa AI…`). (3) **Secret hardening** — removed the hardcoded Exa API key fallback that was baked into the source (now falls back to `EXA_API_KEY` env then empty → a clean Exa 401 the model sees, never a silent baked-in key); added `tools_config.json` to `.gitignore` and `git rm --cached`'d it (it was tracked — a GUI-saved key would have been committed); added a scrubbed `tools_config.sample.json` template (empty secrets, documents the new `backend`/`searxng_url` knobs). NOTE: the old hardcoded key remains in prior git history — rotate on Exa's side if it was ever live."),
@@ -2364,14 +2365,12 @@ _TOOLS_CONFIG_DEFAULTS = {
         "app_password": "",
     },
     "execute_command": {
-        "enabled": True,
         "timeout": 120,
         "banned_commands": ["rm -rf /", "mkfs", "dd if="],
         "login_shell": True,       # Use login shell (sources ~/.zprofile, ~/.zshrc) for full PATH
         "shell_path": "",           # Shell binary path, empty = auto-detect from $SHELL (default: /bin/zsh)
     },
     "web_fetch": {
-        "enabled": True,
         "timeout": 30,
         "max_size_mb": 10,
     },
@@ -2380,29 +2379,22 @@ _TOOLS_CONFIG_DEFAULTS = {
         "model": "",  # empty = auto-select (Haiku > Sonnet > cheapest)
     },
     "read_document": {
-        "enabled": True,
         "max_file_size_mb": 50,
         "vision_model": "",  # for image description; empty = auto
     },
-    "write_document": {
-        "enabled": True,
-    },
-    "edit_document": {
-        "enabled": True,
-    },
+    "write_document": {},
+    "edit_document": {},
     "code_graph": {
         "enabled": True,
         "exclude_dirs": "node_modules,.git,__pycache__,venv,.venv,dist,build",
         "max_file_size_kb": 500,
     },
     "python_exec": {
-        "enabled": True,
         "timeout": 30,
         "max_output_chars": 50000,
         "venv_path": "",
     },
     "transcribe_audio": {
-        "enabled": True,
         "default_model": "mistral-experimental/voxtral-mini-latest",
         "fallback_model": "whisper-base",
     },

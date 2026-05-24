@@ -1,75 +1,5 @@
 // settings_tools.js — tool settings, research-mode disciplines, integrations, KG + mempalace-classifier + classification config. Split from settings.js (Tier F Phase 2). Global <script>, no modules.
 
-/* ── General Settings Helpers ── */
-async function saveToolsConfig() {
-  const bannedRaw = document.getElementById('tool-exec-banned')?.value || '';
-  const banned = bannedRaw.split(',').map(s => s.trim()).filter(Boolean);
-  const cfg = {
-    exa_search: {
-      api_key: document.getElementById('tool-exa-key')?.value || '',
-      default_num_results: parseInt(document.getElementById('tool-exa-num')?.value) || 5,
-    },
-    searxng_search: {
-      url: document.getElementById('tool-searxng-url')?.value?.trim() || '',
-      default_num_results: parseInt(document.getElementById('tool-searxng-num')?.value) || 5,
-    },
-    gmail: {
-      enabled: document.getElementById('tool-gmail-enabled')?.checked ?? true,
-      email: document.getElementById('tool-gmail-email')?.value || '',
-      app_password: document.getElementById('tool-gmail-pass')?.value || '',
-    },
-    execute_command: {
-      enabled: document.getElementById('tool-execute_command-enabled')?.checked ?? true,
-      timeout: parseInt(document.getElementById('tool-exec-timeout')?.value) || 120,
-      banned_commands: banned,
-    },
-    web_fetch: {
-      enabled: document.getElementById('tool-web_fetch-enabled')?.checked ?? true,
-      timeout: parseInt(document.getElementById('tool-wf-timeout')?.value) || 30,
-      max_size_mb: parseInt(document.getElementById('tool-wf-maxsize')?.value) || 10,
-    },
-    refinement: {
-      enabled: document.getElementById('tool-refinement-enabled')?.checked ?? true,
-      model: document.getElementById('tool-refine-model')?.value || '',
-    },
-    read_document: {
-      enabled: document.getElementById('tool-read_document-enabled')?.checked ?? true,
-      max_file_size_mb: parseInt(document.getElementById('tool-rdoc-maxsize')?.value) || 50,
-      vision_model: document.getElementById('tool-rdoc-vision-model')?.value || '',
-    },
-    write_document: {
-      enabled: document.getElementById('tool-write_document-enabled')?.checked ?? true,
-    },
-    edit_document: {
-      enabled: document.getElementById('tool-edit_document-enabled')?.checked ?? true,
-    },
-    code_graph: {
-      enabled: document.getElementById('tool-code_graph-enabled')?.checked ?? true,
-      exclude_dirs: document.getElementById('tool-cg-exclude')?.value || '',
-      max_file_size_kb: parseInt(document.getElementById('tool-cg-maxsize')?.value) || 500,
-    },
-    transcribe_audio: {
-      enabled: document.getElementById('tool-transcribe_audio-enabled')?.checked ?? true,
-      default_model: document.getElementById('tool-ta-default-model')?.value || 'mistral-experimental/voxtral-mini-latest',
-      fallback_model: document.getElementById('tool-ta-fallback-model')?.value || 'whisper-base',
-    },
-    text_to_speech: {
-      enabled: document.getElementById('tool-text_to_speech-enabled')?.checked ?? true,
-      default_model: document.getElementById('tool-tts-model')?.value || 'mistral-experimental/voxtral-mini-tts-latest',
-      voice: document.getElementById('tool-tts-voice')?.value || 'en_paul_neutral',
-    },
-    translation: {
-      enabled: document.getElementById('tool-translation-enabled')?.checked ?? true,
-      default_model: document.getElementById('tool-tr-model')?.value || '',
-    },
-  };
-  try {
-    await API.post('/v1/tools/config', cfg);
-    showToast('Tools configuration saved');
-    switchGeneralTab('tools');
-  } catch(e) { showToast('Failed to save: ' + e.message, true); }
-}
-
 /* ── Per-tool registry UI (Commit 5b) ── */
 
 function toggleToolGroup(groupName) {
@@ -434,14 +364,12 @@ async function saveToolIntegration(toolName) {
     case 'execute_command':
       const banned = (document.getElementById('tool-exec-banned')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
       rec = {
-        enabled: window._toolConfigCache?.execute_command?.enabled !== false,
         timeout: parseInt(document.getElementById('tool-exec-timeout')?.value) || 120,
         banned_commands: banned,
       };
       break;
     case 'web_fetch':
       rec = {
-        enabled: window._toolConfigCache?.web_fetch?.enabled !== false,
         timeout: parseInt(document.getElementById('tool-wf-timeout')?.value) || 30,
         max_size_mb: parseInt(document.getElementById('tool-wf-maxsize')?.value) || 10,
       };
@@ -454,7 +382,6 @@ async function saveToolIntegration(toolName) {
       break;
     case 'read_document':
       rec = {
-        enabled: window._toolConfigCache?.read_document?.enabled !== false,
         max_file_size_mb: parseInt(document.getElementById('tool-rdoc-maxsize')?.value) || 50,
         vision_model: document.getElementById('tool-rdoc-vision-model')?.value || '',
       };
@@ -468,7 +395,6 @@ async function saveToolIntegration(toolName) {
       break;
     case 'transcribe_audio':
       rec = {
-        enabled: window._toolConfigCache?.transcribe_audio?.enabled !== false,
         default_model: document.getElementById('tool-ta-default-model')?.value || '',
         fallback_model: document.getElementById('tool-ta-fallback-model')?.value || '',
       };
