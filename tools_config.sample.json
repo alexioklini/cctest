@@ -2,11 +2,13 @@
   "exa_search": {
     "enabled": true,
     "api_key": "",
-    "default_num_results": 5
+    "default_num_results": 5,
+    "backend": "exa",
+    "searxng_url": ""
   },
   "gmail": {
     "enabled": true,
-    "email": "klinskybrain@gmail.com",
+    "email": "",
     "app_password": ""
   },
   "execute_command": {

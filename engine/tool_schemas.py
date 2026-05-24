@@ -382,7 +382,7 @@ TOOL_DEFINITIONS = [
     {
         "name": "exa_search",
         "description": (
-            "Search the web using Exa AI for current, relevant information. "
+            "Search the web for current, relevant information. "
             "Use this tool whenever the user asks to search the web, look something up, "
             "find recent news, or get current information about any topic."
         ),

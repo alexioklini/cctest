@@ -31,6 +31,7 @@ import json
 import os
 import urllib.request
 import urllib.error
+import urllib.parse
 
 from engine.context import get_request_context
 from engine.tool_exec import _ok, _err
@@ -294,3 +295,156 @@ def tool_web_fetch(args: dict) -> str:
         return _err(f"web_fetch: HTTP {e.code} {e.reason}\n{body_text}")
     except Exception as e:
         return _err(f"web_fetch: {e}")
+
+
+# ─── exa_search (web search; backend = exa | searxng) ─────────────────────────
+#
+# Unlike most tools here, exa_search returns raw JSON strings (not _ok/_err
+# envelopes) — this is the pre-existing contract every caller + the UI
+# reference-extraction relies on. Preserved verbatim on relocation.
+
+def _searxng_search(query: str, num_results: int, category: str | None,
+                    tcfg: dict, cache_key: str) -> str:
+    """SearXNG backend for exa_search. Self-hosted metasearch, no API key.
+
+    Hits <searxng_url>/search?format=json and maps results to the same
+    {title, link} shape exa() returns. Only SearXNG's real `news` category
+    is mapped; Exa-specific categories (research paper / tweet / company /
+    people) have no SearXNG equivalent and are dropped rather than passed
+    through (passing an unknown category returns zero results)."""
+    import brain as _brain
+    base = (tcfg.get("searxng_url") or "").rstrip("/")
+    if not base:
+        return json.dumps({
+            "query": query, "results": [],
+            "error": "SearXNG backend selected but searxng_url is not set in tools_config.exa_search",
+        })
+
+    params = {"q": query, "format": "json"}
+    if category == "news":
+        params["categories"] = "news"
+    url = base + "/search?" + urllib.parse.urlencode(params)
+
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read()
+            if resp.headers.get("Content-Encoding", "") == "gzip":
+                import gzip
+                raw = gzip.decompress(raw)
+            response_data = json.loads(raw.decode("utf-8"))
+
+        results = []
+        for r in response_data.get("results", [])[:num_results]:
+            results.append({
+                "title": r.get("title", ""),
+                "link": r.get("url", ""),
+            })
+
+        search_info = {"query": query, "results": results, "result_count": len(results)}
+        if category:
+            search_info["category"] = category
+        if not results:
+            search_info["message"] = "No search results found. Try a different query."
+        if results:
+            _brain._web_cache.put(cache_key, dict(search_info))
+        return json.dumps(search_info, indent=1)
+
+    except urllib.error.HTTPError as e:
+        error_body = ""
+        try:
+            error_body = e.read().decode("utf-8")
+        except Exception:
+            pass
+        return json.dumps({"query": query, "results": [], "error": f"SearXNG HTTP {e.code}: {error_body}"})
+    except Exception as e:
+        return json.dumps({"query": query, "results": [], "error": f"SearXNG: {e}"})
+
+
+def exa_search(query: str, num_results: int = 5, category: str | None = None,
+               force_fresh: bool = False) -> str:
+    """Execute a web search and return JSON results ({title, link} per result).
+
+    Backend is chosen by tools_config.exa_search.backend ("exa" default, or
+    "searxng" for a self-hosted SearXNG instance). Output shape is identical
+    across backends so nothing downstream changes. Uses stdlib only."""
+    import brain as _brain
+    # Check cache (shared across backends — backend baked into key so a config
+    # switch can't serve a stale cross-backend result)
+    _tcfg = _brain.get_tool_config().get("exa_search", {})
+    backend = (_tcfg.get("backend") or "exa").lower()
+    cache_key = f"{backend}:{query}:{num_results}:{category or ''}"
+    if not force_fresh:
+        cached = _brain._web_cache.get(cache_key)
+        if cached is not None:
+            cached["cached"] = True
+            return json.dumps(cached, indent=1)
+
+    if backend == "searxng":
+        return _searxng_search(query, num_results, category, _tcfg, cache_key)
+
+    # Read API key from tools_config, fall back to env var. No hardcoded
+    # default — an unconfigured key surfaces as an Exa 401 the model sees.
+    api_key = _tcfg.get("api_key") or os.environ.get("EXA_API_KEY", "")
+
+    body = {
+        "query": query,
+        "type": "auto",
+        "num_results": num_results,
+    }
+    if category:
+        body["category"] = category
+
+    headers = {
+        "x-api-key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    try:
+        req = urllib.request.Request(
+            "https://api.exa.ai/search",
+            data=json.dumps(body).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read()
+            # Handle gzip encoding if server sends it anyway
+            encoding = resp.headers.get("Content-Encoding", "")
+            if encoding == "gzip":
+                import gzip
+                raw = gzip.decompress(raw)
+            response_data = json.loads(raw.decode("utf-8"))
+
+        results = []
+        for r in response_data.get("results", []):
+            results.append({
+                "title": r.get("title", ""),
+                "link": r.get("url", ""),
+            })
+
+        search_info = {"query": query, "results": results, "result_count": len(results)}
+        if category:
+            search_info["category"] = category
+        if not results:
+            search_info["message"] = "No search results found. Try a different query."
+        if results:
+            _brain._web_cache.put(cache_key, dict(search_info))
+        return json.dumps(search_info, indent=1)
+
+    except urllib.error.HTTPError as e:
+        error_body = ""
+        try:
+            error_body = e.read().decode("utf-8")
+        except Exception:
+            pass
+        return json.dumps({"query": query, "results": [], "error": f"HTTP {e.code}: {error_body}"})
+    except Exception as e:
+        return json.dumps({"query": query, "results": [], "error": str(e)})

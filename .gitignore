@@ -1,4 +1,5 @@
 config.json
+tools_config.json
 gmail.json
 .DS_Store
 __pycache__/
