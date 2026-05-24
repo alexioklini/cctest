@@ -99,6 +99,7 @@
     "_piiHistoryShowPopover": "writable",
     "_pmAdd": "writable",
     "_pmRemove": "writable",
+    "_programmaticPanelToggle": "writable",
     "_projectResearchModeDefault": "writable",
     "_projectsFilter": "writable",
     "_quotaBar": "writable",

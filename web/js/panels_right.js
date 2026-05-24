@@ -100,6 +100,11 @@ function switchRightTab(tabName) {
 let _turnScrollObserver = null;
 let _turnVisibility = new Map();   // turnNum -> intersectionRatio
 let _activePanelTurn = null;
+// True while syncRightPanelToActiveTurn is programmatically flipping <details>
+// .open — suppresses the ontoggle handler so scroll-driven opens/closes aren't
+// recorded as user choices (which would permanently pin every visited turn and
+// break further auto-follow).
+let _programmaticPanelToggle = false;
 
 // (Re)attach the IntersectionObserver to the current .turn-group elements.
 // Called after every renderMessages() since the turn DOM is rebuilt.
@@ -149,18 +154,22 @@ function syncRightPanelToActiveTurn(turnNum) {
     : 'artifact-turn-groups';
   const container = document.getElementById(containerId);
   if (!container) return;
-  const chat = state.activeChat;
-  const openMap = chat ? ((chat._panelOpenTurns = chat._panelOpenTurns || {})[pane]
-    = (chat._panelOpenTurns[pane] || {})) : null;
   let target = null;
-  container.querySelectorAll('.panel-turn-section').forEach(sec => {
-    const tn = parseInt(sec.getAttribute('data-turn'), 10);
-    const isActive = (tn === turnNum);
-    if (sec.open !== isActive) sec.open = isActive;   // fires ontoggle → openMap
-    if (openMap) openMap[tn] = isActive;              // also set directly (no-op change won't fire)
-    sec.classList.toggle('panel-turn-active', isActive);
-    if (isActive) target = sec;
-  });
+  // These open/close flips are scroll-driven, not user choices — guard the
+  // ontoggle handler so they don't get written into the per-turn openMap
+  // (doing so would pin every visited turn and stop further auto-follow).
+  _programmaticPanelToggle = true;
+  try {
+    container.querySelectorAll('.panel-turn-section').forEach(sec => {
+      const tn = parseInt(sec.getAttribute('data-turn'), 10);
+      const isActive = (tn === turnNum);
+      if (sec.open !== isActive) sec.open = isActive;
+      sec.classList.toggle('panel-turn-active', isActive);
+      if (isActive) target = sec;
+    });
+  } finally {
+    _programmaticPanelToggle = false;
+  }
   if (target && typeof target.scrollIntoView === 'function') {
     target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
@@ -258,11 +267,17 @@ function renderTurnGroupedPane(container, pane, { itemsFor, countFor, ungrouped,
       </details>`;
   }
   container.innerHTML = html;
+  // Re-assert the scroll-driven active turn so a content re-render (new ref /
+  // artifact arriving) doesn't snap focus back to the default lastNonEmpty.
+  if (state.rightPanelOpen && _activePanelTurn != null && state.rightPanelTab === pane) {
+    syncRightPanelToActiveTurn(_activePanelTurn);
+  }
 }
 
 // Remember the user's manual open/close so a re-render (or scroll-sync)
 // doesn't fight their choice.
 function onPanelTurnToggle(pane, turnNum, isOpen) {
+  if (_programmaticPanelToggle) return;   // scroll-sync flip, not a user choice
   const chat = state.activeChat;
   if (!chat) return;
   if (!chat._panelOpenTurns) chat._panelOpenTurns = {};
