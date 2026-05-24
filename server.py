@@ -1163,6 +1163,7 @@ class BrainAgentHandler(
         "/v1/quotas/admin/users",
         "/v1/sidecar/status",
         "/v1/searxng/status",
+        "/v1/searxng/engines",
         "/v1/gdpr/ner-models",
         "/v1/classification/config",
     }
@@ -1202,6 +1203,7 @@ class BrainAgentHandler(
         "/v1/nodes",
         "/v1/sidecar/restart",
         "/v1/searxng/restart",
+        "/v1/searxng/test-engines",
         "/v1/gdpr/ner-models",
         "/v1/classification/config",
     }
@@ -1540,6 +1542,8 @@ class BrainAgentHandler(
             self._handle_sidecar_status()
         elif path == "/v1/searxng/status":
             self._handle_searxng_status()
+        elif path == "/v1/searxng/engines":
+            self._handle_searxng_engines()
         elif path == "/v1/queue/status":
             self._handle_queue_status()
         elif path == "/v1/traces" or path.startswith("/v1/traces?"):
@@ -1755,6 +1759,8 @@ class BrainAgentHandler(
             self._handle_sidecar_restart()
         elif path == "/v1/searxng/restart":
             self._handle_searxng_restart()
+        elif path == "/v1/searxng/test-engines":
+            self._handle_searxng_test_engines()
         elif path == "/v1/skills/install-zip":
             self._handle_install_skill_zip()
         elif path == "/v1/schedule/cancel":
@@ -3802,6 +3808,10 @@ def main():
 
 
     threading.Thread(target=server_daemons._user_profile_loop, args=(_srv,), daemon=True, name="user-profile").start()
+
+    # SearXNG per-engine health probe — hourly, so the Server-settings panel
+    # shows a recent up/down + latency per search engine without manual testing.
+    threading.Thread(target=server_daemons._searxng_engine_health_loop, args=(_srv,), daemon=True, name="searxng-engine-health").start()
 
     # Warmup keeper — fires minimal prefill requests at models flagged with
     # warmup=true so their first real turn lands on a warm KV cache. Runs

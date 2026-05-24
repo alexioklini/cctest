@@ -1689,3 +1689,19 @@ class AdminArtifactsHandlers:
             pass
         status_code = 200 if result.get("ok") else 409
         self._send_json(result, status_code)
+
+    def _handle_searxng_engines(self):
+        """GET /v1/searxng/engines — last per-engine health snapshot (state +
+        latency per search engine), as gathered by the hourly probe or the
+        manual 'Test now' button. Empty 'engines' until the first probe runs."""
+        from server_lib import searxng_health
+        self._send_json(searxng_health.last_snapshot())
+
+    def _handle_searxng_test_engines(self):
+        """POST /v1/searxng/test-engines — run the per-engine health probe NOW
+        (synchronous) and return the fresh snapshot."""
+        from server_lib import searxng_health
+        import brain as _brain
+        base = _brain._searxng_base_url()
+        snap = searxng_health.run_health_check(base)
+        self._send_json(snap)

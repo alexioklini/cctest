@@ -4,10 +4,11 @@
 async function _genTab_server(C) {
   /* ─── SERVER ─── */
     try {
-      const [svc, sc, sx] = await Promise.all([
+      const [svc, sc, sx, sxe] = await Promise.all([
         API.getServices(),
         API.get('/v1/sidecar/status').catch(() => null),
         API.get('/v1/searxng/status').catch(() => null),
+        API.get('/v1/searxng/engines').catch(() => null),
       ]);
       const srv = svc.server || {};
       applyGdprConfigToScanner(srv.gdpr_scanner);
@@ -77,6 +78,7 @@ async function _genTab_server(C) {
           note: 'Powers the searxng_search tool. Web searches briefly fail during restart.',
           disabledHint: 'searxng.auto_start=false',
         })}
+        <div id="searxng-engines-panel">${_renderSearxngEngines(sxe)}</div>
         ${SEC('Cost Quotas')}
         <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
           <span style="font-size:12px;color:var(--text-200);flex:1">Per-user, per-role limits with billing-cycle reset.</span>

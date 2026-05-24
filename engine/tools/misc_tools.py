@@ -359,17 +359,48 @@ def tool_searxng_search(args: dict) -> str:
                 raw = gzip.decompress(raw)
             response_data = json.loads(raw.decode("utf-8"))
 
+        # SearXNG's JSON `results` are already sorted by relevance score
+        # (consensus across engines). Drop near-zero-score noise — single weak
+        # engine, no agreement — so the top num_results stay dense with real
+        # matches; keep at least the best one if everything scored low. Expose
+        # score + snippet so the model can triage which URLs are worth fetching
+        # (it gets bare title+link otherwise and fetches blindly).
+        raw = response_data.get("results", [])
+        ranked = [r for r in raw if r.get("score", 0) >= 0.3] or raw[:1]
         results = []
-        for r in response_data.get("results", [])[:num_results]:
+        for r in ranked[:num_results]:
             results.append({
                 "title": r.get("title", ""),
                 "link": r.get("url", ""),
+                "score": round(r.get("score", 0), 2),
+                "snippet": (r.get("content") or "")[:300],
             })
 
         search_info = {"query": query, "results": results, "result_count": len(results)}
         if category:
             search_info["category"] = category
-        if not results:
+
+        # Wikipedia/Wikidata return a structured infobox (authoritative summary
+        # + canonical URL) on encyclopedic queries — surface it so the model can
+        # answer "who/what is X" directly, without a web_fetch round-trip.
+        infoboxes = response_data.get("infoboxes", []) or []
+        if infoboxes:
+            ib = infoboxes[0]
+            ib_url = ib.get("id") or ib.get("url") or ""
+            if not ib_url:
+                for u in ib.get("urls", []):
+                    if "wikipedia.org" in (u.get("url") or ""):
+                        ib_url = u["url"]
+                        break
+            content = (ib.get("content") or "").strip()
+            if content:
+                search_info["infobox"] = {
+                    "title": ib.get("infobox") or ib.get("title", ""),
+                    "content": content[:600],
+                    "url": ib_url,
+                }
+
+        if not results and "infobox" not in search_info:
             search_info["message"] = "No search results found. Try a different query."
         if results:
             _brain._web_cache.put(cache_key, dict(search_info))

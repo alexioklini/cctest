@@ -108,6 +108,81 @@ async function restartSearxng(btn) {
   }
 }
 
+// Renders the per-engine SearXNG health panel: one row per enabled search
+// engine with its last-test state + latency, the time of the last probe, the
+// next scheduled automatic probe (every 4h, anchored to server startup), and a
+// "Test now" button. `sxe` is the /v1/searxng/engines snapshot (may be null).
+function _renderSearxngEngines(sxe) {
+  const ROW = 'display:flex;align-items:center;gap:8px;padding:4px 12px';
+  const MONO = 'font-family:var(--font-mono);font-size:11px;color:var(--text-300)';
+  const fmtAgo = (t) => !t ? 'never' : (function(s){
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.round(s/60) + 'm ago';
+    return Math.round(s/3600) + 'h ago';
+  })(Math.max(0, Math.round(Date.now()/1000 - t)));
+  const fmtIn = (t) => !t ? '—' : (function(s){
+    if (s <= 0) return 'due';
+    if (s < 3600) return 'in ' + Math.round(s/60) + 'm';
+    return 'in ' + Math.round(s/3600) + 'h';
+  })(Math.round(t - Date.now()/1000));
+  // state → {colour, dot}: ok = healthy, fail/error = down (wasting resources),
+  // empty = alive but no match for the probe query (situational engine).
+  const STATE = {
+    ok:    { c: 'var(--success)',          label: 'ok' },
+    fail:  { c: 'var(--error)',            label: 'fail' },
+    error: { c: 'var(--error)',            label: 'error' },
+    empty: { c: 'var(--text-400)',         label: 'no match' },
+  };
+  const engines = (sxe && Array.isArray(sxe.engines)) ? sxe.engines : [];
+  const testBtn = `<button class="btn-secondary" onclick="testSearxngEngines(this)">Test now</button>`;
+
+  let body;
+  if (!sxe || sxe.error) {
+    body = `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">${esc(sxe?.error || 'Engine health unavailable')}</span></div>`;
+  } else if (!engines.length) {
+    body = `<div style="${ROW}"><span style="font-size:12px;color:var(--text-400);flex:1">No probe has run yet — first automatic test runs shortly after startup, or click Test now.</span></div>`;
+  } else {
+    body = engines.map(e => {
+      const st = STATE[e.state] || { c: 'var(--text-400)', label: esc(e.state || '?') };
+      const healthy = e.state === 'ok' || e.state === 'empty';
+      return `<div style="${ROW}">
+        ${DOT(healthy)}
+        <span style="font-size:13px;color:var(--text-100);flex:1">${esc(e.name || '')}</span>
+        <span style="${MONO}">${e.latency_ms != null ? e.latency_ms + 'ms' : ''}</span>
+        <span style="font-size:11px;color:${st.c};min-width:54px;text-align:right" title="${esc(e.detail||'')}">${st.label}</span>
+      </div>`;
+    }).join('');
+  }
+
+  const tested = (sxe && sxe.tested_at) ? sxe.tested_at : 0;
+  const nextAt = (sxe && sxe.next_auto_at) ? sxe.next_auto_at : 0;
+  const meta = `<div style="font-size:11px;color:var(--text-400);padding:2px 12px;display:grid;grid-template-columns:auto auto;gap:4px 18px">
+      <span>Last test</span><span style="${MONO}">${fmtAgo(tested)}</span>
+      <span>Next auto test</span><span style="${MONO}">${nextAt ? fmtIn(nextAt) : 'every 4h'}</span>
+    </div>`;
+
+  return `<div style="font-size:11px;color:var(--text-400);padding:6px 12px 2px">Per-engine health (probed in isolation; failing engines waste a request on every search).</div>
+    ${body}
+    ${meta}
+    <div style="display:flex;gap:8px;padding:6px 12px 0">${testBtn}
+      <span style="font-size:11px;color:var(--text-400);align-self:center">Manual test does not change the automatic 4-hour schedule.</span>
+    </div>`;
+}
+
+async function testSearxngEngines(btn) {
+  const orig = btn?.textContent || 'Test now';
+  if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+  try {
+    const snap = await API.post('/v1/searxng/test-engines', {});
+    const panel = document.getElementById('searxng-engines-panel');
+    if (panel) panel.innerHTML = _renderSearxngEngines(snap);
+    else showToast('Engine test complete');
+  } catch (e) {
+    showToast('Engine test failed: ' + (e?.message || e), true);
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+}
+
 // Shared renderer for a ProcessSupervisor status block (sidecar + searxng share
 // the same status dict shape). `opts.restartFn` is the onclick handler name,
 // `opts.note` the warning shown next to the restart button, `opts.disabledHint`

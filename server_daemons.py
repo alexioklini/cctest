@@ -1840,6 +1840,30 @@ def _project_sync_loop(srv):
             srv._project_sync_wakeup.clear()
 
 
+_SEARXNG_HEALTH_INTERVAL_SEC = 4 * 3600  # every 4 hours, anchored to startup
+
+
+def _searxng_engine_health_loop(srv):
+    """Per-engine health probe of the bundled SearXNG instance every 4 hours,
+    anchored to server startup, so the Server-settings panel always shows a
+    recent state without the user having to click 'Test now'. The first probe
+    runs ~30s after boot (give SearXNG time to come up); the 4h cadence is
+    fixed on this loop's own timer, so a manual 'Test now' (which calls
+    run_health_check directly via the endpoint) never shifts the next auto
+    probe."""
+    from server_lib import searxng_health
+    time.sleep(30)
+    while True:
+        try:
+            base = engine._searxng_base_url()
+            if base:
+                searxng_health.run_health_check(base)
+        except Exception as e:
+            print(f"[searxng-health] cycle error: {type(e).__name__}: {e}", flush=True)
+        searxng_health.set_next_auto_at(time.time() + _SEARXNG_HEALTH_INTERVAL_SEC)
+        time.sleep(_SEARXNG_HEALTH_INTERVAL_SEC)
+
+
 def _user_profile_loop(srv):
     time.sleep(60)
     while True:
