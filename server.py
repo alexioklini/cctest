@@ -1747,6 +1747,8 @@ class BrainAgentHandler(
             self._handle_helpdesk()
         elif path == "/v1/helpdesk/clear":
             self._handle_helpdesk_clear()
+        elif path == "/v1/helpdesk/warmup":
+            self._handle_helpdesk_warmup()
         elif path == "/v1/helpdesk/delete":
             self._handle_helpdesk_delete()
         elif path == "/v1/helpdesk/config":
@@ -3136,6 +3138,10 @@ def main():
     server_config["sidecar"] = file_config.get("sidecar", {}) or {}
     server_config["searxng"] = file_config.get("searxng", {}) or {}
     server_config["crawl4ai"] = file_config.get("crawl4ai", {}) or {}
+    # warmup block was never loaded from config.json — every wcfg.get(...) in the
+    # keeper + WarmSessionPool fell back to code defaults, so config.json →
+    # warmup (interval, pool_depth, allow_cloud, …) was dead. Load it.
+    server_config["warmup"] = file_config.get("warmup", {}) or {}
 
     # Per-tool prompt settings (admin-editable prose appended to system prompt
     # when the tool is in the active set). Migrate from legacy tools.md the

@@ -123,6 +123,9 @@ function brainyOpen() {
     </div>`;
   document.body.appendChild(overlay);
   overlay.style.display = 'flex';
+  // Lazy warmup: prime Brainy's KV prefix now (fire-and-forget). No-op unless
+  // Brainy's model is local + warmup-enabled; server debounces re-opens.
+  try { API.post('/v1/helpdesk/warmup', {}); } catch (e) {}
   brainyLoadHistory();
   setTimeout(() => { const el = document.getElementById('brainy-input'); if (el) { brainyAutogrow(el); el.focus(); } }, 80);
 }

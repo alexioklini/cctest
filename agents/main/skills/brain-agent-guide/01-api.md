@@ -66,6 +66,11 @@ streaming call, per-USER history, fixed read-only tool set. See
   an exchange is the question row + the answer row, deleted together), or
   `{start_ts, end_ts}` (range); user-scoped.
 - `POST /v1/helpdesk/clear` — wipe the caller's Brainy conversation.
+- `POST /v1/helpdesk/warmup` — lazy-prime Brainy's KV prefix (helpdesk
+  prompt + read-only tools), fired by the frontend when the bubble opens.
+  Background fire-and-forget; no-op unless Brainy's model is local +
+  warmup-enabled; 90s debounce. Returns `{status: priming|warm|in_flight|
+  skipped|disabled}`.
 - `GET /v1/helpdesk/config` / `POST /v1/helpdesk/config` — **admin**:
   `{enabled, model, max_rounds, system_prompt}`. Model "Auto" = server
   default. Edited in Settings → Tools → Brainy.

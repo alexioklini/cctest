@@ -63,6 +63,15 @@ _MAX_HISTORY_TURNS = 20  # cap what we replay into the model
 _HELPDESK_RETRY_MAX = 2          # total attempts after the first (so 3 tries)
 _HELPDESK_RETRY_BACKOFF_S = 0.8  # short, multiplied per attempt
 
+# Lazy Brainy-prefix warmup, triggered when the user opens the bubble. Only
+# meaningful for a LOCAL Brainy model (cloud has no KV prefix to keep warm).
+# Debounced so re-opening the bubble doesn't spam ~25s prefills; on a single
+# GPU the chat prefix may have evicted Brainy's between opens, so we re-prime
+# after the cooldown. A lock keeps two concurrent opens from double-priming.
+_HELPDESK_WARMUP_COOLDOWN_S = 90.0
+_helpdesk_warmup_lock = threading.Lock()
+_helpdesk_warmup_state = {"model": "", "ts": 0.0, "in_flight": False}
+
 
 def _is_transient_upstream_error(err: str) -> bool:
     """True for 5xx / overloaded / auth_unavailable-style upstream blips that a
@@ -414,6 +423,56 @@ class HelpdeskHandlerMixin:
             return
         ChatDB.clear_helpdesk_history(user.get("id") or "")
         self._send_json({"status": "cleared"})
+
+    # ── POST /v1/helpdesk/warmup — lazy-prime Brainy's KV prefix ──────────
+    # Fired by the frontend when the user opens the Brainy bubble. Primes the
+    # helpdesk prefix (helpdesk system prompt + read-only tool set) in the
+    # BACKGROUND so the first question hits a warm cache. No-op unless Brainy's
+    # model is local + warmup-enabled; debounced + deduped. Returns immediately.
+    def _handle_helpdesk_warmup(self):
+        user = self._require_auth()
+        if not user:
+            return
+        cfg = _load_helpdesk_config()
+        if not cfg.get("enabled", True):
+            self._send_json({"status": "disabled"})
+            return
+        model = _resolve_helpdesk_model(cfg)
+        # Cloud model → nothing to keep warm. Only prime local models that have
+        # warmup enabled (mirrors the keeper's gate; cloud has no resident KV).
+        if not model or not engine.is_model_local(model):
+            self._send_json({"status": "skipped", "reason": "model_not_local"})
+            return
+        mcfg = engine.resolve_model_settings(model) or {}
+        if not mcfg.get("warmup"):
+            self._send_json({"status": "skipped", "reason": "warmup_off"})
+            return
+
+        now = time.time()
+        with _helpdesk_warmup_lock:
+            fresh = (_helpdesk_warmup_state["model"] == model
+                     and (now - _helpdesk_warmup_state["ts"]) < _HELPDESK_WARMUP_COOLDOWN_S)
+            if _helpdesk_warmup_state["in_flight"] or fresh:
+                self._send_json({"status": "warm" if fresh else "in_flight"})
+                return
+            _helpdesk_warmup_state["in_flight"] = True
+
+        def _prime():
+            try:
+                engine.run_model_warmup(
+                    model, agent_id="main", mode="full",
+                    purpose="helpdesk", track_state=False,
+                )
+            except Exception as e:
+                print(f"[helpdesk-warmup] {model}: prime error — {e}", flush=True)
+            finally:
+                with _helpdesk_warmup_lock:
+                    _helpdesk_warmup_state.update(model=model, ts=time.time(),
+                                                  in_flight=False)
+
+        threading.Thread(target=_prime, daemon=True,
+                         name=f"helpdesk-warmup-{model[:16]}").start()
+        self._send_json({"status": "priming"})
 
     # ── GET /v1/helpdesk/config (admin) ───────────────────────────────────
     def _handle_helpdesk_config_get(self):

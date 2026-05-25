@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.24.3"
+VERSION = "9.25.0"
 VERSION_DATE = "2026-05-25"
 CHANGELOG = [
+    ("9.25.0", "2026-05-25", "feat(warmup): Lazy Brainy-Prefix-Warmup + warmup-Config wird endlich geladen + pool_depth 10. DREI Dinge. **(1) Vorbestehender Bug behoben** (server.py main): `server_config['warmup']` wurde beim Boot NIE aus config.json gesetzt — jeder `wcfg.get(...)` im warmup-keeper + WarmSessionPool fiel auf Code-Defaults zurück, d.h. die komplette `config.json → warmup`-Section (interval, pool_depth, allow_cloud, …) war toter Code. Jetzt geladen. **(2) pool_depth = 10** (config.json → warmup): der Warm-Session-Pool hält bis zu 10 vorgebaute LEERE Session-Hüllen vor (sie teilen sich EINEN KV-Prefix auf der GPU, zero GPU cost — nur RAM), um viele gleichzeitige „Neuer Chat\"-Klicks ohne Bau-Wartezeit abzufedern. Ändert NICHT Geschwindigkeit/Parallelität (max_concurrent bleibt das Inferenz-Limit) — nur Pufferung. Live verifiziert: Pool baut 10/10. **(3) Lazy Brainy-Prefix-Prime** (handlers/helpdesk.py POST /v1/helpdesk/warmup, von brainyOpen() fire-and-forget gerufen): Brainy hat einen ANDEREN System-Prompt + read-only Tool-Set als der normale Chat → ein eigener KV-Prefix. Der normale warmup-keeper primt nur den interaktiven Prefix; Brainys erste Frage auf einem lokalen Modell zahlte sonst vollen Prefill. Beim Öffnen der Bubble wird Brainys Prefix im Hintergrund geprimt (run_model_warmup mit neuem purpose='helpdesk' + track_state=False, das den helpdesk-Prompt aus config + _HELPDESK_TOOLS spiegelt — verifiziert byte-identisch zum echten Brainy-Turn). No-op außer Brainys Modell ist lokal + warmup an; 90s-Debounce + in-flight-Dedup gegen Re-Open-Spam. Single-GPU-Realität (akzeptiert): Chat- und Brainy-Prefix können sich gegenseitig evicten → der zuletzt genutzte bleibt warm; Lazy-Prime auf Bubble-Open holt Brainys Prefix bei Bedarf zurück. Shared infra: build_first_turn_prefix bekam purpose + system_prompt_override; run_model_warmup bekam purpose + track_state (Side-Prime clobbert nie den Modell-Warmup-State). Endpoint live verifiziert ({status:priming}, Hintergrund-Prime lief). Backend — Neustart nötig (erledigt)."),
     ("9.24.3", "2026-05-25", "fix(helpdesk): Brainy übersteht jetzt transiente Upstream-5xx mit stillem Retry. Beobachtung: als CLIProxyAPI zeitweise 503 auth_unavailable lieferte, zeigte Brainy SOFORT eine leere Antwort — kein Retry. Ein Brainy-Turn feuert mehrere Provider-Calls (einen pro Tool-Runde), also trifft ihn ein einzelner transienter Blip härter als einen normalen Chat. Fix (handlers/helpdesk.py): run_turn wird bis zu 2× wiederholt (insg. 3 Versuche, kurzer Backoff 0.8s×Versuch) — ABER nur wenn (a) der Fehler transient ist (_is_transient_upstream_error: 5xx/overloaded/auth_unavailable/timeout/connection; NIE 4xx/invalid/model-Fehler), (b) noch NICHTS gestreamt wurde (acc_text leer → ein Retry kann nie Text duplizieren) und (c) der Client noch da ist. event_callback leitet `error` nicht mehr sofort durch — der Fehler wird erst nach erschöpften Retries emittiert, sodass ein erholter Turn gar keinen Fehler zeigt (kein Error-Flash). Klassifizierer per Unit-Test geprüft (11 Fälle: 5xx/overload/timeout/connection→retry, 4xx/invalid/model→nein). Happy-Path live verifiziert (brainy_tone.spec.js: korrekte Antwort + Schluss-Spitze). Backend — Neustart nötig (erledigt)."),
     ("9.24.2", "2026-05-25", "polish(helpdesk): Brainy bekommt trocken-charmanten Humor (Ton, nicht auf Kosten der Genauigkeit). System-Prompt erweitert (config.json → helpdesk.system_prompt UND der Code-Default _HELPDESK_DEFAULT_PROMPT in handlers/helpdesk.py — beide Quellen synchron gehalten, da der gespeicherte gewinnt): Die Antwort bleibt immer korrekt + sachlich, aber wenn die Daten eine augenzwinkernde Pointe hergeben, hängt Brainy HÖCHSTENS einen lockeren Schlusssatz an, der das MUSTER selbst kommentiert (z.B. nach 7 Wetterfragen: „Vielleicht mal eine neue Frage ausdenken? Wird langsam zur Gewohnheit. ☂️\"). Sparsam, nie bei Fehlern/PII/Frust. mistral-small ignorierte zunächst die abstrakte Regel und hängte stattdessen ein erfundenes Feature-Angebot an („Soll ich dir zeigen, wie du Wetterdaten in Artifacts speicherst?\" — halluzinierte Funktion) → mit ✅/❌-Few-shot-Beispielen im Prompt umgelenkt (verbotenes Feature-Angebot vs. gewünschte Muster-Pointe), inkl. Anti-Halluzinations-Klausel (keine Funktionen erfinden). Live verifiziert (neuer On-Demand brainy_tone.spec.js): Wetterfrage → korrekte Auflistung der 7 Treffer + genau die gewünschte trockene Schluss-Spitze, kein erfundener Tipp. js_gate grün (smoke 5/5). Prompt-only — kein Neustart (pro-Request frisch gelesen). NB: parallel beobachtet — CLIProxyAPI meldet zeitweise 503 auth_unavailable für Mistral (Upstream-Token), betrifft ALLE Mistral-Calls, nicht Brainy-spezifisch."),
     ("9.24.1", "2026-05-25", "fix(helpdesk): zweite Brainy-Frage ging nicht / Sende-Button blieb deaktiviert — der SSE-Reader im echten Client (chat_helpdesk.js) brach NUR bei Stream-EOF ab, nicht beim `done`-EVENT. Der Server hält die Verbindung offen (Connection: keep-alive), also blockierte `reader.read()` nach dem letzten Event endlos → das `finally` (das brainyState.streaming=false + sendBtn.disabled=false setzt) wurde nie erreicht → streaming blieb true → `if (brainyState.streaming) return;` blockierte jede weitere Frage und der Button blieb disabled. Exakt der Hang, der beim Bau des Test-Helpers (brainy_helpers.js askBrainy) schon erkannt + dort gefixt war, aber im Produktiv-Client fehlte. Fix: Loop bricht beim `done`-Event ab (streamDone-Flag + break), danach reader.cancel() zum Freigeben des kept-alive Sockets; EOF bleibt als Fallback. Live durch die echte UI verifiziert (neuer brainy_doublesend.spec.js: Frage 1 → Button reaktiviert → Frage 2 geht durch, beide Antworten da, keine Konsolenfehler; 1 passed 8.4s). js_gate grün (eslint clean, net-globals 976 unverändert, smoke 5/5). Frontend only — kein Neustart nötig (Browser neu laden genügt)."),
@@ -6667,7 +6668,9 @@ def maybe_reprime_for_thinking(model: str, thinking: bool, agent_id: str = "main
 def build_first_turn_prefix(model: str, agent_id: str, *,
                             mcp_manager=None,
                             discovered_tools: set | None = None,
-                            is_openai_shape: bool = False):
+                            is_openai_shape: bool = False,
+                            purpose: str = "interactive",
+                            system_prompt_override: str | None = None):
     """SINGLE source of truth for the first-turn KV prefix (system prompt +
     active tools). Both the warm-pool prime (`run_model_warmup`) and the live
     chat worker call this so their prefixes are byte-identical — the entire
@@ -6689,7 +6692,7 @@ def build_first_turn_prefix(model: str, agent_id: str, *,
     """
     get_request_context()._current_model = model
     active_tools = resolve_active_tools(
-        purpose="interactive",
+        purpose=purpose,
         agent_id=agent_id,
         discovered_tools=discovered_tools if discovered_tools is not None else set(),
         mcp_manager=mcp_manager,
@@ -6699,17 +6702,25 @@ def build_first_turn_prefix(model: str, agent_id: str, *,
         (t.get("function", {}) or {}).get("name", "") or t.get("name", "")
         for t in active_tools
     }
-    system_prompt = _build_system_prompt(
-        include_memory_summary=True,
-        purpose="interactive",
-        active_tool_names=active_tool_names,
-    )
+    # Brainy (purpose="helpdesk") ships a FIXED system prompt from config, not
+    # the agent's _build_system_prompt — so its warmup prime must mirror that
+    # exact text, else the KV prefix misses on the first Brainy turn.
+    if system_prompt_override is not None:
+        system_prompt = system_prompt_override
+    else:
+        system_prompt = _build_system_prompt(
+            include_memory_summary=True,
+            purpose=purpose,
+            active_tool_names=active_tool_names,
+        )
     return system_prompt, active_tools, active_tool_names
 
 
 def run_model_warmup(model: str, allow_cloud: bool = False,
                      agent_id: str = "main", timeout: int = 30,
-                     mode: str = "full", thinking: bool = False) -> dict:
+                     mode: str = "full", thinking: bool = False,
+                     purpose: str = "interactive",
+                     track_state: bool = True) -> dict:
     """Fire a single prefill request against a model's provider.
 
     Returns a result dict: {ok, state, duration_ms, error, mode}. Updates
@@ -6731,13 +6742,20 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
     first thinking-on turn cache-misses and pays full prefill cost.
     """
     t0 = time.time()
+    # The helpdesk (Brainy) side-prime warms a SECOND, different prefix for the
+    # same model. It must NOT clobber the model's reported warmup state (the
+    # keeper keys state by model and would think the model needs re-priming).
+    # track_state=False routes every state write through this no-op.
+    def _set_state(*a, **k):
+        if track_state:
+            set_warmup_state(*a, **k)
     prov = resolve_provider_for_model(model)
     base_url = prov.get("base_url", "")
     api_key = prov.get("api_key", "")
 
     if not base_url:
         err = "no base_url"
-        set_warmup_state(model, state="failed", last_error=err)
+        _set_state(model, state="failed", last_error=err)
         return {"ok": False, "state": "failed", "error": err, "duration_ms": 0, "mode": mode}
 
     # `prov` (resolve_provider_for_model) returns only {api_key, base_url,
@@ -6747,13 +6765,13 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
     # fix. Use the authoritative resolver, which reads the provider's is_local
     # flag from config by name.
     if not allow_cloud and not is_model_local(model):
-        set_warmup_state(model, state="skipped_cloud",
-                         last_error="cloud provider (warmup.allow_cloud=false)")
+        _set_state(model, state="skipped_cloud",
+                   last_error="cloud provider (warmup.allow_cloud=false)")
         return {"ok": False, "state": "skipped_cloud",
                 "error": "cloud skipped", "duration_ms": 0, "mode": mode}
 
-    set_warmup_state(model, state="warming", last_error="", mode=mode,
-                     thinking_primed=bool(thinking))
+    _set_state(model, state="warming", last_error="", mode=mode,
+               thinking_primed=bool(thinking))
 
     try:
         agent_config = AgentConfig(agent_id)
@@ -6779,11 +6797,25 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
                 # handled inside the helper. Tool wire-shape (openai) differs from
                 # the sidecar's anthropic shape but does NOT affect the KV-relevant
                 # system_prompt / tool-name set.
+                #
+                # purpose="helpdesk": prime BRAINY's prefix instead — its fixed
+                # read-only tool set + the helpdesk system prompt from config (NOT
+                # the agent's _build_system_prompt). Mirrors handlers/helpdesk.py
+                # so the first Brainy turn on a local model hits the warm prefix.
+                _sp_override = None
+                if purpose == "helpdesk":
+                    try:
+                        from handlers.helpdesk import _load_helpdesk_config
+                        _sp_override = _load_helpdesk_config()["system_prompt"]
+                    except Exception:
+                        _sp_override = None
                 system_prompt, all_tools, _ = build_first_turn_prefix(
                     model, agent_id,
                     mcp_manager=mcp_mgr,
                     discovered_tools=set(),
                     is_openai_shape=True,
+                    purpose=purpose,
+                    system_prompt_override=_sp_override,
                 )
                 messages = [
                     {"role": "system", "content": system_prompt},
@@ -6836,9 +6868,9 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
                     resp.read()
             dur_ms = int((time.time() - t0) * 1000)
             now = time.time()
-            set_warmup_state(model, state="warm", last_warmup_ts=now,
-                             last_error="", mode=mode,
-                             thinking_primed=bool(thinking))
+            _set_state(model, state="warm", last_warmup_ts=now,
+                       last_error="", mode=mode,
+                       thinking_primed=bool(thinking))
             return {"ok": True, "state": "warm", "duration_ms": dur_ms,
                     "error": "", "mode": mode, "thinking": bool(thinking)}
     except urllib.error.HTTPError as e:
@@ -6847,14 +6879,14 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
         except Exception:
             body = ""
         err = f"HTTP {e.code}: {body or e.reason}"
-        set_warmup_state(model, state="failed", last_error=err,
-                         last_warmup_ts=time.time(), mode=mode)
+        _set_state(model, state="failed", last_error=err,
+                   last_warmup_ts=time.time(), mode=mode)
         return {"ok": False, "state": "failed", "error": err,
                 "duration_ms": int((time.time() - t0) * 1000), "mode": mode}
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
-        set_warmup_state(model, state="failed", last_error=err,
-                         last_warmup_ts=time.time(), mode=mode)
+        _set_state(model, state="failed", last_error=err,
+                   last_warmup_ts=time.time(), mode=mode)
         return {"ok": False, "state": "failed", "error": err,
                 "duration_ms": int((time.time() - t0) * 1000), "mode": mode}
 
