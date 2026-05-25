@@ -61,8 +61,9 @@ streaming call, per-USER history, fixed read-only tool set. See
   (`text_delta`, `tool_call`, `error`, `done`). Any logged-in user.
 - `GET /v1/helpdesk/history?before_id=&limit=` → `{messages:[{id,role,
   content,ts}], has_more}` — newest-first, cursor-paginated, per-user.
-- `POST /v1/helpdesk/delete` — `{id}` (one) or `{start_ts, end_ts}` (range);
-  user-scoped.
+- `POST /v1/helpdesk/delete` — `{id}` (one row), `{ids:[...]}` (several —
+  an exchange is the question row + the answer row, deleted together), or
+  `{start_ts, end_ts}` (range); user-scoped.
 - `POST /v1/helpdesk/clear` — wipe the caller's Brainy conversation.
 - `GET /v1/helpdesk/config` / `POST /v1/helpdesk/config` — **admin**:
   `{enabled, model, max_rounds, system_prompt}`. Model "Auto" = server

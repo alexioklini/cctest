@@ -282,8 +282,9 @@ function brainyRenderHistory() {
 }
 
 // One exchange = the user question + Brainy's answer + timestamp + delete.
+// An exchange is BOTH rows (question + answer); delete removes both.
 function brainyExchangeHTML(x) {
-  const delId = x.uid || x.aid;   // delete keys off the user row if present
+  const delId = x.uid || x.aid;   // identifies the exchange in local state
   const q = x.q ? `<div class="brainy-bubble brainy-user"><div class="brainy-bubble-body">${esc(x.q)}</div></div>` : '';
   const a = (x.a || x.aid) ? `<div class="brainy-bubble brainy-bot"><span class="brainy-bubble-avatar">${brainyAvatarHTML()}</span>`
     + `<div class="brainy-bubble-body">${typeof renderMarkdown === 'function' ? renderMarkdown(x.a || '') : esc(x.a || '')}</div></div>` : '';
@@ -303,9 +304,14 @@ function brainyToggleGroup(key) {
 
 async function brainyDeleteExchange(id) {
   if (!confirm('Diesen Brainy-Eintrag löschen?')) return;
+  const x = brainyState.exchanges.find((e) => (e.uid || e.aid) === id);
+  if (!x) return;
+  // An exchange spans two rows (question + answer) — delete BOTH, else the
+  // orphaned answer survives the next reload.
+  const ids = [x.uid, x.aid].filter((v) => v != null);
   try {
-    await API.post('/v1/helpdesk/delete', { id });
-    brainyState.exchanges = brainyState.exchanges.filter((x) => (x.uid || x.aid) !== id);
+    await API.post('/v1/helpdesk/delete', { ids });
+    brainyState.exchanges = brainyState.exchanges.filter((e) => (e.uid || e.aid) !== id);
     brainyRenderHistory();
   } catch (e) { showToast('Löschen fehlgeschlagen', true); }
 }

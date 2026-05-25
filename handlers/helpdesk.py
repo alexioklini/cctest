@@ -98,6 +98,38 @@ def _format_view_context(ctx: dict) -> str:
     return f"[Kontext — der Nutzer ist gerade hier: {'; '.join(bits)}]\n\n"
 
 
+def _build_helpdesk_messages(history: list, new_question: str) -> list:
+    """Turn the stored Brainy rows + the new question into a clean
+    user/assistant message list for the model.
+
+    History can be malformed — a turn whose reply was empty leaves an
+    unpaired `user` row, and a partial delete can leave an orphan `assistant`
+    row. Replaying that verbatim yields consecutive same-role turns or a
+    leading assistant turn, which providers reject with a 400 — that was why
+    a *second* question to Brainy sometimes did nothing. Normalise to strict
+    alternation: drop empties, merge consecutive same-role content, and drop
+    a leading assistant turn. The new question is always the final user turn.
+    """
+    msgs = []
+    for row in history:
+        role = row.get("role")
+        content = (row.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        if msgs and msgs[-1]["role"] == role:
+            msgs[-1]["content"] += "\n\n" + content   # merge same-role run
+        else:
+            msgs.append({"role": role, "content": content})
+    while msgs and msgs[0]["role"] != "user":          # must start with user
+        msgs.pop(0)
+    # Append the new question, merging if history's tail was also a user turn.
+    if msgs and msgs[-1]["role"] == "user":
+        msgs[-1]["content"] += "\n\n" + new_question
+    else:
+        msgs.append({"role": "user", "content": new_question})
+    return msgs
+
+
 class HelpdeskHandlerMixin:
 
     # ── POST /v1/helpdesk — ask Brainy (SSE) ──────────────────────────────
@@ -140,13 +172,9 @@ class HelpdeskHandlerMixin:
         # A per-turn view-context note is prepended to the question (not stored)
         # so Brainy knows where the user currently is.
         history = ChatDB.load_helpdesk_history(uid, limit=_MAX_HISTORY_TURNS * 2) or []
-        messages = []
-        for row in history:
-            role = row.get("role")
-            if role in ("user", "assistant"):
-                messages.append({"role": role, "content": row.get("content") or ""})
         ctx_note = _format_view_context(view_ctx)
-        messages.append({"role": "user", "content": (ctx_note + message) if ctx_note else message})
+        messages = _build_helpdesk_messages(
+            history, (ctx_note + message) if ctx_note else message)
 
         # Persist the question (the user's text only, without the context note)
         # immediately, so a disconnect mid-stream still records what was asked.
@@ -244,8 +272,9 @@ class HelpdeskHandlerMixin:
             "has_more": has_more,           # are there OLDER rows before this page?
         })
 
-    # ── POST /v1/helpdesk/delete — remove one row or a time range ─────────
-    # Body: {id} for a single message, or {start_ts, end_ts} for a group
+    # ── POST /v1/helpdesk/delete — remove rows or a time range ────────────
+    # Body: {id} for a single row, {ids:[...]} for several (an exchange = the
+    # question row + the answer row), or {start_ts, end_ts} for a group
     # (created_at in [start_ts, end_ts)). User-scoped — can't touch others'.
     def _handle_helpdesk_delete(self):
         user = self._require_auth()
@@ -253,9 +282,13 @@ class HelpdeskHandlerMixin:
             return
         body = self._read_json()
         uid = user.get("id") or ""
-        if "id" in body and body.get("id"):
-            ok = ChatDB.delete_helpdesk_message(uid, body["id"])
-            self._send_json({"deleted": 1 if ok else 0})
+        # Accept a list of ids (delete a whole exchange) or a single id.
+        ids = body.get("ids")
+        if not ids and body.get("id"):
+            ids = [body["id"]]
+        if ids:
+            deleted = sum(1 for i in ids if i and ChatDB.delete_helpdesk_message(uid, i))
+            self._send_json({"deleted": deleted})
             return
         if body.get("start_ts") is not None and body.get("end_ts") is not None:
             n = ChatDB.delete_helpdesk_range(uid, body["start_ts"], body["end_ts"])
