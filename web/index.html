@@ -1324,9 +1324,14 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
      the helpdesk bot. Visible in every view. Its symbol is the user's buddy
      species (or the generic brain when no buddy). Filled by brainyRefreshBubble()
      (chat_helpdesk.js). -->
-<button id="brainy-bubble" class="brainy-fab" type="button"
-        title="Brainy fragen — dein Helfer für brain-agent"
-        aria-label="Brainy öffnen" onclick="brainyOpen()"></button>
+<div id="brainy-dock" class="brainy-dock">
+  <!-- Status cloud (buddy.js phase words: „Grübelt", „Stöbert" …) — appears
+       beside the bubble while a turn is running. -->
+  <span id="brainy-status" class="brainy-status" style="display:none"></span>
+  <button id="brainy-bubble" class="brainy-fab" type="button"
+          title="Brainy fragen — dein Helfer für brain-agent"
+          aria-label="Brainy öffnen" onclick="brainyOpen()"></button>
+</div>
 
 <script src="js/api.js"></script>
 <script src="js/state.js"></script>
@@ -1391,14 +1396,8 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z" fill="#fef3c7" fill-opacity="0.9"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.7" fill="currentColor"/></svg>
         </button>
       </div>
-      <!-- Floating ASCII companion (buddy.js) — sits in the gap between the
-           toggle buttons and the model selector. The pet reacts to the current
-           agent phase (pose + motion + opacity); the bubble shows a whimsical
-           status word above it while busy. Both hidden when idle / off. -->
-      <span class="composer-buddy-wrap" data-id="buddy-wrap">
-        <span class="composer-buddy-bubble" data-id="buddy-bubble" style="display:none"></span>
-        <pre class="buddy composer-buddy" data-id="buddy-slot" style="display:none"></pre>
-      </span>
+      <!-- (The companion now lives in the Brainy bubble bottom-right, driven by
+           buddy.js — it animates there during a turn. No composer companion.) -->
       <div class="composer-footer-right">
         <span class="model-selector-btn" data-id="model-selector" onclick="toggleModelDropdown(event)">
           <span class="warmup-dot" data-id="warmup-dot" style="display:none;margin-right:4px"></span>

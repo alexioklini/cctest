@@ -180,22 +180,19 @@ function buddyResolveSpecies() {
 }
 
 // Opacity targets, set as the CSS var --buddy-op (smoothly transitioned in CSS).
-// Three states: deep-idle (no keystrokes ~60s, no turn) → active-idle (recent
-// keystroke) → turn (a reply is generating). Keep in sync with main.css.
-const BUDDY_OP_DEEP_IDLE = 0.08;
-const BUDDY_IDLE_FADE_MS  = 60000;   // no-keystroke delay before fading to deep-idle
-const BUDDY_TYPING_HOLD_MS = 2500;   // typing reverts to idle after this much quiet
+// `op` drives the STATUS-CLOUD opacity (the FAB itself stays fully opaque):
+// deep-idle (no turn) → busy (a reply is generating). Keep in sync with main.css.
+const BUDDY_OP_DEEP_IDLE = 0;        // status cloud hidden when idle
+const BUDDY_IDLE_FADE_MS  = 1200;    // delay before the status cloud fades out
 
-// Per-phase config. `op` is the opacity target. `motion` is a CSS class toggled
-// for a phase-specific wiggle. The phase name also becomes a `phase-<name>`
-// class on the SVG host, which main.css uses to drive the facial expression
-// (blink, wide eyes, busy 'o' mouth, idle zzz, busy spark) — no JS frame loop.
+// Per-phase config. `op` is the status-cloud opacity target. `motion` is a CSS
+// class toggled for a phase-specific wiggle on the buddy SVG. The phase name
+// also becomes a `phase-<name>` class on the FAB, which main.css uses to drive
+// the facial expression (blink, busy 'o' mouth, busy spark) — no JS frame loop.
 // `words` is the rotating whimsical status pool (Claude-Code-CLI flavour); empty
-// means no word (only idle stays quiet). The `typing` pool is "buddy watching
-// you compose" flavour, distinct from the busy phases.
+// means no word (idle stays quiet).
 const BUDDY_PHASES = {
   idle:       { op: BUDDY_OP_DEEP_IDLE, motion: '',            words: [] },
-  typing:     { op: 0.45,               motion: 'buddy-perk',  words: ['Hört zu', 'Schaut zu', 'Ganz Ohr', 'Nur zu', 'Mhm'] },
   thinking:   { op: 0.9,                motion: 'buddy-bob',   words: ['Grübelt', 'Sinniert', 'Tüftelt', 'Überlegt', 'Hmm'] },
   tool:       { op: 0.9,                motion: 'buddy-shake', words: ['Holt', 'Werkelt', 'Gräbt', 'Stöbert'] },
   writing:    { op: 0.9,                motion: 'buddy-bob',   words: ['Verfasst', 'Schreibt', 'Entwirft', 'Formuliert'] },
@@ -205,15 +202,13 @@ const BUDDY_PHASES = {
 const BUDDY_PHASE_CLASSES = Object.keys(BUDDY_PHASES).map(p => 'phase-' + p);
 const BUDDY_MOTION_CLASSES = ['buddy-perk','buddy-bob','buddy-shake','buddy-stretch','buddy-squish'];
 
-// The companion lives inline in the composer footer. The composer template is
-// cloned into three views, so there are up to three `.composer-buddy` elements
-// (each paired with a `.composer-buddy-bubble`) — we drive them all in lockstep.
-// Born once on app load, it never stops. It tracks a single `phase` (idle /
-// typing / thinking / tool / writing / warmup / compacting); each phase has its
-// own pose, animation speed, motion style, opacity and whimsical bubble words.
-// Phase precedence is handled by the callers: stream callbacks set thinking /
-// tool / writing / warmup / compacting; composer input sets typing; a turn
-// ending or the typing hold expiring returns to idle.
+// The companion lives IN the Brainy bubble (#brainy-bubble, bottom-right, every
+// view), with its phase word shown in the status cloud beside it (#brainy-status).
+// Born once on app load. It tracks a single `phase` (idle / thinking / tool /
+// writing / warmup / compacting); each phase has its own facial expression,
+// motion wiggle and whimsical status words. Phase precedence is handled by the
+// callers: the chat stream callbacks set thinking / tool / writing / warmup /
+// compacting; a turn ending returns to idle.
 class FloatingBuddy {
   constructor() {
     this.species = null;
@@ -222,12 +217,14 @@ class FloatingBuddy {
     this.wordTimer = null;     // status-word rotation
     this.typingTimer = null;   // typing → idle revert
   }
-  _els()    { return document.querySelectorAll('.composer-buddy'); }
-  _bubbles(){ return document.querySelectorAll('.composer-buddy-bubble'); }
-  // Render the species' comic SVG into every buddy slot (once per species, not
-  // per frame). Body silhouette + the shared face layer; line-work inherits
-  // currentColor so --buddy-color tints it. Animation (blink, expression, bob)
-  // is all CSS, driven by the phase-* class.
+  // The buddy now LIVES IN the Brainy floating bubble (bottom-right, every
+  // view). `_els()` is the bubble host; `_bubbles()` is the status-word cloud
+  // beside it. Both are single elements (no per-view clones anymore).
+  _els()    { const el = document.getElementById('brainy-bubble'); return el ? [el] : []; }
+  _bubbles(){ const el = document.getElementById('brainy-status'); return el ? [el] : []; }
+  // Render the species' comic SVG into the bubble. Body silhouette + the shared
+  // face layer; line-work inherits currentColor so --buddy-color tints it.
+  // Animation (blink, expression, bob) is all CSS, driven by the phase-* class.
   _draw(species) {
     const sp = BUDDY_SPECIES[species];
     if (!sp) return;
@@ -237,7 +234,9 @@ class FloatingBuddy {
       `stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">` +
       sp.body + buddyFace(sp.face || {}) +
       `</svg>`;
-    this._els().forEach(el => { el.innerHTML = svg; });
+    this._els().forEach(el => {
+      el.innerHTML = `<span class="brainy-fab-buddy">${svg}</span>`;
+    });
   }
   // Toggle the phase-<name> class on each buddy host so CSS shows the right
   // expression for the current phase.
@@ -248,21 +247,21 @@ class FloatingBuddy {
       el.classList.add(cls);
     });
   }
-  // Drive opacity on BOTH the pet and its bubble so the cloud fades in lockstep
-  // with the buddy (custom props set inline on the pet don't cascade to the
-  // sibling bubble, so it must be set on both).
+  // The FAB itself stays fully opaque (it's an action button) — only the status
+  // cloud fades. Kept as _setOp so the phase machine is unchanged.
   _setOp(v)   {
-    this._els().forEach(el => el.style.setProperty('--buddy-op', String(v)));
     this._bubbles().forEach(b => b.style.setProperty('--buddy-op', String(v)));
   }
-  // Per-species accent color, applied to both the pet and its status text so
-  // the whole companion reads as one themed unit. Falls back to the brand accent.
+  // Per-species accent color, applied to the bubble + its status text so the
+  // whole companion reads as one themed unit. Falls back to the brand accent.
   _setColor(c) {
     const col = c || 'var(--accent-brand)';
     this._els().forEach(el => el.style.setProperty('--buddy-color', col));
     this._bubbles().forEach(b => b.style.setProperty('--buddy-color', col));
   }
-  _show(on)   { this._els().forEach(el => { el.style.display = on ? '' : 'none'; }); }
+  // The FAB is always shown (it's the Brainy entry point); when the buddy is
+  // "off" we just fall back to the 🧠 emoji symbol (handled in refresh()).
+  _show(on)   {}
   _setMotion(cls) {
     this._els().forEach(el => {
       el.classList.remove(...BUDDY_MOTION_CLASSES);
@@ -305,52 +304,27 @@ class FloatingBuddy {
     if (phase === 'idle') this._armIdleFade();
   }
 
-  // (Re)resolve the species from prefs and show/hide accordingly.
+  // (Re)resolve the species from prefs. The Brainy bubble owns the symbol
+  // (brainyRefreshBubble renders the species SVG or 🧠); here we just track the
+  // species so the phase machine knows whether to animate + which color to use.
   refresh() {
     const species = buddyResolveSpecies();
-    if (!species) {                          // "off" → hide every copy, stop timers
+    // brainyRefreshBubble() paints the FAB symbol (buddy SVG or 🧠 fallback).
+    if (typeof brainyRefreshBubble === 'function') brainyRefreshBubble();
+    if (!species) {                          // "off" → no animation, 🧠 fallback
       [this.idleTimer, this.wordTimer, this.typingTimer]
         .forEach(t => t && clearTimeout(t));
       this.idleTimer = this.wordTimer = this.typingTimer = null;
       this.species = null;
-      this._show(false);
       this._setBubble('');
-      if (typeof brainyRefreshBubble === 'function') brainyRefreshBubble();
       return;
     }
     this.species = species;
     this.phase = 'idle';
-    this._show(true);
     this._setMotion('');
     this._setBubble('');
     this._setColor(BUDDY_SPECIES[species].color);
-    this._draw(species);
     this._setPhaseClass('idle');
-    // Brainy's floating bubble mirrors the user's buddy symbol — refresh it.
-    if (typeof brainyRefreshBubble === 'function') brainyRefreshBubble();
-    // Briefly surface the (possibly just-changed) buddy so a species switch in
-    // settings is actually visible — at deep-idle 0.08 the change is invisible.
-    // Pulse to visible, then ease back to deep-idle after a couple seconds
-    // (unless a real phase change has taken over by then).
-    this._setOp(0.7);
-    if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => {
-      if (this.phase === 'idle') this._setOp(BUDDY_OP_DEEP_IDLE);
-    }, 2500);
-  }
-
-  // User typed in the composer: show the "typing" phase, but only when no turn
-  // is running (a live turn's phase takes precedence). Auto-reverts to idle
-  // after a short quiet period.
-  poke() {
-    if (!this.species) return;
-    const busy = !['idle', 'typing'].includes(this.phase);
-    if (!busy) this.setPhase('typing');
-    this._armIdleFade();
-    if (this.typingTimer) clearTimeout(this.typingTimer);
-    this.typingTimer = setTimeout(() => {
-      if (this.phase === 'typing') this.setPhase('idle');
-    }, BUDDY_TYPING_HOLD_MS);
   }
 
   turnEnd() { this.setPhase('idle'); }
@@ -362,11 +336,9 @@ function buddy() {
   return _buddy;
 }
 
-// Public hooks.
+// Public hooks (the stream callbacks in chat_send.js drive these — unchanged
+// API; they now animate the Brainy bubble instead of the composer companion).
 function buddyInit()       { buddy()?.refresh(); }            // app load + after settings save
 function buddyPhase(phase) { buddy()?.setPhase(phase); }      // stream callbacks drive this
 function buddyTurnStart()  { buddy()?.setPhase('thinking'); } // first beat of a turn
 function buddyTurnEnd()    { buddy()?.turnEnd(); }
-
-// Brighten / show "typing" on any keystroke anywhere in the app.
-document.addEventListener('keydown', () => { _buddy && _buddy.poke(); }, true);

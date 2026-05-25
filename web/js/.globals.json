@@ -292,7 +292,6 @@
     "BUDDY_PHASE_CLASSES": "writable",
     "BUDDY_PHASES": "writable",
     "BUDDY_SPECIES": "writable",
-    "BUDDY_TYPING_HOLD_MS": "writable",
     "buddyColor": "writable",
     "buddyDefaultSpecies": "writable",
     "buddyFace": "writable",

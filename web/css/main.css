@@ -4581,127 +4581,62 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   user-select: none;
 }
 
-/* The wrap is the middle child of the composer footer (justify-content:
-   space-between → it sits centred in the gap between the toggle buttons and
-   the model selector). It anchors the absolutely-positioned status bubble. */
-.composer-buddy-wrap {
-  flex: 0 0 auto;
-  align-self: center;
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 8px;
-  min-width: 1px;
-}
+/* --- Buddy expression + motion, applied to the Brainy bubble's SVG ---
+   buddy.js adds the phase-* / motion classes to the FAB (#brainy-bubble); the
+   species SVG inside it (.brainy-fab-buddy .b-*) reacts. The companion used to
+   live in the composer footer — it now animates here, bottom-right. */
+.brainy-fab .b-eye  { fill: currentColor; stroke: none; }
+.brainy-fab .b-lid  { display: none; }
+.brainy-fab .b-mouth-o { display: none; }
+.brainy-fab .b-spark   { display: none; }
+.brainy-fab .b-zzz     { display: none; fill: currentColor; stroke: none; }
+.brainy-fab .b-nose,
+.brainy-fab .b-patch   { fill: currentColor; stroke: none; }
+.brainy-fab .b-belly   { opacity: 0.0; }
 
-/* The pet host. Opacity is driven by buddy.js via --buddy-op (smooth fade). A
-   slow idle float keeps it alive; per-phase motion classes layer a livelier
-   wiggle on top. `color` is the buddy colour — the inline SVG strokes inherit
-   it via currentColor. A soft coloured drop-shadow gives the line-art depth. */
-.composer-buddy {
-  margin: 0;
-  line-height: 0;
-  color: var(--buddy-color, var(--accent-brand));
-  pointer-events: none;
-  opacity: var(--buddy-op, 0.08);
-  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.28));
-  transition: opacity 1.2s ease, color 0.4s ease;
-  animation: buddyFloat 4s ease-in-out infinite;
-}
-/* The cartoon itself. Sized small to sit in the footer; scales crisply. */
-.composer-buddy .b-svg {
-  display: block;
-  width: 32px;
-  height: 32px;
-  overflow: visible;
-}
-@keyframes buddyFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
-
-/* --- Facial expression per phase (driven by the phase-* class on .composer-buddy) --- */
-/* Eyes: open by default; the flat lid line is hidden until a blink. */
-.composer-buddy .b-eye  { fill: currentColor; stroke: none; }
-.composer-buddy .b-lid  { display: none; }
-.composer-buddy .b-mouth-o { display: none; }
-.composer-buddy .b-spark   { display: none; }
-.composer-buddy .b-zzz     { display: none; fill: currentColor; stroke: none; }
-.composer-buddy .b-nose,
-.composer-buddy .b-patch   { fill: currentColor; stroke: none; }
-.composer-buddy .b-belly   { opacity: 0.0; }
-
-/* Idle: occasional blink (eyes → lid lines) + a faint floating 'z'. */
-.composer-buddy.phase-idle .b-eye { animation: buddyBlink 5.5s steps(1) infinite; }
-.composer-buddy.phase-idle .b-lid {
+/* Idle: occasional blink (eyes → lid lines). (No 'z' — a FAB shouldn't look
+   asleep.) */
+.brainy-fab.phase-idle .b-eye { animation: buddyBlink 5.5s steps(1) infinite; }
+.brainy-fab.phase-idle .b-lid {
   display: block; animation: buddyBlinkLid 5.5s steps(1) infinite;
 }
-.composer-buddy.phase-idle .b-zzz { display: block; animation: buddyZzz 3s ease-in-out infinite; }
 @keyframes buddyBlink    { 0%,94%,100% { opacity: 1; } 96% { opacity: 0; } }
 @keyframes buddyBlinkLid { 0%,94%,100% { opacity: 0; } 96% { opacity: 1; } }
-@keyframes buddyZzz      { 0%,100% { opacity: 0; transform: translateY(2px); } 50% { opacity: 0.8; transform: translateY(-1px); } }
-
-/* Typing: wide, attentive eyes (slightly enlarged pupils). */
-.composer-buddy.phase-typing .b-eye { transform: scale(1.25); transform-origin: center; transform-box: fill-box; }
 
 /* Busy phases (thinking/tool/writing/warmup/compacting): an 'o' mouth + a
    twinkling spark; the smile mouth is hidden. */
-.composer-buddy.phase-thinking .b-mouth,
-.composer-buddy.phase-tool .b-mouth,
-.composer-buddy.phase-writing .b-mouth,
-.composer-buddy.phase-warmup .b-mouth,
-.composer-buddy.phase-compacting .b-mouth { display: none; }
-.composer-buddy.phase-thinking .b-mouth-o,
-.composer-buddy.phase-tool .b-mouth-o,
-.composer-buddy.phase-writing .b-mouth-o,
-.composer-buddy.phase-warmup .b-mouth-o,
-.composer-buddy.phase-compacting .b-mouth-o { display: block; }
-.composer-buddy.phase-thinking .b-spark,
-.composer-buddy.phase-tool .b-spark,
-.composer-buddy.phase-writing .b-spark,
-.composer-buddy.phase-compacting .b-spark {
+.brainy-fab.phase-thinking .b-mouth,
+.brainy-fab.phase-tool .b-mouth,
+.brainy-fab.phase-writing .b-mouth,
+.brainy-fab.phase-warmup .b-mouth,
+.brainy-fab.phase-compacting .b-mouth { display: none; }
+.brainy-fab.phase-thinking .b-mouth-o,
+.brainy-fab.phase-tool .b-mouth-o,
+.brainy-fab.phase-writing .b-mouth-o,
+.brainy-fab.phase-warmup .b-mouth-o,
+.brainy-fab.phase-compacting .b-mouth-o { display: block; }
+.brainy-fab.phase-thinking .b-spark,
+.brainy-fab.phase-tool .b-spark,
+.brainy-fab.phase-writing .b-spark,
+.brainy-fab.phase-compacting .b-spark {
   display: block; fill: currentColor; stroke: none;
   transform-origin: center; transform-box: fill-box;
   animation: buddySpark 1.2s ease-in-out infinite;
 }
 @keyframes buddySpark { 0%,100% { opacity: 0.3; transform: scale(0.7) rotate(0deg); } 50% { opacity: 1; transform: scale(1.1) rotate(20deg); } }
 
-/* Per-phase motion — each replaces the idle float with a phase-flavoured one.
-   Kept subtle (tiny px) so it reads as "liveliness", not jitter. */
-.composer-buddy.buddy-perk    { animation: buddyPerk 0.9s ease-in-out infinite; }
-.composer-buddy.buddy-bob     { animation: buddyBob 0.7s ease-in-out infinite; }
-.composer-buddy.buddy-shake   { animation: buddyShake 0.35s ease-in-out infinite; }
-.composer-buddy.buddy-stretch { animation: buddyStretch 1.1s ease-in-out infinite; }
-.composer-buddy.buddy-squish  { animation: buddySquish 0.6s ease-in-out infinite; }
+/* Per-phase motion — applied to the SVG wrapper so it doesn't fight the FAB's
+   own idle float. Kept subtle (tiny px) so it reads as "liveliness". */
+.brainy-fab.buddy-perk    .brainy-fab-buddy { animation: buddyPerk 0.9s ease-in-out infinite; }
+.brainy-fab.buddy-bob     .brainy-fab-buddy { animation: buddyBob 0.7s ease-in-out infinite; }
+.brainy-fab.buddy-shake   .brainy-fab-buddy { animation: buddyShake 0.35s ease-in-out infinite; }
+.brainy-fab.buddy-stretch .brainy-fab-buddy { animation: buddyStretch 1.1s ease-in-out infinite; }
+.brainy-fab.buddy-squish  .brainy-fab-buddy { animation: buddySquish 0.6s ease-in-out infinite; }
 @keyframes buddyPerk    { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-1px); } }
 @keyframes buddyBob     { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2.5px); } }
 @keyframes buddyShake   { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-1.5px); } 75% { transform: translateX(1.5px); } }
 @keyframes buddyStretch { 0%,100% { transform: scaleY(1); } 50% { transform: scaleY(1.18); } }
 @keyframes buddySquish  { 0%,100% { transform: scaleX(1); } 50% { transform: scaleX(0.8) scaleY(1.1); } }
-
-/* Whimsical status text, floating at the pet's top-right. Claude-Code-CLI
-   flavour ("Pondering…", "Musing…"). Bare monospace text in the buddy's own
-   colour — no bubble, no box — anchored at the top-right of the pet (where the
-   bubble used to sit), close above it. Opacity tracks the busy pet via
-   var(--buddy-op) so it fades in lockstep. Shown only while busy. */
-.composer-buddy-bubble {
-  position: absolute;
-  bottom: 92%;
-  left: 55%;
-  margin: 0;
-  padding: 0;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.1px;
-  line-height: 1;
-  color: var(--buddy-color, var(--accent-brand));
-  pointer-events: none;
-  opacity: var(--buddy-op, 0.9);
-  animation: buddyBubbleIn 0.25s ease;
-}
-/* Pop-in animates transform only (a tiny rise) — NOT opacity, which is owned by
-   var(--buddy-op) so the text fades in lockstep with the pet. */
-@keyframes buddyBubbleIn { from { transform: translateY(3px); } to { transform: translateY(0); } }
 .spinner-bar .spinner-elapsed { margin-left: auto; font-family: var(--font-mono); font-size: 11px; }
 
 /* Footer bar */
@@ -7316,13 +7251,20 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
    Brainy 🧠 — Helpdesk-Buddy + Modal (chat_helpdesk.js)
    ═══════════════════════════════════════════════════════════ */
 
-/* Floating action button — the single, always-available way to open Brainy.
-   Fixed bottom-right, visible in EVERY view. Symbol = user's buddy or 🧠. */
-.brainy-fab {
+/* Dock — the single, always-available Brainy entry, fixed bottom-right and
+   visible in EVERY view. Holds the status cloud (left) + the FAB (right). */
+.brainy-dock {
   position: fixed;
   right: 22px;
   bottom: 22px;
   z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;          /* only the children are interactive */
+}
+.brainy-fab {
+  pointer-events: auto;
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -7341,13 +7283,36 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 .brainy-fab:active { transform: scale(0.96); }
 .brainy-fab-emoji { font-size: 28px; line-height: 1; }
 .brainy-fab-buddy { display: flex; width: 60%; height: 60%; color: #fff; }
-.brainy-fab-buddy .b-svg { width: 100%; height: 100%; }
+.brainy-fab-buddy .b-svg { width: 100%; height: 100%; overflow: visible; }
 @keyframes brainyFloat {
   0%, 100% { transform: translateY(0); }
   50%      { transform: translateY(-4px); }
 }
+
+/* Status cloud — the buddy's whimsical phase word ("Grübelt…", "Stöbert…"),
+   shown to the LEFT of the FAB while a turn runs. Themed in the buddy color,
+   fades via --buddy-op (set by buddy.js). */
+.brainy-status {
+  pointer-events: none;
+  max-width: 160px;
+  padding: 5px 11px;
+  border-radius: 14px;
+  background: var(--bg-000);
+  border: 1px solid var(--border-100);
+  box-shadow: 0 3px 12px rgba(0,0,0,0.14);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--buddy-color, var(--accent-brand));
+  opacity: var(--buddy-op, 1);
+  transition: opacity 0.5s ease;
+  animation: brainyStatusIn 0.22s ease;
+}
+@keyframes brainyStatusIn { from { transform: translateX(8px); opacity: 0; } to { transform: translateX(0); } }
+
 @media (max-width: 560px) {
-  .brainy-fab { width: 50px; height: 50px; right: 16px; bottom: 16px; }
+  .brainy-dock { right: 16px; bottom: 16px; }
+  .brainy-fab { width: 50px; height: 50px; }
 }
 
 /* Modal — a focused mini-chat, narrower than the wide settings modals. */
