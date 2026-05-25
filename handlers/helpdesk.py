@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 
 import brain as engine
 import server_lib.auth as _auth_mod
@@ -52,6 +53,30 @@ _HELPDESK_DEFAULT_PROMPT = (
 )
 
 _MAX_HISTORY_TURNS = 20  # cap what we replay into the model
+
+# Transient upstream failures worth one quiet retry. Brainy fires several
+# provider calls per turn (one per tool round); when CLIProxyAPI / the
+# upstream briefly returns 5xx (e.g. a momentary `auth_unavailable: 503`),
+# a single call failing would otherwise surface as an empty answer. We only
+# retry when NOTHING has been streamed yet (acc_text empty) — a 5xx normally
+# lands before the first text_delta — so a retry can never duplicate text.
+_HELPDESK_RETRY_MAX = 2          # total attempts after the first (so 3 tries)
+_HELPDESK_RETRY_BACKOFF_S = 0.8  # short, multiplied per attempt
+
+
+def _is_transient_upstream_error(err: str) -> bool:
+    """True for 5xx / overloaded / auth_unavailable-style upstream blips that a
+    retry might clear — NOT for 4xx (bad request, our fault) or model errors."""
+    if not err:
+        return False
+    e = err.lower()
+    if any(s in e for s in ("400", "401", "403", "404", "422", "invalid", "bad request")):
+        return False
+    return any(s in e for s in (
+        "503", "502", "500", "504", "529",
+        "auth_unavailable", "overloaded", "unavailable",
+        "internalservererror", "timeout", "timed out", "connection",
+    ))
 
 
 def _load_helpdesk_config() -> dict:
@@ -268,7 +293,10 @@ class HelpdeskHandlerMixin:
                 client_gone.set()
 
         def event_callback(ev_type: str, data: dict):
-            # Forward only the events Brainy's mini-chat renders.
+            # Forward only the events Brainy's mini-chat renders. NOTE: we do
+            # NOT forward `error` events here — run_turn emits one on a transient
+            # 5xx, but we want the retry below to get a clean shot first. A
+            # genuinely-failed turn surfaces the error after retries (see loop).
             if ev_type == "text_delta":
                 txt = data.get("text", "")
                 if txt:
@@ -277,22 +305,40 @@ class HelpdeskHandlerMixin:
             elif ev_type == "tool_call":
                 # Surface a friendly "looking something up" hint.
                 emit("tool_call", {"name": data.get("name", "")})
-            elif ev_type == "error":
-                emit("error", {"message": data.get("message", "Fehler")})
 
-        try:
-            result = sidecar_proxy.helpdesk_call(
-                messages=messages,
-                model=model,
-                system_prompt=cfg["system_prompt"],
-                session_id=session_id,
-                user_id=uid,
-                event_callback=event_callback,
-                max_rounds=cfg["max_rounds"],
-            )
-        except Exception as e:  # never leak a 500 mid-stream
-            emit("error", {"message": f"{type(e).__name__}: {e}"})
-            result = {"reply": "".join(acc_text), "error": str(e)}
+        # Run the turn, retrying once or twice on a transient upstream 5xx —
+        # but ONLY while nothing has streamed yet (acc_text empty), so a retry
+        # can never duplicate partial output. The `error` event is held back
+        # until we've exhausted retries (a recovered turn shows no error).
+        result = {}
+        attempt = 0
+        while True:
+            try:
+                result = sidecar_proxy.helpdesk_call(
+                    messages=messages,
+                    model=model,
+                    system_prompt=cfg["system_prompt"],
+                    session_id=session_id,
+                    user_id=uid,
+                    event_callback=event_callback,
+                    max_rounds=cfg["max_rounds"],
+                )
+                err = result.get("error")
+            except Exception as e:  # raised (didn't return) — treat like an error result
+                err = f"{type(e).__name__}: {e}"
+                result = {"reply": "".join(acc_text), "error": err}
+
+            streamed = bool(acc_text)
+            if (err and not streamed and attempt < _HELPDESK_RETRY_MAX
+                    and _is_transient_upstream_error(err) and not client_gone.is_set()):
+                attempt += 1
+                time.sleep(_HELPDESK_RETRY_BACKOFF_S * attempt)
+                continue
+            # Final attempt (or success, or already-streamed): if it still
+            # errored without producing text, surface it to the client now.
+            if err and not (result.get("reply") or "").strip() and not acc_text:
+                emit("error", {"message": err})
+            break
 
         final_text = (result.get("reply") or "".join(acc_text)).strip()
         err = result.get("error")
