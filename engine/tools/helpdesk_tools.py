@@ -11,8 +11,9 @@
 # Seams:
 #   - `_ok` / `_err` from engine.tool_exec.
 #   - `get_request_context` from engine.context.
-#   - brain runtime (ChatDB, AuthDB, ProjectManager, scheduler, profile reader)
-#     reached lazily via `import brain as _brain` — no top-level import (cycle).
+#   - ChatDB / AuthDB imported directly from server_lib (NOT re-exported on
+#     brain). ProjectManager / _scheduler / _read_user_profile reached lazily
+#     via `import brain as _brain` (they DO live on brain).
 #
 # brain.py re-exports all three via `from engine.tools.helpdesk_tools import (...)`.
 
@@ -20,6 +21,11 @@ from __future__ import annotations
 
 from engine.context import get_request_context
 from engine.tool_exec import _ok, _err
+# ChatDB / AuthDB are NOT re-exported on `brain` — import from their real
+# modules (leaf modules, no cycle with engine). ProjectManager / _scheduler /
+# _read_user_profile DO live on brain, reached lazily via `import brain as _brain`.
+from server_lib.db import ChatDB
+from server_lib.auth import AuthDB
 
 # Keep payloads small — Brainy needs orientation, not full transcripts.
 _MAX_MESSAGES = 12
@@ -38,11 +44,11 @@ def tool_helpdesk_session_info(args: dict) -> str:
     sid = get_request_context().session_id or ""
     if not sid:
         return _err("helpdesk_session_info: no active session")
-    info = _brain.ChatDB.get_session_info(sid) or {}
+    info = ChatDB.get_session_info(sid) or {}
     if not info:
         return _err(f"helpdesk_session_info: session {sid} not found")
 
-    msgs = _brain.ChatDB.load_messages(sid) or []
+    msgs = ChatDB.load_messages(sid) or []
     # Keep only the human-visible turns (drop internal thinking/tool rows).
     convo = [m for m in msgs if m.get("role") in ("user", "assistant")]
     recent = []
@@ -79,7 +85,7 @@ def tool_helpdesk_user_context(args: dict) -> str:
 
     user = {}
     try:
-        user = _brain.AuthDB.get_user(uid) or {}
+        user = AuthDB.get_user(uid) or {}
     except Exception as e:  # auth DB optional / single-user installs
         return _err(f"helpdesk_user_context: {type(e).__name__}: {e}")
 
@@ -112,7 +118,7 @@ def tool_helpdesk_user_activity(args: dict) -> str:
     # Sessions the user can see. None caller_user_id = admin/all (single-user).
     sessions = []
     try:
-        rows = _brain.ChatDB.list_sessions(
+        rows = ChatDB.list_sessions(
             caller_user_id=(uid or None),
             visible_user_ids=([uid] if uid else None),
         ) or []
@@ -132,7 +138,7 @@ def tool_helpdesk_user_activity(args: dict) -> str:
         teams = []
         if uid:
             try:
-                teams = [t.get("id") for t in (_brain.AuthDB.get_user_teams(uid) or [])]
+                teams = [t.get("id") for t in (AuthDB.get_user_teams(uid) or [])]
             except Exception:
                 teams = []
         for p in (_brain.ProjectManager.list_projects(
