@@ -630,6 +630,17 @@ class ChatDB:
                 "CREATE INDEX IF NOT EXISTS idx_helpdesk_history_user "
                 "ON helpdesk_history(user_id, id)"
             )
+            # Context label = where the user was when this turn was asked
+            # (e.g. "project:<name>", "view:translation"). Display-neutral; its
+            # purpose is context-filtered REPLAY — the model turn prefers turns
+            # from the user's current context + the most-recent few, so an old
+            # unrelated thread neither bleeds in nor costs tokens. Storage stays
+            # one per-user thread (delete/pagination/grouping unchanged). NULL on
+            # legacy rows → treated as "matches any context".
+            try:
+                conn.execute("ALTER TABLE helpdesk_history ADD COLUMN context_label TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -1499,11 +1510,12 @@ class ChatDB:
     @staticmethod
     @_db_safe(default=list)
     def load_helpdesk_history(user_id, limit=400):
-        """Return the user's Brainy conversation, oldest first."""
+        """Return the user's Brainy conversation, oldest first (incl.
+        context_label for context-filtered replay)."""
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT role, content, created_at FROM helpdesk_history "
+                "SELECT role, content, created_at, context_label FROM helpdesk_history "
                 "WHERE user_id = ? ORDER BY id ASC LIMIT ?",
                 (user_id or "", limit),
             ).fetchall()
@@ -1522,13 +1534,13 @@ class ChatDB:
             conn.row_factory = sqlite3.Row
             if before_id:
                 rows = conn.execute(
-                    "SELECT id, role, content, created_at FROM helpdesk_history "
+                    "SELECT id, role, content, created_at, context_label FROM helpdesk_history "
                     "WHERE user_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
                     (user_id or "", int(before_id), int(limit)),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT id, role, content, created_at FROM helpdesk_history "
+                    "SELECT id, role, content, created_at, context_label FROM helpdesk_history "
                     "WHERE user_id = ? ORDER BY id DESC LIMIT ?",
                     (user_id or "", int(limit)),
                 ).fetchall()
@@ -1563,12 +1575,12 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def append_helpdesk_message(user_id, role, content):
+    def append_helpdesk_message(user_id, role, content, context_label=""):
         with _db_conn() as conn:
             conn.execute(
-                "INSERT INTO helpdesk_history (session_id, user_id, role, content) "
-                "VALUES ('', ?, ?, ?)",
-                (user_id or "", role, content or ""),
+                "INSERT INTO helpdesk_history (session_id, user_id, role, content, context_label) "
+                "VALUES ('', ?, ?, ?, ?)",
+                (user_id or "", role, content or "", context_label or ""),
             )
             conn.commit()
 

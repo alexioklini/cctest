@@ -274,6 +274,8 @@
     "brainyAutogrow": "writable",
     "brainyAvatarHTML": "writable",
     "brainyClose": "writable",
+    "brainyContextBadge": "writable",
+    "brainyContextKey": "writable",
     "brainyDeleteExchange": "writable",
     "brainyDeleteGroup": "writable",
     "brainyExchangeHTML": "writable",

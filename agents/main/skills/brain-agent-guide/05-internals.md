@@ -153,6 +153,15 @@ main chat agent.
   via `sidecar_proxy.helpdesk_call()` with `purpose='helpdesk'` and an
   empty turn session_id (no collision with main chat). History is
   per-USER in `helpdesk_history` (NOT per-session).
+- **Context-filtered replay**: one stored per-user thread, but each turn
+  records `context_label` (`project:<name>` else `view:<type>`, from the
+  view context). The model turn replays only turns matching the *current*
+  context + the most-recent few (cap `_REPLAY_MAX_ROWS=24`) — cutting both
+  tokens and cross-context bleed without fragmenting storage. Runs before
+  the alternation sanitizer (`_build_helpdesk_messages`, the 9.23.1 fix that
+  normalises history to strict user/assistant alternation so a malformed
+  thread can't 400 the next send). The label also renders as a per-question
+  badge in the UI; it's persisted, so badge + replay survive reload/restart.
 - **Exclusive skill**: this `brain-agent-guide` skill is gated to Brainy
   (`HELPDESK_ONLY_SKILLS`) — hidden from normal chat unless helpdesk_mode.
 - **Fixed read-only tools** (`_HELPDESK_TOOLS`, 15 tools): `use_skill`, the

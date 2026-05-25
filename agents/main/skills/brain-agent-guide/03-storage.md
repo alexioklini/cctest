@@ -175,12 +175,16 @@ Admin only — see `/v1/sessions/<sid>/gdpr-maps[/<id>]`.
 ### chats.db → helpdesk_history (Brainy conversation)
 ```
 id INTEGER PK AUTOINCREMENT, session_id TEXT (vestigial, empty),
-user_id TEXT, role TEXT, content TEXT, created_at REAL
+user_id TEXT, role TEXT, content TEXT, created_at REAL,
+context_label TEXT (where the turn was asked: "project:<name>" |
+                    "view:<type>"; ''/NULL = legacy/any)
 ```
 Index `idx_helpdesk_history_user(user_id, id)`. **Per-USER, not
 per-session** — Brainy's history follows the user across chats and is NOT
 cascade-dropped when a chat session is deleted. Served newest-first +
-cursor-paginated by `GET /v1/helpdesk/history`.
+cursor-paginated by `GET /v1/helpdesk/history`. `context_label` (written on
+both rows of an exchange) drives the per-question UI badge AND
+context-filtered replay (see `05-internals.md` → Brainy).
 
 ### context.db (LCM)
 Nodes + edges of the lossless context manager DAG. `nodes(id, session_id,

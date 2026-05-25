@@ -7398,11 +7398,29 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   border: 1px solid var(--border-100);
   border-top-left-radius: 4px;
 }
-.brainy-user { align-self: flex-end; }
+.brainy-user { align-self: flex-end; display: flex; flex-direction: column; align-items: flex-end; }
 .brainy-user .brainy-bubble-body {
   background: var(--accent-brand);
   color: #fff;
   border-top-right-radius: 4px;
+}
+/* Context badge above a question — shows where it was asked (persisted). */
+.brainy-ctx-badge {
+  align-self: flex-end;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  color: var(--text-400);
+  background: var(--bg-200);
+  border: 1px solid var(--border-200);
+  border-radius: 6px;
+  padding: 1px 6px;
+  margin-bottom: 3px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .brainy-bubble-body p:first-child { margin-top: 0; }
 .brainy-bubble-body p:last-child { margin-bottom: 0; }

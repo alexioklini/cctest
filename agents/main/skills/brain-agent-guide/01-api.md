@@ -60,7 +60,8 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `POST /v1/helpdesk` — `{message, session_id?, view_context?}` SSE stream
   (`text_delta`, `tool_call`, `error`, `done`). Any logged-in user.
 - `GET /v1/helpdesk/history?before_id=&limit=` → `{messages:[{id,role,
-  content,ts}], has_more}` — newest-first, cursor-paginated, per-user.
+  content,ts,context_label}], has_more}` — newest-first, cursor-paginated,
+  per-user. `context_label` = where the turn was asked (badge + replay key).
 - `POST /v1/helpdesk/delete` — `{id}` (one row), `{ids:[...]}` (several —
   an exchange is the question row + the answer row, deleted together), or
   `{start_ts, end_ts}` (range); user-scoped.

@@ -82,6 +82,21 @@ def _resolve_helpdesk_model(cfg: dict) -> str:
         return ""
 
 
+def _context_label(ctx: dict) -> str:
+    """A stable key for *where* a Brainy turn was asked, used for
+    context-filtered replay. A project is the strongest signal (its name);
+    otherwise the view type. Empty when unknown. NOT shown to the user and
+    NOT sent to the model — purely a replay-filter key."""
+    if not isinstance(ctx, dict):
+        return ""
+    if ctx.get("project"):
+        return f"project:{ctx['project']}"
+    view = (ctx.get("view") or "").strip()
+    if view and view not in ("unknown", ""):
+        return f"view:{view}"
+    return ""
+
+
 def _format_view_context(ctx: dict) -> str:
     """A short German note telling Brainy where the user currently is, prepended
     to the question (not stored). Empty when no useful context."""
@@ -98,20 +113,51 @@ def _format_view_context(ctx: dict) -> str:
     return f"[Kontext — der Nutzer ist gerade hier: {'; '.join(bits)}]\n\n"
 
 
-def _build_helpdesk_messages(history: list, new_question: str) -> list:
+# Replay-window knobs. Keep the conversation cheap + on-topic without
+# fragmenting storage: replay turns from the user's CURRENT context plus a
+# few most-recent regardless of context (so an immediate follow-up after a
+# context switch never loses its setup), capped to a tight tail.
+_REPLAY_MAX_ROWS = 24       # hard cap on rows fed to the model (~12 exchanges)
+_REPLAY_RECENT_KEEP = 4     # always keep this many newest rows, any context
+
+
+def _select_replay_rows(history: list, current_label: str) -> list:
+    """Context-filtered replay selection over flat oldest-first rows.
+
+    Keep a row if it (a) matches the current context, (b) has no label
+    (legacy / unknown → matches anything), or (c) is among the most-recent
+    few regardless of context. Then keep only the last _REPLAY_MAX_ROWS.
+    Storage is untouched — this only narrows what reaches the model, cutting
+    both tokens and cross-context bleed."""
+    n = len(history)
+    recent_from = n - _REPLAY_RECENT_KEEP
+    kept = []
+    for i, row in enumerate(history):
+        label = (row.get("context_label") or "").strip()
+        if i >= recent_from or not label or not current_label or label == current_label:
+            kept.append(row)
+    return kept[-_REPLAY_MAX_ROWS:]
+
+
+def _build_helpdesk_messages(history: list, new_question: str,
+                             current_label: str = "") -> list:
     """Turn the stored Brainy rows + the new question into a clean
     user/assistant message list for the model.
 
-    History can be malformed — a turn whose reply was empty leaves an
-    unpaired `user` row, and a partial delete can leave an orphan `assistant`
-    row. Replaying that verbatim yields consecutive same-role turns or a
-    leading assistant turn, which providers reject with a 400 — that was why
-    a *second* question to Brainy sometimes did nothing. Normalise to strict
-    alternation: drop empties, merge consecutive same-role content, and drop
-    a leading assistant turn. The new question is always the final user turn.
+    Two passes. First, context-filtered replay selection (_select_replay_rows)
+    narrows history to the current context + a recent tail — cheaper and
+    on-topic. Second, normalise to strict alternation: history can be
+    malformed — a turn whose reply was empty leaves an unpaired `user` row,
+    and a partial delete can leave an orphan `assistant` row. Replaying that
+    verbatim yields consecutive same-role turns or a leading assistant turn,
+    which providers reject with a 400 — that was why a *second* question to
+    Brainy sometimes did nothing. So: drop empties, merge consecutive
+    same-role content, drop a leading assistant turn. The new question is
+    always the final user turn.
     """
+    rows = _select_replay_rows(history, current_label)
     msgs = []
-    for row in history:
+    for row in rows:
         role = row.get("role")
         content = (row.get("content") or "").strip()
         if role not in ("user", "assistant") or not content:
@@ -170,15 +216,19 @@ class HelpdeskHandlerMixin:
 
         # Build the message list: the user's prior Brainy turns + new question.
         # A per-turn view-context note is prepended to the question (not stored)
-        # so Brainy knows where the user currently is.
+        # so Brainy knows where the user currently is. Replay is context-filtered
+        # by `label` (current context + recent tail) — see _build_helpdesk_messages.
+        label = _context_label(view_ctx)
         history = ChatDB.load_helpdesk_history(uid, limit=_MAX_HISTORY_TURNS * 2) or []
         ctx_note = _format_view_context(view_ctx)
         messages = _build_helpdesk_messages(
-            history, (ctx_note + message) if ctx_note else message)
+            history, (ctx_note + message) if ctx_note else message, current_label=label)
 
         # Persist the question (the user's text only, without the context note)
         # immediately, so a disconnect mid-stream still records what was asked.
-        ChatDB.append_helpdesk_message(uid, "user", message)
+        # The context label is persisted with it → survives reload + restart and
+        # drives both the badge and context-filtered replay.
+        ChatDB.append_helpdesk_message(uid, "user", message, context_label=label)
 
         # ── Open the SSE stream ──
         self.send_response(200)
@@ -234,7 +284,7 @@ class HelpdeskHandlerMixin:
         err = result.get("error")
 
         if final_text:
-            ChatDB.append_helpdesk_message(uid, "assistant", final_text)
+            ChatDB.append_helpdesk_message(uid, "assistant", final_text, context_label=label)
 
         emit("done", {"reply": final_text, "error": err})
 
@@ -268,6 +318,7 @@ class HelpdeskHandlerMixin:
                 "role": r.get("role"),
                 "content": r.get("content"),
                 "ts": r.get("created_at"),
+                "context_label": r.get("context_label") or "",
             } for r in rows],
             "has_more": has_more,           # are there OLDER rows before this page?
         })

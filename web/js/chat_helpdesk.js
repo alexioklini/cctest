@@ -153,16 +153,42 @@ function brainyPairExchanges(msgs) {
   const out = [];
   let cur = null;
   for (const m of msgs) {
+    const ctx = m.context_label || '';
     if (m.role === 'user') {
       if (cur) out.push(cur);
-      cur = { uid: m.id, aid: null, ts: m.ts, q: m.content || '', a: '' };
+      cur = { uid: m.id, aid: null, ts: m.ts, q: m.content || '', a: '', ctx };
     } else {  // assistant
-      if (cur && !cur.a) { cur.a = m.content || ''; cur.aid = m.id; }
-      else { out.push({ uid: null, aid: m.id, ts: m.ts, q: '', a: m.content || '' }); }
+      if (cur && !cur.a) { cur.a = m.content || ''; cur.aid = m.id; if (!cur.ctx) cur.ctx = ctx; }
+      else { out.push({ uid: null, aid: m.id, ts: m.ts, q: '', a: m.content || '', ctx }); }
     }
   }
   if (cur) out.push(cur);
   return out;
+}
+
+// Machine context key for the CURRENT view — mirrors the server's
+// _context_label() so the live (pre-reload) badge matches what gets persisted.
+function brainyContextKey() {
+  const ctx = brainyViewContext() || {};
+  if (ctx.project) return 'project:' + ctx.project;
+  const v = (ctx.view || '').trim();
+  return (v && v !== 'unknown') ? 'view:' + v : '';
+}
+
+// Machine context key (e.g. "project:Foo", "view:translation") → German badge
+// text, or '' for none. Mirrors the view labels used by brainyViewContext().
+function brainyContextBadge(label) {
+  const ctx = (label || '').trim();
+  if (!ctx) return '';
+  if (ctx.startsWith('project:')) return 'Projekt: ' + ctx.slice(8);
+  const VIEW = {
+    welcome: 'Startseite', chat: 'Chat', chats: 'Chat-Liste',
+    projects: 'Projekte', 'project-detail': 'Projekt',
+    scheduled: 'Geplante Aufgaben', workflows: 'Workflows',
+    translation: 'Übersetzung', favourites: 'Favoriten', settings: 'Einstellungen',
+  };
+  if (ctx.startsWith('view:')) { const v = ctx.slice(5); return VIEW[v] || v; }
+  return ctx;
 }
 
 async function brainyLoadHistory() {
@@ -285,7 +311,10 @@ function brainyRenderHistory() {
 // An exchange is BOTH rows (question + answer); delete removes both.
 function brainyExchangeHTML(x) {
   const delId = x.uid || x.aid;   // identifies the exchange in local state
-  const q = x.q ? `<div class="brainy-bubble brainy-user"><div class="brainy-bubble-body">${esc(x.q)}</div></div>` : '';
+  const badge = brainyContextBadge(x.ctx);
+  const badgeHTML = badge
+    ? `<div class="brainy-ctx-badge" title="Gefragt in: ${esc(badge)}">${esc(badge)}</div>` : '';
+  const q = x.q ? `<div class="brainy-bubble brainy-user">${badgeHTML}<div class="brainy-bubble-body">${esc(x.q)}</div></div>` : '';
   const a = (x.a || x.aid) ? `<div class="brainy-bubble brainy-bot"><span class="brainy-bubble-avatar">${brainyAvatarHTML()}</span>`
     + `<div class="brainy-bubble-body">${typeof renderMarkdown === 'function' ? renderMarkdown(x.a || '') : esc(x.a || '')}</div></div>` : '';
   return `<div class="brainy-exchange" data-id="${delId}">
@@ -364,10 +393,14 @@ async function brainySend() {
   // welcome/empty placeholder is showing, clear it first.
   const list = document.getElementById('brainy-list');
   if (!brainyState.exchanges.length) list.innerHTML = '';
+  const ctxKey = brainyContextKey();            // persisted server-side; badge now
+  const badge = brainyContextBadge(ctxKey);
+  const badgeHTML = badge
+    ? `<div class="brainy-ctx-badge" title="Gefragt in: ${esc(badge)}">${esc(badge)}</div>` : '';
   const live = document.createElement('div');
   live.className = 'brainy-exchange brainy-exchange-live';
   live.innerHTML =
-    `<div class="brainy-bubble brainy-user"><div class="brainy-bubble-body">${esc(text)}</div></div>`
+    `<div class="brainy-bubble brainy-user">${badgeHTML}<div class="brainy-bubble-body">${esc(text)}</div></div>`
     + `<div class="brainy-bubble brainy-bot"><span class="brainy-bubble-avatar">${brainyAvatarHTML()}</span>`
     + `<div class="brainy-bubble-body" data-live-body><span class="brainy-typing"><span></span><span></span><span></span></span></div></div>`;
   list.appendChild(live);
@@ -441,7 +474,7 @@ async function brainySend() {
     // Record the completed exchange in state (id-less until the next open, where
     // it reloads from the DB with real ids → delete becomes available).
     const ts = Math.floor(Date.now() / 1000);
-    brainyState.exchanges.push({ uid: null, aid: null, ts, q: text, a: acc });
+    brainyState.exchanges.push({ uid: null, aid: null, ts, q: text, a: acc, ctx: ctxKey });
     const tline = document.createElement('div');
     tline.className = 'brainy-ex-time';
     tline.textContent = brainyFmtTime(ts);
