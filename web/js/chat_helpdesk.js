@@ -436,9 +436,15 @@ async function brainySend() {
     const decoder = new TextDecoder();
     let buf = '';
     let evType = '';
-    while (true) {
+    let streamDone = false;   // set by the SSE `done` event — see below
+    // IMPORTANT: break on the `done` EVENT, not just on reader EOF. The server
+    // keeps the connection alive (Connection: keep-alive), so reader.read()
+    // can block past the final event — leaving brainyState.streaming = true,
+    // which disables the send button and blocks every further question. The
+    // `done` event is the real end-of-turn signal.
+    while (!streamDone) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) break;   // EOF fallback (server closed first)
       buf += decoder.decode(value, { stream: true });
       const lines = buf.split('\n');
       buf = lines.pop();   // keep incomplete tail
@@ -464,10 +470,13 @@ async function brainySend() {
               acc = data.reply;
               bodyEl.innerHTML = (typeof renderMarkdown === 'function') ? renderMarkdown(data.reply) : esc(data.reply);
             }
+            streamDone = true;   // end the loop — do NOT wait for reader EOF
+            break;
           }
         }
       }
     }
+    try { await reader.cancel(); } catch (e) {}   // release the kept-alive socket
     if (firstDelta && !acc) {
       bodyEl.innerHTML = '<span class="brainy-error">Brainy hat keine Antwort geliefert.</span>';
     }
