@@ -76,13 +76,15 @@ async function askBrainy(page, message, opts = {}) {
       let e = 'HTTP ' + resp.status; try { e = (await resp.json()).error || e; } catch (x) {}
       return { httpError: e, status: resp.status, events: [], reply: '', error: e, toolCalls: [], raw: '' };
     }
-    // Parse the SSE stream the same way the client does.
+    // Parse the SSE stream. CRITICAL: break on the `done` EVENT, not on stream
+    // EOF — the server returns fast but the socket may linger (HTTP/1.0 close /
+    // keepalive), so waiting for reader `done` can hang the whole turn.
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = '', evType = '';
     const events = [], toolCalls = [];
-    let reply = '', error = null, acc = '';
-    while (true) {
+    let reply = '', error = null, acc = '', finished = false;
+    while (!finished) {
       const { value, done } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
@@ -97,10 +99,11 @@ async function askBrainy(page, message, opts = {}) {
           if (evType === 'text_delta' && data.text) acc += data.text;
           else if (evType === 'tool_call') toolCalls.push(data.name);
           else if (evType === 'error') error = data.message || 'error';
-          else if (evType === 'done') reply = (data.reply || acc || '').trim();
+          else if (evType === 'done') { reply = (data.reply || acc || '').trim(); finished = true; break; }
         }
       }
     }
+    try { await reader.cancel(); } catch (x) {}   // free the socket, don't block
     if (!reply) reply = acc.trim();
     return { events, reply, error, toolCalls, raw: acc };
   }, { message, opts });
