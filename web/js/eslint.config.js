@@ -16,7 +16,7 @@ const projectGlobals = JSON.parse(fs.readFileSync(globalsFile, 'utf8')).globals;
 
 module.exports = [
   // Global ignore — the gate's own Node tooling is not browser source.
-  { ignores: ['eslint.config.js', 'playwright.config.js', 'playwright.brainy.config.js', 'smoke.spec.js', 'brainy_helpers.js', 'brainy_context.spec.js', 'brainy_e2e.spec.js', 'brainy_doublesend.spec.js', 'node_modules/**'] },
+  { ignores: ['eslint.config.js', 'playwright.config.js', 'playwright.brainy.config.js', 'smoke.spec.js', 'brainy_helpers.js', 'brainy_context.spec.js', 'brainy_e2e.spec.js', 'brainy_doublesend.spec.js', 'brainy_tone.spec.js', 'node_modules/**'] },
   {
     files: ['**/*.js'],
     languageOptions: {
