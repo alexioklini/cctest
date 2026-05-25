@@ -1346,7 +1346,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <template id="composer-template">
   <div class="composer-box" data-composer-box>
     <textarea class="composer-input" data-id="input" rows="1"
-              oninput="autoResizeInput(this); updateSendButton(); schedulePIIBadgeUpdate()"></textarea>
+              oninput="autoResizeInput(this); updateSendButton(); schedulePIIBadgeUpdate(); if(typeof buddyPoke==='function')buddyPoke()"></textarea>
     <div class="image-preview-area" data-id="image-preview"></div>
     <div class="slash-popup" data-id="slash-popup"></div>
     <div class="composer-footer">

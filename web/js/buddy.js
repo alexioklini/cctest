@@ -184,6 +184,7 @@ function buddyResolveSpecies() {
 // deep-idle (no turn) → busy (a reply is generating). Keep in sync with main.css.
 const BUDDY_OP_DEEP_IDLE = 0;        // status cloud hidden when idle
 const BUDDY_IDLE_FADE_MS  = 1200;    // delay before the status cloud fades out
+const BUDDY_TYPING_HOLD_MS = 2500;   // 'typing' reverts to idle after this much quiet
 
 // Per-phase config. `op` is the status-cloud opacity target. `motion` is a CSS
 // class toggled for a phase-specific wiggle on the buddy SVG. The phase name
@@ -193,6 +194,7 @@ const BUDDY_IDLE_FADE_MS  = 1200;    // delay before the status cloud fades out
 // means no word (idle stays quiet).
 const BUDDY_PHASES = {
   idle:       { op: BUDDY_OP_DEEP_IDLE, motion: '',            words: [] },
+  typing:     { op: 0.9,                motion: 'buddy-perk',  words: ['Hört zu', 'Schaut zu', 'Ganz Ohr', 'Nur zu', 'Mhm'] },
   thinking:   { op: 0.9,                motion: 'buddy-bob',   words: ['Grübelt', 'Sinniert', 'Tüftelt', 'Überlegt', 'Hmm'] },
   tool:       { op: 0.9,                motion: 'buddy-shake', words: ['Holt', 'Werkelt', 'Gräbt', 'Stöbert'] },
   writing:    { op: 0.9,                motion: 'buddy-bob',   words: ['Verfasst', 'Schreibt', 'Entwirft', 'Formuliert'] },
@@ -289,18 +291,27 @@ class FloatingBuddy {
     this.wordTimer = setInterval(roll, 2600);
   }
 
-  // The single entry point. Switches the buddy to `phase` (idempotent — no-op if
-  // already there). Unknown phase falls back to idle.
+  // The single entry point. Switches the buddy to `phase`. Unknown phase falls
+  // back to idle. Lazily resolves the species so a turn that fires before
+  // refresh() still animates (and so a null species never silently kills it).
   setPhase(phase) {
-    if (!this.species) return;
+    if (!this.species) {
+      this.species = buddyResolveSpecies();
+      if (this.species) this._setColor(BUDDY_SPECIES[this.species].color);
+    }
+    if (!this.species) return;               // buddy genuinely off → stay quiet
     if (!BUDDY_PHASES[phase]) phase = 'idle';
-    if (phase === this.phase) return;
-    this.phase = phase;
     const cfg = BUDDY_PHASES[phase];
+    const samePhase = (phase === this.phase);
+    this.phase = phase;
     this._setOp(cfg.op);
     this._setMotion(cfg.motion);
     this._setPhaseClass(phase);
-    this._startWords(cfg.words);
+    // Re-roll words even on a same-phase call (a fresh turn re-entering
+    // 'thinking' should still surface a word immediately).
+    if (!samePhase || (this.wordTimer == null && cfg.words.length)) {
+      this._startWords(cfg.words);
+    }
     if (phase === 'idle') this._armIdleFade();
   }
 
@@ -327,6 +338,19 @@ class FloatingBuddy {
     this._setPhaseClass('idle');
   }
 
+  // The user is typing in the composer: show the attentive 'typing' phase, but
+  // only when no turn is running (a live turn's phase takes precedence). Reverts
+  // to idle after a short quiet period.
+  poke() {
+    const busy = !['idle', 'typing'].includes(this.phase);
+    if (busy) return;
+    this.setPhase('typing');
+    if (this.typingTimer) clearTimeout(this.typingTimer);
+    this.typingTimer = setTimeout(() => {
+      if (this.phase === 'typing') this.setPhase('idle');
+    }, BUDDY_TYPING_HOLD_MS);
+  }
+
   turnEnd() { this.setPhase('idle'); }
 }
 
@@ -342,3 +366,4 @@ function buddyInit()       { buddy()?.refresh(); }            // app load + afte
 function buddyPhase(phase) { buddy()?.setPhase(phase); }      // stream callbacks drive this
 function buddyTurnStart()  { buddy()?.setPhase('thinking'); } // first beat of a turn
 function buddyTurnEnd()    { buddy()?.turnEnd(); }
+function buddyPoke()       { buddy()?.poke(); }               // composer typing

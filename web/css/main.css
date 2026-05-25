@@ -4603,6 +4603,9 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 @keyframes buddyBlink    { 0%,94%,100% { opacity: 1; } 96% { opacity: 0; } }
 @keyframes buddyBlinkLid { 0%,94%,100% { opacity: 0; } 96% { opacity: 1; } }
 
+/* Typing: wide, attentive eyes. */
+.brainy-fab.phase-typing .b-eye { transform: scale(1.25); transform-origin: center; transform-box: fill-box; }
+
 /* Busy phases (thinking/tool/writing/warmup/compacting): an 'o' mouth + a
    twinkling spark; the smile mouth is hidden. */
 .brainy-fab.phase-thinking .b-mouth,
