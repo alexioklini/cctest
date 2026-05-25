@@ -7482,10 +7482,15 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   color: var(--text-000);
   min-height: 38px;
   max-height: 140px;
-  /* hidden at rest (autogrow sizes to content); scrollbar only past max-height */
+  /* autogrow (brainyAutogrow) sizes the textarea to its content, so it only
+     ever needs to scroll past max-height. Hide the scrollbar entirely — Safari
+     otherwise reserves a visible gutter even when content fits. It still scrolls
+     past 140px, just without a visible bar. */
   overflow-y: auto;
+  scrollbar-width: none;            /* Firefox */
   line-height: 1.4;
 }
+.brainy-input::-webkit-scrollbar { width: 0; height: 0; display: none; }  /* Safari/Chrome */
 .brainy-input:focus { outline: none; border-color: var(--accent-brand); }
 .brainy-send {
   flex-shrink: 0;

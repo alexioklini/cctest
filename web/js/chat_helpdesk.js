@@ -140,7 +140,7 @@ async function brainyLoadHistory() {
 
   if (!msgs.length) {
     brainyAppendBubble('assistant',
-      'Hi! Ich bin **Brainy** 🧠 — dein persönlicher Helfer im brain-agent. '
+      'Hi! Ich bin **Brainy** — dein persönlicher Helfer im brain-agent. '
       + 'Frag mich alles: wie die App funktioniert, was du gerade vor dir hast, '
       + 'oder wie du etwas erledigst. Womit kann ich helfen?');
     return;
