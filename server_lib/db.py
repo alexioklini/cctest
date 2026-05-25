@@ -1510,6 +1510,58 @@ class ChatDB:
             return [dict(r) for r in rows]
 
     @staticmethod
+    @_db_safe(default=list)
+    def load_helpdesk_history_page(user_id, before_id=None, limit=20):
+        """Paginated, NEWEST-first page of the user's Brainy history (for the UI
+        — distinct from load_helpdesk_history which is oldest-first for building
+        the model turn). `before_id` is a cursor: return rows with id < before_id
+        (older than what's already shown). Includes id + created_at so the client
+        can paginate, group by time, and delete. Returns up to `limit` rows
+        newest-first; the caller reverses for display."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            if before_id:
+                rows = conn.execute(
+                    "SELECT id, role, content, created_at FROM helpdesk_history "
+                    "WHERE user_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
+                    (user_id or "", int(before_id), int(limit)),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, role, content, created_at FROM helpdesk_history "
+                    "WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                    (user_id or "", int(limit)),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=False)
+    def delete_helpdesk_message(user_id, msg_id):
+        """Delete a single Brainy row (scoped to the user, so one user can't
+        delete another's). Returns True if a row was removed."""
+        with _db_conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM helpdesk_history WHERE user_id = ? AND id = ?",
+                (user_id or "", int(msg_id)),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    @staticmethod
+    @_db_safe(default=0)
+    def delete_helpdesk_range(user_id, start_ts, end_ts):
+        """Delete all of the user's Brainy rows with created_at in [start_ts,
+        end_ts) — the group-delete path. Returns the number of rows removed."""
+        with _db_conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM helpdesk_history WHERE user_id = ? "
+                "AND created_at >= ? AND created_at < ?",
+                (user_id or "", float(start_ts), float(end_ts)),
+            )
+            conn.commit()
+            return cur.rowcount
+
+    @staticmethod
     @_db_safe(default=None)
     def append_helpdesk_message(user_id, role, content):
         with _db_conn() as conn:

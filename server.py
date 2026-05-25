@@ -1747,6 +1747,8 @@ class BrainAgentHandler(
             self._handle_helpdesk()
         elif path == "/v1/helpdesk/clear":
             self._handle_helpdesk_clear()
+        elif path == "/v1/helpdesk/delete":
+            self._handle_helpdesk_delete()
         elif path == "/v1/helpdesk/config":
             self._handle_helpdesk_config_save()
         elif path == "/v1/web/search":

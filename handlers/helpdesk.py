@@ -211,15 +211,57 @@ class HelpdeskHandlerMixin:
         emit("done", {"reply": final_text, "error": err})
 
     # ── GET /v1/helpdesk/history — the user's own Brainy conversation ─────
+    # Paginated, NEWEST-first. Query: before_id (cursor — older than this id),
+    # limit (default 20). Returns {messages:[{id,role,content,ts}], has_more}
+    # in chronological (oldest-first) order for display.
     def _handle_helpdesk_history(self):
         user = self._require_auth()
         if not user:
             return
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        try:
+            before_id = int(qs.get("before_id", [""])[0] or 0) or None
+        except (TypeError, ValueError):
+            before_id = None
+        try:
+            limit = max(1, min(100, int(qs.get("limit", ["20"])[0] or 20)))
+        except (TypeError, ValueError):
+            limit = 20
         uid = user.get("id") or ""
-        rows = ChatDB.load_helpdesk_history(uid) or []
+        # Fetch limit+1 to detect whether older rows remain.
+        rows = ChatDB.load_helpdesk_history_page(uid, before_id=before_id, limit=limit + 1) or []
+        has_more = len(rows) > limit
+        rows = rows[:limit]                 # newest-first
+        rows = list(reversed(rows))         # → chronological for display
         self._send_json({
-            "messages": [{"role": r.get("role"), "content": r.get("content")} for r in rows],
+            "messages": [{
+                "id": r.get("id"),
+                "role": r.get("role"),
+                "content": r.get("content"),
+                "ts": r.get("created_at"),
+            } for r in rows],
+            "has_more": has_more,           # are there OLDER rows before this page?
         })
+
+    # ── POST /v1/helpdesk/delete — remove one row or a time range ─────────
+    # Body: {id} for a single message, or {start_ts, end_ts} for a group
+    # (created_at in [start_ts, end_ts)). User-scoped — can't touch others'.
+    def _handle_helpdesk_delete(self):
+        user = self._require_auth()
+        if not user:
+            return
+        body = self._read_json()
+        uid = user.get("id") or ""
+        if "id" in body and body.get("id"):
+            ok = ChatDB.delete_helpdesk_message(uid, body["id"])
+            self._send_json({"deleted": 1 if ok else 0})
+            return
+        if body.get("start_ts") is not None and body.get("end_ts") is not None:
+            n = ChatDB.delete_helpdesk_range(uid, body["start_ts"], body["end_ts"])
+            self._send_json({"deleted": n})
+            return
+        self._send_json({"error": "id or start_ts+end_ts required"}, 400)
 
     # ── POST /v1/helpdesk/clear — wipe the user's own Brainy conversation ─
     def _handle_helpdesk_clear(self):

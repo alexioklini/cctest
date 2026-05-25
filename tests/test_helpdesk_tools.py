@@ -147,5 +147,59 @@ class TestHelpdeskUserActivity(unittest.TestCase):
         self.assertIsInstance(data["sessions"], list)
 
 
+class TestHelpdeskHistoryPaging(unittest.TestCase):
+    """Paginated newest-first reads + scoped single/range delete (the UI's
+    history feature). Each test seeds its OWN fresh rows (under a per-test uid)
+    so the delete tests can't undercut each other — order-independent."""
+
+    def setUp(self):
+        self.uid = "test-hist-%d-%d" % (int(time.time()), id(self))
+        for i in range(6):  # 6 exchanges (12 rows), oldest-first
+            ChatDB.append_helpdesk_message(self.uid, "user", f"frage {i}")
+            ChatDB.append_helpdesk_message(self.uid, "assistant", f"antwort {i}")
+
+    def tearDown(self):
+        ChatDB.clear_helpdesk_history(self.uid)
+
+    def test_page_is_newest_first_with_ids_and_ts(self):
+        page = ChatDB.load_helpdesk_history_page(self.uid, limit=4)
+        self.assertEqual(len(page), 4)
+        # newest-first → descending ids
+        ids = [r["id"] for r in page]
+        self.assertEqual(ids, sorted(ids, reverse=True))
+        for r in page:
+            self.assertIn("created_at", r)
+            self.assertIn("content", r)
+
+    def test_cursor_pagination_is_lossless(self):
+        seen, cursor, guard = [], None, 0
+        while guard < 20:
+            guard += 1
+            page = ChatDB.load_helpdesk_history_page(self.uid, before_id=cursor, limit=4)
+            if not page:
+                break
+            seen += [r["id"] for r in page]
+            cursor = page[-1]["id"]   # oldest in this newest-first page
+        self.assertEqual(len(seen), 12)            # all 12 rows, none skipped
+        self.assertEqual(len(set(seen)), 12)       # none duplicated
+
+    def test_single_delete_is_user_scoped(self):
+        page = ChatDB.load_helpdesk_history_page(self.uid, limit=1)
+        rid = page[0]["id"]
+        self.assertFalse(ChatDB.delete_helpdesk_message("someone-else", rid))  # scoped
+        self.assertTrue(ChatDB.delete_helpdesk_message(self.uid, rid))
+        remaining = {r["id"] for r in ChatDB.load_helpdesk_history_page(self.uid, limit=50)}
+        self.assertNotIn(rid, remaining)
+
+    def test_range_delete(self):
+        rows = ChatDB.load_helpdesk_history_page(self.uid, limit=50)
+        if not rows:
+            self.skipTest("no rows")
+        ts = [r["created_at"] for r in rows]
+        n = ChatDB.delete_helpdesk_range(self.uid, min(ts), max(ts) + 1)
+        self.assertGreaterEqual(n, 1)
+        self.assertEqual(ChatDB.load_helpdesk_history_page(self.uid, limit=50), [])
+
+
 if __name__ == "__main__":
     unittest.main()

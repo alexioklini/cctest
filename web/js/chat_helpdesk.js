@@ -21,6 +21,13 @@ const brainyState = {
   sessionId: '',          // current chat session (context only; may be empty)
   viewContext: null,      // where the user is, captured on open
   abort: null,            // AbortController for the in-flight ask
+  exchanges: [],          // [{uid, aid, ts, q, a}] oldest-first (uid/aid = msg ids)
+  oldestId: null,         // pagination cursor (smallest msg id currently shown)
+  hasMore: false,         // older rows exist before oldestId
+  loadingOlder: false,    // guard against concurrent lazy loads
+  collapsed: {},          // {groupKey: true} — collapsed group state
+  pageSize: 20,
+  groupThreshold: 10,     // flat list at/below this many exchanges; grouped above
 };
 
 /* ── Floating bubble — its symbol is the user's buddy (or 🧠) ── */
@@ -92,7 +99,18 @@ function brainyOpen() {
         </div>
         <button class="modal-close" onclick="brainyClose()" title="Schließen">&times;</button>
       </div>
-      <div class="brainy-messages" id="brainy-messages"></div>
+      <div class="brainy-messages" id="brainy-messages" onscroll="brainyOnScroll()">
+        <div id="brainy-load-more" class="brainy-load-more" style="display:none">
+          <button class="brainy-load-more-btn" onclick="brainyLoadOlder()">Ältere laden</button>
+        </div>
+        <div id="brainy-list"></div>
+      </div>
+      <button id="brainy-to-top" class="brainy-anchor" title="Nach oben" onclick="brainyScrollTop()" style="display:none">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+      </button>
+      <button id="brainy-to-bottom" class="brainy-anchor brainy-anchor-bottom" title="Nach unten" onclick="brainyScrollBottom()" style="display:none">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
       <div class="brainy-input-row">
         <textarea id="brainy-input" class="brainy-input" rows="1"
                   placeholder="Frag Brainy etwas über brain-agent oder diese Sitzung…"
@@ -126,57 +144,196 @@ function brainyClose() {
   // Don't abort an in-flight answer — it persists server-side and finishes.
 }
 
-/* ── History restore ────────────────────────────────────────── */
+/* ── History: pair messages into exchanges, group by age, lazy-load ──────── */
+
+// Pair a flat oldest-first [{id,role,content,ts}] list into exchanges
+// [{uid,aid,ts,q,a}]. A user message opens an exchange; the next assistant
+// message closes it. Tolerates orphans (assistant without a preceding user).
+function brainyPairExchanges(msgs) {
+  const out = [];
+  let cur = null;
+  for (const m of msgs) {
+    if (m.role === 'user') {
+      if (cur) out.push(cur);
+      cur = { uid: m.id, aid: null, ts: m.ts, q: m.content || '', a: '' };
+    } else {  // assistant
+      if (cur && !cur.a) { cur.a = m.content || ''; cur.aid = m.id; }
+      else { out.push({ uid: null, aid: m.id, ts: m.ts, q: '', a: m.content || '' }); }
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
 
 async function brainyLoadHistory() {
-  const box = document.getElementById('brainy-messages');
-  if (!box) return;
-  box.innerHTML = '';
+  Object.assign(brainyState, { exchanges: [], oldestId: null, hasMore: false, collapsed: {} });
   let msgs = [];
   try {
-    const r = await API.get('/v1/helpdesk/history');   // per-user, no session key
+    // pageSize is in EXCHANGES; the server paginates by message rows (~2/exchange).
+    const r = await API.get(`/v1/helpdesk/history?limit=${brainyState.pageSize * 2}`);
     msgs = r?.messages || [];
+    brainyState.hasMore = !!r?.has_more;
   } catch (e) { /* best-effort */ }
 
-  if (!msgs.length) {
-    brainyAppendBubble('assistant',
-      'Hi! Ich bin **Brainy** — dein persönlicher Helfer im brain-agent. '
-      + 'Frag mich alles: wie die App funktioniert, was du gerade vor dir hast, '
-      + 'oder wie du etwas erledigst. Womit kann ich helfen?');
+  if (msgs.length) brainyState.oldestId = msgs[0].id;   // chronological → first is oldest
+  brainyState.exchanges = brainyPairExchanges(msgs);
+  brainyRenderHistory();
+  brainyScrollBottom();
+}
+
+// Fetch the next older page (cursor = current oldest id), prepend, keep scroll.
+async function brainyLoadOlder() {
+  if (brainyState.loadingOlder || !brainyState.hasMore || !brainyState.oldestId) return;
+  brainyState.loadingOlder = true;
+  const box = document.getElementById('brainy-messages');
+  const prevH = box ? box.scrollHeight : 0;
+  try {
+    const r = await API.get(`/v1/helpdesk/history?before_id=${brainyState.oldestId}&limit=${brainyState.pageSize * 2}`);
+    const msgs = r?.messages || [];
+    brainyState.hasMore = !!r?.has_more;
+    if (msgs.length) {
+      brainyState.oldestId = msgs[0].id;
+      brainyState.exchanges = brainyPairExchanges(msgs).concat(brainyState.exchanges);
+      brainyRenderHistory();
+      // preserve scroll position so the viewport doesn't jump
+      if (box) box.scrollTop = box.scrollHeight - prevH;
+    }
+  } catch (e) { /* best-effort */ }
+  finally { brainyState.loadingOlder = false; }
+}
+
+/* ── Adaptive age grouping ──────────────────────────────────── */
+
+// Bucket key + label for a timestamp (seconds), relative to now.
+function brainyGroupOf(ts) {
+  const d = new Date((ts || 0) * 1000);
+  const now = new Date();
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const today = startOfDay(now);
+  const dDay = startOfDay(d);
+  const dayMs = 86400000;
+  if (dDay === today) return { key: 'd0', label: 'Heute' };
+  if (dDay === today - dayMs) return { key: 'd1', label: 'Gestern' };
+  if (dDay > today - 7 * dayMs) return { key: 'w', label: 'Diese Woche' };
+  if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth())
+    return { key: 'm', label: 'Diesen Monat' };
+  if (d.getFullYear() === now.getFullYear()) {
+    const MON = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+    return { key: 'm' + d.getMonth(), label: MON[d.getMonth()] };
+  }
+  return { key: 'y' + d.getFullYear(), label: String(d.getFullYear()) };
+}
+
+function brainyFmtTime(ts) {
+  const d = new Date((ts || 0) * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const t = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return sameDay ? t : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${t}`;
+}
+
+/* ── Render ─────────────────────────────────────────────────── */
+
+function brainyRenderHistory() {
+  const list = document.getElementById('brainy-list');
+  if (!list) return;
+  const ex = brainyState.exchanges;
+  document.getElementById('brainy-load-more').style.display = brainyState.hasMore ? '' : 'none';
+
+  if (!ex.length) {
+    list.innerHTML = `<div class="brainy-bubble brainy-bot"><span class="brainy-bubble-avatar">${brainyAvatarHTML()}</span>`
+      + `<div class="brainy-bubble-body">${renderMarkdown('Hi! Ich bin **Brainy** — dein persönlicher Helfer im brain-agent. '
+      + 'Frag mich alles: wie die App funktioniert, was du gerade vor dir hast, oder wie du etwas erledigst. Womit kann ich helfen?')}</div></div>`;
     return;
   }
-  for (const m of msgs) brainyAppendBubble(m.role, m.content || '');
-  brainyScroll();
-}
 
-/* ── Rendering helpers ──────────────────────────────────────── */
-
-function brainyAppendBubble(role, text) {
-  const box = document.getElementById('brainy-messages');
-  if (!box) return null;
-  const wrap = document.createElement('div');
-  wrap.className = `brainy-bubble brainy-${role === 'user' ? 'user' : 'bot'}`;
-  if (role !== 'user') {
-    const av = document.createElement('span');
-    av.className = 'brainy-bubble-avatar';
-    av.innerHTML = brainyAvatarHTML();   // the user's buddy (crab etc.)
-    wrap.appendChild(av);
+  // Flat list at/below the threshold; grouped above.
+  if (ex.length <= brainyState.groupThreshold) {
+    list.innerHTML = ex.map(brainyExchangeHTML).join('');
+    return;
   }
-  const body = document.createElement('div');
-  body.className = 'brainy-bubble-body';
-  body.innerHTML = (role === 'user')
-    ? esc(text)
-    : (typeof renderMarkdown === 'function' ? renderMarkdown(text) : esc(text));
-  wrap.appendChild(body);
-  box.appendChild(wrap);
-  brainyScroll();
-  return body;
+
+  // Grouped: consecutive exchanges sharing a bucket key (list is oldest→newest).
+  let html = '', curKey = null, groupItems = [];
+  const flush = () => {
+    if (!groupItems.length) return;
+    const g = brainyGroupOf(groupItems[0].ts);
+    const collapsed = !!brainyState.collapsed[g.key];
+    const startTs = groupItems[0].ts, endTs = groupItems[groupItems.length - 1].ts + 1;
+    html += `<div class="brainy-group" data-key="${esc(g.key)}">
+      <div class="brainy-group-head" onclick="brainyToggleGroup('${esc(g.key)}')">
+        <svg class="brainy-group-chevron${collapsed ? ' collapsed' : ''}" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        <span class="brainy-group-label">${esc(g.label)}</span>
+        <span class="brainy-group-count">${groupItems.length}</span>
+        <button class="brainy-group-del" title="Diese Gruppe löschen" onclick="event.stopPropagation();brainyDeleteGroup('${esc(g.key)}',${startTs},${endTs})">&times;</button>
+      </div>
+      <div class="brainy-group-body"${collapsed ? ' style="display:none"' : ''}>
+        ${groupItems.map(brainyExchangeHTML).join('')}
+      </div></div>`;
+    groupItems = [];
+  };
+  for (const x of ex) {
+    const k = brainyGroupOf(x.ts).key;
+    if (k !== curKey) { flush(); curKey = k; }
+    groupItems.push(x);
+  }
+  flush();
+  list.innerHTML = html;
 }
 
-function brainyScroll() {
-  const box = document.getElementById('brainy-messages');
-  if (box) box.scrollTop = box.scrollHeight;
+// One exchange = the user question + Brainy's answer + timestamp + delete.
+function brainyExchangeHTML(x) {
+  const delId = x.uid || x.aid;   // delete keys off the user row if present
+  const q = x.q ? `<div class="brainy-bubble brainy-user"><div class="brainy-bubble-body">${esc(x.q)}</div></div>` : '';
+  const a = (x.a || x.aid) ? `<div class="brainy-bubble brainy-bot"><span class="brainy-bubble-avatar">${brainyAvatarHTML()}</span>`
+    + `<div class="brainy-bubble-body">${typeof renderMarkdown === 'function' ? renderMarkdown(x.a || '') : esc(x.a || '')}</div></div>` : '';
+  return `<div class="brainy-exchange" data-id="${delId}">
+    <button class="brainy-ex-del" title="Diesen Eintrag löschen" onclick="brainyDeleteExchange(${delId})">&times;</button>
+    ${q}${a}
+    <div class="brainy-ex-time">${esc(brainyFmtTime(x.ts))}</div>
+  </div>`;
 }
+
+function brainyToggleGroup(key) {
+  brainyState.collapsed[key] = !brainyState.collapsed[key];
+  brainyRenderHistory();
+}
+
+/* ── Delete ─────────────────────────────────────────────────── */
+
+async function brainyDeleteExchange(id) {
+  if (!confirm('Diesen Brainy-Eintrag löschen?')) return;
+  try {
+    await API.post('/v1/helpdesk/delete', { id });
+    brainyState.exchanges = brainyState.exchanges.filter((x) => (x.uid || x.aid) !== id);
+    brainyRenderHistory();
+  } catch (e) { showToast('Löschen fehlgeschlagen', true); }
+}
+
+async function brainyDeleteGroup(key, startTs, endTs) {
+  if (!confirm('Alle Einträge dieser Gruppe löschen?')) return;
+  try {
+    await API.post('/v1/helpdesk/delete', { start_ts: startTs, end_ts: endTs });
+    brainyState.exchanges = brainyState.exchanges.filter((x) => brainyGroupOf(x.ts).key !== key);
+    brainyRenderHistory();
+  } catch (e) { showToast('Löschen fehlgeschlagen', true); }
+}
+
+/* ── Scroll: lazy-load trigger + top/bottom anchors ─────────── */
+
+function brainyOnScroll() {
+  const box = document.getElementById('brainy-messages');
+  if (!box) return;
+  if (box.scrollTop < 40) brainyLoadOlder();    // near the top → fetch older
+  const top = document.getElementById('brainy-to-top');
+  const bot = document.getElementById('brainy-to-bottom');
+  const far = box.scrollHeight - box.clientHeight;
+  if (top) top.style.display = box.scrollTop > 120 ? '' : 'none';
+  if (bot) bot.style.display = (far - box.scrollTop) > 120 ? '' : 'none';
+}
+function brainyScrollTop() { const b = document.getElementById('brainy-messages'); if (b) b.scrollTop = 0; }
+function brainyScrollBottom() { const b = document.getElementById('brainy-messages'); if (b) b.scrollTop = b.scrollHeight; }
+function brainyScroll() { brainyScrollBottom(); }
 
 function brainyAutogrow(el) {
   el.style.height = 'auto';
@@ -197,14 +354,23 @@ async function brainySend() {
   input.value = '';
   brainyAutogrow(input);
 
-  brainyAppendBubble('user', text);
+  // Append a LIVE exchange block at the bottom (id-less until reload). If the
+  // welcome/empty placeholder is showing, clear it first.
+  const list = document.getElementById('brainy-list');
+  if (!brainyState.exchanges.length) list.innerHTML = '';
+  const live = document.createElement('div');
+  live.className = 'brainy-exchange brainy-exchange-live';
+  live.innerHTML =
+    `<div class="brainy-bubble brainy-user"><div class="brainy-bubble-body">${esc(text)}</div></div>`
+    + `<div class="brainy-bubble brainy-bot"><span class="brainy-bubble-avatar">${brainyAvatarHTML()}</span>`
+    + `<div class="brainy-bubble-body" data-live-body><span class="brainy-typing"><span></span><span></span><span></span></span></div></div>`;
+  list.appendChild(live);
+  const bodyEl = live.querySelector('[data-live-body]');
+  brainyScrollBottom();
+
   brainyState.streaming = true;
   const sendBtn = document.getElementById('brainy-send-btn');
   if (sendBtn) sendBtn.disabled = true;
-
-  // Bot bubble with a typing indicator until the first delta arrives.
-  const bodyEl = brainyAppendBubble('assistant', '');
-  bodyEl.innerHTML = '<span class="brainy-typing"><span></span><span></span><span></span></span>';
   let acc = '';
   let firstDelta = true;
 
@@ -256,6 +422,7 @@ async function brainySend() {
             bodyEl.innerHTML += `<div class="brainy-error">${esc(data.message || 'Fehler')}</div>`;
           } else if (evType === 'done') {
             if (data.reply && (firstDelta || !acc)) {
+              acc = data.reply;
               bodyEl.innerHTML = (typeof renderMarkdown === 'function') ? renderMarkdown(data.reply) : esc(data.reply);
             }
           }
@@ -265,6 +432,14 @@ async function brainySend() {
     if (firstDelta && !acc) {
       bodyEl.innerHTML = '<span class="brainy-error">Brainy hat keine Antwort geliefert.</span>';
     }
+    // Record the completed exchange in state (id-less until the next open, where
+    // it reloads from the DB with real ids → delete becomes available).
+    const ts = Math.floor(Date.now() / 1000);
+    brainyState.exchanges.push({ uid: null, aid: null, ts, q: text, a: acc });
+    const tline = document.createElement('div');
+    tline.className = 'brainy-ex-time';
+    tline.textContent = brainyFmtTime(ts);
+    live.appendChild(tline);
   } catch (e) {
     if (e.name !== 'AbortError') {
       bodyEl.innerHTML = `<span class="brainy-error">${esc(e.message || 'Verbindungsfehler')}</span>`;
