@@ -53,6 +53,27 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
 - `GET /v1/sessions/<sid>/gdpr-maps` — admin: pseudonym maps for this chat
 - `GET /v1/sessions/<sid>/gdpr-maps/<id>` — admin: decrypt one map
 
+### Helpdesk (Brainy)
+Brainy is the read-only helpdesk bot (the floating bubble). Separate
+streaming call, per-USER history, fixed read-only tool set. See
+`05-internals.md` → "Brainy helpdesk bot".
+- `POST /v1/helpdesk` — `{message, session_id?, view_context?}` SSE stream
+  (`text_delta`, `tool_call`, `error`, `done`). Any logged-in user.
+- `GET /v1/helpdesk/history?before_id=&limit=` → `{messages:[{id,role,
+  content,ts}], has_more}` — newest-first, cursor-paginated, per-user.
+- `POST /v1/helpdesk/delete` — `{id}` (one) or `{start_ts, end_ts}` (range);
+  user-scoped.
+- `POST /v1/helpdesk/clear` — wipe the caller's Brainy conversation.
+- `GET /v1/helpdesk/config` / `POST /v1/helpdesk/config` — **admin**:
+  `{enabled, model, max_rounds, system_prompt}`. Model "Auto" = server
+  default. Edited in Settings → Tools → Brainy.
+
+### Manual web search (Websuche)
+- `POST /v1/web/search` — `{query, num_results?, force_fresh?}` → `{query,
+  results}`. Any logged-in user. Pure `searxng_search` passthrough — no
+  fetch, no LLM. Backs the Websuche tab; the curated URLs are sent on the
+  next chat as `body.web_urls_to_fetch` (see `POST /v1/chat`).
+
 ### Send / control
 - `POST /v1/chat` — send message (SSE stream). Body:
   ```
@@ -65,9 +86,17 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
     "save_to_memory": 0|1|2,
     "research_mode_override": 0|1|null,
     "caveman_mode": 0..3,
-    "thinking_level": "off|low|medium|high"
+    "thinking_level": "off|low|medium|high",
+    "web_urls_to_fetch": [{"url": "...", "title": "..."}]  # Websuche basket
   }
   ```
+  When `web_urls_to_fetch` is present, the worker pre-fetches each URL
+  fresh at turn time and injects the markdown into a transient wire copy
+  of the user message (never persisted). Unless `sessions.allow_further_web`
+  is set, the three web tools (`web_fetch`, `exa_search`, `searxng_search`)
+  are locked out for that turn so the model works strictly from the
+  curated set. Fetched sources are recorded on the assistant turn's
+  `metadata.web_sources` (rendered as "Webquellen dieser Anfrage").
   Response: SSE events (`text_delta`, `thinking`, `tool_use`, `tool_result`,
   `done`, `error`, …).
 - `GET /v1/chat/stream?session_id=<sid>` — re-attach to a live turn (SSE)
@@ -82,7 +111,9 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
 - `POST /v1/sessions/manage` — bulk ops:
   `action: "delete" | "archive" | "rename" | "set_visibility" |
    "set_project" | "set_save_to_memory" | "memorize_turns" |
-   "purge_turns" | ...`. Body keys depend on action; see `04-recipes.md`.
+   "purge_turns" | "allow_further_web" | ...`. Body keys depend on action;
+   see `04-recipes.md`. `allow_further_web {value}` toggles the sticky
+   per-session escape hatch that lifts the Websuche tool lockout.
 
 ## Agents
 
@@ -196,6 +227,14 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
 - `GET /v1/tools/breakdown?agent=` — token cost per tool
 - `POST /v1/tools/call` — **localhost+nonce only**, sidecar→Brain dispatch
   (do not call manually)
+- `GET /v1/tools/result?session_id=&tool_use_id=` — full, **uncapped**
+  tool-result text (ownership-checked, path-traversal-guarded). When a
+  tool result exceeds the in-context budget (>50KB) it is spilled to
+  `<agent>/artifacts/*_<sid>/tool-results/<tool_use_id>.txt`; this serves
+  that file as a `text/plain` download. The web UI falls back to it when
+  its in-DOM copy is the truncated stub after a reload. Works for
+  `sched-*` synthetic sessions. (The per-agent `tool_result_char_limit`
+  knob was removed in 9.15.2.)
 
 ## GDPR / PII
 
@@ -275,11 +314,20 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
 - `GET /v1/status` — server uptime + version
 - `GET /v1/services` — daemon status (mempalace-miner, chat-sync, …)
 - `GET /v1/services/log?name=&lines=` — tail a service log
-- `POST /v1/services/telegram` / `/services/server` — start/stop/restart
+- `POST /v1/services/telegram` / `/services/server` — start/stop/restart.
+  `/services/server` also persists `config.default_model` (the
+  Settings → Server → Standardmodell dropdown; 9.21.4).
 - `POST /v1/restart` — restart Brain (graceful)
 - `GET /v1/warmup/status` / `POST /v1/warmup/trigger`
 - `GET /v1/sidecar/status` / `POST /v1/sidecar/restart`
 - `GET /v1/queue/status` / `POST /v1/queue/cancel`
+- `GET /v1/searxng/status` / `POST /v1/searxng/restart` — admin: the
+  self-hosted SearXNG subprocess (status/pid/uptime/health/breaker).
+- `GET /v1/searxng/engines` — admin: last per-engine health snapshot +
+  `next_auto_at`. `POST /v1/searxng/test-engines` — run the probe now.
+- `GET /v1/crawl4ai/status` / `POST /v1/crawl4ai/restart` — admin: the
+  crawl4ai headless-render subprocess (port 8422). No-ops unless
+  `config.json → crawl4ai.auto_start` is set.
 - `GET /v1/traces` / `/v1/traces/<id>` — LLM-call traces
 - `GET /v1/audit` / `/v1/audit/export` — audit log
 - `GET /v1/cache/stats` / `POST /v1/cache/clear`

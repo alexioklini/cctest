@@ -17,6 +17,8 @@ launcher.py → server.py (HTTP API, port 8420)
                 │   └─ Anthropic Python SDK 0.101.0
                 │      Owns the agentic loop. Brain never iterates LLM rounds.
                 │
+                ├── searxng/ (port 8088, separate venv) — self-hosted search
+                ├── crawl4ai/ (port 8422, separate venv) — headless render
                 ├── SQLite              # chats, schedules, costs, traces, context, …
                 └── MemPalace (in-process, NOT MCP)
 ```
@@ -75,6 +77,96 @@ Provider-scoped ids exist when multiple providers serve the same model
 - cloud: 0 (unlimited)
 
 Key = `provider_name`, not base_url.
+
+## Request context (typed, contextvars)
+
+Per-request state (current user, project, exclude_tools, purpose, …) lives
+in a typed `RequestContext` dataclass held in a `contextvars.ContextVar`
+(`engine/context.py`). Read/write **only** via `get_request_context().<field>`;
+enter/teardown **only** via `with request_context(**overrides):` (the
+context manager push/token-resets — automatic teardown). The sidecar's
+`/v1/tools/call` rebuilds the context per call (`tool_mcp._apply_context`,
+inside its own `with`).
+
+The old `_thread_local = threading.local()` request-state bag is **gone**
+(Tier G, 9.12.0). Bleed invariant: a fresh thread starts with empty
+context, so HTTP and per-task threads are bleed-free — but never set
+request context bare on a pooled (`ThreadPoolExecutor`) thread; always
+wrap it in `with request_context()`. (DB-connection pooling still uses
+`threading.local()` — a separate, untouched pattern.)
+
+## Supervised subprocesses
+
+Three long-lived helper processes, each its own venv, each managed by a
+`ProcessSupervisor` subclass (3-crash-in-60s circuit breaker + HTTP health
+probe), admin status/restart endpoints:
+
+- **sidecar** (`:8421`) — the Anthropic SDK agentic loop (above).
+- **SearXNG** (`:8088`, `SearxngSupervisor`) — self-hosted metasearch
+  backing `searxng_search` + the Websuche tab. URL from
+  `config.json → searxng.url` via `_searxng_base_url()`. Per-engine health
+  is probed in isolation (each engine's `!shortcut`), states `ok`/`empty`/
+  `fail`, auto-refreshed every 4h (`_searxng_engine_health_loop`); the
+  snapshot is in-memory only. Admin: `/v1/searxng/{status,restart,engines,
+  test-engines}`, monitored in Settings → Server.
+- **crawl4ai** (`:8422`, `Crawl4aiSupervisor`) — headless Chromium render
+  service, `POST /render {url}` → markdown. No-ops unless
+  `config.json → crawl4ai.auto_start`. `brain._crawl4ai_render()` degrades
+  gracefully when down. Admin: `/v1/crawl4ai/{status,restart}`.
+
+`web_fetch` fallback chain: markitdown HTML→md first; crawl4ai render only
+when the converted text is near-empty (<30 chars) on an HTML GET. Every
+result is tagged `fetch_method` (raw/markitdown/crawl4ai), surfaced as a
+chat-view badge.
+
+## Manual web search (Websuche) + tool lockout
+
+The Websuche tab is human-curated retrieval. `POST /v1/web/search` is a
+pure `searxng_search` passthrough (no fetch, no LLM). The user marks URLs
+into a client-side basket; on send they ride as `body.web_urls_to_fetch`.
+
+- **Turn-time + ephemeral**: the worker fetches each URL `force_fresh=True`
+  just before the wire build and injects the markdown into a *transient
+  wire copy* of the last user message (`_inject_web_preamble_into_wire`).
+  `session.messages`/DB stay clean — every send re-fetches, nothing goes
+  stale. Per-turn sources are recorded on `metadata.web_sources`
+  (wire-stripped, audit/display only).
+- **Hard lockout**: when a curated set is present and
+  `sessions.allow_further_web` is off, the worker sets
+  `get_request_context().exclude_tools = ["web_fetch","exa_search",
+  "searxng_search"]`; `resolve_active_tools` subtracts it (generic
+  per-turn mechanism, Brain-side — NOT plumbed through the sidecar
+  payload). All non-web tools stay live. There is **no** `web_search` tool.
+- **Escape hatch**: `sessions.allow_further_web` (sticky, default 0), inert
+  when the basket is empty; when on, curated sources are still pre-fetched
+  but the model may also search/fetch.
+
+This is a DIFFERENT mechanism from project `web_urls` (mined into the
+project wing/KG by the project-sync daemon) — do not merge them.
+
+## Brainy helpdesk bot
+
+A read-only helpdesk assistant (the floating bubble), separate from the
+main chat agent.
+
+- **Streaming call**: `POST /v1/helpdesk` runs a dedicated streaming call
+  via `sidecar_proxy.helpdesk_call()` with `purpose='helpdesk'` and an
+  empty turn session_id (no collision with main chat). History is
+  per-USER in `helpdesk_history` (NOT per-session).
+- **Exclusive skill**: this `brain-agent-guide` skill is gated to Brainy
+  (`HELPDESK_ONLY_SKILLS`) — hidden from normal chat unless helpdesk_mode.
+- **Fixed read-only tools** (`_HELPDESK_TOOLS`, 15 tools): `use_skill`, the
+  three `helpdesk_*` tools, `mempalace_query`, the read/search/context
+  tools, and the three web tools. No write/exec tools.
+- **Per-turn tool enforcement** (9.22.0): `run_turn`/`run_turn_blocking`
+  put the resolved tool names in `tool_context['allowed_tools']`;
+  `tool_mcp.handle_tools_call` rejects any `tool_use` not in that list
+  before dispatch (generic, all purposes; empty list = no enforcement).
+  `use_skill` returns companion-page **absolute** paths (`companion_pages`)
+  so Brainy stops guessing relative paths.
+- **Config**: `config.json → helpdesk {enabled, model, max_rounds,
+  system_prompt}`. Model "Auto" resolves to the server default. Edited in
+  Settings → Tools → Brainy.
 
 ## Warmup & warm pool
 
@@ -182,9 +274,10 @@ if call.purpose not in global.purposes (when set): drop
 if effective_deferred and tool not in discovered_tools: drop (surface via tool_search)
 ```
 
-Purposes: `interactive | transform | memory_summary | research_minimal`.
-Purpose is a property of the call, not the agent — agents cannot override
-it.
+Purposes: `interactive | transform | memory_summary | research_minimal |
+helpdesk`. Purpose is a property of the call, not the agent — agents
+cannot override it. Since 9.22.0 the resolved tool list is also enforced
+at dispatch (`tool_context['allowed_tools']`), not just at list-build.
 
 ## Cost & quotas
 

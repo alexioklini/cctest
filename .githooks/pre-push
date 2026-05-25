@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#
+# Backstop for the brain-agent-guide skill (Brainy's knowledge base).
+#
+# The skill at agents/main/skills/brain-agent-guide/ must stay in lockstep
+# with the code. This hook flags a push where feature code changed but the
+# skill did not, so the docs Brainy reads don't silently drift.
+#
+# It is a REMINDER, not a judge — it can't tell a docs-irrelevant refactor
+# from a real feature. If the change genuinely needs no skill update, push
+# again with SKILL_DOC_OK=1 (or git push --no-verify).
+#
+# Installed via:  git config core.hooksPath .githooks
+# (run once; see CLAUDE.md "Keeping the brain-agent-guide skill current").
+
+set -euo pipefail
+
+SKILL_DIR="agents/main/skills/brain-agent-guide"
+
+# Paths whose changes plausibly affect what Brainy should document:
+# endpoints, tools, schemas, UI, version/changelog. Tune as the repo moves.
+WATCH_RE='^(brain\.py|server\.py|handlers/|engine/tool_schemas\.py|engine/tools/|server_lib/db\.py|web/index\.html|web/js/)'
+
+if [[ "${SKILL_DOC_OK:-}" == "1" ]]; then
+  exit 0
+fi
+
+# stdin: <local ref> <local sha> <remote ref> <remote sha> per pushed ref.
+needs_check=0
+drifted=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Skip branch deletions (all-zero local sha).
+  if [[ "$local_sha" =~ ^0+$ ]]; then
+    continue
+  fi
+
+  # Determine the commit range being pushed. For a new branch the remote
+  # sha is all-zero; fall back to "everything not already on origin".
+  if [[ "$remote_sha" =~ ^0+$ ]]; then
+    range="$local_sha"
+    extra='--not --remotes=origin'
+  else
+    range="${remote_sha}..${local_sha}"
+    extra=''
+  fi
+
+  changed=$(git diff --name-only "$range" $extra 2>/dev/null || true)
+  [[ -z "$changed" ]] && continue
+
+  if echo "$changed" | grep -Eq "$WATCH_RE"; then
+    needs_check=1
+    if ! echo "$changed" | grep -q "^${SKILL_DIR}/"; then
+      drifted=1
+    fi
+  fi
+done
+
+if [[ "$needs_check" == "1" && "$drifted" == "1" ]]; then
+  cat >&2 <<EOF
+
+──────────────────────────────────────────────────────────────────────
+  brain-agent-guide skill check
+
+  This push changes feature code (endpoints / tools / schemas / UI /
+  version) but does NOT touch ${SKILL_DIR}/.
+
+  That skill is the knowledge base Brainy reads to answer users. If this
+  change adds or alters something a user could ask about, update the
+  matching reference file in the same push:
+
+    SKILL.md · 01-api.md · 02-tools.md · 03-storage.md
+    04-recipes.md · 05-internals.md · 06-user-manual.md
+
+  If no doc update is needed (internal refactor, test-only, etc.), re-push:
+
+    SKILL_DOC_OK=1 git push        # or:  git push --no-verify
+──────────────────────────────────────────────────────────────────────
+
+EOF
+  exit 1
+fi
+
+exit 0

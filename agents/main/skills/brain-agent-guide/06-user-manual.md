@@ -1,559 +1,640 @@
-# Brain-Agent User Manual
+# Brain-Agent Benutzerhandbuch
 
-Plain-language guide to the web UI. Read this when the user asks
-"how do I…" about anything they can see on screen, or wants a walkthrough
-for a real task ("translate a docx", "compare two Excels", "set up a
-recurring report"). Don't quote this verbatim — extract the answer to
-their specific question and skip the rest.
+Verständliche Anleitung zur Web-Oberfläche. Lies dies, wenn der Nutzer
+fragt „wie mache ich…" zu etwas, das er auf dem Bildschirm sieht, oder
+eine Schritt-für-Schritt-Anleitung für eine echte Aufgabe will
+(„ein docx übersetzen", „zwei Excel-Dateien vergleichen", „einen
+wiederkehrenden Bericht einrichten"). Zitiere dies nicht wörtlich —
+extrahiere die Antwort auf die konkrete Frage und lass den Rest weg.
 
-When the user asks you to **do** the task instead of explaining it,
-switch to `04-recipes.md` and execute.
-
----
-
-## The interface at a glance
-
-**Left sidebar** — main navigation:
-- **New chat** — opens the welcome / composer view
-- **Search** — fuzzy search across all your chats
-- **Chats** — every chat, newest first; archive/star/rename from the row menu
-- **Projects** — knowledge bases with their own memory
-- **Favourites** — pinned chats, artifacts, prompts, images
-- **Artifacts** — every file produced or uploaded across sessions
-- **Scheduled** — recurring tasks (cron-like)
-- **Workflows** — multi-step automations with approval gates
-- **Translation** — text / document / audio / live mic
-- **Data** — placeholder for now (feature in development)
-- **Settings (gear)** — agent + general settings (most are admin-only)
-
-**Main area** — whatever view the sidebar selected. Welcome view shows
-the greeting + composer + prompt cards.
-
-**Right panel** (toggle top-right) — three tabs:
-- **Attachments** — files you uploaded into this chat
-- **References** — sources the model read this turn (web fetches, doc reads)
-- **Files** — artifacts the model produced this turn
-
-**Status bar** (bottom) — connection dot, agent, model, In/Out tokens,
-speed, context-window fill, session cost, plan usage, warmup state,
-provider queue. Click any of them for details.
-
-**Composer toolbar** (above the textarea, left side):
-- 📎 attach files
-- 🧠 thinking level (off / low / medium / high — only on models that support it)
-- 🔬 research mode override (project chats only)
-- ✨ refine — polish the draft before sending
-- 🔧 show/hide tool calls in the transcript
-- 🛡️ GDPR details (hide / show full PII findings inline)
-- 💾 save-to-memory cycle (off / on / auto)
-- 🪨 caveman mode (terse responses)
-- (extra badges appear when GDPR action is set or PII history present)
+Die gesamte Oberfläche ist **auf Deutsch** (seit v9.20). Technische
+Begriffe bleiben englisch (Agent, Workflow, Token, Provider, Cache, MCP,
+KG/Knowledge Graph, Caveman, Warmup, Tool, Hook, Skill, Soul). Wenn der
+Nutzer dich bittet, die Aufgabe **auszuführen** statt sie zu erklären,
+wechsle zu `04-recipes.md` und führe sie aus.
 
 ---
 
-## Sending a message
+## Die Oberfläche auf einen Blick
 
-Type, hit `Enter` (Shift+Enter for newline), or click the send button.
-While the model is responding the send button becomes a stop button.
+**Linke Seitenleiste** — Hauptnavigation:
+- **Neuer Chat** — öffnet die Willkommens-/Eingabeansicht
+- **Suche** — unscharfe Suche über alle Chats
+- **Chats** — alle Chats, neueste zuerst; archivieren/markieren/umbenennen
+  über das Zeilenmenü
+- **Projekte** — Wissensbasen mit eigenem Gedächtnis
+- **Favoriten** — angeheftete Chats, Artifacts, Prompts, Bilder
+- **Artifacts** — alle erzeugten oder hochgeladenen Dateien sitzungsübergreifend
+- **Geplante Aufgaben** — wiederkehrende Tasks (cron-artig)
+- **Workflows** — mehrstufige Automatisierungen mit Freigabe-Gates
+- **Übersetzung** — Text / Dokument / Audio / Live-Mikrofon
+- **Daten** — Platzhalter (Funktion in Entwicklung)
+- **Einstellungen (Zahnrad)** — Agent- + allgemeine Einstellungen
+  (meist nur für Admins)
 
-**Attachments**: click 📎 or drag files into the composer. Supported types:
-images, PDF, docx, xlsx, pptx, eml/msg, epub, txt/md, csv/tsv, json, source
-code (py/js/ts/go/rs/etc.), zip. The model receives images directly if it
-has vision; everything else is converted to markdown server-side and read
-with `read_document`.
+**Hauptbereich** — die jeweils gewählte Ansicht. Die Willkommensansicht
+zeigt Begrüßung + Eingabefeld + Prompt-Karten.
 
-**Models**: switch via the model badge in the status bar or composer.
-Local models stay on-device; cloud models hit the configured provider.
+**Rechtes Panel** (oben rechts ein-/ausblenden) — Tabs mit Inhalt:
+- **Anhänge** — in diesen Chat hochgeladene Dateien
+- **Referenzen** — Quellen, die das Modell in diesem Turn gelesen hat
+  (Web-Abrufe, Dokument-Lesungen)
+- **Dateien** — Artifacts, die das Modell in diesem Turn erzeugt hat
+- **Websuche** — kuratierte Web-Quellen für den nächsten Turn (siehe unten)
 
-**Cancel / re-attach**: hit stop to cancel a turn. If you close the
-browser tab mid-turn, reopen the chat — the worker keeps running and
-the transcript catches up.
+Das Panel öffnet sich automatisch nur bei einem neuen **Output**-Artifact;
+sonst glüht das Symbol kurz auf. Es öffnet beim ersten Tab mit Inhalt,
+bis der Nutzer selbst einen Tab wählt. Schließt der Nutzer das Panel,
+bleibt es bis zum Neuladen geschlossen.
+
+**Statusleiste** (unten) — Verbindungspunkt, Agent, Modell, In/Out-Tokens,
+Geschwindigkeit, Kontextfenster-Füllstand, Sitzungskosten, Plan-Nutzung,
+Warmup-Status, Provider-Queue. Auf jedes Element klicken für Details.
+
+**Eingabe-Werkzeugleiste** (über dem Textfeld, links):
+- 📎 Dateien anhängen
+- 🧠 Thinking-Level (off / low / medium / high — nur bei Modellen, die es können)
+- 🔬 Recherche-Modus-Override (nur in Projekt-Chats)
+- ✨ Verfeinern — den Entwurf vor dem Senden polieren
+- 🔧 Tool-Aufrufe im Verlauf ein-/ausblenden
+- 🛡️ GDPR-Details (PII-Funde inline aus-/einblenden)
+- 💾 In-Gedächtnis-speichern-Zyklus (aus / an / auto)
+- 🪨 Caveman-Modus (knappe Antworten)
+
+**Brainy** — die schwebende Sprechblase unten rechts (in jeder Ansicht).
+Brainy ist ein **schreibgeschützter** Helpdesk-Assistent: er kennt diese
+Oberfläche, kann Sitzungs-/Nutzerkontext lesen und Fragen beantworten,
+ändert aber nie etwas. Siehe „Brainy" weiter unten.
+
+---
+
+## Eine Nachricht senden
+
+Tippen, `Enter` drücken (Shift+Enter für Zeilenumbruch) oder den
+Senden-Knopf klicken. Während das Modell antwortet, wird der Senden-Knopf
+zum Stopp-Knopf.
+
+**Anhänge**: 📎 klicken oder Dateien ins Eingabefeld ziehen. Unterstützt:
+Bilder, PDF, docx, xlsx, pptx, eml/msg, epub, txt/md, csv/tsv, json,
+Quellcode (py/js/ts/go/rs/…), zip. Das Modell erhält Bilder direkt, wenn
+es Vision hat; alles andere wird serverseitig zu Markdown konvertiert und
+mit `read_document` gelesen.
+
+**Modelle**: über das Modell-Badge in der Statusleiste oder im Eingabefeld
+wechseln. Lokale Modelle bleiben auf dem Gerät; Cloud-Modelle gehen an den
+konfigurierten Provider.
+
+**Abbrechen / Wieder-Anhängen**: Stopp drücken bricht den Turn ab.
+Schließt man den Browser-Tab mitten im Turn, einfach den Chat wieder
+öffnen — der Worker läuft weiter und der Verlauf holt auf.
 
 ---
 
 ## Chats
 
-Click **Chats** to list everything. Per-row menu (⋯):
-- Rename, star, archive, delete
-- Set project (move into a project)
-- Share — change visibility (private / specific users / team / global)
-- Memorize / purge specific turns — pick which messages get filed to memory
+**Chats** klicken listet alles. Zeilenmenü (⋯):
+- Umbenennen, markieren, archivieren, löschen
+- Projekt zuweisen (in ein Projekt verschieben)
+- Teilen — Sichtbarkeit ändern (privat / bestimmte Nutzer / Team / global)
+- Turns merken / verwerfen — auswählen, welche Nachrichten ins Gedächtnis kommen
 
-**Search** (sidebar): semantic + keyword across all messages you can see.
+**Suche** (Seitenleiste): semantisch + Stichwort über alle sichtbaren
+Nachrichten.
 
-**Archive ≠ delete**: archived chats are hidden from the list but their
-memory drawers stay intact. Delete wipes everything including drawers.
+**Archivieren ≠ Löschen**: archivierte Chats sind aus der Liste
+ausgeblendet, ihre Gedächtnis-Drawer bleiben aber erhalten. Löschen
+entfernt alles inklusive Drawer.
 
-**Save-to-memory** (composer button or per-chat setting):
-- **off** — nothing from this chat enters MemPalace
-- **on** — every turn is mined into your private wing
-- **auto** — server classifier decides per-message (facts / decisions /
-  references kept; chitchat skipped)
+**In-Gedächtnis-speichern** (Eingabe-Knopf oder Chat-Einstellung):
+- **aus** — nichts aus diesem Chat geht in MemPalace
+- **an** — jeder Turn wird in den privaten Wing eingespeist
+- **auto** — der Server-Klassifizierer entscheidet pro Nachricht
+  (Fakten / Entscheidungen / Referenzen bleiben; Smalltalk wird übersprungen)
 
-For pinpoint control, use the per-turn 🌐 menu next to any message:
-*memorize this / memorize complete / purge this / purge above / purge below*.
-
----
-
-## Projects
-
-A project is a knowledge base with its own private memory and its own
-attached files. Use a project when you want the AI to consistently
-draw from a specific document corpus (policies, manuals, codebases,
-research papers, …).
-
-**Create a project**:
-1. Sidebar → **Projects** → ＋ new
-2. Name it. Optional: add a description and an image.
-3. **Input folders** — point at on-disk directories that should be mined.
-   Recurse + auto-sync flags per folder.
-4. **Ingest** — upload files via the project page (multipart drag-drop).
-5. **Research mode** toggle — see below.
-
-**Research mode** (per-project default, per-chat override via the 🔬
-composer button):
-- **ON** — for policy / compliance / Q&A projects. The model is required
-  to consult project memory first, refuses on empty retrieval, must cite
-  per-claim with verbatim quotes. Citation validator runs server-side.
-- **OFF** — for codegen / drafting / build-with-context projects. Memory
-  available but not mandatory; the model can fall back on its training.
-
-**Sync**: input folders are mined by a daemon every 6h. Buttons on the
-project page:
-- **Sync now** — mine new/changed files immediately
-- **Full resync** (admin-only style) — wipe the project's memory wing
-  and re-mine everything
-- **Sync history** — past runs + per-file results
-- **Knowledge graph** — drill into extracted entity-relation triples
-  (only meaningful for normative documents like policies / regulations)
-
-**Project chats**: starting a chat from a project page auto-scopes
-memory queries to that project. The model sees the project's
-`instructions` field plus the appropriate research-mode discipline.
+Für punktgenaue Kontrolle das Pro-Turn-🌐-Menü neben jeder Nachricht:
+*diese merken / komplett merken / diese verwerfen / oben verwerfen /
+unten verwerfen*.
 
 ---
 
-## Translation
+## Projekte
 
-Sidebar → **Translation**. Four tabs:
+Ein Projekt ist eine Wissensbasis mit eigenem privaten Gedächtnis und
+eigenen Dateien. Nutze ein Projekt, wenn die KI konsistent aus einem
+bestimmten Dokumentkorpus schöpfen soll (Richtlinien, Handbücher,
+Codebasen, Forschungspapiere, …).
 
-### Text tab
-- Paste text on the left, translation appears on the right.
-- Source language auto-detects; manual override via the **From** pill.
-- **Glossary** dropdown — apply a saved term list (consistent terminology).
-- **Tone** dropdown — formal / casual / technical / etc.
-- 🔊 buttons read the source or translation aloud (TTS).
-- Swap arrows flip source↔target.
+**Projekt anlegen**:
+1. Seitenleiste → **Projekte** → ＋ neu
+2. Benennen. Optional: Beschreibung und Bild.
+3. **Eingabeordner** — auf Verzeichnisse zeigen, die eingespeist werden
+   sollen. Rekursiv- + Auto-Sync-Flags pro Ordner.
+4. **Hochladen** — Dateien über die Projektseite (Multipart-Drag&Drop).
+5. **Web-Adressen** — eine Liste von URLs, die das Projekt frisch abruft
+   und ins Projektgedächtnis + KG einspeist (per crawl4ai gerendert, also
+   auch JS-Seiten). Anderer Mechanismus als die Websuche im Chat.
+6. **Projektmodus** / **Recherche**-Umschalter — siehe unten.
 
-### Document tab
-- Drag-drop a `.docx`, `.pptx`, or `.pdf`.
-- Pick **From** and **To** languages.
-- Click **Translate**. PDF is converted to docx first.
-- Result appears in **History** below — click **Download** to save.
-- Formatting (headings, tables, footnotes, slide layouts) is preserved
-  in-place via chunked OOXML editing.
+Die Hilfe auf der Projekt-Einstellungsseite ist ein aufklappbarer
+„Hilfe"-Bereich.
 
-### Audio / Video tab
-- Drag-drop audio or video. Voxtral transcribes + translates.
-- **Mode** selector: subtitles (SRT/VTT), transcript (TXT), or both.
-- History row has separate download buttons per output format.
+**Recherche-Modus** (Projekt-Standard, pro Chat per 🔬-Knopf überschreibbar):
+- **AN** (Frage-Antwort-Projekt) — für Richtlinien-/Compliance-/Q&A-Projekte.
+  Das Modell muss zuerst das Projektgedächtnis konsultieren, verweigert
+  bei leerem Treffer, muss pro Aussage mit wörtlichem Zitat belegen. Ein
+  serverseitiger Zitat-Validator läuft mit.
+- **AUS** — für Codegen/Entwurf/Bauen-mit-Kontext. Gedächtnis verfügbar,
+  aber nicht zwingend; das Modell darf auf sein Training zurückgreifen.
 
-### Live Microphone tab
-- Click record. Speak. Translation appears as you talk.
-- **Mode**: live captions vs. sentence-by-sentence chunks.
-- Stop button finalizes; downloadable as SRT/VTT/TXT.
+**Synchronisierung**: Eingabeordner werden von einem Daemon alle 6 h
+eingespeist. Knöpfe auf der Projektseite:
+- **Jetzt synchronisieren** — neue/geänderte Dateien sofort einspeisen
+- **Vollständig neu synchronisieren** — den Gedächtnis-Wing des Projekts
+  leeren und alles neu einspeisen
+- **Sync-Verlauf** — vergangene Läufe + Ergebnisse pro Datei
+- **Knowledge Graph** — extrahierte Entitäts-Relations-Tripel
+  (nur sinnvoll bei normativen Dokumenten wie Richtlinien/Vorschriften)
 
-### Glossaries
-- Top-right **Glossaries** button opens the modal.
-- Create per-language-pair term lists for consistent translation across
-  documents (especially for legal / technical / brand terminology).
+**Projekt-Chats**: Ein Chat von der Projektseite aus skopiert
+Gedächtnis-Abfragen automatisch auf dieses Projekt. Das Modell sieht das
+`instructions`-Feld des Projekts plus die passende Recherche-Disziplin.
 
 ---
 
-## Scheduled tasks
+## Übersetzung
 
-Sidebar → **Scheduled** → ＋ new. A scheduled task is a prompt that runs
-on a cron schedule with full tool access. Results are saved as artifacts
-and visible in the task's history.
+Seitenleiste → **Übersetzung**. Vier Tabs:
 
-**Create**:
-- **Name** — slug (used for cancel / run-now)
-- **Task** — the prompt the agent gets. Be specific about the deliverable.
-- **Schedule** — cron expr (`0 8 * * *` = daily 08:00) or `@every 30m`.
-- **Model** — pick. Local models cost nothing; cloud cost the daily quota.
-- **Timeout** — seconds before the run is killed (default 300; raise for
-  long jobs).
-- **Attachments** (optional) — files the task can read (same files reused
-  every fire, not per-run copies).
-- **Working dir** — overrides the task's cwd.
-- **Tool profile**:
-  - blank = research-minimal (fewer tools, faster, cheaper)
-  - `interactive` = full toolkit (use for "do real work" tasks)
-- **Thinking level** + **Caveman chat** — per-task overrides if needed.
+### Text-Tab
+- Text links einfügen, Übersetzung erscheint rechts.
+- Quellsprache wird automatisch erkannt; manuell über die **Von**-Pille.
+- **Glossar**-Auswahl — eine gespeicherte Begriffsliste anwenden
+  (konsistente Terminologie).
+- **Ton**-Auswahl — formal / locker / technisch / …
+- 🔊-Knöpfe lesen Quelle oder Übersetzung vor (TTS).
+- Tausch-Pfeile drehen Quelle↔Ziel.
 
-**Manage**: filter tabs at top (All / Running). Per-row buttons let you
-**run now**, **pause / resume**, **edit**, **delete**, **clear history**,
-or open run detail (output + cost + artifacts + traces).
+### Dokument-Tab
+- `.docx`, `.pptx` oder `.pdf` per Drag&Drop ablegen.
+- **Von** und **Nach** Sprache wählen.
+- **Übersetzen** klicken. PDF wird zuerst in docx konvertiert.
+- Ergebnis erscheint im **Verlauf** darunter — **Herunterladen** speichert.
+- Formatierung (Überschriften, Tabellen, Fußnoten, Folien-Layouts) bleibt
+  per chunkweiser OOXML-Bearbeitung in-place erhalten.
 
-**Artifacts from a scheduled run** appear in the Artifacts view tagged
-with the synthetic session `sched-<run_id>` and in the run-detail panel.
+### Audio-/Video-Tab
+- Audio oder Video ablegen. Voxtral transkribiert + übersetzt.
+- **Modus**-Auswahl: Untertitel (SRT/VTT), Transkript (TXT) oder beides.
+- Verlaufszeile hat eigene Herunterladen-Knöpfe pro Ausgabeformat.
+
+### Live-Mikrofon-Tab
+- Aufnahme klicken. Sprechen. Übersetzung erscheint während des Sprechens.
+- **Modus**: Live-Untertitel vs. satzweise Stücke.
+- Stopp finalisiert; als SRT/VTT/TXT herunterladbar.
+
+### Glossare
+- **Glossare**-Knopf oben rechts öffnet das Modal.
+- Pro Sprachpaar Begriffslisten anlegen für konsistente Übersetzung über
+  Dokumente hinweg (besonders für Recht/Technik/Marken-Terminologie).
+
+---
+
+## Geplante Aufgaben
+
+Seitenleiste → **Geplante Aufgaben** → ＋ neu. Eine geplante Aufgabe ist ein
+Prompt, der nach einem Cron-Zeitplan mit vollem Tool-Zugriff läuft.
+Ergebnisse werden als Artifacts gespeichert und im Verlauf der Aufgabe
+sichtbar.
+
+**Anlegen**:
+- **Name** — Slug (für Abbruch / Jetzt-ausführen)
+- **Aufgabe** — der Prompt für den Agenten. Sei konkret zum Liefergegenstand.
+- **Zeitplan** — Cron-Ausdruck (`0 8 * * *` = täglich 08:00) oder `@every 30m`.
+- **Modell** — wählen. Lokale Modelle kosten nichts; Cloud zählt aufs
+  Tageskontingent.
+- **Timeout** — Sekunden bis zum Abbruch (Standard 300; für lange Jobs erhöhen).
+- **Anhänge** (optional) — Dateien, die die Aufgabe lesen kann (dieselben
+  Dateien bei jedem Lauf wiederverwendet, keine Pro-Lauf-Kopien).
+- **Arbeitsverzeichnis** — überschreibt das cwd der Aufgabe.
+- **Tool-Profil**:
+  - leer = research-minimal (weniger Tools, schneller, günstiger)
+  - `interactive` = volle Toolbox (für „echte Arbeit"-Aufgaben)
+- **Thinking-Level** + **Caveman-Chat** — Pro-Aufgabe-Overrides bei Bedarf.
+
+**Verwalten**: Filter-Tabs oben (Alle / Laufend). Pro-Zeile-Knöpfe:
+**Jetzt ausführen**, **Pausieren / Fortsetzen**, **Bearbeiten**,
+**Löschen**, **Verlauf leeren** oder Lauf-Detail öffnen (Ausgabe + Kosten
++ Artifacts + Traces).
+
+**Artifacts aus einem geplanten Lauf** erscheinen in der Artifacts-Ansicht
+mit der synthetischen Sitzung `sched-<run_id>` und im Lauf-Detail.
 
 ---
 
 ## Workflows
 
-Sidebar → **Workflows**. Multi-step automations: each step is a prompt
-or an `ask_user` gate. Use these when a recurring task needs human
-approval at certain points (e.g. "draft the email" → human approves →
-"send via gmail_send").
+Seitenleiste → **Workflows**. Mehrstufige Automatisierungen: jeder Schritt
+ist ein Prompt oder ein `ask_user`-Gate. Nutze diese, wenn eine
+wiederkehrende Aufgabe an bestimmten Punkten menschliche Freigabe braucht
+(z. B. „E-Mail entwerfen" → Mensch gibt frei → „via gmail_send senden").
 
-Create from the editor: name, description, ordered steps with optional
-file uploads and `ask_user_for_file` / `ask_llm` blocks. Run from the
-Workflows view; the **Executions** panel shows live state with
-approve / cancel buttons.
+Im Editor anlegen: Name, Beschreibung, geordnete Schritte mit optionalen
+Datei-Uploads und `ask_user_for_file` / `ask_llm`-Blöcken. Aus der
+Workflows-Ansicht starten; das **Ausführungen**-Panel zeigt den
+Live-Status mit Freigeben-/Abbrechen-Knöpfen.
 
 ---
 
 ## Artifacts
 
-Sidebar → **Artifacts**. Two views:
-- **Grid**: all output files (md, html, pdf, images) across every session.
-  Defaults to **outputs only** (hides intermediates like `.py` / `.csv`
-  the model wrote as scratch).
-- **Browse**: directory view under `agents/<id>/artifacts/`.
+Seitenleiste → **Artifacts**. Zwei Ansichten:
+- **Raster**: alle Output-Dateien (md, html, pdf, Bilder) über alle
+  Sitzungen. Standardmäßig **nur Outputs** (versteckt Zwischendateien wie
+  `.py` / `.csv`, die das Modell als Notiz schrieb).
+- **Durchsuchen**: Verzeichnisansicht unter `agents/<id>/artifacts/`.
 
-**Per-artifact actions** (right panel when a chat is open + an artifact
-is selected): preview, view source, copy, download, share.
+**Pro-Artifact-Aktionen** (rechtes Panel bei offenem Chat + gewähltem
+Artifact): Vorschau, Quelle ansehen, kopieren, herunterladen, teilen.
 
-Every write/edit creates an **artifact version** (5 MB cap). Open the
-artifact panel → version dropdown to compare.
-
----
-
-## Favourites
-
-Pin anything for quick access: chats, artifacts, prompts, images.
-Sidebar → **Favourites** lists them. Click ★ in any list row or use the
-share menu.
+Jeder Schreib-/Bearbeitungsvorgang erzeugt eine **Artifact-Version**
+(5 MB-Limit). Artifact-Panel → Versions-Auswahl zum Vergleichen.
 
 ---
 
-## Settings
+## Favoriten
 
-Gear icon, bottom-left. Two modals depending on role:
+Beliebiges für Schnellzugriff anheften: Chats, Artifacts, Prompts, Bilder.
+Seitenleiste → **Favoriten** listet sie. ★ in einer Listenzeile klicken
+oder über das Teilen-Menü.
 
-### Agent settings (admin)
-- **Soul** — the agent's persona (markdown)
+---
+
+## Websuche (kuratierte Web-Quellen)
+
+Im rechten Panel der **Websuche**-Tab. Damit kuratiert der Nutzer selbst
+Web-Quellen, und der nächste Turn arbeitet strikt aus dieser Menge.
+
+**Ablauf**:
+1. Im Websuche-Tab eine Suchanfrage eingeben → Treffer erscheinen.
+2. Treffer ankreuzen, um sie in den **Korb** zu legen. URLs lassen sich
+   auch manuell eintippen oder per Drag&Drop ablegen.
+3. Der Korb ist global und bleibt erhalten (über Suchen und Sitzungen
+   hinweg, im Browser gespeichert) — nur der Nutzer leert ihn. Einträge
+   einzeln aktivieren/deaktivieren (überspringen, aber behalten) oder
+   entfernen; Sammelaktionen vorhanden. Die Kopfzeile zeigt eine grobe
+   Token-Schätzung der aktivierten Menge.
+4. Die nächste Chat-Nachricht senden. Der Server ruft jede aktivierte URL
+   **frisch zum Turn-Zeitpunkt** ab und gibt den Inhalt dem Modell —
+   nichts wird im Verlauf eingefroren, jeder Versand ruft neu ab (eine
+   Wetterseite ist morgen wieder aktuell).
+5. Solange der Korb gefüllt ist, sind die drei Web-Tools für diesen Turn
+   **gesperrt** — das Modell darf nicht frei weitersuchen, sondern nur die
+   kuratierten Quellen nutzen. Die abgerufenen Quellen erscheinen unter der
+   Antwort als „Webquellen dieser Anfrage" (jede aufklappbar).
+
+**Escape-Hatch**: Das Kontrollkästchen in der Websuche-Kopfzeile (sticky
+pro Sitzung) hebt die Sperre auf — die kuratierten Quellen werden weiter
+vorab abgerufen, das Modell darf zusätzlich selbst suchen/abrufen. Das
+Kästchen ist wirkungslos, solange der Korb leer ist.
+
+(Anderer Mechanismus als die **Web-Adressen** eines Projekts, die dauerhaft
+ins Projektgedächtnis eingespeist werden.)
+
+---
+
+## Einstellungen
+
+Zahnrad, unten links. Je nach Rolle zwei Bereiche:
+
+### Agent-Einstellungen (Admin)
+- **Soul** — die Persona des Agenten (Markdown)
 - **Agent** — `agent.json`: tool_groups, token_config, rate_limits, team
-- **Skills** — install zip / browse Claude Code plugins / enable per-agent
-- **MCP** — connect MCP servers
-- **Tokens** — per-tool overrides + per-agent compact threshold
-- **Hooks** — event hooks (pre/post tool, pre/post turn)
-- **Schedule** — agent's own memory_summary daemon config
+- **Skills** — Zip installieren / Claude-Code-Plugins durchsuchen /
+  pro Agent aktivieren
+- **MCP** — MCP-Server verbinden
+- **Tokens** — Pro-Tool-Overrides + Pro-Agent-Compact-Schwelle
+- **Hooks** — Event-Hooks (pre/post Tool, pre/post Turn)
+- **Zeitplan** — der eigene memory_summary-Daemon des Agenten
 
-### General settings (admin)
-- **Server** — default model, chat-summary model, ports
-- **Providers** — add/edit/test OpenAI-compatible providers
-- **Nodes** — distributed compute peers
-- **Models** — per-model config (warmup, thinking, profile, cost)
-- **Agents** — list + create
-- **Teams** — team CRUD + ACLs
-- **Costs** — global cost view per user/model/day
-- **Quotas** — per-user daily + cycle limits + enforcement mode
-- **GDPR** — PII scanner, category actions, NER models, rule overrides
-- **Context** — LCM (lossless context manager) thresholds
-- **MemPalace** — chat-sync classifier, wing rules
-- **Knowledge Graph** — extraction profile + closet config
-- **Tools** — per-tool enable/defer/purpose + prose
-- **Research mode** — discipline texts (refusal / precision / citation)
+### Allgemeine Einstellungen (Admin)
+- **Server** — Standardmodell, Chat-Zusammenfassungs-Modell, Ports,
+  Monitore für **Sidecar**, **Web Search (SearXNG)** und **crawl4ai**
+  (Status/PID/Uptime/Health/Breaker + Neustart; SearXNG zusätzlich mit
+  Pro-Engine-Tabelle und „Jetzt testen"). Beim Standardmodell zeigt das
+  Auswahlfeld „— nicht gesetzt —", wenn keins gesetzt ist (seit 9.21.4).
+- **Provider** — OpenAI-kompatible Provider hinzufügen/bearbeiten/testen
+- **Nodes** — verteilte Compute-Peers
+- **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost)
+- **Agents** — Liste + anlegen
+- **Teams** — Team-CRUD + ACLs
+- **Kosten** — globale Kostenansicht pro Nutzer/Modell/Tag
+- **Kontingente** — Pro-Nutzer Tages- + Zyklus-Limits + Durchsetzungsmodus
+- **GDPR** — PII-Scanner, Kategorie-Aktionen, NER-Modelle, Regel-Overrides
+- **Kontext** — LCM-Schwellen (Lossless Context Manager)
+- **MemPalace** — Chat-Sync-Klassifizierer, Wing-Regeln
+- **Knowledge Graph** — Extraktionsprofil + Closet-Konfiguration
+- **Tools** — Pro-Tool aktivieren/deferren/Purpose + Prosatexte; enthält
+  auch den **Brainy**-Tab (siehe unten)
+- **Recherche-Modus** — Disziplintexte (Verweigerung / Präzision / Zitat)
 
-### Account (any user)
-User menu (top-right avatar):
-- **Profile** — display name, email
-- **Preferences** — greeting name, job description, communication
-  preferences, memory defaults, daily summary on/off + hour
-- **Password** — change own
-- **Profile doc** — the auto-maintained user profile markdown; can
-  trigger update or reset
+### Konto (jeder Nutzer)
+Nutzermenü (Avatar oben rechts):
+- **Profil** — Anzeigename, E-Mail
+- **Einstellungen** — Begrüßungsname, Tätigkeitsbeschreibung,
+  Kommunikationspräferenzen, Gedächtnis-Standards, Tageszusammenfassung
+  an/aus + Stunde
+- **Passwort** — eigenes ändern
+- **Profildokument** — das automatisch gepflegte Nutzerprofil-Markdown;
+  Aktualisierung oder Zurücksetzen auslösbar
+
+---
+
+## Brainy (Helpdesk-Bot)
+
+Brainy ist die schwebende Sprechblase unten rechts, in jeder Ansicht
+verfügbar (das Symbol ist der Buddy des Nutzers oder 🧠). Brainy ist ein
+**schreibgeschützter** Assistent für genau diese Oberfläche — er erklärt
+Funktionen, findet Dinge und liest Sitzungs-/Nutzerkontext, aber er ändert,
+schreibt oder löscht nie etwas.
+
+- Auf die Blase klicken öffnet einen Mini-Chat. Antworten kommen auf
+  Deutsch und sind auf die aktuelle Ansicht zugeschnitten.
+- Der Verlauf ist **pro Nutzer** (nicht pro Chat) und bleibt erhalten.
+  Nachrichten werden zu Frage-Antwort-Paaren mit Zeitstempel gruppiert;
+  bei mehr als ~10 Paaren greift adaptive Altersgruppierung (Heute /
+  Gestern / Diese Woche / Diesen Monat / Monat / Jahr, einklappbar) mit
+  „Ältere laden". Einzelne Paare oder ganze Gruppen lassen sich löschen.
+- Admins konfigurieren Brainy unter **Einstellungen → Tools → Brainy**:
+  Aktiviert-Schalter, Modell (Standard „Auto" = Server-Standardmodell),
+  Tool-Runden (1–12) und den editierbaren System-Prompt.
 
 ---
 
 ## FAQ
 
-**Q: Why is the model dropdown suddenly limited to local models?**
-A: GDPR scanner found PII in the chat draft or history, and "server
-block" is on for that category. Either remove the PII, switch to a
-local model (data stays on-device), or — if you're admin — change the
-category action in Settings → GDPR from `block` to `warn`.
+**F: Warum ist die Modellauswahl plötzlich auf lokale Modelle beschränkt?**
+A: Der GDPR-Scanner hat PII im Entwurf oder Verlauf gefunden, und für diese
+Kategorie ist „Server-Block" aktiv. Entweder die PII entfernen, auf ein
+lokales Modell wechseln (Daten bleiben auf dem Gerät) oder — als Admin —
+die Kategorie-Aktion unter Einstellungen → GDPR von `block` auf `warn`
+ändern.
 
-**Q: Why did the response stop with "Sidecar error…"?**
-A: The sidecar subprocess (the part that runs the LLM loop) is down.
-Restart it: Settings or `POST /v1/sidecar/restart`. If chat keeps
-failing, tail `~/.brain-agent/pi-sidecar.log`.
+**F: Warum stoppte die Antwort mit „Sidecar error…"?**
+A: Der Sidecar-Subprozess (der die LLM-Schleife fährt) ist unten. Neu
+starten: Einstellungen → Server → Sidecar-Monitor oder
+`POST /v1/sidecar/restart`. Bei wiederholtem Fehlschlag
+`~/.brain-agent/pi-sidecar.log` prüfen.
 
-**Q: My scheduled task says "running" forever.**
-A: Either it hit the timeout (raise it in the schedule edit) or it
-deadlocked on `ask_user_for_file` / `ask_user` (scheduled tasks can't
-prompt). Use **cancel** on the row and rewrite the task without
-interactive tools.
+**F: Meine geplante Aufgabe steht ewig auf „läuft".**
+A: Entweder Timeout erreicht (im Zeitplan erhöhen) oder sie hängt an
+`ask_user_for_file` / `ask_user` (geplante Aufgaben können nicht
+nachfragen). **Abbrechen** in der Zeile und die Aufgabe ohne interaktive
+Tools neu schreiben.
 
-**Q: I don't see my project memory in chat.**
-A: Three checks:
-1. Is the chat actually inside that project? Open the chat → project
-   badge should show the project name.
-2. Has the project synced? Open the project → **Sync status**.
-3. Is research_mode set correctly? Q&A use cases need it ON; codegen
-   keeps it OFF.
+**F: Ich sehe mein Projektgedächtnis nicht im Chat.**
+A: Drei Prüfungen:
+1. Ist der Chat wirklich im Projekt? Chat öffnen → Projekt-Badge sollte
+   den Projektnamen zeigen.
+2. Wurde das Projekt synchronisiert? Projekt öffnen → **Sync-Verlauf**.
+3. Ist der Recherche-Modus richtig gesetzt? Q&A braucht ihn AN; Codegen AUS.
 
-**Q: The chat says "Context window is getting full".**
-A: Click **Compact now** in the warning banner, or the ✂️ icon in the
-status bar. The LCM (Lossless Context Manager) will summarize older
-turns; nothing is lost (originals stay searchable) but the live
-conversation shrinks.
+**F: Der Chat sagt „Kontextfenster wird voll".**
+A: **Jetzt verdichten** im Warnbanner klicken oder das ✂️-Symbol in der
+Statusleiste. Der LCM (Lossless Context Manager) fasst ältere Turns
+zusammen; nichts geht verloren (Originale bleiben durchsuchbar), aber die
+aktive Konversation schrumpft.
 
-**Q: Translation lost my formatting.**
-A: For `.docx` / `.pptx`, formatting is preserved in-place. For PDFs,
-the result comes back as `.docx` (PDFs aren't directly editable). If
-the source PDF was scanned (image-based), OCR ran first and some
-layouts may have been lost — there's no fix for that on the PDF side.
+**F: Was bedeuten die farbigen Badges an Web-Abrufen (raw / markitdown /
+crawl4ai)?**
+A: Sie zeigen, **wie** `web_fetch` den Inhalt geholt hat: `raw` (keine
+Konvertierung), `markitdown` (HTML→Markdown) oder `crawl4ai` (per
+Headless-Browser gerendert — für JS-Seiten, die sonst leer bleiben). Rein
+informativ.
 
-**Q: How do I get the model to cite its sources?**
-A: Use a project with **research mode ON**. The model is then required
-to cite per-claim with verbatim quotes from the project's documents,
-and the server-side validator catches uncited claims.
+**F: Übersetzung hat meine Formatierung verloren.**
+A: Bei `.docx` / `.pptx` bleibt die Formatierung in-place erhalten. Bei
+PDFs kommt das Ergebnis als `.docx` zurück (PDFs sind nicht direkt
+editierbar). War das Quell-PDF gescannt (bildbasiert), lief zuerst OCR und
+manche Layouts gehen verloren — dafür gibt es PDF-seitig keine Lösung.
 
-**Q: My quota turned red.**
-A: Either daily or monthly cap exceeded. Click the status-bar quota
-pill for breakdown. Enforcement mode determines behavior:
-- `warn_only` — you keep going, just visible warning
-- `force_local` — cloud models silently swap to a local fallback
-- `hard_block` — chat refuses until reset
+**F: Wie bringe ich das Modell dazu, Quellen zu zitieren?**
+A: Ein Projekt mit **Recherche-Modus AN** nutzen. Dann muss das Modell pro
+Aussage mit wörtlichem Zitat aus den Projektdokumenten belegen, und der
+serverseitige Validator fängt unbelegte Aussagen ab.
 
-**Q: The model picked the wrong document.**
-A: Open the right-panel **References** tab to see which files it read.
-If it grabbed the wrong one, point it explicitly: *"Read
-`projects/X/ingested/<filename>.pdf` and answer from there only."*
+**F: Mein Kontingent ist rot.**
+A: Tages- oder Monats-Limit überschritten. Auf die Kontingent-Pille in der
+Statusleiste klicken für die Aufschlüsselung. Der Durchsetzungsmodus
+bestimmt das Verhalten:
+- `warn_only` — es geht weiter, nur eine sichtbare Warnung
+- `force_local` — Cloud-Modelle wechseln still auf ein lokales Fallback
+- `hard_block` — Chat verweigert bis zum Reset
 
-**Q: How do I share a chat with my team?**
-A: Chat menu (⋯) → **Share** → set visibility to **Team**. They'll see
-it under Chats with your name as owner. For workflows, projects,
-schedules, artifacts — same share menu wherever the object is listed.
+**F: Das Modell hat das falsche Dokument gewählt.**
+A: Im rechten Panel den **Referenzen**-Tab öffnen, um zu sehen, welche
+Dateien es gelesen hat. Bei der falschen explizit hinweisen: *„Lies
+`projects/X/ingested/<dateiname>.pdf` und antworte nur daraus."*
 
-**Q: How do I recover from "PII detected — choose action"?**
-A: The pre-send modal offers:
-- **Stay** (block, edit yourself)
-- **Proceed local** (route to a local model; data stays on-device)
-- **Proceed pseudonymized** (PII replaced with tokens; an admin-only
-  decrypt map is saved in case you need to audit later)
-- **Whitelist** — for one-off allowlisting (e.g. your own email
-  address in your own messages)
+**F: Wie teile ich einen Chat mit meinem Team?**
+A: Chat-Menü (⋯) → **Teilen** → Sichtbarkeit auf **Team** setzen. Sie sehen
+ihn unter Chats mit deinem Namen als Eigentümer. Für Workflows, Projekte,
+geplante Aufgaben, Artifacts — dasselbe Teilen-Menü überall.
 
-**Q: Can the agent see what I uploaded?**
-A: Yes — uploads land in the chat's session folder. Reachable via
-`read_document` (rich formats) or `read_file` (plain text). The right
-panel **Attachments** tab shows everything available.
+**F: Wie erhole ich mich von „PII erkannt — Aktion wählen"?**
+A: Das Modal vor dem Senden bietet:
+- **Bleiben** (blockieren, selbst bearbeiten)
+- **Lokal fortfahren** (an ein lokales Modell; Daten bleiben auf dem Gerät)
+- **Pseudonymisiert fortfahren** (PII durch Tokens ersetzt; eine
+  Admin-Decrypt-Map wird für späteres Audit gespeichert)
+- **Whitelist** — einmaliges Erlauben (z. B. die eigene E-Mail-Adresse)
 
-**Q: Why is the same prompt cheaper after the first run?**
-A: Prompt cache + warmup KV-prefix. The first turn of a fresh session
-warms the cache; subsequent turns are faster and cheaper as long as
-the system prompt stays stable.
+**F: Kann der Agent sehen, was ich hochgeladen habe?**
+A: Ja — Uploads landen im Sitzungsordner. Erreichbar über `read_document`
+(reiche Formate) oder `read_file` (Klartext). Der **Anhänge**-Tab im
+rechten Panel zeigt alles Verfügbare.
 
----
-
-## Recipe: translate a Word document
-
-1. Sidebar → **Translation** → **Document** tab.
-2. Drag your `.docx` into the drop zone (or click to pick).
-3. **From**: leave as Auto-detect or pick explicitly. **To**: target language.
-4. Optional: pick a glossary (consistent terminology) and tone.
-5. Click **Translate**. Progress bar shows chunk-by-chunk progress.
-6. When done, **Download** appears next to the file in History below.
-   Original formatting (headings, tables, footnotes) is preserved.
-
-**Tip**: For long documents, the chunking is automatic. If you have a
-multi-language glossary (legal terms, brand names), create it once via
-the **Glossaries** modal and reuse across documents.
-
-**If PDF**: drop the PDF in the same tab. It's converted to `.docx`
-first, then translated. The output is `.docx`, not `.pdf` — PDFs are
-not round-trippable.
+**F: Warum ist derselbe Prompt nach dem ersten Lauf günstiger?**
+A: Prompt-Cache + Warmup-KV-Prefix. Der erste Turn einer frischen Sitzung
+wärmt den Cache; Folge-Turns sind schneller und günstiger, solange der
+System-Prompt stabil bleibt.
 
 ---
 
-## Recipe: compare two Excel files (do column X differ?)
+## Rezept: ein Word-Dokument übersetzen
 
-This is a chat task, not a Translation feature. Workflow:
+1. Seitenleiste → **Übersetzung** → **Dokument**-Tab.
+2. `.docx` in die Ablagezone ziehen (oder klicken zum Auswählen).
+3. **Von**: Auto-Erkennung lassen oder wählen. **Nach**: Zielsprache.
+4. Optional: Glossar (konsistente Terminologie) und Ton wählen.
+5. **Übersetzen** klicken. Der Fortschrittsbalken zeigt Chunk für Chunk.
+6. Fertig → **Herunterladen** erscheint neben der Datei im Verlauf darunter.
+   Originalformatierung (Überschriften, Tabellen, Fußnoten) bleibt erhalten.
 
-1. Open a new chat. Pick a model that handles code well (any
-   reasoning-capable model is fine).
-2. 📎 Attach both `.xlsx` files.
+**Tipp**: Bei langen Dokumenten ist das Chunking automatisch. Bei einem
+mehrsprachigen Glossar (Rechtsbegriffe, Markennamen) dieses einmal über das
+**Glossare**-Modal anlegen und über Dokumente hinweg wiederverwenden.
+
+**Bei PDF**: das PDF im selben Tab ablegen. Es wird zuerst in `.docx`
+konvertiert, dann übersetzt. Die Ausgabe ist `.docx`, nicht `.pdf`.
+
+---
+
+## Rezept: zwei Excel-Dateien vergleichen
+
+Das ist eine Chat-Aufgabe, keine Übersetzungs-Funktion:
+
+1. Neuen Chat öffnen. Ein Modell wählen, das gut mit Code umgeht.
+2. 📎 Beide `.xlsx`-Dateien anhängen.
 3. Prompt:
-   > Compare `file_a.xlsx` and `file_b.xlsx`. They each have a column
-   > `customer_id`. List rows where the value of column `amount`
-   > differs between the two files for the same `customer_id`. Output
-   > a CSV with columns `customer_id, amount_a, amount_b, delta`.
+   > Vergleiche `datei_a.xlsx` und `datei_b.xlsx`. Beide haben eine Spalte
+   > `customer_id`. Liste die Zeilen, in denen sich der Wert von `amount`
+   > zwischen den Dateien bei gleicher `customer_id` unterscheidet. Gib eine
+   > CSV mit den Spalten `customer_id, amount_a, amount_b, delta` aus.
+4. Der Agent liest beide mit `read_document` (oder `python_exec` + pandas),
+   erzeugt den Vergleich und speichert die CSV als Artifact, herunterladbar
+   im **Dateien**-Tab des rechten Panels.
 
-4. The agent reads both with `read_document` (or `python_exec` +
-   pandas if it picks that path), produces the comparison, and saves
-   the CSV as an artifact you can download from the right panel
-   **Files** tab.
-
-**Tip**: If the files are large or sheet structure is unusual, ask for
-a header preview first: *"Show me the first 3 rows of each so we agree
-on column names."* Then issue the comparison.
-
-**Tip**: For a recurring comparison (e.g. nightly diff of two reports),
-make it a scheduled task. Attach both files to the schedule, prompt
-identical to above, schedule `0 7 * * *`, tool_profile `interactive`.
+**Tipp**: Für einen wiederkehrenden Vergleich daraus eine geplante Aufgabe
+machen — beide Dateien anhängen, Prompt wie oben, Zeitplan `0 7 * * *`,
+Tool-Profil `interactive`.
 
 ---
 
-## Recipe: set up a daily email summary
+## Rezept: tägliche E-Mail-Zusammenfassung einrichten
 
-1. Sidebar → **Scheduled** → ＋ new.
-2. Fill in:
-   - **Name**: `daily_inbox_summary`
-   - **Task**:
-     > Use `gmail_search` to find unread messages from the last 24
-     > hours. For each thread that looks like it needs a reply, list
-     > the sender, subject, and one-sentence reason. Skip newsletters
-     > and notifications. Output as a markdown bullet list.
-   - **Schedule**: `0 8 * * *`
-   - **Model**: any capable model (locally hosted is fine — Gmail
-     content stays cheaper)
-   - **Tool profile**: `interactive` (needs gmail tools)
-3. Save. Click **run now** to test once. Check the run detail for the
-   output.
-4. If the output is good, leave it. It'll fire daily at 08:00.
+1. Seitenleiste → **Geplante Aufgaben** → ＋ neu.
+2. Ausfüllen:
+   - **Name**: `tägliche_inbox_zusammenfassung`
+   - **Aufgabe**:
+     > Nutze `gmail_search`, um ungelesene Nachrichten der letzten 24 h zu
+     > finden. Für jeden Thread, der eine Antwort zu brauchen scheint,
+     > liste Absender, Betreff und einen Ein-Satz-Grund. Überspringe
+     > Newsletter und Benachrichtigungen. Gib eine Markdown-Liste aus.
+   - **Zeitplan**: `0 8 * * *`
+   - **Modell**: ein fähiges Modell (lokal ist gut)
+   - **Tool-Profil**: `interactive` (braucht die Gmail-Tools)
+3. Speichern. **Jetzt ausführen** klicken zum Testen. Lauf-Detail prüfen.
+4. Passt die Ausgabe, stehen lassen — feuert täglich um 08:00.
 
-**Tip**: Pipe the result somewhere actionable — modify the task to
-`gmail_send` a summary email to yourself, or write a markdown file to
-your Notes folder.
+**Tipp**: Das Ergebnis an etwas Umsetzbares schicken — die Aufgabe so
+ändern, dass sie eine Zusammenfassung per `gmail_send` an dich selbst
+schickt.
 
 ---
 
-## Recipe: build a project that answers from a folder of PDFs
+## Rezept: ein Projekt bauen, das aus einem PDF-Ordner antwortet
 
-1. Sidebar → **Projects** → ＋ new. Name it (e.g. `gdpr_policies`).
-2. Open the project. **Add input folder** → point at the directory
-   containing the PDFs. Check **recursive** if subdirs matter.
-3. Click **Sync now**. Wait for the sync to complete (status panel
-   shows progress; large folders take minutes).
-4. (Optional) Knowledge graph extraction runs automatically if
-   enabled; that takes longer. Watch the **Knowledge Graph** button on
-   the project page once it lights up.
-5. Make sure **Research mode** is ON (top of the project page).
-6. Click **New chat** from the project. Ask your question.
-7. The model is now required to cite per-claim; you'll see
-   `[Quelle: ... — "..."]` brackets in the response. Click any to
-   verify against the source.
+1. Seitenleiste → **Projekte** → ＋ neu. Benennen (z. B. `gdpr_richtlinien`).
+2. Projekt öffnen. **Eingabeordner hinzufügen** → auf das Verzeichnis mit
+   den PDFs zeigen. **Rekursiv** ankreuzen, falls Unterordner zählen.
+3. **Jetzt synchronisieren** klicken. Auf Abschluss warten (Sync-Verlauf
+   zeigt Fortschritt; große Ordner dauern Minuten).
+4. (Optional) Die KG-Extraktion läuft automatisch, falls aktiviert; das
+   dauert länger. Den **Knowledge Graph**-Knopf beobachten.
+5. Sicherstellen, dass der **Recherche-Modus** AN ist.
+6. **Neuer Chat** aus dem Projekt. Frage stellen.
+7. Das Modell muss nun pro Aussage zitieren; in der Antwort erscheinen
+   `[Quelle: … — "…"]`-Klammern. Zum Prüfen auf eine klicken.
 
-**Tip**: If the model refuses with "no relevant memory", broaden your
-query, or check that sync actually ingested the documents (project →
-**Docs** tab lists them).
+**Tipp**: Verweigert das Modell mit „kein relevantes Gedächtnis", die
+Anfrage breiter fassen oder prüfen, ob der Sync die Dokumente wirklich
+eingespeist hat (Projekt → **Dateien**-Tab listet sie).
 
-**Tip**: Re-sync after adding/removing files. Use **Full resync** only
-when document content changes drastically (renames, restructured PDFs)
-— it's expensive.
+**Tipp**: Nach Hinzufügen/Entfernen von Dateien neu synchronisieren.
+**Vollständig neu synchronisieren** nur, wenn sich Inhalte drastisch ändern
+— es ist teuer.
 
 ---
 
-## Best practices
+## Best Practices
 
-**For chat:**
-- Set save-to-memory to **auto** for general chats — the classifier
-  keeps useful facts, drops chitchat.
-- For high-signal projects (research, decisions you'll reference later),
-  switch to **on** and review per-turn from the 🌐 menu.
-- Use **refine** (✨) when your draft is messy — it polishes without
-  changing meaning.
-- Caveman mode is for "give me one line, nothing else."
+**Für Chat:**
+- In-Gedächtnis-speichern auf **auto** für allgemeine Chats — der
+  Klassifizierer behält Nützliches, verwirft Smalltalk.
+- Für signalstarke Projekte (Forschung, Entscheidungen) auf **an** und pro
+  Turn über das 🌐-Menü prüfen.
+- **Verfeinern** (✨) bei unsauberem Entwurf — poliert ohne Sinnänderung.
+- Caveman-Modus für „gib mir eine Zeile, sonst nichts."
 
-**For projects:**
-- Research mode ON is the right default for Q&A; OFF for codegen.
-- Keep `instructions` short — it goes into the system prompt every turn.
-- Trust the citation validator — if the model produces uncited claims
-  in a research-mode project, server-side checks catch it and request
-  a re-round.
+**Für Projekte:**
+- Recherche-Modus AN ist der richtige Standard für Q&A; AUS für Codegen.
+- `instructions` kurz halten — geht jeden Turn in den System-Prompt.
+- Dem Zitat-Validator vertrauen — unbelegte Aussagen in einem
+  Recherche-Modus-Projekt werden serverseitig abgefangen.
 
-**For scheduled tasks:**
-- Be specific about deliverable format ("output a markdown table",
-  "save to `report.md`"). Vague tasks produce vague output.
-- Start with `tool_profile=""` (research-minimal). Promote to
-  `interactive` only if the task genuinely needs the full toolkit.
-- Test with **run now** before letting cron run it.
-- Pin a model — don't leave it on "default" if you care about cost.
+**Für geplante Aufgaben:**
+- Konkret zum Ausgabeformat sein („gib eine Markdown-Tabelle aus",
+  „speichere nach `bericht.md`"). Vage Aufgaben → vage Ausgabe.
+- Mit Tool-Profil leer (research-minimal) starten. Nur bei echtem Bedarf
+  auf `interactive` hochstufen.
+- Mit **Jetzt ausführen** testen, bevor Cron läuft.
+- Ein Modell festlegen — nicht auf „Standard" lassen, wenn Kosten zählen.
 
-**For attachments:**
-- For binary files (PDF, docx, xlsx, …), the model uses `read_document`
-  which goes through markitdown / Mistral OCR. Quality varies; if a
-  table comes out garbled, ask for a re-read with explicit pagination.
-- Image-based PDFs need OCR (slow). Convert to text PDFs upstream if
-  you can.
+**Für Anhänge:**
+- Bei Binärdateien (PDF, docx, xlsx, …) nutzt das Modell `read_document`
+  über markitdown / Mistral OCR. Qualität schwankt; kommt eine Tabelle
+  verstümmelt, ein erneutes Lesen mit expliziter Paginierung verlangen.
+- Bildbasierte PDFs brauchen OCR (langsam). Wenn möglich vorab in
+  Text-PDFs umwandeln.
 
-**For memory:**
-- Project memory (when research mode is on) is the highest-quality
-  signal. Use projects, don't try to teach the agent via long chats.
-- Your **user profile** is auto-maintained from your chat activity —
-  if it gets something wrong, edit `agents/main/user_profiles/<uid>.md`
-  directly or click "reset" in Profile doc.
+**Für Gedächtnis:**
+- Projektgedächtnis (bei Recherche-Modus an) ist das hochwertigste Signal.
+  Projekte nutzen, nicht über lange Chats „beibringen".
+- Das **Nutzerprofil** wird automatisch aus der Aktivität gepflegt — bei
+  Fehlern `agents/main/user_profiles/<uid>.md` direkt editieren oder in
+  Profildokument „zurücksetzen".
 
-**For privacy:**
-- Local models = data never leaves the host. The status bar shows a
-  badge for local vs cloud.
-- GDPR scanner runs before every cloud send. Trust it; tune category
-  actions if it's too aggressive.
+**Für Datenschutz:**
+- Lokale Modelle = Daten verlassen den Host nie. Die Statusleiste zeigt ein
+  Badge lokal vs. Cloud.
+- Der GDPR-Scanner läuft vor jedem Cloud-Versand. Ihm vertrauen; die
+  Kategorie-Aktionen anpassen, falls zu aggressiv.
 
 ---
 
-## Tips & tricks
+## Tipps & Tricks
 
-- **`/`-commands**: type `/` in the composer to open the slash menu —
-  agent commands, search, recent prompts.
-- **`@`-mentions**: in a team chat, `@username` notifies that user.
-- **Drag-drop**: works on the welcome composer, in-chat composer, and
-  the project ingest area.
-- **Multi-select**: hold `Cmd/Ctrl` and click multiple chats to
-  archive / delete / set project in bulk.
-- **Status bar context bar** fills as the conversation grows. At 60%
-  the LCM warning appears; at 80% you'll hit truncation. Compact early.
-- **Cost preview**: hover the model badge in the composer — it shows
-  per-1K-token cost. Useful before sending a long context to an
-  expensive model.
-- **Speed badge**: tells you tokens/sec. If a local model is slow,
-  check warmup status (status-bar warmup pill) — first turn after a
-  cold start is always slower.
-- **Reattach**: closing the browser tab mid-stream doesn't cancel.
-  Reopen the chat and it picks up the live stream.
-- **Translation glossaries** apply across all four translation tabs —
-  build them once.
-- **Schedule + workflow combo**: schedule the workflow, not individual
-  steps. The workflow handles approval gates; the schedule fires it
-  on cron.
-- **Hidden right panel**: top-right toggle. Auto-opens when a tool
-  produces a file.
-- **Inspect** (🔍 in status bar): when something looks weird, the
-  inspect modal shows model, system prompt size, message count, token
-  budget — fastest way to spot a misconfiguration.
-- **Search before chat**: sidebar **Search** is full-text + semantic
-  across every chat you can see. Often the answer you want is in a
-  chat you already had.
+- **`/`-Befehle**: `/` im Eingabefeld öffnet das Slash-Menü — Agent-Befehle,
+  Suche, letzte Prompts.
+- **`@`-Erwähnungen**: in einem Team-Chat benachrichtigt `@nutzername`.
+- **Drag&Drop**: im Willkommens-Eingabefeld, im Chat-Eingabefeld und im
+  Projekt-Upload-Bereich.
+- **Mehrfachauswahl**: `Cmd/Strg` halten und mehrere Chats anklicken, um
+  sie gesammelt zu archivieren / löschen / einem Projekt zuzuweisen.
+- **Kontextleiste** füllt sich mit der Konversation. Bei 60 % erscheint die
+  LCM-Warnung; bei 80 % droht Abschneiden. Früh verdichten.
+- **Kostenvorschau**: über das Modell-Badge im Eingabefeld schweben — zeigt
+  Kosten pro 1K Tokens. Nützlich vor langem Kontext an ein teures Modell.
+- **Geschwindigkeits-Badge**: Tokens/Sek. Ist ein lokales Modell langsam,
+  den Warmup-Status prüfen — der erste Turn nach Kaltstart ist langsamer.
+- **Wieder anhängen**: Browser-Tab mitten im Stream schließen bricht nicht
+  ab. Chat wieder öffnen, der Live-Stream wird fortgesetzt.
+- **Übersetzungs-Glossare** gelten über alle vier Übersetzungs-Tabs.
+- **Geplante Aufgabe + Workflow kombinieren**: den Workflow planen, nicht
+  einzelne Schritte. Der Workflow handhabt Freigabe-Gates.
+- **Inspizieren** (🔍 in der Statusleiste): wenn etwas seltsam aussieht,
+  zeigt das Inspect-Modal Modell, System-Prompt-Größe, Nachrichtenzahl,
+  Token-Budget — der schnellste Weg, eine Fehlkonfiguration zu finden.
+- **Brainy fragen**: für „wo finde ich…"/„wie geht…"-Fragen die schwebende
+  Sprechblase nutzen — sie kennt diese Oberfläche.
 
 ---
 
-## When to use what
+## Wann was nutzen
 
-| Goal | Use |
+| Ziel | Nutze |
 |---|---|
-| Quick question, no memory needed | New chat, any model |
-| Q&A from a document corpus | Project + research mode ON + ingest the docs |
-| Build code, draft text with context | Project + research mode OFF |
-| One-off file conversion / extraction | Chat with attachment |
-| Translate a document | Translation → Document tab |
-| Transcribe + translate audio | Translation → Audio/Video |
-| Recurring task ("every day…") | Scheduled |
-| Recurring task with approval gates | Workflow + schedule |
-| Cross-chat search | Sidebar Search |
-| Pin something for fast access | Favourite (★) |
-| Share work with team | Share menu → Team |
-| Privacy-sensitive content | Local model + GDPR scanner ON |
+| Schnelle Frage, kein Gedächtnis nötig | Neuer Chat, beliebiges Modell |
+| Q&A aus einem Dokumentkorpus | Projekt + Recherche-Modus AN + Dokumente einspeisen |
+| Code bauen, Text mit Kontext entwerfen | Projekt + Recherche-Modus AUS |
+| Einmalige Datei-Konvertierung/-Extraktion | Chat mit Anhang |
+| Antworten aus kuratierten Web-Quellen | Websuche-Tab → URLs markieren → senden |
+| Ein Dokument übersetzen | Übersetzung → Dokument-Tab |
+| Audio transkribieren + übersetzen | Übersetzung → Audio/Video |
+| Wiederkehrende Aufgabe („jeden Tag…") | Geplante Aufgaben |
+| Wiederkehrende Aufgabe mit Freigabe-Gates | Workflow + geplante Aufgabe |
+| Chat-übergreifende Suche | Seitenleiste Suche |
+| Etwas für Schnellzugriff anheften | Favorit (★) |
+| Arbeit mit Team teilen | Teilen-Menü → Team |
+| Datenschutzsensibler Inhalt | Lokales Modell + GDPR-Scanner AN |
+| „Wie funktioniert X hier?" beantwortet bekommen | Brainy (Sprechblase) |

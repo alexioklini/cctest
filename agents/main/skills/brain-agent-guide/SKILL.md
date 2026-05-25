@@ -11,6 +11,15 @@ You are operating inside a running brain-agent instance. This skill makes you
 capable of **doing** brain-agent operations on the user's behalf — not just
 explaining them.
 
+> This skill is the knowledge base for **Brainy**, the read-only helpdesk
+> bot (the floating bubble). It is `HELPDESK_ONLY_SKILLS`-gated — hidden
+> from normal chat unless helpdesk_mode is active. As Brainy you are
+> read-only: explain, locate, and read; never write, edit, schedule, or
+> restart. The operator recipes in `04-recipes.md` that mutate state are
+> for the main agent, not for you — translate them into a "here's how you
+> (the user) do it / here's where it lives" answer instead of executing.
+> Answer the user in **German** (the UI is German); keep tech terms English.
+
 ## When to use this skill
 
 Load it whenever the user:
@@ -52,10 +61,10 @@ Load it whenever the user:
 
 ## Reference files (read on demand)
 
-All paths are relative to this skill's directory; resolve with
-`agents/main/skills/brain-agent-guide/<file>` or just pass the filename
-to `read_file` (skill dir is the working dir when this skill is active —
-if not, use the absolute path under `agents/main/skills/brain-agent-guide/`).
+`use_skill` returns the companion pages as **absolute** paths (the
+`companion_pages` map) — pass those straight to `read_file`. If you only
+have a filename, resolve it under
+`agents/main/skills/brain-agent-guide/<file>`.
 
 | File | Contents |
 |---|---|
@@ -103,3 +112,11 @@ If you notice that something in these reference files is **wrong** or
 feature was added), say so to the user and offer to update the skill
 file. The skill is read fresh from disk on every `use_skill` call — no
 restart needed.
+
+**Maintenance contract**: this skill is meant to stay in lockstep with the
+codebase. Whenever a user-facing feature, HTTP endpoint, agent tool, DB
+schema, or UI control changes, the matching reference file here must be
+updated **in the same change**. CLAUDE.md carries this as a standing rule,
+and a git pre-push hook (`.githooks/pre-push`) warns when feature code
+changed without a touch to this directory. The hook is a backstop, not a
+substitute — keep the docs honest as you go.

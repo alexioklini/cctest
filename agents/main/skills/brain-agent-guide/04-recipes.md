@@ -198,10 +198,14 @@ curl -s -H "$AUTH" http://127.0.0.1:8420/v1/models | jq '.[] | {id, display_name
 curl -s -H "$AUTH" http://127.0.0.1:8420/v1/providers | jq
 ```
 
-Default model lives in `config.json → server.default_model`. To change:
+Default model lives in `config.json → default_model` (top-level, since
+9.21.4). The Settings → Server → Standardmodell dropdown saves it via
+`POST /v1/services/server`; that path persists it (no manual edit needed).
+To set it programmatically:
 ```bash
-# edit then:
-curl -s -H "$AUTH" -X POST http://127.0.0.1:8420/v1/restart
+curl -s -H "$AUTH" -H 'Content-Type: application/json' \
+  -X POST http://127.0.0.1:8420/v1/services/server \
+  -d '{"action":"save","default_model":"<model_id>"}'
 ```
 
 ---
@@ -260,6 +264,44 @@ curl -s -H "$AUTH" "http://127.0.0.1:8420/v1/services/log?name=mempalace-miner&l
 
 Available service names: `mempalace-miner`, `mempalace-chat-sync`,
 `mempalace-project-sync`, `user-profile`, `scheduler`, `telegram`.
+
+---
+
+## "Web search isn't working / check SearXNG + crawl4ai"
+
+```bash
+# Self-hosted SearXNG subprocess (backs searxng_search + the Websuche tab):
+curl -s -H "$AUTH" http://127.0.0.1:8420/v1/searxng/status | jq
+curl -s -H "$AUTH" http://127.0.0.1:8420/v1/searxng/engines | jq   # per-engine health
+curl -s -H "$AUTH" -X POST http://127.0.0.1:8420/v1/searxng/test-engines | jq
+curl -s -H "$AUTH" -X POST http://127.0.0.1:8420/v1/searxng/restart
+
+# crawl4ai headless render service (web_fetch fallback for JS pages, port 8422):
+curl -s -H "$AUTH" http://127.0.0.1:8420/v1/crawl4ai/status | jq
+curl -s -H "$AUTH" -X POST http://127.0.0.1:8420/v1/crawl4ai/restart
+
+# A raw search (no fetch, no LLM — same path the Websuche tab uses):
+curl -s -H "$AUTH" -H 'Content-Type: application/json' \
+  -X POST http://127.0.0.1:8420/v1/web/search -d '{"query":"<q>"}' | jq
+```
+
+If `searxng_search` returns nothing, check that the tool is enabled
+(`config.json → tool_settings.searxng_search.enabled` — default false) and
+that the subprocess is up. crawl4ai no-ops entirely unless
+`config.json → crawl4ai.auto_start` is set.
+
+---
+
+## "Show / clear Brainy's (helpdesk) conversation for a user"
+
+Brainy history is per-USER in `chats.db → helpdesk_history`:
+```bash
+sqlite3 -readonly agents/main/chats.db \
+  "SELECT datetime(created_at,'unixepoch','localtime'), role, substr(content,1,200)
+   FROM helpdesk_history WHERE user_id='<uid>' ORDER BY id DESC LIMIT 20;"
+```
+Brainy's config (admin): `GET/POST /v1/helpdesk/config`
+(`{enabled, model, max_rounds, system_prompt}`).
 
 ---
 

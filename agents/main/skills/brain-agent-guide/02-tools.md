@@ -8,7 +8,13 @@ dispatches via `engine.TOOL_DISPATCH` (or MCP fallback) → result returned.
 Tools are gated per-call by a 3-layer resolver:
 1. Global enable/deferred/purposes (admin-edited `config.json → tool_settings`).
 2. Per-agent override (`agent.json → token_config.tool_overrides.<name>`).
-3. Call purpose: `interactive | transform | memory_summary | research_minimal`.
+3. Call purpose: `interactive | transform | memory_summary |
+   research_minimal | helpdesk`.
+
+Brainy (the helpdesk bot) runs with `purpose='helpdesk'` and a fixed
+read-only tool set — see "Helpdesk tools" below. Since 9.22.0, the
+resolved tool names are also enforced at dispatch: `tool_mcp` rejects any
+`tool_use` not in the turn's allowed list before it runs.
 
 Deferred tools are hidden from the initial list and surfaced via `tool_search`.
 
@@ -52,8 +58,20 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
 
 ## Web / email
 
-- `web_fetch(url)` — GET, returns plain text
-- `exa_search(query, num_results?)` — semantic web search (Exa)
+- `web_fetch(url)` — GET one URL, returns its content tagged with a
+  `fetch_method`: `raw` (non-HTML, or HTML nothing converted) /
+  `markitdown` (our HTML→markdown) / `crawl4ai` (headless-browser render).
+  markitdown is tried first; the crawl4ai headless render fires **only**
+  when the converted text is near-empty (<30 chars) on an HTML GET — so
+  JS-rendered pages get rendered, static pages never pay the browser cost.
+  The chat view shows the method as a colored badge.
+- `exa_search(query, num_results?)` — semantic web search (Exa cloud, API
+  key). **Search-only**: returns title + link, no page content.
+- `searxng_search(query, num_results?, category?)` — self-hosted SearXNG
+  search (no API key). Returns `score` + ~300-char `snippet` per result,
+  plus an `infobox` when available. `category` accepts `news`. This is a
+  **standalone tool**, not an exa_search backend. Default-disabled at the
+  global gate — admin enables it in Settings → Tools.
 - `gmail_inbox` / `gmail_read(id)` / `gmail_search(q)` / `gmail_send` /
   `gmail_reply` — requires `gmail.json` configured
 
@@ -106,6 +124,24 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
 - `tool_search(query)` — find deferred tools. Returns name + schema for
   matching tools so the LLM can invoke them in the next round.
 
+## Helpdesk (Brainy-only)
+
+Only available when `purpose='helpdesk'` (the Brainy bubble). Not in normal
+chat. No args — they read scope from the request context (current user +
+session).
+
+- `helpdesk_session_info()` — facts about the chat session Brainy was
+  opened from (model, project, message count, …).
+- `helpdesk_user_context()` — the caller's profile / preferences.
+- `helpdesk_user_activity()` — the caller's recent chats / schedules /
+  usage.
+
+Brainy's full fixed read-only set (`_HELPDESK_TOOLS`): `use_skill`, the
+three `helpdesk_*` tools, `mempalace_query`, `read_document`, `read_file`,
+`list_directory`, `search_files`, `context_search`, `context_detail`,
+`context_recall`, `web_fetch`, `exa_search`, `searxng_search`. Every
+write/exec tool is deliberately excluded.
+
 ## User interaction
 
 - `ask_user(question)` — pause turn, wait for user reply (blocks via
@@ -138,7 +174,7 @@ documents     read_document write_document edit_document
 memory        mempalace_query save_chat_to_memory
               mempalace_kg_query mempalace_kg_search mempalace_kg_neighbors
 context       context_search context_detail context_recall
-web           web_fetch exa_search
+web           web_fetch exa_search searxng_search
 email         gmail_inbox gmail_read gmail_search gmail_send gmail_reply
 delegation    delegate_task task_status task_cancel
 code_graph    code_graph_build code_graph_query code_graph_impact

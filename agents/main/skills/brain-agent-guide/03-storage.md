@@ -34,7 +34,7 @@ agents/
                                # data_sessions, favourites, reactions,
                                # read_cursors, kg_extraction_log/progress/state,
                                # chat_mempalace_sync, closet_regen_progress,
-                               # project_sync_runs
+                               # project_sync_runs, helpdesk_history
     scheduler.db               # legacy / migrating
     schedules.db               # schedules, schedule_history, workflow_history
     costs.db                   # cost_log
@@ -58,9 +58,15 @@ agents/
 
 config.json                    # repo root: providers, models, server,
                                # tool_settings, gdpr_scanner, quotas, mempalace,
-                               # research_mode_disciplines, deleted_models
+                               # research_mode_disciplines, deleted_models,
+                               # default_model, searxng{url}, crawl4ai{auto_start,
+                               # url,venv_python}, helpdesk{enabled,model,
+                               # max_rounds,system_prompt}  (last three gitignored,
+                               # per-machine — supervisors no-op without them)
 mempalace.yaml                 # MemPalace palace_path + chat-sync config
 sidecar/                       # Anthropic SDK subprocess (separate venv)
+searxng/ + .venv_searxng       # self-hosted SearXNG (port 8088), gitignored
+crawl4ai/ + .venv_crawl4ai     # headless-render service (port 8422), gitignored
 ```
 
 ## Critical SQLite schemas
@@ -78,7 +84,8 @@ research_mode_override INTEGER (NULL=use project default),
 streaming_text TEXT, streaming_meta TEXT,
 extra_member_user_ids TEXT (JSON list),
 excluded_user_ids TEXT (JSON list),
-last_system_prompt TEXT, gdpr_action_pref TEXT
+last_system_prompt TEXT, gdpr_action_pref TEXT,
+allow_further_web INTEGER (0/1, sticky; lifts the Websuche tool lockout)
 ```
 
 Status values: `active | archived | note_chat` (note_chat = AI-editing
@@ -165,6 +172,16 @@ Used for Brain-restart turn recovery.
 Encrypted GDPR pseudonym maps. Decrypt with `pseudonym.key`.
 Admin only — see `/v1/sessions/<sid>/gdpr-maps[/<id>]`.
 
+### chats.db → helpdesk_history (Brainy conversation)
+```
+id INTEGER PK AUTOINCREMENT, session_id TEXT (vestigial, empty),
+user_id TEXT, role TEXT, content TEXT, created_at REAL
+```
+Index `idx_helpdesk_history_user(user_id, id)`. **Per-USER, not
+per-session** — Brainy's history follows the user across chats and is NOT
+cascade-dropped when a chat session is deleted. Served newest-first +
+cursor-paginated by `GET /v1/helpdesk/history`.
+
 ### context.db (LCM)
 Nodes + edges of the lossless context manager DAG. `nodes(id, session_id,
 depth, content, token_count, …)`, `edges(parent_id, child_id, kind)`.
@@ -193,6 +210,10 @@ Tree-sitter AST snapshots. `files(path, sha256, lang, …)`,
   with `<!-- brain-source: <abs path> -->` link back.
 - Chat attachments at upload time: `/tmp/brain-attachments/<sid>/<file>`,
   then promoted into artifacts on send.
+- Oversized tool results (>50KB) spill to
+  `agents/main/artifacts/<YYYY-MM-DD>_<sid_prefix>/tool-results/<tool_use_id>.txt`
+  (the in-context copy is truncated; full text served by
+  `GET /v1/tools/result`).
 - User profile: `agents/main/user_profiles/<uid>.md` +
   `<uid>.history/<ISO>.md` (capped 30).
 

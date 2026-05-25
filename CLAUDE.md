@@ -20,6 +20,10 @@ These rules apply to every task unless explicitly overridden. Bias: caution over
 
 Guidance for Claude Code in this repo. **Non-obvious invariants only** — factual catalogs (tool list, endpoints, config fields) live in the code; grep/read it.
 
+## Keeping the brain-agent-guide skill current
+
+`agents/main/skills/brain-agent-guide/` is the knowledge base **Brainy** (the read-only helpdesk bot) reads to answer users. It is NOT auto-derived from code — it drifts unless maintained. **Standing rule: when a change adds or alters a user-facing feature, an HTTP endpoint, an agent tool, a DB schema, or a UI control, update the matching skill file in the SAME change.** Map: `01-api.md` (endpoints), `02-tools.md` (agent tools + groups/purposes), `03-storage.md` (DB schemas + disk layout), `04-recipes.md` (operator how-tos), `05-internals.md` (architecture/behavior), `06-user-manual.md` (web-UI walkthrough + FAQ, **written in German** to match the UI; tech terms stay English per [[feedback_german_ui_everywhere]]), `SKILL.md` (routing). Bump the version in both places per [[feedback_version_two_places]]. A `git pre-push` hook (`.githooks/pre-push`, enabled via `git config core.hooksPath .githooks` — run once per clone) warns when watched feature code changed without a skill touch; it's a backstop, not a substitute. Override a false positive with `SKILL_DOC_OK=1 git push`.
+
 ## Repository Structure
 
 - `launcher.py` — Gateway CLI (start/stop/restart, launch frontends)
