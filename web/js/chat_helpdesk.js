@@ -8,8 +8,10 @@
    Model, exklusiver brain-agent-guide-Skill) — komplett getrennt
    vom Haupt-Chat, funktioniert auch während des Streamings.
 
-   Globals: brainyState, brainyToggleBuddy, brainyBuddyEnabled,
-   brainyOpen, brainyClose, brainySend, brainyRefreshBuddy.
+   Entry points: the composer crab buddy (buddy.js, when enabled) or the
+   composer '?' help button (when the buddy is off). Both call brainyOpen().
+
+   Globals: brainyState, brainyOpen, brainyClose, brainySend (+ render helpers).
    ═══════════════════════════════════════════════════════════ */
 
 const brainyState = {
@@ -19,27 +21,6 @@ const brainyState = {
   abort: null,            // AbortController for the in-flight ask
 };
 
-function brainyBuddyEnabled() {
-  // Default ON; the user can hide the floating buddy (then a composer
-  // help button takes over). Persisted in localStorage.
-  return localStorage.getItem('brainy-buddy-hidden') !== '1';
-}
-
-function brainyToggleBuddy() {
-  const hidden = brainyBuddyEnabled();   // currently shown → will hide
-  localStorage.setItem('brainy-buddy-hidden', hidden ? '1' : '0');
-  brainyRefreshBuddy();
-}
-
-// Show/hide the floating buddy depending on the toggle + whether a chat is open.
-function brainyRefreshBuddy() {
-  const buddy = document.getElementById('brainy-buddy');
-  if (!buddy) return;
-  const inChat = (typeof state !== 'undefined') && state.currentView === 'chat'
-                 && !!state.activeChat?.sessionId;
-  buddy.style.display = (inChat && brainyBuddyEnabled()) ? 'flex' : 'none';
-}
-
 /* ── Open / close the modal ─────────────────────────────────── */
 
 function brainyOpen() {
@@ -48,38 +29,49 @@ function brainyOpen() {
   brainyState.sessionId = sid;
   brainyState.open = true;
 
+  // Rebuild each open so the avatar reflects the user's current buddy species.
   let overlay = document.getElementById('brainy-overlay');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = 'brainy-overlay';
-    overlay.className = 'modal-overlay brainy-overlay';
-    overlay.onclick = (e) => { if (e.target === overlay) brainyClose(); };
-    overlay.innerHTML = `
-      <div class="modal-content brainy-modal">
-        <div class="brainy-header">
-          <span class="brainy-avatar" aria-hidden="true">🧠</span>
-          <div class="brainy-header-text">
-            <div class="brainy-title">Brainy</div>
-            <div class="brainy-subtitle">Dein freundlicher Helfer für brain-agent</div>
-          </div>
-          <button class="modal-close" onclick="brainyClose()" title="Schließen">&times;</button>
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'brainy-overlay';
+  overlay.className = 'modal-overlay brainy-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) brainyClose(); };
+  const accent = (typeof buddyColor === 'function') ? buddyColor() : 'var(--accent-brand)';
+  overlay.innerHTML = `
+    <div class="modal-content brainy-modal">
+      <div class="brainy-header" style="background:linear-gradient(135deg, ${accent}, color-mix(in srgb, ${accent} 70%, #000 30%))">
+        <span class="brainy-avatar" aria-hidden="true" style="color:#fff">${brainyAvatarHTML(true)}</span>
+        <div class="brainy-header-text">
+          <div class="brainy-title">Brainy</div>
+          <div class="brainy-subtitle">Dein freundlicher Helfer für brain-agent</div>
         </div>
-        <div class="brainy-messages" id="brainy-messages"></div>
-        <div class="brainy-input-row">
-          <textarea id="brainy-input" class="brainy-input" rows="1"
-                    placeholder="Frag Brainy etwas über brain-agent oder diese Sitzung…"
-                    oninput="brainyAutogrow(this)"
-                    onkeydown="brainyInputKey(event)"></textarea>
-          <button class="brainy-send" id="brainy-send-btn" onclick="brainySend()" title="Senden">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-          </button>
-        </div>
-      </div>`;
-    document.body.appendChild(overlay);
-  }
+        <button class="modal-close" onclick="brainyClose()" title="Schließen">&times;</button>
+      </div>
+      <div class="brainy-messages" id="brainy-messages"></div>
+      <div class="brainy-input-row">
+        <textarea id="brainy-input" class="brainy-input" rows="1"
+                  placeholder="Frag Brainy etwas über brain-agent oder diese Sitzung…"
+                  oninput="brainyAutogrow(this)"
+                  onkeydown="brainyInputKey(event)"></textarea>
+        <button class="brainy-send" id="brainy-send-btn" onclick="brainySend()" title="Senden">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
   overlay.style.display = 'flex';
   brainyLoadHistory();
-  setTimeout(() => document.getElementById('brainy-input')?.focus(), 80);
+  setTimeout(() => { const el = document.getElementById('brainy-input'); if (el) { brainyAutogrow(el); el.focus(); } }, 80);
+}
+
+// Brainy's avatar IS the user's buddy (crab etc.). Falls back to 🧠 when the
+// buddy is off / unavailable. `inheritColor` keeps currentColor (header = white);
+// otherwise tints with the species color (bubbles).
+function brainyAvatarHTML(inheritColor) {
+  const svg = (typeof buddySvgMarkup === 'function') ? buddySvgMarkup() : '';
+  if (!svg) return '🧠';
+  const col = inheritColor ? '' : ` style="color:${(typeof buddyColor==='function')?buddyColor():'currentColor'}"`;
+  return `<span class="brainy-avatar-buddy"${col}>${svg}</span>`;
 }
 
 function brainyClose() {
@@ -122,7 +114,7 @@ function brainyAppendBubble(role, text) {
   if (role !== 'user') {
     const av = document.createElement('span');
     av.className = 'brainy-bubble-avatar';
-    av.textContent = '🧠';
+    av.innerHTML = brainyAvatarHTML();   // the user's buddy (crab etc.)
     wrap.appendChild(av);
   }
   const body = document.createElement('div');

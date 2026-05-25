@@ -148,6 +148,24 @@ function buddyDefaultSpecies(userId) {
   return BUDDY_IDS[(h >>> 0) % BUDDY_IDS.length];
 }
 
+// Standalone SVG markup for a species (or the current user's species). Used by
+// Brainy (the helpdesk modal) so its avatar IS the user's buddy. Returns '' if
+// the species is unknown / buddy is off — caller falls back to an emoji.
+function buddySvgMarkup(species) {
+  const sp = BUDDY_SPECIES[species || buddyResolveSpecies()];
+  if (!sp) return '';
+  return `<svg class="b-svg" viewBox="0 0 40 40" fill="none" `
+    + `stroke="currentColor" stroke-width="2" stroke-linecap="round" `
+    + `stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">`
+    + sp.body + buddyFace(sp.face || {})
+    + `</svg>`;
+}
+// The themed accent color of the current user's species (for Brainy's header).
+function buddyColor(species) {
+  const sp = BUDDY_SPECIES[species || buddyResolveSpecies()];
+  return (sp && sp.color) || 'var(--accent-brand)';
+}
+
 // Resolve the species the current user should see, or null when disabled.
 function buddyResolveSpecies() {
   // `state` is a top-level `const` in state.js — it is NOT a property of
@@ -219,7 +237,41 @@ class FloatingBuddy {
       `stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">` +
       sp.body + buddyFace(sp.face || {}) +
       `</svg>`;
-    this._els().forEach(el => { el.innerHTML = svg; });
+    this._els().forEach(el => {
+      el.innerHTML = svg;
+      // Clicking the buddy opens Brainy (the helpdesk bot) + flashes an
+      // "active" state. Wired per-draw; guarded so re-draws don't stack
+      // listeners. The buddy is the Brainy entry point whenever it's enabled,
+      // which is why the composer '?' help button hides while a buddy is shown.
+      if (!el._brainyWired) {
+        el._brainyWired = true;
+        el.style.cursor = 'pointer';
+        el.title = 'Brainy fragen — dein Helfer für brain-agent';
+        el.addEventListener('click', () => {
+          this.flashActive();
+          if (typeof brainyOpen === 'function') brainyOpen();
+        });
+      }
+    });
+  }
+
+  // Brief "active" fade on left-click: pop to full opacity + an active class
+  // the CSS can style, then ease back to the idle opacity.
+  flashActive() {
+    this._els().forEach(el => el.classList.add('buddy-active'));
+    this._setOp(1);
+    if (this._activeTimer) clearTimeout(this._activeTimer);
+    this._activeTimer = setTimeout(() => {
+      this._els().forEach(el => el.classList.remove('buddy-active'));
+      if (this.phase === 'idle') this._setOp(BUDDY_OP_DEEP_IDLE);
+    }, 1400);
+  }
+
+  // Buddy enabled ⇒ it IS the Brainy entry point, so hide the composer '?'
+  // help button (redundant). Buddy off ⇒ show '?' as the fallback entry.
+  _syncHelpButtons(buddyOn) {
+    document.querySelectorAll('[data-id="btn-brainy-help"], #btn-brainy-help')
+      .forEach(b => { b.style.display = buddyOn ? 'none' : ''; });
   }
   // Toggle the phase-<name> class on each buddy host so CSS shows the right
   // expression for the current phase.
@@ -297,6 +349,7 @@ class FloatingBuddy {
       this.species = null;
       this._show(false);
       this._setBubble('');
+      this._syncHelpButtons(false);   // buddy off → show '?' fallback
       return;
     }
     this.species = species;
@@ -307,6 +360,7 @@ class FloatingBuddy {
     this._setColor(BUDDY_SPECIES[species].color);
     this._draw(species);
     this._setPhaseClass('idle');
+    this._syncHelpButtons(true);    // buddy on → it's the Brainy entry; hide '?'
     // Briefly surface the (possibly just-changed) buddy so a species switch in
     // settings is actually visible — at deep-idle 0.08 the change is invisible.
     // Pulse to visible, then ease back to deep-idle after a couple seconds
