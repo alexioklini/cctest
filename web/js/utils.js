@@ -91,20 +91,20 @@ async function showConfirm(message, title = '') {
     title,
     message,
     buttons: [
-      { label: 'Cancel', value: 'cancel' },
+      { label: 'Abbrechen', value: 'cancel' },
       { label: 'OK', value: 'ok', primary: true },
     ],
   });
   return result === 'ok';
 }
 
-async function showConfirmDanger(message, title = '', confirmLabel = 'Delete') {
+async function showConfirmDanger(message, title = '', confirmLabel = 'Löschen') {
   const result = await showDialog({
     title,
     message,
     danger: true,
     buttons: [
-      { label: 'Cancel', value: 'cancel' },
+      { label: 'Abbrechen', value: 'cancel' },
       { label: confirmLabel, value: 'ok', primary: true, danger: true },
     ],
   });
@@ -125,7 +125,7 @@ async function showPrompt(message, defaultValue = '', title = '') {
     message,
     input: { defaultValue },
     buttons: [
-      { label: 'Cancel', value: 'cancel' },
+      { label: 'Abbrechen', value: 'cancel' },
       { label: 'OK', value: 'ok', primary: true },
     ],
   });
@@ -134,16 +134,16 @@ async function showPrompt(message, defaultValue = '', title = '') {
 function relativeTime(ts) {
   if (!ts) return '';
   const diff = (Date.now() - new Date(ts).getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
-  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
-  if (diff < 604800) return Math.floor(diff/86400) + 'd ago';
+  if (diff < 60) return 'gerade eben';
+  if (diff < 3600) return 'vor ' + Math.floor(diff/60) + ' Min.';
+  if (diff < 86400) return 'vor ' + Math.floor(diff/3600) + ' Std.';
+  if (diff < 604800) return 'vor ' + Math.floor(diff/86400) + ' Tg.';
   return new Date(ts).toLocaleDateString();
 }
 
 function modelShortName(modelId, withProvider = true) {
   if (!modelId) return '';
-  if (modelId === 'auto') return '✨ Auto';
+  if (modelId === 'auto') return '✨ Auto';  // 'Auto' kept — product term
   const cfg = state.modelsConfig?.models?.[modelId];
   let name = '';
   // Check display_name first (user-configurable), then shortname
@@ -180,7 +180,7 @@ function modelShortName(modelId, withProvider = true) {
 // Falls back to provider-qualified short name when empty.
 function modelDescription(modelId) {
   if (!modelId) return '';
-  if (modelId === 'auto') return 'Automatically picks the best-fitting model for each message';
+  if (modelId === 'auto') return 'Wählt für jede Nachricht automatisch das am besten passende Modell';
   const cfg = state.modelsConfig?.models?.[modelId];
   const desc = (cfg?.description || '').trim();
   if (desc) return desc;
@@ -318,14 +318,14 @@ const PIIScanner = {
     personal:'warn', bare_id:'warn',
   },
   categoryLabels: {
-    secrets:'Secrets & API keys',
-    national_id:'National IDs (checksum-verified)',
-    national_id_ctx:'ID-like values (context-matched)',
-    financial:'Financial (IBAN, cards, accounts)',
-    contact:'Contact info (emails, phone, names, addresses, organisations)',
-    network:'Network addresses (IP)',
-    personal:'Biographical (passport, DOB)',
-    bare_id:'Bare numeric identifiers',
+    secrets:'Secrets & API-Keys',
+    national_id:'Nationale IDs (prüfsummengeprüft)',
+    national_id_ctx:'ID-ähnliche Werte (kontextbasiert)',
+    financial:'Finanzen (IBAN, Karten, Konten)',
+    contact:'Kontaktdaten (E-Mails, Telefon, Namen, Adressen, Organisationen)',
+    network:'Netzwerkadressen (IP)',
+    personal:'Biografisch (Reisepass, Geburtsdatum)',
+    bare_id:'Reine numerische Bezeichner',
   },
 
   // Current policy — refreshed from /v1/services/status. Defaults are safe.
@@ -371,50 +371,50 @@ const PIIScanner = {
   // Each rule: {id, label, regex, validate?} — validate() reduces false positives.
   rules: [
     // ── Tier 2: cloud secrets & API keys (distinct prefixes → high priority) ──
-    { id:'pem_private_key', label:'Private key',
+    { id:'pem_private_key', label:'Privater Schlüssel',
       regex:/-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]{1,10000}?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/g },
-    { id:'aws_access_key', label:'AWS access key ID',
+    { id:'aws_access_key', label:'AWS-Access-Key-ID',
       regex:/(?<![A-Z0-9])(?:AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA|ABIA|ACCA)[A-Z0-9]{16}(?![A-Z0-9])/g },
-    { id:'aws_secret_key', label:'AWS secret access key',
+    { id:'aws_secret_key', label:'AWS Secret Access Key',
       // Context-gated: 40-char b64-like string preceded by aws-secret cue + separator
       regex:/(?:aws_secret_access_key|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?secret)[\s:="']*([A-Za-z0-9\/+]{40})(?![A-Za-z0-9\/+=])/gi },
-    { id:'github_app_token', label:'GitHub app token',
+    { id:'github_app_token', label:'GitHub-App-Token',
       // More specific (longer/new format) — must come before generic ghp_ rule
       regex:/\bgithub_pat_[A-Za-z0-9_]{82}\b/g },
-    { id:'github_pat', label:'GitHub personal access token',
+    { id:'github_pat', label:'Persönliches GitHub-Zugriffstoken',
       regex:/\bgh[pousr]_[A-Za-z0-9]{36,255}\b/g },
     { id:'slack_token', label:'Slack token',
       regex:/\bxox[abprs]-[A-Za-z0-9-]{10,200}\b/g },
     { id:'slack_webhook', label:'Slack webhook URL',
       regex:/https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]+/g },
-    { id:'google_api_key', label:'Google API key',
+    { id:'google_api_key', label:'Google-API-Key',
       regex:/\bAIza[0-9A-Za-z_\-]{35}\b/g },
-    { id:'google_oauth_client', label:'Google OAuth client ID',
+    { id:'google_oauth_client', label:'Google-OAuth-Client-ID',
       regex:/\b\d{12}-[a-z0-9]{32}\.apps\.googleusercontent\.com\b/g },
-    { id:'stripe_live', label:'Stripe live key',
+    { id:'stripe_live', label:'Stripe-Live-Key',
       regex:/\b(?:sk|rk|pk)_live_[0-9a-zA-Z]{24,99}\b/g },
-    { id:'stripe_test', label:'Stripe test key',
+    { id:'stripe_test', label:'Stripe-Test-Key',
       regex:/\b(?:sk|rk|pk)_test_[0-9a-zA-Z]{24,99}\b/g },
-    { id:'openai_key', label:'OpenAI API key',
+    { id:'openai_key', label:'OpenAI-API-Key',
       regex:/\bsk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20,}\b/g },
-    { id:'anthropic_key', label:'Anthropic API key',
+    { id:'anthropic_key', label:'Anthropic-API-Key',
       regex:/\bsk-ant-[a-z0-9]{2,6}-[A-Za-z0-9_\-]{85,120}\b/g },
-    { id:'twilio_sid', label:'Twilio account SID',
+    { id:'twilio_sid', label:'Twilio-Account-SID',
       regex:/\bAC[a-f0-9]{32}\b/g },
-    { id:'sendgrid_key', label:'SendGrid API key',
+    { id:'sendgrid_key', label:'SendGrid-API-Key',
       regex:/\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b/g },
-    { id:'mailgun_key', label:'Mailgun API key',
+    { id:'mailgun_key', label:'Mailgun-API-Key',
       regex:/\bkey-[a-f0-9]{32}\b/g },
     { id:'jwt', label:'JWT',
       regex:/\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/g },
-    { id:'azure_storage_conn', label:'Azure Storage connection string',
+    { id:'azure_storage_conn', label:'Azure-Storage-Verbindungszeichenfolge',
       regex:/DefaultEndpointsProtocol=https;AccountName=[A-Za-z0-9]+;AccountKey=[A-Za-z0-9+\/=]{80,};?(?:EndpointSuffix=[^;\s]+)?/g },
-    { id:'azure_account_key', label:'Azure account key',
+    { id:'azure_account_key', label:'Azure-Account-Key',
       regex:/(?:AccountKey|SharedAccessKey)=([A-Za-z0-9+\/=]{40,100})(?=[;"'\s]|$)/g },
-    { id:'basic_auth_url', label:'Credentials in URL',
+    { id:'basic_auth_url', label:'Zugangsdaten in URL',
       regex:/\b(?:https?|ftp|ssh|git|postgres|postgresql|mysql|mongodb|redis):\/\/[^\s:@\/]+:[^\s@\/]+@[A-Za-z0-9.\-]+/g,
       validate:(m)=>!/:\/\/[^:]*:(password|changeme|example|xxx+|\*+)@/i.test(m) },
-    { id:'generic_secret_assignment', label:'Hard-coded secret',
+    { id:'generic_secret_assignment', label:'Fest codiertes Secret',
       // `token = "abc..."` or `api_key: "abc..."` with 20+ char value
       regex:/\b(?:api[_-]?key|secret|token|password|passwd|pwd|auth|bearer)[\s:=]{1,4}["']([A-Za-z0-9+\/=_\-]{20,})["']/gi,
       validate:(m)=>{
@@ -428,7 +428,7 @@ const PIIScanner = {
 
     // ── Standard identifiers (phone is after national-ID rules below to
     // avoid eating checksum-valid IDs shaped like XXX-XXX-XXXX) ──
-    { id:'email', label:'Email address',
+    { id:'email', label:'E-Mail-Adresse',
       regex:/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
     // Credit card moved below national IDs — a valid-Luhn 13-digit national ID
     // would otherwise be classified as a card. See below after ID block.
@@ -451,16 +451,16 @@ const PIIScanner = {
         for (const d of num) { rem = (rem*10 + parseInt(d,10)) % 97; }
         return rem === 1;
       } },
-    { id:'ipv4', label:'IPv4 address',
+    { id:'ipv4', label:'IPv4-Adresse',
       regex:/(?<!\d)(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?!\d)/g,
       validate:(m)=>{
         // Skip obvious non-personal private/link-local/loopback ranges
         if (/^(0\.|127\.|255\.|169\.254\.)/.test(m)) return false;
         return true;
       } },
-    { id:'ipv6', label:'IPv6 address',
+    { id:'ipv6', label:'IPv6-Adresse',
       regex:/\b(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}\b/g },
-    { id:'us_ssn', label:'US Social Security Number',
+    { id:'us_ssn', label:'US-Sozialversicherungsnummer',
       // XXX-XX-XXXX with required dashes (cuts false positives). Context-gated
       // variants (SSN: 123456789) handled as a second pattern.
       regex:/(?<!\d)(\d{3})-(\d{2})-(\d{4})(?!\d)/g,
@@ -471,7 +471,7 @@ const PIIScanner = {
         if (b === '00' || c === '0000') return false;
         return true;
       } },
-    { id:'us_ssn_ctx', label:'US Social Security Number',
+    { id:'us_ssn_ctx', label:'US-Sozialversicherungsnummer',
       // No dashes, but must be preceded by SSN/social context
       regex:/(?:\bSSN\b|\bsocial\s+security\b)[^\w\n]{0,15}(\d{9})(?!\d)/gi,
       validate:(m)=>{
@@ -482,7 +482,7 @@ const PIIScanner = {
         if (b === '00' || c === '0000') return false;
         return true;
       } },
-    { id:'at_svnr', label:'Austrian Sozialversicherungsnummer',
+    { id:'at_svnr', label:'Österreichische Sozialversicherungsnummer',
       regex:/(?<!\d)\d{10}(?!\d)/g,
       validate:(m)=>{
         const w = [3,7,9,5,8,4,2,1,6];
@@ -496,7 +496,7 @@ const PIIScanner = {
         if (dd < 1 || dd > 31 || mm < 1 || mm > 12) return false;
         return true;
       } },
-    { id:'fr_insee', label:'French INSEE / NIR',
+    { id:'fr_insee', label:'Französische INSEE / NIR',
       // 13 digits + 2-digit key; mod-97 check. Corsica uses 2A/2B in dept slot — we skip those.
       regex:/(?<!\d)([12])(\d{2})(0[1-9]|1[0-2]|[2-9]\d)(\d{2}|\dA|\dB)(\d{3})(\d{3})[\s ]?(\d{2})(?!\d)/gi,
       validate:(m)=>{
@@ -507,7 +507,7 @@ const PIIScanner = {
         return (97 - (n % 97)) === key;
       } },
     // ── Context-gated rules first (keyword match beats bare-digit rules) ──
-    { id:'de_steuerid', label:'German Steuer-ID',
+    { id:'de_steuerid', label:'Deutsche Steuer-ID',
       regex:/(?:\bSteuer[- ]?ID\b|Steueridentifikationsnummer|\bTIN\b)[^\d\n]{0,20}(\d{11})(?!\d)/gi,
       validate:(m)=>{
         const d = (m.match(/\d{11}/) || [''])[0];
@@ -519,11 +519,11 @@ const PIIScanner = {
       } },
 
     // ── Tier 1: EU national IDs ──
-    { id:'uk_nino', label:'UK National Insurance Number',
+    { id:'uk_nino', label:'UK National Insurance Number',  // brit. Sozialversicherungsnummer
       // 2 letters (not D,F,I,Q,U,V; first char not O; not combinations FY,GB,NK,KN,TN,NT,ZZ),
       // 6 digits, 1 suffix letter A-D or space.
       regex:/\b(?!BG|GB|NK|KN|TN|NT|ZZ)[A-CEGHJ-PR-TW-Z][A-CEGHJ-NPR-TW-Z][0-9]{6}[A-D]?\b/g },
-    { id:'uk_nhs', label:'UK NHS number',
+    { id:'uk_nhs', label:'UK-NHS-Nummer',
       regex:/(?<!\d)\d{3}[ -]?\d{3}[ -]?\d{4}(?!\d)/g,
       validate:(m)=>{
         const d = m.replace(/\D/g,'');
@@ -535,7 +535,7 @@ const PIIScanner = {
         if (check === 10) return false;
         return check === +d[9];
       } },
-    { id:'nl_bsn', label:'Dutch BSN',
+    { id:'nl_bsn', label:'Niederländische BSN',
       // Context-gated — 8-9 digit shape collides with many other numbers
       regex:/(?:\bBSN\b|burgerservicenummer|sofinummer)[^\d\n]{0,15}(\d{8,9})(?!\d)/gi,
       validate:(m)=>{
@@ -547,7 +547,7 @@ const PIIScanner = {
         for (let i = 0; i < 9; i++) s += (+d[i]) * w[i];
         return s % 11 === 0 && +d !== 0;
       } },
-    { id:'be_national', label:'Belgian national number',
+    { id:'be_national', label:'Belgische Nationalnummer',
       regex:/(?<!\d)\d{2}[. ]?\d{2}[. ]?\d{2}[- ]?\d{3}[. ]?\d{2}(?!\d)/g,
       validate:(m)=>{
         const d = m.replace(/\D/g,'');
@@ -559,7 +559,7 @@ const PIIScanner = {
         const b = 97 - (parseInt('2' + body9, 10) % 97);
         return check === a || check === b;
       } },
-    { id:'pl_pesel', label:'Polish PESEL',
+    { id:'pl_pesel', label:'Polnische PESEL',
       regex:/(?<!\d)\d{11}(?!\d)/g,
       validate:(m)=>{
         const w = [1,3,7,9,1,3,7,9,1,3];
@@ -571,7 +571,7 @@ const PIIScanner = {
         const mm = +m.slice(2,4);
         return (mm >= 1 && mm <= 12) || (mm >= 21 && mm <= 32) || (mm >= 41 && mm <= 52) || (mm >= 61 && mm <= 72) || (mm >= 81 && mm <= 92);
       } },
-    { id:'pt_nif', label:'Portuguese NIF',
+    { id:'pt_nif', label:'Portugiesische NIF',
       // Context-gated — generic 9-digit strings would false-positive too often
       regex:/(?:\bNIF\b|número\s+fiscal|contribuinte)[^\d\n]{0,15}(\d{9})(?!\d)/gi,
       validate:(m)=>{
@@ -583,7 +583,7 @@ const PIIScanner = {
         if (check >= 10) check = 0;
         return check === +d[8];
       } },
-    { id:'se_personnummer', label:'Swedish personnummer',
+    { id:'se_personnummer', label:'Schwedische Personnummer',
       regex:/(?<!\d)(?:\d{2})?\d{6}[-+]?\d{4}(?!\d)/g,
       validate:(m)=>{
         const d = m.replace(/\D/g,'');
@@ -599,7 +599,7 @@ const PIIScanner = {
         const check = (10 - (s % 10)) % 10;
         return check === +short[9];
       } },
-    { id:'dk_cpr', label:'Danish CPR',
+    { id:'dk_cpr', label:'Dänische CPR',
       // 10 digits, optional dash after 6: DDMMYY-XXXX
       regex:/(?<!\d)\d{6}[- ]?\d{4}(?!\d)/g,
       validate:(m)=>{
@@ -608,7 +608,7 @@ const PIIScanner = {
         const dd = +d.slice(0,2), mm = +d.slice(2,4);
         return dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12;
       } },
-    { id:'no_fnr', label:'Norwegian fødselsnummer',
+    { id:'no_fnr', label:'Norwegische Fødselsnummer',
       regex:/(?<!\d)\d{11}(?!\d)/g,
       validate:(m)=>{
         const d = [...m].map(c => +c);
@@ -625,7 +625,7 @@ const PIIScanner = {
         if (k2 === 11) k2 = 0;
         return k2 !== 10 && k2 === d[10];
       } },
-    { id:'ch_ahv', label:'Swiss AHV (OASI)',
+    { id:'ch_ahv', label:'Schweizer AHV',
       // EAN-13 starting with 756
       regex:/\b756[.\- ]?\d{4}[.\- ]?\d{4}[.\- ]?\d{2}\b/g,
       validate:(m)=>{
@@ -636,7 +636,7 @@ const PIIScanner = {
         const check = (10 - (s % 10)) % 10;
         return check === +d[12];
       } },
-    { id:'cz_rc', label:'Czech rodné číslo',
+    { id:'cz_rc', label:'Tschechische rodné číslo',
       regex:/(?<!\d)\d{6}\/?\d{3,4}(?!\d)/g,
       validate:(m)=>{
         const d = m.replace(/\D/g,'');
@@ -650,7 +650,7 @@ const PIIScanner = {
         const m_real = mm > 50 ? mm - 50 : mm;
         return m_real >= 1 && m_real <= 12;
       } },
-    { id:'ro_cnp', label:'Romanian CNP',
+    { id:'ro_cnp', label:'Rumänische CNP',
       regex:/(?<!\d)\d{13}(?!\d)/g,
       validate:(m)=>{
         const w = [2,7,9,1,4,6,3,5,8,2,7,9];
@@ -662,7 +662,7 @@ const PIIScanner = {
         const mm = +m.slice(3,5), dd = +m.slice(5,7);
         return mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31;
       } },
-    { id:'hu_taj', label:'Hungarian TAJ',
+    { id:'hu_taj', label:'Ungarische TAJ',
       // Context-gated — same 9-digit shape as Dutch BSN, US SSN (no dashes),
       // and many others; keyword required to avoid collisions.
       regex:/(?:\bTAJ\b|társadalom|társadalombiztos)[^\d\n]{0,15}(\d{3}[- ]?\d{3}[- ]?\d{3})(?!\d)/gi,
@@ -673,7 +673,7 @@ const PIIScanner = {
         for (let i = 0; i < 8; i++) s += (+d[i]) * (i % 2 === 0 ? 3 : 7);
         return (s % 10) === +d[8];
       } },
-    { id:'gr_amka', label:'Greek AMKA',
+    { id:'gr_amka', label:'Griechische AMKA',
       regex:/(?<!\d)\d{11}(?!\d)/g,
       validate:(m)=>{
         // Starts with DDMMYY and Luhn over 11 digits
@@ -681,7 +681,7 @@ const PIIScanner = {
         if (dd < 1 || dd > 31 || mm < 1 || mm > 12) return false;
         return PIIScanner._luhn(m);
       } },
-    { id:'bg_egn', label:'Bulgarian EGN',
+    { id:'bg_egn', label:'Bulgarische EGN',
       regex:/(?<!\d)\d{10}(?!\d)/g,
       validate:(m)=>{
         const w = [2,4,8,5,10,9,7,3,6];
@@ -694,7 +694,7 @@ const PIIScanner = {
         const real = mm > 40 ? mm - 40 : (mm > 20 ? mm - 20 : mm);
         return real >= 1 && real <= 12;
       } },
-    { id:'ie_pps', label:'Irish PPS',
+    { id:'ie_pps', label:'Irische PPS',
       regex:/\b\d{7}[A-W][A-IW]?\b/g,
       validate:(m)=>{
         const s = m.toUpperCase();
@@ -714,7 +714,7 @@ const PIIScanner = {
       } },
 
     // ── Tier 1: Americas + APAC national IDs ──
-    { id:'br_cpf', label:'Brazilian CPF',
+    { id:'br_cpf', label:'Brasilianische CPF',
       regex:/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g,
       validate:(m)=>{
         const d = m.replace(/\D/g,'');
@@ -727,7 +727,7 @@ const PIIScanner = {
         };
         return calc(9) === +d[9] && calc(10) === +d[10];
       } },
-    { id:'br_cnpj', label:'Brazilian CNPJ',
+    { id:'br_cnpj', label:'Brasilianische CNPJ',
       regex:/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/g,
       validate:(m)=>{
         const d = m.replace(/\D/g,'');
@@ -742,7 +742,7 @@ const PIIScanner = {
         };
         return calc(12, weights1) === +d[12] && calc(13, weights2) === +d[13];
       } },
-    { id:'ca_sin', label:'Canadian SIN',
+    { id:'ca_sin', label:'Kanadische SIN',
       regex:/(?<!\d)\d{3}[- ]?\d{3}[- ]?\d{3}(?!\d)/g,
       validate:(m)=>{
         const d = m.replace(/\D/g,'');
@@ -750,12 +750,12 @@ const PIIScanner = {
         if (d[0] === '0' || d[0] === '8') return false;
         return PIIScanner._luhn(d);
       } },
-    { id:'mx_curp', label:'Mexican CURP',
+    { id:'mx_curp', label:'Mexikanische CURP',
       regex:/\b[A-Z][AEIOUX][A-Z]{2}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b/gi },
-    { id:'ar_dni', label:'Argentine DNI',
+    { id:'ar_dni', label:'Argentinische DNI',
       // Context-gated: "DNI" keyword + 7-8 digits (optionally separated)
       regex:/\bDNI[\s:]*\d{1,2}\.?\d{3}\.?\d{3}\b/gi },
-    { id:'in_aadhaar', label:'Indian Aadhaar',
+    { id:'in_aadhaar', label:'Indische Aadhaar',
       // Context-gated: Verhoeff alone passes ~10% of random 12-digit strings,
       // too noisy without the "aadhaar"/"UID" keyword nearby
       regex:/(?:\baadhaar\b|\bUID\b|\bUIDAI\b)[^\d\n]{0,20}([2-9]\d{3}[ -]?\d{4}[ -]?\d{4})(?!\d)/gi,
@@ -768,7 +768,7 @@ const PIIScanner = {
         for (let i = 0; i < digits.length; i++) c = d2[c][p[i % 8][digits[i]]];
         return c === 0;
       } },
-    { id:'jp_mynumber', label:'Japanese My Number',
+    { id:'jp_mynumber', label:'Japanische My Number',
       regex:/(?<!\d)\d{12}(?!\d)/g,
       validate:(m)=>{
         const w = [6,5,4,3,2,7,6,5,4,3,2];
@@ -778,7 +778,7 @@ const PIIScanner = {
         const check = r <= 1 ? 0 : 11 - r;
         return check === +m[11];
       } },
-    { id:'kr_rrn', label:'Korean RRN',
+    { id:'kr_rrn', label:'Koreanische RRN',
       regex:/(?<!\d)\d{6}[- ]?[1-8]\d{6}(?!\d)/g,
       validate:(m)=>{
         const d = m.replace(/\D/g,'');
@@ -791,7 +791,7 @@ const PIIScanner = {
         const mm = +d.slice(2,4), dd = +d.slice(4,6);
         return mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31;
       } },
-    { id:'sg_nric', label:'Singapore NRIC/FIN',
+    { id:'sg_nric', label:'Singapurische NRIC/FIN',
       regex:/\b[STFGM]\d{7}[A-Z]\b/g,
       validate:(m)=>{
         const first = m[0], digits = m.slice(1,8), check = m[8];
@@ -810,7 +810,7 @@ const PIIScanner = {
         if (!table) return false;
         return table[r] === check;
       } },
-    { id:'tw_nid', label:'Taiwan national ID',
+    { id:'tw_nid', label:'Taiwanesische National-ID',
       regex:/\b[A-Z][12]\d{8}\b/g,
       validate:(m)=>{
         // First letter maps to two digits via table
@@ -826,7 +826,7 @@ const PIIScanner = {
       } },
 
     // ── Credit card (after national IDs: 13-digit IDs shouldn't be stolen) ──
-    { id:'credit_card', label:'Credit card number',
+    { id:'credit_card', label:'Kreditkartennummer',
       regex:/(?<![+\d])(?:\d[ -]?){13,19}(?!\d)/g,
       validate:(m)=>{
         const digits = m.replace(/\D/g,'');
@@ -841,11 +841,11 @@ const PIIScanner = {
       } },
 
     // ── Phone (generic — runs after national-ID rules so checksum IDs win) ──
-    { id:'phone', label:'Phone number',
+    { id:'phone', label:'Telefonnummer',
       regex:/(?:(?<![\w.])\+\d{1,3}[\s().-]?(?:\d[\s().-]?){7,14}\d|(?<!\d)\d{3}[\s.-]\d{3,4}[\s.-]\d{3,4}(?!\d))/g,
       validate:(m)=>{ const digits = m.replace(/\D/g,''); return digits.length>=8 && digits.length<=15; } },
 
-    { id:'es_dni_nie', label:'Spanish DNI/NIE',
+    { id:'es_dni_nie', label:'Spanische DNI/NIE',
       // DNI: 8 digits + letter. NIE: X/Y/Z + 7 digits + letter.
       regex:/(?<![A-Z0-9])(?:[XYZ]?\d{7,8}[A-HJ-NP-TV-Z])(?![A-Z0-9])/gi,
       validate:(m)=>{
@@ -859,13 +859,13 @@ const PIIScanner = {
         }
         return letters[num%23] === s.slice(-1);
       } },
-    { id:'it_codicefiscale', label:'Italian Codice Fiscale',
+    { id:'it_codicefiscale', label:'Italienische Codice Fiscale',
       regex:/\b[A-Z]{6}\d{2}[A-EHLMPR-T]\d{2}[A-Z]\d{3}[A-Z]\b/gi },
-    { id:'passport', label:'Passport number (heuristic)',
+    { id:'passport', label:'Reisepassnummer (heuristisch)',
       // Context-triggered: must be preceded by "passport" within 20 chars
       regex:/passport[^\w\n]{0,20}([A-Z][0-9]{6,9}|[A-Z]{1,2}[0-9]{6,8})/gi,
       validate:(_)=>true },
-    { id:'dob', label:'Date of birth',
+    { id:'dob', label:'Geburtsdatum',
       // Context: "DOB:", "born", "geboren", "date of birth" near a date
       regex:/(?:\b(?:DOB|born|date\s+of\s+birth|geboren|geburtsdatum|né|née|nacido)\b[^\n]{0,20}?(?:\d{1,2}[\/.\- ]\d{1,2}[\/.\- ]\d{2,4}|\d{4}-\d{2}-\d{2}))/gi },
 
@@ -873,23 +873,23 @@ const PIIScanner = {
     // the checksum fails. The user is clearly discussing that PII category
     // regardless of whether the specific value is valid. Runs LAST so the
     // strict checksum rules above still win via overlap suppression. ──
-    { id:'svnr_ctx', label:'Social-insurance number (likely)',
+    { id:'svnr_ctx', label:'Sozialversicherungsnummer (wahrscheinlich)',
       regex:/(?:\bSVNR\b|\bSV[- ]?Nr\.?\b|\bSV[- ]?Nummer\b|Sozialversicherungsnummer|social[- ]?insurance|national[- ]?insurance|\bNIN\b)[^\d\n]{0,20}(\d[\d \-\/.]{7,19}\d)/gi },
-    { id:'ssn_ctx_loose', label:'Social Security Number (likely)',
+    { id:'ssn_ctx_loose', label:'Sozialversicherungsnummer (wahrscheinlich)',
       regex:/(?:\bSSN\b|social[- ]?security[- ]?(?:number|no\.?|#)?)[^\d\n]{0,15}(\d{3}[- ]?\d{2}[- ]?\d{4}|\d{9})/gi },
-    { id:'tax_id_ctx', label:'Tax identification number (likely)',
+    { id:'tax_id_ctx', label:'Steueridentifikationsnummer (wahrscheinlich)',
       regex:/(?:\bTIN\b|tax[- ]?id(?:entification)?[- ]?(?:number|no\.?)?|Steuer[- ]?ID|Steuernummer|USt[- ]?ID|VAT[- ]?(?:number|no\.?))[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-.\/]{6,18}[A-Z0-9])/gi },
-    { id:'insurance_number_ctx', label:'Insurance number (likely)',
+    { id:'insurance_number_ctx', label:'Versicherungsnummer (wahrscheinlich)',
       regex:/(?:insurance[- ]?number|insurance[- ]?no\.?|Versicherungsnummer|numéro[- ]?(?:de[- ]?)?sécurité[- ]?sociale|numero[- ]?(?:di[- ]?)?previdenza)[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-.\/]{6,19}[A-Z0-9])/gi },
-    { id:'id_card_ctx', label:'ID / identity card number (likely)',
+    { id:'id_card_ctx', label:'Ausweisnummer (wahrscheinlich)',
       regex:/(?:\bID[- ]?(?:number|no\.?|card)\b|Personalausweis|carte[- ]?d['\s-]identit|documento[- ]?(?:de[- ]?)?identi[dt]ad|cédula)[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-.\/]{5,16}[A-Z0-9])/gi },
-    { id:'drivers_license_ctx', label:"Driver's license number (likely)",
+    { id:'drivers_license_ctx', label:"Führerscheinnummer (wahrscheinlich)",
       regex:/(?:driver'?s?[- ]?licen[sc]e|Führerschein|permis[- ]?de[- ]?conduire|carnet[- ]?de[- ]?conducir|patente)[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-.\/]{5,16}[A-Z0-9])/gi },
-    { id:'passport_ctx_loose', label:'Passport number (likely)',
+    { id:'passport_ctx_loose', label:'Reisepassnummer (wahrscheinlich)',
       regex:/(?:passport|Reisepass|passeport|pasaporte|passaporto)[^\w\n]{0,20}([A-Z0-9][A-Z0-9\- ]{5,14}[A-Z0-9])/gi },
-    { id:'bank_account_ctx', label:'Bank account number (likely)',
+    { id:'bank_account_ctx', label:'Bankkontonummer (wahrscheinlich)',
       regex:/(?:\baccount[- ]?(?:number|no\.?|#)\b|\bacct\.?[- ]?(?:no\.?|#)?\b|\bIBAN\b|Kontonummer|numéro[- ]?de[- ]?compte|número[- ]?de[- ]?cuenta)[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-\/.]{7,30}[A-Z0-9])/gi },
-    { id:'health_insurance_ctx', label:'Health insurance number (likely)',
+    { id:'health_insurance_ctx', label:'Krankenversicherungsnummer (wahrscheinlich)',
       regex:/(?:health[- ]?insurance|Krankenversicherungsnummer|Krankenkasse|assurance[- ]?maladie|seguridad[- ]?social|Medicare|Medicaid|\bNHS[- ]?(?:number|no\.?)?|\bAMKA\b|\bTAJ\b)[^\d\n]{0,20}([A-Z0-9][A-Z0-9 \-.\/]{5,19}[A-Z0-9])/gi },
   ],
 
@@ -912,7 +912,7 @@ const PIIScanner = {
       const idx = text.indexOf(line);
       findings.push({
         ruleId: 'bare_identifier',
-        label: 'Numeric identifier (unverified)',
+        label: 'Numerischer Bezeichner (unverifiziert)',
         match: line,
         index: idx,
       });

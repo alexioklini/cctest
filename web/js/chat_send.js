@@ -24,7 +24,7 @@ async function sendMessage() {
   if (_wfChat && _wfChat.workflowRunId && wfBanner && wfBanner.data) {
     const _ws = wfBanner.data.status || '';
     if (WF_LIVE_STATUSES.has(_ws)) {
-      showToast(`Run is ${_ws} — wait for it to finish.`, true);
+      showToast(`Ausführung ist ${_ws} — bitte auf Abschluss warten.`, true);
       return;
     }
   }
@@ -35,7 +35,7 @@ async function sendMessage() {
   // Ensure agent selected
   if (!state.activeAgentId) {
     if (state.agents.length) selectAgent(state.agents[0].name);
-    else { showToast('No agents available', true); return; }
+    else { showToast('Keine Agents verfügbar', true); return; }
   }
 
   // From project-detail: bind to the project's agent, start a fresh chat for
@@ -107,12 +107,12 @@ async function sendMessage() {
     f => f.scan && f.scan.scanned === false && BLOCKING_REASONS.has(f.scan.reason));
   if (blockingFile) {
     const reasonLabel = {
-      'too_large': 'too large (>50 MB)',
-      'extract_timeout': 'scan timed out (>30 s)',
-      'extract_failed': 'scan failed',
-      'unsupported': 'unsupported format',
+      'too_large': 'zu groß (>50 MB)',
+      'extract_timeout': 'Scan-Zeitüberschreitung (>30 s)',
+      'extract_failed': 'Scan fehlgeschlagen',
+      'unsupported': 'nicht unterstütztes Format',
     }[blockingFile.scan.reason] || blockingFile.scan.reason;
-    showToast(`Cannot send: ${blockingFile.name} — ${reasonLabel}. Remove it to continue.`, true);
+    showToast(`Senden nicht möglich: ${blockingFile.name} — ${reasonLabel}. Zum Fortfahren entfernen.`, true);
     return;
   }
 
@@ -672,17 +672,17 @@ function buildStreamCallbacks(chat, isActive) {
         card.innerHTML = `
           <div class="wq-header">
             <span class="wq-badge">WORKER</span>
-            <span>Worker <code>${esc(d.worker_id)}</code> needs your input</span>
+            <span>Worker <code>${esc(d.worker_id)}</code> benötigt Ihre Eingabe</span>
           </div>
           <div class="wq-body">
             ${d.context_summary ? `<div class="wq-context">${esc(d.context_summary)}</div>` : ''}
             <div class="wq-question">${esc(d.question)}</div>
             ${optionsHtml ? `<div class="wq-options">${optionsHtml}</div>` : ''}
-            <textarea class="wq-freeform" placeholder="Type your answer..." style="width:100%;min-height:40px;margin-bottom:8px;border:1px solid var(--border-100);border-radius:6px;padding:6px 8px;font-size:13px;background:var(--bg-000);color:var(--text-200);resize:vertical;display:${d.options ? 'none' : 'block'}"></textarea>
+            <textarea class="wq-freeform" placeholder="Antwort eingeben..." style="width:100%;min-height:40px;margin-bottom:8px;border:1px solid var(--border-100);border-radius:6px;padding:6px 8px;font-size:13px;background:var(--bg-000);color:var(--text-200);resize:vertical;display:${d.options ? 'none' : 'block'}"></textarea>
             <div class="wq-actions">
-              <button class="wq-btn-answer" onclick="answerWorkerQuestion('${esc(d.worker_id)}')">Answer</button>
-              <button onclick="answerWorkerQuestion('${esc(d.worker_id)}', '__delegate__')">Let agent decide</button>
-              <button class="wq-btn-abort" onclick="abortWorkerFromQuestion('${esc(d.worker_id)}')">Abort worker</button>
+              <button class="wq-btn-answer" onclick="answerWorkerQuestion('${esc(d.worker_id)}')">Antworten</button>
+              <button onclick="answerWorkerQuestion('${esc(d.worker_id)}', '__delegate__')">Agent entscheiden lassen</button>
+              <button class="wq-btn-abort" onclick="abortWorkerFromQuestion('${esc(d.worker_id)}')">Worker abbrechen</button>
             </div>
           </div>
         `;
@@ -699,7 +699,7 @@ function buildStreamCallbacks(chat, isActive) {
         if (card) {
           card.classList.add('wq-answered');
           const body = card.querySelector('.wq-body');
-          if (body) body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Answered: ${esc(d.answer)}</div>`;
+          if (body) body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Beantwortet: ${esc(d.answer)}</div>`;
         }
       },
       user_input_needed: (d) => {
@@ -736,22 +736,22 @@ function buildStreamCallbacks(chat, isActive) {
             <div class="wq-item" data-qid="${esc(qid)}" data-question="${esc(q.question)}" style="${idx > 0 ? 'margin-top:14px;padding-top:14px;border-top:1px solid var(--border-100)' : ''}">
               ${header}
               ${optionsHtml ? `<div class="wq-options">${optionsHtml}</div>` : ''}
-              <textarea class="wq-freeform" placeholder="Type your answer..." style="width:100%;min-height:40px;margin-top:6px;margin-bottom:0;border:1px solid var(--border-100);border-radius:6px;padding:6px 8px;font-size:13px;background:var(--bg-000);color:var(--text-200);resize:vertical;display:${opts ? 'none' : 'block'}"></textarea>
+              <textarea class="wq-freeform" placeholder="Antwort eingeben..." style="width:100%;min-height:40px;margin-top:6px;margin-bottom:0;border:1px solid var(--border-100);border-radius:6px;padding:6px 8px;font-size:13px;background:var(--bg-000);color:var(--text-200);resize:vertical;display:${opts ? 'none' : 'block'}"></textarea>
             </div>
           `;
         }).join('');
 
-        const headerLabel = isBatch ? `${questions.length} questions` : 'The agent needs your input';
+        const headerLabel = isBatch ? `${questions.length} Fragen` : 'Der Agent benötigt Ihre Eingabe';
         card.innerHTML = `
           <div class="wq-header">
-            <span class="wq-badge">QUESTION${isBatch ? 'S' : ''}</span>
+            <span class="wq-badge">${isBatch ? 'FRAGEN' : 'FRAGE'}</span>
             <span>${esc(headerLabel)}</span>
           </div>
           <div class="wq-body">
             ${d.context_summary ? `<div class="wq-context">${esc(d.context_summary)}</div>` : ''}
             ${questionsHtml}
             <div class="wq-actions" style="margin-top:12px">
-              <button class="wq-btn-answer" onclick="answerChatQuestion('${esc(d.session_id)}')">${isBatch ? 'Submit answers' : 'Answer'}</button>
+              <button class="wq-btn-answer" onclick="answerChatQuestion('${esc(d.session_id)}')">${isBatch ? 'Antworten absenden' : 'Antworten'}</button>
             </div>
           </div>
         `;
@@ -768,9 +768,9 @@ function buildStreamCallbacks(chat, isActive) {
           const lines = Object.entries(d.answers).map(([q, a]) =>
             `<div>· ${esc(q)} → ${esc(a)}</div>`
           ).join('');
-          body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Answers:${lines}</div>`;
+          body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Antworten:${lines}</div>`;
         } else if (d.answer != null) {
-          body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Answered: ${esc(d.answer)}</div>`;
+          body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Beantwortet: ${esc(d.answer)}</div>`;
         }
       },
       fallback: (d) => {
@@ -798,7 +798,7 @@ function buildStreamCallbacks(chat, isActive) {
       warmup: (d) => {
         if (d.status === 'waiting') {
           if (isActive() && typeof buddyPhase === 'function') buddyPhase('warmup');
-          if (isActive()) document.getElementById('spinner-label').textContent = 'Waiting for warmup...';
+          if (isActive()) document.getElementById('spinner-label').textContent = 'Warte auf Warmup...';
         } else if (d.status === 'ready') {
           stopWarmupPoll(chat);
           updateStatusBar();
@@ -807,7 +807,7 @@ function buildStreamCallbacks(chat, isActive) {
       max_tokens_exhausted: (d) => {
         if (isActive() && d.message) {
           const el = document.getElementById('spinner-label');
-          if (el) el.textContent = 'Token limit reached';
+          if (el) el.textContent = 'Token-Limit erreicht';
           showToast(d.message, true);
         }
       },
@@ -815,7 +815,7 @@ function buildStreamCallbacks(chat, isActive) {
         if (typeof buddyPhase === 'function') buddyPhase('compacting');
         const spinnerBar = document.getElementById('spinner-bar');
         const el = document.getElementById('spinner-label');
-        if (el) el.textContent = `Compacting context${d.pct ? ` (${d.pct}% full)` : ''}…`;
+        if (el) el.textContent = `Kontext wird verdichtet${d.pct ? ` (${d.pct}% voll)` : ''}…`;
         if (spinnerBar && !spinnerBar.classList.contains('active')) {
           document.getElementById('spinner-model').textContent = spinnerModelName(chat);
           document.getElementById('spinner-elapsed').textContent = '';
@@ -827,9 +827,9 @@ function buildStreamCallbacks(chat, isActive) {
         const el = document.getElementById('spinner-label');
         if (el) {
           const ratio = (d && d.claim_total)
-            ? ` (${d.uncited_claims}/${d.claim_total} uncited)`
+            ? ` (${d.uncited_claims}/${d.claim_total} ohne Quelle)`
             : '';
-          el.textContent = `Citations re-rounding${ratio}…`;
+          el.textContent = `Quellen werden erneut geprüft${ratio}…`;
         }
       },
       citation_reround_done: () => {
@@ -951,7 +951,7 @@ function buildStreamCallbacks(chat, isActive) {
         // Desktop notification when window not focused
         if (!document.hasFocus() && window.electronAPI?.showNotification) {
           const preview = (d.text || chat.streamingText || '').slice(0, 120).replace(/\n/g, ' ');
-          window.electronAPI.showNotification({ title: `${chat.agent || 'Brain Agent'} responded`, body: preview || 'Response complete' });
+          window.electronAPI.showNotification({ title: `${chat.agent || 'Brain Agent'} hat geantwortet`, body: preview || 'Antwort abgeschlossen' });
         }
 
         // Reload sessions for sidebar
@@ -972,9 +972,9 @@ function buildStreamCallbacks(chat, isActive) {
         clearInterval(chat._streamTimerInterval);
         if (isActive()) {
           updateStreamingUI(false);
-          const msg = d.message || 'Unknown error';
+          const msg = d.message || 'Unbekannter Fehler';
           if (!/Load failed|Failed to fetch|NetworkError|AbortError|network/i.test(msg)) {
-            showToast('Error: ' + msg, true);
+            showToast('Fehler: ' + msg, true);
           }
         }
       },
@@ -1014,27 +1014,27 @@ function _onStreamCatch(e, chat, isActive, streamGen) {
     // Suppress transient network errors (browser tab backgrounded, connection hiccup)
     const msg = e.message || '';
     if (!/Load failed|Failed to fetch|NetworkError|AbortError|network/i.test(msg)) {
-      showToast('Send failed: ' + msg, true);
+      showToast('Senden fehlgeschlagen: ' + msg, true);
     }
   }
 }
 async function triggerLCM() {
   const chat = state.activeChat;
   const sessionId = chat?.sessionId;
-  if (!sessionId) { showToast('No active session', true); return; }
-  if (chat.streaming) { showToast('Wait for response to finish', true); return; }
+  if (!sessionId) { showToast('Keine aktive Sitzung', true); return; }
+  if (chat.streaming) { showToast('Bitte auf das Ende der Antwort warten', true); return; }
   const btn = document.getElementById('status-lcm-btn');
   if (btn) btn.disabled = true;
   const spinnerBar = document.getElementById('spinner-bar');
   document.getElementById('spinner-model').textContent = spinnerModelName(chat);
-  document.getElementById('spinner-label').textContent = 'Compacting context…';
+  document.getElementById('spinner-label').textContent = 'Kontext wird verdichtet…';
   document.getElementById('spinner-elapsed').textContent = '';
   spinnerBar.classList.add('active');
   if (typeof buddyPhase === 'function') buddyPhase('compacting');
   try {
     const result = await API.post('/v1/context/compact', { session_id: sessionId });
     if (result.status === 'no_change') {
-      showToast('Nothing to compact');
+      showToast('Nichts zu verdichten');
       return;
     }
     // Reload messages from server, then inject a visual divider at the start
@@ -1060,9 +1060,9 @@ async function triggerLCM() {
     if (data.max_context) chat.maxContext = data.max_context;
     renderMessages();
     updateStatusBar();
-    showToast(`Compacted ${result.before_tokens}→${result.after_tokens} tokens`);
+    showToast(`Verdichtet: ${result.before_tokens}→${result.after_tokens} Token`);
   } catch(e) {
-    showToast('LCM failed: ' + (e.message || e), true);
+    showToast('LCM fehlgeschlagen: ' + (e.message || e), true);
   } finally {
     if (btn) btn.disabled = false;
     spinnerBar.classList.remove('active');
@@ -1071,10 +1071,10 @@ async function triggerLCM() {
 }
 async function restoreLCM(sessionId) {
   if (!sessionId) return;
-  if (!await showConfirm('Restore original messages? The compacted summary will be replaced by the full history.', 'Restore history')) return;
+  if (!await showConfirm('Ursprüngliche Nachrichten wiederherstellen? Die verdichtete Zusammenfassung wird durch den vollständigen Verlauf ersetzt.', 'Verlauf wiederherstellen')) return;
   try {
     const result = await API.post('/v1/context/uncompact', { session_id: sessionId });
-    if (result.status === 'no_originals') { showToast('No originals to restore'); return; }
+    if (result.status === 'no_originals') { showToast('Keine Originale zum Wiederherstellen'); return; }
     // Re-fetch messages in place without re-initialising the whole session
     const data = await API.getSessionMessages(sessionId);
     const chat = state.activeChat;
@@ -1099,14 +1099,14 @@ async function restoreLCM(sessionId) {
       scrollToBottom();
       updateStatusBar();
     }
-    showToast('Original messages restored');
+    showToast('Ursprüngliche Nachrichten wiederhergestellt');
   } catch(e) {
-    showToast('Restore failed: ' + (e.message || e), true);
+    showToast('Wiederherstellung fehlgeschlagen: ' + (e.message || e), true);
   }
 }
 async function openInspectModal() {
   const sessionId = state.activeChat?.sessionId;
-  if (!sessionId) { showToast('No active session', true); return; }
+  if (!sessionId) { showToast('Keine aktive Sitzung', true); return; }
   // For scheduled-run chats the session id has the shape `sched-<run_id>` —
   // there's a much richer per-run modal already (timeline + tool spans +
   // artifacts + result text) so route there instead of the generic per-turn
@@ -1125,12 +1125,12 @@ async function openInspectModal() {
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
   overlay.innerHTML = `<div class="modal-content wide" style="max-height:90vh;display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;padding:20px 24px 0;gap:12px">
-      <h2 style="margin:0;font-size:18px;font-weight:600;color:var(--text-000)">Session Inspector</h2>
+      <h2 style="margin:0;font-size:18px;font-weight:600;color:var(--text-000)">Sitzungs-Inspektor</h2>
       <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-400)">${esc(sessionId)}</span>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()" style="margin-left:auto">&times;</button>
     </div>
     <div id="inspect-body" style="flex:1;overflow-y:auto;padding:16px 24px 24px">
-      <div style="color:var(--text-400);padding:24px;text-align:center">Loading...</div>
+      <div style="color:var(--text-400);padding:24px;text-align:center">Wird geladen...</div>
     </div>
   </div>`;
   document.body.appendChild(overlay);
@@ -1144,23 +1144,23 @@ async function openInspectModal() {
     const t = data.totals || {};
     html += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px">
       <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Turns</div>
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Anfragen</div>
         <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${t.turns || 0}</div>
       </div>
       <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Tokens In</div>
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Token ein</div>
         <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${(t.tokens_in||0).toLocaleString()}</div>
       </div>
       <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Tokens Out</div>
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Token aus</div>
         <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${(t.tokens_out||0).toLocaleString()}</div>
       </div>
       <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Duration</div>
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Dauer</div>
         <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${t.duration ? t.duration.toFixed(1) + 's' : '-'}</div>
       </div>
       <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Cost</div>
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Kosten</div>
         <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">$${(t.cost||0).toFixed(4)}</div>
       </div>
     </div>`;
@@ -1176,10 +1176,10 @@ async function openInspectModal() {
     // --- System Prompt (once) ---
     html += `<details style="margin-bottom:8px;border:1px solid var(--border-100);border-radius:10px;overflow:hidden">
       <summary style="padding:12px 16px;cursor:pointer;background:var(--bg-100);font-weight:500;color:var(--text-000);display:flex;align-items:center;gap:8px">
-        <span style="color:#8b5cf6">System Prompt</span>
-        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">~${spTokens.toLocaleString()} tokens</span>
+        <span style="color:#8b5cf6">System-Prompt</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">~${spTokens.toLocaleString()} Token</span>
       </summary>
-      <pre style="margin:0;padding:16px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;background:var(--bg-200);color:var(--text-200);font-family:var(--font-mono)">${esc(spContent || '(not available)')}</pre>
+      <pre style="margin:0;padding:16px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;background:var(--bg-200);color:var(--text-200);font-family:var(--font-mono)">${esc(spContent || '(nicht verfügbar)')}</pre>
     </details>`;
 
     // --- Round-0 Preamble (once; only when the session got one) ---
@@ -1190,8 +1190,8 @@ async function openInspectModal() {
     if (preContent) {
       html += `<details style="margin-bottom:8px;border:1px solid var(--border-100);border-radius:10px;overflow:hidden">
         <summary style="padding:12px 16px;cursor:pointer;background:var(--bg-100);font-weight:500;color:var(--text-000);display:flex;align-items:center;gap:8px">
-          <span style="color:#0891b2">Preamble</span>
-          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">round 0 · first user message · ~${preTokens.toLocaleString()} tokens</span>
+          <span style="color:#0891b2">Präambel</span>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">Runde 0 · erste Nutzernachricht · ~${preTokens.toLocaleString()} Token</span>
         </summary>
         <pre style="margin:0;padding:16px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;background:var(--bg-200);color:var(--text-200);font-family:var(--font-mono)">${esc(preContent)}</pre>
       </details>`;
@@ -1202,8 +1202,8 @@ async function openInspectModal() {
     if (toolsCount > 0) {
       html += `<details style="margin-bottom:16px;border:1px solid var(--border-100);border-radius:10px;overflow:hidden">
         <summary style="padding:12px 16px;cursor:pointer;background:var(--bg-100);font-weight:500;color:var(--text-000);display:flex;align-items:center;gap:8px">
-          <span style="color:var(--accent-brand)">Tool Definitions</span>
-          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">${toolsCount} tools &middot; ~${toolsTokens.toLocaleString()} tokens</span>
+          <span style="color:var(--accent-brand)">Tool-Definitionen</span>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">${toolsCount} Tools &middot; ~${toolsTokens.toLocaleString()} Token</span>
         </summary>
         <div style="padding:12px 16px;display:flex;flex-wrap:wrap;gap:4px">
           ${toolNames.map(n => `<span style="font-size:11px;font-family:var(--font-mono);background:var(--bg-200);color:var(--text-300);padding:2px 8px;border-radius:4px">${esc(n)}</span>`).join('')}
@@ -1218,16 +1218,16 @@ async function openInspectModal() {
     // explicitly when investigating "what got sent to the cloud".
     html += `<details id="inspect-gdpr-maps" style="margin-bottom:16px;border:1px solid var(--border-100);border-radius:10px;overflow:hidden">
       <summary style="padding:12px 16px;cursor:pointer;background:var(--bg-100);font-weight:500;color:var(--text-000);display:flex;align-items:center;gap:8px">
-        <span style="color:#047857">GDPR Mappings</span>
-        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">admin only · show what was sent</span>
+        <span style="color:#047857">GDPR-Zuordnungen</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">nur Admin · zeigt, was gesendet wurde</span>
       </summary>
       <div id="inspect-gdpr-body" style="padding:12px 16px;font-size:12.5px;color:var(--text-300)">
-        <div style="color:var(--text-400)">Open to load…</div>
+        <div style="color:var(--text-400)">Zum Laden öffnen…</div>
       </div>
     </details>`;
 
     // --- Interactions ---
-    html += `<div style="font-weight:600;font-size:14px;color:var(--text-000);margin-bottom:12px">Interactions</div>`;
+    html += `<div style="font-weight:600;font-size:14px;color:var(--text-000);margin-bottom:12px">Interaktionen</div>`;
 
     for (const ix of (data.interactions || [])) {
       const a = ix.assistant || {};
@@ -1240,7 +1240,7 @@ async function openInspectModal() {
       // Per-turn state badges: thinking level + caveman modes
       const tLvl = a.thinking_level || (a.thinking ? 'on' : '');
       const thinkingBadge = (tLvl && tLvl !== 'none')
-        ? `<span style="font-size:10px;background:#ede9fe;color:#8b5cf6;padding:1px 6px;border-radius:4px" title="Thinking level used for this turn">thinking: ${esc(tLvl)}</span>`
+        ? `<span style="font-size:10px;background:#ede9fe;color:#8b5cf6;padding:1px 6px;border-radius:4px" title="Für diese Anfrage verwendete Denkstufe">thinking: ${esc(tLvl)}</span>`
         : '';
       const cavChat = parseInt(a.caveman_chat) || 0;
       const cavSys = parseInt(a.caveman_system) || 0;
@@ -1249,10 +1249,10 @@ async function openInspectModal() {
       if (cavSys) cavParts.push(`sys ${cavName(cavSys)}`);
       if (cavChat) cavParts.push(`chat ${cavName(cavChat)}`);
       const cavBadge = cavParts.length
-        ? `<span style="font-size:10px;background:#fef3c7;color:#b45309;padding:1px 6px;border-radius:4px" title="Caveman compression level applied for this turn (system prompt / chat response)">caveman: ${cavParts.join(' / ')}</span>`
+        ? `<span style="font-size:10px;background:#fef3c7;color:#b45309;padding:1px 6px;border-radius:4px" title="Für diese Anfrage angewendete Caveman-Komprimierung (System-Prompt / Chat-Antwort)">caveman: ${cavParts.join(' / ')}</span>`
         : '';
       html += `<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--bg-100);border-bottom:1px solid var(--border-100);flex-wrap:wrap">
-        <span style="font-weight:600;color:var(--text-000)">Turn ${ix.turn}</span>
+        <span style="font-weight:600;color:var(--text-000)">Anfrage ${ix.turn}</span>
         ${thinkingBadge}
         ${cavBadge}
         <span style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-400)">
@@ -1277,46 +1277,46 @@ async function openInspectModal() {
           const _hasApi = typeof p.tokens_in === 'number' && p.tokens_in > 0;
           const _hasOut = typeof p.tokens_out === 'number' && p.tokens_out > 0;
           const _tokLabel = _hasApi
-            ? `${p.tokens_in.toLocaleString()} in${_hasOut ? ' / ' + p.tokens_out.toLocaleString() + ' out' : ''} tok (API)`
-            : `~${(p.total_payload_tokens||0).toLocaleString()} tok est`;
+            ? `${p.tokens_in.toLocaleString()} ein${_hasOut ? ' / ' + p.tokens_out.toLocaleString() + ' aus' : ''} Token (API)`
+            : `~${(p.total_payload_tokens||0).toLocaleString()} Token gesch.`;
           const histLen = (p.history || []).length;
           const prevHistLen = prev ? (prev.history || []).length : 0;
           const histDelta = histLen - prevHistLen;
           const deltaBadge = prev && histDelta > 0
-            ? `<span style="${MONO11};background:var(--bg-200);padding:1px 6px;border-radius:4px">+${histDelta} msg${histDelta>1?'s':''}</span>`
+            ? `<span style="${MONO11};background:var(--bg-200);padding:1px 6px;border-radius:4px">+${histDelta} Nachr.</span>`
             : '';
           html += `<details style="border-bottom:1px solid var(--border-050)"${pi === 0 ? ' open' : ''}>
             <summary style="padding:10px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <span style="color:var(--accent-brand);font-weight:500;font-size:13px">API Request${payloads.length > 1 ? ' (Round ' + round + ')' : ''}</span>
+              <span style="color:var(--accent-brand);font-weight:500;font-size:13px">API-Anfrage${payloads.length > 1 ? ' (Runde ' + round + ')' : ''}</span>
               <span style="${MONO11}">${_tokLabel}</span>
               ${deltaBadge}
-              ${histLen ? `<span style="${MONO11}">&middot; history ${histLen}</span>` : ''}
+              ${histLen ? `<span style="${MONO11}">&middot; Verlauf ${histLen}</span>` : ''}
             </summary>
             <div style="padding:8px 16px 12px">
               <!-- Token breakdown bar -->
               <div style="display:flex;gap:0;height:6px;margin-bottom:8px;border-radius:3px;overflow:hidden">
                 <div style="flex:${p.system_tokens||1};background:#8b5cf6" title="System"></div>
                 <div style="flex:${p.tools_tokens||1};background:var(--accent-brand)" title="Tools"></div>
-                <div style="flex:${p.history_tokens||1};background:var(--text-400)" title="History"></div>
-                <div style="flex:${p.user_tokens||1};background:var(--success)" title="User"></div>
+                <div style="flex:${p.history_tokens||1};background:var(--text-400)" title="Verlauf"></div>
+                <div style="flex:${p.user_tokens||1};background:var(--success)" title="Nutzer"></div>
               </div>
               <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;margin-bottom:8px">
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#8b5cf6"></span>System ~${(p.system_tokens||0).toLocaleString()}</span>
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--accent-brand)"></span>Tools (${p.tools_count||0}) ~${(p.tools_tokens||0).toLocaleString()}</span>
-                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--text-400)"></span>History (${histLen} msgs) ~${(p.history_tokens||0).toLocaleString()}</span>
-                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--success)"></span>User ~${(p.user_tokens||0).toLocaleString()}</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--text-400)"></span>Verlauf (${histLen} Nachr.) ~${(p.history_tokens||0).toLocaleString()}</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--success)"></span>Nutzer ~${(p.user_tokens||0).toLocaleString()}</span>
               </div>
 
               <!-- History (auto-open when it's what differs from the previous round) -->
               ${histLen ? `<details style="margin-bottom:4px"${histDelta > 0 ? ' open' : ''}>
-                <summary style="cursor:pointer;${MONO11}">History (${histLen} messages)${histDelta > 0 ? ` &middot; ${histDelta} new this round` : ''}</summary>
+                <summary style="cursor:pointer;${MONO11}">Verlauf (${histLen} Nachrichten)${histDelta > 0 ? ` &middot; ${histDelta} neu in dieser Runde` : ''}</summary>
                 <div style="max-height:250px;overflow-y:auto;border:1px solid var(--border-050);border-radius:6px;margin-top:4px">
                   ${(p.history||[]).map((h, hi) => {
                     const isNew = pi > 0 && hi >= prevHistLen;
                     const bg = isNew ? 'background:var(--bg-100);' : '';
                     return `<div style="padding:4px 12px;border-bottom:1px solid var(--border-050);${bg}">
-                      <span style="font-size:10px;font-weight:600;color:${h.role==='user'?'var(--accent-brand)':h.role==='tool'?'#0891b2':'var(--success)'};text-transform:uppercase">${esc(h.role)}${isNew?' · NEW':''}</span>
-                      <pre style="margin:2px 0 0;font-size:11px;white-space:pre-wrap;word-break:break-word;color:var(--text-300);font-family:var(--font-mono)">${esc(String(h.content||'').substring(0, 2000))}${String(h.content||'').length > 2000 ? '\\n... (truncated)' : ''}</pre>
+                      <span style="font-size:10px;font-weight:600;color:${h.role==='user'?'var(--accent-brand)':h.role==='tool'?'#0891b2':'var(--success)'};text-transform:uppercase">${esc(h.role)}${isNew?' · NEU':''}</span>
+                      <pre style="margin:2px 0 0;font-size:11px;white-space:pre-wrap;word-break:break-word;color:var(--text-300);font-family:var(--font-mono)">${esc(String(h.content||'').substring(0, 2000))}${String(h.content||'').length > 2000 ? '\\n... (gekürzt)' : ''}</pre>
                     </div>`;
                   }).join('')}
                 </div>
@@ -1324,7 +1324,7 @@ async function openInspectModal() {
 
               <!-- User Message (only when present — absent on continuation rounds) -->
               ${p.user_message ? `<details open>
-                <summary style="cursor:pointer;${MONO11}">User Message (~${(p.user_tokens||0).toLocaleString()} tok)</summary>
+                <summary style="cursor:pointer;${MONO11}">Nutzernachricht (~${(p.user_tokens||0).toLocaleString()} Token)</summary>
                 <pre style="${PRE};margin-top:4px;border-radius:6px">${esc(p.user_message)}</pre>
               </details>` : ''}
             </div>
@@ -1335,16 +1335,16 @@ async function openInspectModal() {
         const userWireBlock = ix.user.wire_content
           ? `<details style="margin:0 16px 8px;border:1px solid var(--border-100);border-radius:8px;overflow:hidden">
               <summary style="padding:6px 10px;cursor:pointer;background:#ecfdf5;color:#047857;font-size:11.5px;font-weight:500">
-                Wire request (pseudonymised) — what the cloud LLM received
+                Wire-Anfrage (pseudonymisiert) — was das Cloud-LLM erhalten hat
               </summary>
               <pre style="${PRE};margin:0">${esc(ix.user.wire_content)}</pre>
             </details>`
           : '';
         html += `<details style="border-bottom:1px solid var(--border-050)">
           <summary style="padding:10px 16px;cursor:pointer;display:flex;align-items:center;gap:8px">
-            <span style="color:var(--accent-brand);font-weight:500;font-size:13px">Request</span>
-            <span style="${MONO11}">~${(ix.user.tokens_est||0).toLocaleString()} tok est</span>
-            ${a.tokens_in ? `<span style="${MONO11}">&middot; ${a.tokens_in.toLocaleString()} tok in (API)</span>` : ''}
+            <span style="color:var(--accent-brand);font-weight:500;font-size:13px">Anfrage</span>
+            <span style="${MONO11}">~${(ix.user.tokens_est||0).toLocaleString()} Token gesch.</span>
+            ${a.tokens_in ? `<span style="${MONO11}">&middot; ${a.tokens_in.toLocaleString()} Token ein (API)</span>` : ''}
           </summary>
           <pre style="${PRE}">${esc(ix.user.content || '')}</pre>
           ${userWireBlock}
@@ -1359,9 +1359,9 @@ async function openInspectModal() {
 
         html += `<details>
           <summary style="padding:10px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span style="color:var(--success);font-weight:500;font-size:13px">Response</span>
-            <span style="${MONO11}">~${(a.tokens_est||0).toLocaleString()} tok est</span>
-            ${a.tokens_out ? `<span style="${MONO11}">&middot; ${a.tokens_out.toLocaleString()} tok out (API)</span>` : ''}
+            <span style="color:var(--success);font-weight:500;font-size:13px">Antwort</span>
+            <span style="${MONO11}">~${(a.tokens_est||0).toLocaleString()} Token gesch.</span>
+            ${a.tokens_out ? `<span style="${MONO11}">&middot; ${a.tokens_out.toLocaleString()} Token aus (API)</span>` : ''}
             ${a.thinking ? BADGE('thinking', '#ede9fe', '#8b5cf6') : ''}
             ${a.sdk ? BADGE('SDK', 'var(--bg-300)', 'var(--text-400)') : ''}
             ${hasWorkerTool ? BADGE('Hintergrund', '#0891b2', '#fff') : ''}
@@ -1375,7 +1375,7 @@ async function openInspectModal() {
             let tIsWorker = false;
             const rs = typeof t.result === 'string' ? t.result : JSON.stringify(t.result || '');
             if (rs.includes('"worker": true') || rs.includes('"worker":true')) tIsWorker = true;
-            const wBadge = tIsWorker ? ' <span style="font-size:9px;font-weight:600;background:#0891b2;color:#fff;padding:1px 5px;border-radius:3px;letter-spacing:0.5px" title="Executed via worker subagent">Hintergrund</span>' : '';
+            const wBadge = tIsWorker ? ' <span style="font-size:9px;font-weight:600;background:#0891b2;color:#fff;padding:1px 5px;border-radius:3px;letter-spacing:0.5px" title="Über Worker-Subagent ausgeführt">Hintergrund</span>' : '';
             const wf = tIsWorker ? findWorkerFlow(t.name, rs) : null;
             const flowHtml = wf ? renderWorkerFlow(wf) : '';
             html += `<details style="margin-bottom:4px">
@@ -1399,7 +1399,7 @@ async function openInspectModal() {
         if (a.wire_content) {
           html += `<details style="margin:0 16px 8px;border:1px solid var(--border-100);border-radius:8px;overflow:hidden">
             <summary style="padding:6px 10px;cursor:pointer;background:#ecfdf5;color:#047857;font-size:11.5px;font-weight:500">
-              Wire response (pseudonymised) — ${a.gdpr_restored||0} token${(a.gdpr_restored||0)===1?'':'s'} restored
+              Wire-Antwort (pseudonymisiert) — ${a.gdpr_restored||0} Token wiederhergestellt
             </summary>
             <pre style="${PRE};margin:0">${esc(a.wire_content)}</pre>
           </details>`;
@@ -1420,7 +1420,7 @@ async function openInspectModal() {
           }).join('');
           html += `<details style="margin:0 16px 8px;border:1px solid var(--border-100);border-radius:8px;overflow:hidden">
             <summary style="padding:6px 10px;cursor:pointer;background:#eff6ff;color:#1d4ed8;font-size:11.5px;font-weight:500">
-              Web sources used this turn (${a.web_sources.length}, fetched fresh)
+              In dieser Anfrage verwendete Webquellen (${a.web_sources.length}, frisch abgerufen)
             </summary>${srcItems}
           </details>`;
         }
@@ -1428,7 +1428,7 @@ async function openInspectModal() {
           </div>
         </details>`;
       } else {
-        html += `<div style="padding:10px 16px;color:var(--text-400);font-style:italic;font-size:13px">No response</div>`;
+        html += `<div style="padding:10px 16px;color:var(--text-400);font-style:italic;font-size:13px">Keine Antwort</div>`;
       }
 
       html += `</div>`;
@@ -1447,15 +1447,15 @@ async function openInspectModal() {
         if (gdprDetails.dataset.loaded === '1') return;
         gdprDetails.dataset.loaded = '1';
         const gbody = document.getElementById('inspect-gdpr-body');
-        gbody.innerHTML = '<div style="color:var(--text-400)">Loading mappings…</div>';
+        gbody.innerHTML = '<div style="color:var(--text-400)">Zuordnungen werden geladen…</div>';
         try {
           const list = await API.listSessionGdprMaps(sessionId);
           const maps = list.mappings || [];
           if (!maps.length) {
-            gbody.innerHTML = '<div style="color:var(--text-400)">No anonymisation mappings stored for this session.</div>';
+            gbody.innerHTML = '<div style="color:var(--text-400)">Keine Anonymisierungs-Zuordnungen für diese Sitzung gespeichert.</div>';
             return;
           }
-          let mhtml = `<div style="color:var(--text-400);margin-bottom:10px">${maps.length} mapping${maps.length === 1 ? '' : 's'} stored. Each row was an "Anonymise & continue" turn — pseudonymisation map encrypted at rest, decrypted on demand.</div>`;
+          let mhtml = `<div style="color:var(--text-400);margin-bottom:10px">${maps.length} Zuordnung${maps.length === 1 ? '' : 'en'} gespeichert. Jede Zeile war eine „Anonymisieren & fortfahren“-Anfrage — Pseudonymisierungs-Zuordnung verschlüsselt gespeichert, bei Bedarf entschlüsselt.</div>`;
           for (const m of maps) {
             const when = m.created_at
               ? new Date(m.created_at * 1000).toLocaleString()
@@ -1465,7 +1465,7 @@ async function openInspectModal() {
                 <span style="font-family:var(--font-mono);color:var(--text-200)">${esc(m.mapping_id.slice(0, 16))}…</span>
                 <span style="color:var(--text-400);margin-left:auto">${esc(when)}</span>
               </summary>
-              <div class="gdpr-map-detail" style="padding:10px 12px;color:var(--text-400);font-size:12px">Click to load decrypted contents…</div>
+              <div class="gdpr-map-detail" style="padding:10px 12px;color:var(--text-400);font-size:12px">Klicken, um entschlüsselte Inhalte zu laden…</div>
             </details>`;
           }
           gbody.innerHTML = mhtml;
@@ -1477,7 +1477,7 @@ async function openInspectModal() {
               if (!d.open || d.dataset.loaded === '1') return;
               d.dataset.loaded = '1';
               const detailBox = d.querySelector('.gdpr-map-detail');
-              detailBox.innerHTML = 'Decrypting…';
+              detailBox.innerHTML = 'Wird entschlüsselt…';
               try {
                 const mapping = await API.getSessionGdprMap(sessionId, d.dataset.mappingId);
                 const pairs = mapping.pairs || [];
@@ -1487,16 +1487,16 @@ async function openInspectModal() {
                   .map(([k, v]) => `${esc(k)}:${v}`).join(' · ') || '—';
                 const srcLine = sources.length ? sources.map(esc).join(', ') : '—';
                 let inner = `<div style="display:grid;grid-template-columns:auto auto;gap:4px 12px;margin-bottom:10px;font-size:11.5px">
-                  <span style="color:var(--text-400)">Sources</span><span style="color:var(--text-200)">${srcLine}</span>
-                  <span style="color:var(--text-400)">Categories</span><span style="color:var(--text-200)">${catLine}</span>
-                  <span style="color:var(--text-400)">Tokens minted</span><span style="color:var(--text-200)">${mapping.token_count || 0}</span>
+                  <span style="color:var(--text-400)">Quellen</span><span style="color:var(--text-200)">${srcLine}</span>
+                  <span style="color:var(--text-400)">Kategorien</span><span style="color:var(--text-200)">${catLine}</span>
+                  <span style="color:var(--text-400)">Erzeugte Token</span><span style="color:var(--text-200)">${mapping.token_count || 0}</span>
                 </div>`;
                 if (!pairs.length) {
-                  inner += '<div style="color:var(--text-400)">Mapping decrypted but contains no entries.</div>';
+                  inner += '<div style="color:var(--text-400)">Zuordnung entschlüsselt, enthält aber keine Einträge.</div>';
                 } else {
-                  inner += '<div style="font-size:11px;color:var(--text-400);margin-bottom:4px">Before → After (what the user wrote → what the cloud LLM received)</div>';
+                  inner += '<div style="font-size:11px;color:var(--text-400);margin-bottom:4px">Vorher → Nachher (was der Nutzer schrieb → was das Cloud-LLM erhielt)</div>';
                   inner += '<table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11.5px">';
-                  inner += '<thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border-100);color:var(--text-400);font-weight:500">Real value</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border-100);color:var(--text-400);font-weight:500">Token sent</th></tr></thead><tbody>';
+                  inner += '<thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border-100);color:var(--text-400);font-weight:500">Echter Wert</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border-100);color:var(--text-400);font-weight:500">Gesendeter Token</th></tr></thead><tbody>';
                   for (const p of pairs) {
                     inner += `<tr>
                       <td style="padding:4px 8px;color:var(--text-200);word-break:break-all;border-bottom:1px solid var(--border-100)">${esc(p.real)}</td>
@@ -1507,7 +1507,7 @@ async function openInspectModal() {
                 }
                 detailBox.innerHTML = inner;
               } catch (mErr) {
-                detailBox.innerHTML = `<div style="color:var(--error)">Decrypt failed: ${esc(mErr.message || mErr)}</div>`;
+                detailBox.innerHTML = `<div style="color:var(--error)">Entschlüsselung fehlgeschlagen: ${esc(mErr.message || mErr)}</div>`;
               }
             });
           }
@@ -1516,7 +1516,7 @@ async function openInspectModal() {
           // section's gating intent is obvious.
           const msg = (lErr && lErr.message) ? lErr.message : String(lErr);
           if (/403|admin/i.test(msg)) {
-            gbody.innerHTML = '<div style="color:var(--text-400)">Admin only — sign in as an admin to inspect pseudonymisation mappings.</div>';
+            gbody.innerHTML = '<div style="color:var(--text-400)">Nur Admin — als Administrator anmelden, um Pseudonymisierungs-Zuordnungen einzusehen.</div>';
           } else {
             gbody.innerHTML = `<div style="color:var(--error)">${esc(msg)}</div>`;
           }
@@ -1539,12 +1539,12 @@ async function answerWorkerQuestion(workerId, delegateValue) {
       answer = ta ? ta.value.trim() : '';
     }
   }
-  if (!answer) { showToast('Please select an option or type an answer', true); return; }
+  if (!answer) { showToast('Bitte eine Option wählen oder eine Antwort eingeben', true); return; }
   try {
     await API.post(`/v1/workers/${encodeURIComponent(workerId)}/answer`, { answer });
     const card = document.getElementById(`wq-${workerId}`);
     if (card) { card.classList.add('wq-answered'); }
-  } catch (e) { showToast('Failed to send answer: ' + e.message, true); }
+  } catch (e) { showToast('Antwort konnte nicht gesendet werden: ' + e.message, true); }
 }
 async function answerChatQuestion(sessionId) {
   const card = document.getElementById(`aq-${sessionId}`);
@@ -1566,7 +1566,7 @@ async function answerChatQuestion(sessionId) {
     answers[question] = val;
   });
   if (!items.length || missing.length) {
-    showToast(items.length ? `Please answer all ${items.length} questions` : 'No question to answer', true);
+    showToast(items.length ? `Bitte alle ${items.length} Fragen beantworten` : 'Keine Frage zu beantworten', true);
     return;
   }
   const body = { session_id: sessionId };
@@ -1579,7 +1579,7 @@ async function answerChatQuestion(sessionId) {
   try {
     await API.post('/v1/chat/answer', body);
     card.classList.add('wq-answered');
-  } catch (e) { showToast('Failed to send answer: ' + e.message, true); }
+  } catch (e) { showToast('Antwort konnte nicht gesendet werden: ' + e.message, true); }
 }
 async function abortWorkerFromQuestion(workerId) {
   try {
@@ -1590,7 +1590,7 @@ async function abortWorkerFromQuestion(workerId) {
     try { await API.post('/v1/chat', { session_id: chat.sessionId, message: `[abort worker ${workerId}]` }); } catch(e) {}
   }
   const card = document.getElementById(`wq-${workerId}`);
-  if (card) { card.classList.add('wq-answered'); card.querySelector('.wq-body').innerHTML += '<div style="margin-top:8px;font-size:12px;color:var(--error)">Worker aborted</div>'; }
+  if (card) { card.classList.add('wq-answered'); card.querySelector('.wq-body').innerHTML += '<div style="margin-top:8px;font-size:12px;color:var(--error)">Worker abgebrochen</div>'; }
 }
 async function stopGeneration() {
   const chat = state.activeChat;
@@ -1630,7 +1630,7 @@ function updateStreamingUI(isStreaming, chat) {
     sendBtn.classList.add('hidden');
     stopBtn.classList.remove('hidden');
     document.getElementById('spinner-model').textContent = spinnerModelName(targetChat);
-    document.getElementById('spinner-label').textContent = 'Thinking...';
+    document.getElementById('spinner-label').textContent = 'Denke nach...';
     document.getElementById('spinner-elapsed').textContent = '';
     if (typeof buddyTurnStart === 'function') buddyTurnStart();
   } else {

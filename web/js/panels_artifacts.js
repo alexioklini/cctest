@@ -218,18 +218,18 @@ async function _renderAttachmentFullview() {
   // Shell first — we re-render the body slot once async fetch resolves.
   const renderShell = (bodyHtml) => {
     fullview.innerHTML = `
-      <button class="attach-fullview-back" onclick="renderAttachmentsPane()">Back to all</button>
+      <button class="attach-fullview-back" onclick="renderAttachmentsPane()">Zurück zu allen</button>
       <div class="attach-fullview-body" id="attach-fullview-body">${bodyHtml}</div>
       <div class="attach-fullview-actions">
-        <button class="artifact-action-btn" onclick="copyAttachment()" ${canCopy?'':'disabled'} title="Copy">
+        <button class="artifact-action-btn" onclick="copyAttachment()" ${canCopy?'':'disabled'} title="Kopieren">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-          Copy
+          Kopieren
         </button>
-        <button class="artifact-action-btn" onclick="downloadAttachment()" ${canDownload?'':'disabled'} title="Download">
+        <button class="artifact-action-btn" onclick="downloadAttachment()" ${canDownload?'':'disabled'} title="Herunterladen">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Download
+          Herunterladen
         </button>
-        <button class="artifact-action-btn ${sourceActive}" onclick="toggleAttachmentSource()" title="View source">
+        <button class="artifact-action-btn ${sourceActive}" onclick="toggleAttachmentSource()" title="Quelltext anzeigen">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
           Code
         </button>
@@ -240,10 +240,10 @@ async function _renderAttachmentFullview() {
   // Code/metadata view — shows path/MIME/raw body (text) or data URI head/tail.
   if (_attachmentSourceMode) {
     const lines = [];
-    lines.push(`Name: ${a.name || '(unknown)'}`);
-    if (a.type) lines.push(`Type: ${a.type}`);
-    if (a.path) lines.push(`Path: ${a.path}`);
-    renderShell(`<pre class="attach-fullview-code">${esc(lines.join('\n'))}\n\nLoading…</pre>`);
+    lines.push(`Name: ${a.name || '(unbekannt)'}`);
+    if (a.type) lines.push(`Typ: ${a.type}`);
+    if (a.path) lines.push(`Pfad: ${a.path}`);
+    renderShell(`<pre class="attach-fullview-code">${esc(lines.join('\n'))}\n\nWird geladen …</pre>`);
     const body = await _fetchAttachmentBody(a);
     const slot = document.getElementById('attach-fullview-body');
     if (!slot) return;
@@ -253,7 +253,7 @@ async function _renderAttachmentFullview() {
     } else if (a.url && a.url.startsWith('data:') && a.url.length > 300) {
       tail = `${a.url.slice(0, 200)}\n…\n${a.url.slice(-100)}`;
     } else {
-      tail = `(unavailable: ${body.error})`;
+      tail = `(nicht verfügbar: ${body.error})`;
     }
     slot.innerHTML = `<pre class="attach-fullview-code">${esc(lines.join('\n'))}\n\n${esc(tail)}</pre>`;
     return;
@@ -267,7 +267,7 @@ async function _renderAttachmentFullview() {
   if (a.isImage && a.path) {
     // Disk-saved image, no inline bytes — load via /v1/files/download as a
     // blob URL.
-    renderShell(`<div style="color:var(--text-400);font-size:12px">Loading…</div>`);
+    renderShell(`<div style="color:var(--text-400);font-size:12px">Wird geladen …</div>`);
     try {
       const url = `${BASE_URL}/v1/files/download?path=${encodeURIComponent(a.path)}`;
       const resp = await fetch(url, { headers: API._headers() });
@@ -278,14 +278,14 @@ async function _renderAttachmentFullview() {
       if (slot) slot.innerHTML = `<img src="${objUrl}" alt="${esc(a.name)}">`;
     } catch (e) {
       const slot = document.getElementById('attach-fullview-body');
-      if (slot) slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Preview unavailable: ${esc(e.message || e)}</div>`;
+      if (slot) slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Vorschau nicht verfügbar: ${esc(e.message || e)}</div>`;
     }
     return;
   }
 
   // PDF preview — load via blob URL into an iframe (browser's native PDF viewer).
   if (isPdf && (a.path || (a.url && a.url.startsWith('data:application/pdf')))) {
-    renderShell(`<div style="color:var(--text-400);font-size:12px">Loading…</div>`);
+    renderShell(`<div style="color:var(--text-400);font-size:12px">Wird geladen …</div>`);
     try {
       let objUrl;
       if (a.url && a.url.startsWith('data:')) {
@@ -303,19 +303,19 @@ async function _renderAttachmentFullview() {
       if (slot) slot.innerHTML = `<iframe src="${objUrl}" style="width:100%;height:100%;border:none;border-radius:8px;background:#fff"></iframe>`;
     } catch (e) {
       const slot = document.getElementById('attach-fullview-body');
-      if (slot) slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Preview unavailable: ${esc(e.message || e)}</div>`;
+      if (slot) slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Vorschau nicht verfügbar: ${esc(e.message || e)}</div>`;
     }
     return;
   }
 
   // Text / code / markdown preview — fetch body and render
   if (isText) {
-    renderShell(`<div style="color:var(--text-400);font-size:12px">Loading…</div>`);
+    renderShell(`<div style="color:var(--text-400);font-size:12px">Wird geladen …</div>`);
     const body = await _fetchAttachmentBody(a);
     const slot = document.getElementById('attach-fullview-body');
     if (!slot) return;
     if (!body.ok) {
-      slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Preview unavailable: ${esc(body.error)}</div>`;
+      slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Vorschau nicht verfügbar: ${esc(body.error)}</div>`;
       return;
     }
     if (ext === 'md' || ext === 'markdown') {
@@ -343,7 +343,7 @@ async function _renderAttachmentFullview() {
       <div class="attach-fullview-file-ext">${esc(extLabel)}</div>
       <div class="attach-fullview-file-name">${esc(a.name)}</div>
       ${a.type ? `<div class="attach-fullview-file-meta">${esc(a.type)}</div>` : ''}
-      <div style="font-size:11px;color:var(--text-400);margin-top:8px">No inline preview — use Download to open this file</div>
+      <div style="font-size:11px;color:var(--text-400);margin-top:8px">Keine Inline-Vorschau — über „Herunterladen“ öffnen</div>
     </div>
   `);
 }
@@ -368,17 +368,17 @@ async function copyAttachment() {
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
         await navigator.clipboard.write([new ClipboardItem({ [mime]: new Blob([bytes], { type: mime }) })]);
-        showToast('Image copied');
+        showToast('Bild kopiert');
         return;
       }
     }
     // Fallback: copy filename (we don't have bytes for disk-only files
     // without an extra round-trip — name is what's useful for non-images)
     await navigator.clipboard.writeText(a.name || '');
-    showToast('Filename copied');
+    showToast('Dateiname kopiert');
   } catch (e) {
     console.error('[attachment] copy failed', e);
-    showToast(`Copy failed: ${e.message || e}`, true);
+    showToast(`Kopieren fehlgeschlagen: ${e.message || e}`, true);
   }
 }
 
@@ -401,7 +401,7 @@ async function downloadAttachment() {
       setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
       return;
     } catch (e) {
-      showToast(`Download failed: ${e.message || e}`, true);
+      showToast(`Herunterladen fehlgeschlagen: ${e.message || e}`, true);
       return;
     }
   }
@@ -412,7 +412,7 @@ async function downloadAttachment() {
       const resp = await fetch(url, { headers: API._headers() });
       if (!resp.ok) {
         const err = await resp.text().catch(() => '');
-        showToast(`Download failed (${resp.status}): ${err.slice(0, 80)}`, true);
+        showToast(`Herunterladen fehlgeschlagen (${resp.status}): ${err.slice(0, 80)}`, true);
         return;
       }
       const blob = await resp.blob();
@@ -425,11 +425,11 @@ async function downloadAttachment() {
       link.remove();
       setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
     } catch (e) {
-      showToast(`Download failed: ${e.message || e}`, true);
+      showToast(`Herunterladen fehlgeschlagen: ${e.message || e}`, true);
     }
     return;
   }
-  showToast('Nothing to download', true);
+  showToast('Nichts zum Herunterladen', true);
 }
 
 // Legacy compat
@@ -460,7 +460,7 @@ async function openArtifactPanel(artifactId, version) {
   const artifacts = state.artifacts[sessionId] || [];
   const artifact = artifacts.find(a => a.id === artifactId);
   if (!artifact) {
-    showToast('Artifact not found', true);
+    showToast('Artefakt nicht gefunden', true);
     return;
   }
 
@@ -505,19 +505,19 @@ async function loadArtifactVersion(version) {
     const data = await API.getArtifactContent(artifactId, version);
     if (!data || !data.content) {
       console.error('[artifact] Empty response for', artifactId, 'version', version, 'data:', data);
-      container.innerHTML = `<div class="artifact-empty">No content available (version ${version})</div>`;
+      container.innerHTML = `<div class="artifact-empty">Kein Inhalt verfügbar (Version ${version})</div>`;
       return;
     }
     renderArtifactContent(data.content, data.type, data.name, data.encoding);
   } catch (e) {
     console.error('[artifact] Load failed for', artifactId, 'version', version, e);
-    container.innerHTML = `<div class="artifact-empty">Failed to load content: ${e.message || e}</div>`;
+    container.innerHTML = `<div class="artifact-empty">Inhalt konnte nicht geladen werden: ${e.message || e}</div>`;
   }
 }
 
 function shareCurrentArtifact() {
   const artifactId = state.activeArtifactId;
-  if (!artifactId) { showToast('No artifact open', true); return; }
+  if (!artifactId) { showToast('Kein Artefakt geöffnet', true); return; }
   const title = document.getElementById('artifact-title')?.textContent || 'artifact';
   shareDialog('artifact', artifactId, '', { title });
 }
@@ -771,8 +771,8 @@ function _renderKnowledgeGraphSvg(drawers, triples, opts) {
   // disambiguate. Two-column subject/object layouts are obvious from
   // arrow direction.
   if (cols.length >= 2 && docNodes.length) {
-    const headerLabel = (key) => key === 'doc' ? 'Documents'
-                                : key === 'subj' ? 'Subjects' : 'Objects';
+    const headerLabel = (key) => key === 'doc' ? 'Dokumente'
+                                : key === 'subj' ? 'Subjekte' : 'Objekte';
     cols.forEach(col => {
       svg += `<text x="${col.x}" y="14" font-size="10" fill="var(--text-400)"
                     text-anchor="middle" font-family="var(--font-sans, system-ui)"
@@ -787,7 +787,7 @@ function _renderKnowledgeGraphSvg(drawers, triples, opts) {
 function openUsedMemoryGraph(idx) {
   const { drawers, triples } = _collectKnowledgeForMessage(idx);
   if (!drawers.length && !triples.length) {
-    showToast('This response did not pull from project memory');
+    showToast('Diese Antwort hat nicht auf den Projektspeicher zugegriffen');
     return;
   }
   const overlay = document.createElement('div');
@@ -812,7 +812,7 @@ function openUsedMemoryGraph(idx) {
           <div style="color:var(--text-300);line-height:1.4;white-space:pre-wrap">${esc(text)}</div>
         </div>`;
       }).join('')
-    : '<div style="color:var(--text-400);font-size:12px;padding:8px">No drawers retrieved.</div>';
+    : '<div style="color:var(--text-400);font-size:12px;padding:8px">Keine Schubladen abgerufen.</div>';
   // Triples list: subject — predicate → object, grouped to keep the panel
   // scannable when extraction returns dozens.
   const tripleRows = triples.length
@@ -828,40 +828,40 @@ function openUsedMemoryGraph(idx) {
           <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-400);margin-top:2px">${esc(sf)}${conf ? ` · c=${conf}` : ''}</div>
         </div>`;
       }).join('')
-    : '<div style="color:var(--text-400);font-size:12px;padding:8px">No relations extracted.</div>';
+    : '<div style="color:var(--text-400);font-size:12px;padding:8px">Keine Beziehungen extrahiert.</div>';
   // Tagline tells the user, in plain English, what the panel contains —
   // the header alone leaves users guessing what "drawers" and "relations"
   // mean in context.
   const tagline = `<div style="font-size:12px;color:var(--text-400);line-height:1.5;padding:10px 14px;background:var(--bg-100);border:1px solid var(--border-100);border-radius:8px;margin-bottom:12px">
-    These are the document chunks (drawers) and extracted facts (relations) that the agent retrieved from this project's memory before composing its answer. Use them to verify which sources were consulted and what specific claims were drawn from them.
+    Dies sind die Dokumentabschnitte (Schubladen) und extrahierten Fakten (Beziehungen), die der Agent aus dem Speicher dieses Projekts abgerufen hat, bevor er seine Antwort verfasst hat. Damit lässt sich nachvollziehen, welche Quellen herangezogen wurden und welche konkreten Aussagen daraus stammen.
   </div>`;
 
   overlay.innerHTML = `<div class="modal-content" style="max-width:1180px;width:94vw;max-height:90vh;display:flex;flex-direction:column">
     <div class="modal-header" style="display:flex;align-items:center;gap:10px">
-      <span style="font-weight:600">Memory & Relations used in this response</span>
-      <span style="font-size:11px;color:var(--text-400)">${drawers.length} drawer${drawers.length===1?'':'s'} · ${triples.length} relation${triples.length===1?'':'s'}</span>
+      <span style="font-weight:600">In dieser Antwort verwendeter Speicher & Beziehungen</span>
+      <span style="font-size:11px;color:var(--text-400)">${drawers.length} Schublade${drawers.length===1?'':'n'} · ${triples.length} Beziehung${triples.length===1?'':'en'}</span>
       <button class="modal-close" style="margin-left:auto" onclick="this.closest('.modal-overlay').remove()">&times;</button>
     </div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;overflow:auto;flex:1;padding:16px 20px">
       ${tagline}
       <div style="display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;align-items:start">
         <div style="min-width:0;display:flex;flex-direction:column;gap:8px">
-          <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Graph view</div>
+          <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Graph-Ansicht</div>
           <div>${svg}</div>
           <div style="display:flex;gap:14px;font-size:11px;color:var(--text-400);align-items:center;flex-wrap:wrap;padding:4px 0 0">
-            <span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:18px;height:10px;border-radius:5px;background:#d9770624;border:1.5px solid #d97706"></span> Document</span>
-            <span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:18px;height:10px;border-radius:5px;background:#2563eb24;border:1.5px solid #2563eb"></span> Entity</span>
-            <span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:18px;border-top:1.5px solid var(--accent-brand)"></span> Relation</span>
-            <span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:18px;border-top:1.5px dashed var(--accent-brand);opacity:0.6"></span> Source link</span>
+            <span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:18px;height:10px;border-radius:5px;background:#d9770624;border:1.5px solid #d97706"></span> Dokument</span>
+            <span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:18px;height:10px;border-radius:5px;background:#2563eb24;border:1.5px solid #2563eb"></span> Entität</span>
+            <span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:18px;border-top:1.5px solid var(--accent-brand)"></span> Beziehung</span>
+            <span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:18px;border-top:1.5px dashed var(--accent-brand);opacity:0.6"></span> Quellenverweis</span>
           </div>
         </div>
         <div style="min-width:0;display:flex;flex-direction:column;gap:14px">
           <div>
-            <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Drawers (${drawers.length})</div>
+            <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Schubladen (${drawers.length})</div>
             <div>${drawerCards}</div>
           </div>
           <div>
-            <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Relations (${triples.length})</div>
+            <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Beziehungen (${triples.length})</div>
             <div>${tripleRows}</div>
           </div>
         </div>
@@ -888,13 +888,13 @@ function showArtifactList() {
   const artifacts = state.artifacts[sessionId] || [];
 
   const container = document.getElementById('artifact-content');
-  document.getElementById('artifact-title').textContent = 'Artifacts';
+  document.getElementById('artifact-title').textContent = 'Artefakte';
   document.getElementById('artifact-actions').style.display = 'none';
   document.getElementById('artifact-version-select').innerHTML = '';
   state.activeArtifactId = null;
 
   if (artifacts.length === 0) {
-    container.innerHTML = '<div class="artifact-empty"><svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>No artifacts yet</div>';
+    container.innerHTML = '<div class="artifact-empty"><svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Noch keine Artefakte</div>';
     return;
   }
 
@@ -912,8 +912,8 @@ function showArtifactList() {
   if (hasIntermediate) {
     const outActive = _artifactListRoleFilter === 'output';
     filterBar = `<div style="display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--border-100)">
-      <button onclick="setArtifactListRoleFilter('output')" style="padding:3px 10px;border-radius:5px;font-size:11px;background:${outActive?'var(--bg-300)':'transparent'};color:${outActive?'var(--text-000)':'var(--text-300)'};border:1px solid var(--border-100)">Outputs</button>
-      <button onclick="setArtifactListRoleFilter('all')" style="padding:3px 10px;border-radius:5px;font-size:11px;background:${!outActive?'var(--bg-300)':'transparent'};color:${!outActive?'var(--text-000)':'var(--text-300)'};border:1px solid var(--border-100)">All (+${intermediateCount} working files)</button>
+      <button onclick="setArtifactListRoleFilter('output')" style="padding:3px 10px;border-radius:5px;font-size:11px;background:${outActive?'var(--bg-300)':'transparent'};color:${outActive?'var(--text-000)':'var(--text-300)'};border:1px solid var(--border-100)">Ergebnisse</button>
+      <button onclick="setArtifactListRoleFilter('all')" style="padding:3px 10px;border-radius:5px;font-size:11px;background:${!outActive?'var(--bg-300)':'transparent'};color:${!outActive?'var(--text-000)':'var(--text-300)'};border:1px solid var(--border-100)">Alle (+${intermediateCount} Arbeitsdateien)</button>
     </div>`;
   }
   container.innerHTML = filterBar + '<div id="artifact-turn-groups"></div>';
@@ -921,10 +921,10 @@ function showArtifactList() {
   const cardHtml = (a) => {
     const verCount = a.versions?.length || 0;
     const latestVer = verCount > 0 ? a.versions[verCount - 1] : null;
-    const meta = latestVer ? (latestVer.action === 'created' ? 'Created' : 'Modified') : '';
+    const meta = latestVer ? (latestVer.action === 'created' ? 'Erstellt' : 'Geändert') : '';
     const isInter = (a.role || 'output') === 'intermediate';
     const roleBadge = isInter
-      ? `<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(120,120,120,0.15);color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-left:4px" title="Helper/working file produced during execution">working</span>`
+      ? `<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(120,120,120,0.15);color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-left:4px" title="Während der Ausführung erzeugte Hilfs-/Arbeitsdatei">Arbeitsdatei</span>`
       : '';
     return `
       <div class="artifact-list-card" onclick="openArtifactPanel('${esc(a.id)}')">
@@ -962,7 +962,7 @@ async function copyArtifact() {
   const raw = container._rawContent;
   const encoding = container._rawEncoding;
   const type = container._rawType;
-  if (!raw) { showToast('Nothing to copy', true); return; }
+  if (!raw) { showToast('Nichts zum Kopieren', true); return; }
   // Iframes (HTML artifacts) can hold focus, breaking navigator.clipboard.
   try { window.focus(); } catch(_) {}
   try {
@@ -973,11 +973,11 @@ async function copyArtifact() {
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       await navigator.clipboard.write([new ClipboardItem({ [mime]: new Blob([bytes], { type: mime }) })]);
-      showToast('Image copied');
+      showToast('Bild kopiert');
       return;
     }
     await navigator.clipboard.writeText(raw);
-    showToast('Copied to clipboard');
+    showToast('In die Zwischenablage kopiert');
   } catch (e) {
     // Fallback: hidden textarea + execCommand('copy') works even when
     // navigator.clipboard rejects due to focus stolen by an iframe.
@@ -992,11 +992,11 @@ async function copyArtifact() {
       ta.select();
       const ok = document.execCommand('copy');
       ta.remove();
-      if (ok) { showToast('Copied to clipboard'); return; }
+      if (ok) { showToast('In die Zwischenablage kopiert'); return; }
       throw new Error('execCommand returned false');
     } catch (e2) {
       console.error('[artifact] copy failed', e, e2);
-      showToast(`Copy failed: ${e.message || e}`, true);
+      showToast(`Kopieren fehlgeschlagen: ${e.message || e}`, true);
     }
   }
 }
@@ -1009,7 +1009,7 @@ async function downloadArtifact() {
   try {
     const r = await fetch(url, { headers: API._headers() });
     if (!r.ok) {
-      const msg = r.status === 401 ? 'Not authorized' : `Download failed (${r.status})`;
+      const msg = r.status === 401 ? 'Nicht autorisiert' : `Herunterladen fehlgeschlagen (${r.status})`;
       showToast(msg, true);
       return;
     }
@@ -1027,7 +1027,7 @@ async function downloadArtifact() {
     setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
   } catch (e) {
     console.error('[artifact] download failed', e);
-    showToast(`Download failed: ${e.message || e}`, true);
+    showToast(`Herunterladen fehlgeschlagen: ${e.message || e}`, true);
   }
 }
 
@@ -1092,13 +1092,13 @@ let _browseArtifactsRole = 'output';
 
 async function loadArtifactsBrowse() {
   const grid = document.getElementById('artifacts-grid');
-  grid.innerHTML = '<div class="artifacts-empty">Loading...</div>';
+  grid.innerHTML = '<div class="artifacts-empty">Wird geladen …</div>';
 
   try {
     const resp = await API.browseArtifacts(_browseArtifactsAgent);
     _browseArtifactsCache = resp.artifacts || [];
   } catch (e) {
-    grid.innerHTML = '<div class="artifacts-empty">Failed to load artifacts</div>';
+    grid.innerHTML = '<div class="artifacts-empty">Artefakte konnten nicht geladen werden</div>';
     return;
   }
 
@@ -1106,7 +1106,7 @@ async function loadArtifactsBrowse() {
   const agents = [...new Set(_browseArtifactsCache.map(a => a.agent_id))];
   const filterEl = document.getElementById('artifacts-agent-filter');
   if (agents.length > 1) {
-    let chips = `<button class="artifacts-agent-chip${!_browseArtifactsAgent ? ' active' : ''}" onclick="setArtifactsBrowseAgent(null)">All agents</button>`;
+    let chips = `<button class="artifacts-agent-chip${!_browseArtifactsAgent ? ' active' : ''}" onclick="setArtifactsBrowseAgent(null)">Alle Agents</button>`;
     for (const ag of agents) {
       chips += `<button class="artifacts-agent-chip${_browseArtifactsAgent === ag ? ' active' : ''}" onclick="setArtifactsBrowseAgent('${esc(ag)}')">${esc(ag)}</button>`;
     }
@@ -1135,11 +1135,11 @@ function renderArtifactsBrowse() {
 
   if (filtered.length === 0) {
     const roleHint = _browseArtifactsRole === 'output'
-      ? '<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Try <a href="#" onclick="event.preventDefault();filterArtifactsRole(\'all\')" style="color:var(--accent-brand)">Show working files</a> to include helper scripts and working data.</div>'
+      ? '<div style="margin-top:8px;font-size:12px;color:var(--text-400)"><a href="#" onclick="event.preventDefault();filterArtifactsRole(\'all\')" style="color:var(--accent-brand)">Arbeitsdateien anzeigen</a>, um Hilfsskripte und Arbeitsdaten einzubeziehen.</div>'
       : '';
     grid.innerHTML = `<div class="artifacts-empty" style="grid-column:1/-1">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-      No artifacts${_browseArtifactsFilter !== 'all' ? ' of this type' : ''}${_browseArtifactsSource !== 'all' ? ' in ' + _browseArtifactsSource : ''} yet
+      Noch keine Artefakte${_browseArtifactsFilter !== 'all' ? ' dieses Typs' : ''}${_browseArtifactsSource !== 'all' ? ' in ' + _browseArtifactsSource : ''}
       ${roleHint}
     </div>`;
     return;
@@ -1160,11 +1160,11 @@ function renderArtifactsBrowse() {
     const isScheduled = a.source === 'scheduled';
     const schedRun = a.schedule_run;
     const sourceBadge = isScheduled
-      ? `<span class="abm-source" style="background:rgba(245,158,11,0.12);color:#d97706;padding:1px 6px;border-radius:4px;font-size:10px;text-transform:uppercase;letter-spacing:0.04em" title="${esc(schedRun ? schedRun.schedule_name + ' · run #' + schedRun.run_id : 'Scheduled task')}">sched${schedRun ? ' · ' + esc((schedRun.schedule_name || '').slice(0, 18)) : ''}</span>`
+      ? `<span class="abm-source" style="background:rgba(245,158,11,0.12);color:#d97706;padding:1px 6px;border-radius:4px;font-size:10px;text-transform:uppercase;letter-spacing:0.04em" title="${esc(schedRun ? schedRun.schedule_name + ' · Lauf #' + schedRun.run_id : 'Geplante Aufgabe')}">geplant${schedRun ? ' · ' + esc((schedRun.schedule_name || '').slice(0, 18)) : ''}</span>`
       : '';
     const isInter = (a.role || 'output') === 'intermediate';
     const roleBadge = isInter
-      ? `<span style="background:rgba(120,120,120,0.15);color:var(--text-400);padding:1px 5px;border-radius:3px;font-size:10px;text-transform:uppercase;letter-spacing:0.04em" title="Helper or working file used during execution">working</span>`
+      ? `<span style="background:rgba(120,120,120,0.15);color:var(--text-400);padding:1px 5px;border-radius:3px;font-size:10px;text-transform:uppercase;letter-spacing:0.04em" title="Während der Ausführung verwendete Hilfs- oder Arbeitsdatei">Arbeitsdatei</span>`
       : '';
 
     html += `
@@ -1269,7 +1269,7 @@ async function openScheduledArtifact(runId, sessionId, agentId, artifactId) {
   try {
     detail = await API.manageSchedule({ action: 'run_detail', run_id: runId });
     if (detail.error) { showToast(detail.error, true); return; }
-  } catch (e) { showToast('Failed to load run: ' + e.message, true); return; }
+  } catch (e) { showToast('Lauf konnte nicht geladen werden: ' + e.message, true); return; }
 
   // Artifacts list for this session (so openArtifactPanel's lookup works).
   try {
@@ -1293,7 +1293,7 @@ async function openScheduledArtifact(runId, sessionId, agentId, artifactId) {
   state.activeScheduledRunId = runId;
   const runRow = detail.run || {};
   chat.model = runRow.model || chat.model;
-  chat.chatTitle = `${runRow.schedule_name || 'Scheduled task'} · run #${runId}`;
+  chat.chatTitle = `${runRow.schedule_name || 'Geplante Aufgabe'} · Lauf #${runId}`;
 
   // Build pseudo-message stream: user task, thinking+tool_call/result per
   // round in trace order, then the final assistant result.
@@ -1364,7 +1364,7 @@ function _applyScheduledReadonlyUI(runRow) {
   // so a later openSession clears it naturally.
   const input = document.getElementById('input');
   const sendBtn = document.getElementById('send-btn');
-  if (input) { input.disabled = true; input.placeholder = 'Read-only — scheduled task log'; }
+  if (input) { input.disabled = true; input.placeholder = 'Schreibgeschützt — Protokoll der geplanten Aufgabe'; }
   if (sendBtn) sendBtn.disabled = true;
 
   // Banner above messages.
@@ -1388,35 +1388,35 @@ function _applyScheduledReadonlyUI(runRow) {
     <div style="display:flex;align-items:center;gap:10px">
       <span style="width:8px;height:8px;border-radius:50%;background:${statusColor};flex-shrink:0"></span>
       <div style="flex:1;min-width:0">
-        <div style="color:var(--text-100);font-weight:500">Scheduled task · ${esc(runRow.schedule_name || '')} · run #${runRow.id}</div>
+        <div style="color:var(--text-100);font-weight:500">Geplante Aufgabe · ${esc(runRow.schedule_name || '')} · Lauf #${runRow.id}</div>
         <div style="color:var(--text-400);font-size:11px;margin-top:2px">
           ${runRow.started_at ? esc(new Date(runRow.started_at+'Z').toLocaleString()) : ''}
           · <span style="color:${statusColor}">${esc(status)}</span>
           ${runRow.duration_ms != null ? ` · ${(runRow.duration_ms/1000).toFixed(1)}s` : ''}
-          · ${runRow.tool_calls || 0} tool calls
+          · ${runRow.tool_calls || 0} Tool-Aufrufe
           ${runRow.model ? ' · ' + esc(runRow.model) : ''}
         </div>
       </div>
       <button onclick="_schedViewRunDetail(${runRow.id})" style="padding:4px 10px;border-radius:6px;background:var(--bg-200);color:var(--text-200);font-size:12px;border:1px solid var(--border-100);cursor:pointer">Details</button>
-      <button ${running ? 'disabled title="Cannot delete a running task"' : ''} onclick="_schedDeleteRunFromBanner(${runRow.id})" style="padding:4px 10px;border-radius:6px;background:transparent;color:var(--text-300);font-size:12px;border:1px solid var(--border-100);cursor:${running?'not-allowed':'pointer'}">Delete run</button>
+      <button ${running ? 'disabled title="Ein laufender Lauf kann nicht gelöscht werden"' : ''} onclick="_schedDeleteRunFromBanner(${runRow.id})" style="padding:4px 10px;border-radius:6px;background:transparent;color:var(--text-300);font-size:12px;border:1px solid var(--border-100);cursor:${running?'not-allowed':'pointer'}">Lauf löschen</button>
     </div>
     ${taskText ? `<details style="margin-left:18px">
-      <summary style="cursor:pointer;font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em;list-style:none">Task prompt</summary>
+      <summary style="cursor:pointer;font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em;list-style:none">Aufgaben-Prompt</summary>
       <div style="margin-top:6px;padding:8px;background:var(--bg-100);border-radius:6px;font-size:12px;color:var(--text-200);white-space:pre-wrap;max-height:160px;overflow:auto">${esc(taskText)}</div>
     </details>` : ''}
   `;
 }
 
 async function _schedDeleteRunFromBanner(runId) {
-  if (!await showConfirmDanger(`Delete run #${runId}?\n\nThis removes the history row and every artifact produced by this run (files included).`, 'Delete Run', 'Delete')) return;
+  if (!await showConfirmDanger(`Lauf #${runId} löschen?\n\nDamit werden der Verlaufseintrag und alle von diesem Lauf erzeugten Artefakte (inklusive Dateien) entfernt.`, 'Lauf löschen', 'Löschen')) return;
   try {
     const res = await API.manageSchedule({ action: 'delete_run', run_id: runId });
     if (res && res.error) { showToast(res.error, true); return; }
-    showToast(`Run deleted · ${res.artifacts_removed||0} artifact(s) purged`);
+    showToast(`Lauf gelöscht · ${res.artifacts_removed||0} Artefakt(e) entfernt`);
     // Leave the read-only view — no session to return to.
     navigateTo('scheduled');
   } catch(e) {
-    showToast('Failed: ' + e.message, true);
+    showToast('Fehlgeschlagen: ' + e.message, true);
   }
 }
 

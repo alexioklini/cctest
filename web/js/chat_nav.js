@@ -163,7 +163,7 @@ function renderTurnNavMenuItems(anchorMsgIdx) {
     html += `<hr>`;
     html += `<div class="msg-edit-dropdown-section-label">Zu Anfrage springen</div>`;
     for (const t of turns) {
-      const q = esc(turnQuestionPreview(t.userMsg, 60) || '(empty)');
+      const q = esc(turnQuestionPreview(t.userMsg, 60) || '(leer)');
       const isHere = t.turnNum === anchorTurn ? ' style="background:var(--bg-200)"' : '';
       html += `<div class="msg-edit-dropdown-item"${isHere} onclick="jumpToTurn(${t.turnNum})">
         <span class="turn-nav-num">${t.turnNum}.</span>

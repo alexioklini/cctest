@@ -6,7 +6,7 @@ function openGeneralSettings() {
   // points (slash command, future shortcuts) fail closed instead of letting
   // a non-admin browse and then 403 on save.
   if ((state.authUser?.role || 'admin') !== 'admin') {
-    showToast('General settings are admin-only', true);
+    showToast('Allgemeine Einstellungen sind nur für Administratoren', true);
     return;
   }
   const overlay = document.createElement('div');
@@ -18,28 +18,28 @@ function openGeneralSettings() {
 
   content.innerHTML = `
     <div class="modal-header">
-      <span class="modal-title">General Settings</span>
+      <span class="modal-title">Allgemeine Einstellungen</span>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
     </div>
     <div class="modal-tabs modal-tabs-vertical" id="general-settings-tabs">
       <div class="sidebar-group-label">Server</div>
       <button class="modal-tab active" onclick="switchGeneralTab('server',this)">Server</button>
-      <button class="modal-tab" onclick="switchGeneralTab('providers',this)">Providers</button>
+      <button class="modal-tab" onclick="switchGeneralTab('providers',this)">Provider</button>
       <button class="modal-tab" onclick="switchGeneralTab('nodes',this)">Nodes</button>
 
-      <div class="sidebar-group-label">Models</div>
-      <button class="modal-tab" onclick="switchGeneralTab('models',this)">Models</button>
+      <div class="sidebar-group-label">Modelle</div>
+      <button class="modal-tab" onclick="switchGeneralTab('models',this)">Modelle</button>
 
-      <div class="sidebar-group-label">Users &amp; Costs</div>
+      <div class="sidebar-group-label">Benutzer &amp; Kosten</div>
       <button class="modal-tab" onclick="switchGeneralTab('agents',this)">Agents</button>
       <button class="modal-tab" onclick="switchGeneralTab('teams',this)">Teams</button>
-      <button class="modal-tab" onclick="switchGeneralTab('costs',this)">Costs</button>
-      <button class="modal-tab" onclick="switchGeneralTab('quotas',this)">Quotas</button>
+      <button class="modal-tab" onclick="switchGeneralTab('costs',this)">Kosten</button>
+      <button class="modal-tab" onclick="switchGeneralTab('quotas',this)">Kontingente</button>
 
-      <div class="sidebar-group-label">Privacy &amp; Memory</div>
-      <button class="modal-tab" onclick="switchGeneralTab('gdpr',this)">GDPR</button>
-      <button class="modal-tab" onclick="switchGeneralTab('classification',this)">Classification</button>
-      <button class="modal-tab" onclick="switchGeneralTab('context',this)">Context</button>
+      <div class="sidebar-group-label">Datenschutz &amp; Memory</div>
+      <button class="modal-tab" onclick="switchGeneralTab('gdpr',this)">DSGVO</button>
+      <button class="modal-tab" onclick="switchGeneralTab('classification',this)">Klassifizierung</button>
+      <button class="modal-tab" onclick="switchGeneralTab('context',this)">Kontext</button>
       <button class="modal-tab" onclick="switchGeneralTab('mempalace',this)">MemPalace</button>
       <button class="modal-tab" onclick="switchGeneralTab('knowledge-graph',this)">Knowledge&nbsp;Graph</button>
 
@@ -67,18 +67,18 @@ function _renderScheduleRow(t) {
 }
 
 async function restartSidecar(btn) {
-  if (!confirm('Hard-restart the sidecar?\n\nIn-flight chat turns will fail with a sidecar error and need to be retried.')) return;
-  const orig = btn?.textContent || 'Restart sidecar';
-  if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
+  if (!confirm('Sidecar hart neu starten?\n\nLaufende Chat-Durchläufe schlagen mit einem Sidecar-Fehler fehl und müssen erneut versucht werden.')) return;
+  const orig = btn?.textContent || 'Sidecar neu starten';
+  if (btn) { btn.disabled = true; btn.textContent = 'Wird neu gestartet…'; }
   try {
     const r = await API.post('/v1/sidecar/restart', {});
     if (r && r.ok) {
-      showToast('Sidecar restarting');
+      showToast('Sidecar wird neu gestartet');
     } else {
-      showToast(r?.error || 'Restart failed', true);
+      showToast(r?.error || 'Neustart fehlgeschlagen', true);
     }
   } catch (e) {
-    showToast('Restart failed: ' + (e?.message || e), true);
+    showToast('Neustart fehlgeschlagen: ' + (e?.message || e), true);
   } finally {
     // Re-render the Server tab so the new status (PID, uptime) shows up.
     setTimeout(() => {
@@ -90,15 +90,15 @@ async function restartSidecar(btn) {
 }
 
 async function restartSearxng(btn) {
-  if (!confirm('Hard-restart the bundled SearXNG instance?\n\nWeb searches will briefly fail until it comes back up.')) return;
-  const orig = btn?.textContent || 'Restart SearXNG';
-  if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
+  if (!confirm('Die mitgelieferte SearXNG-Instanz hart neu starten?\n\nWebsuchen schlagen kurzzeitig fehl, bis sie wieder hochgefahren ist.')) return;
+  const orig = btn?.textContent || 'SearXNG neu starten';
+  if (btn) { btn.disabled = true; btn.textContent = 'Wird neu gestartet…'; }
   try {
     const r = await API.post('/v1/searxng/restart', {});
-    if (r && r.ok) showToast('SearXNG restarting');
-    else showToast(r?.error || 'Restart failed', true);
+    if (r && r.ok) showToast('SearXNG wird neu gestartet');
+    else showToast(r?.error || 'Neustart fehlgeschlagen', true);
   } catch (e) {
-    showToast('Restart failed: ' + (e?.message || e), true);
+    showToast('Neustart fehlgeschlagen: ' + (e?.message || e), true);
   } finally {
     setTimeout(() => {
       const t = document.querySelector('.modal-tab.active[onclick*="server"]');
@@ -109,15 +109,15 @@ async function restartSearxng(btn) {
 }
 
 async function restartCrawl4ai(btn) {
-  if (!confirm('Hard-restart the crawl4ai render service?\n\nJS-rendered fetches briefly fall back to plain HTTP until it comes back up.')) return;
-  const orig = btn?.textContent || 'Restart crawl4ai';
-  if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
+  if (!confirm('Den crawl4ai-Render-Dienst hart neu starten?\n\nJS-gerenderte Abrufe fallen kurzzeitig auf einfaches HTTP zurück, bis er wieder hochgefahren ist.')) return;
+  const orig = btn?.textContent || 'crawl4ai neu starten';
+  if (btn) { btn.disabled = true; btn.textContent = 'Wird neu gestartet…'; }
   try {
     const r = await API.post('/v1/crawl4ai/restart', {});
-    if (r && r.ok) showToast('crawl4ai restarting');
-    else showToast(r?.error || 'Restart failed', true);
+    if (r && r.ok) showToast('crawl4ai wird neu gestartet');
+    else showToast(r?.error || 'Neustart fehlgeschlagen', true);
   } catch (e) {
-    showToast('Restart failed: ' + (e?.message || e), true);
+    showToast('Neustart fehlgeschlagen: ' + (e?.message || e), true);
   } finally {
     setTimeout(() => {
       const t = document.querySelector('.modal-tab.active[onclick*="server"]');
@@ -134,13 +134,13 @@ async function restartCrawl4ai(btn) {
 function _renderSearxngEngines(sxe) {
   const ROW = 'display:flex;align-items:center;gap:8px;padding:4px 12px';
   const MONO = 'font-family:var(--font-mono);font-size:11px;color:var(--text-300)';
-  const fmtAgo = (t) => !t ? 'never' : (function(s){
-    if (s < 60) return s + 's ago';
-    if (s < 3600) return Math.round(s/60) + 'm ago';
-    return Math.round(s/3600) + 'h ago';
+  const fmtAgo = (t) => !t ? 'nie' : (function(s){
+    if (s < 60) return 'vor ' + s + 's';
+    if (s < 3600) return 'vor ' + Math.round(s/60) + 'm';
+    return 'vor ' + Math.round(s/3600) + 'h';
   })(Math.max(0, Math.round(Date.now()/1000 - t)));
   const fmtIn = (t) => !t ? '—' : (function(s){
-    if (s <= 0) return 'due';
+    if (s <= 0) return 'fällig';
     if (s < 3600) return 'in ' + Math.round(s/60) + 'm';
     return 'in ' + Math.round(s/3600) + 'h';
   })(Math.round(t - Date.now()/1000));
@@ -148,18 +148,18 @@ function _renderSearxngEngines(sxe) {
   // empty = alive but no match for the probe query (situational engine).
   const STATE = {
     ok:    { c: 'var(--success)',          label: 'ok' },
-    fail:  { c: 'var(--error)',            label: 'fail' },
-    error: { c: 'var(--error)',            label: 'error' },
-    empty: { c: 'var(--text-400)',         label: 'no match' },
+    fail:  { c: 'var(--error)',            label: 'Fehler' },
+    error: { c: 'var(--error)',            label: 'Fehler' },
+    empty: { c: 'var(--text-400)',         label: 'kein Treffer' },
   };
   const engines = (sxe && Array.isArray(sxe.engines)) ? sxe.engines : [];
-  const testBtn = `<button class="btn-secondary" onclick="testSearxngEngines(this)">Test now</button>`;
+  const testBtn = `<button class="btn-secondary" onclick="testSearxngEngines(this)">Jetzt testen</button>`;
 
   let body;
   if (!sxe || sxe.error) {
-    body = `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">${esc(sxe?.error || 'Engine health unavailable')}</span></div>`;
+    body = `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">${esc(sxe?.error || 'Engine-Zustand nicht verfügbar')}</span></div>`;
   } else if (!engines.length) {
-    body = `<div style="${ROW}"><span style="font-size:12px;color:var(--text-400);flex:1">No probe has run yet — first automatic test runs shortly after startup, or click Test now.</span></div>`;
+    body = `<div style="${ROW}"><span style="font-size:12px;color:var(--text-400);flex:1">Noch keine Prüfung durchgeführt — der erste automatische Test läuft kurz nach dem Start, oder klicken Sie auf „Jetzt testen".</span></div>`;
   } else {
     body = engines.map(e => {
       const st = STATE[e.state] || { c: 'var(--text-400)', label: esc(e.state || '?') };
@@ -176,28 +176,28 @@ function _renderSearxngEngines(sxe) {
   const tested = (sxe && sxe.tested_at) ? sxe.tested_at : 0;
   const nextAt = (sxe && sxe.next_auto_at) ? sxe.next_auto_at : 0;
   const meta = `<div style="font-size:11px;color:var(--text-400);padding:2px 12px;display:grid;grid-template-columns:auto auto;gap:4px 18px">
-      <span>Last test</span><span style="${MONO}">${fmtAgo(tested)}</span>
-      <span>Next auto test</span><span style="${MONO}">${nextAt ? fmtIn(nextAt) : 'every 4h'}</span>
+      <span>Letzter Test</span><span style="${MONO}">${fmtAgo(tested)}</span>
+      <span>Nächster Auto-Test</span><span style="${MONO}">${nextAt ? fmtIn(nextAt) : 'alle 4 h'}</span>
     </div>`;
 
-  return `<div style="font-size:11px;color:var(--text-400);padding:6px 12px 2px">Per-engine health (probed in isolation; failing engines waste a request on every search).</div>
+  return `<div style="font-size:11px;color:var(--text-400);padding:6px 12px 2px">Zustand pro Engine (isoliert geprüft; fehlerhafte Engines verschwenden bei jeder Suche eine Anfrage).</div>
     ${body}
     ${meta}
     <div style="display:flex;gap:8px;padding:6px 12px 0">${testBtn}
-      <span style="font-size:11px;color:var(--text-400);align-self:center">Manual test does not change the automatic 4-hour schedule.</span>
+      <span style="font-size:11px;color:var(--text-400);align-self:center">Ein manueller Test ändert den automatischen 4-Stunden-Zeitplan nicht.</span>
     </div>`;
 }
 
 async function testSearxngEngines(btn) {
-  const orig = btn?.textContent || 'Test now';
-  if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+  const orig = btn?.textContent || 'Jetzt testen';
+  if (btn) { btn.disabled = true; btn.textContent = 'Wird getestet…'; }
   try {
     const snap = await API.post('/v1/searxng/test-engines', {});
     const panel = document.getElementById('searxng-engines-panel');
     if (panel) panel.innerHTML = _renderSearxngEngines(snap);
-    else showToast('Engine test complete');
+    else showToast('Engine-Test abgeschlossen');
   } catch (e) {
-    showToast('Engine test failed: ' + (e?.message || e), true);
+    showToast('Engine-Test fehlgeschlagen: ' + (e?.message || e), true);
     if (btn) { btn.disabled = false; btn.textContent = orig; }
   }
 }
@@ -210,21 +210,21 @@ function _renderSupervisorStatus(sc, opts) {
   const ROW = 'display:flex;align-items:center;gap:8px;padding:6px 12px';
   const MONO = 'font-family:var(--font-mono);font-size:11px;color:var(--text-300)';
   if (!sc) {
-    return `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">Status unavailable</span></div>`;
+    return `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">Status nicht verfügbar</span></div>`;
   }
   if (!sc.enabled) {
-    return `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">Supervisor disabled</span><span style="font-size:11px;color:var(--text-400)">${esc(opts.disabledHint||'')}</span></div>`;
+    return `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">Supervisor deaktiviert</span><span style="font-size:11px;color:var(--text-400)">${esc(opts.disabledHint||'')}</span></div>`;
   }
   const running = !!sc.running;
   const healthOk = !!sc.last_health_ok;
   const breaker = !!sc.breaker_open;
   const uptime = running && sc.started_at ? Math.max(0, Math.round(Date.now()/1000 - sc.started_at)) : 0;
-  const fmtAgo = (t) => !t ? 'never' : (function(s){
-    if (s<60) return s+'s ago';
-    if (s<3600) return Math.round(s/60)+'m ago';
-    return Math.round(s/3600)+'h ago';
+  const fmtAgo = (t) => !t ? 'nie' : (function(s){
+    if (s<60) return 'vor '+s+'s';
+    if (s<3600) return 'vor '+Math.round(s/60)+'m';
+    return 'vor '+Math.round(s/3600)+'h';
   })(Math.max(0, Math.round(Date.now()/1000 - t)));
-  const statusLabel = breaker ? 'breaker open' : (running ? (healthOk ? 'running' : 'unresponsive') : 'stopped');
+  const statusLabel = breaker ? 'Breaker offen' : (running ? (healthOk ? 'läuft' : 'reagiert nicht') : 'gestoppt');
   const statusColor = breaker ? 'var(--error)' : (running && healthOk ? 'var(--success)' : 'var(--warning, #b45309)');
   return `
     <div style="${ROW}">
@@ -234,14 +234,14 @@ function _renderSupervisorStatus(sc, opts) {
       <span style="font-size:11px;color:${statusColor}">${esc(statusLabel)}</span>
     </div>
     <div style="font-size:11px;color:var(--text-400);padding:0 12px;display:grid;grid-template-columns:auto auto;gap:4px 18px">
-      ${running ? `<span>Uptime</span><span style="${MONO}">${uptime}s</span>` : ''}
-      <span>Last health probe</span><span style="${MONO}">${healthOk?'ok':'fail'} &middot; ${fmtAgo(sc.last_health_at)}</span>
-      <span>Crashes (last 60s)</span><span style="${MONO}">${sc.crash_count_60s||0} / ${sc.crash_limit||3}</span>
-      ${sc.last_exit_rc !== null && sc.last_exit_rc !== undefined ? `<span>Last exit</span><span style="${MONO}">rc=${sc.last_exit_rc} &middot; ${fmtAgo(sc.last_exit_at)}</span>` : ''}
-      ${breaker ? `<span style="color:var(--error)">Circuit breaker</span><span style="${MONO};color:var(--error)">open — auto-restart halted</span>` : ''}
+      ${running ? `<span>Laufzeit</span><span style="${MONO}">${uptime}s</span>` : ''}
+      <span>Letzte Zustandsprüfung</span><span style="${MONO}">${healthOk?'ok':'Fehler'} &middot; ${fmtAgo(sc.last_health_at)}</span>
+      <span>Abstürze (letzte 60s)</span><span style="${MONO}">${sc.crash_count_60s||0} / ${sc.crash_limit||3}</span>
+      ${sc.last_exit_rc !== null && sc.last_exit_rc !== undefined ? `<span>Letzter Exit</span><span style="${MONO}">rc=${sc.last_exit_rc} &middot; ${fmtAgo(sc.last_exit_at)}</span>` : ''}
+      ${breaker ? `<span style="color:var(--error)">Sicherung</span><span style="${MONO};color:var(--error)">offen — automatischer Neustart angehalten</span>` : ''}
     </div>
     <div style="display:flex;gap:8px;padding:0 12px;margin-top:6px">
-      <button class="btn-secondary" onclick="${opts.restartFn}(this)">${breaker ? 'Restart & clear breaker' : (opts.restartLabel||'Restart')}</button>
+      <button class="btn-secondary" onclick="${opts.restartFn}(this)">${breaker ? 'Neu starten & Sicherung zurücksetzen' : (opts.restartLabel||'Neu starten')}</button>
       <span style="font-size:11px;color:var(--text-400);align-self:center">${esc(opts.note||'')}</span>
     </div>`;
 }
@@ -265,7 +265,7 @@ async function switchGeneralTab(tab, btn) {
     btn.classList.add('active');
   }
   const C = document.getElementById('general-tab-content');
-  C.innerHTML = '<div style="padding:20px;color:var(--text-400)">Loading...</div>';
+  C.innerHTML = '<div style="padding:20px;color:var(--text-400)">Lädt…</div>';
   // per-tab body renderers live in settings_general_tabs.js
   const RENDERERS = { server:_genTab_server, models:_genTab_models, providers:_genTab_providers, agents:_genTab_agents, teams:_genTab_teams, nodes:_genTab_nodes, context:_genTab_context, costs:_genTab_costs, quotas:_genTab_quotas, mempalace:_genTab_mempalace, 'knowledge-graph':_genTab_knowledge_graph, gdpr:_genTab_gdpr, classification:_genTab_classification, tools:_genTab_tools };
   const fn = RENDERERS[tab];
@@ -285,8 +285,8 @@ async function saveContextConfig() {
       summary_target_tokens: parseInt(document.getElementById('ctx-target-tokens')?.value) || 1000,
       summary_model: document.getElementById('ctx-summary-model')?.value || '',
     });
-    showToast('Context config saved');
-  } catch(e) { showToast('Save failed: ' + e.message, true); }
+    showToast('Kontext-Konfiguration gespeichert');
+  } catch(e) { showToast('Speichern fehlgeschlagen: ' + e.message, true); }
 }
 
 async function saveModelsConfig() {
@@ -376,25 +376,25 @@ async function saveModelsConfig() {
     });
     await API.post('/v1/models/config', { action: 'save', models: mc });
     state.modelsConfig.models = mc;
-    showToast('Models config saved');
-  } catch(e) { showToast('Save failed: ' + e.message, true); }
+    showToast('Modell-Konfiguration gespeichert');
+  } catch(e) { showToast('Speichern fehlgeschlagen: ' + e.message, true); }
 }
 
 async function addManualModel() {
   const id = document.getElementById('add-model-id')?.value?.trim();
   const provider = document.getElementById('add-model-provider')?.value?.trim();
   const display = document.getElementById('add-model-display')?.value?.trim();
-  if (!id) { showToast('Model ID required', true); return; }
-  if (!provider) { showToast('Provider required', true); return; }
+  if (!id) { showToast('Modell-ID erforderlich', true); return; }
+  if (!provider) { showToast('Provider erforderlich', true); return; }
   const mc = state.modelsConfig?.models || {};
-  if (mc[id]) { showToast('Model already exists', true); return; }
+  if (mc[id]) { showToast('Modell existiert bereits', true); return; }
   mc[id] = { enabled: true, provider, display_name: display || id, shortname: id, priority: 10, capabilities: [], icon: '\u{1F916}', manual: true };
   state.modelsConfig.models = mc;
   try {
     await API.post('/v1/models/config', { action: 'save', models: mc });
-    showToast('Model added');
+    showToast('Modell hinzugefügt');
     switchGeneralTab('models');
-  } catch(e) { showToast('Failed: ' + e.message, true); }
+  } catch(e) { showToast('Fehlgeschlagen: ' + e.message, true); }
 }
 
 async function removeModel(mid) {
@@ -406,43 +406,43 @@ async function removeModel(mid) {
   state.modelsConfig.models = mc;
   try {
     await API.post('/v1/models/config', { action: 'delete', model_id: mid });
-    showToast('Model removed');
+    showToast('Modell entfernt');
     switchGeneralTab('models');
-  } catch(e) { showToast('Failed: ' + e.message, true); }
+  } catch(e) { showToast('Fehlgeschlagen: ' + e.message, true); }
 }
 
 async function _confirmRemoveModel(mid) {
-  if (!await showConfirmDanger(`Remove model ${mid}?`, 'Remove Model', 'Remove')) return;
+  if (!await showConfirmDanger(`Modell ${mid} entfernen?`, 'Modell entfernen', 'Entfernen')) return;
   removeModel(mid);
 }
 
 async function resyncProvider(btn, name) {
-  if (!await showConfirmDanger(`Full resync of "${name}"? This deletes ALL its models AND their deletion tombstones, then re-discovers from the provider's /models endpoint.`, 'Full Resync', 'Resync')) return;
-  btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Resyncing...';
+  if (!await showConfirmDanger(`Vollständige Neusynchronisierung von „${name}"? Dies löscht ALLE seine Modelle UND deren Lösch-Tombstones und ermittelt sie dann erneut über den /models-Endpunkt des Providers.`, 'Vollständige Neusynchronisierung', 'Neu synchronisieren')) return;
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Synchronisiere…';
   try {
     await API.post('/v1/models/config', { action: 'resync_provider', provider: name });
     const d = await API.getModelsConfig();
     state.modelsConfig = d;
     switchGeneralTab('providers');
-    showToast(`${name} fully resynced`);
+    showToast(`${name} vollständig neu synchronisiert`);
   } catch(e) {
-    showToast('Resync failed: ' + e.message, true);
+    showToast('Neusynchronisierung fehlgeschlagen: ' + e.message, true);
     btn.disabled = false; btn.textContent = orig;
   }
 }
 
 async function syncProvider(btn, name) {
-  btn.disabled = true; btn.textContent = 'Syncing...';
+  btn.disabled = true; btn.textContent = 'Synchronisiere…';
   try {
     await API.post('/v1/models/config', { action: 'sync', provider: name });
-    showToast(`Syncing ${name}...`);
+    showToast(`${name} wird synchronisiert…`);
     setTimeout(async () => {
       const d = await API.getModelsConfig();
       state.modelsConfig = d;
       switchGeneralTab('providers');
-      showToast(`${name} synced`);
+      showToast(`${name} synchronisiert`);
     }, 3000);
-  } catch(e) { showToast('Sync failed', true); btn.disabled = false; btn.textContent = 'Sync'; }
+  } catch(e) { showToast('Synchronisierung fehlgeschlagen', true); btn.disabled = false; btn.textContent = 'Sync'; }
 }
 
 async function saveProviderEdit(name, pid) {
@@ -452,9 +452,9 @@ async function saveProviderEdit(name, pid) {
   const provider = { base_url, default_model, is_local };
   try {
     await API.post('/v1/providers', { action: 'add', name, provider });
-    showToast('Provider updated');
+    showToast('Provider aktualisiert');
     switchGeneralTab('providers');
-  } catch(e) { showToast('Save failed: ' + e.message, true); }
+  } catch(e) { showToast('Speichern fehlgeschlagen: ' + e.message, true); }
 }
 
 async function openProviderKeysModal(provName) {
@@ -464,14 +464,14 @@ async function openProviderKeysModal(provName) {
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `<div class="modal-content" style="max-width:640px;padding:20px;display:grid;gap:12px">
     <div style="display:flex;align-items:center;gap:8px">
-      <span style="font-size:15px;font-weight:600;color:var(--text-000)">API Keys — ${esc(provName)}</span>
+      <span style="font-size:15px;font-weight:600;color:var(--text-000)">API-Schlüssel — ${esc(provName)}</span>
       <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-400)">preferred → round-robin → fallback</span>
       <button class="modal-close" style="margin-left:auto" onclick="document.getElementById('_prov-keys-modal')?.remove()">&times;</button>
     </div>
-    <div id="_prov-keys-list" style="display:grid;gap:6px"><span style="color:var(--text-400);font-size:12px">Loading…</span></div>
+    <div id="_prov-keys-list" style="display:grid;gap:6px"><span style="color:var(--text-400);font-size:12px">Lädt…</span></div>
     <div style="display:flex;gap:8px">
-      <button class="btn-primary" style="font-size:12px" onclick="openKeyEditModal('${esc(provName)}','')">+ Add key</button>
-      <button class="btn-secondary" style="font-size:12px;margin-left:auto" onclick="openProviderStatsModal('${esc(provName)}')">View stats →</button>
+      <button class="btn-primary" style="font-size:12px" onclick="openKeyEditModal('${esc(provName)}','')">+ Schlüssel hinzufügen</button>
+      <button class="btn-secondary" style="font-size:12px;margin-left:auto" onclick="openProviderStatsModal('${esc(provName)}')">Statistiken anzeigen →</button>
     </div>
   </div>`;
   overlay.addEventListener('click', e => { if (e.target===overlay) overlay.remove(); });
@@ -482,7 +482,7 @@ async function openProviderKeysModal(provName) {
 async function _renderProviderKeysList(provName) {
   const target = document.getElementById('_prov-keys-list');
   if (!target) return;
-  const USAGE_LABELS = {preferred:'Preferred (prio 1)',round_robin:'Round-robin (prio 2)',fallback:'Fallback (prio 3)'};
+  const USAGE_LABELS = {preferred:'Bevorzugt (Prio 1)',round_robin:'Round-Robin (Prio 2)',fallback:'Fallback (Prio 3)'};
   const USAGE_COLORS = {preferred:'var(--accent)',round_robin:'var(--text-200)',fallback:'var(--text-400)'};
   try {
     const provs = await API.getProviders();
@@ -491,23 +491,23 @@ async function _renderProviderKeysList(provName) {
     const prov = providers.find(p => p.name === provName);
     const keys = prov?.api_keys || [];
     if (!keys.length) {
-      target.innerHTML = `<span style="font-family:var(--font-mono);color:var(--text-400);font-size:11px">No keys yet — click + Add key</span>`;
+      target.innerHTML = `<span style="font-family:var(--font-mono);color:var(--text-400);font-size:11px">Noch keine Schlüssel — auf „+ Schlüssel hinzufügen" klicken</span>`;
       return;
     }
     target.innerHTML = keys.map(k => {
       const usageColor = USAGE_COLORS[k.usage]||'var(--text-200)';
-      const deadlinePart = k.deadline ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--text-400)">exp ${esc(k.deadline.slice(0,10))}</span>` : '';
+      const deadlinePart = k.deadline ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--text-400)">gültig bis ${esc(k.deadline.slice(0,10))}</span>` : '';
       return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--bg-100);border-radius:6px;flex-wrap:wrap">
         <span style="font-size:13px;font-weight:500;color:var(--text-100);min-width:100px">${esc(k.name)}</span>
         <span style="font-family:var(--font-mono);color:${usageColor};font-size:11px">${esc(USAGE_LABELS[k.usage]||k.usage)}</span>
         <span style="font-family:var(--font-mono);color:var(--text-400);font-size:11px">${esc(k.key_hint||'')}</span>
         ${deadlinePart}
-        <button class="btn-secondary" style="padding:2px 8px;font-size:11px;margin-left:auto" onclick="openKeyEditModal('${esc(provName)}','${esc(k.name)}')">Edit</button>
-        <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="deleteProviderKey('${esc(provName)}','${esc(k.name)}')">Delete</button>
+        <button class="btn-secondary" style="padding:2px 8px;font-size:11px;margin-left:auto" onclick="openKeyEditModal('${esc(provName)}','${esc(k.name)}')">Bearbeiten</button>
+        <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="deleteProviderKey('${esc(provName)}','${esc(k.name)}')">Löschen</button>
       </div>`;
     }).join('');
   } catch(e) {
-    target.innerHTML = `<span style="color:var(--error);font-size:12px">Failed to load: ${esc(e.message||'error')}</span>`;
+    target.innerHTML = `<span style="color:var(--error);font-size:12px">Laden fehlgeschlagen: ${esc(e.message||'error')}</span>`;
   }
 }
 
@@ -519,17 +519,17 @@ async function openProviderStatsModal(provName, days) {
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `<div class="modal-content" style="max-width:760px;padding:20px;display:grid;gap:12px">
     <div style="display:flex;align-items:center;gap:8px">
-      <span style="font-size:15px;font-weight:600;color:var(--text-000)">Usage Stats — ${esc(provName)}</span>
+      <span style="font-size:15px;font-weight:600;color:var(--text-000)">Nutzungsstatistiken — ${esc(provName)}</span>
       <select class="form-select" id="_prov-stats-days" style="width:auto;font-size:12px;padding:2px 8px;margin-left:8px"
         onchange="openProviderStatsModal('${esc(provName)}', this.value)">
-        <option value="7"${d===7?' selected':''}>Last 7 days</option>
-        <option value="30"${d===30?' selected':''}>Last 30 days</option>
-        <option value="90"${d===90?' selected':''}>Last 90 days</option>
-        <option value="365"${d===365?' selected':''}>Last 365 days</option>
+        <option value="7"${d===7?' selected':''}>Letzte 7 Tage</option>
+        <option value="30"${d===30?' selected':''}>Letzte 30 Tage</option>
+        <option value="90"${d===90?' selected':''}>Letzte 90 Tage</option>
+        <option value="365"${d===365?' selected':''}>Letzte 365 Tage</option>
       </select>
       <button class="modal-close" style="margin-left:auto" onclick="document.getElementById('_prov-stats-modal')?.remove()">&times;</button>
     </div>
-    <div id="_prov-stats-body"><span style="color:var(--text-400);font-size:12px">Loading…</span></div>
+    <div id="_prov-stats-body"><span style="color:var(--text-400);font-size:12px">Lädt…</span></div>
   </div>`;
   overlay.addEventListener('click', e => { if (e.target===overlay) overlay.remove(); });
   document.body.appendChild(overlay);
@@ -542,18 +542,18 @@ async function openProviderStatsModal(provName, days) {
     const body = document.getElementById('_prov-stats-body');
     if (!body) return;
     if (!ps) {
-      body.innerHTML = `<span style="font-family:var(--font-mono);color:var(--text-400);font-size:11px">No usage in selected window.</span>`;
+      body.innerHTML = `<span style="font-family:var(--font-mono);color:var(--text-400);font-size:11px">Keine Nutzung im ausgewählten Zeitraum.</span>`;
       return;
     }
     const totals = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:10px;background:var(--bg-100);border-radius:8px">
-      <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Calls</div><div style="font-size:18px;font-weight:600;color:var(--text-000)">${fmtNum(ps.calls)}</div></div>
-      <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Tokens in</div><div style="font-size:18px;font-weight:600;color:var(--text-000)">${fmtNum(ps.tokens_in)}</div></div>
-      <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Tokens out</div><div style="font-size:18px;font-weight:600;color:var(--text-000)">${fmtNum(ps.tokens_out)}</div></div>
-      <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Cost</div><div style="font-size:18px;font-weight:600;color:var(--text-000)">${fmtCost(ps.cost_usd)}</div></div>
+      <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Aufrufe</div><div style="font-size:18px;font-weight:600;color:var(--text-000)">${fmtNum(ps.calls)}</div></div>
+      <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Tokens ein</div><div style="font-size:18px;font-weight:600;color:var(--text-000)">${fmtNum(ps.tokens_in)}</div></div>
+      <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Tokens aus</div><div style="font-size:18px;font-weight:600;color:var(--text-000)">${fmtNum(ps.tokens_out)}</div></div>
+      <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Kosten</div><div style="font-size:18px;font-weight:600;color:var(--text-000)">${fmtCost(ps.cost_usd)}</div></div>
     </div>`;
     const keys = (ps.keys || []).slice().sort((a,b)=>b.calls-a.calls);
     const headerRow = `<div style="display:grid;grid-template-columns:1.4fr repeat(5, 1fr);gap:8px;padding:6px 8px;font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--border-100)">
-      <div>Key</div><div style="text-align:right">Calls</div><div style="text-align:right">Tokens in</div><div style="text-align:right">Tokens out</div><div style="text-align:right">Cost</div><div style="text-align:right">Last used</div>
+      <div>Schlüssel</div><div style="text-align:right">Aufrufe</div><div style="text-align:right">Tokens ein</div><div style="text-align:right">Tokens aus</div><div style="text-align:right">Kosten</div><div style="text-align:right">Zuletzt verwendet</div>
     </div>`;
     const rows = keys.length ? keys.map(k => `<div style="display:grid;grid-template-columns:1.4fr repeat(5, 1fr);gap:8px;padding:6px 8px;font-size:12px;border-bottom:1px solid var(--border-100)">
       <div style="color:var(--text-100);font-weight:500;overflow:hidden;text-overflow:ellipsis">${esc(k.key_name||'(unknown)')}</div>
@@ -562,15 +562,15 @@ async function openProviderStatsModal(provName, days) {
       <div style="font-family:var(--font-mono);text-align:right;color:var(--text-200)">${fmtNum(k.tokens_out)}</div>
       <div style="font-family:var(--font-mono);text-align:right;color:var(--text-100)">${fmtCost(k.cost_usd)}</div>
       <div style="font-family:var(--font-mono);text-align:right;color:var(--text-400);font-size:10px">${esc((k.last_used||'').slice(0,16).replace('T',' '))}</div>
-    </div>`).join('') : `<div style="padding:8px;font-family:var(--font-mono);color:var(--text-400);font-size:11px">No per-key breakdown available.</div>`;
+    </div>`).join('') : `<div style="padding:8px;font-family:var(--font-mono);color:var(--text-400);font-size:11px">Keine Aufschlüsselung pro Schlüssel verfügbar.</div>`;
     body.innerHTML = `${totals}
       <div style="margin-top:8px">
-        <div style="font-size:11px;font-weight:500;color:var(--text-200);margin-bottom:4px">Per API key</div>
+        <div style="font-size:11px;font-weight:500;color:var(--text-200);margin-bottom:4px">Pro API-Schlüssel</div>
         ${headerRow}${rows}
       </div>`;
   } catch(e) {
     const body = document.getElementById('_prov-stats-body');
-    if (body) body.innerHTML = `<span style="color:var(--error);font-size:12px">Failed to load stats: ${esc(e.message||'error')}</span>`;
+    if (body) body.innerHTML = `<span style="color:var(--error);font-size:12px">Statistiken konnten nicht geladen werden: ${esc(e.message||'error')}</span>`;
   }
 }
 
@@ -582,22 +582,22 @@ function openKeyEditModal(provName, keyName) {
   overlay.id = '_key-edit-modal';
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `<div class="modal-content" style="max-width:420px;padding:20px;display:grid;gap:12px">
-    <div style="font-size:15px;font-weight:600;color:var(--text-000)">${isEdit?'Edit API Key':'Add API Key'}</div>
-    <div><label class="form-label">Key name</label><input class="form-input" id="_kmod-name" placeholder="e.g. main, backup-1" value="${isEdit?esc(keyName):''}"></div>
-    <div><label class="form-label">API key value</label><input class="form-input" id="_kmod-key" type="password" placeholder="${isEdit?'leave blank to keep current':'sk-...'}"></div>
-    <div><label class="form-label">Usage / priority</label>
+    <div style="font-size:15px;font-weight:600;color:var(--text-000)">${isEdit?'API-Schlüssel bearbeiten':'API-Schlüssel hinzufügen'}</div>
+    <div><label class="form-label">Schlüsselname</label><input class="form-input" id="_kmod-name" placeholder="z. B. main, backup-1" value="${isEdit?esc(keyName):''}"></div>
+    <div><label class="form-label">API-Schlüsselwert</label><input class="form-input" id="_kmod-key" type="password" placeholder="${isEdit?'leer lassen, um aktuellen zu behalten':'sk-...'}"></div>
+    <div><label class="form-label">Verwendung / Priorität</label>
       <select class="form-select" id="_kmod-usage" style="width:100%">
-        <option value="preferred">Preferred (prio 1 — used first, round-robin among peers)</option>
-        <option value="round_robin">Round-robin (prio 2 — when no preferred available)</option>
-        <option value="fallback">Fallback (prio 3 — last resort)</option>
+        <option value="preferred">Bevorzugt (Prio 1 — zuerst verwendet, Round-Robin unter gleichrangigen)</option>
+        <option value="round_robin">Round-Robin (Prio 2 — wenn kein bevorzugter verfügbar)</option>
+        <option value="fallback">Fallback (Prio 3 — letzte Möglichkeit)</option>
       </select>
     </div>
-    <div><label class="form-label">Expiry date <span style="color:var(--text-400)">(optional, ISO date e.g. 2026-12-31)</span></label>
+    <div><label class="form-label">Ablaufdatum <span style="color:var(--text-400)">(optional, ISO-Datum z. B. 2026-12-31)</span></label>
       <input class="form-input" id="_kmod-deadline" placeholder="2026-12-31">
     </div>
     <div style="display:flex;gap:8px">
-      <button class="btn-primary" onclick="saveKeyFromModal('${esc(provName)}','${isEdit?esc(keyName):''}')">Save</button>
-      <button class="btn-secondary" onclick="document.getElementById('_key-edit-modal')?.remove()">Cancel</button>
+      <button class="btn-primary" onclick="saveKeyFromModal('${esc(provName)}','${isEdit?esc(keyName):''}')">Speichern</button>
+      <button class="btn-secondary" onclick="document.getElementById('_key-edit-modal')?.remove()">Abbrechen</button>
     </div>
   </div>`;
   overlay.addEventListener('click', e => { if(e.target===overlay) overlay.remove(); });
@@ -621,87 +621,87 @@ async function saveKeyFromModal(provName, oldKeyName) {
   const keyVal = document.getElementById('_kmod-key')?.value;
   const usage = document.getElementById('_kmod-usage')?.value || 'preferred';
   const deadline = document.getElementById('_kmod-deadline')?.value?.trim();
-  if (!name) { showToast('Key name required', true); return; }
+  if (!name) { showToast('Schlüsselname erforderlich', true); return; }
   const isEdit = !!oldKeyName;
   // If editing and no new key value, we need to look up the existing key from stored list
   // The server only has the masked hint, so require the value if it's a new key;
   // for edits without a new value, send a special _keep_key_value flag
   const entry = { name, usage };
   if (keyVal) entry.key = keyVal;
-  else if (!isEdit) { showToast('API key value required for new key', true); return; }
+  else if (!isEdit) { showToast('API-Schlüsselwert für neuen Schlüssel erforderlich', true); return; }
   else entry._keep_key_value = true;
   if (deadline) entry.deadline = deadline;
   try {
     await API.post('/v1/providers', { action: 'save_key', name: provName, key_entry: entry, old_name: oldKeyName });
-    showToast('Key saved');
+    showToast('Schlüssel gespeichert');
     document.getElementById('_key-edit-modal')?.remove();
     state.providers = await API.getProviders().then(p => Array.isArray(p) ? p : (p.providers||[]));
     if (document.getElementById('_prov-keys-modal')) await _renderProviderKeysList(provName);
     else switchGeneralTab('providers');
-  } catch(e) { showToast('Save failed: ' + e.message, true); }
+  } catch(e) { showToast('Speichern fehlgeschlagen: ' + e.message, true); }
 }
 
 async function deleteProviderKey(provName, keyName) {
-  if (!await showConfirmDanger(`Delete key "${keyName}" from ${provName}?`, 'Delete Key', 'Delete')) return;
+  if (!await showConfirmDanger(`Schlüssel „${keyName}" von ${provName} löschen?`, 'Schlüssel löschen', 'Löschen')) return;
   try {
     await API.post('/v1/providers', { action: 'delete_key', name: provName, key_name: keyName });
-    showToast('Key deleted');
+    showToast('Schlüssel gelöscht');
     state.providers = await API.getProviders().then(p => Array.isArray(p) ? p : (p.providers||[]));
     if (document.getElementById('_prov-keys-modal')) await _renderProviderKeysList(provName);
     else switchGeneralTab('providers');
-  } catch(e) { showToast('Delete failed: ' + e.message, true); }
+  } catch(e) { showToast('Löschen fehlgeschlagen: ' + e.message, true); }
 }
 
 async function testProvider(name) {
   try {
     const r = await API.post('/v1/providers/test', { name });
-    showToast(r.status === 'ok' ? `${name}: connected` : `${name}: ${r.error||'failed'}`, r.status !== 'ok');
-  } catch(e) { showToast('Test failed: ' + e.message, true); }
+    showToast(r.status === 'ok' ? `${name}: verbunden` : `${name}: ${r.error||'fehlgeschlagen'}`, r.status !== 'ok');
+  } catch(e) { showToast('Test fehlgeschlagen: ' + e.message, true); }
 }
 
 async function deleteProvider(name) {
   try {
     await API.post('/v1/providers', { action: 'delete', name });
-    showToast('Provider deleted');
+    showToast('Provider gelöscht');
     switchGeneralTab('providers');
-  } catch(e) { showToast('Delete failed: ' + e.message, true); }
+  } catch(e) { showToast('Löschen fehlgeschlagen: ' + e.message, true); }
 }
 
 async function _confirmDeleteProvider(name) {
-  if (!await showConfirmDanger(`Delete provider ${name}?`, 'Delete Provider', 'Delete')) return;
+  if (!await showConfirmDanger(`Provider ${name} löschen?`, 'Provider löschen', 'Löschen')) return;
   deleteProvider(name);
 }
 
 async function renameProvider(name) {
-  const next = await showPrompt(`Rename provider "${name}" to:`, name);
+  const next = await showPrompt(`Provider „${name}" umbenennen in:`, name);
   if (next === null) return;
   const trimmed = next.trim();
   if (!trimmed || trimmed === name) return;
-  if (/[\s/]/.test(trimmed)) { showToast("Name must not contain '/' or whitespace", true); return; }
+  if (/[\s/]/.test(trimmed)) { showToast("Der Name darf kein '/' und keine Leerzeichen enthalten", true); return; }
   try {
     await API.post('/v1/providers', { action: 'rename', name, new_name: trimmed });
-    showToast(`Renamed to ${trimmed}`);
+    showToast(`Umbenannt in ${trimmed}`);
     switchGeneralTab('providers');
-  } catch(e) { showToast('Rename failed: ' + e.message, true); }
+  } catch(e) { showToast('Umbenennen fehlgeschlagen: ' + e.message, true); }
 }
 
 async function testNewProvider() {
   const res = document.getElementById('prov-test-result');
-  res.innerHTML = '<span style="color:var(--text-400)">Testing...</span>';
+  res.innerHTML = '<span style="color:var(--text-400)">Wird getestet…</span>';
   try {
     const r = await API.post('/v1/providers/test', {
       base_url: document.getElementById('prov-url')?.value,
       api_key: document.getElementById('prov-key')?.value,
     });
     res.innerHTML = r.status === 'ok'
-      ? `<span style="color:var(--success)">Connected (${r.models||0} models)</span>`
-      : `<span style="color:var(--error)">${esc(r.error||'Failed')}</span>`;
+      ? `<span style="color:var(--success)">Verbunden (${r.models||0} Modelle)</span>`
+      : `<span style="color:var(--error)">${esc(r.error||'Fehlgeschlagen')}</span>`;
   } catch(e) { res.innerHTML = `<span style="color:var(--error)">${esc(e.message)}</span>`; }
 }
 
 async function saveNewProvider() {
   const name = document.getElementById('prov-name')?.value?.trim();
-  if (!name) { showToast('Name required', true); return; }
+  if (!name) { showToast('Name erforderlich', true); return; }
   const rawKey = document.getElementById('prov-key')?.value || '';
   const provider = {
     base_url: document.getElementById('prov-url')?.value || '',
@@ -711,15 +711,15 @@ async function saveNewProvider() {
   };
   try {
     await API.post('/v1/providers', { action: 'add', name, provider });
-    showToast('Provider added');
+    showToast('Provider hinzugefügt');
     state.providers = await API.getProviders().then(p => Array.isArray(p) ? p : (p.providers||[]));
     switchGeneralTab('providers');
-  } catch(e) { showToast('Add failed: ' + e.message, true); }
+  } catch(e) { showToast('Hinzufügen fehlgeschlagen: ' + e.message, true); }
 }
 
 async function createNode() {
   const name = document.getElementById('node-name')?.value?.trim();
-  if (!name) { showToast('Name required', true); return; }
+  if (!name) { showToast('Name erforderlich', true); return; }
   try {
     const r = await API.post('/v1/nodes', {
       action: 'add', name,
@@ -727,20 +727,20 @@ async function createNode() {
     });
     const res = document.getElementById('node-result');
     if (r.token) {
-      res.innerHTML = `<div style="margin-top:8px;padding:10px;background:var(--bg-200);border-radius:8px"><div style="font-size:12px;font-weight:500;color:var(--text-200);margin-bottom:4px">Install token:</div><code style="font-size:11px;color:var(--accent-brand);word-break:break-all">${esc(r.token)}</code></div>`;
+      res.innerHTML = `<div style="margin-top:8px;padding:10px;background:var(--bg-200);border-radius:8px"><div style="font-size:12px;font-weight:500;color:var(--text-200);margin-bottom:4px">Installations-Token:</div><code style="font-size:11px;color:var(--accent-brand);word-break:break-all">${esc(r.token)}</code></div>`;
     }
-    showToast('Node created');
+    showToast('Node erstellt');
     switchGeneralTab('nodes');
-  } catch(e) { showToast('Create failed: ' + e.message, true); }
+  } catch(e) { showToast('Erstellen fehlgeschlagen: ' + e.message, true); }
 }
 
 async function _confirmRemoveNode(name) {
-  if (!await showConfirmDanger('Remove node?', 'Remove Node', 'Remove')) return;
+  if (!await showConfirmDanger('Node entfernen?', 'Node entfernen', 'Entfernen')) return;
   try {
     await API.post('/v1/nodes', { action: 'remove', name });
-    showToast('Removed');
+    showToast('Entfernt');
     switchGeneralTab('nodes');
-  } catch(e) { showToast('Remove failed: ' + e.message, true); }
+  } catch(e) { showToast('Entfernen fehlgeschlagen: ' + e.message, true); }
 }
 
 

@@ -8,12 +8,12 @@
 
 const FAVOURITES_TYPE_DEFAULTS = {
   chat:         { icon: '💬', color: '#64748b', label: 'Chat' },
-  project_chat: { icon: '🗂️', color: '#6366f1', label: 'Project chat' },
-  project:      { icon: '📁', color: '#6366f1', label: 'Project' },
+  project_chat: { icon: '🗂️', color: '#6366f1', label: 'Projekt-Chat' },
+  project:      { icon: '📁', color: '#6366f1', label: 'Projekt' },
   workflow:     { icon: '🔀', color: '#10b981', label: 'Workflow' },
-  schedule:     { icon: '⏰', color: '#f59e0b', label: 'Schedule' },
-  artifact:     { icon: '📄', color: '#8b5cf6', label: 'Artifact' },
-  translation:  { icon: '🌐', color: '#0ea5e9', label: 'Translation' },
+  schedule:     { icon: '⏰', color: '#f59e0b', label: 'Zeitplan' },
+  artifact:     { icon: '📄', color: '#8b5cf6', label: 'Artefakt' },
+  translation:  { icon: '🌐', color: '#0ea5e9', label: 'Übersetzung' },
 };
 
 /* Sidebar-style line-art glyphs used as the *default* card icon when the user
@@ -126,7 +126,7 @@ function mountFavouriteStar(container, opts) {
   const btn = document.createElement('button');
   btn.className = 'fav-star-btn';
   btn.type = 'button';
-  btn.setAttribute('aria-label', 'Add to favourites');
+  btn.setAttribute('aria-label', 'Zu Favoriten hinzufügen');
   btn.innerHTML = '<span class="fav-glyph">☆</span>';
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -150,12 +150,12 @@ function refreshStarButton(btn, opts) {
   if (row) {
     btn.classList.add('is-favourited');
     btn.querySelector('.fav-glyph').textContent = '★';
-    btn.setAttribute('aria-label', 'Customise favourite');
+    btn.setAttribute('aria-label', 'Favorit anpassen');
     btn.dataset.favId = row.id;
   } else {
     btn.classList.remove('is-favourited');
     btn.querySelector('.fav-glyph').textContent = '☆';
-    btn.setAttribute('aria-label', 'Add to favourites');
+    btn.setAttribute('aria-label', 'Zu Favoriten hinzufügen');
     delete btn.dataset.favId;
   }
 }
@@ -185,13 +185,13 @@ async function onStarClick(btn, opts) {
     if (row && row.id) {
       FavouritesCache.upsert(row);
       refreshStarButton(btn, opts);
-      flashToast('Added to favourites');
+      flashToast('Zu Favoriten hinzugefügt');
       window.dispatchEvent(new CustomEvent('favourites:changed'));
     } else if (row && row.error) {
-      flashToast(`Could not favourite: ${row.error}`, true);
+      flashToast(`Favorisieren nicht möglich: ${row.error}`, true);
     }
   } catch (e) {
-    flashToast(`Favourite failed: ${e.message || e}`, true);
+    flashToast(`Favorisieren fehlgeschlagen: ${e.message || e}`, true);
   }
 }
 
@@ -203,9 +203,9 @@ function openFavouriteMenu(anchorBtn, row, opts) {
   menu.className = 'fav-popover';
   menu.id = 'fav-popover';
   menu.innerHTML = `
-    <button class="fav-popover-item" data-act="customise">⚙ Customise</button>
-    <button class="fav-popover-item" data-act="rescope">🔀 Change scope</button>
-    <button class="fav-popover-item" data-act="remove">✕ Remove favourite</button>
+    <button class="fav-popover-item" data-act="customise">⚙ Anpassen</button>
+    <button class="fav-popover-item" data-act="rescope">🔀 Sichtbarkeit ändern</button>
+    <button class="fav-popover-item" data-act="remove">✕ Favorit entfernen</button>
   `;
   document.body.appendChild(menu);
   const r = anchorBtn.getBoundingClientRect();
@@ -233,10 +233,10 @@ async function removeFavourite(row, opts, btn) {
     await API.del(`/v1/favourites/${row.id}`);
     FavouritesCache.removeById(row.id);
     refreshStarButton(btn, opts);
-    flashToast('Removed from favourites');
+    flashToast('Aus Favoriten entfernt');
     window.dispatchEvent(new CustomEvent('favourites:changed'));
   } catch (e) {
-    flashToast(`Remove failed: ${e.message || e}`, true);
+    flashToast(`Entfernen fehlgeschlagen: ${e.message || e}`, true);
   }
 }
 
@@ -249,12 +249,12 @@ function openRescopeMenu(anchorBtn, row, opts) {
   const isAdmin = state.authUser?.role === 'admin';
   const teams = state.userTeams || [];
   const items = [];
-  items.push(`<button class="fav-popover-item" data-scope="user" data-scope-id="${state.authUser?.id || ''}">👤 Just me</button>`);
+  items.push(`<button class="fav-popover-item" data-scope="user" data-scope-id="${state.authUser?.id || ''}">👤 Nur ich</button>`);
   for (const t of teams) {
     items.push(`<button class="fav-popover-item" data-scope="team" data-scope-id="${t.id}">👥 Team: ${escapeHtml(t.name || t.id)}</button>`);
   }
   if (isAdmin) {
-    items.push(`<button class="fav-popover-item" data-scope="general" data-scope-id="">🌐 Everyone</button>`);
+    items.push(`<button class="fav-popover-item" data-scope="general" data-scope-id="">🌐 Jeder</button>`);
   }
   menu.innerHTML = items.join('');
   document.body.appendChild(menu);
@@ -282,13 +282,13 @@ function openRescopeMenu(anchorBtn, row, opts) {
       });
       if (fresh && fresh.id) {
         FavouritesCache.upsert(fresh);
-        flashToast(`Now favourited for ${labelForScope(scope, scope_id)}`);
+        flashToast(`Jetzt favorisiert für ${labelForScope(scope, scope_id)}`);
         window.dispatchEvent(new CustomEvent('favourites:changed'));
       } else if (fresh && fresh.error) {
-        flashToast(`Re-scope failed: ${fresh.error}`, true);
+        flashToast(`Sichtbarkeit ändern fehlgeschlagen: ${fresh.error}`, true);
       }
     } catch (err) {
-      flashToast(`Re-scope failed: ${err.message || err}`, true);
+      flashToast(`Sichtbarkeit ändern fehlgeschlagen: ${err.message || err}`, true);
     }
     refreshStarButton(anchorBtn, opts);
   });
@@ -296,11 +296,11 @@ function openRescopeMenu(anchorBtn, row, opts) {
 }
 
 function labelForScope(scope, scope_id) {
-  if (scope === 'user') return 'just you';
-  if (scope === 'general') return 'everyone';
+  if (scope === 'user') return 'nur Sie';
+  if (scope === 'general') return 'jeden';
   if (scope === 'team') {
     const t = (state.userTeams || []).find(x => x.id === scope_id);
-    return `team ${t?.name || scope_id}`;
+    return `Team ${t?.name || scope_id}`;
   }
   return scope;
 }
@@ -315,30 +315,30 @@ function openCustomiseModal(row, opts) {
   overlay.innerHTML = `
     <div class="fav-modal" role="dialog" aria-modal="true">
       <div class="fav-modal-head">
-        <h3>Customise favourite</h3>
-        <button class="fav-modal-close" aria-label="Close">✕</button>
+        <h3>Favorit anpassen</h3>
+        <button class="fav-modal-close" aria-label="Schließen">✕</button>
       </div>
       <div class="fav-modal-body">
         <section class="fav-section">
-          <h4>Image</h4>
+          <h4>Bild</h4>
           <div class="fav-image-row">
             <div class="fav-image-preview" id="fav-image-preview"></div>
             <div class="fav-image-actions">
               <label class="fav-btn">
-                Upload…
+                Hochladen…
                 <input type="file" id="fav-image-input" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden>
               </label>
-              <button class="fav-btn" data-act="clear-image">Use icon instead</button>
-              <p class="fav-hint">Max 2 MB. JPG, PNG, WebP or SVG.</p>
+              <button class="fav-btn" data-act="clear-image">Stattdessen Symbol verwenden</button>
+              <p class="fav-hint">Max. 2 MB. JPG, PNG, WebP oder SVG.</p>
             </div>
           </div>
         </section>
         <section class="fav-section">
-          <h4>Icon</h4>
+          <h4>Symbol</h4>
           <div class="fav-icon-grid" id="fav-icon-grid"></div>
         </section>
         <section class="fav-section">
-          <h4>Accent colour</h4>
+          <h4>Akzentfarbe</h4>
           <div class="fav-color-grid" id="fav-color-grid"></div>
         </section>
       </div>
@@ -411,7 +411,7 @@ function openCustomiseModal(row, opts) {
   overlay.querySelector('#fav-image-input').addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) { flashToast('Image too large (max 2 MB)', true); return; }
+    if (file.size > 2 * 1024 * 1024) { flashToast('Bild zu groß (max. 2 MB)', true); return; }
     const fd = new FormData();
     fd.append('file', file);
     try {
@@ -420,14 +420,14 @@ function openCustomiseModal(row, opts) {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
         body: fd,
       });
-      if (!r.ok) { flashToast(`Upload failed: ${r.status}`, true); return; }
+      if (!r.ok) { flashToast(`Hochladen fehlgeschlagen: ${r.status}`, true); return; }
       const updated = await r.json();
       Object.assign(state_, updated);
       FavouritesCache.upsert({ ...row, ...updated });
       paintPreview();
       window.dispatchEvent(new CustomEvent('favourites:changed'));
     } catch (err) {
-      flashToast(`Upload failed: ${err.message || err}`, true);
+      flashToast(`Hochladen fehlgeschlagen: ${err.message || err}`, true);
     }
   });
 
@@ -440,7 +440,7 @@ function openCustomiseModal(row, opts) {
       paintPreview();
       window.dispatchEvent(new CustomEvent('favourites:changed'));
     } catch (err) {
-      flashToast(`Clear failed: ${err.message || err}`, true);
+      flashToast(`Entfernen fehlgeschlagen: ${err.message || err}`, true);
     }
   });
 
@@ -451,7 +451,7 @@ function openCustomiseModal(row, opts) {
       FavouritesCache.upsert({ ...row, ...updated });
       window.dispatchEvent(new CustomEvent('favourites:changed'));
     } catch (err) {
-      flashToast(`Save failed: ${err.message || err}`, true);
+      flashToast(`Speichern fehlgeschlagen: ${err.message || err}`, true);
     }
   }
 }
@@ -513,7 +513,7 @@ async function renderRecentFavourites() {
     const iconHtml = customIcon
       ? escapeHtml(customIcon)
       : favouriteTypeGlyphSvg(row.item_type, 16);
-    const t = (row.title || '(untitled)').slice(0, 50);
+    const t = (row.title || '(ohne Titel)').slice(0, 50);
     div.innerHTML = `
       <span class="sb-sess-icon sb-fav-icon">${iconHtml}</span>
       <span class="sb-session-title">${escapeHtml(t)}</span>
@@ -600,13 +600,13 @@ function renderFavouritesScopeChips() {
   const isAdmin = state.authUser?.role === 'admin';
   const counts = countByScope();
   const chips = [];
-  chips.push({ key: 'all',      label: `All (${counts.all})` });
-  chips.push({ key: 'mine',     label: `Mine (${counts.mine})` });
+  chips.push({ key: 'all',      label: `Alle (${counts.all})` });
+  chips.push({ key: 'mine',     label: `Meine (${counts.mine})` });
   for (const t of teams) {
     chips.push({ key: `team:${t.id}`, label: `${t.name || t.id} (${counts.byTeam[t.id] || 0})` });
   }
   if (isAdmin || counts.general > 0) {
-    chips.push({ key: 'general', label: `Everyone (${counts.general})` });
+    chips.push({ key: 'general', label: `Jeder (${counts.general})` });
   }
   tabs.innerHTML = chips.map(c => `
     <button class="fav-view-tab${FAV_VIEW_STATE.scope === c.key ? ' is-active' : ''}"
@@ -662,8 +662,8 @@ function renderFavouritesGrid() {
     grid.innerHTML = `
       <div class="fav-view-empty">
         <div class="fav-view-empty-glyph">⭐</div>
-        <p>No favourites in this view yet.</p>
-        <p class="fav-view-empty-hint">Click the ☆ on any chat, project, workflow, scheduled task, or artifact to pin it here.</p>
+        <p>In dieser Ansicht noch keine Favoriten.</p>
+        <p class="fav-view-empty-hint">Klicken Sie auf das ☆ bei einem Chat, Projekt, Workflow, geplanten Task oder Artefakt, um es hier anzuheften.</p>
       </div>`;
     return;
   }
@@ -690,7 +690,7 @@ function renderFavouritesGrid() {
       : '';
     const runnable = !unavailable && (row.item_type === 'workflow' || row.item_type === 'schedule');
     const runBtn = runnable
-      ? `<button class="fav-view-card-run" title="Run now" aria-label="Run now">
+      ? `<button class="fav-view-card-run" title="Jetzt ausführen" aria-label="Jetzt ausführen">
            <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
          </button>`
       : '';
@@ -700,10 +700,10 @@ function renderFavouritesGrid() {
           ${imageUrl ? '<div class="fav-view-card-overlay"></div>' : ''}
           ${!imageUrl ? `<span class="fav-view-card-glyph">${customIcon ? escapeHtml(ic) : favouriteTypeGlyphSvg(row.item_type, 44)}</span>` : ''}
           ${runBtn}
-          <button class="fav-view-card-remove" title="Remove favourite">×</button>
+          <button class="fav-view-card-remove" title="Favorit entfernen">×</button>
         </div>
         <div class="fav-view-card-info">
-          <div class="fav-view-card-title">${escapeHtml(row.title || '(untitled)')}</div>
+          <div class="fav-view-card-title">${escapeHtml(row.title || '(ohne Titel)')}</div>
           <div class="fav-view-card-meta">
             <span class="fav-view-card-type">${escapeHtml(typeLabel)}</span>
             ${scopeBadge}
@@ -722,7 +722,7 @@ function renderFavouritesGrid() {
       if (ev.target.closest('.fav-view-card-remove')) return;
       if (ev.target.closest('.fav-view-card-run')) return;
       if (row.available === false) {
-        flashToast('This item is no longer accessible', true);
+        flashToast('Dieses Element ist nicht mehr verfügbar', true);
         return;
       }
       openFavouriteRow(row);
@@ -734,10 +734,10 @@ function renderFavouritesGrid() {
         try {
           await API.del(`/v1/favourites/${row.id}`);
           FavouritesCache.removeById(row.id);
-          flashToast('Removed from favourites');
+          flashToast('Aus Favoriten entfernt');
           window.dispatchEvent(new CustomEvent('favourites:changed'));
         } catch (e) {
-          flashToast(`Remove failed: ${e.message || e}`, true);
+          flashToast(`Entfernen fehlgeschlagen: ${e.message || e}`, true);
         }
       });
     }
@@ -757,45 +757,45 @@ function renderFavouritesGrid() {
      • schedule → manageSchedule({action:'run_now', name}) */
 async function runFavouriteRow(row) {
   if (!row || row.available === false) {
-    flashToast('This item is no longer accessible', true);
+    flashToast('Dieses Element ist nicht mehr verfügbar', true);
     return;
   }
   const t = row.item_type;
   const name = row.item_id;
   if (t === 'workflow') {
     if (typeof wfRun === 'function') {
-      flashToast('Starting workflow…');
+      flashToast('Workflow wird gestartet…');
       navigateTo('workflows');
-      try { await wfRun(name); } catch (e) { flashToast(`Run failed: ${e.message || e}`, true); }
+      try { await wfRun(name); } catch (e) { flashToast(`Ausführung fehlgeschlagen: ${e.message || e}`, true); }
     } else {
-      flashToast('Workflow runner unavailable', true);
+      flashToast('Workflow-Ausführung nicht verfügbar', true);
     }
   } else if (t === 'schedule') {
     try {
       await API.manageSchedule({ action: 'run_now', name });
-      flashToast(`Triggered "${row.title || name}"`);
+      flashToast(`"${row.title || name}" ausgelöst`);
     } catch (e) {
-      flashToast(`Run failed: ${e.message || e}`, true);
+      flashToast(`Ausführung fehlgeschlagen: ${e.message || e}`, true);
     }
   }
 }
 
 function scopeBadgeHtml(row) {
-  if (row.scope === 'general') return `<span class="fav-view-card-scope is-general">Everyone</span>`;
+  if (row.scope === 'general') return `<span class="fav-view-card-scope is-general">Jeder</span>`;
   if (row.scope === 'team') {
     const t = (state.userTeams || []).find(x => x.id === row.scope_id);
     return `<span class="fav-view-card-scope is-team">Team · ${escapeHtml(t?.name || row.scope_id)}</span>`;
   }
-  return `<span class="fav-view-card-scope is-user">Mine</span>`;
+  return `<span class="fav-view-card-scope is-user">Meine</span>`;
 }
 
 function favRelativeTime(ms) {
   if (!ms) return '';
   const diff = Date.now() - ms;
-  if (diff < 60_000) return 'just now';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d ago`;
+  if (diff < 60_000) return 'gerade eben';
+  if (diff < 3_600_000) return `vor ${Math.floor(diff / 60_000)} Min.`;
+  if (diff < 86_400_000) return `vor ${Math.floor(diff / 3_600_000)} Std.`;
+  if (diff < 7 * 86_400_000) return `vor ${Math.floor(diff / 86_400_000)} Tg.`;
   try { return new Date(ms).toLocaleDateString(); } catch(_) { return ''; }
 }
 
@@ -808,26 +808,26 @@ async function favViewClear() {
   const s = FAV_VIEW_STATE.scope;
   let scope, scope_id, label;
   const userId = state.authUser?.id || '';
-  if (s === 'mine') { scope = 'user'; scope_id = userId; label = 'your personal'; }
-  else if (s === 'general') { scope = 'general'; scope_id = ''; label = 'global'; }
+  if (s === 'mine') { scope = 'user'; scope_id = userId; label = 'Ihre persönlichen'; }
+  else if (s === 'general') { scope = 'general'; scope_id = ''; label = 'globalen'; }
   else if (s.startsWith('team:')) {
     scope = 'team'; scope_id = s.slice(5);
     const t = (state.userTeams || []).find(x => x.id === scope_id);
-    label = `team "${t?.name || scope_id}"`;
+    label = `Team-"${t?.name || scope_id}"-`;
   } else {
-    flashToast('Pick a specific scope (Mine / Team / Everyone) before clearing.', true);
+    flashToast('Wählen Sie zuerst eine bestimmte Sichtbarkeit (Meine / Team / Jeder).', true);
     return;
   }
-  if (!await showConfirmDanger(`Remove all ${label} favourites? This can't be undone.`, 'Clear favourites', 'Remove all')) return;
+  if (!await showConfirmDanger(`Alle ${label} Favoriten entfernen? Dies kann nicht rückgängig gemacht werden.`, 'Favoriten löschen', 'Alle entfernen')) return;
   try {
     const r = await API.del(`/v1/favourites?scope=${encodeURIComponent(scope)}&scope_id=${encodeURIComponent(scope_id)}`);
-    flashToast(`Removed ${r?.removed || 0} favourite(s)`);
+    flashToast(`${r?.removed || 0} Favorit(en) entfernt`);
     await FavouritesCache.load(true);
     window.dispatchEvent(new CustomEvent('favourites:changed'));
     renderFavouritesScopeChips();
     renderFavouritesGrid();
   } catch (e) {
-    flashToast(`Clear failed: ${e.message || e}`, true);
+    flashToast(`Löschen fehlgeschlagen: ${e.message || e}`, true);
   }
 }
 

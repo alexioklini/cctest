@@ -20,7 +20,7 @@ const CLS_LEVEL_LABEL = {
   internal: 'Intern',
   confidential: 'Vertraulich',
   strict: 'Streng Vertraulich',
-  unmarked: 'Unmarked',
+  unmarked: 'Nicht gekennzeichnet',
 };
 
 function clsInit() {
@@ -80,7 +80,7 @@ function clsRenderFileList() {
     <div class="cls-file-row">
       <span class="nm">${clsEsc(f.name)}</span>
       <span class="sz">${clsFmtSize(f.size)}</span>
-      <span class="x" onclick="clsRemoveFile(${i})" title="Remove">✕</span>
+      <span class="x" onclick="clsRemoveFile(${i})" title="Entfernen">✕</span>
     </div>
   `).join('');
 }
@@ -135,12 +135,12 @@ async function clsRunScan() {
   const btn = document.getElementById('cls-run-btn');
   const status = document.getElementById('cls-scan-status');
   status.classList.remove('err');
-  status.textContent = 'Scanning…';
+  status.textContent = 'Wird gescannt…';
   btn.disabled = true;
   try {
     let resp;
     if (clsState.mode === 'upload') {
-      if (!clsState.pickedFiles.length) throw new Error('No files picked');
+      if (!clsState.pickedFiles.length) throw new Error('Keine Dateien ausgewählt');
       const fd = new FormData();
       clsState.pickedFiles.forEach(f => fd.append('files', f, f.name));
       const token = localStorage.getItem('auth-token');
@@ -150,7 +150,7 @@ async function clsRunScan() {
       resp = await r.json();
     } else if (clsState.mode === 'folder') {
       const path = document.getElementById('cls-folder-path').value.trim();
-      if (!path) throw new Error('Folder path required');
+      if (!path) throw new Error('Ordnerpfad erforderlich');
       resp = await API.post('/v1/classification/scan-folder', {
         path,
         recursive: document.getElementById('cls-folder-recursive').checked,
@@ -159,7 +159,7 @@ async function clsRunScan() {
     } else {
       const agent_id = document.getElementById('cls-project-agent').value;
       const project_name = document.getElementById('cls-project-name').value;
-      if (!project_name) throw new Error('Pick a project');
+      if (!project_name) throw new Error('Projekt auswählen');
       resp = await API.post('/v1/classification/scan-project', {
         agent_id, project_name, persist: true,
       });
@@ -169,7 +169,7 @@ async function clsRunScan() {
     clsRenderSummary(resp.summary || {});
     clsRenderResults();
     document.getElementById('cls-results').classList.remove('hidden');
-    status.textContent = `Scanned ${clsState.lastResults.length} file(s).`;
+    status.textContent = `${clsState.lastResults.length} Datei(en) gescannt.`;
   } catch (e) {
     status.classList.add('err');
     status.textContent = e.message || String(e);
@@ -186,9 +186,9 @@ function clsRenderSummary(summary) {
   const mismatch = summary.mismatch_count || 0;
   const errors = summary.error_count || 0;
   const parts = [
-    `<b>${total}</b> file(s)`,
+    `<b>${total}</b> Datei(en)`,
     `<span class="sep">·</span>`,
-    `Public ${bl.public || 0}`,
+    `Öffentlich ${bl.public || 0}`,
     `<span class="sep">·</span>`,
     `Intern ${bl.internal || 0}`,
     `<span class="sep">·</span>`,
@@ -196,10 +196,10 @@ function clsRenderSummary(summary) {
     `<span class="sep">·</span>`,
     `Streng ${bl.strict || 0}`,
     `<span class="sep">·</span>`,
-    `Unmarked ${bl.unmarked || 0}`,
+    `Nicht gekennzeichnet ${bl.unmarked || 0}`,
   ];
-  if (mismatch) parts.push(`<span class="sep">·</span><span class="warn">${mismatch} mismatch(es)</span>`);
-  if (errors)   parts.push(`<span class="sep">·</span><span class="warn">${errors} error(s)</span>`);
+  if (mismatch) parts.push(`<span class="sep">·</span><span class="warn">${mismatch} Abweichung(en)</span>`);
+  if (errors)   parts.push(`<span class="sep">·</span><span class="warn">${errors} Fehler</span>`);
   box.innerHTML = parts.join(' ');
 }
 
@@ -215,14 +215,14 @@ function clsRenderResults() {
     return true;
   });
   tbody.innerHTML = rows.map(clsRowHtml).join('') || `
-    <tr><td colspan="6" style="text-align:center;color:var(--text-400);padding:24px">No matching results.</td></tr>`;
+    <tr><td colspan="6" style="text-align:center;color:var(--text-400);padding:24px">Keine passenden Ergebnisse.</td></tr>`;
 }
 
 function clsRowHtml(r) {
   const markerPill = r.marker_level
     ? `<span class="cls-pill cls-pill-${r.marker_level}">${CLS_LEVEL_LABEL[r.marker_level]}</span>`
     : `<span class="cls-pill cls-pill-none">—</span>`;
-  const finalPill = `<span class="cls-pill cls-pill-${r.final_level || 'unmarked'}">${CLS_LEVEL_LABEL[r.final_level] || r.final_level || 'Unmarked'}</span>`;
+  const finalPill = `<span class="cls-pill cls-pill-${r.final_level || 'unmarked'}">${CLS_LEVEL_LABEL[r.final_level] || r.final_level || 'Nicht gekennzeichnet'}</span>`;
   const heur = r.heuristic_level || 'public';
   const heurPill = `<span class="cls-pill cls-pill-${heur}">${CLS_LEVEL_LABEL[heur]}</span>`;
   const mm = r.mismatch || null;
@@ -244,7 +244,7 @@ function clsRowHtml(r) {
   const ev = (r.marker_evidence && r.marker_evidence[0])
     ? `<div class="cls-evidence">"${clsEsc(r.marker_evidence[0].excerpt || '')}"</div>`
     : (r.filename_hint
-        ? `<div class="cls-evidence">via filename</div>`
+        ? `<div class="cls-evidence">über Dateiname</div>`
         : '');
   const errCell = r.error ? `<div class="cls-evidence" style="color:var(--error,#d33)">${clsEsc(r.error)}</div>` : '';
   return `<tr>
@@ -300,12 +300,12 @@ function clsExportCsv() {
 
 async function clsLoadHistory() {
   const box = document.getElementById('cls-history-list');
-  box.innerHTML = `<div style="color:var(--text-400);font-size:13px">Loading…</div>`;
+  box.innerHTML = `<div style="color:var(--text-400);font-size:13px">Wird geladen…</div>`;
   try {
     const data = await API.get('/v1/classification/scans');
     const scans = data.scans || [];
     if (!scans.length) {
-      box.innerHTML = `<div style="color:var(--text-400);font-size:13px;padding:20px;text-align:center">No scans yet.</div>`;
+      box.innerHTML = `<div style="color:var(--text-400);font-size:13px;padding:20px;text-align:center">Noch keine Scans.</div>`;
       return;
     }
     box.innerHTML = scans.map(s => {
@@ -314,11 +314,11 @@ async function clsLoadHistory() {
       const mm = summary.mismatch_count || 0;
       const date = new Date((s.created_at || 0) * 1000).toLocaleString();
       const counts = [
-        bl.confidential ? `${bl.confidential} vert.` : '',
+        bl.confidential ? `${bl.confidential} vertr.` : '',
         bl.strict       ? `${bl.strict} streng`     : '',
-        bl.unmarked     ? `${bl.unmarked} unmarked` : '',
-        mm              ? `${mm} mismatch`          : '',
-      ].filter(Boolean).join(' · ') || `${s.file_count || 0} files`;
+        bl.unmarked     ? `${bl.unmarked} nicht gekennz.` : '',
+        mm              ? `${mm} Abweichung`        : '',
+      ].filter(Boolean).join(' · ') || `${s.file_count || 0} Dateien`;
       return `
         <div class="cls-history-row" onclick="clsOpenScan('${clsEsc(s.scan_id)}')">
           <div class="lbl">
@@ -326,7 +326,7 @@ async function clsLoadHistory() {
             <div class="meta">${clsEsc(s.source_kind || '')} · ${date}</div>
           </div>
           <div class="stat">${counts}</div>
-          <span class="x" onclick="event.stopPropagation();clsDeleteScan('${clsEsc(s.scan_id)}')" title="Delete">✕</span>
+          <span class="x" onclick="event.stopPropagation();clsDeleteScan('${clsEsc(s.scan_id)}')" title="Löschen">✕</span>
         </div>`;
     }).join('');
   } catch (e) {
@@ -344,14 +344,14 @@ async function clsOpenScan(scanId) {
     clsRenderResults();
     document.getElementById('cls-results').classList.remove('hidden');
     document.getElementById('cls-scan-status').textContent =
-      `Loaded scan: ${data.source_label || data.source_kind}`;
+      `Scan geladen: ${data.source_label || data.source_kind}`;
   } catch (e) {
     showToast(e.message || String(e), true);
   }
 }
 
 async function clsDeleteScan(scanId) {
-  if (!confirm('Delete this scan?')) return;
+  if (!confirm('Diesen Scan löschen?')) return;
   try {
     await API.del(`/v1/classification/scans/${encodeURIComponent(scanId)}`);
     clsLoadHistory();

@@ -17,7 +17,7 @@ function handleFileSelect(event) {
     // turns, or read_document for normal turns — sees a truncated file and
     // fails opaquely; the user has no way to tell what went wrong.
     if (file.size === 0) {
-      showToast(`${file.name} is empty — not attached`, true);
+      showToast(`${file.name} ist leer — nicht angehängt`, true);
       continue;
     }
     const reader = new FileReader();
@@ -29,7 +29,7 @@ function handleFileSelect(event) {
       // file — silently pushing an empty `data` would let the broken
       // attachment slip past every downstream check.
       if (!b64) {
-        showToast(`${file.name} could not be read — not attached`, true);
+        showToast(`${file.name} konnte nicht gelesen werden — nicht angehängt`, true);
         return;
       }
       // base64 length × 3/4 ≈ raw size. Cross-check against the File's
@@ -37,7 +37,7 @@ function handleFileSelect(event) {
       // we should refuse rather than ship a corrupt file to the server.
       const decodedLen = Math.floor(b64.length * 3 / 4);
       if (decodedLen < file.size * 0.5) {
-        showToast(`${file.name} read truncated (${decodedLen} / ${file.size} bytes) — not attached`, true);
+        showToast(`${file.name} unvollständig gelesen (${decodedLen} / ${file.size} Bytes) — nicht angehängt`, true);
         return;
       }
       const entry = {
@@ -59,7 +59,7 @@ function handleFileSelect(event) {
       scanPendingAttachment(entry);
     };
     reader.onerror = () => {
-      showToast(`${file.name} failed to read: ${reader.error?.message || 'unknown'}`, true);
+      showToast(`${file.name} konnte nicht gelesen werden: ${reader.error?.message || 'unbekannt'}`, true);
     };
     reader.readAsDataURL(file);
   }
@@ -179,20 +179,20 @@ function renderFilePreviews() {
           }
         }
         if (sc.state === 'pending') {
-          scanBadge = `<span title="Scanning for PII…" style="font-size:10px;color:var(--text-300)">⏳</span>`;
+          scanBadge = `<span title="Wird auf PII geprüft…" style="font-size:10px;color:var(--text-300)">⏳</span>`;
         } else if (sc.scanned === false &&
                    ['too_large','extract_timeout','extract_failed','unsupported'].includes(sc.reason)) {
           const r = {
-            'too_large': 'too large for PII scan',
-            'extract_timeout': 'PII scan timed out',
-            'extract_failed': 'PII scan failed',
-            'unsupported': 'unsupported format — cannot scan',
+            'too_large': 'zu groß für PII-Prüfung',
+            'extract_timeout': 'Zeitüberschreitung bei PII-Prüfung',
+            'extract_failed': 'PII-Prüfung fehlgeschlagen',
+            'unsupported': 'nicht unterstütztes Format — keine Prüfung möglich',
           }[sc.reason];
           // Append classification fragment so an unscannable + classified
           // attachment doesn't hide the classification info behind the
           // PII-side icon.
           const _t = r + (clsTooltipFragment ? clsTooltipFragment : '');
-          scanBadge = `<span title="${esc(_t)} — remove to send" style="color:#dc2626;font-weight:bold;cursor:help">⛔</span>`;
+          scanBadge = `<span title="${esc(_t)} — zum Senden entfernen" style="color:#dc2626;font-weight:bold;cursor:help">⛔</span>`;
         } else if (sc.scanned && sc.finding_count > 0) {
           // PII findings present — surface the count and fold the
           // classification summary into the same tooltip per user request
@@ -342,7 +342,7 @@ function removePendingFile(idx) {
         // drags in a corrupted file gets the same toast as one who
         // picks it.
         if (file.size === 0) {
-          showToast(`${file.name} is empty — not attached`, true);
+          showToast(`${file.name} ist leer — nicht angehängt`, true);
           continue;
         }
         const isImage = file.type.startsWith('image/');
@@ -352,12 +352,12 @@ function removePendingFile(idx) {
           const commaIdx = result.indexOf(',');
           const b64 = commaIdx >= 0 ? result.slice(commaIdx + 1) : '';
           if (!b64) {
-            showToast(`${file.name} could not be read — not attached`, true);
+            showToast(`${file.name} konnte nicht gelesen werden — nicht angehängt`, true);
             return;
           }
           const decodedLen = Math.floor(b64.length * 3 / 4);
           if (decodedLen < file.size * 0.5) {
-            showToast(`${file.name} read truncated (${decodedLen} / ${file.size} bytes) — not attached`, true);
+            showToast(`${file.name} unvollständig gelesen (${decodedLen} / ${file.size} Bytes) — nicht angehängt`, true);
             return;
           }
           const entry = {
@@ -375,7 +375,7 @@ function removePendingFile(idx) {
           scanPendingAttachment(entry);
         };
         reader.onerror = () => {
-          showToast(`${file.name} failed to read: ${reader.error?.message || 'unknown'}`, true);
+          showToast(`${file.name} konnte nicht gelesen werden: ${reader.error?.message || 'unbekannt'}`, true);
         };
         reader.readAsDataURL(file);
       }
@@ -412,17 +412,17 @@ async function previewFile(path) {
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
       </div>
       <div class="modal-body">
-        <pre style="font-family:var(--font-mono);font-size:13px;line-height:1.5;overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:60vh;overflow-y:auto;background:var(--code-bg);padding:16px;border-radius:8px"><code>${esc(data.content || data.preview || 'Empty file')}</code></pre>
+        <pre style="font-family:var(--font-mono);font-size:13px;line-height:1.5;overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:60vh;overflow-y:auto;background:var(--code-bg);padding:16px;border-radius:8px"><code>${esc(data.content || data.preview || 'Leere Datei')}</code></pre>
       </div>
       <div class="modal-footer">
-        <a href="${API.getFileDownloadUrl(path)}" class="btn-primary" download>Download</a>
+        <a href="${API.getFileDownloadUrl(path)}" class="btn-primary" download>Herunterladen</a>
       </div>
     `;
 
     overlay.appendChild(content);
     document.body.appendChild(overlay);
   } catch(e) {
-    showToast('Failed to preview file', true);
+    showToast('Dateivorschau fehlgeschlagen', true);
   }
 }
 
@@ -433,7 +433,7 @@ function copyMessage(idx) {
   const chat = state.activeChat;
   if (!chat?.messages[idx]) return;
   const text = chat.messages[idx].content || '';
-  navigator.clipboard.writeText(text).then(() => showToast('Copied'));
+  navigator.clipboard.writeText(text).then(() => showToast('Kopiert'));
 }
 
 function retryMessage(idx) {
@@ -556,11 +556,11 @@ async function deleteMessages(mode, idx) {
   // Confirm for destructive actions
   const count = removeTo - removeFrom;
   const realCount = idsToDelete.length;
-  const label = mode === 'before' ? `Remove ${count} message${count !== 1 ? 's' : ''} before this point?` :
-                mode === 'after' ? `Remove ${count} message${count !== 1 ? 's' : ''} after this point?` :
-                mode === 'response' ? 'Remove this response?' :
-                'Remove this Q&A pair?';
-  if (!await showConfirmDanger(label, 'Remove messages', 'Remove')) return;
+  const label = mode === 'before' ? `${count} Nachricht${count !== 1 ? 'en' : ''} vor dieser Stelle entfernen?` :
+                mode === 'after' ? `${count} Nachricht${count !== 1 ? 'en' : ''} nach dieser Stelle entfernen?` :
+                mode === 'response' ? 'Diese Antwort entfernen?' :
+                'Dieses Frage-Antwort-Paar entfernen?';
+  if (!await showConfirmDanger(label, 'Nachrichten entfernen', 'Entfernen')) return;
 
   // Collect artifact IDs from messages being removed (for local cleanup)
   const artifactIds = new Set();
@@ -590,15 +590,15 @@ async function deleteMessages(mode, idx) {
     }
   }
   renderMessages();
-  showToast(`Removed ${realCount || count} message${(realCount || count) !== 1 ? 's' : ''}`);
+  showToast(`${realCount || count} Nachricht${(realCount || count) !== 1 ? 'en' : ''} entfernt`);
 }
 
 function copyCodeBlock(btn) {
   const pre = btn.closest('.code-block-header')?.nextElementSibling;
   const code = pre?.querySelector('code')?.textContent || '';
   navigator.clipboard.writeText(code).then(() => {
-    btn.textContent = 'Copied!';
-    setTimeout(() => btn.textContent = 'Copy', 1500);
+    btn.textContent = 'Kopiert!';
+    setTimeout(() => btn.textContent = 'Kopieren', 1500);
   });
 }
 

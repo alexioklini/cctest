@@ -58,7 +58,7 @@ async function ensureSession(chat) {
     }
     return chat.sessionId;
   } catch(e) {
-    showToast('Failed to create session: ' + e.message, true);
+    showToast('Sitzung konnte nicht erstellt werden: ' + e.message, true);
     throw e;
   }
 }
@@ -310,7 +310,7 @@ async function openSession(sessionId, agentId) {
       state.artifacts[sessionId] = [];
     }
   } catch(e) {
-    showToast('Failed to load session', true);
+    showToast('Sitzung konnte nicht geladen werden', true);
   }
 
   // Close artifact and references panels when switching sessions
@@ -475,7 +475,7 @@ function newChat() {
 async function archiveSession(sessionId) {
   try {
     await API.manageSession({action:'archive', session_id: sessionId});
-    showToast('Chat archived');
+    showToast('Chat archiviert');
     // Refresh the appropriate list
     const agentId = state._projectDetailAgent;
     const projectName = state._projectDetailName;
@@ -484,17 +484,17 @@ async function archiveSession(sessionId) {
     } else {
       loadAgentSessions(state.activeAgentId);
     }
-  } catch(e) { showToast('Archive failed', true); }
+  } catch(e) { showToast('Archivieren fehlgeschlagen', true); }
 }
 
 async function deleteSession(sessionId) {
-  if (!await showConfirmDanger('Delete this chat?', 'Delete chat', 'Delete')) return;
+  if (!await showConfirmDanger('Diesen Chat löschen?', 'Chat löschen', 'Löschen')) return;
   try {
     await API.deleteSession(sessionId);
     if (state.activeChat?.sessionId === sessionId) {
       newChat();
     }
-    showToast('Session deleted');
+    showToast('Sitzung gelöscht');
     loadAgentSessions(state.activeAgentId);
     // If we're inside a project, refresh that project's list too.
     const agentId = state._projectDetailAgent;
@@ -502,30 +502,30 @@ async function deleteSession(sessionId) {
     if (state.currentView === 'project-detail' && agentId && projectName) {
       loadProjectChats(agentId, projectName);
     }
-  } catch(e) { showToast('Delete failed', true); }
+  } catch(e) { showToast('Löschen fehlgeschlagen', true); }
 }
 
 async function archiveAllChats() {
-  const scope = state.chatsFilter === 'archived' ? 'archived' : 'active';
-  if (!await showConfirm(`Archive all ${scope} chats?`, 'Archive chats')) return;
+  const scope = state.chatsFilter === 'archived' ? 'archivierten' : 'aktiven';
+  if (!await showConfirm(`Alle ${scope} Chats archivieren?`, 'Chats archivieren')) return;
   try {
     await API.manageSession({action:'archive_all'});
-    showToast('All chats archived');
+    showToast('Alle Chats archiviert');
     loadChatsList();
     loadAgentSessions(state.activeAgentId);
-  } catch(e) { showToast('Archive all failed', true); }
+  } catch(e) { showToast('Alle archivieren fehlgeschlagen', true); }
 }
 
 async function deleteAllChats() {
   const archived = state.chatsFilter === 'archived';
-  const label = archived ? 'archived' : 'ALL';
-  if (!await showConfirmDanger(`Permanently delete ${label} chats? This cannot be undone.`, 'Delete chats', 'Delete all')) return;
+  const label = archived ? 'archivierten' : 'ALLE';
+  if (!await showConfirmDanger(`${label} Chats dauerhaft löschen? Dies kann nicht rückgängig gemacht werden.`, 'Chats löschen', 'Alle löschen')) return;
   try {
     const r = await API.manageSession({action:'delete_all', archived_only: archived});
-    showToast(`Deleted ${r.count || 'all'} chats`);
+    showToast(`${r.count || 'Alle'} Chats gelöscht`);
     newChat();
     loadChatsList();
     loadAgentSessions(state.activeAgentId);
-  } catch(e) { showToast('Delete all failed', true); }
+  } catch(e) { showToast('Alle löschen fehlgeschlagen', true); }
 }
 

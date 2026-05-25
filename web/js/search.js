@@ -10,7 +10,7 @@ function openSearchModal() {
   content.className = 'modal-content';
   content.innerHTML = `
     <div class="modal-body" style="padding:16px">
-      <input class="form-input" id="global-search" placeholder="Search chats, projects, agents..." autofocus
+      <input class="form-input" id="global-search" placeholder="Chats, Projekte, Agents durchsuchen..." autofocus
              oninput="performGlobalSearch(this.value)"
              style="font-size:16px;padding:12px 16px;border-radius:12px">
       <div id="search-results" style="margin-top:12px;max-height:400px;overflow-y:auto"></div>
@@ -26,7 +26,7 @@ async function performGlobalSearch(query) {
   const container = document.getElementById('search-results');
   if (!query || query.length < 2) { container.innerHTML = ''; return; }
 
-  container.innerHTML = '<div style="padding:8px;color:var(--text-400);font-size:13px">Searching...</div>';
+  container.innerHTML = '<div style="padding:8px;color:var(--text-400);font-size:13px">Wird gesucht...</div>';
 
   // Search sessions
   let results = [];
@@ -49,7 +49,7 @@ async function performGlobalSearch(query) {
       </div>
     `;
   }
-  if (!results.length) html = '<div style="padding:12px;text-align:center;color:var(--text-400);font-size:13px">No results</div>';
+  if (!results.length) html = '<div style="padding:12px;text-align:center;color:var(--text-400);font-size:13px">Keine Ergebnisse</div>';
   container.innerHTML = html;
 }
 

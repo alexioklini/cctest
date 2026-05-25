@@ -20,7 +20,7 @@ function updateChatView() {
     item_type: state.currentProject ? 'project_chat' : 'chat',
     item_id: sid,
     agent_id: chat.agentId || state.activeAgentId || 'main',
-    title: chatTitle || 'Untitled chat',
+    title: chatTitle || 'Unbenannter Chat',
   } : null;
   // LLM-generated summary surfaces only as a hover tooltip on the title —
   // never replaces it. Falls back to summary as visible label only when
@@ -84,27 +84,27 @@ function updateStatusBar() {
   for (const memBtn of _composerToggleEls('btn-save-to-memory')) {
     if (mode === 'on') {
       memBtn.style.color = 'var(--success, #22c55e)';
-      memBtn.title = 'Memory: on (all messages saved) — click to cycle';
+      memBtn.title = 'Gedächtnis: an (alle Nachrichten werden gespeichert) — zum Umschalten klicken';
     } else if (mode === 'auto') {
       const clf = state.mempalaceClassifier || {};
       const detail = clf.enabled && clf.model
-        ? `LLM classifier: ${modelShortName(clf.model, false)}`
-        : clf.min_turns ? `min ${clf.min_turns} turns` : 'default rules';
+        ? `LLM-Klassifizierer: ${modelShortName(clf.model, false)}`
+        : clf.min_turns ? `mind. ${clf.min_turns} Turns` : 'Standardregeln';
       memBtn.style.color = 'var(--warning, #f59e0b)';
-      memBtn.title = `Memory: auto (${detail}) — click to cycle`;
+      memBtn.title = `Gedächtnis: automatisch (${detail}) — zum Umschalten klicken`;
     } else {
       memBtn.style.color = '';
-      memBtn.title = 'Memory: off — click to cycle';
+      memBtn.title = 'Gedächtnis: aus — zum Umschalten klicken';
     }
   }
 
   // Caveman mode toggle: icon per level (off=spaceship, lite=car, full=horse, ultra=campfire)
   const cm = chat.cavemanMode || 0;
   const cavTitle = {
-    0: 'Caveman: off (spaceship) — click to cycle',
-    1: 'Caveman: lite (car) — click to cycle',
-    2: 'Caveman: full (horse) — click to cycle',
-    3: 'Caveman: ultra (campfire) — click to cycle',
+    0: 'Caveman: aus (Raumschiff) — zum Umschalten klicken',
+    1: 'Caveman: leicht (Auto) — zum Umschalten klicken',
+    2: 'Caveman: voll (Pferd) — zum Umschalten klicken',
+    3: 'Caveman: ultra (Lagerfeuer) — zum Umschalten klicken',
   }[cm];
   for (const cavBtn of _composerToggleEls('btn-caveman')) {
     cavBtn.innerHTML = cavemanIconFor(cm);
@@ -118,14 +118,14 @@ function updateStatusBar() {
   // can reset with a click. Hidden when no preference is active.
   const gdprPref = (chat.gdprActionPref || '').trim();
   const gdprLabel = {
-    'anonymise':   'Auto-anonymising PII before send',
-    'local_model': 'Auto-routing PII messages to local model',
-    'continue':    'Auto-continuing past PII warnings',
+    'anonymise':   'Personenbezogene Daten werden vor dem Senden automatisch anonymisiert',
+    'local_model': 'Nachrichten mit personenbezogenen Daten werden automatisch an ein lokales Modell geleitet',
+    'continue':    'PII-Warnungen werden automatisch übergangen',
   }[gdprPref] || '';
   for (const gBtn of _composerToggleEls('btn-gdpr-pref')) {
     if (gdprPref && gdprLabel) {
       gBtn.style.display = '';
-      gBtn.title = `${gdprLabel} — click to reset`;
+      gBtn.title = `${gdprLabel} — zum Zurücksetzen klicken`;
     } else {
       gBtn.style.display = 'none';
     }
@@ -137,7 +137,7 @@ function updateStatusBar() {
     warmupEl = document.createElement('div');
     warmupEl.id = 'status-warmup';
     warmupEl.className = 'status-item';
-    warmupEl.innerHTML = '<span style="font-size:11px;color:#8b5cf6;font-weight:500;animation:pulse 1s infinite">Warming up...</span>';
+    warmupEl.innerHTML = '<span style="font-size:11px;color:#8b5cf6;font-weight:500;animation:pulse 1s infinite">Aufwärmen …</span>';
     document.getElementById('status-bar').insertBefore(warmupEl, document.getElementById('status-bar').children[2]);
   }
   warmupEl.style.display = chat._warmingUp ? '' : 'none';
@@ -190,7 +190,7 @@ function updateStatusBar() {
     fill.className = 'context-fill' + (pct >= 80 ? ' danger' : pct >= 50 ? ' warn' : '');
     const fmtK = (n) => n >= 1000 ? (n/1000).toFixed(1) + 'K' : n.toString();
     label.textContent = `${fmtK(contextUsed)} / ${fmtK(effectiveMaxContext)} (${pct}%)`;
-    label.title = `${contextUsed.toLocaleString()} / ${effectiveMaxContext.toLocaleString()} tokens (last API input)`;
+    label.title = `${contextUsed.toLocaleString()} / ${effectiveMaxContext.toLocaleString()} Token (letzte API-Eingabe)`;
 
     // LCM warning banner: show at ≥60% — compaction is manual-only, so the
     // banner stays visible until the user runs ✂️ Compact or the conversation
@@ -200,7 +200,7 @@ function updateStatusBar() {
       const isStreaming = !!document.getElementById('stop-btn')?.offsetParent;
       if (pct >= 60 && !isStreaming) {
         const txt = document.getElementById('lcm-warn-text');
-        if (txt) txt.textContent = `Context is ${pct}% full — compact now to keep the conversation going.`;
+        if (txt) txt.textContent = `Der Kontext ist zu ${pct}% gefüllt — jetzt verdichten, um das Gespräch fortzusetzen.`;
         banner.classList.add('visible');
       } else {
         banner.classList.remove('visible');
@@ -231,11 +231,11 @@ function updateStatusBar() {
     if (sessionCost <= 0) {
       costLabel.textContent = '0.00';
       costLabel.style.color = 'var(--text-400)';
-      costWrap.title = 'Session cost: $0.00 — no pricing configured for this model. Set cost_input/cost_output in Settings → Models.';
+      costWrap.title = 'Sitzungskosten: $0.00 — für dieses Modell sind keine Preise hinterlegt. cost_input/cost_output unter Einstellungen → Modelle festlegen.';
     } else {
       costLabel.textContent = sessionCost < 1 ? sessionCost.toFixed(3) : sessionCost.toFixed(2);
       costLabel.style.color = '';
-      costWrap.title = `Session cost: $${sessionCost.toFixed(4)}`;
+      costWrap.title = `Sitzungskosten: $${sessionCost.toFixed(4)}`;
     }
   } else {
     costWrap.style.display = 'none';
@@ -307,7 +307,7 @@ function initScrollAnchors() {
    ═══════════════════════════════════════════════════════════ */
 async function loadChatsList() {
   const container = document.getElementById('chats-list');
-  container.innerHTML = '<div style="padding:16px;color:var(--text-400)">Loading...</div>';
+  container.innerHTML = '<div style="padding:16px;color:var(--text-400)">Wird geladen …</div>';
 
   try {
     // Load sessions for all agents
@@ -347,7 +347,7 @@ async function loadChatsList() {
       div.innerHTML = `
         <div class="chat-list-item-title"${tip}>${esc(title)}</div>
         <div class="chat-list-item-meta">
-          Last message ${relativeTime(s.last_active)}
+          Letzte Nachricht ${relativeTime(s.last_active)}
           ${s.agentId ? ' in <span class="chat-list-item-agent">' + esc(s.agentDisplay) + '</span>' : ''}
         </div>
       `;
@@ -356,10 +356,10 @@ async function loadChatsList() {
     }
 
     if (!allSessions.length) {
-      container.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-400)">No chats found</div>';
+      container.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-400)">Keine Chats gefunden</div>';
     }
   } catch(e) {
-    container.innerHTML = '<div style="padding:16px;color:var(--error)">Failed to load chats</div>';
+    container.innerHTML = '<div style="padding:16px;color:var(--error)">Chats konnten nicht geladen werden</div>';
   }
 }
 

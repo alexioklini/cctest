@@ -162,23 +162,23 @@ function trLiveToggle() {
 async function trLiveStart() {
   // Browser support gate.
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    trLiveStatus('Microphone not supported in this browser.', true);
+    trLiveStatus('Mikrofon wird in diesem Browser nicht unterstützt.', true);
     return;
   }
   const mode = document.getElementById('tr-live-mode')?.value || 'translate';
   if (mode === 'translate' && !trState.targetLang) {
-    trLiveStatus('Pick a target language.', true);
+    trLiveStatus('Wählen Sie eine Zielsprache.', true);
     return;
   }
 
-  trLiveStatus('Requesting microphone…');
+  trLiveStatus('Mikrofonzugriff wird angefragt…');
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true },
     });
   } catch (e) {
-    trLiveStatus(`Microphone denied: ${e.message}`, true);
+    trLiveStatus(`Mikrofonzugriff verweigert: ${e.message}`, true);
     return;
   }
 
@@ -199,7 +199,7 @@ async function trLiveStart() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch (e) {
     stream.getTracks().forEach(t => t.stop());
-    trLiveStatus(`Session start failed: ${e.message}`, true);
+    trLiveStatus(`Session-Start fehlgeschlagen: ${e.message}`, true);
     return;
   }
   const session = await res.json();
@@ -214,9 +214,9 @@ async function trLiveStart() {
   trLiveRenderSegments();
   document.getElementById('tr-live-record-btn').classList.add('recording');
   document.getElementById('tr-live-record-btn').innerHTML =
-    '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> Stop recording';
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> Aufnahme stoppen';
   document.getElementById('tr-live-download-btn').disabled = true;
-  trLiveStatus('Recording…');
+  trLiveStatus('Aufnahme läuft…');
 
   trLiveStartElapsedTimer();
   trLiveSubscribe(session.id);
@@ -261,7 +261,7 @@ function trLiveStartRecorder() {
   try {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
   } catch (e) {
-    trLiveStatus(`AudioContext failed: ${e.message}`, true);
+    trLiveStatus(`AudioContext fehlgeschlagen: ${e.message}`, true);
     trLiveStop();
     return;
   }
@@ -295,7 +295,7 @@ function trLiveStartRecorder() {
       // Keep the user roughly informed about VAD decisions in the status line.
       // Don't spam — only on explicit hard-cap flushes (those are interesting).
       if (reason === 'hard_cap') {
-        trLiveStatus(`Long utterance — flushed at ${TR_LIVE_VAD.HARD_CAP_S}s.`);
+        trLiveStatus(`Lange Äußerung — nach ${TR_LIVE_VAD.HARD_CAP_S} s übermittelt.`);
       }
       await fetch(`/v1/translate/live/${encodeURIComponent(trLiveState.sessionId)}/chunk`, {
         method: 'POST',
@@ -430,8 +430,8 @@ async function trLiveStop() {
   trLiveTtsStop();
   document.getElementById('tr-live-record-btn').classList.remove('recording');
   document.getElementById('tr-live-record-btn').innerHTML =
-    '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg> Start recording';
-  trLiveStatus('Finalizing…');
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg> Aufnahme starten';
+  trLiveStatus('Wird abgeschlossen…');
   if (trLiveState.elapsedTimer) {
     clearInterval(trLiveState.elapsedTimer);
     trLiveState.elapsedTimer = null;
@@ -462,7 +462,7 @@ async function trLiveStop() {
   }
   document.getElementById('tr-live-download-btn').disabled =
     !trLiveState.segments.length;
-  trLiveStatus(trLiveState.segments.length ? 'Stopped.' : 'Stopped (no segments).');
+  trLiveStatus(trLiveState.segments.length ? 'Gestoppt.' : 'Gestoppt (keine Segmente).');
   if (trLiveState.segments.length) trHistoryRefresh();
 }
 
@@ -488,7 +488,7 @@ async function trLiveSubscribe(sessionId) {
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   } catch (e) {
-    if (e.name !== 'AbortError') trLiveStatus(`SSE failed: ${e.message}`, true);
+    if (e.name !== 'AbortError') trLiveStatus(`SSE fehlgeschlagen: ${e.message}`, true);
     return;
   }
   const reader = resp.body.getReader();
@@ -526,7 +526,7 @@ async function trLiveSubscribe(sessionId) {
         trLiveMaybeQueueTts(seg, i);
       }
     } else if (type === 'error') {
-      trLiveStatus(`Server: ${payload.error || 'error'}`, true);
+      trLiveStatus(`Server: ${payload.error || 'Fehler'}`, true);
     } else if (type === 'closed') {
       // Server finished flushing.
       try { ctrl.abort(); } catch (_) {}
@@ -545,7 +545,7 @@ async function trLiveSubscribe(sessionId) {
       }
     }
   } catch (e) {
-    if (e.name !== 'AbortError') trLiveStatus(`SSE error: ${e.message}`, true);
+    if (e.name !== 'AbortError') trLiveStatus(`SSE-Fehler: ${e.message}`, true);
   } finally {
     if (trLiveState.abortSse === ctrl) trLiveState.abortSse = null;
   }
@@ -555,7 +555,7 @@ function trLiveRenderSegments() {
   const wrap = document.getElementById('tr-live-stream');
   if (!wrap) return;
   if (!trLiveState.segments.length) {
-    wrap.innerHTML = '<div class="tr-placeholder">Listening… speak into the microphone. Each finalized segment will appear here.</div>';
+    wrap.innerHTML = '<div class="tr-placeholder">Höre zu… sprechen Sie ins Mikrofon. Jedes fertiggestellte Segment erscheint hier.</div>';
     return;
   }
   const html = trLiveState.segments.map((s, idx) => {

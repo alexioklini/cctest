@@ -47,14 +47,14 @@ function navigateTo(view, opts) {
 
     case 'chats':
       document.getElementById('chats-view').classList.add('active');
-      updatePageHeader('Chats');
+      updatePageHeader('Chats');  // German keeps the same word
       document.getElementById('status-bar').style.display = '';
       loadChatsList();
       break;
 
     case 'projects':
       document.getElementById('projects-view').classList.add('active');
-      updatePageHeader('Projects');
+      updatePageHeader('Projekte');
       // Hide per-chat status bar — same reason as project-detail: no chat
       // in scope, the bar would otherwise show stale session data.
       document.getElementById('status-bar').style.display = 'none';
@@ -63,7 +63,7 @@ function navigateTo(view, opts) {
 
     case 'project-detail':
       document.getElementById('project-detail-view').classList.add('active');
-      updatePageHeader(opts?.projectName || 'Project');
+      updatePageHeader(opts?.projectName || 'Projekt');
       // Hide the per-chat status bar — there's no chat in scope on this view,
       // so the bar would otherwise leak the previous chat's session id /
       // model / tokens / cost / context fill, which the user reads as
@@ -88,7 +88,7 @@ function navigateTo(view, opts) {
 
     case 'artifacts':
       document.getElementById('artifacts-view').classList.add('active');
-      updatePageHeader('Artifacts');
+      updatePageHeader('Artefakte');
       // Hide per-chat status bar — artifacts overview is a cross-session
       // grid; no chat in scope, so the bar would otherwise show stale
       // session data from whichever chat the user was last viewing.
@@ -98,7 +98,7 @@ function navigateTo(view, opts) {
 
     case 'scheduled':
       document.getElementById('scheduled-view').classList.add('active');
-      updatePageHeader('Scheduled');
+      updatePageHeader('Geplant');
       // Hide per-chat status bar — scheduled is a list view with no chat
       // in scope. Once a run is opened (openScheduledArtifact → chat view)
       // the bar comes back with that run's actual data.
@@ -125,7 +125,7 @@ function navigateTo(view, opts) {
 
     case 'data': {
       document.getElementById('data-view').classList.add('active');
-      updatePageHeader('Data');
+      updatePageHeader('Daten');
       document.getElementById('status-bar').style.display = 'none';
       if (typeof clsOpenView === 'function') clsOpenView();
       break;
@@ -133,7 +133,7 @@ function navigateTo(view, opts) {
 
     case 'favourites':
       if (favView) favView.classList.add('active');
-      updatePageHeader('Favourites');
+      updatePageHeader('Favoriten');
       document.getElementById('status-bar').style.display = 'none';
       if (typeof loadFavouritesView === 'function') loadFavouritesView();
       break;
@@ -156,14 +156,14 @@ function navigateTo(view, opts) {
 }
 
 const _TR_TAB_TITLES = {
-  text: 'Text Translation',
-  document: 'Document Translation',
-  audio: 'Audio / Video Translation',
-  live: 'Live Microphone Translation',
+  text: 'Textübersetzung',
+  document: 'Dokumentübersetzung',
+  audio: 'Audio-/Videoübersetzung',
+  live: 'Live-Mikrofonübersetzung',
 };
 
 function _updateTranslationHeaderStar(tab) {
-  const title = _TR_TAB_TITLES[tab] || 'Translation';
+  const title = _TR_TAB_TITLES[tab] || 'Übersetzung';
   updatePageHeader(title, null, null, {
     item_type: 'translation',
     item_id: tab,
@@ -180,7 +180,7 @@ function updatePageHeader(title, breadcrumb, breadcrumbAgentId, favouriteOpts, t
     // attached programmatically (not inline) so quotes in the names can't
     // break out of the attribute and silently disable the handler.
     const titleAttr = tooltip ? ` title="${esc(tooltip)}"` : '';
-    el.innerHTML = `<span class="page-header-crumb"${breadcrumbAgentId ? ' data-clickable="1" style="color:var(--text-400);cursor:pointer" title="Open project"' : ' style="color:var(--text-400)"'}>${esc(breadcrumb)}</span> <span class="breadcrumb-sep">/</span> <span${titleAttr}>${esc(title)}</span>`;
+    el.innerHTML = `<span class="page-header-crumb"${breadcrumbAgentId ? ' data-clickable="1" style="color:var(--text-400);cursor:pointer" title="Projekt öffnen"' : ' style="color:var(--text-400)"'}>${esc(breadcrumb)}</span> <span class="breadcrumb-sep">/</span> <span${titleAttr}>${esc(title)}</span>`;
     if (breadcrumbAgentId) {
       const crumb = el.querySelector('.page-header-crumb');
       crumb.addEventListener('click', (ev) => {
@@ -505,17 +505,17 @@ function collectGdprFormConfig() {
 
 async function saveGdprConfig() {
   const btn = document.getElementById('gdpr-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Wird gespeichert...'; }
   try {
     const body = { gdpr_scanner: collectGdprFormConfig() };
     const r = await API.post('/v1/services/server', body);
     applyGdprConfigToScanner(r.gdpr_scanner);
-    showToast('GDPR settings saved');
+    showToast('GDPR-Einstellungen gespeichert');
     schedulePIIBadgeUpdate();
   } catch (e) {
-    showToast('Failed: ' + (e.message || e), true);
+    showToast('Fehlgeschlagen: ' + (e.message || e), true);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Save all GDPR settings'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Alle GDPR-Einstellungen speichern'; }
   }
 }
 
@@ -529,11 +529,11 @@ function resetGdprCategories() {
   for (const sel of document.querySelectorAll('.gdpr-rule-override')) {
     sel.value = '';
   }
-  showToast('Defaults restored — click Save to apply');
+  showToast('Standardwerte wiederhergestellt — zum Übernehmen auf Speichern klicken');
 }
 
 async function _confirmResetGdprCategories() {
-  if (!await showConfirm('Reset all categories and overrides to defaults? (Master switches and allowlist are kept.)')) return;
+  if (!await showConfirm('Alle Kategorien und Überschreibungen auf Standardwerte zurücksetzen? (Hauptschalter und Allowlist bleiben erhalten.)')) return;
   resetGdprCategories();
 }
 
@@ -543,15 +543,15 @@ function _renderGdprNerPill(languages) {
   const host = document.getElementById('gdpr-ner-pill');
   if (!host) return;
   if (!languages || !languages.length) {
-    host.innerHTML = `<div style="font-size:11px;color:var(--text-400);font-style:italic">No NER models registered.</div>`;
+    host.innerHTML = `<div style="font-size:11px;color:var(--text-400);font-style:italic">Keine NER-Modelle registriert.</div>`;
     return;
   }
   host.innerHTML = languages.map(l => {
     const loaded = !!l.loaded;
     const failed = !!l.failed && !loaded;
     const statusColor = loaded ? 'var(--success,#16a34a)' : (failed ? 'var(--error,#dc2626)' : 'var(--text-400)');
-    const statusText = loaded ? 'loaded' : (failed ? 'failed to load' : 'not loaded');
-    const btnLabel = loaded ? 'Unload' : 'Load';
+    const statusText = loaded ? 'geladen' : (failed ? 'Laden fehlgeschlagen' : 'nicht geladen');
+    const btnLabel = loaded ? 'Entladen' : 'Laden';
     const btnAction = loaded ? 'unload' : 'load';
     return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)">
       <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${statusColor};flex-shrink:0"></span>
@@ -569,22 +569,22 @@ async function refreshGdprNerPill() {
     _renderGdprNerPill(r.languages || []);
   } catch (e) {
     const host = document.getElementById('gdpr-ner-pill');
-    if (host) host.innerHTML = `<div style="font-size:11px;color:var(--error)">Failed to read NER state: ${esc(e.message || e)}</div>`;
+    if (host) host.innerHTML = `<div style="font-size:11px;color:var(--error)">NER-Status konnte nicht gelesen werden: ${esc(e.message || e)}</div>`;
   }
 }
 
 async function _gdprNerAction(action, lang, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = action === 'load' ? 'Loading…' : 'Unloading…'; }
+  if (btn) { btn.disabled = true; btn.textContent = action === 'load' ? 'Wird geladen…' : 'Wird entladen…'; }
   try {
     const r = await API.post('/v1/gdpr/ner-models', { action, lang });
     _renderGdprNerPill(r.languages || []);
     if (r.status === 'load_failed') {
-      showToast(`Failed to load ${lang} — check server.error.log`, true);
+      showToast(`Laden von ${lang} fehlgeschlagen — server.error.log prüfen`, true);
     } else {
       showToast(`NER ${lang}: ${r.status}`);
     }
   } catch (e) {
-    showToast('Failed: ' + (e.message || e), true);
+    showToast('Fehlgeschlagen: ' + (e.message || e), true);
     refreshGdprNerPill();
   }
 }
@@ -611,20 +611,20 @@ async function saveQuotaConfig() {
   };
   try {
     await API.post('/v1/quotas/config', body);
-    showToast('Quota settings saved');
+    showToast('Kontingent-Einstellungen gespeichert');
     QuotaMonitor.refresh();
     // Re-render the tab so the user list reflects new thresholds
     switchGeneralTab('quotas', document.querySelector('.modal-tab.active'));
   } catch (e) {
-    showToast('Failed: ' + (e.message || e), true);
+    showToast('Fehlgeschlagen: ' + (e.message || e), true);
   }
 }
 
 async function quotaEditOverride(userId, displayName) {
   // Quick prompt-driven override editor; full inline form would be heavier than worth it
-  const dailyStr = await showPrompt(`Daily limit for ${displayName} (USD; blank = inherit role default; 0 = no limit):`, '');
+  const dailyStr = await showPrompt(`Tageslimit für ${displayName} (USD; leer = Rollenstandard übernehmen; 0 = kein Limit):`, '');
   if (dailyStr === null) return;
-  const cycleStr = await showPrompt(`Cycle limit for ${displayName} (USD; blank = inherit; 0 = no limit):`, '');
+  const cycleStr = await showPrompt(`Zykluslimit für ${displayName} (USD; leer = übernehmen; 0 = kein Limit):`, '');
   if (cycleStr === null) return;
   API.get('/v1/quotas/config').then(cfg => {
     const ov = Object.assign({}, cfg.user_overrides || {});
@@ -638,9 +638,9 @@ async function quotaEditOverride(userId, displayName) {
     }
     return API.post('/v1/quotas/config', { user_overrides: ov });
   }).then(() => {
-    showToast('Override updated');
+    showToast('Überschreibung aktualisiert');
     switchGeneralTab('quotas', document.querySelector('.modal-tab.active'));
-  }).catch(e => showToast('Failed: ' + (e.message || e), true));
+  }).catch(e => showToast('Fehlgeschlagen: ' + (e.message || e), true));
 }
 
 async function quotaOpenUserBreakdown(userId, displayName) {
@@ -652,10 +652,10 @@ async function quotaOpenUserBreakdown(userId, displayName) {
   div.style.display = 'flex';
   div.onclick = (e) => { if (e.target === div) div.remove(); };
   div.innerHTML = `<div class="modal-content" style="max-width:640px" onclick="event.stopPropagation()">
-    <div class="modal-header"><div class="modal-title">Usage breakdown — ${esc(displayName)}</div>
+    <div class="modal-header"><div class="modal-title">Nutzungsaufschlüsselung — ${esc(displayName)}</div>
       <button class="modal-close" onclick="document.getElementById('quota-breakdown-modal').remove()">&times;</button>
     </div>
-    <div class="modal-body" id="quota-breakdown-body"><div style="color:var(--text-300);text-align:center;padding:20px">Loading…</div></div>
+    <div class="modal-body" id="quota-breakdown-body"><div style="color:var(--text-300);text-align:center;padding:20px">Wird geladen…</div></div>
   </div>`;
   document.body.appendChild(div);
   try {
@@ -669,32 +669,32 @@ async function quotaOpenUserBreakdown(userId, displayName) {
     const totalCost = perModel.reduce((s, r) => s + (r.cost || 0), 0);
     body.innerHTML = `
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-        <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px"><div style="font-size:11px;color:var(--text-400)">Cycle</div><div style="font-size:18px;font-weight:600">${fmt(st.cycle?.used_usd||0)} <span style="font-size:11px;color:var(--text-400)">/ ${fmt(st.cycle?.limit_usd||0)}</span></div></div>
-        <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px"><div style="font-size:11px;color:var(--text-400)">Today</div><div style="font-size:18px;font-weight:600">${fmt(st.daily?.used_usd||0)} <span style="font-size:11px;color:var(--text-400)">/ ${fmt(st.daily?.limit_usd||0)}</span></div></div>
-        <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px"><div style="font-size:11px;color:var(--text-400)">Role</div><div style="font-size:14px;font-weight:600;text-transform:capitalize">${esc(st.role||'')}</div></div>
+        <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px"><div style="font-size:11px;color:var(--text-400)">Zyklus</div><div style="font-size:18px;font-weight:600">${fmt(st.cycle?.used_usd||0)} <span style="font-size:11px;color:var(--text-400)">/ ${fmt(st.cycle?.limit_usd||0)}</span></div></div>
+        <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px"><div style="font-size:11px;color:var(--text-400)">Heute</div><div style="font-size:18px;font-weight:600">${fmt(st.daily?.used_usd||0)} <span style="font-size:11px;color:var(--text-400)">/ ${fmt(st.daily?.limit_usd||0)}</span></div></div>
+        <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px"><div style="font-size:11px;color:var(--text-400)">Rolle</div><div style="font-size:14px;font-weight:600;text-transform:capitalize">${esc(st.role||'')}</div></div>
       </div>
-      <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:8px 0 4px">By model (current cycle)</div>
+      <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:8px 0 4px">Nach Modell (aktueller Zyklus)</div>
       ${perModel.length ? perModel.map(r => {
         const pct = totalCost > 0 ? (r.cost / totalCost * 100) : 0;
         return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border-100)">
           <span style="flex:1;font-size:12px;color:var(--text-100);font-family:var(--font-mono)">${esc(modelShortName(r.model))}</span>
-          <span style="font-size:11px;color:var(--text-400)">${(r.calls||0)} calls</span>
+          <span style="font-size:11px;color:var(--text-400)">${(r.calls||0)} Aufrufe</span>
           <span style="font-size:11px;color:var(--text-400);min-width:36px;text-align:right">${pct.toFixed(0)}%</span>
           <span style="font-size:13px;font-weight:500;min-width:80px;text-align:right">${fmt(r.cost||0)}</span>
         </div>`;
-      }).join('') : '<div style="color:var(--text-400);padding:8px 0">No usage in current cycle.</div>'}
-      <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:14px 0 4px">Last 30 days</div>
+      }).join('') : '<div style="color:var(--text-400);padding:8px 0">Keine Nutzung im aktuellen Zyklus.</div>'}
+      <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:14px 0 4px">Letzte 30 Tage</div>
       ${daily.length ? daily.map(d => `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid var(--border-100);font-size:12px">
         <span style="font-family:var(--font-mono);color:var(--text-200)">${esc(d.day || '')}</span>
         <span style="flex:1"></span>
-        <span style="color:var(--text-400)">${(d.calls||0)} calls</span>
-        <span style="color:var(--text-400)">${((d.tokens_in||0)+(d.tokens_out||0)).toLocaleString()} tok</span>
+        <span style="color:var(--text-400)">${(d.calls||0)} Aufrufe</span>
+        <span style="color:var(--text-400)">${((d.tokens_in||0)+(d.tokens_out||0)).toLocaleString()} Token</span>
         <span style="font-weight:500;min-width:80px;text-align:right">${fmt(d.cost||0)}</span>
-      </div>`).join('') : '<div style="color:var(--text-400);padding:8px 0">No daily data.</div>'}
+      </div>`).join('') : '<div style="color:var(--text-400);padding:8px 0">Keine Tagesdaten.</div>'}
     `;
   } catch (e) {
     document.getElementById('quota-breakdown-body').innerHTML =
-      `<div style="color:var(--error);padding:16px">Failed: ${esc(String(e))}</div>`;
+      `<div style="color:var(--error);padding:16px">Fehlgeschlagen: ${esc(String(e))}</div>`;
   }
 }
 
@@ -835,7 +835,7 @@ function toggleModelDropdown(event) {
   if (localOnly) {
     const hdr = document.createElement('div');
     hdr.style.cssText = 'padding:8px 12px;font-size:11px;color:#92400e;background:#fef3c7;border-bottom:1px solid #fde68a;line-height:1.35';
-    hdr.innerHTML = '<b>Personal data detected</b><br>Only local models are selectable while the GDPR block is active.';
+    hdr.innerHTML = '<b>Personenbezogene Daten erkannt</b><br>Während die GDPR-Sperre aktiv ist, sind nur lokale Modelle auswählbar.';
     dd.appendChild(hdr);
   }
 
@@ -844,7 +844,7 @@ function toggleModelDropdown(event) {
   if (!localOnly) {
     const autoItem = document.createElement('div');
     autoItem.className = 'dropdown-item' + (currentModel === 'auto' ? ' active' : '');
-    autoItem.title = 'Automatically pick the best-fitting model for each message';
+    autoItem.title = 'Für jede Nachricht automatisch das am besten passende Modell wählen';
     autoItem.innerHTML = `
       <span class="dd-check">${currentModel === 'auto' ? '&#10003;' : ''}</span>
       <span class="dd-label">&#10024; Auto</span>
@@ -990,14 +990,14 @@ function toggleSbAgentDropdown() {
       html += `<div style="padding:8px 10px 4px;font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">${esc(team.name || teamId)}</div>`;
       for (const member of (team.members || [])) {
         const isHead = member.is_team_head;
-        html += agentRow(member, isHead ? 'head' : 'member');
+        html += agentRow(member, isHead ? 'Leitung' : 'Mitglied');
       }
     }
   }
 
   // 3. Standalone agents
   if (ts.standalone?.length) {
-    html += `<div style="padding:8px 10px 4px;font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Standalone</div>`;
+    html += `<div style="padding:8px 10px 4px;font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Eigenständig</div>`;
     for (const agent of ts.standalone) {
       html += agentRow(agent, null);
     }
@@ -1068,9 +1068,9 @@ function refreshWelcomeGreeting() {
   const greetingEl = document.getElementById('welcome-greeting-text');
   if (!greetingEl) return;
   const hour = new Date().getHours();
-  let timeLabel = 'Good evening';
-  if (hour < 12) timeLabel = 'Good morning';
-  else if (hour < 18) timeLabel = 'Good afternoon';
+  let timeLabel = 'Guten Abend';
+  if (hour < 12) timeLabel = 'Guten Morgen';
+  else if (hour < 18) timeLabel = 'Guten Tag';
   const u = state.authUser;
   let name = '';
   if (u) {
@@ -1190,16 +1190,16 @@ function renderSessionsList(container, sessions) {
     div.className = 'sb-session-item' + (state.activeChat?.sessionId === sid ? ' active' : '');
     // Title primary; summary is hover-only. Falls back to summary only when
     // no title (rare — pre-first-turn rows).
-    const title = s.title || s.summary || `Chat ${sid?.substring(0,6)}`;
+    const title = s.title || s.summary || `Chat ${sid?.substring(0,6)}`;  // "Chat" identical in German
     const tip = s.summary ? ` title="${esc(s.summary)}"` : '';
     div.innerHTML = `
       <span class="sb-sess-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>
       <span class="sb-session-title"${tip}>${esc(title)}</span>
       <span class="sb-sess-actions">
-        <button onclick="event.stopPropagation(); archiveSession('${sid}')" title="Archive">
+        <button onclick="event.stopPropagation(); archiveSession('${sid}')" title="Archivieren">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 8v13H3V8M1 3h22v5H1z"/></svg>
         </button>
-        <button onclick="event.stopPropagation(); deleteSession('${sid}')" title="Delete">
+        <button onclick="event.stopPropagation(); deleteSession('${sid}')" title="Löschen">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
         </button>
       </span>
@@ -1220,7 +1220,7 @@ async function renderRecentProjectChats(container) {
   // project view without first visiting the projects list.
   const needsLoad = !state.agentProjects || !Object.keys(state.agentProjects).length;
   if (needsLoad) {
-    container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Loading projects…</div>';
+    container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Projekte werden geladen…</div>';
     try { await loadProjectsList(); } catch(_) {}
   }
 
@@ -1233,7 +1233,7 @@ async function renderRecentProjectChats(container) {
     }
   }
   if (!accessSet.size) {
-    container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">No projects yet</div>';
+    container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Noch keine Projekte</div>';
     return;
   }
 
@@ -1279,7 +1279,7 @@ async function renderRecentProjectChats(container) {
   sessions = sessions.slice(0, 30);
 
   if (!sessions.length) {
-    container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">No project chats yet</div>';
+    container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Noch keine Projekt-Chats</div>';
     return;
   }
   renderSessionsList(container, sessions);
@@ -1292,7 +1292,7 @@ async function renderRecentScheduledRuns(container) {
   // Only show the loading placeholder on the first paint to avoid flicker on
   // every subsequent renderRecentChats() trigger (rename hook, polls, etc.).
   if (!wasRuns) {
-    container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Loading runs…</div>';
+    container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Ausführungen werden geladen…</div>';
     // Stale signature from a prior runs session — force a fresh render below.
     delete container.dataset.sig;
     delete container.dataset.activeRun;
@@ -1312,7 +1312,7 @@ async function renderRecentScheduledRuns(container) {
     // chat-centric view).
     if (container.dataset.mode !== 'runs') return;
     if (!runs.length) {
-      container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">No scheduled runs yet</div>';
+      container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Noch keine geplanten Ausführungen</div>';
       return;
     }
     // Cheap stable signature to skip the DOM rebuild when nothing changed
@@ -1330,7 +1330,7 @@ async function renderRecentScheduledRuns(container) {
       const running = h.status === 'running';
       const dotColor = running ? '#3b82f6' : (ok ? '#10b981' : (h.status === 'timeout' ? '#f59e0b' : '#ef4444'));
       const when = h.started_at ? new Date(h.started_at + 'Z').toLocaleString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
-      const title = h.schedule_name || `Run #${h.id}`;
+      const title = h.schedule_name || `Ausführung #${h.id}`;
       const agentId = h.agent || 'main';
       const div = document.createElement('div');
       div.className = 'sb-session-item' + (activeId === h.id ? ' active' : '');
@@ -1344,7 +1344,7 @@ async function renderRecentScheduledRuns(container) {
     }
   } catch (e) {
     if (!wasRuns) {
-      container.innerHTML = `<div class="sb-session-item" style="opacity:.6;cursor:default;color:var(--error)">Failed: ${esc(e.message)}</div>`;
+      container.innerHTML = `<div class="sb-session-item" style="opacity:.6;cursor:default;color:var(--error)">Fehlgeschlagen: ${esc(e.message)}</div>`;
     }
   }
 }

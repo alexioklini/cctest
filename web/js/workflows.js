@@ -32,8 +32,8 @@ function wfRenderList() {
   if (!wfState.list.length) {
     root.innerHTML = `
       <div class="wf-empty">
-        <p>No workflows yet.</p>
-        <p class="wf-empty-hint">Click <strong>New Workflow</strong> to create one. Workflows are small scripts that compose Brain tools — useful for repeatable, automatable tasks.</p>
+        <p>Noch keine Workflows.</p>
+        <p class="wf-empty-hint">Klicken Sie auf <strong>Neuer Workflow</strong>, um einen zu erstellen. Workflows sind kleine Skripte, die Brain-Tools verketten — nützlich für wiederholbare, automatisierbare Aufgaben.</p>
       </div>`;
     return;
   }
@@ -47,21 +47,21 @@ function wfRenderList() {
           </div>
           <div class="wf-card-desc">${escapeHtml(wf.description || '')}</div>
           <div class="wf-card-meta">
-            <span class="wf-pill">${escapeHtml(wf.trigger || 'manual')}</span>
+            <span class="wf-pill">${escapeHtml(wf.trigger || 'manuell')}</span>
             <span class="wf-card-fname">${escapeHtml(wf.file)}</span>
           </div>
         </div>
         <div class="wf-card-actions">
-          <button class="wf-btn wf-btn-primary" onclick="wfRun('${escapeJs(wf.name)}')">Run</button>
-          <button class="wf-btn wf-btn-ghost" onclick="wfOpenEditor('${escapeJs(wf.name)}')">Edit</button>
-          <button class="wf-btn wf-btn-ghost" onclick="shareDialog('workflow','${escapeJs(wf.name)}','${WF_AGENT}',{title:'${escapeJs(wf.display_name || wf.name)}',onChange:loadWorkflows})">Share</button>
+          <button class="wf-btn wf-btn-primary" onclick="wfRun('${escapeJs(wf.name)}')">Ausführen</button>
+          <button class="wf-btn wf-btn-ghost" onclick="wfOpenEditor('${escapeJs(wf.name)}')">Bearbeiten</button>
+          <button class="wf-btn wf-btn-ghost" onclick="shareDialog('workflow','${escapeJs(wf.name)}','${WF_AGENT}',{title:'${escapeJs(wf.display_name || wf.name)}',onChange:loadWorkflows})">Teilen</button>
           <button class="wf-btn wf-btn-ghost" data-wf-history-btn="${escapeHtml(wf.name)}"
-                  onclick="wfToggleHistory('${escapeJs(wf.name)}')">History</button>
-          <button class="wf-btn wf-btn-ghost" onclick="wfDelete('${escapeJs(wf.name)}')">Delete</button>
+                  onclick="wfToggleHistory('${escapeJs(wf.name)}')">Verlauf</button>
+          <button class="wf-btn wf-btn-ghost" onclick="wfDelete('${escapeJs(wf.name)}')">Löschen</button>
         </div>
       </div>
       <div class="wf-card-history hidden" id="wf-hist-${escapeHtml(wf.name)}">
-        <div class="wf-hist-loading">Loading history…</div>
+        <div class="wf-hist-loading">Verlauf wird geladen…</div>
       </div>
     </div>
   `).join('');
@@ -85,17 +85,17 @@ async function wfToggleHistory(name) {
   const btn = document.querySelector(`[data-wf-history-btn="${name}"]`);
   if (!root.classList.contains('hidden')) {
     root.classList.add('hidden');
-    if (btn) btn.textContent = 'History';
+    if (btn) btn.textContent = 'Verlauf';
     return;
   }
   root.classList.remove('hidden');
-  if (btn) btn.textContent = 'Hide history';
-  root.innerHTML = '<div class="wf-hist-loading">Loading history…</div>';
+  if (btn) btn.textContent = 'Verlauf ausblenden';
+  root.innerHTML = '<div class="wf-hist-loading">Verlauf wird geladen…</div>';
   try {
     const data = await API.get(`/v1/workflows/history?workflow=${encodeURIComponent(name)}&limit=10`);
     wfRenderHistoryRows(root, data.executions || []);
   } catch (e) {
-    root.innerHTML = `<div class="wf-hist-error">Could not load history: ${escapeHtml(e.message)}</div>`;
+    root.innerHTML = `<div class="wf-hist-error">Verlauf konnte nicht geladen werden: ${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -104,27 +104,27 @@ function wfRenderHistoryRows(root, rows) {
   // which workflow to scope to. Empty when this helper is reused elsewhere.
   const wfName = (root && root.id) ? root.id.replace(/^wf-hist-/, '') : '';
   if (!rows.length) {
-    root.innerHTML = '<div class="wf-hist-empty">No runs yet.</div>';
+    root.innerHTML = '<div class="wf-hist-empty">Noch keine Läufe.</div>';
     return;
   }
   // Toolbar appears whenever there's at least one terminal row to clear.
   const hasTerminal = rows.some(r => !['running','pending','waiting_approval'].includes(r.status));
   const clearBtn = (hasTerminal && wfName)
-    ? `<button class="wf-btn wf-btn-ghost wf-btn-mini wf-btn-clear-hist" onclick="wfClearWorkflowHistory('${escapeJs(wfName)}')">Clear history</button>`
+    ? `<button class="wf-btn wf-btn-ghost wf-btn-mini wf-btn-clear-hist" onclick="wfClearWorkflowHistory('${escapeJs(wfName)}')">Verlauf löschen</button>`
     : '';
   root.innerHTML = `
     ${clearBtn ? `<div class="wf-hist-toolbar">${clearBtn}</div>` : ''}
     <table class="wf-hist-table">
       <thead>
         <tr>
-          <th>When</th>
+          <th>Wann</th>
           <th>Status</th>
-          <th>Trigger</th>
-          <th>User</th>
-          <th>Duration</th>
-          <th>LLM calls</th>
-          <th>Tokens (in/out)</th>
-          <th>Cost</th>
+          <th>Auslöser</th>
+          <th>Benutzer</th>
+          <th>Dauer</th>
+          <th>LLM-Aufrufe</th>
+          <th>Token (ein/aus)</th>
+          <th>Kosten</th>
           <th></th>
         </tr>
       </thead>
@@ -138,17 +138,17 @@ function wfHistoryRowActions(r) {
   const status = r.status || 'unknown';
   const isCancelable = (status === 'running' || status === 'pending' || status === 'waiting_approval');
   const cancelBtn = isCancelable
-    ? `<button class="wf-btn wf-btn-mini wf-btn-cancel" onclick="wfCancelFromHistory('${escapeJs(r.execution_id)}', event)">Cancel</button>`
+    ? `<button class="wf-btn wf-btn-mini wf-btn-cancel" onclick="wfCancelFromHistory('${escapeJs(r.execution_id)}', event)">Abbrechen</button>`
     : '';
   // Terminal rows (completed / failed / cancelled) get a Delete button. Live
   // rows don't — user must Cancel first; once cancelled the next render shows
   // Delete in place of Cancel.
   const deleteBtn = isCancelable
     ? ''
-    : `<button class="wf-btn wf-btn-mini wf-btn-delete" title="Delete this history row" onclick="wfDeleteRunFromHistory('${escapeJs(r.execution_id)}', event)">Delete</button>`;
+    : `<button class="wf-btn wf-btn-mini wf-btn-delete" title="Diesen Verlaufseintrag löschen" onclick="wfDeleteRunFromHistory('${escapeJs(r.execution_id)}', event)">Löschen</button>`;
   return `
     <div class="wf-hist-actions">
-      <button class="wf-btn wf-btn-ghost wf-btn-mini" onclick="wfShowHistoryDetail('${escapeJs(r.execution_id)}')">View</button>
+      <button class="wf-btn wf-btn-ghost wf-btn-mini" onclick="wfShowHistoryDetail('${escapeJs(r.execution_id)}')">Anzeigen</button>
       ${cancelBtn}
       ${deleteBtn}
     </div>`;
@@ -172,48 +172,48 @@ function _wfRefreshOpenHistoryTables() {
 
 async function wfDeleteRunFromHistory(executionId, ev) {
   if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
-  if (!await showConfirmDanger('Delete this history entry? This cannot be undone.', 'Delete Run', 'Delete')) return;
+  if (!await showConfirmDanger('Diesen Verlaufseintrag löschen? Dies kann nicht rückgängig gemacht werden.', 'Lauf löschen', 'Löschen')) return;
   try {
     const r = await API.del(`/v1/workflows/history/${executionId}`);
     if (r && r.error) {
-      await showAlert('Delete failed: ' + r.error);
+      await showAlert('Löschen fehlgeschlagen: ' + r.error);
       return;
     }
     _wfRefreshOpenHistoryTables();
   } catch (e) {
-    await showAlert('Delete error: ' + e.message);
+    await showAlert('Löschfehler: ' + e.message);
   }
 }
 
 async function wfClearWorkflowHistory(name) {
-  if (!await showConfirmDanger(`Delete ALL terminal runs for "${name}"? This cannot be undone. Running entries are kept (cancel them first to delete).`, 'Clear History', 'Delete All')) return;
+  if (!await showConfirmDanger(`ALLE abgeschlossenen Läufe für "${name}" löschen? Dies kann nicht rückgängig gemacht werden. Laufende Einträge bleiben erhalten (zuerst abbrechen, um sie zu löschen).`, 'Verlauf löschen', 'Alle löschen')) return;
   try {
     const r = await API.del(`/v1/workflows/history?workflow=${encodeURIComponent(name)}`);
     if (r && r.error) {
-      await showAlert('Clear failed: ' + r.error);
+      await showAlert('Löschen fehlgeschlagen: ' + r.error);
       return;
     }
     _wfRefreshOpenHistoryTables();
   } catch (e) {
-    await showAlert('Clear error: ' + e.message);
+    await showAlert('Löschfehler: ' + e.message);
   }
 }
 
 async function wfClearAllRuns() {
   const mine = document.getElementById('wf-runs-mine');
   const onlyMine = mine && mine.checked;
-  const scope = onlyMine ? 'your runs' : 'all visible runs';
-  if (!await showConfirmDanger(`Delete ${scope}? This cannot be undone. Running entries are kept (cancel them first to delete).`, 'Clear Runs', 'Delete All')) return;
+  const scope = onlyMine ? 'Ihre Läufe' : 'alle sichtbaren Läufe';
+  if (!await showConfirmDanger(`${scope} löschen? Dies kann nicht rückgängig gemacht werden. Laufende Einträge bleiben erhalten (zuerst abbrechen, um sie zu löschen).`, 'Läufe löschen', 'Alle löschen')) return;
   try {
     const url = '/v1/workflows/history' + (onlyMine ? '?mine=1' : '');
     const r = await API.del(url);
     if (r && r.error) {
-      await showAlert('Clear failed: ' + r.error);
+      await showAlert('Löschen fehlgeschlagen: ' + r.error);
       return;
     }
     _wfRefreshOpenHistoryTables();
   } catch (e) {
-    await showAlert('Clear error: ' + e.message);
+    await showAlert('Löschfehler: ' + e.message);
   }
 }
 
@@ -227,7 +227,7 @@ function wfHistoryRowHtml(r) {
     <tr class="wf-hist-row wf-hist-${status}">
       <td>${escapeHtml(when)}</td>
       <td><span class="wf-status-${status}">${escapeHtml(status)}</span></td>
-      <td>${escapeHtml(r.trigger_kind || 'manual')}</td>
+      <td>${escapeHtml(r.trigger_kind || 'manuell')}</td>
       <td>${escapeHtml(r.user_display || '—')}</td>
       <td>${escapeHtml(dur)}</td>
       <td>${r.llm_calls || 0}</td>
@@ -242,12 +242,12 @@ async function wfCancelFromHistory(executionId, ev) {
   try {
     const r = await API.post(`/v1/workflows/executions/${executionId}/cancel`, {});
     if (r && r.error) {
-      await showAlert('Cancel failed: ' + r.error);
+      await showAlert('Abbrechen fehlgeschlagen: ' + r.error);
       return;
     }
     _wfRefreshOpenHistoryTables();
   } catch (e) {
-    await showAlert('Cancel error: ' + e.message);
+    await showAlert('Abbruchfehler: ' + e.message);
   }
 }
 
@@ -278,7 +278,7 @@ function wfSwitchSubtab(name, el) {
 async function loadWorkflowRuns() {
   const wrap = document.getElementById('wf-runs-table-wrap');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="wf-hist-loading">Loading runs…</div>';
+  wrap.innerHTML = '<div class="wf-hist-loading">Läufe werden geladen…</div>';
   const status = document.getElementById('wf-runs-status').value;
   const mine = document.getElementById('wf-runs-mine').checked;
   const params = new URLSearchParams();
@@ -289,16 +289,16 @@ async function loadWorkflowRuns() {
     const data = await API.get(`/v1/workflows/history?${params.toString()}`);
     const rows = data.executions || [];
     if (!rows.length) {
-      wrap.innerHTML = '<div class="wf-hist-empty">No runs match.</div>';
+      wrap.innerHTML = '<div class="wf-hist-empty">Keine passenden Läufe.</div>';
       return;
     }
     wrap.innerHTML = `
       <table class="wf-hist-table wf-runs-table">
         <thead>
           <tr>
-            <th>When</th><th>Workflow</th><th>Status</th><th>Trigger</th>
-            <th>User</th><th>Duration</th><th>LLM calls</th><th>Tokens</th>
-            <th>Cost</th><th></th>
+            <th>Wann</th><th>Workflow</th><th>Status</th><th>Auslöser</th>
+            <th>Benutzer</th><th>Dauer</th><th>LLM-Aufrufe</th><th>Token</th>
+            <th>Kosten</th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -313,7 +313,7 @@ async function loadWorkflowRuns() {
                 <td>${escapeHtml(when)}</td>
                 <td><strong>${escapeHtml(r.workflow_name || '')}</strong></td>
                 <td><span class="wf-status-${status}">${escapeHtml(status)}</span></td>
-                <td>${escapeHtml(r.trigger_kind || 'manual')}</td>
+                <td>${escapeHtml(r.trigger_kind || 'manuell')}</td>
                 <td>${escapeHtml(r.user_display || '—')}</td>
                 <td>${escapeHtml(dur)}</td>
                 <td>${r.llm_calls || 0}</td>
@@ -325,7 +325,7 @@ async function loadWorkflowRuns() {
         </tbody>
       </table>`;
   } catch (e) {
-    wrap.innerHTML = `<div class="wf-hist-error">Could not load: ${escapeHtml(e.message)}</div>`;
+    wrap.innerHTML = `<div class="wf-hist-error">Konnte nicht geladen werden: ${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -539,11 +539,11 @@ async function wfSaveCurrent() {
   const name = (nameInput.value || '').trim();
   const source = editor.value;
   if (!name) {
-    status.textContent = 'Name is required.';
+    status.textContent = 'Name ist erforderlich.';
     status.className = 'wf-editor-status wf-error';
     return;
   }
-  status.textContent = 'Saving…';
+  status.textContent = 'Wird gespeichert…';
   status.className = 'wf-editor-status';
   try {
     const data = await API.post(`/v1/agents/${WF_AGENT}/workflows`, { name, source });
@@ -554,17 +554,17 @@ async function wfSaveCurrent() {
     }
     wfState.currentName = data.name;
     nameInput.disabled = true;
-    status.textContent = 'Saved.';
+    status.textContent = 'Gespeichert.';
     status.className = 'wf-editor-status wf-ok';
     loadWorkflows();
   } catch (e) {
-    status.textContent = 'Save failed: ' + e.message;
+    status.textContent = 'Speichern fehlgeschlagen: ' + e.message;
     status.className = 'wf-editor-status wf-error';
   }
 }
 
 async function wfDelete(name) {
-  if (!await showConfirmDanger(`Delete workflow "${name}"?`, 'Delete Workflow', 'Delete')) return;
+  if (!await showConfirmDanger(`Workflow "${name}" löschen?`, 'Workflow löschen', 'Löschen')) return;
   try {
     await API.del(`/v1/agents/${WF_AGENT}/workflows/${encodeURIComponent(name)}`);
     loadWorkflows();
@@ -1224,13 +1224,13 @@ async function wfRun(name) {
   try {
     const data = await API.post(`/v1/agents/${WF_AGENT}/workflows/${encodeURIComponent(name)}/run`, { variables: {} });
     if (data.error) {
-      await showAlert('Run failed: ' + data.error);
+      await showAlert('Ausführung fehlgeschlagen: ' + data.error);
       return;
     }
     // Drop straight into the inline detail view; live polling kicks in.
     wfOpenDetail(data.execution_id);
   } catch (e) {
-    await showAlert('Run error: ' + e.message);
+    await showAlert('Ausführungsfehler: ' + e.message);
   }
 }
 
@@ -1267,9 +1267,9 @@ async function wfOpenDetail(executionId) {
     const model = (state.activeChat && state.activeChat.model) || '';
     info = await API.post(`/v1/workflows/history/${encodeURIComponent(executionId)}/session`,
                           model ? { model } : {});
-    if (info && info.error) { await showAlert('Open failed: ' + info.error); return; }
+    if (info && info.error) { await showAlert('Öffnen fehlgeschlagen: ' + info.error); return; }
   } catch (e) {
-    await showAlert('Open failed: ' + e.message);
+    await showAlert('Öffnen fehlgeschlagen: ' + e.message);
     return;
   }
   // Seed the References panel from the workflow's input files so the
@@ -1287,7 +1287,7 @@ async function wfOpenDetail(executionId) {
         title: ref.name,
         link: ref.path,
         snippet: '',
-        domain: 'workflow run',
+        domain: 'Workflow-Lauf',
         favicon: '',
         kind: 'file',
       });
@@ -1295,7 +1295,7 @@ async function wfOpenDetail(executionId) {
     state.chatReferences[info.session_id] = existing;
   }
   if (typeof openSession !== 'function') {
-    await showAlert('Internal error: openSession not available');
+    await showAlert('Interner Fehler: openSession nicht verfügbar');
     return;
   }
   const agentId = WF_AGENT;
@@ -1334,7 +1334,7 @@ async function wfBannerFetch(initial) {
       const banner = document.getElementById('workflow-run-banner');
       if (banner) {
         banner.classList.remove('hidden');
-        banner.innerHTML = `<div class="workflow-run-banner-error">Could not load run: ${escapeHtml(e.message)}</div>`;
+        banner.innerHTML = `<div class="workflow-run-banner-error">Lauf konnte nicht geladen werden: ${escapeHtml(e.message)}</div>`;
       }
       return;
     }
@@ -1380,9 +1380,9 @@ async function wfBannerCancel() {
   if (!id) return;
   try {
     const r = await API.post(`/v1/workflows/executions/${id}/cancel`, {});
-    if (r && r.error) { await showAlert('Cancel failed: ' + r.error); return; }
+    if (r && r.error) { await showAlert('Abbrechen fehlgeschlagen: ' + r.error); return; }
     wfBannerFetch(false);
-  } catch (e) { await showAlert('Cancel error: ' + e.message); }
+  } catch (e) { await showAlert('Abbruchfehler: ' + e.message); }
 }
 
 async function wfBannerSaveToChats() {
@@ -1394,7 +1394,7 @@ async function wfBannerSaveToChats() {
   // a run for later reference even before asking anything.
   try {
     const r = await API.post(`/v1/workflows/history/${id}/promote-session/${sid}`, {});
-    if (r && r.error) { await showAlert('Save failed: ' + r.error); return; }
+    if (r && r.error) { await showAlert('Speichern fehlgeschlagen: ' + r.error); return; }
     // Seed the references panel from the input files the workflow read.
     const refs = (r && r.references) || [];
     if (refs.length) {
@@ -1405,7 +1405,7 @@ async function wfBannerSaveToChats() {
         if (seen.has(ref.path)) continue;
         existing.searched.push({
           title: ref.name, link: ref.path, snippet: '',
-          domain: 'workflow run', favicon: '', kind: 'file',
+          domain: 'Workflow-Lauf', favicon: '', kind: 'file',
         });
       }
       state.chatReferences[sid] = existing;
@@ -1415,7 +1415,7 @@ async function wfBannerSaveToChats() {
     if (typeof loadSessions === 'function') loadSessions();
     // Re-render the banner so the Save button switches to "Saved".
     renderWorkflowBanner();
-  } catch (e) { await showAlert('Save error: ' + e.message); }
+  } catch (e) { await showAlert('Speicherfehler: ' + e.message); }
 }
 
 function wfBannerBack() {
@@ -1466,8 +1466,8 @@ function _wfMaybeCollapsed(text, opts) {
   if (newlineCut.length < preview.length) preview = newlineCut;
   return `
     <div class="wf-detail-collapsible" data-full="${encodeURIComponent(text)}">
-      <${tag} class="${cls} wf-detail-collapsed-pre">${escapeHtml(preview)}<span class="wf-detail-ellipsis"> … (+${(text.length - preview.length).toLocaleString()} chars)</span></${tag}>
-      <button type="button" class="wf-btn wf-btn-mini wf-btn-ghost wf-detail-expand-btn" onclick="wfDetailToggleExpand(this, '${tag}', '${cls.replace(/'/g, "\\'")}')">Show more</button>
+      <${tag} class="${cls} wf-detail-collapsed-pre">${escapeHtml(preview)}<span class="wf-detail-ellipsis"> … (+${(text.length - preview.length).toLocaleString()} Zeichen)</span></${tag}>
+      <button type="button" class="wf-btn wf-btn-mini wf-btn-ghost wf-detail-expand-btn" onclick="wfDetailToggleExpand(this, '${tag}', '${cls.replace(/'/g, "\\'")}')">Mehr anzeigen</button>
     </div>
   `;
 }
@@ -1484,7 +1484,7 @@ function wfDetailToggleExpand(btn, tag, cls) {
       pre.classList.add('wf-detail-expanded-pre');
       pre.innerHTML = escapeHtml(full);
     }
-    btn.textContent = 'Show less';
+    btn.textContent = 'Weniger anzeigen';
   } else {
     // Re-render collapsed
     const full = decodeURIComponent(wrap.dataset.full || '');
@@ -1496,9 +1496,9 @@ function wfDetailToggleExpand(btn, tag, cls) {
       pre.classList.add('wf-detail-collapsed-pre');
       pre.classList.remove('wf-detail-expanded-pre');
       pre.innerHTML = escapeHtml(preview) +
-        `<span class="wf-detail-ellipsis"> … (+${(full.length - preview.length).toLocaleString()} chars)</span>`;
+        `<span class="wf-detail-ellipsis"> … (+${(full.length - preview.length).toLocaleString()} Zeichen)</span>`;
     }
-    btn.textContent = 'Show more';
+    btn.textContent = 'Mehr anzeigen';
   }
 }
 
@@ -1508,19 +1508,19 @@ function wfDetailDownloadTranscript() {
   const data = wfState.detailRun;
   if (!data) return;
   const lines = [];
-  lines.push(`# Workflow run: ${data.workflow_name || ''}`);
+  lines.push(`# Workflow-Lauf: ${data.workflow_name || ''}`);
   lines.push('');
-  lines.push(`- Execution ID: \`${wfState.currentExecId}\``);
-  lines.push(`- Status: ${data.status || 'unknown'}`);
-  if (data.started_at) lines.push(`- Started: ${data.started_at}`);
-  if (data.finished_at) lines.push(`- Finished: ${data.finished_at}`);
-  if (data.duration_ms != null) lines.push(`- Duration: ${data.duration_ms}ms`);
-  if (data.user_display) lines.push(`- User: ${data.user_display}`);
-  if (data.trigger_kind) lines.push(`- Trigger: ${data.trigger_kind}`);
-  if (data.cost_usd) lines.push(`- Cost: $${Number(data.cost_usd).toFixed(4)}`);
+  lines.push(`- Ausführungs-ID: \`${wfState.currentExecId}\``);
+  lines.push(`- Status: ${data.status || 'unbekannt'}`);
+  if (data.started_at) lines.push(`- Gestartet: ${data.started_at}`);
+  if (data.finished_at) lines.push(`- Beendet: ${data.finished_at}`);
+  if (data.duration_ms != null) lines.push(`- Dauer: ${data.duration_ms}ms`);
+  if (data.user_display) lines.push(`- Benutzer: ${data.user_display}`);
+  if (data.trigger_kind) lines.push(`- Auslöser: ${data.trigger_kind}`);
+  if (data.cost_usd) lines.push(`- Kosten: $${Number(data.cost_usd).toFixed(4)}`);
   lines.push('');
   if (data.workflow_source) {
-    lines.push('## Workflow source');
+    lines.push('## Workflow-Quellcode');
     lines.push('');
     lines.push('```');
     lines.push(data.workflow_source);
@@ -1529,7 +1529,7 @@ function wfDetailDownloadTranscript() {
   }
   const steps = data.steps || (typeof data.steps_json === 'string' ? JSON.parse(data.steps_json || '[]') : []) || [];
   if (steps.length) {
-    lines.push('## Trace');
+    lines.push('## Ablauf');
     lines.push('');
     for (const s of steps) {
       const detail = s.detail || '';
@@ -1543,7 +1543,7 @@ function wfDetailDownloadTranscript() {
     try { rv = JSON.parse(rv); } catch (_) {}
   }
   if (rv != null && rv !== '') {
-    lines.push('## Returned');
+    lines.push('## Rückgabewert');
     lines.push('');
     lines.push('```');
     lines.push(typeof rv === 'string' ? rv : JSON.stringify(rv, null, 2));
@@ -1551,7 +1551,7 @@ function wfDetailDownloadTranscript() {
     lines.push('');
   }
   if (data.error) {
-    lines.push('## Error');
+    lines.push('## Fehler');
     lines.push('');
     lines.push('```');
     lines.push(data.error);
@@ -1559,10 +1559,10 @@ function wfDetailDownloadTranscript() {
     lines.push('');
   }
   if (wfState.detailFollowups.length) {
-    lines.push('## Follow-up conversation');
+    lines.push('## Folgekonversation');
     lines.push('');
     for (const f of wfState.detailFollowups) {
-      lines.push(`### ${f.role === 'user' ? 'User' : 'Assistant'}`);
+      lines.push(`### ${f.role === 'user' ? 'Benutzer' : 'Assistent'}`);
       lines.push('');
       lines.push(f.text || '');
       lines.push('');
@@ -1614,10 +1614,10 @@ function renderWorkflowBanner() {
   const data = wfBanner.data;
   if (!data) {
     banner.classList.remove('hidden');
-    banner.innerHTML = `<div class="workflow-run-banner-loading">Loading workflow run…</div>`;
+    banner.innerHTML = `<div class="workflow-run-banner-loading">Workflow-Lauf wird geladen…</div>`;
     return;
   }
-  const status = data.status || 'unknown';
+  const status = data.status || 'unbekannt';
   const isLive = WF_LIVE_STATUSES.has(status);
   const dur = _fmtDuration(data.duration_ms);
   const cost = data.cost_usd ? '$' + Number(data.cost_usd).toFixed(4) : '';
@@ -1636,7 +1636,7 @@ function renderWorkflowBanner() {
   if (src) {
     traceHtml += `
       <div class="wf-banner-trace-card">
-        <div class="wf-banner-trace-card-label">Workflow source</div>
+        <div class="wf-banner-trace-card-label">Workflow-Quellcode</div>
         ${_wfMaybeCollapsed(src, { tag: 'pre', cls: 'wf-banner-source' })}
       </div>`;
   }
@@ -1649,7 +1649,7 @@ function renderWorkflowBanner() {
       const next = steps[i + 1];
       const paired = next && next.kind === 'call_done' ? next : null;
       const callHtml = _wfMaybeCollapsed(s.detail || '', { tag: 'div', cls: 'wf-banner-trace-call' });
-      const resultText = paired ? (paired.detail || '(no output)') : '';
+      const resultText = paired ? (paired.detail || '(keine Ausgabe)') : '';
       const resultHtml = paired
         ? _wfMaybeCollapsed(resultText, { tag: 'div', cls: 'wf-banner-trace-result' })
         : '<div class="wf-banner-trace-result wf-detail-pending">…</div>';
@@ -1666,7 +1666,7 @@ function renderWorkflowBanner() {
     if (kind === 'error') {
       traceHtml += `
         <div class="wf-banner-trace-card wf-banner-trace-error">
-          <div class="wf-banner-trace-card-label">Error · L${s.line}</div>
+          <div class="wf-banner-trace-card-label">Fehler · L${s.line}</div>
           ${_wfMaybeCollapsed(s.detail || '', { tag: 'div', cls: 'wf-banner-trace-result' })}
         </div>`;
       i += 1; continue;
@@ -1685,13 +1685,13 @@ function renderWorkflowBanner() {
     const txt = typeof rv === 'string' ? rv : JSON.stringify(rv, null, 2);
     traceHtml += `
       <div class="wf-banner-trace-card wf-banner-trace-final">
-        <div class="wf-banner-trace-card-label">Returned</div>
+        <div class="wf-banner-trace-card-label">Rückgabewert</div>
         ${_wfMaybeCollapsed(txt, { tag: 'pre', cls: 'wf-banner-final-value' })}
       </div>`;
   } else if (data.error) {
     traceHtml += `
       <div class="wf-banner-trace-card wf-banner-trace-error">
-        <div class="wf-banner-trace-card-label">Failed</div>
+        <div class="wf-banner-trace-card-label">Fehlgeschlagen</div>
         ${_wfMaybeCollapsed(data.error, { tag: 'pre', cls: 'wf-banner-final-value' })}
       </div>`;
   }
@@ -1705,41 +1705,41 @@ function renderWorkflowBanner() {
   banner.classList.remove('hidden');
   banner.innerHTML = `
     <div class="wf-banner-header">
-      <button class="wf-btn wf-btn-ghost wf-banner-back" onclick="wfBannerBack()" title="Back to workflows">← Workflows</button>
+      <button class="wf-btn wf-btn-ghost wf-banner-back" onclick="wfBannerBack()" title="Zurück zu Workflows">← Workflows</button>
       <div class="wf-banner-titlebar">
         <div class="wf-banner-title">
           <span class="wf-banner-workflow-name">${escapeHtml(data.workflow_name || 'Workflow')}</span>
           <span class="wf-status-${status} wf-banner-status">${escapeHtml(status)}</span>
         </div>
         <div class="wf-banner-meta">
-          ${agent ? `<span class="wf-banner-meta-pill">agent: <strong>${escapeHtml(agent)}</strong></span>` : ''}
-          <span class="wf-banner-meta-pill">model: <strong>${escapeHtml(model)}</strong></span>
-          ${started ? `<span class="wf-banner-meta-pill">started: ${escapeHtml(started)}</span>` : ''}
-          ${finished ? `<span class="wf-banner-meta-pill">finished: ${escapeHtml(finished)}</span>` : ''}
-          ${dur ? `<span class="wf-banner-meta-pill">duration: ${escapeHtml(dur)}</span>` : ''}
-          ${cost ? `<span class="wf-banner-meta-pill">cost: ${escapeHtml(cost)}</span>` : ''}
-          ${data.user_display ? `<span class="wf-banner-meta-pill">by ${escapeHtml(data.user_display)}</span>` : ''}
+          ${agent ? `<span class="wf-banner-meta-pill">Agent: <strong>${escapeHtml(agent)}</strong></span>` : ''}
+          <span class="wf-banner-meta-pill">Modell: <strong>${escapeHtml(model)}</strong></span>
+          ${started ? `<span class="wf-banner-meta-pill">gestartet: ${escapeHtml(started)}</span>` : ''}
+          ${finished ? `<span class="wf-banner-meta-pill">beendet: ${escapeHtml(finished)}</span>` : ''}
+          ${dur ? `<span class="wf-banner-meta-pill">Dauer: ${escapeHtml(dur)}</span>` : ''}
+          ${cost ? `<span class="wf-banner-meta-pill">Kosten: ${escapeHtml(cost)}</span>` : ''}
+          ${data.user_display ? `<span class="wf-banner-meta-pill">von ${escapeHtml(data.user_display)}</span>` : ''}
           <span class="wf-banner-meta-pill wf-banner-execid" title="${escapeHtml(wfId)}">${escapeHtml(wfId.slice(0, 10))}</span>
         </div>
       </div>
       <div class="wf-banner-actions">
-        ${isLive ? '<button class="wf-btn wf-btn-ghost" onclick="wfBannerCancel()">Cancel run</button>' : ''}
-        <button class="wf-btn wf-btn-ghost" onclick="wfDetailDownloadTranscript()" title="Download a Markdown transcript of this run">Download transcript</button>
+        ${isLive ? '<button class="wf-btn wf-btn-ghost" onclick="wfBannerCancel()">Lauf abbrechen</button>' : ''}
+        <button class="wf-btn wf-btn-ghost" onclick="wfDetailDownloadTranscript()" title="Markdown-Protokoll dieses Laufs herunterladen">Protokoll herunterladen</button>
         ${promoted
-          ? '<button class="wf-btn wf-btn-ghost" disabled title="This run is saved as a chat">✓ Saved</button>'
-          : '<button class="wf-btn wf-btn-primary" onclick="wfBannerSaveToChats()">Save to chats</button>'}
+          ? '<button class="wf-btn wf-btn-ghost" disabled title="Dieser Lauf ist als Chat gespeichert">✓ Gespeichert</button>'
+          : '<button class="wf-btn wf-btn-primary" onclick="wfBannerSaveToChats()">In Chats speichern</button>'}
       </div>
     </div>
     <details class="wf-banner-trace-details" ${wfBanner.traceCollapsed ? '' : 'open'} ontoggle="wfBanner.traceCollapsed = !this.open">
       <summary>
-        <span class="wf-banner-section-label">Run trace</span>
-        <span class="wf-banner-section-summary">${steps.length} step${steps.length === 1 ? '' : 's'}${data.tool_calls ? ` · ${data.tool_calls} tool call${data.tool_calls === 1 ? '' : 's'}` : ''}${data.llm_calls ? ` · ${data.llm_calls} LLM call${data.llm_calls === 1 ? '' : 's'}` : ''}</span>
+        <span class="wf-banner-section-label">Ablaufprotokoll</span>
+        <span class="wf-banner-section-summary">${steps.length} Schritt${steps.length === 1 ? '' : 'e'}${data.tool_calls ? ` · ${data.tool_calls} Tool-Aufruf${data.tool_calls === 1 ? '' : 'e'}` : ''}${data.llm_calls ? ` · ${data.llm_calls} LLM-Aufruf${data.llm_calls === 1 ? '' : 'e'}` : ''}</span>
       </summary>
       <div class="wf-banner-trace-body">
-        ${traceHtml || '<div class="wf-hist-empty">No steps recorded.</div>'}
+        ${traceHtml || '<div class="wf-hist-empty">Keine Schritte aufgezeichnet.</div>'}
       </div>
     </details>
-    ${isLive ? '<div class="wf-banner-live-hint">⏵ Run is in progress — composer will accept follow-ups once it finishes.</div>' : ''}
+    ${isLive ? '<div class="wf-banner-live-hint">⏵ Lauf in Bearbeitung — das Eingabefeld akzeptiert Folgenachrichten, sobald er abgeschlossen ist.</div>' : ''}
   `;
 }
 
@@ -1756,8 +1756,8 @@ function wfParseAskFileDetail(detail) {
 }
 
 function wfRenderUploadPrompt(root, prompt, accept) {
-  const promptText = prompt || 'The workflow is waiting for a file.';
-  const acceptHint = accept ? `Accepted: ${escapeHtml(accept)}` : 'Any file type accepted';
+  const promptText = prompt || 'Der Workflow wartet auf eine Datei.';
+  const acceptHint = accept ? `Akzeptiert: ${escapeHtml(accept)}` : 'Jeder Dateityp akzeptiert';
   const acceptAttr = accept ? `accept="${escapeHtml(accept)}"` : '';
   root.innerHTML = `
     <div class="wf-upload">
@@ -1774,15 +1774,15 @@ function wfRenderUploadPrompt(root, prompt, accept) {
         <input type="file" id="wf-upload-input" ${acceptAttr} onchange="wfOnFilePicked()" hidden />
         <div class="wf-upload-drop-inner">
           <div class="wf-upload-drop-cta">
-            <span class="wf-upload-link">Choose a file</span>
-            <span class="wf-upload-or">or drop it here</span>
+            <span class="wf-upload-link">Datei auswählen</span>
+            <span class="wf-upload-or">oder hier ablegen</span>
           </div>
           <div class="wf-upload-filename" id="wf-upload-filename"></div>
         </div>
       </label>
       <div class="wf-upload-actions">
-        <button class="wf-btn wf-btn-ghost" onclick="wfCancelUpload()">Cancel</button>
-        <button class="wf-btn wf-btn-primary" id="wf-upload-submit" onclick="wfUploadFile()" disabled>Upload</button>
+        <button class="wf-btn wf-btn-ghost" onclick="wfCancelUpload()">Abbrechen</button>
+        <button class="wf-btn wf-btn-primary" id="wf-upload-submit" onclick="wfUploadFile()" disabled>Hochladen</button>
       </div>
     </div>`;
   // Drag-and-drop wiring
@@ -1841,7 +1841,7 @@ async function wfUploadFile() {
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   if (submit) {
     submit.disabled = true;
-    submit.textContent = 'Uploading…';
+    submit.textContent = 'Wird hochgeladen…';
   }
   try {
     const res = await fetch(`${BASE_URL}/v1/workflows/executions/${id}/upload-file`, {
@@ -1852,16 +1852,16 @@ async function wfUploadFile() {
     });
     const data = await res.json();
     if (data.error) {
-      if (submit) { submit.disabled = false; submit.textContent = 'Upload'; }
+      if (submit) { submit.disabled = false; submit.textContent = 'Hochladen'; }
       const nameEl = document.getElementById('wf-upload-filename');
       if (nameEl) nameEl.innerHTML = `<span class="wf-upload-error">${escapeHtml(data.error)}</span>`;
       return;
     }
     document.getElementById('wf-run-prompt').classList.add('hidden');
   } catch (e) {
-    if (submit) { submit.disabled = false; submit.textContent = 'Upload'; }
+    if (submit) { submit.disabled = false; submit.textContent = 'Hochladen'; }
     const nameEl = document.getElementById('wf-upload-filename');
-    if (nameEl) nameEl.innerHTML = `<span class="wf-upload-error">${escapeHtml(e.message || 'Upload failed')}</span>`;
+    if (nameEl) nameEl.innerHTML = `<span class="wf-upload-error">${escapeHtml(e.message || 'Hochladen fehlgeschlagen')}</span>`;
   }
 }
 
@@ -1875,22 +1875,22 @@ function escapeJs(s) {
 }
 
 /* ─── Sample template ─── */
-const WF_TEMPLATE_MEETING_NOTES = `# Meeting Notes — uploads a recording, transcribes it,
-# extracts notes + action items, saves to a markdown file.
+const WF_TEMPLATE_MEETING_NOTES = `# Besprechungsnotizen — lädt eine Aufnahme hoch, transkribiert sie,
+# extrahiert Notizen + Aufgaben, speichert in eine Markdown-Datei.
 
-WORKFLOW "Meeting Notes"
-DESCRIPTION "Transcribe a meeting recording and extract structured notes."
+WORKFLOW "Besprechungsnotizen"
+DESCRIPTION "Eine Besprechungsaufnahme transkribieren und strukturierte Notizen extrahieren."
 TRIGGER manual
 
-SET upload = CALL ask_user_for_file prompt="Upload meeting recording (.wav / .mp3 / .m4a)" accept="audio/*"
+SET upload = CALL ask_user_for_file prompt="Besprechungsaufnahme hochladen (.wav / .mp3 / .m4a)" accept="audio/*"
 SET transcript_result = CALL transcribe_audio file=upload.path
 SET transcript = transcript_result.transcript
 
-SET notes_result = CALL ask_llm prompt="Extract from this meeting transcript:\\n\\n1. A 2-3 sentence summary\\n2. Key decisions (bullet list)\\n3. Action items (bullet list, with owner if mentioned)\\n4. Open questions (bullet list)\\n\\nReturn well-formatted Markdown.\\n\\nTranscript:\\n\\n{{transcript}}"
+SET notes_result = CALL ask_llm prompt="Extrahiere aus diesem Besprechungstranskript:\\n\\n1. Eine Zusammenfassung in 2-3 Sätzen\\n2. Wichtige Entscheidungen (Aufzählung)\\n3. Aufgaben (Aufzählung, mit Verantwortlichem falls genannt)\\n4. Offene Fragen (Aufzählung)\\n\\nGib gut formatiertes Markdown zurück.\\n\\nTranskript:\\n\\n{{transcript}}"
 SET notes = notes_result.text
 
 SET filename = "/tmp/meeting_" + now("%Y-%m-%d_%H%M") + ".md"
-SET body = "# Meeting Notes — " + now("%Y-%m-%d %H:%M") + "\\n\\n## Transcript\\n\\n" + transcript + "\\n\\n## Notes\\n\\n" + notes + "\\n"
+SET body = "# Besprechungsnotizen — " + now("%Y-%m-%d %H:%M") + "\\n\\n## Transkript\\n\\n" + transcript + "\\n\\n## Notizen\\n\\n" + notes + "\\n"
 CALL write_file path=filename content=body
 
 RETURN filename

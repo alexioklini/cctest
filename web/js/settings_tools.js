@@ -28,7 +28,7 @@ function toggleToolPanel(toolName) {
 
 function renderToolPanelBody(toolName) {
   const t = (window._toolSettingsCache || {})[toolName];
-  if (!t) return '<div style="color:var(--error)">No data for ' + toolName + '</div>';
+  if (!t) return '<div style="color:var(--error)">Keine Daten für ' + toolName + '</div>';
   const cfg = (window._toolConfigCache || {})[toolName] || null;
   const status = (window._toolStatusCache || {})[toolName] || null;
   const allTools = Object.keys(window._toolSettingsCache || {}).filter(n => n !== toolName);
@@ -76,43 +76,43 @@ function renderToolPanelBody(toolName) {
   if (t.integration_only) {
     return `
       <div style="font-size:11px;color:var(--text-400);margin-bottom:10px">
-        Integration-only — this entry configures a service used by the server (no agent-callable tool).
+        Nur Integration — dieser Eintrag konfiguriert einen vom Server genutzten Dienst (kein vom Agent aufrufbares Tool).
       </div>
-      ${integHTML || '<div style="color:var(--error);font-size:11px">No integration fields registered for this entry.</div>'}
+      ${integHTML || '<div style="color:var(--error);font-size:11px">Für diesen Eintrag sind keine Integrationsfelder registriert.</div>'}
       <div style="display:flex;justify-content:flex-end">
-        <button class="btn-primary" onclick="saveTool('${esc(toolName)}')" style="padding:6px 14px;font-size:12px">Save</button>
+        <button class="btn-primary" onclick="saveTool('${esc(toolName)}')" style="padding:6px 14px;font-size:12px">Speichern</button>
       </div>`;
   }
 
   return `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px">
       <div>
-        <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">Group</div>
+        <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">Gruppe</div>
         <div style="font-size:12px;font-family:var(--font-mono);color:var(--text-100);padding:6px 8px;background:var(--bg-100);border-radius:4px">${esc(t.group || '(ungrouped)')}</div>
       </div>
       <div style="display:flex;gap:14px;align-items:end">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="checkbox" id="ts-${esc(toolName)}-enabled" ${t.enabled?'checked':''}>
-          <span style="font-size:12px;color:var(--text-100)">Enabled</span>
+          <span style="font-size:12px;color:var(--text-100)">Aktiviert</span>
         </label>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="checkbox" id="ts-${esc(toolName)}-deferred" ${t.deferred?'checked':''}>
-          <span style="font-size:12px;color:var(--text-100)" title="Hide from initial tool list; expose only via tool_search">Deferred</span>
+          <span style="font-size:12px;color:var(--text-100)" title="Aus der anfänglichen Tool-Liste ausblenden; nur über tool_search verfügbar machen">Aufgeschoben</span>
         </label>
       </div>
     </div>
 
     ${integHTML}
 
-    <div style="font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px">Prompt prose</div>
-    ${txt('ts-' + toolName + '-description', 'Description', t.description, 6)}
-    ${txt('ts-' + toolName + '-when_to_use', 'When to use', t.when_to_use, 3)}
-    ${txt('ts-' + toolName + '-warnings', 'Warnings', t.warnings, 3)}
-    ${txt('ts-' + toolName + '-examples', 'Examples', t.examples, 4)}
+    <div style="font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px">Prompt-Text</div>
+    ${txt('ts-' + toolName + '-description', 'Beschreibung', t.description, 6)}
+    ${txt('ts-' + toolName + '-when_to_use', 'Wann zu verwenden', t.when_to_use, 3)}
+    ${txt('ts-' + toolName + '-warnings', 'Warnungen', t.warnings, 3)}
+    ${txt('ts-' + toolName + '-examples', 'Beispiele', t.examples, 4)}
 
     <div style="margin-bottom:10px">
       <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">
-        Purposes <span style="text-transform:none;font-weight:400">— call purposes where this tool is allowed. Empty (all unchecked) = available for every purpose.</span>
+        Zwecke <span style="text-transform:none;font-weight:400">— Aufrufzwecke, bei denen dieses Tool erlaubt ist. Leer (nichts ausgewählt) = für jeden Zweck verfügbar.</span>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:14px;padding:6px 8px;background:var(--bg-100);border-radius:4px" id="ts-${esc(toolName)}-purposes-wrap">
         ${purposeChecks}
@@ -121,14 +121,14 @@ function renderToolPanelBody(toolName) {
 
     <div style="margin-bottom:10px">
       <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">
-        Applies with <span style="text-transform:none;font-weight:400">— prose renders only when ALL selected tools are also active (Cmd/Ctrl-click for multi-select)</span>
+        Gilt mit <span style="text-transform:none;font-weight:400">— Text wird nur angezeigt, wenn ALLE ausgewählten Tools ebenfalls aktiv sind (Cmd/Strg-Klick für Mehrfachauswahl)</span>
       </div>
       <select id="ts-${esc(toolName)}-applies_with" multiple size="4" class="form-input" style="width:100%;font-family:var(--font-mono);font-size:11px">${awOptions}</select>
     </div>
 
     <div style="display:flex;justify-content:flex-end;gap:8px">
-      <button class="btn-secondary" onclick="resetToolPromptSettings('${esc(toolName)}')" style="padding:6px 14px;font-size:12px" title="Clear all prose fields and applies_with (does NOT touch enabled/deferred)">Clear prose</button>
-      <button class="btn-primary" onclick="saveTool('${esc(toolName)}')" style="padding:6px 14px;font-size:12px">Save</button>
+      <button class="btn-secondary" onclick="resetToolPromptSettings('${esc(toolName)}')" style="padding:6px 14px;font-size:12px" title="Alle Text-Felder und „Gilt mit" leeren (Aktiviert/Aufgeschoben bleiben unberührt)">Text leeren</button>
+      <button class="btn-primary" onclick="saveTool('${esc(toolName)}')" style="padding:6px 14px;font-size:12px">Speichern</button>
     </div>`;
 }
 
@@ -139,7 +139,7 @@ function renderToolIntegrationFields(name, cfg) {
   const lbl = (t) => `<div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px">${t}</div>`;
   const maskF = (id, val) => `<div style="display:flex;gap:6px;align-items:center">
     <input id="${id}" type="password" value="${esc(val||'')}" class="form-input" style="flex:1;font-family:var(--font-mono);font-size:11px" autocomplete="off">
-    <button class="btn-secondary" style="font-size:10px;padding:4px 8px" onclick="const i=document.getElementById('${id}');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
+    <button class="btn-secondary" style="font-size:10px;padding:4px 8px" onclick="const i=document.getElementById('${id}');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Anzeigen':'Verbergen'">Anzeigen</button>
   </div>`;
   // Build a chat-capable model dropdown. If the saved value isn't currently
   // a configured/enabled chat model, surface it as a "(legacy/missing)"
@@ -149,55 +149,55 @@ function renderToolIntegrationFields(name, cfg) {
     const ids = new Set(entries.map(([mid]) => mid));
     let opts = `<option value="">${esc(placeholderLabel || 'Auto')}</option>`;
     if (sel && !ids.has(sel)) {
-      opts += `<option value="${esc(sel)}" selected>${esc(sel)} (legacy/missing)</option>`;
+      opts += `<option value="${esc(sel)}" selected>${esc(sel)} (veraltet/fehlend)</option>`;
     }
     opts += entries.map(([mid]) => modelOption(mid, {selected: mid === sel})).join('');
     return `<select id="${id}" class="form-select" style="font-size:11px;width:100%">${opts}</select>`;
   };
   switch (name) {
     case 'exa_search':
-      return `${lbl('API Key')}${maskF('tool-exa-key', cfg.api_key)}
-        ${lbl('Default Results Per Query')}
+      return `${lbl('API-Schlüssel')}${maskF('tool-exa-key', cfg.api_key)}
+        ${lbl('Standard-Ergebnisse pro Anfrage')}
         <input id="tool-exa-num" type="number" min="1" max="50" value="${cfg.default_num_results||5}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px">`;
     case 'searxng_search':
-      return `<div style="font-size:11px;color:var(--text-400);margin-bottom:6px">Uses the bundled self-hosted SearXNG instance. Manage it (URL, status, restart) under <b>Settings &rarr; Server &rarr; Web Search</b>.</div>
-        ${lbl('Default Results Per Query')}
+      return `<div style="font-size:11px;color:var(--text-400);margin-bottom:6px">Verwendet die mitgelieferte, selbst gehostete SearXNG-Instanz. Verwalten Sie sie (URL, Status, Neustart) unter <b>Einstellungen &rarr; Server &rarr; Websuche</b>.</div>
+        ${lbl('Standard-Ergebnisse pro Anfrage')}
         <input id="tool-searxng-num" type="number" min="1" max="50" value="${cfg.default_num_results||5}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px">`;
     case 'gmail':
-      return `${lbl('Email')}
+      return `${lbl('E-Mail')}
         <input id="tool-gmail-email" type="email" value="${esc(cfg.email||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
-        ${lbl('App Password')}${maskF('tool-gmail-pass', cfg.app_password)}
-        <div style="margin-top:6px"><a href="https://myaccount.google.com/apppasswords" target="_blank" style="font-size:11px;color:var(--accent)">Create app password</a></div>`;
+        ${lbl('App-Passwort')}${maskF('tool-gmail-pass', cfg.app_password)}
+        <div style="margin-top:6px"><a href="https://myaccount.google.com/apppasswords" target="_blank" style="font-size:11px;color:var(--accent)">App-Passwort erstellen</a></div>`;
     case 'execute_command':
-      return `${lbl('Default Timeout (seconds)')}
+      return `${lbl('Standard-Timeout (Sekunden)')}
         <input id="tool-exec-timeout" type="number" min="1" max="600" value="${cfg.timeout||120}" class="form-input" style="width:100px;font-family:var(--font-mono);font-size:11px">
-        ${lbl('Banned Commands (comma-separated)')}
+        ${lbl('Gesperrte Befehle (kommagetrennt)')}
         <input id="tool-exec-banned" type="text" value="${esc((cfg.banned_commands||[]).join(', '))}" class="form-input" style="font-family:var(--font-mono);font-size:11px">`;
     case 'web_fetch':
       return `<div style="display:flex;gap:12px">
-        <div>${lbl('Timeout (seconds)')}<input id="tool-wf-timeout" type="number" min="1" max="120" value="${cfg.timeout||30}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px"></div>
-        <div>${lbl('Max Size (MB)')}<input id="tool-wf-maxsize" type="number" min="1" max="100" value="${cfg.max_size_mb||10}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px"></div>
+        <div>${lbl('Timeout (Sekunden)')}<input id="tool-wf-timeout" type="number" min="1" max="120" value="${cfg.timeout||30}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px"></div>
+        <div>${lbl('Max. Größe (MB)')}<input id="tool-wf-maxsize" type="number" min="1" max="100" value="${cfg.max_size_mb||10}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px"></div>
       </div>`;
     case 'refinement':
-      return `${lbl('Model')}
-        ${chatModelSelect('tool-refine-model', cfg.model || '', 'Auto (Haiku > Sonnet > cheapest)')}
-        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Model used by the refine button in chat and note-AI inputs.</div>`;
+      return `${lbl('Modell')}
+        ${chatModelSelect('tool-refine-model', cfg.model || '', 'Auto (Haiku > Sonnet > günstigstes)')}
+        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Modell, das vom Verfeinern-Button im Chat und in Notiz-KI-Eingaben verwendet wird.</div>`;
     case 'read_document': {
       const visEntries = enabledModelsWithCapability('image');
       const visIds = new Set(visEntries.map(([mid]) => mid));
       const visSel = cfg.vision_model || '';
-      let visOpts = `<option value="">Auto (cheapest vision model)</option>`;
-      if (visSel && !visIds.has(visSel)) visOpts += `<option value="${esc(visSel)}" selected>${esc(visSel)} (legacy/missing)</option>`;
+      let visOpts = `<option value="">Auto (günstigstes Vision-Modell)</option>`;
+      if (visSel && !visIds.has(visSel)) visOpts += `<option value="${esc(visSel)}" selected>${esc(visSel)} (veraltet/fehlend)</option>`;
       visOpts += visEntries.map(([mid]) => modelOption(mid, {selected: mid === visSel})).join('');
-      return `${lbl('Max File Size (MB)')}
+      return `${lbl('Max. Dateigröße (MB)')}
         <input id="tool-rdoc-maxsize" type="number" min="1" max="200" value="${cfg.max_file_size_mb||50}" class="form-input" style="width:100px;font-family:var(--font-mono);font-size:11px">
-        ${lbl('Vision Model (for images)')}
+        ${lbl('Vision-Modell (für Bilder)')}
         <select id="tool-rdoc-vision-model" class="form-select" style="font-size:11px;width:100%">${visOpts}</select>`;
     }
     case 'code_graph':
-      return `${lbl('Exclude Directories (comma-separated)')}
+      return `${lbl('Verzeichnisse ausschließen (kommagetrennt)')}
         <input id="tool-cg-exclude" type="text" value="${esc(cfg.exclude_dirs||'node_modules,.git,__pycache__,venv')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
-        ${lbl('Max File Size (KB)')}
+        ${lbl('Max. Dateigröße (KB)')}
         <input id="tool-cg-maxsize" type="number" min="50" max="5000" value="${cfg.max_file_size_kb||500}" class="form-input" style="width:100px;font-family:var(--font-mono);font-size:11px">`;
     case 'transcribe_audio': {
       // Capability-filtered dropdown: only models tagged `audio` are
@@ -207,35 +207,35 @@ function renderToolIntegrationFields(name, cfg) {
       const audioIds = new Set(audioEntries.map(([mid]) => mid));
       const audioSelectHtml = (id, sel) => {
         let opts = '';
-        if (sel && !audioIds.has(sel)) opts += `<option value="${esc(sel)}" selected>${esc(sel)} (legacy/missing)</option>`;
+        if (sel && !audioIds.has(sel)) opts += `<option value="${esc(sel)}" selected>${esc(sel)} (veraltet/fehlend)</option>`;
         opts += audioEntries.map(([mid]) => modelOption(mid, {selected: mid === sel})).join('');
         return `<select id="${id}" class="form-select" style="font-size:11px;width:100%">${opts}</select>`;
       };
-      return `${lbl('Default Model')}
+      return `${lbl('Standardmodell')}
         ${audioSelectHtml('tool-ta-default-model', cfg.default_model || '')}
-        ${lbl('Fallback Model')}
+        ${lbl('Fallback-Modell')}
         ${audioSelectHtml('tool-ta-fallback-model', cfg.fallback_model || '')}
-        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Only models tagged with the <code>audio</code> capability are listed. The tool will use the configured id exactly — fuzzy name matching has been removed.</div>`;
+        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Nur Modelle mit der Fähigkeit <code>audio</code> werden aufgelistet. Das Tool verwendet die konfigurierte ID exakt — unscharfes Namensmatching wurde entfernt.</div>`;
     }
     case 'text_to_speech': {
       const ttsEntries = enabledModelsWithCapability('tts');
       const ttsIds = new Set(ttsEntries.map(([mid]) => mid));
       const sel = cfg.default_model || '';
       let opts = '';
-      if (sel && !ttsIds.has(sel)) opts += `<option value="${esc(sel)}" selected>${esc(sel)} (legacy/missing)</option>`;
+      if (sel && !ttsIds.has(sel)) opts += `<option value="${esc(sel)}" selected>${esc(sel)} (veraltet/fehlend)</option>`;
       opts += ttsEntries.map(([mid]) => modelOption(mid, {selected: mid === sel})).join('');
-      return `${lbl('Default Model')}
+      return `${lbl('Standardmodell')}
         <select id="tool-tts-model" class="form-select" style="font-size:11px;width:100%">${opts}</select>
-        ${lbl('Voice')}
+        ${lbl('Stimme')}
         <input id="tool-tts-voice" type="text" value="${esc(cfg.voice||'en_paul_neutral')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
-        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Only models tagged with the <code>tts</code> capability are listed. The tool will use the configured id exactly.</div>`;
+        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Nur Modelle mit der Fähigkeit <code>tts</code> werden aufgelistet. Das Tool verwendet die konfigurierte ID exakt.</div>`;
     }
     case 'translation':
-      return `${lbl('Default Model')}
-        ${chatModelSelect('tool-tr-model', cfg.default_model || '', 'Auto (refinement model → fallback)')}
-        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Chat-capable LLM used to translate text, documents, and audio/video segments. Separate from the transcription model (Voxtral/Whisper) and TTS.</div>`;
+      return `${lbl('Standardmodell')}
+        ${chatModelSelect('tool-tr-model', cfg.default_model || '', 'Auto (Refinement-Modell → Fallback)')}
+        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Chat-fähiges LLM zum Übersetzen von Text, Dokumenten und Audio-/Videosegmenten. Getrennt vom Transkriptionsmodell (Voxtral/Whisper) und TTS.</div>`;
     default:
-      return `<div style="font-size:11px;color:var(--text-400)">No integration fields for this tool.</div>`;
+      return `<div style="font-size:11px;color:var(--text-400)">Keine Integrationsfelder für dieses Tool.</div>`;
   }
 }
 
@@ -246,7 +246,7 @@ function renderToolIntegrationFields(name, cfg) {
 // no settings form; tools without tool_config have no integration record).
 async function saveTool(toolName) {
   const t = (window._toolSettingsCache || {})[toolName];
-  if (!t) { showToast('No cached record for ' + toolName, true); return; }
+  if (!t) { showToast('Kein zwischengespeicherter Datensatz für ' + toolName, true); return; }
   const get = (suffix) => document.getElementById('ts-' + toolName + '-' + suffix);
 
   // --- Part 1: per-tool settings (skipped for integration-only pseudo-tools,
@@ -293,9 +293,9 @@ async function saveTool(toolName) {
           const nameSpan = headerSpans[0];
           if (nameSpan) {
             const star = document.createElement('span');
-            star.title = 'Custom prompt prose configured';
+            star.title = 'Benutzerdefinierter Prompt-Text konfiguriert';
             star.style.cssText = 'font-size:10px;color:var(--accent)';
-            star.textContent = '★ prose';
+            star.textContent = '★ Text';
             nameSpan.parentNode.insertBefore(star, nameSpan.nextSibling);
           }
         } else if (!hasProse && proseSpan) {
@@ -307,9 +307,9 @@ async function saveTool(toolName) {
       await API.post('/v1/tools/config', { [toolName]: rec });
       if (window._toolConfigCache) window._toolConfigCache[toolName] = rec;
     }
-    showToast('Saved ' + toolName);
+    showToast(toolName + ' gespeichert');
   } catch(e) {
-    showToast('Save failed: ' + (e.message || e), true);
+    showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
   }
 }
 
@@ -321,7 +321,7 @@ function resetToolPromptSettings(toolName) {
   });
   const aw = get('applies_with');
   if (aw) [...aw.options].forEach(o => o.selected = false);
-  showToast('Cleared (not saved — click Save to persist)');
+  showToast('Geleert (nicht gespeichert — zum Übernehmen auf Speichern klicken)');
 }
 
 /* ── Research-mode disciplines (D2 + D3) ── */
@@ -330,11 +330,11 @@ function resetResearchModeDiscipline(section) {
   const ta = document.getElementById('rmd-' + section);
   const dft = (window._rmdResp?.defaults || {})[section];
   if (!ta || dft === undefined) {
-    showToast('No default available for ' + section, true);
+    showToast('Kein Standardwert verfügbar für ' + section, true);
     return;
   }
   ta.value = dft;
-  showToast('Reset (not saved — click Save disciplines to persist)');
+  showToast('Zurückgesetzt (nicht gespeichert — zum Übernehmen auf „Disziplinen speichern" klicken)');
 }
 
 async function saveResearchModeDisciplines() {
@@ -346,10 +346,10 @@ async function saveResearchModeDisciplines() {
   }
   try {
     const resp = await API.post('/v1/research-mode/disciplines', body);
-    showToast('Disciplines saved');
+    showToast('Disziplinen gespeichert');
     if (window._rmdResp) window._rmdResp.sections = resp.sections;
   } catch(e) {
-    showToast('Save failed: ' + (e.message || e), true);
+    showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
   }
 }
 
@@ -447,8 +447,8 @@ async function saveMpClassifier() {
     });
     // Refresh cached classifier config
     state.mempalaceClassifier = await API.get('/v1/mempalace/classifier').catch(() => ({}));
-    showToast('Classifier config saved');
-  } catch(e) { showToast('Save failed: ' + e.message, true); }
+    showToast('Classifier-Konfiguration gespeichert');
+  } catch(e) { showToast('Speichern fehlgeschlagen: ' + e.message, true); }
 }
 
 function _kgShowInfo(title, htmlBody) {
@@ -462,7 +462,7 @@ function _kgShowInfo(title, htmlBody) {
   m.innerHTML = `<div class="modal-content" style="max-width:780px;width:80vw;max-height:80vh;display:flex;flex-direction:column">
     <div class="modal-header" style="display:flex;align-items:center;gap:10px">
       <span style="font-weight:600">${esc(title)}</span>
-      <button class="btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 10px" onclick="document.getElementById('${modalId}').remove()">Close</button>
+      <button class="btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 10px" onclick="document.getElementById('${modalId}').remove()">Schließen</button>
     </div>
     <div class="modal-body" style="overflow:auto;flex:1;padding:14px">${htmlBody}</div>
   </div>`;
@@ -482,9 +482,9 @@ async function saveKgConfig() {
       regenerate_closets: document.getElementById('kg-regen-closets')?.checked ?? false,
     };
     await API.post('/v1/mempalace/kg/config', body);
-    showToast('Knowledge Graph settings saved');
+    showToast('Knowledge-Graph-Einstellungen gespeichert');
     switchGeneralTab('knowledge-graph');
-  } catch(e) { showToast('Save failed: ' + (e.message || e), true); }
+  } catch(e) { showToast('Speichern fehlgeschlagen: ' + (e.message || e), true); }
 }
 
 async function kgOpenProject(agentId, projectName) {
@@ -502,9 +502,9 @@ async function kgOpenProject(agentId, projectName) {
     <div class="modal-header" style="display:flex;align-items:center;gap:10px">
       <span style="font-weight:600">Knowledge Graph &mdash; ${esc(projectName)}</span>
       <span style="font-size:11px;color:var(--text-400);font-family:var(--font-mono)">${esc(agentId)}</span>
-      <button class="btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 10px" onclick="document.getElementById('${modalId}').remove()">Close</button>
+      <button class="btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 10px" onclick="document.getElementById('${modalId}').remove()">Schließen</button>
     </div>
-    <div class="modal-body" id="kg-project-body" style="overflow:auto;flex:1;padding:16px">Loading…</div>
+    <div class="modal-body" id="kg-project-body" style="overflow:auto;flex:1;padding:16px">Lädt…</div>
   </div>`;
   document.body.appendChild(m);
   m.addEventListener('click', (ev) => { if (ev.target === m) m.remove(); });
@@ -531,7 +531,7 @@ async function kgOpenProject(agentId, projectName) {
         </div>
         <span style="min-width:40px;text-align:right;color:var(--text-300);font-family:var(--font-mono)">${p.count}</span>
       </div>`;
-    }).join('') || '<div style="font-size:12px;color:var(--text-400)">No triples yet.</div>';
+    }).join('') || '<div style="font-size:12px;color:var(--text-400)">Noch keine Triples.</div>';
 
     // Top entities
     const entRows = (data.top_entities||[]).slice(0,15).map(e =>
@@ -540,7 +540,7 @@ async function kgOpenProject(agentId, projectName) {
         <span style="font-size:10px;padding:1px 5px;background:var(--bg-300);border-radius:3px;color:var(--text-400)">${esc(e.type||'unknown')}</span>
         <span style="min-width:30px;text-align:right;color:var(--text-300);font-family:var(--font-mono)">${e.degree}</span>
       </div>`
-    ).join('') || '<div style="font-size:12px;color:var(--text-400)">No entities.</div>';
+    ).join('') || '<div style="font-size:12px;color:var(--text-400)">Keine Entitäten.</div>';
 
     // Sample triples
     const sampleRows = (data.sample_triples||[]).map(t => {
@@ -555,7 +555,7 @@ async function kgOpenProject(agentId, projectName) {
         </div>
         <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-400);margin-top:3px">${esc(sf)}</div>
       </div>`;
-    }).join('') || '<div style="font-size:12px;color:var(--text-400)">No triples extracted yet.</div>';
+    }).join('') || '<div style="font-size:12px;color:var(--text-400)">Noch keine Triples extrahiert.</div>';
 
     // Extraction log
     const logRows = (data.extraction_log||[]).slice(0,15).map(r => {
@@ -568,39 +568,39 @@ async function kgOpenProject(agentId, projectName) {
         triples=<b>${r.triples_extracted||0}</b> errors=${r.errors||0}
         ${r.error_msg?`<span style="color:var(--error)" title="${esc(r.error_msg)}"> · ${esc((r.error_msg||'').slice(0,80))}</span>`:''}
       </div>`;
-    }).join('') || '<div style="font-size:12px;color:var(--text-400)">No runs yet.</div>';
+    }).join('') || '<div style="font-size:12px;color:var(--text-400)">Noch keine Ausführungen.</div>';
 
     body.innerHTML = `
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-        ${STAT((data.entities||0).toLocaleString(),'Entities')}
-        ${STAT((data.triples||0).toLocaleString(),'Relations')}
-        ${STAT((data.top_predicates||[]).length,'Predicates seen')}
-        ${STAT((data.extraction_log||[]).length,'Runs logged')}
+        ${STAT((data.entities||0).toLocaleString(),'Entitäten')}
+        ${STAT((data.triples||0).toLocaleString(),'Beziehungen')}
+        ${STAT((data.top_predicates||[]).length,'Prädikate gesehen')}
+        ${STAT((data.extraction_log||[]).length,'Läufe protokolliert')}
       </div>
       ${isAdmin?`<div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:14px">
-        <button class="btn-secondary" onclick="kgReextract('${esc(agentId)}','${esc(projectName)}')">Re-extract everything</button>
+        <button class="btn-secondary" onclick="kgReextract('${esc(agentId)}','${esc(projectName)}')">Alles neu extrahieren</button>
       </div>`:''}
 
-      <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:8px 0 6px">Predicate frequency</div>
+      <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:8px 0 6px">Prädikathäufigkeit</div>
       <div style="display:grid;gap:4px">${predBars}</div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px">
         <div>
-          <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Top entities by degree</div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Top-Entitäten nach Grad</div>
           ${entRows}
         </div>
         <div>
-          <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Recent extraction runs</div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Letzte Extraktionsläufe</div>
           ${logRows}
         </div>
       </div>
 
-      <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:18px 0 6px">Sample triples (highest confidence)</div>
+      <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:18px 0 6px">Beispiel-Triples (höchste Konfidenz)</div>
       <div>${sampleRows}</div>
     `;
   } catch(e) {
     const body = document.getElementById('kg-project-body');
-    if (body) body.innerHTML = `<div style="color:var(--error)">Failed to load: ${esc(e.message||e)}</div>`;
+    if (body) body.innerHTML = `<div style="color:var(--error)">Laden fehlgeschlagen: ${esc(e.message||e)}</div>`;
   }
 }
 
@@ -617,9 +617,9 @@ async function kgQueryEntity(agentId, projectName, entityName) {
           ${conf?`<span style="font-family:var(--font-mono);color:var(--text-400)">c=${conf}</span>`:''}
         </div>
       </div>`;
-    }).join('') || '<div style="font-size:12px;color:var(--text-400)">No triples for this entity.</div>';
-    _kgShowInfo(`Entity: ${entityName}`, `<div style="font-size:11px;color:var(--text-400);margin-bottom:8px">${data.count} triples (${data.total_in_kg} in KG before scope filter)</div>${triples}`);
-  } catch(e) { showToast('Lookup failed: ' + (e.message||e), true); }
+    }).join('') || '<div style="font-size:12px;color:var(--text-400)">Keine Triples für diese Entität.</div>';
+    _kgShowInfo(`Entität: ${entityName}`, `<div style="font-size:11px;color:var(--text-400);margin-bottom:8px">${data.count} Triples (${data.total_in_kg} im KG vor Scope-Filter)</div>${triples}`);
+  } catch(e) { showToast('Abfrage fehlgeschlagen: ' + (e.message||e), true); }
 }
 
 async function kgSearchPredicate(agentId, projectName, predicate) {
@@ -631,18 +631,18 @@ async function kgSearchPredicate(agentId, projectName, predicate) {
       return `<div style="padding:6px 0;font-size:12px;border-bottom:1px dotted var(--border-100)">
         (${esc(t.subject||'')}) <span style="font-family:var(--font-mono);color:var(--accent-brand)">[${esc(predicate)}]</span> (${esc(t.object||'')}) ${conf?`<span style="font-family:var(--font-mono);color:var(--text-400);margin-left:6px">c=${conf}</span>`:''}
       </div>`;
-    }).join('') || `<div style="font-size:12px;color:var(--text-400)">No "${esc(predicate)}" triples in the sample (full set may have more — ${(data.top_predicates||[]).find(p=>p.predicate===predicate)?.count||0} total).</div>`;
-    _kgShowInfo(`Triples with predicate: ${predicate}`, list);
-  } catch(e) { showToast('Search failed: ' + (e.message||e), true); }
+    }).join('') || `<div style="font-size:12px;color:var(--text-400)">Keine „${esc(predicate)}"-Triples in der Stichprobe (der vollständige Satz enthält ggf. mehr — insgesamt ${(data.top_predicates||[]).find(p=>p.predicate===predicate)?.count||0}).</div>`;
+    _kgShowInfo(`Triples mit Prädikat: ${predicate}`, list);
+  } catch(e) { showToast('Suche fehlgeschlagen: ' + (e.message||e), true); }
 }
 
 async function kgReextract(agentId, projectName) {
-  if (!await showConfirmDanger(`Purge all triples for "${projectName}" and re-extract from scratch?\n\nThis deletes existing triples + the extraction cursor, then queues the project for the next sync cycle (within 30 min, or trigger Sync now from the project panel).`, 'Re-extract KG', 'Purge & Re-extract')) return;
+  if (!await showConfirmDanger(`Alle Triples für „${projectName}" löschen und von Grund auf neu extrahieren?\n\nDies löscht vorhandene Triples + den Extraktions-Cursor und stellt das Projekt für den nächsten Sync-Zyklus in die Warteschlange (innerhalb von 30 Min. oder „Jetzt synchronisieren" im Projekt-Panel auslösen).`, 'KG neu extrahieren', 'Löschen & neu extrahieren')) return;
   try {
     const res = await API.post('/v1/mempalace/kg/reextract', {agent_id: agentId, project: projectName});
-    showToast(`Purged ${res.triples_deleted||0} triples · queued for re-extraction`);
+    showToast(`${res.triples_deleted||0} Triples gelöscht · für Neuextraktion eingereiht`);
     setTimeout(()=>kgOpenProject(agentId, projectName), 500);
-  } catch(e) { showToast('Re-extract failed: ' + (e.message||e), true); }
+  } catch(e) { showToast('Neuextraktion fehlgeschlagen: ' + (e.message||e), true); }
 }
 
 function clsRestoreDefaultKw(level) {
@@ -670,15 +670,15 @@ function clsAddExtraRow() {
       <option value="confidential" selected>Vertraulich</option>
       <option value="strict">Streng Vertraulich</option>
     </select>
-    <input type="text" class="form-input cls-extra-pattern" style="flex:1;font-family:monospace;font-size:12px" placeholder="Regex pattern">
-    <button class="btn-secondary" style="font-size:11px;padding:2px 8px" onclick="this.parentElement.remove()">Remove</button>`;
+    <input type="text" class="form-input cls-extra-pattern" style="flex:1;font-family:monospace;font-size:12px" placeholder="Regex-Muster">
+    <button class="btn-secondary" style="font-size:11px;padding:2px 8px" onclick="this.parentElement.remove()">Entfernen</button>`;
   box.appendChild(row);
 }
 
 async function clsSaveSettings() {
   const status = document.getElementById('cls-settings-status');
   status.style.color = 'var(--text-400)';
-  status.textContent = 'Saving…';
+  status.textContent = 'Speichern…';
   try {
     const keywords = {};
     for (const lvl of ['internal', 'confidential', 'strict']) {
@@ -712,7 +712,7 @@ async function clsSaveSettings() {
     if (policy) body.policy = policy;
     await API.post('/v1/classification/config', body);
     status.style.color = 'var(--success,#1b6a31)';
-    status.textContent = 'Saved.';
+    status.textContent = 'Gespeichert.';
   } catch (e) {
     status.style.color = 'var(--error,#d33)';
     status.textContent = e.message || String(e);

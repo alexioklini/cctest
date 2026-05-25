@@ -27,36 +27,36 @@ const trState = {
 // Curated language list — covers what a German bank realistically translates
 // in/out of. Easy to extend without touching server-side LANG_NAMES.
 const TR_LANGS = [
-  ['en', 'English'],
-  ['de', 'German'],
-  ['fr', 'French'],
-  ['es', 'Spanish'],
-  ['it', 'Italian'],
-  ['pt', 'Portuguese'],
-  ['nl', 'Dutch'],
-  ['pl', 'Polish'],
-  ['cs', 'Czech'],
-  ['sk', 'Slovak'],
-  ['hu', 'Hungarian'],
-  ['ro', 'Romanian'],
-  ['tr', 'Turkish'],
-  ['el', 'Greek'],
-  ['sv', 'Swedish'],
-  ['da', 'Danish'],
-  ['no', 'Norwegian'],
-  ['fi', 'Finnish'],
-  ['ru', 'Russian'],
-  ['uk', 'Ukrainian'],
-  ['ja', 'Japanese'],
-  ['zh', 'Chinese'],
-  ['ko', 'Korean'],
-  ['ar', 'Arabic'],
+  ['en', 'Englisch'],
+  ['de', 'Deutsch'],
+  ['fr', 'Französisch'],
+  ['es', 'Spanisch'],
+  ['it', 'Italienisch'],
+  ['pt', 'Portugiesisch'],
+  ['nl', 'Niederländisch'],
+  ['pl', 'Polnisch'],
+  ['cs', 'Tschechisch'],
+  ['sk', 'Slowakisch'],
+  ['hu', 'Ungarisch'],
+  ['ro', 'Rumänisch'],
+  ['tr', 'Türkisch'],
+  ['el', 'Griechisch'],
+  ['sv', 'Schwedisch'],
+  ['da', 'Dänisch'],
+  ['no', 'Norwegisch'],
+  ['fi', 'Finnisch'],
+  ['ru', 'Russisch'],
+  ['uk', 'Ukrainisch'],
+  ['ja', 'Japanisch'],
+  ['zh', 'Chinesisch'],
+  ['ko', 'Koreanisch'],
+  ['ar', 'Arabisch'],
   ['hi', 'Hindi'],
 ];
 const TR_LANG_NAMES = Object.fromEntries(TR_LANGS);
 
 function trLangLabel(code) {
-  if (!code) return 'Auto-detect';
+  if (!code) return 'Automatisch erkennen';
   return TR_LANG_NAMES[code] || code.toUpperCase();
 }
 
@@ -83,7 +83,7 @@ async function trLoadGlossaries() {
   const sel = document.getElementById('tr-glossary-select');
   if (!sel) return;
   const prev = trState.glossarySlug;
-  sel.innerHTML = '<option value="">— none —</option>' +
+  sel.innerHTML = '<option value="">— keines —</option>' +
     trState.glossaries.map(g =>
       `<option value="${escapeHtml(g.slug)}">${escapeHtml(g.name)}</option>`
     ).join('');
@@ -128,7 +128,7 @@ function trRenderSourcePill() {
     label.textContent = trLangLabel(trState.sourceLang) +
       (trState.sourceLangManual ? '' : ' (auto)');
   } else {
-    label.textContent = 'Auto-detect';
+    label.textContent = 'Automatisch erkennen';
   }
   const pill = document.getElementById('tr-source-pill');
   if (pill) pill.classList.toggle('tr-pill-manual', trState.sourceLangManual);
@@ -146,7 +146,7 @@ function trToggleSourceMenu(ev) {
   const menu = document.createElement('div');
   menu.className = 'tr-lang-menu';
   menu.id = 'tr-source-menu';
-  const items = [['', 'Auto-detect'], null, ...TR_LANGS];
+  const items = [['', 'Automatisch erkennen'], null, ...TR_LANGS];
   menu.innerHTML = items.map(it => {
     if (it === null) return '<div class="tr-lang-menu-divider"></div>';
     const [code, name] = it;
@@ -221,7 +221,7 @@ function trSwapLanguages() {
     if (outText) {
       src.value = outText;
       out.dataset.translation = '';
-      out.innerHTML = '<div class="tr-placeholder">Translation will appear here.</div>';
+      out.innerHTML = '<div class="tr-placeholder">Die Übersetzung erscheint hier.</div>';
       trUpdateCounts();
     }
   }
@@ -247,10 +247,10 @@ function trUpdateCounts() {
   const out = document.getElementById('tr-target-output');
   const sc = document.getElementById('tr-source-count');
   const tc = document.getElementById('tr-target-count');
-  if (sc && src) sc.textContent = `${src.value.length} chars`;
+  if (sc && src) sc.textContent = `${src.value.length} Zeichen`;
   if (tc && out) {
     const len = (out.dataset.translation || '').length;
-    tc.textContent = `${len} chars`;
+    tc.textContent = `${len} Zeichen`;
   }
 }
 
@@ -259,7 +259,7 @@ function trClearSource() {
   if (src) src.value = '';
   const out = document.getElementById('tr-target-output');
   if (out) {
-    out.innerHTML = '<div class="tr-placeholder">Translation will appear here.</div>';
+    out.innerHTML = '<div class="tr-placeholder">Die Übersetzung erscheint hier.</div>';
     out.dataset.translation = '';
   }
   trState.detected = null;
@@ -302,7 +302,7 @@ function trUpdateDetectBadge() {
     return;
   }
   const pct = Math.round((d.confidence || 0) * 100);
-  badge.textContent = `Detected ${trLangLabel(d.lang)} · ${pct}%`;
+  badge.textContent = `Erkannt: ${trLangLabel(d.lang)} · ${pct}%`;
   badge.classList.add('visible');
   badge.classList.toggle('low-conf', d.confidence < 0.7);
 }
@@ -318,21 +318,21 @@ async function trRunTextTranslation() {
 
   const text = src.value;
   if (!text.trim()) {
-    status.textContent = 'Source text is empty.';
+    status.textContent = 'Der Quelltext ist leer.';
     status.classList.add('error');
     return;
   }
   if (!trState.targetLang) {
-    status.textContent = 'Pick a target language.';
+    status.textContent = 'Wählen Sie eine Zielsprache.';
     status.classList.add('error');
     return;
   }
 
-  status.textContent = 'Translating…';
+  status.textContent = 'Wird übersetzt…';
   status.classList.remove('error');
   btn.disabled = true;
   out.classList.add('translating');
-  out.innerHTML = '<div class="tr-placeholder">Translating…</div>';
+  out.innerHTML = '<div class="tr-placeholder">Wird übersetzt…</div>';
   out.dataset.translation = '';
 
   const t0 = Date.now();
@@ -359,10 +359,10 @@ async function trRunTextTranslation() {
       trUpdateDetectBadge();
     }
     if (r.noop) {
-      status.textContent = `Source already in ${trLangLabel(trState.targetLang)} — no translation needed.`;
+      status.textContent = `Quelltext ist bereits ${trLangLabel(trState.targetLang)} — keine Übersetzung nötig.`;
     } else {
       const m = r.model ? ` · ${r.model}` : '';
-      status.textContent = `Done in ${dt}s${m}`;
+      status.textContent = `Fertig in ${dt}s${m}`;
     }
     trUpdateCounts();
     // Prefetch TTS for both sides so audio is ready on first click.
@@ -372,8 +372,8 @@ async function trRunTextTranslation() {
     if (r.translation && !r.noop) trHistoryRefresh();
   } catch (e) {
     out.classList.remove('translating');
-    out.innerHTML = '<div class="tr-placeholder">Translation failed.</div>';
-    status.textContent = (e.message || 'Translation failed').slice(0, 240);
+    out.innerHTML = '<div class="tr-placeholder">Übersetzung fehlgeschlagen.</div>';
+    status.textContent = (e.message || 'Übersetzung fehlgeschlagen').slice(0, 240);
     status.classList.add('error');
   } finally {
     btn.disabled = false;
@@ -388,8 +388,8 @@ function trCopyTarget() {
     const status = document.getElementById('tr-status');
     if (status) {
       const prev = status.textContent;
-      status.textContent = 'Copied.';
-      setTimeout(() => { if (status.textContent === 'Copied.') status.textContent = prev; }, 1500);
+      status.textContent = 'Kopiert.';
+      setTimeout(() => { if (status.textContent === 'Kopiert.') status.textContent = prev; }, 1500);
     }
   });
 }
@@ -478,13 +478,13 @@ async function _trTtsPlay(side, text, lang, btn) {
       URL.revokeObjectURL(blobUrl);
       _trTtsPlaying = false;
       _trTtsResetBtns();
-      _trTtsSetStatus('TTS playback error');
+      _trTtsSetStatus('TTS-Wiedergabefehler');
     };
 
     await audio.play();
   } catch (e) {
     _trTtsStop();
-    _trTtsSetStatus('TTS failed: ' + e.message);
+    _trTtsSetStatus('TTS fehlgeschlagen: ' + e.message);
   }
 }
 
@@ -524,13 +524,13 @@ async function trRenderGlossariesModal() {
   if (!body) return;
 
   if (trState.modalEditing) {
-    title.textContent = trState.modalEditing.slug ? 'Edit glossary' : 'New glossary';
+    title.textContent = trState.modalEditing.slug ? 'Glossar bearbeiten' : 'Neues Glossar';
     body.innerHTML = trGlossaryFormHtml(trState.modalEditing);
     trBindGlossaryFormEvents();
     return;
   }
 
-  title.textContent = 'Glossaries';
+  title.textContent = 'Glossare';
   // Fresh fetch so the modal always shows current state.
   let list = [];
   try {
@@ -538,16 +538,16 @@ async function trRenderGlossariesModal() {
     list = data.glossaries || [];
     trState.glossaries = list;
   } catch (e) {
-    body.innerHTML = `<div class="tr-gloss-empty">Failed to load glossaries: ${escapeHtml(e.message || '')}</div>`;
+    body.innerHTML = `<div class="tr-gloss-empty">Glossare konnten nicht geladen werden: ${escapeHtml(e.message || '')}</div>`;
     return;
   }
   const newBtn = `
     <div style="margin-bottom:14px;display:flex;justify-content:flex-end">
-      <button class="tr-btn tr-btn-primary" onclick="trEditGlossary('')">+ New glossary</button>
+      <button class="tr-btn tr-btn-primary" onclick="trEditGlossary('')">+ Neues Glossar</button>
     </div>`;
   if (!list.length) {
     body.innerHTML = newBtn +
-      '<div class="tr-gloss-empty">No glossaries yet. Create one to start enforcing bank-specific terminology.</div>';
+      '<div class="tr-gloss-empty">Noch keine Glossare. Erstellen Sie eines, um bankspezifische Terminologie durchzusetzen.</div>';
     return;
   }
   body.innerHTML = newBtn + '<div class="tr-gloss-list">' +
@@ -557,12 +557,12 @@ async function trRenderGlossariesModal() {
           <div class="tr-gloss-card-name">${escapeHtml(g.name)}</div>
           ${g.description ? `<div class="tr-gloss-card-desc">${escapeHtml(g.description)}</div>` : ''}
           <div class="tr-gloss-card-meta">
-            ${g.source ? `${trLangLabel(g.source)} → ${trLangLabel(g.target)} · ` : ''}${g.entry_count} entries${g.do_not_translate_count ? ` · ${g.do_not_translate_count} do-not-translate` : ''}
+            ${g.source ? `${trLangLabel(g.source)} → ${trLangLabel(g.target)} · ` : ''}${g.entry_count} Einträge${g.do_not_translate_count ? ` · ${g.do_not_translate_count} nicht übersetzen` : ''}
           </div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
-          <button class="tr-btn" onclick="trEditGlossary('${escapeHtml(g.slug)}')">Edit</button>
-          <button class="tr-btn tr-btn-danger" onclick="trDeleteGlossary('${escapeHtml(g.slug)}','${escapeHtml(g.name)}')">Delete</button>
+          <button class="tr-btn" onclick="trEditGlossary('${escapeHtml(g.slug)}')">Bearbeiten</button>
+          <button class="tr-btn tr-btn-danger" onclick="trDeleteGlossary('${escapeHtml(g.slug)}','${escapeHtml(g.name)}')">Löschen</button>
         </div>
       </div>
     `).join('') + '</div>';
@@ -592,7 +592,7 @@ async function trEditGlossary(slug) {
         do_not_translate: g.do_not_translate || [],
       };
     } catch (e) {
-      await showAlert('Failed to load glossary: ' + (e.message || ''));
+      await showAlert('Glossar konnte nicht geladen werden: ' + (e.message || ''));
       return;
     }
   }
@@ -608,11 +608,11 @@ function trGlossaryFormHtml(g) {
   };
   const entries = g.entries.map((e, i) => `
     <div class="tr-gloss-entry" data-idx="${i}">
-      <input type="text" class="tr-gloss-entry-src" placeholder="Source term"
+      <input type="text" class="tr-gloss-entry-src" placeholder="Quellbegriff"
              value="${escapeHtml(e.src || '')}">
-      <input type="text" class="tr-gloss-entry-tgt" placeholder="Target term"
+      <input type="text" class="tr-gloss-entry-tgt" placeholder="Zielbegriff"
              value="${escapeHtml(e.tgt || '')}">
-      <button class="tr-gloss-entry-remove" type="button" data-idx="${i}" title="Remove">
+      <button class="tr-gloss-entry-remove" type="button" data-idx="${i}" title="Entfernen">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
@@ -623,48 +623,48 @@ function trGlossaryFormHtml(g) {
       <div class="tr-gloss-row">
         <div class="tr-gloss-field">
           <label>Name</label>
-          <input type="text" id="tr-gloss-name" value="${escapeHtml(g.name)}" required placeholder="e.g. Bank DE-EN">
+          <input type="text" id="tr-gloss-name" value="${escapeHtml(g.name)}" required placeholder="z. B. Bank DE-EN">
         </div>
         <div class="tr-gloss-field">
-          <label>Description</label>
+          <label>Beschreibung</label>
           <input type="text" id="tr-gloss-desc" value="${escapeHtml(g.description)}" placeholder="optional">
         </div>
       </div>
       <div class="tr-gloss-row">
         <div class="tr-gloss-field">
-          <label>Source language (hint)</label>
+          <label>Quellsprache (Hinweis)</label>
           <select id="tr-gloss-source">${langOptions(g.source)}</select>
         </div>
         <div class="tr-gloss-field">
-          <label>Target language (hint)</label>
+          <label>Zielsprache (Hinweis)</label>
           <select id="tr-gloss-target">${langOptions(g.target)}</select>
         </div>
       </div>
 
       <div class="tr-gloss-field">
-        <label>Term mappings</label>
+        <label>Begriffszuordnungen</label>
         <div class="tr-gloss-entries" id="tr-gloss-entries">
           <div class="tr-gloss-entries-header">
-            <div>Source</div><div>Target</div><div></div>
+            <div>Quelle</div><div>Ziel</div><div></div>
           </div>
           ${entries}
           <div class="tr-gloss-add-row">
-            <button class="tr-btn" type="button" onclick="trAddGlossaryEntry()">+ Add term</button>
+            <button class="tr-btn" type="button" onclick="trAddGlossaryEntry()">+ Begriff hinzufügen</button>
           </div>
         </div>
       </div>
 
       <div class="tr-gloss-field">
-        <label>Do not translate (one term per line)</label>
+        <label>Nicht übersetzen (ein Begriff pro Zeile)</label>
         <textarea id="tr-gloss-dnt" rows="3"
           placeholder="BaFin&#10;DZ Bank&#10;MaRisk">${escapeHtml((g.do_not_translate || []).join('\n'))}</textarea>
       </div>
 
       <div class="tr-gloss-form-actions">
-        ${g.slug ? `<button class="tr-btn tr-btn-danger" type="button" onclick="trDeleteGlossary('${escapeHtml(g.slug)}','${escapeHtml(g.name)}')">Delete</button>` : ''}
+        ${g.slug ? `<button class="tr-btn tr-btn-danger" type="button" onclick="trDeleteGlossary('${escapeHtml(g.slug)}','${escapeHtml(g.name)}')">Löschen</button>` : ''}
         <div class="tr-btn-spacer"></div>
-        <button class="tr-btn" type="button" onclick="trCancelGlossaryEdit()">Cancel</button>
-        <button class="tr-btn tr-btn-primary" type="button" onclick="trSaveGlossary()">Save</button>
+        <button class="tr-btn" type="button" onclick="trCancelGlossaryEdit()">Abbrechen</button>
+        <button class="tr-btn tr-btn-primary" type="button" onclick="trSaveGlossary()">Speichern</button>
       </div>
     </form>
   `;
@@ -716,7 +716,7 @@ async function trSaveGlossary() {
   trReadGlossaryFormIntoState();
   const g = trState.modalEditing;
   if (!g.name.trim()) {
-    await showAlert('Name is required.');
+    await showAlert('Name ist erforderlich.');
     return;
   }
   // Strip empty rows.
@@ -739,13 +739,13 @@ async function trSaveGlossary() {
     const sel = document.getElementById('tr-glossary-select');
     if (sel) sel.value = saved.slug;
   } catch (e) {
-    await showAlert('Save failed: ' + (e.message || ''));
+    await showAlert('Speichern fehlgeschlagen: ' + (e.message || ''));
   }
 }
 
 async function trDeleteGlossary(slug, name) {
   if (!slug) return;
-  if (!await showConfirmDanger(`Delete glossary "${name || slug}"?`, 'Delete Glossary', 'Delete')) return;
+  if (!await showConfirmDanger(`Glossar "${name || slug}" löschen?`, 'Glossar löschen', 'Löschen')) return;
   try {
     await API.del(`/v1/translate/glossaries/${encodeURIComponent(slug)}`);
     if (trState.glossarySlug === slug) trState.glossarySlug = '';
@@ -753,7 +753,7 @@ async function trDeleteGlossary(slug, name) {
     trRenderGlossariesModal();
     await trLoadGlossaries();
   } catch (e) {
-    await showAlert('Delete failed: ' + (e.message || ''));
+    await showAlert('Löschen fehlgeschlagen: ' + (e.message || ''));
   }
 }
 
@@ -796,14 +796,14 @@ function trDocSetFile(f) {
   const ext = ('.' + (f.name.split('.').pop() || '')).toLowerCase();
   if (!TR_DOC_EXTS.includes(ext)) {
     if (status) {
-      status.textContent = `Unsupported file type ${ext}. Use ${TR_DOC_EXTS.join(', ')}.`;
+      status.textContent = `Nicht unterstützter Dateityp ${ext}. Verwenden Sie ${TR_DOC_EXTS.join(', ')}.`;
       status.classList.add('error');
     }
     return;
   }
   if (f.size > TR_DOC_MAX_BYTES) {
     if (status) {
-      status.textContent = 'File too large (max 50 MB).';
+      status.textContent = 'Datei zu groß (max. 50 MB).';
       status.classList.add('error');
     }
     return;
@@ -853,11 +853,11 @@ async function trRunDocTranslation() {
   const file = trDocState.file;
   const status = document.getElementById('tr-doc-status');
   if (!file) {
-    if (status) { status.textContent = 'Pick a file first.'; status.classList.add('error'); }
+    if (status) { status.textContent = 'Wählen Sie zuerst eine Datei.'; status.classList.add('error'); }
     return;
   }
   if (!trState.targetLang) {
-    if (status) { status.textContent = 'Pick a target language.'; status.classList.add('error'); }
+    if (status) { status.textContent = 'Wählen Sie eine Zielsprache.'; status.classList.add('error'); }
     return;
   }
 
@@ -873,7 +873,7 @@ async function trRunDocTranslation() {
   if (trState.tone) fd.append('tone', trState.tone);
 
   document.getElementById('tr-doc-translate-btn').disabled = true;
-  status.textContent = 'Uploading…';
+  status.textContent = 'Wird hochgeladen…';
   status.classList.remove('error');
 
   let job;
@@ -890,7 +890,7 @@ async function trRunDocTranslation() {
     }
     job = await res.json();
   } catch (e) {
-    status.textContent = (e.message || 'Upload failed').slice(0, 240);
+    status.textContent = (e.message || 'Hochladen fehlgeschlagen').slice(0, 240);
     status.classList.add('error');
     document.getElementById('tr-doc-translate-btn').disabled = false;
     return;
@@ -899,13 +899,13 @@ async function trRunDocTranslation() {
   trDocState.jobId = job.job_id;
   trDocShowJobPanel(job, file.name);
   trDocSubscribe(job.job_id);
-  status.textContent = 'Translating…';
+  status.textContent = 'Wird übersetzt…';
 }
 
 function trDocShowJobPanel(job, filename) {
   const panel = document.getElementById('tr-doc-job');
   panel.classList.remove('hidden');
-  document.getElementById('tr-doc-job-name').textContent = filename || job.filename || 'document';
+  document.getElementById('tr-doc-job-name').textContent = filename || job.filename || 'Dokument';
   trDocApplyJobState(job);
 }
 
@@ -918,17 +918,17 @@ function trDocApplyJobState(job) {
   stateEl.classList.remove('running', 'done', 'error');
   switch (job.state) {
     case 'queued':
-      stateEl.textContent = 'Queued'; break;
+      stateEl.textContent = 'In Warteschlange'; break;
     case 'running':
-      stateEl.textContent = 'Translating';
+      stateEl.textContent = 'Wird übersetzt';
       stateEl.classList.add('running');
       break;
     case 'done':
-      stateEl.textContent = 'Done';
+      stateEl.textContent = 'Fertig';
       stateEl.classList.add('done');
       break;
     case 'error':
-      stateEl.textContent = 'Error';
+      stateEl.textContent = 'Fehler';
       stateEl.classList.add('error');
       break;
     default:
@@ -940,30 +940,30 @@ function trDocApplyJobState(job) {
     trDocState.outputName = job.output_filename || '';
     trDocState.fallback = !!job.fallback;
     const lines = [
-      `${job.runs} segment${job.runs === 1 ? '' : 's'} translated`,
+      `${job.runs} Segment${job.runs === 1 ? '' : 'e'} übersetzt`,
     ];
     if (job.model) lines.push(job.model);
-    if (job.fallback) lines.push('PDF converted to DOCX');
-    if (job.noop) lines.push('source already in target language — copied');
+    if (job.fallback) lines.push('PDF in DOCX umgewandelt');
+    if (job.noop) lines.push('Quelle bereits in Zielsprache — kopiert');
     meta.textContent = lines.join(' · ');
     dl?.classList.remove('hidden');
     const status = document.getElementById('tr-doc-status');
-    if (status) { status.textContent = 'Done.'; status.classList.remove('error'); }
+    if (status) { status.textContent = 'Fertig.'; status.classList.remove('error'); }
     trHistoryRefresh();
   } else if (job.state === 'error') {
-    meta.textContent = job.error || 'Unknown error';
+    meta.textContent = job.error || 'Unbekannter Fehler';
     dl?.classList.add('hidden');
     const status = document.getElementById('tr-doc-status');
     if (status) {
-      status.textContent = (job.error || 'Translation failed').slice(0, 240);
+      status.textContent = (job.error || 'Übersetzung fehlgeschlagen').slice(0, 240);
       status.classList.add('error');
     }
     document.getElementById('tr-doc-translate-btn').disabled = false;
   } else {
     if (job.runs_total) {
-      meta.textContent = `${job.runs_done} / ${job.runs_total} segments · ${pct.toFixed(0)}%`;
+      meta.textContent = `${job.runs_done} / ${job.runs_total} Segmente · ${pct.toFixed(0)}%`;
     } else {
-      meta.textContent = 'Preparing…';
+      meta.textContent = 'Wird vorbereitet…';
     }
   }
 }
@@ -983,7 +983,7 @@ async function trDocSubscribe(jobId) {
   } catch (e) {
     if (e.name !== 'AbortError') {
       const status = document.getElementById('tr-doc-status');
-      if (status) { status.textContent = `SSE failed: ${e.message}`; status.classList.add('error'); }
+      if (status) { status.textContent = `SSE fehlgeschlagen: ${e.message}`; status.classList.add('error'); }
     }
     return;
   }
@@ -1030,7 +1030,7 @@ async function trDocSubscribe(jobId) {
   } catch (e) {
     if (e.name !== 'AbortError') {
       const status = document.getElementById('tr-doc-status');
-      if (status) { status.textContent = `SSE error: ${e.message}`; status.classList.add('error'); }
+      if (status) { status.textContent = `SSE-Fehler: ${e.message}`; status.classList.add('error'); }
     }
   } finally {
     if (trDocState.source === ctrl) trDocState.source = null;
@@ -1062,7 +1062,7 @@ async function trDocDownload() {
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch (e) {
     if (status) {
-      status.textContent = `Download failed: ${e.message}`;
+      status.textContent = `Herunterladen fehlgeschlagen: ${e.message}`;
       status.classList.add('error');
     }
   }
@@ -1112,14 +1112,14 @@ function trMediaSetFile(f) {
   const ext = ('.' + (f.name.split('.').pop() || '')).toLowerCase();
   if (!TR_MEDIA_EXTS.includes(ext)) {
     if (status) {
-      status.textContent = `Unsupported file type ${ext}.`;
+      status.textContent = `Nicht unterstützter Dateityp ${ext}.`;
       status.classList.add('error');
     }
     return;
   }
   if (f.size > TR_MEDIA_MAX_BYTES) {
     if (status) {
-      status.textContent = 'File too large (max 200 MB).';
+      status.textContent = 'Datei zu groß (max. 200 MB).';
       status.classList.add('error');
     }
     return;
@@ -1162,11 +1162,11 @@ async function trRunMediaTranslation() {
   const status = document.getElementById('tr-media-status');
   const mode = document.getElementById('tr-media-mode')?.value || 'translate';
   if (!file) {
-    if (status) { status.textContent = 'Pick a file first.'; status.classList.add('error'); }
+    if (status) { status.textContent = 'Wählen Sie zuerst eine Datei.'; status.classList.add('error'); }
     return;
   }
   if (mode === 'translate' && !trState.targetLang) {
-    if (status) { status.textContent = 'Pick a target language.'; status.classList.add('error'); }
+    if (status) { status.textContent = 'Wählen Sie eine Zielsprache.'; status.classList.add('error'); }
     return;
   }
 
@@ -1181,7 +1181,7 @@ async function trRunMediaTranslation() {
   if (trState.model) fd.append('model', trState.model);
 
   document.getElementById('tr-media-translate-btn').disabled = true;
-  status.textContent = 'Uploading…';
+  status.textContent = 'Wird hochgeladen…';
   status.classList.remove('error');
 
   let job;
@@ -1197,7 +1197,7 @@ async function trRunMediaTranslation() {
     }
     job = await res.json();
   } catch (e) {
-    status.textContent = (e.message || 'Upload failed').slice(0, 240);
+    status.textContent = (e.message || 'Hochladen fehlgeschlagen').slice(0, 240);
     status.classList.add('error');
     document.getElementById('tr-media-translate-btn').disabled = false;
     return;
@@ -1206,13 +1206,13 @@ async function trRunMediaTranslation() {
   trMediaState.jobId = job.job_id;
   trMediaShowJobPanel(job, file.name);
   trMediaSubscribe(job.job_id);
-  status.textContent = 'Processing…';
+  status.textContent = 'Wird verarbeitet…';
 }
 
 function trMediaShowJobPanel(job, filename) {
   const panel = document.getElementById('tr-media-job');
   panel.classList.remove('hidden');
-  document.getElementById('tr-media-job-name').textContent = filename || job.filename || 'media';
+  document.getElementById('tr-media-job-name').textContent = filename || job.filename || 'Medien';
   trMediaApplyJobState(job);
 }
 
@@ -1223,14 +1223,14 @@ function trMediaApplyJobState(job) {
   if (!stateEl || !meta || !bar) return;
   stateEl.classList.remove('running', 'done', 'error');
   switch (job.state) {
-    case 'queued':  stateEl.textContent = 'Queued'; break;
+    case 'queued':  stateEl.textContent = 'In Warteschlange'; break;
     case 'running':
-      stateEl.textContent = (job.stage === 'transcribe') ? 'Transcribing'
-        : (job.stage === 'translate') ? 'Translating' : 'Running';
+      stateEl.textContent = (job.stage === 'transcribe') ? 'Wird transkribiert'
+        : (job.stage === 'translate') ? 'Wird übersetzt' : 'Läuft';
       stateEl.classList.add('running');
       break;
-    case 'done':    stateEl.textContent = 'Done'; stateEl.classList.add('done'); break;
-    case 'error':   stateEl.textContent = 'Error'; stateEl.classList.add('error'); break;
+    case 'done':    stateEl.textContent = 'Fertig'; stateEl.classList.add('done'); break;
+    case 'error':   stateEl.textContent = 'Fehler'; stateEl.classList.add('error'); break;
     default:        stateEl.textContent = job.state || '';
   }
   const pct = Math.max(0, Math.min(100, job.progress_pct || 0));
@@ -1238,45 +1238,45 @@ function trMediaApplyJobState(job) {
 
   if (job.state === 'done') {
     const lines = [];
-    if (typeof job.duration_s === 'number') lines.push(`${job.duration_s.toFixed(1)}s of audio`);
+    if (typeof job.duration_s === 'number') lines.push(`${job.duration_s.toFixed(1)} s Audio`);
     const segCount = (job.segments || []).length;
-    if (segCount) lines.push(`${segCount} segment${segCount === 1 ? '' : 's'}`);
+    if (segCount) lines.push(`${segCount} Segment${segCount === 1 ? '' : 'e'}`);
     if (job.transcribe_model) lines.push(job.transcribe_model.split('/').pop());
-    if (job.runs > 0) lines.push(`${job.runs} translated`);
+    if (job.runs > 0) lines.push(`${job.runs} übersetzt`);
     meta.textContent = lines.join(' · ');
     trMediaRenderDownloads(job);
     trMediaRenderSegments(job.segments || []);
     document.getElementById('tr-media-translate-btn').disabled = false;
     const status = document.getElementById('tr-media-status');
-    if (status) { status.textContent = 'Done.'; status.classList.remove('error'); }
+    if (status) { status.textContent = 'Fertig.'; status.classList.remove('error'); }
     trHistoryRefresh();
   } else if (job.state === 'error') {
-    meta.textContent = job.error || 'Unknown error';
+    meta.textContent = job.error || 'Unbekannter Fehler';
     document.getElementById('tr-media-translate-btn').disabled = false;
     const status = document.getElementById('tr-media-status');
     if (status) {
-      status.textContent = (job.error || 'Failed').slice(0, 240);
+      status.textContent = (job.error || 'Fehlgeschlagen').slice(0, 240);
       status.classList.add('error');
     }
   } else {
     if (job.stage === 'translate' && job.runs_total) {
-      meta.textContent = `Translating segments… ${job.runs_done}/${job.runs_total}`;
+      meta.textContent = `Segmente werden übersetzt… ${job.runs_done}/${job.runs_total}`;
     } else if (job.stage === 'transcribe') {
-      meta.textContent = 'Transcribing audio…';
+      meta.textContent = 'Audio wird transkribiert…';
     } else {
-      meta.textContent = 'Preparing…';
+      meta.textContent = 'Wird vorbereitet…';
     }
   }
 }
 
 const TR_MEDIA_DL_LABELS = {
-  bilingual_txt: 'Bilingual TXT',
-  transcript_txt: 'Transcript TXT',
-  transcript_srt: 'Transcript SRT',
-  transcript_vtt: 'Transcript VTT',
-  translation_txt: 'Translation TXT',
-  translation_srt: 'Translation SRT',
-  translation_vtt: 'Translation VTT',
+  bilingual_txt: 'Zweisprachig TXT',
+  transcript_txt: 'Transkript TXT',
+  transcript_srt: 'Transkript SRT',
+  transcript_vtt: 'Transkript VTT',
+  translation_txt: 'Übersetzung TXT',
+  translation_srt: 'Übersetzung SRT',
+  translation_vtt: 'Übersetzung VTT',
 };
 const TR_MEDIA_DL_ORDER = [
   'bilingual_txt',
@@ -1316,9 +1316,9 @@ function trMediaRenderSegments(segments) {
   const speakBtns = document.getElementById('tr-media-speak-btns');
   if (speakBtns) {
     const svgSpk = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>`;
-    let html = `<button class="tr-media-speak-all-btn" id="tr-media-speak-transcript" title="Speak full transcript">${svgSpk} Transcript</button>`;
+    let html = `<button class="tr-media-speak-all-btn" id="tr-media-speak-transcript" title="Gesamtes Transkript vorlesen">${svgSpk} Transkript</button>`;
     if (hasTranslation) {
-      html += `<button class="tr-media-speak-all-btn" id="tr-media-speak-translation" title="Speak full translation">${svgSpk} Translation</button>`;
+      html += `<button class="tr-media-speak-all-btn" id="tr-media-speak-translation" title="Gesamte Übersetzung vorlesen">${svgSpk} Übersetzung</button>`;
     }
     speakBtns.innerHTML = html;
     const allTranscript = segments.map(s => s.text || '').join(' ');
@@ -1341,14 +1341,14 @@ function trMediaRenderSegments(segments) {
       return `<div class="tr-media-seg no-translation">
         <div class="tr-media-seg-time">${t}</div>
         <div class="tr-media-seg-src">${src}</div>
-        <button class="tr-media-seg-speak" data-seg="${i}" data-side="src" title="Speak">${svgSpk}</button>
+        <button class="tr-media-seg-speak" data-seg="${i}" data-side="src" title="Vorlesen">${svgSpk}</button>
       </div>`;
     }
     const tgt = escapeHtml(s.translation || '');
     return `<div class="tr-media-seg">
       <div class="tr-media-seg-time">${t}</div>
-      <div class="tr-media-seg-src">${src}<button class="tr-media-seg-speak" data-seg="${i}" data-side="src" title="Speak source">${svgSpk}</button></div>
-      <div class="tr-media-seg-tgt">${tgt}<button class="tr-media-seg-speak" data-seg="${i}" data-side="tgt" title="Speak translation">${svgSpk}</button></div>
+      <div class="tr-media-seg-src">${src}<button class="tr-media-seg-speak" data-seg="${i}" data-side="src" title="Quelle vorlesen">${svgSpk}</button></div>
+      <div class="tr-media-seg-tgt">${tgt}<button class="tr-media-seg-speak" data-seg="${i}" data-side="tgt" title="Übersetzung vorlesen">${svgSpk}</button></div>
     </div>`;
   }).join('');
 
@@ -1406,7 +1406,7 @@ async function trMediaDownload(format, filename) {
     setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
   } catch (e) {
     if (status) {
-      status.textContent = `Download failed: ${e.message}`;
+      status.textContent = `Herunterladen fehlgeschlagen: ${e.message}`;
       status.classList.add('error');
     }
   }
@@ -1425,7 +1425,7 @@ async function trMediaSubscribe(jobId) {
   } catch (e) {
     if (e.name !== 'AbortError') {
       const status = document.getElementById('tr-media-status');
-      if (status) { status.textContent = `SSE failed: ${e.message}`; status.classList.add('error'); }
+      if (status) { status.textContent = `SSE fehlgeschlagen: ${e.message}`; status.classList.add('error'); }
     }
     return;
   }
@@ -1463,7 +1463,7 @@ async function trMediaSubscribe(jobId) {
   } catch (e) {
     if (e.name !== 'AbortError') {
       const status = document.getElementById('tr-media-status');
-      if (status) { status.textContent = `SSE error: ${e.message}`; status.classList.add('error'); }
+      if (status) { status.textContent = `SSE-Fehler: ${e.message}`; status.classList.add('error'); }
     }
   } finally {
     if (trMediaState.abort === ctrl) trMediaState.abort = null;
@@ -1542,7 +1542,7 @@ function _trHistoryRenderTab(tab) {
   const entries = _trHistoryFilterAndSort(_trHistoryEntriesForTab(tab), tab);
   if (!entries.length) {
     const ui = _trHistoryUiState[tab];
-    list.innerHTML = `<div class="tr-history-empty">${ui.search ? 'No matches.' : 'No history yet.'}</div>`;
+    list.innerHTML = `<div class="tr-history-empty">${ui.search ? 'Keine Treffer.' : 'Noch kein Verlauf.'}</div>`;
     return;
   }
   list.innerHTML = entries.map(e => _trHistoryRowHtml(e, tab)).join('');
@@ -1554,7 +1554,7 @@ function _trHistoryRowHtml(entry, tab) {
   const langs = [entry.source_lang, entry.target_lang].filter(Boolean).join(' → ');
   const isOther = _trHistoryIsAdmin && entry.user_id && entry.user_id !== _trHistoryCurrentUser;
   const ownerBadge = isOther
-    ? `<span class="tr-history-owner" title="Other user">${escapeHtml(entry.user_id)}</span>`
+    ? `<span class="tr-history-owner" title="Anderer Benutzer">${escapeHtml(entry.user_id)}</span>`
     : '';
   const expanded = !!_trHistoryExpanded[entry.id];
   const detail = expanded ? _trHistoryDetailHtml(entry) : '';
@@ -1563,7 +1563,7 @@ function _trHistoryRowHtml(entry, tab) {
       <span class="tr-history-row-title">${escapeHtml(entry.title || '—')}</span>
       <span class="tr-history-row-meta">${langs ? escapeHtml(langs) + ' · ' : ''}${escapeHtml(date)}</span>
       ${ownerBadge}
-      <button class="tr-history-row-del" title="Delete"
+      <button class="tr-history-row-del" title="Löschen"
         onclick="event.stopPropagation();trHistoryDelete('${escapeHtml(entry.id)}')">×</button>
     </div>
     ${detail}
@@ -1586,17 +1586,17 @@ function _trHistoryDetailText(entry, result) {
   return `<div class="tr-history-detail-inline">
     <div class="tr-history-text-cols">
       <div class="tr-history-text-col">
-        <div class="tr-history-text-label">Source</div>
+        <div class="tr-history-text-label">Quelle</div>
         <div class="tr-history-text-body">${escapeHtml(src) || '<em>—</em>'}</div>
       </div>
       <div class="tr-history-text-col">
-        <div class="tr-history-text-label">Translation</div>
+        <div class="tr-history-text-label">Übersetzung</div>
         <div class="tr-history-text-body">${escapeHtml(tgt) || '<em>—</em>'}</div>
       </div>
     </div>
     <div class="tr-history-detail-actions">
       <button class="tr-btn tr-btn-primary" onclick="trHistoryRestoreText('${escapeHtml(entry.id)}')">
-        Load into editor
+        In Editor laden
       </button>
     </div>
   </div>`;
@@ -1645,8 +1645,8 @@ function _trHistoryDetailDocument(entry, result) {
   const outName = result.output_filename || '';
   return `<div class="tr-history-detail-inline">
     <div class="tr-history-files">
-      ${_trHistoryFileLink(entry.id, 'source', 'Source', srcName, '📄')}
-      ${_trHistoryFileLink(entry.id, 'output', 'Translated', outName, '📑')}
+      ${_trHistoryFileLink(entry.id, 'source', 'Quelle', srcName, '📄')}
+      ${_trHistoryFileLink(entry.id, 'output', 'Übersetzt', outName, '📑')}
     </div>
   </div>`;
 }
@@ -1658,13 +1658,13 @@ function _trHistoryDetailMedia(entry, result) {
   const srcName = result.source_filename || '';
   const outFiles = result.output_files || {};
   const formatLabels = {
-    transcript_txt: 'Transcript (TXT)',
-    transcript_srt: 'Transcript (SRT)',
-    transcript_vtt: 'Transcript (VTT)',
-    translation_txt: 'Translation (TXT)',
-    translation_srt: 'Translation (SRT)',
-    translation_vtt: 'Translation (VTT)',
-    bilingual_txt: 'Bilingual (TXT)',
+    transcript_txt: 'Transkript (TXT)',
+    transcript_srt: 'Transkript (SRT)',
+    transcript_vtt: 'Transkript (VTT)',
+    translation_txt: 'Übersetzung (TXT)',
+    translation_srt: 'Übersetzung (SRT)',
+    translation_vtt: 'Übersetzung (VTT)',
+    bilingual_txt: 'Zweisprachig (TXT)',
   };
   const fileLinks = Object.keys(outFiles)
     .filter(k => k !== 'primary')
@@ -1673,10 +1673,10 @@ function _trHistoryDetailMedia(entry, result) {
   const transcript = result.transcript || (result.segments || []).map(s => s.text || '').filter(Boolean).join('\n');
   return `<div class="tr-history-detail-inline">
     <div class="tr-history-files">
-      ${_trHistoryFileLink(entry.id, 'source', 'Source media', srcName, '🎬')}
+      ${_trHistoryFileLink(entry.id, 'source', 'Quellmedien', srcName, '🎬')}
       ${fileLinks}
     </div>
-    ${transcript ? `<div class="tr-history-transcript"><div class="tr-history-text-label">Transcript</div><pre>${escapeHtml(transcript)}</pre></div>` : ''}
+    ${transcript ? `<div class="tr-history-transcript"><div class="tr-history-text-label">Transkript</div><pre>${escapeHtml(transcript)}</pre></div>` : ''}
   </div>`;
 }
 
@@ -1685,13 +1685,13 @@ function _trHistoryDetailLive(entry, result) {
   const summary = segs.map(s => s.translation || s.text || '').filter(Boolean).join(' ').slice(0, 600);
   const outFiles = result.output_files || {};
   const links = Object.keys(outFiles).map(k => {
-    const label = k === 'srt' ? 'SRT subtitles' : k === 'txt' ? 'Plain text' : k.toUpperCase();
+    const label = k === 'srt' ? 'SRT-Untertitel' : k === 'txt' ? 'Klartext' : k.toUpperCase();
     const icon = k === 'srt' ? '🎞' : '📝';
     return _trHistoryFileLink(entry.id, k, label, outFiles[k], icon);
   }).join('');
   return `<div class="tr-history-detail-inline">
-    ${summary ? `<div class="tr-history-transcript"><div class="tr-history-text-label">Transcript summary</div><div class="tr-history-text-body">${escapeHtml(summary)}${summary.length === 600 ? '…' : ''}</div></div>` : ''}
-    <div class="tr-history-files">${links || '<em style="font-size:12px;color:var(--text-400)">No saved files.</em>'}</div>
+    ${summary ? `<div class="tr-history-transcript"><div class="tr-history-text-label">Transkript-Zusammenfassung</div><div class="tr-history-text-body">${escapeHtml(summary)}${summary.length === 600 ? '…' : ''}</div></div>` : ''}
+    <div class="tr-history-files">${links || '<em style="font-size:12px;color:var(--text-400)">Keine gespeicherten Dateien.</em>'}</div>
   </div>`;
 }
 
@@ -1732,7 +1732,7 @@ async function trHistoryOpenFile(ev, url, suggestedName) {
   try {
     const resp = await fetch(url, { headers: trAuthHeaders() });
     if (!resp.ok) {
-      showToast && showToast(`Open failed (${resp.status})`, true);
+      showToast && showToast(`Öffnen fehlgeschlagen (${resp.status})`, true);
       return false;
     }
     const blob = await resp.blob();
@@ -1749,7 +1749,7 @@ async function trHistoryOpenFile(ev, url, suggestedName) {
     // finish loading without leaking memory if the user keeps the tab open.
     setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
   } catch (e) {
-    showToast && showToast('Open failed: ' + (e.message || e), true);
+    showToast && showToast('Öffnen fehlgeschlagen: ' + (e.message || e), true);
   }
   return false;
 }
@@ -1761,6 +1761,6 @@ async function trHistoryDelete(id) {
     delete _trHistoryExpanded[id];
     ['text', 'document', 'media', 'live'].forEach(_trHistoryRenderTab);
   } catch (e) {
-    showToast && showToast('Delete failed: ' + e.message, true);
+    showToast && showToast('Löschen fehlgeschlagen: ' + e.message, true);
   }
 }

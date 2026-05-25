@@ -11,7 +11,7 @@ let _projectsFilter = 'active';
 
 async function loadProjectsList() {
   const list = document.getElementById('projects-list');
-  list.innerHTML = '<div style="padding:16px;color:var(--text-400)">Loading...</div>';
+  list.innerHTML = '<div style="padding:16px;color:var(--text-400)">Wird geladen …</div>';
 
   try {
     let allProjects = [];
@@ -29,7 +29,7 @@ async function loadProjectsList() {
     _allProjectsCache = allProjects;
     renderProjectsList();
   } catch(e) {
-    list.innerHTML = '<div style="padding:16px;color:var(--error)">Failed to load projects</div>';
+    list.innerHTML = '<div style="padding:16px;color:var(--error)">Projekte konnten nicht geladen werden</div>';
   }
 }
 
@@ -62,7 +62,7 @@ function renderProjectsList() {
   list.innerHTML = '';
   list.classList.add('project-grid');
   if (!filtered.length) {
-    list.innerHTML = '<div class="project-grid-empty">No projects found</div>';
+    list.innerHTML = '<div class="project-grid-empty">Keine Projekte gefunden</div>';
     return;
   }
   for (let i = 0; i < filtered.length; i++) {
@@ -92,14 +92,14 @@ function renderProjectsList() {
         ${hasImage ? '<div class="project-card-art-overlay"></div>' : ''}
         ${!hasImage ? `<span class="project-card-glyph">${glyphHtml}</span>` : ''}
         <div class="project-card-fav-slot" onclick="event.stopPropagation()"></div>
-        <button class="project-card-menu" onclick="event.stopPropagation(); showProjectListMenu(event, '${esc(agent)}', '${esc(p.name)}')" title="More options">
+        <button class="project-card-menu" onclick="event.stopPropagation(); showProjectListMenu(event, '${esc(agent)}', '${esc(p.name)}')" title="Weitere Optionen">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
         </button>
       </div>
       <div class="project-card-info">
         <div class="project-card-title"${titleAttr}>${esc(displayName)}</div>
         <div class="project-card-meta">
-          <span class="project-card-type">Project</span>
+          <span class="project-card-type">Projekt</span>
           ${timeAgo ? `<span>· ${esc(timeAgo)}</span>` : ''}
         </div>
       </div>
@@ -133,15 +133,15 @@ function setProjectFilter(filter, el) {
 function formatTimeAgo(date) {
   if (!date || isNaN(date.getTime())) return '';
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-  if (seconds < 60) return 'just now';
+  if (seconds < 60) return 'gerade eben';
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return `vor ${minutes} Min.`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return `vor ${hours} Std.`;
   const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
+  if (days < 30) return `vor ${days} T.`;
   const months = Math.floor(days / 30);
-  return `${months}mo ago`;
+  return `vor ${months} Mon.`;
 }
 
 function openProject(agentId, projectName) {
@@ -163,7 +163,7 @@ function openProject(agentId, projectName) {
 async function _editProjectImageUpload(ev, agentId, projectName) {
   const file = ev?.target?.files?.[0];
   if (!file) return;
-  if (file.size > 2 * 1024 * 1024) { await showAlert('Image too large (max 2 MB).'); return; }
+  if (file.size > 2 * 1024 * 1024) { await showAlert('Bild zu groß (max. 2 MB).'); return; }
   const fd = new FormData();
   fd.append('file', file);
   try {
@@ -172,13 +172,13 @@ async function _editProjectImageUpload(ev, agentId, projectName) {
       { method: 'POST',
         headers: { 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
         body: fd });
-    if (!r.ok) { await showAlert(`Upload failed: ${r.status}`); return; }
+    if (!r.ok) { await showAlert(`Hochladen fehlgeschlagen: ${r.status}`); return; }
     const data = await r.json();
     const preview = document.getElementById('edit-project-image-preview');
     const label   = document.getElementById('edit-project-image-label');
     const clear   = document.getElementById('edit-project-image-clear');
     if (preview) preview.style.backgroundImage = `url('/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}/image?v=${Date.now()}')`;
-    if (label) label.textContent = 'Replace';
+    if (label) label.textContent = 'Ersetzen';
     if (clear) clear.style.display = 'inline-block';
     if (window._projectEditOriginal) window._projectEditOriginal.image = data.image || '';
     try { await window.Favourites?.reload?.(); } catch(_) {}
@@ -186,27 +186,27 @@ async function _editProjectImageUpload(ev, agentId, projectName) {
     // when the user closes the modal and returns to the list.
     try { await loadProjectsList(); } catch(_) {}
   } catch (e) {
-    await showAlert(`Upload failed: ${e.message || e}`);
+    await showAlert(`Hochladen fehlgeschlagen: ${e.message || e}`);
   } finally {
     ev.target.value = '';
   }
 }
 
 async function _editProjectImageClear(agentId, projectName) {
-  if (!await showConfirmDanger('Remove this project image?', 'Remove Image', 'Remove')) return;
+  if (!await showConfirmDanger('Dieses Projektbild entfernen?', 'Bild entfernen', 'Entfernen')) return;
   try {
     await API.del(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}/image`);
     const preview = document.getElementById('edit-project-image-preview');
     const label   = document.getElementById('edit-project-image-label');
     const clear   = document.getElementById('edit-project-image-clear');
     if (preview) preview.style.backgroundImage = '';
-    if (label) label.textContent = 'Upload';
+    if (label) label.textContent = 'Hochladen';
     if (clear) clear.style.display = 'none';
     if (window._projectEditOriginal) window._projectEditOriginal.image = '';
     try { await window.Favourites?.reload?.(); } catch(_) {}
     try { await loadProjectsList(); } catch(_) {}
   } catch (e) {
-    await showAlert(`Remove failed: ${e.message || e}`);
+    await showAlert(`Entfernen fehlgeschlagen: ${e.message || e}`);
   }
 }
 
@@ -228,13 +228,13 @@ function paintProjectDetailBanner(agentId, projectName, project) {
     banner.style.background = '';
     if (glyph) glyph.style.display = 'none';
     if (remove) remove.style.display = '';
-    if (label) label.textContent = 'Replace image';
+    if (label) label.textContent = 'Bild ersetzen';
   } else {
     banner.style.backgroundImage = '';
     banner.style.background = accent;
     if (glyph) { glyph.style.display = ''; glyph.textContent = icon; }
     if (remove) remove.style.display = 'none';
-    if (label) label.textContent = 'Upload image';
+    if (label) label.textContent = 'Bild hochladen';
   }
 }
 
@@ -246,7 +246,7 @@ async function handleProjectImageUpload(ev) {
   const projectName = state._projectDetailName;
   if (!project || !agentId || !projectName) return;
   if (file.size > 2 * 1024 * 1024) {
-    await showAlert('Image too large (max 2 MB).');
+    await showAlert('Bild zu groß (max. 2 MB).');
     return;
   }
   const fd = new FormData();
@@ -260,7 +260,7 @@ async function handleProjectImageUpload(ev) {
         body: fd,
       });
     if (!r.ok) {
-      await showAlert(`Upload failed: ${r.status}`);
+      await showAlert(`Hochladen fehlgeschlagen: ${r.status}`);
       return;
     }
     const data = await r.json();
@@ -270,7 +270,7 @@ async function handleProjectImageUpload(ev) {
     // the new source_image_url on next render.
     try { await window.Favourites?.reload?.(); } catch(_) {}
   } catch (e) {
-    await showAlert(`Upload failed: ${e.message || e}`);
+    await showAlert(`Hochladen fehlgeschlagen: ${e.message || e}`);
   } finally {
     ev.target.value = '';
   }
@@ -281,14 +281,14 @@ async function removeProjectImage() {
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
   if (!project || !agentId || !projectName) return;
-  if (!await showConfirmDanger('Remove this project image?', 'Remove Image', 'Remove')) return;
+  if (!await showConfirmDanger('Dieses Projektbild entfernen?', 'Bild entfernen', 'Entfernen')) return;
   try {
     await API.del(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}/image`);
     project.image = '';
     paintProjectDetailBanner(agentId, projectName, project);
     try { await window.Favourites?.reload?.(); } catch(_) {}
   } catch (e) {
-    await showAlert(`Remove failed: ${e.message || e}`);
+    await showAlert(`Entfernen fehlgeschlagen: ${e.message || e}`);
   }
 }
 
@@ -297,7 +297,7 @@ async function loadProjectDetail(agentId, projectName) {
   try {
     const project = await API.getProject(agentId, projectName);
     if (!project) {
-      showToast('Project not found');
+      showToast('Projekt nicht gefunden');
       navigateTo('projects');
       return;
     }
@@ -319,14 +319,14 @@ async function loadProjectDetail(agentId, projectName) {
     if (project.description) {
       const desc = project.description;
       if (desc.length > 200) {
-        descEl.innerHTML = esc(desc.slice(0, 200)) + '... <span class="project-detail-desc-toggle" onclick="toggleProjectDesc()">Show more</span>';
+        descEl.innerHTML = esc(desc.slice(0, 200)) + '... <span class="project-detail-desc-toggle" onclick="toggleProjectDesc()">Mehr anzeigen</span>';
         descEl.dataset.full = desc;
         descEl.dataset.collapsed = 'true';
       } else {
         descEl.textContent = desc;
       }
     } else {
-      descEl.innerHTML = '<span style="color:var(--text-400);font-style:italic">No description</span>';
+      descEl.innerHTML = '<span style="color:var(--text-400);font-style:italic">Keine Beschreibung</span>';
     }
 
     // Render the Research / Q&A project checkbox state.
@@ -351,7 +351,7 @@ async function loadProjectDetail(agentId, projectName) {
     const composerInput = document.getElementById('project-input');
     if (composerInput) {
       const displayName = project.name || projectName;
-      composerInput.placeholder = `Write your message to ${displayName}`;
+      composerInput.placeholder = `Ihre Nachricht an ${displayName}`;
     }
 
     // Load project files
@@ -371,7 +371,7 @@ async function loadProjectDetail(agentId, projectName) {
     // Load project conversations
     loadProjectChats(agentId, projectName);
   } catch(e) {
-    showToast('Failed to load project');
+    showToast('Projekt konnte nicht geladen werden');
     console.error(e);
   }
 }
@@ -384,33 +384,33 @@ function projectItemPillHtml(kind, ident) {
   const key = `${kind}:${ident}`;
   const it = items[key];
   if (!it) {
-    return '<span class="project-item-pill" data-state="pending" title="Waiting for next sync cycle">pending</span>';
+    return '<span class="project-item-pill" data-state="pending" title="Wartet auf den nächsten Abgleichzyklus">ausstehend</span>';
   }
   const stateName = it.state || 'pending';
   const tip = it.error ? it.error
             : (stateName === 'indexed'
-                ? `Indexed ${it.drawers_filed != null ? '(' + it.drawers_filed + ' drawers)' : ''}`.trim()
-                : (stateName === 'syncing' ? 'Sync in progress…' : 'Pending'));
+                ? `Indexiert ${it.drawers_filed != null ? '(' + it.drawers_filed + ' Schubladen)' : ''}`.trim()
+                : (stateName === 'syncing' ? 'Abgleich läuft …' : 'Ausstehend'));
   let label = stateName;
-  if (stateName === 'indexed') label = 'indexed';
-  else if (stateName === 'syncing') label = 'syncing…';
-  else if (stateName === 'error') label = 'error';
+  if (stateName === 'indexed') label = 'indexiert';
+  else if (stateName === 'syncing') label = 'wird abgeglichen …';
+  else if (stateName === 'error') label = 'Fehler';
   let kgBadge = '';
   const kgState = it.kg_state || '';
   const triples = it.triples_extracted;
   const kgParseErrors = it.kg_parse_errors || 0;
   if (kgState === 'extracting') {
-    kgBadge = ` <span class="project-item-pill" data-kg="extracting" title="Knowledge graph extraction running">KG…</span>`;
+    kgBadge = ` <span class="project-item-pill" data-kg="extracting" title="Knowledge-Graph-Extraktion läuft">KG…</span>`;
   } else if (kgState === 'error') {
-    const kgErr = it.kg_last_error || 'KG extraction failed';
-    const triplesPart = (typeof triples === 'number' && triples > 0) ? `${triples} relations · ` : '';
+    const kgErr = it.kg_last_error || 'KG-Extraktion fehlgeschlagen';
+    const triplesPart = (typeof triples === 'number' && triples > 0) ? `${triples} Beziehungen · ` : '';
     kgBadge = ` <span class="project-item-pill" data-kg="error" title="${esc(kgErr)}">${triplesPart}KG !</span>`;
   } else if (typeof triples === 'number' && triples > 0) {
     // Per-folder pill in the right pane — same renaming as the project chip
     // ("triples" is jargon, "relations" is what's been extracted).
-    const warnPart = kgParseErrors > 0 ? ` · ${kgParseErrors} parse err` : '';
-    const warnTitle = kgParseErrors > 0 ? ` (${kgParseErrors} chunks returned invalid JSON — non-fatal)` : '';
-    kgBadge = ` <span class="project-item-pill" data-kg="${kgParseErrors > 0 ? 'warn' : 'ok'}" title="Knowledge graph relations extracted from this folder${warnTitle}">${triples} relations${warnPart}</span>`;
+    const warnPart = kgParseErrors > 0 ? ` · ${kgParseErrors} Parse-Fehler` : '';
+    const warnTitle = kgParseErrors > 0 ? ` (${kgParseErrors} Abschnitte lieferten ungültiges JSON — nicht kritisch)` : '';
+    kgBadge = ` <span class="project-item-pill" data-kg="${kgParseErrors > 0 ? 'warn' : 'ok'}" title="Aus diesem Ordner extrahierte Knowledge-Graph-Beziehungen${warnTitle}">${triples} Beziehungen${warnPart}</span>`;
   }
   return `<span class="project-item-pill" data-state="${stateName}" title="${esc(tip)}">${esc(label)}</span>${kgBadge}`;
 }
@@ -445,7 +445,7 @@ function humanIn(iso) {
   const t = new Date(iso).getTime();
   if (!t) return '';
   const sec = (t - Date.now()) / 1000;
-  if (sec < 60) return 'now';
+  if (sec < 60) return 'jetzt';
   if (sec < 3600) return Math.floor(sec / 60) + 'm';
   if (sec < 86400) return Math.floor(sec / 3600) + 'h';
   return Math.floor(sec / 86400) + 'd';
@@ -458,7 +458,7 @@ function toggleProjectDesc() {
     descEl.dataset.collapsed = 'false';
   } else {
     const desc = descEl.dataset.full;
-    descEl.innerHTML = esc(desc.slice(0, 200)) + '... <span class="project-detail-desc-toggle" onclick="toggleProjectDesc()">Show more</span>';
+    descEl.innerHTML = esc(desc.slice(0, 200)) + '... <span class="project-detail-desc-toggle" onclick="toggleProjectDesc()">Mehr anzeigen</span>';
     descEl.dataset.collapsed = 'true';
   }
 }
@@ -479,9 +479,9 @@ async function loadProjectFiles(agentId, projectName) {
       const srcHash = doc.source_hash || '';
       item.innerHTML = `
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        <span class="project-file-name" title="${esc(doc.source || doc.name || '')}">${esc(doc.source || doc.name || 'Document')}</span>
+        <span class="project-file-name" title="${esc(doc.source || doc.name || '')}">${esc(doc.source || doc.name || 'Dokument')}</span>
         <span data-pif-pill data-pif-kind="attachment" data-pif-id="${esc(srcHash)}">${projectItemPillHtml('attachment', srcHash)}</span>
-        <span class="project-file-delete" onclick="deleteProjectFile('${esc(agentId)}','${esc(projectName)}','${esc(srcHash)}'); event.stopPropagation();" title="Remove">
+        <span class="project-file-delete" onclick="deleteProjectFile('${esc(agentId)}','${esc(projectName)}','${esc(srcHash)}'); event.stopPropagation();" title="Entfernen">
           <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </span>
       `;
@@ -546,7 +546,7 @@ async function loadProjectChats(agentId, projectName) {
     if (!sessions.length) {
       const empty = document.createElement('div');
       empty.style.cssText = 'padding:18px 8px;color:var(--text-400);font-size:13px;text-align:center';
-      empty.textContent = filter === 'archived' ? 'No archived chats' : 'No chats yet';
+      empty.textContent = filter === 'archived' ? 'Keine archivierten Chats' : 'Noch keine Chats';
       container.appendChild(empty);
       return;
     }
@@ -557,13 +557,13 @@ async function loadProjectChats(agentId, projectName) {
       const isArchived = filter === 'archived' || s.status === 'archived';
       // Stash status flag for the menu (avoids a second fetch).
       item.dataset.archived = isArchived ? '1' : '0';
-      const pcTitle = s.title || s.summary || 'Untitled';
+      const pcTitle = s.title || s.summary || 'Unbenannt';
       const pcTip = s.summary ? ` title="${esc(s.summary)}"` : '';
       item.innerHTML = `
         <span class="project-chat-item-title"${pcTip}>${esc(pcTitle)}</span>
-        <span class="project-chat-item-meta">${ago ? 'Last message ' + ago : ''}</span>
+        <span class="project-chat-item-meta">${ago ? 'Letzte Nachricht ' + ago : ''}</span>
         <span class="project-chat-item-actions">
-          <button style="color:var(--text-400);padding:4px" onclick="event.stopPropagation(); showProjectChatMenu(event, '${esc(s.id)}', ${isArchived ? 'true' : 'false'})" title="More options">
+          <button style="color:var(--text-400);padding:4px" onclick="event.stopPropagation(); showProjectChatMenu(event, '${esc(s.id)}', ${isArchived ? 'true' : 'false'})" title="Weitere Optionen">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
           </button>
         </span>
@@ -605,22 +605,22 @@ async function archiveAllProjectChats() {
   // On the Active tab → archive all active in this project.
   // On the Archived tab → unarchive all archived in this project.
   if (filter === 'archived') {
-    if (!await showConfirm(`Unarchive all archived chats in "${projectName}"?`)) return;
+    if (!await showConfirm(`Alle archivierten Chats in „${projectName}“ wiederherstellen?`)) return;
     try {
       await API.manageSession({ action: 'unarchive_all', agent: agentId, project: projectName });
-      showToast('All chats unarchived');
+      showToast('Alle Chats wiederhergestellt');
       loadProjectChats(agentId, projectName);
       loadAgentSessions(agentId);
-    } catch(e) { showToast('Unarchive all failed', true); }
+    } catch(e) { showToast('Wiederherstellen aller Chats fehlgeschlagen', true); }
     return;
   }
-  if (!await showConfirm(`Archive all active chats in "${projectName}"?`)) return;
+  if (!await showConfirm(`Alle aktiven Chats in „${projectName}“ archivieren?`)) return;
   try {
     await API.manageSession({ action: 'archive_all', agent: agentId, project: projectName });
-    showToast('All chats archived');
+    showToast('Alle Chats archiviert');
     loadProjectChats(agentId, projectName);
     loadAgentSessions(agentId);
-  } catch(e) { showToast('Archive all failed', true); }
+  } catch(e) { showToast('Archivieren aller Chats fehlgeschlagen', true); }
 }
 
 async function deleteAllProjectChats() {
@@ -629,20 +629,20 @@ async function deleteAllProjectChats() {
   if (!agentId || !projectName) return;
   const filter = state._projectChatsFilter || 'active';
   const archivedOnly = filter === 'archived';
-  const label = archivedOnly ? 'archived chats' : 'ALL chats';
-  if (!await showConfirmDanger(`Permanently delete ${label} in "${projectName}"? This cannot be undone.`, 'Delete Chats', 'Delete')) return;
+  const label = archivedOnly ? 'archivierte Chats' : 'ALLE Chats';
+  if (!await showConfirmDanger(`${label} in „${projectName}“ endgültig löschen? Dies kann nicht rückgängig gemacht werden.`, 'Chats löschen', 'Löschen')) return;
   try {
     const r = await API.manageSession({
       action: 'delete_all', agent: agentId, project: projectName, archived_only: archivedOnly,
     });
-    showToast(`Deleted ${r.count || 'all'} chats`);
+    showToast(`${r.count || 'Alle'} Chats gelöscht`);
     // If the active chat was inside this project, reset the view.
     if (state.activeChat?.sessionId && state.currentProject === projectName) {
       newChat();
     }
     loadProjectChats(agentId, projectName);
     loadAgentSessions(agentId);
-  } catch(e) { showToast('Delete all failed', true); }
+  } catch(e) { showToast('Löschen aller Chats fehlgeschlagen', true); }
 }
 
 // Per-session unarchive helper used by the project chat menu and (eventually)
@@ -650,14 +650,14 @@ async function deleteAllProjectChats() {
 async function unarchiveSession(sessionId) {
   try {
     await API.manageSession({ action: 'unarchive', session_id: sessionId });
-    showToast('Chat unarchived');
+    showToast('Chat wiederhergestellt');
     const agentId = state._projectDetailAgent;
     const projectName = state._projectDetailName;
     if (state.currentView === 'project-detail' && agentId && projectName) {
       loadProjectChats(agentId, projectName);
     }
     loadAgentSessions(state.activeAgentId);
-  } catch(e) { showToast('Unarchive failed', true); }
+  } catch(e) { showToast('Wiederherstellen fehlgeschlagen', true); }
 }
 
 function editProjectInstructions() {
@@ -720,7 +720,7 @@ function switchInstrTab(mode) {
     if (raw.trim()) {
       preview.innerHTML = renderMarkdown(raw);
     } else {
-      preview.innerHTML = '<span class="instr-preview-empty">Nothing to preview yet — write some instructions in the Edit tab.</span>';
+      preview.innerHTML = '<span class="instr-preview-empty">Noch nichts zur Vorschau — schreiben Sie im Reiter „Bearbeiten“ einige Anweisungen.</span>';
     }
     textarea.style.display = 'none';
     preview.style.display = 'block';
@@ -778,7 +778,7 @@ function renderProjectWebUrls(urls) {
         <div class="pif-row-head">
           <svg class="pif-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
           <span class="pif-name" title="${esc(u.url)}">${esc(u.title || host)}</span>
-          <button class="pif-action-btn pif-delete" onclick="removeProjectWebUrl(${idx})" title="Remove URL" aria-label="Remove">
+          <button class="pif-action-btn pif-delete" onclick="removeProjectWebUrl(${idx})" title="URL entfernen" aria-label="Entfernen">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
           </button>
         </div>
@@ -883,14 +883,14 @@ function _renderProjectMemberChips(containerId, ids, listId) {
   const byId = {};
   for (const u of dir) byId[u.id] = u;
   if (!ids.length) {
-    wrap.innerHTML = '<span style="font-size:12px;color:var(--text-400);font-style:italic">None added</span>';
+    wrap.innerHTML = '<span style="font-size:12px;color:var(--text-400);font-style:italic">Niemand hinzugefügt</span>';
     return;
   }
   wrap.innerHTML = ids.map(uid => {
     const u = byId[uid] || {id: uid, display_name: uid};
     return `<span class="project-member-chip" data-uid="${esc(uid)}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-200);border:1px solid var(--border-200);border-radius:12px;font-size:12px;margin:2px 4px 2px 0">
       ${esc(_userLabel(u))}
-      <button onclick="_pmRemove('${esc(listId)}','${esc(uid)}','${esc(containerId)}')" style="background:none;border:none;cursor:pointer;color:var(--text-400);padding:0;line-height:1" title="Remove">×</button>
+      <button onclick="_pmRemove('${esc(listId)}','${esc(uid)}','${esc(containerId)}')" style="background:none;border:none;cursor:pointer;color:var(--text-400);padding:0;line-height:1" title="Entfernen">×</button>
     </span>`;
   }).join('');
 }
@@ -925,10 +925,10 @@ function _renderMemberPicker(opts) {
       <div id="${opts.containerId}" style="min-height:24px;margin-bottom:6px"></div>
       <div style="display:flex;gap:6px">
         <select class="project-modal-input" id="${opts.selectId}" style="flex:1">
-          <option value="">Select user…</option>
+          <option value="">Benutzer auswählen …</option>
           ${options}
         </select>
-        <button class="btn-secondary" onclick="_pmAdd('${esc(opts.selectId)}','${esc(opts.listId)}','${esc(opts.containerId)}')">Add</button>
+        <button class="btn-secondary" onclick="_pmAdd('${esc(opts.selectId)}','${esc(opts.listId)}','${esc(opts.containerId)}')">Hinzufügen</button>
       </div>
     </div>`;
 }
@@ -950,18 +950,18 @@ async function showCreateProjectModal() {
   content.style.maxWidth = '520px';
   content.innerHTML = `
     <div class="modal-header">
-      <span class="modal-title">New Project</span>
+      <span class="modal-title">Neues Projekt</span>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
     </div>
     <div class="modal-body" style="padding:16px">
       <div class="project-modal-field">
-        <label class="project-modal-label">Project name</label>
-        <input class="project-modal-input" id="create-project-name" placeholder="My Project" autofocus>
+        <label class="project-modal-label">Projektname</label>
+        <input class="project-modal-input" id="create-project-name" placeholder="Mein Projekt" autofocus>
       </div>
       <div class="project-modal-field">
-        <label class="project-modal-label">Description (optional)</label>
+        <label class="project-modal-label">Beschreibung (optional)</label>
         <textarea class="project-modal-input" id="create-project-desc" rows="3" style="resize:vertical"
-          placeholder="What is this project about?"></textarea>
+          placeholder="Worum geht es in diesem Projekt?"></textarea>
       </div>
       <div class="project-modal-field">
         <label class="project-modal-label">Agent</label>
@@ -978,13 +978,13 @@ async function showCreateProjectModal() {
         const canTeam = isAdmin || headedTeams.length > 0;
         const teamOptions = isAdmin ? (state.userTeams || []) : headedTeams;
         const visOpts = [];
-        visOpts.push(`<option value="user"${!isAdmin && !canTeam ? ' selected' : ''}>Personal</option>`);
+        visOpts.push(`<option value="user"${!isAdmin && !canTeam ? ' selected' : ''}>Persönlich</option>`);
         if (canTeam) visOpts.push(`<option value="team"${!isAdmin ? ' selected' : ''}>Team</option>`);
-        if (isAdmin) visOpts.push('<option value="global" selected>Global (everyone)</option>');
+        if (isAdmin) visOpts.push('<option value="global" selected>Global (alle)</option>');
         const initialVis = isAdmin ? 'global' : (canTeam ? 'team' : 'user');
         const ownerBlock = isAdmin
           ? `<div class="project-modal-field">
-              <label class="project-modal-label">Owner</label>
+              <label class="project-modal-label">Eigentümer</label>
               <select class="project-modal-input" id="create-project-owner">
                 ${(state._userDirectory || []).map(u => `<option value="${esc(u.id)}" ${u.id===state.authUser.id?'selected':''}>${esc(_userLabel(u))}</option>`).join('')}
               </select>
@@ -993,7 +993,7 @@ async function showCreateProjectModal() {
         const visBlock = (visOpts.length === 1)
           ? `<input type="hidden" id="create-project-visibility" value="user">`
           : `<div class="project-modal-field">
-              <label class="project-modal-label">Visibility</label>
+              <label class="project-modal-label">Sichtbarkeit</label>
               <select class="project-modal-input" id="create-project-visibility" onchange="_createProjectOnVisChange(this.value)">
                 ${visOpts.join('')}
               </select>
@@ -1001,22 +1001,22 @@ async function showCreateProjectModal() {
             <div class="project-modal-field" id="create-project-team-wrap" style="display:${initialVis==='team'?'block':'none'}">
               <label class="project-modal-label">Team</label>
               <select class="project-modal-input" id="create-project-team">
-                <option value="">Select team...</option>
+                <option value="">Team auswählen …</option>
                 ${teamOptions.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}
               </select>
             </div>`;
         // Members panels (rendered for create; default to whatever initialVis dictates)
         const extrasPicker = _renderMemberPicker({
-          label: 'Add members',
-          helpText: 'Personal: people who get access. Team: extras outside the team. Global: ignored.',
+          label: 'Mitglieder hinzufügen',
+          helpText: 'Persönlich: Personen mit Zugriff. Team: Zusätzliche außerhalb des Teams. Global: ignoriert.',
           listId: '_projectCreateExtras',
           containerId: 'create-project-extras-chips',
           selectId: 'create-project-extras-select',
           excludeIds: [state.authUser.id],
         });
         const excludedPicker = _renderMemberPicker({
-          label: 'Exclude users',
-          helpText: 'Global only — block specific users from this project.',
+          label: 'Benutzer ausschließen',
+          helpText: 'Nur Global — bestimmte Benutzer von diesem Projekt ausschließen.',
           listId: '_projectCreateExcluded',
           containerId: 'create-project-excluded-chips',
           selectId: 'create-project-excluded-select',
@@ -1031,8 +1031,8 @@ async function showCreateProjectModal() {
       })() : ''}
     </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border-100)">
-      <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-      <button class="btn-primary" onclick="createProject()">Create Project</button>
+      <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Abbrechen</button>
+      <button class="btn-primary" onclick="createProject()">Projekt erstellen</button>
     </div>
   `;
   overlay.appendChild(content);
@@ -1069,8 +1069,8 @@ async function createProject() {
   const visibility = document.getElementById('create-project-visibility')?.value || '';
   const teamId = document.getElementById('create-project-team')?.value || '';
   const ownerId = document.getElementById('create-project-owner')?.value || '';
-  if (!name) { showToast('Project name is required'); return; }
-  if (visibility === 'team' && !teamId) { showToast('Select a team for team-scoped project'); return; }
+  if (!name) { showToast('Projektname ist erforderlich'); return; }
+  if (visibility === 'team' && !teamId) { showToast('Wählen Sie ein Team für ein team-gebundenes Projekt'); return; }
 
   const body = { name, description: desc || '' };
   if (visibility) body.visibility = visibility;
@@ -1085,11 +1085,11 @@ async function createProject() {
   try {
     const result = await API.createProject(agentId, body);
     if (result.error) { showToast(result.error); return; }
-    showToast('Project created');
+    showToast('Projekt erstellt');
     document.querySelector('.modal-overlay')?.remove();
     openProject(agentId, result.name || name);
   } catch(e) {
-    showToast('Failed to create project');
+    showToast('Projekt konnte nicht erstellt werden');
   }
 }
 
@@ -1102,9 +1102,9 @@ function showProjectListMenu(event, agentId, projectName) {
   menu.className = 'ctx-menu';
   menu.style.cssText = `position:fixed;z-index:10000;background:var(--bg-000);border:1px solid var(--border-200);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);padding:4px;min-width:140px`;
   menu.innerHTML = `
-    <div style="padding:8px 12px;cursor:pointer;border-radius:6px;font-size:13px;color:var(--text-200)" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="editProjectFromMenu('${esc(agentId)}','${esc(projectName)}'); this.closest('.ctx-menu').remove()">Edit</div>
-    <div style="padding:8px 12px;cursor:pointer;border-radius:6px;font-size:13px;color:var(--text-200)" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="archiveProject('${esc(agentId)}','${esc(projectName)}'); this.closest('.ctx-menu').remove()">Archive</div>
-    <div style="padding:8px 12px;cursor:pointer;border-radius:6px;font-size:13px;color:var(--error)" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="deleteProject('${esc(agentId)}','${esc(projectName)}'); this.closest('.ctx-menu').remove()">Delete</div>
+    <div style="padding:8px 12px;cursor:pointer;border-radius:6px;font-size:13px;color:var(--text-200)" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="editProjectFromMenu('${esc(agentId)}','${esc(projectName)}'); this.closest('.ctx-menu').remove()">Bearbeiten</div>
+    <div style="padding:8px 12px;cursor:pointer;border-radius:6px;font-size:13px;color:var(--text-200)" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="archiveProject('${esc(agentId)}','${esc(projectName)}'); this.closest('.ctx-menu').remove()">Archivieren</div>
+    <div style="padding:8px 12px;cursor:pointer;border-radius:6px;font-size:13px;color:var(--error)" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="deleteProject('${esc(agentId)}','${esc(projectName)}'); this.closest('.ctx-menu').remove()">Löschen</div>
   `;
   document.body.appendChild(menu);
   // Position near the click
@@ -1135,10 +1135,10 @@ function showProjectChatMenu(event, sessionId, isArchived) {
   const dangerStyle = itemStyle + ';color:var(--error)';
   const sid = esc(sessionId);
   const toggleAction = isArchived
-    ? `<div style="${itemStyle}" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="unarchiveSession('${sid}'); this.closest('.ctx-menu').remove()">Unarchive</div>`
-    : `<div style="${itemStyle}" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="archiveSession('${sid}'); this.closest('.ctx-menu').remove()">Archive</div>`;
+    ? `<div style="${itemStyle}" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="unarchiveSession('${sid}'); this.closest('.ctx-menu').remove()">Wiederherstellen</div>`
+    : `<div style="${itemStyle}" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="archiveSession('${sid}'); this.closest('.ctx-menu').remove()">Archivieren</div>`;
   menu.innerHTML = toggleAction + `
-    <div style="${dangerStyle}" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="deleteSession('${sid}'); this.closest('.ctx-menu').remove()">Delete</div>
+    <div style="${dangerStyle}" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="deleteSession('${sid}'); this.closest('.ctx-menu').remove()">Löschen</div>
   `;
   document.body.appendChild(menu);
   const r = event.target.closest('button')?.getBoundingClientRect() || { left: event.clientX, bottom: event.clientY };
@@ -1153,14 +1153,14 @@ function showProjectChatMenu(event, sessionId, isArchived) {
 async function editProjectFromMenu(agentId, projectName) {
   let project = null;
   try { project = await API.getProject(agentId, projectName); } catch(e) {}
-  if (!project) { showToast('Failed to load project'); return; }
+  if (!project) { showToast('Projekt konnte nicht geladen werden'); return; }
 
   const isAdmin = state.authUser && state.authUser.role === 'admin';
   const ownerUid = project.owner_user_id || '';
   const ownerTid = project.owner_team_id || '';
   const isOwner = state.authUser && ownerUid && ownerUid === state.authUser.id;
   const canManage = isAdmin || isOwner;
-  if (!canManage) { showToast('Only the project owner can edit this project'); return; }
+  if (!canManage) { showToast('Nur der Projekteigentümer kann dieses Projekt bearbeiten'); return; }
 
   await _ensureUserDirectory();
   // Stash for the save handler so it knows the effective scope when the
@@ -1185,49 +1185,49 @@ async function editProjectFromMenu(agentId, projectName) {
   content.style.maxWidth = '540px';
   const ownerSelectorBlock = canTransfer
     ? `<div class="project-modal-field">
-        <label class="project-modal-label">Owner</label>
+        <label class="project-modal-label">Eigentümer</label>
         <select class="project-modal-input" id="edit-project-owner">
           ${(state._userDirectory || []).map(u => `<option value="${esc(u.id)}" ${u.id===ownerUid?'selected':''}>${esc(_userLabel(u))}</option>`).join('')}
         </select>
-        ${isAdmin ? '' : '<div style="font-size:11px;color:var(--text-400);margin-top:4px">Transferring removes your edit rights.</div>'}
+        ${isAdmin ? '' : '<div style="font-size:11px;color:var(--text-400);margin-top:4px">Bei einer Übertragung verlieren Sie Ihre Bearbeitungsrechte.</div>'}
       </div>`
-    : `<div class="project-modal-field" style="font-size:12px;color:var(--text-400)">Owner: <strong>${esc(_userLabel((state._userDirectory||[]).find(u=>u.id===ownerUid)||{id:ownerUid,display_name:ownerUid}))}</strong></div>`;
+    : `<div class="project-modal-field" style="font-size:12px;color:var(--text-400)">Eigentümer: <strong>${esc(_userLabel((state._userDirectory||[]).find(u=>u.id===ownerUid)||{id:ownerUid,display_name:ownerUid}))}</strong></div>`;
 
   const scopeBlock = canRescope
     ? `<div class="project-modal-field">
-        <label class="project-modal-label">Visibility</label>
+        <label class="project-modal-label">Sichtbarkeit</label>
         <select class="project-modal-input" id="edit-project-visibility" onchange="_editProjectOnVisChange(this.value)">
-          <option value="user" ${project.visibility==='user'?'selected':''}>Personal</option>
+          <option value="user" ${project.visibility==='user'?'selected':''}>Persönlich</option>
           <option value="team" ${project.visibility==='team'?'selected':''}>Team</option>
-          <option value="global" ${project.visibility==='global'?'selected':''}>Global (everyone)</option>
+          <option value="global" ${project.visibility==='global'?'selected':''}>Global (alle)</option>
         </select>
       </div>
       <div class="project-modal-field" id="edit-project-team-wrap" style="display:${project.visibility==='team'?'block':'none'}">
         <label class="project-modal-label">Team</label>
         <select class="project-modal-input" id="edit-project-team">
-          <option value="">Select team...</option>
+          <option value="">Team auswählen …</option>
           ${allTeams.map(t => `<option value="${esc(t.id)}" ${t.id===ownerTid?'selected':''}>${esc(t.name)}</option>`).join('')}
         </select>
       </div>`
     : `<div class="project-modal-field" style="font-size:12px;color:var(--text-400)">
-        Visibility: <strong>${esc(project.visibility || 'global')}</strong>${ownerTid?` · Team: <strong>${esc((allTeams.find(t=>t.id===ownerTid)||{}).name||ownerTid)}</strong>`:''}
-        <div style="margin-top:4px">Only admins can change scope.</div>
+        Sichtbarkeit: <strong>${esc(project.visibility || 'global')}</strong>${ownerTid?` · Team: <strong>${esc((allTeams.find(t=>t.id===ownerTid)||{}).name||ownerTid)}</strong>`:''}
+        <div style="margin-top:4px">Nur Administratoren können den Geltungsbereich ändern.</div>
       </div>`;
 
   // Member pickers
   const extrasPicker = _renderMemberPicker({
-    label: 'Members',
+    label: 'Mitglieder',
     helpText: project.visibility === 'team'
-      ? 'Team members are auto-included. List below holds extras outside the team.'
-      : (project.visibility === 'global' ? '' : 'Users granted access in addition to the owner.'),
+      ? 'Teammitglieder sind automatisch enthalten. Die Liste unten enthält Zusätzliche außerhalb des Teams.'
+      : (project.visibility === 'global' ? '' : 'Benutzer, die zusätzlich zum Eigentümer Zugriff erhalten.'),
     listId: '_projectEditExtras',
     containerId: 'edit-project-extras-chips',
     selectId: 'edit-project-extras-select',
     excludeIds: [ownerUid],
   });
   const excludedPicker = _renderMemberPicker({
-    label: 'Excluded users',
-    helpText: 'Block these users from a Global project.',
+    label: 'Ausgeschlossene Benutzer',
+    helpText: 'Diese Benutzer von einem globalen Projekt ausschließen.',
     listId: '_projectEditExcluded',
     containerId: 'edit-project-excluded-chips',
     selectId: 'edit-project-excluded-select',
@@ -1236,35 +1236,35 @@ async function editProjectFromMenu(agentId, projectName) {
 
   content.innerHTML = `
     <div class="modal-header">
-      <span class="modal-title">Edit Project</span>
+      <span class="modal-title">Projekt bearbeiten</span>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
     </div>
     <div class="modal-body" style="padding:16px">
       <div class="project-modal-field">
-        <label class="project-modal-label">Project name</label>
-        <input class="project-modal-input" id="edit-project-display-name" value="${esc(project.name || projectName)}" placeholder="My Project">
-        <div style="font-size:11px;color:var(--text-400);margin-top:4px">Display name only. Folder name stays <code>${esc(projectName)}</code>.</div>
+        <label class="project-modal-label">Projektname</label>
+        <input class="project-modal-input" id="edit-project-display-name" value="${esc(project.name || projectName)}" placeholder="Mein Projekt">
+        <div style="font-size:11px;color:var(--text-400);margin-top:4px">Nur Anzeigename. Der Ordnername bleibt <code>${esc(projectName)}</code>.</div>
       </div>
       <div class="project-modal-field">
-        <label class="project-modal-label">Description</label>
+        <label class="project-modal-label">Beschreibung</label>
         <textarea class="project-modal-input" id="edit-project-desc" rows="3" style="resize:vertical"
-          placeholder="What is this project about?">${esc(project.description || '')}</textarea>
+          placeholder="Worum geht es in diesem Projekt?">${esc(project.description || '')}</textarea>
       </div>
       <div class="project-modal-field">
-        <label class="project-modal-label">Icon</label>
+        <label class="project-modal-label">Symbol</label>
         <input class="project-modal-input" id="edit-project-icon" value="${esc(project.icon || '📁')}" maxlength="4" style="width:80px;text-align:center;font-size:18px">
       </div>
       <div class="project-modal-field">
-        <label class="project-modal-label">Image</label>
+        <label class="project-modal-label">Bild</label>
         <div style="display:flex;align-items:center;gap:10px">
           <div id="edit-project-image-preview" style="width:64px;height:42px;border-radius:6px;border:1px solid var(--border-200);background:var(--bg-300);background-size:cover;background-position:center;flex-shrink:0;${project.image ? `background-image:url('/v1/agents/${esc(agentId)}/projects/${esc(projectName)}/image?v=${Date.now()}')` : ''}"></div>
           <label class="btn-secondary" style="cursor:pointer">
-            <span id="edit-project-image-label">${project.image ? 'Replace' : 'Upload'}</span>
+            <span id="edit-project-image-label">${project.image ? 'Ersetzen' : 'Hochladen'}</span>
             <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden onchange="_editProjectImageUpload(event,'${esc(agentId)}','${esc(projectName)}')">
           </label>
-          <button type="button" class="btn-secondary" id="edit-project-image-clear" onclick="_editProjectImageClear('${esc(agentId)}','${esc(projectName)}')" style="display:${project.image?'inline-block':'none'}">Remove</button>
+          <button type="button" class="btn-secondary" id="edit-project-image-clear" onclick="_editProjectImageClear('${esc(agentId)}','${esc(projectName)}')" style="display:${project.image?'inline-block':'none'}">Entfernen</button>
         </div>
-        <div style="font-size:11px;color:var(--text-400);margin-top:4px">Used as the card background on the projects list and on favourites pinned to this project. Max 2 MB.</div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:4px">Wird als Kartenhintergrund in der Projektliste und bei an dieses Projekt angehefteten Favoriten verwendet. Max. 2 MB.</div>
       </div>
       ${ownerSelectorBlock}
       ${scopeBlock}
@@ -1272,8 +1272,8 @@ async function editProjectFromMenu(agentId, projectName) {
       <div id="edit-project-excluded-wrap" style="display:${project.visibility==='global'?'block':'none'}">${excludedPicker}</div>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border-100)">
-      <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-      <button class="btn-primary" onclick="saveProjectEdit('${esc(agentId)}','${esc(projectName)}')">Save</button>
+      <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Abbrechen</button>
+      <button class="btn-primary" onclick="saveProjectEdit('${esc(agentId)}','${esc(projectName)}')">Speichern</button>
     </div>
   `;
   overlay.appendChild(content);
@@ -1300,14 +1300,14 @@ async function saveProjectEdit(agentId, projectName) {
   const visEl = document.getElementById('edit-project-visibility');
   const teamEl = document.getElementById('edit-project-team');
   const ownerEl = document.getElementById('edit-project-owner');
-  if (!displayName) { showToast('Project name is required'); return; }
+  if (!displayName) { showToast('Projektname ist erforderlich'); return; }
   const updates = { name: displayName, description: desc, icon };
   if (ownerEl) updates.owner_user_id = ownerEl.value || '';
   if (visEl) {
     updates.visibility = visEl.value;
     if (visEl.value === 'team') {
       const tid = teamEl?.value || '';
-      if (!tid) { showToast('Select a team'); return; }
+      if (!tid) { showToast('Wählen Sie ein Team'); return; }
       updates.owner_team_id = tid;
     } else {
       updates.owner_team_id = '';
@@ -1326,32 +1326,32 @@ async function saveProjectEdit(agentId, projectName) {
   try {
     const result = await API.updateProject(agentId, projectName, updates);
     if (result && result.error) { showToast(result.error); return; }
-    showToast('Project updated');
+    showToast('Projekt aktualisiert');
     document.querySelector('.modal-overlay')?.remove();
     if (state._projectDetailAgent === agentId && state._projectDetailName === projectName) {
       loadProjectDetail(agentId, projectName);
     }
     loadProjectsList();
   } catch(e) {
-    showToast('Failed to update project');
+    showToast('Projekt konnte nicht aktualisiert werden');
   }
 }
 
 async function archiveProject(agentId, projectName) {
   try {
     await API.updateProject(agentId, projectName, { status: 'archived' });
-    showToast('Project archived');
+    showToast('Projekt archiviert');
     loadProjectsList();
-  } catch(e) { showToast('Failed to archive project'); }
+  } catch(e) { showToast('Projekt konnte nicht archiviert werden'); }
 }
 
 async function deleteProject(agentId, projectName) {
-  if (!await showConfirmDanger(`Delete project "${projectName}"? This cannot be undone.`, 'Delete Project', 'Delete')) return;
+  if (!await showConfirmDanger(`Projekt „${projectName}“ löschen? Dies kann nicht rückgängig gemacht werden.`, 'Projekt löschen', 'Löschen')) return;
   try {
     await API.deleteProject(agentId, projectName);
-    showToast('Project deleted');
+    showToast('Projekt gelöscht');
     loadProjectsList();
-  } catch(e) { showToast('Failed to delete project'); }
+  } catch(e) { showToast('Projekt konnte nicht gelöscht werden'); }
 }
 
 function toggleProjectStar() {

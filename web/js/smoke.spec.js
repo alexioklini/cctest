@@ -37,7 +37,7 @@ async function login(page) {
   if (await userField.isVisible().catch(() => false)) {
     await userField.fill('admin');
     await page.locator('#auth-password').fill('admin');
-    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.getByRole('button', { name: 'Anmelden' }).click();
   }
   // Welcome view is the post-login landing.
   await expect(page.locator('#welcome-view')).toBeVisible({ timeout: 10000 });
@@ -70,12 +70,12 @@ test('General Settings modal opens + a fetch-triggering tab renders', async ({ p
   const errors = attachConsoleGuard(page);
   await login(page);
   await page.evaluate(() => openGeneralSettings());
-  await expect(page.locator('.modal-overlay .modal-title')).toHaveText('General Settings', { timeout: 8000 });
+  await expect(page.locator('.modal-overlay .modal-title')).toHaveText('Allgemeine Einstellungen', { timeout: 8000 });
   // Switch to Models tab — triggers a /v1/... fetch in switchGeneralTab.
-  await page.locator('.modal-tab', { hasText: 'Models' }).first().click();
+  await page.locator('.modal-tab', { hasText: 'Modelle' }).first().click();
   await page.waitForTimeout(1200);
   // Switch to Providers too (another fetch path).
-  await page.locator('.modal-tab', { hasText: 'Providers' }).first().click();
+  await page.locator('.modal-tab', { hasText: 'Provider' }).first().click();
   await page.waitForTimeout(1000);
   // Close the modal (read-only — no save).
   await page.locator('.modal-overlay .modal-close').first().click();

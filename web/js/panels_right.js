@@ -355,7 +355,7 @@ function _refCardHtml(ref) {
   const faviconHtml = isProject
     ? ''
     : `<img class="ref-favicon" src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">`;
-  const domainLabel = isProject ? 'Project source' : esc(ref.domain);
+  const domainLabel = isProject ? 'Projektquelle' : esc(ref.domain);
   return `
     <div class="ref-card" data-link="${esc(ref.link)}" onclick="${clickHandler}">
       <div class="ref-card-preview">
@@ -428,7 +428,7 @@ function renderReferencesPane() {
       return h;
     },
     ungrouped: null,
-    emptyAll: '<div class="attach-empty">No sources in this chat</div>',
+    emptyAll: '<div class="attach-empty">Keine Quellen in diesem Chat</div>',
   });
 }
 
@@ -446,7 +446,7 @@ async function openProjectSource(absPath) {
     });
     if (!resp.ok) {
       const err = await resp.text().catch(() => '');
-      showToast(`Cannot open ${absPath.split('/').pop()}: ${resp.status} ${err.slice(0, 80)}`, true);
+      showToast(`${absPath.split('/').pop()} kann nicht geöffnet werden: ${resp.status} ${err.slice(0, 80)}`, true);
       return;
     }
     const blob = await resp.blob();
@@ -459,7 +459,7 @@ async function openProjectSource(absPath) {
     // arbitrary but long enough; the browser keeps a reference.
     setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
   } catch (e) {
-    showToast(`Failed to open: ${e.message || e}`, true);
+    showToast(`Öffnen fehlgeschlagen: ${e.message || e}`, true);
   }
 }
 
@@ -815,7 +815,7 @@ function getReferencesForMessage(idx) {
 
 function openReferencesPanel(highlightLink) {
   const { cited, searched } = collectChatReferences();
-  if (!cited.length && !searched.length) { showToast('No sources in this chat'); return; }
+  if (!cited.length && !searched.length) { showToast('Keine Quellen in diesem Chat'); return; }
   openRightPanel('references');
   if (highlightLink) {
     setTimeout(() => {

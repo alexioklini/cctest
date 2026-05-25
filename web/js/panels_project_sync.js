@@ -25,10 +25,10 @@ async function loadProjectInputFolders(agentId, projectName) {
         <div class="pif-row-head">
           <svg class="pif-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           <span class="pif-name" title="${esc(fullPath)}">${esc(name)}</span>
-          <button class="pif-action-btn" onclick="editProjectInputFolder(${idx})" title="Edit folder settings" aria-label="Edit">
+          <button class="pif-action-btn" onclick="editProjectInputFolder(${idx})" title="Ordnereinstellungen bearbeiten" aria-label="Bearbeiten">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
           </button>
-          <button class="pif-action-btn pif-delete" onclick="removeProjectInputFolder(${idx})" title="Remove folder" aria-label="Remove">
+          <button class="pif-action-btn pif-delete" onclick="removeProjectInputFolder(${idx})" title="Ordner entfernen" aria-label="Entfernen">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
           </button>
         </div>
@@ -83,7 +83,7 @@ async function _pifLoadFolder(path) {
   const crumbs = document.getElementById('pif-picker-crumbs');
   const list = document.getElementById('pif-picker-list');
   if (!crumbs || !list) return;
-  list.innerHTML = '<div style="padding:14px;color:var(--text-400);text-align:center">Loading…</div>';
+  list.innerHTML = '<div style="padding:14px;color:var(--text-400);text-align:center">Wird geladen …</div>';
   try {
     const data = await API.get(`/v1/files/tree?path=${encodeURIComponent(path)}&depth=0`);
     if (data.error) { list.innerHTML = `<div style="padding:14px;color:var(--error)">${esc(data.error)}</div>`; return; }
@@ -97,7 +97,7 @@ async function _pifLoadFolder(path) {
       html += `<div onclick="_pifLoadFolder('${esc(parent)}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border-100);font-family:var(--font-mono);font-size:12px;color:var(--text-300)" onmouseover="this.style.background='var(--bg-200)'" onmouseout="this.style.background=''">↑ ..</div>`;
     }
     if (!dirs.length) {
-      html += '<div style="padding:14px;color:var(--text-400);text-align:center;font-size:12px">(no subfolders)</div>';
+      html += '<div style="padding:14px;color:var(--text-400);text-align:center;font-size:12px">(keine Unterordner)</div>';
     } else {
       for (const d of dirs) {
         html += `<div onclick="_pifLoadFolder('${esc(d.path)}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border-100);font-family:var(--font-mono);font-size:12px;color:var(--text-200);display:flex;align-items:center;gap:8px" onmouseover="this.style.background='var(--bg-200)'" onmouseout="this.style.background=''">
@@ -113,7 +113,7 @@ async function _pifLoadFolder(path) {
 
 async function _pifPickerSelect() {
   const path = window._pifPickerPath || '';
-  if (!path) { showToast('No folder selected', true); return; }
+  if (!path) { showToast('Kein Ordner ausgewählt', true); return; }
   const recursive = document.getElementById('pif-picker-recursive')?.checked ?? true;
   const autoSync = document.getElementById('pif-picker-auto-sync')?.checked ?? true;
   const agentId = state._projectDetailAgent;
@@ -126,14 +126,14 @@ async function _pifPickerSelect() {
       showToast(res.error);
       return;
     }
-    showToast('Folder added — first scan running');
+    showToast('Ordner hinzugefügt — erster Scan läuft');
     document.querySelector('.sched-modal-overlay')?.remove();
     loadProjectInputFolders(agentId, projectName);
     // Trigger a sync now so the user sees activity immediately, even if
     // auto_sync is off — the user just opted in to a one-shot index.
     projectSyncNow();
   } catch(e) {
-    showToast('Failed to add folder: ' + (e?.message || e));
+    showToast('Ordner konnte nicht hinzugefügt werden: ' + (e?.message || e));
   }
 }
 
@@ -154,15 +154,15 @@ function removeProjectInputFolder(idx) {
   overlay.innerHTML = `<div class="sched-modal" style="max-width:520px">
     <h2 style="display:flex;align-items:center;gap:8px">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#d33" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-      Remove input folder?
+      Eingabeordner entfernen?
     </h2>
     <div style="font-size:13px;color:var(--text-300);line-height:1.5;margin:8px 0 16px">
       <div style="font-family:var(--font-mono);font-size:12px;background:var(--bg-100);padding:8px 10px;border-radius:6px;border:1px solid var(--border-100);word-break:break-all;margin-bottom:10px">${esc(folder.path || '')}</div>
-      This folder will no longer be scanned. Already-indexed content stays in this project's memory until the project is purged.
+      Dieser Ordner wird nicht mehr gescannt. Bereits indexierte Inhalte bleiben im Speicher dieses Projekts, bis das Projekt geleert wird.
     </div>
     <div class="sched-modal-actions">
-      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Cancel</button>
-      <button class="sched-create-btn" style="background:#d33;border-color:#d33" onclick="_pifConfirmDelete(${idx})">Remove folder</button>
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Abbrechen</button>
+      <button class="sched-create-btn" style="background:#d33;border-color:#d33" onclick="_pifConfirmDelete(${idx})">Ordner entfernen</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
@@ -176,9 +176,9 @@ async function _pifConfirmDelete(idx) {
   try {
     await API.del(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/input-folders/${idx}`);
     loadProjectInputFolders(agentId, projectName);
-    showToast('Folder removed');
+    showToast('Ordner entfernt');
   } catch(e) {
-    showToast('Failed to remove folder');
+    showToast('Ordner konnte nicht entfernt werden');
   }
 }
 
@@ -199,22 +199,22 @@ function editProjectInputFolder(idx) {
   const recChecked = folder.recursive !== false ? 'checked' : '';
   const autoChecked = folder.auto_sync !== false ? 'checked' : '';
   overlay.innerHTML = `<div class="sched-modal" style="max-width:600px">
-    <h2>Edit input folder</h2>
-    <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">Change the path or how this folder is scanned.</div>
+    <h2>Eingabeordner bearbeiten</h2>
+    <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">Pfad oder Scan-Verhalten dieses Ordners ändern.</div>
     <div id="pif-picker-crumbs" style="font-family:var(--font-mono);font-size:12px;color:var(--text-300);padding:6px 10px;background:var(--bg-100);border-radius:6px;margin-bottom:8px;word-break:break-all">…</div>
     <div id="pif-picker-list" style="max-height:340px;overflow-y:auto;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)"></div>
     <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--text-300);cursor:pointer">
       <input type="checkbox" id="pif-picker-recursive" ${recChecked}>
-      Scan recursively (include all subfolders)
+      Rekursiv scannen (alle Unterordner einbeziehen)
     </label>
     <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;color:var(--text-300);cursor:pointer">
       <input type="checkbox" id="pif-picker-auto-sync" ${autoChecked}>
-      Include in automatic sync cycles
-      <span style="color:var(--text-400);font-size:12px">— uncheck to only sync manually</span>
+      In automatische Abgleichzyklen einbeziehen
+      <span style="color:var(--text-400);font-size:12px">— abwählen, um nur manuell abzugleichen</span>
     </label>
     <div class="sched-modal-actions">
-      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Cancel</button>
-      <button class="sched-create-btn" onclick="_pifEditSave()">Save changes</button>
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Abbrechen</button>
+      <button class="sched-create-btn" onclick="_pifEditSave()">Änderungen speichern</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
@@ -244,12 +244,12 @@ async function _pifEditSave() {
   try {
     const res = await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/input-folders/${idx}`, body);
     if (res?.error) { showToast(res.error); return; }
-    showToast('Folder updated');
+    showToast('Ordner aktualisiert');
     document.querySelector('.sched-modal-overlay')?.remove();
     window._pifEditingIdx = null;
     loadProjectInputFolders(agentId, projectName);
   } catch(e) {
-    showToast('Failed to update folder: ' + (e?.message || e));
+    showToast('Ordner konnte nicht aktualisiert werden: ' + (e?.message || e));
   }
 }
 
@@ -261,11 +261,11 @@ function projectOpenKnowledgeGraph() {
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
   if (!agentId || !projectName) {
-    showToast('No project in scope', true);
+    showToast('Kein Projekt im Kontext', true);
     return;
   }
   if (typeof kgOpenProject !== 'function') {
-    showToast('Knowledge graph viewer not available', true);
+    showToast('Knowledge-Graph-Ansicht nicht verfügbar', true);
     return;
   }
   kgOpenProject(agentId, projectName);
@@ -277,10 +277,10 @@ async function projectSyncNow() {
   if (!agentId || !projectName) return;
   try {
     await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/sync-now`, {});
-    showToast('Sync queued');
+    showToast('Synchronisierung eingeplant');
     refreshProjectSyncStatus(agentId, projectName);
   } catch(e) {
-    showToast('Failed to trigger sync');
+    showToast('Synchronisierung konnte nicht ausgelöst werden');
   }
 }
 
@@ -288,17 +288,17 @@ async function projectFullResync() {
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
   if (!agentId || !projectName) return;
-  if (!await showConfirmDanger(`Full Resync will wipe all memory, knowledge graph triples, and sync state for "${projectName}", then re-index everything from scratch.\n\nContinue?`, 'Full Resync', 'Resync')) return;
+  if (!await showConfirmDanger(`Eine vollständige Neu-Synchronisierung löscht den gesamten Speicher, alle Knowledge-Graph-Tripel und den Abgleichstatus für „${projectName}“ und indexiert anschließend alles von Grund auf neu.\n\nFortfahren?`, 'Vollständige Neu-Synchronisierung', 'Neu synchronisieren')) return;
   const btn = document.getElementById('project-action-full-resync');
-  if (btn) { btn.disabled = true; btn.textContent = 'Wiping…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Wird gelöscht …'; }
   try {
     await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/full-resync`, {});
-    showToast('Full resync queued — re-indexing from scratch');
+    showToast('Vollständige Neu-Synchronisierung eingeplant — alles wird neu indexiert');
     refreshProjectSyncStatus(agentId, projectName);
   } catch(e) {
-    showToast('Full resync failed', true);
+    showToast('Vollständige Neu-Synchronisierung fehlgeschlagen', true);
   } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg> Full Resync'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg> Vollständige Neu-Synchronisierung'; }
   }
 }
 
@@ -340,8 +340,8 @@ async function refreshProjectSyncStatus(agentId, projectName) {
     // Renamed for non-technical users: a (subject, predicate, object) triple
     // doesn't mean anything outside the KG world. "Relation" reads as "fact
     // we extracted" in plain English.
-    const tripleStr = (triples != null && triples > 0) ? ` · ${triples} relations` : '';
-    let label = 'Memory: idle';
+    const tripleStr = (triples != null && triples > 0) ? ` · ${triples} Beziehungen` : '';
+    let label = 'Speicher: inaktiv';
     if (live === 'syncing') {
       // Live progress: P/T file count + ETA from elapsed-rate. cycle_total_files
       // is from a cheap pre-walk and may overshoot the miner's filtered file
@@ -367,34 +367,34 @@ async function refreshProjectSyncStatus(agentId, projectName) {
         }
       }
       const cur = st.current_folder ? ` (${st.current_folder.split('/').pop()})` : '';
-      label = `Memory: syncing${progress} files${eta}${cur}`;
-      chip.title = 'Sync in progress';
+      label = `Speicher: synchronisiert${progress} Dateien${eta}${cur}`;
+      chip.title = 'Synchronisierung läuft';
       const sublabelElSync = document.getElementById('project-sync-sublabel');
       if (sublabelElSync) sublabelElSync.textContent = '';
     } else if (live === 'error') {
-      label = 'Memory: error';
-      chip.title = st.last_error || 'Sync failed — use Sync now to retry';
+      label = 'Speicher: Fehler';
+      chip.title = st.last_error || 'Synchronisierung fehlgeschlagen — über „Jetzt abgleichen“ erneut versuchen';
       const sublabelElErr = document.getElementById('project-sync-sublabel');
       if (sublabelElErr) sublabelElErr.textContent = '';
     } else {
       // Idle: lead with files (the unit users care about), then triples,
       // then "next sync in Xh". Last-synced timestamp and type shown in sub-label.
       const filesStr = totalFiles != null
-        ? `${totalFiles} file${totalFiles === 1 ? '' : 's'}`
-        : `${totalDrawers} indexed`;
-      const next = data.next_run_at ? ` · next sync in ${humanIn(data.next_run_at)}` : '';
-      label = `Memory: ${filesStr}${tripleStr}${next}`;
+        ? `${totalFiles} Datei${totalFiles === 1 ? '' : 'en'}`
+        : `${totalDrawers} indexiert`;
+      const next = data.next_run_at ? ` · nächster Abgleich in ${humanIn(data.next_run_at)}` : '';
+      label = `Speicher: ${filesStr}${tripleStr}${next}`;
       const last = st.last_run_finished || data.last_scan || '';
       const drawerHint = (totalFiles != null && totalDrawers)
-        ? `${totalDrawers} drawer${totalDrawers === 1 ? '' : 's'} · ` : '';
-      chip.title = `${drawerHint}${last ? 'Last synced ' + humanAgo(last) + ' ago — ' : ''}use the buttons on the right to sync or open the knowledge graph`;
+        ? `${totalDrawers} Schublade${totalDrawers === 1 ? '' : 'n'} · ` : '';
+      chip.title = `${drawerHint}${last ? 'Zuletzt abgeglichen vor ' + humanAgo(last) + ' — ' : ''}über die Schaltflächen rechts abgleichen oder den Knowledge Graph öffnen`;
       // Sub-label: "synced Xh ago · Scheduled" or "synced Xh ago · Full Resync"
       const sublabelEl = document.getElementById('project-sync-sublabel');
       if (sublabelEl) {
         if (last) {
-          const typeLabel = st.last_triggered_by === 'full_resync' ? 'Full Resync'
-                          : st.last_triggered_by === 'manual' ? 'Manual' : 'Scheduled';
-          sublabelEl.textContent = `synced ${humanAgo(last)} ago · ${typeLabel}`;
+          const typeLabel = st.last_triggered_by === 'full_resync' ? 'Vollständige Neu-Synchronisierung'
+                          : st.last_triggered_by === 'manual' ? 'Manuell' : 'Geplant';
+          sublabelEl.textContent = `abgeglichen vor ${humanAgo(last)} · ${typeLabel}`;
         } else {
           sublabelEl.textContent = '';
         }
@@ -422,7 +422,7 @@ async function refreshProjectSyncStatus(agentId, projectName) {
           break;
         }
       }
-      let kgProgress = kgTotal > 0 ? ` ${kgDone}/${kgTotal} chunks` : (kgDone > 0 ? ` ${kgDone} chunks` : '');
+      let kgProgress = kgTotal > 0 ? ` ${kgDone}/${kgTotal} Abschnitte` : (kgDone > 0 ? ` ${kgDone} Abschnitte` : '');
       let kgEta = '';
       if (kgStarted && kgDone > 0 && kgTotal > 0 && kgDone / kgTotal >= 0.05) {
         const elapsedMs = Math.max(0, Date.now() - kgStarted);
@@ -433,9 +433,9 @@ async function refreshProjectSyncStatus(agentId, projectName) {
           kgEta = ` · ETA ${etaStr}`;
         }
       }
-      const kgTriplesStr = kgTriples > 0 ? ` · ${kgTriples} so far` : '';
-      label = `Memory: KG extracting${kgProgress}${kgEta}${kgTriplesStr}`;
-      chip.title = 'Knowledge graph extraction in progress';
+      const kgTriplesStr = kgTriples > 0 ? ` · ${kgTriples} bisher` : '';
+      label = `Speicher: KG-Extraktion${kgProgress}${kgEta}${kgTriplesStr}`;
+      chip.title = 'Knowledge-Graph-Extraktion läuft';
       const sublabelElKg = document.getElementById('project-sync-sublabel');
       if (sublabelElKg) sublabelElKg.textContent = '';
     }
@@ -456,16 +456,16 @@ async function refreshProjectSyncStatus(agentId, projectName) {
         const hasRelations = (st.total_triples || 0) > 0;
         kgBtn.disabled = !hasRelations;
         kgBtn.title = hasRelations
-          ? `Open the knowledge graph drilldown (${st.total_triples} relations)`
-          : 'No relations extracted yet — sync this project first';
+          ? `Knowledge-Graph-Detailansicht öffnen (${st.total_triples} Beziehungen)`
+          : 'Noch keine Beziehungen extrahiert — dieses Projekt zuerst abgleichen';
       }
     }
     const syncBtn = document.getElementById('project-action-sync');
     if (syncBtn) {
       syncBtn.disabled = (live === 'syncing');
       syncBtn.title = live === 'syncing'
-        ? 'Sync already in progress'
-        : 'Run a memory sync now';
+        ? 'Synchronisierung läuft bereits'
+        : 'Speicher jetzt abgleichen';
     }
     const fullResyncBtn = document.getElementById('project-action-full-resync');
     if (fullResyncBtn) {
@@ -489,11 +489,11 @@ async function refreshProjectSyncStatus(agentId, projectName) {
 function timeAgo(timestamp) {
   const now = Date.now() / 1000;
   const diff = now - timestamp;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  if (diff < 2592000) return `${Math.floor(diff / 86400)}d ago`;
-  return `${Math.floor(diff / 2592000)}mo ago`;
+  if (diff < 60) return 'gerade eben';
+  if (diff < 3600) return `vor ${Math.floor(diff / 60)} Min.`;
+  if (diff < 86400) return `vor ${Math.floor(diff / 3600)} Std.`;
+  if (diff < 2592000) return `vor ${Math.floor(diff / 86400)} T.`;
+  return `vor ${Math.floor(diff / 2592000)} Mon.`;
 }
 
 // ─── Sync History Modal ──────────────────────────────────────────────────────
@@ -531,7 +531,7 @@ async function _loadSyncRuns(agentId, projectName) {
     if (loadingEl) loadingEl.style.display = 'none';
     _renderSyncRuns(agentId, projectName, data.runs || []);
   } catch(e) {
-    if (loadingEl) loadingEl.textContent = 'Failed to load history.';
+    if (loadingEl) loadingEl.textContent = 'Verlauf konnte nicht geladen werden.';
   }
 }
 
@@ -539,7 +539,7 @@ function _renderSyncRuns(agentId, projectName, runs) {
   const listEl = document.getElementById('sync-history-list');
   if (!listEl) return;
   if (!runs.length) {
-    listEl.innerHTML = '<p style="color:var(--text-400);font-size:.85rem">No sync runs recorded yet.</p>';
+    listEl.innerHTML = '<p style="color:var(--text-400);font-size:.85rem">Noch keine Abgleichläufe aufgezeichnet.</p>';
     return;
   }
   // Pair purge runs with the full_resync run that follows immediately after.
@@ -590,7 +590,7 @@ function _renderSyncRuns(agentId, projectName, runs) {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       btn.disabled = true;
-      btn.textContent = 'Cancelling…';
+      btn.textContent = 'Wird abgebrochen …';
       try {
         await API.post(
           `/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/sync-cancel`, {}
@@ -607,10 +607,10 @@ function _renderSyncRuns(agentId, projectName, runs) {
 // Triggered-by → human label + colour hint
 function _triggerLabel(tb) {
   return {
-    scheduled: { text: 'Scheduled', cls: '' },
-    manual:    { text: 'Manual',    cls: '' },
-    full_resync: { text: 'Full Resync', cls: 'accent' },
-    full_resync_purge: { text: 'Full Resync', cls: 'accent' },
+    scheduled: { text: 'Geplant', cls: '' },
+    manual:    { text: 'Manuell', cls: '' },
+    full_resync: { text: 'Vollständige Neu-Synchronisierung', cls: 'accent' },
+    full_resync_purge: { text: 'Vollständige Neu-Synchronisierung', cls: 'accent' },
   }[tb] || { text: tb, cls: '' };
 }
 
@@ -635,9 +635,9 @@ function _syncRunPairHtml(purgeRun, resyncRun) {
     : {};
 
   const statParts = [
-    rSum.total_files != null    ? `${rSum.total_files} files` : null,
-    rSum.total_indexed != null  ? `${rSum.total_indexed} drawers` : null,
-    rSum.total_triples != null  ? `${rSum.total_triples} triples` : null,
+    rSum.total_files != null    ? `${rSum.total_files} Dateien` : null,
+    rSum.total_indexed != null  ? `${rSum.total_indexed} Schubladen` : null,
+    rSum.total_triples != null  ? `${rSum.total_triples} Tripel` : null,
   ].filter(Boolean).join(' · ');
 
   const errStr = [...(rSum.errors || []), ...(pSum.errors || [])].filter(Boolean).join(', ');
@@ -648,11 +648,11 @@ function _syncRunPairHtml(purgeRun, resyncRun) {
     <div class="sh-run-header" style="display:flex;align-items:center;gap:10px;padding:9px 0;cursor:pointer;border-bottom:1px solid var(--border-200)">
       <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0${isPulse ? ';animation:pulse 1.4s ease-in-out infinite' : ''}"></span>
       <span style="font-size:.82rem;color:var(--text-400);min-width:70px">${startedAgo}</span>
-      <span style="font-size:.82rem;font-weight:500;flex:1">${statParts || (primary.state === 'running' ? 'Running…' : '—')}</span>
+      <span style="font-size:.82rem;font-weight:500;flex:1">${statParts || (primary.state === 'running' ? 'Läuft …' : '—')}</span>
       ${errStr ? `<span style="font-size:.75rem;color:var(--error);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${errStr}">⚠ ${errStr}</span>` : ''}
-      <span style="font-size:.75rem;padding:2px 7px;border-radius:4px;background:color-mix(in srgb,var(--accent-blue) 12%,transparent);color:var(--accent-blue)">Full Resync</span>
+      <span style="font-size:.75rem;padding:2px 7px;border-radius:4px;background:color-mix(in srgb,var(--accent-blue) 12%,transparent);color:var(--accent-blue)">Vollständige Neu-Synchronisierung</span>
       ${totalElapsed ? `<span style="font-size:.78rem;color:var(--text-400)">${totalElapsed}</span>` : ''}
-      ${primary.state === 'running' ? `<button class="sh-cancel-btn" style="font-size:.75rem;padding:2px 8px;background:color-mix(in srgb,var(--error) 12%,transparent);border:1px solid color-mix(in srgb,var(--error) 30%,transparent);border-radius:4px;color:var(--error);cursor:pointer">Cancel</button>` : ''}
+      ${primary.state === 'running' ? `<button class="sh-cancel-btn" style="font-size:.75rem;padding:2px 8px;background:color-mix(in srgb,var(--error) 12%,transparent);border:1px solid color-mix(in srgb,var(--error) 30%,transparent);border-radius:4px;color:var(--error);cursor:pointer">Abbrechen</button>` : ''}
       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="sh-chevron" style="transition:transform .2s;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
     <div class="sh-run-detail" style="display:none;padding:10px 0 4px">
@@ -673,7 +673,7 @@ function _syncRunPairDetailHtml(purgeRun, resyncRun) {
       ? _fmtElapsed(purgeRun.finished_at - purgeRun.started_at) : '';
 
     html += `<div style="font-size:.78rem;font-weight:600;margin-bottom:6px;color:var(--text-400);display:flex;align-items:center;gap:8px">
-      <span>Purge</span>${purgeElapsed ? `<span style="font-weight:400">${purgeElapsed}</span>` : ''}
+      <span>Löschen</span>${purgeElapsed ? `<span style="font-weight:400">${purgeElapsed}</span>` : ''}
     </div>`;
 
     const P_LBL  = 'width:160px;min-width:160px;padding:2px 10px 2px 0;color:var(--text-400);white-space:nowrap';
@@ -681,18 +681,18 @@ function _syncRunPairDetailHtml(purgeRun, resyncRun) {
     const P_TIME = 'width:44px;min-width:44px;padding:2px 0 2px 10px;text-align:right;color:var(--text-400);white-space:nowrap';
     if (purgeActions.length) {
       const actionLabels = {
-        drawers_purged: 'Drawers wiped',
-        kg_triples_purged: 'KG triples wiped',
-        closet_cursor_cleared: 'Closet cursor cleared',
-        doc_convert_cache_cleared: 'Doc-convert cache cleared',
+        drawers_purged: 'Schubladen gelöscht',
+        kg_triples_purged: 'KG-Tripel gelöscht',
+        closet_cursor_cleared: 'Closet-Cursor zurückgesetzt',
+        doc_convert_cache_cleared: 'Doc-Convert-Cache geleert',
       };
       html += `<table style="font-size:.78rem;border-collapse:collapse;width:100%;table-layout:fixed;margin-bottom:12px">`;
       for (const a of purgeActions) {
         const label = actionLabels[a.action] || a.action;
         let detail = '';
-        if (a.action === 'drawers_purged') detail = `${a.deleted ?? 0} deleted`;
-        else if (a.action === 'kg_triples_purged') detail = `${a.triples_deleted ?? 0} triples, ${a.progress_cursors_deleted ?? 0} cursors`;
-        else if (a.action === 'doc_convert_cache_cleared') detail = `${a.dirs_removed ?? 0} dirs, ${a.files_removed ?? 0} files`;
+        if (a.action === 'drawers_purged') detail = `${a.deleted ?? 0} gelöscht`;
+        else if (a.action === 'kg_triples_purged') detail = `${a.triples_deleted ?? 0} Tripel, ${a.progress_cursors_deleted ?? 0} Cursor`;
+        else if (a.action === 'doc_convert_cache_cleared') detail = `${a.dirs_removed ?? 0} Verzeichnisse, ${a.files_removed ?? 0} Dateien`;
         else detail = '✓';
         const errTxt = a.error ? ` <span style="color:var(--error)">⚠ ${a.error}</span>` : '';
         const elTxt = a.elapsed_s > 0 ? _fmtElapsed(a.elapsed_s) : '';
@@ -706,10 +706,10 @@ function _syncRunPairDetailHtml(purgeRun, resyncRun) {
     } else {
       // Fallback to summary fields if no purge_actions recorded
       const rows = [
-        pSum.drawers_deleted != null ? ['Drawers wiped', `${pSum.drawers_deleted}`] : null,
-        pSum.triples_deleted != null ? ['KG triples wiped', `${pSum.triples_deleted}`] : null,
-        pSum.kg_progress_deleted != null ? ['KG cursors cleared', `${pSum.kg_progress_deleted}`] : null,
-        pSum.brain_extracted_cleared != null ? ['Doc-convert dirs cleared', `${pSum.brain_extracted_cleared}`] : null,
+        pSum.drawers_deleted != null ? ['Schubladen gelöscht', `${pSum.drawers_deleted}`] : null,
+        pSum.triples_deleted != null ? ['KG-Tripel gelöscht', `${pSum.triples_deleted}`] : null,
+        pSum.kg_progress_deleted != null ? ['KG-Cursor zurückgesetzt', `${pSum.kg_progress_deleted}`] : null,
+        pSum.brain_extracted_cleared != null ? ['Doc-Convert-Verzeichnisse geleert', `${pSum.brain_extracted_cleared}`] : null,
       ].filter(Boolean);
       if (rows.length) {
         html += `<table style="font-size:.78rem;border-collapse:collapse;width:100%;table-layout:fixed;margin-bottom:12px">
@@ -724,12 +724,12 @@ function _syncRunPairDetailHtml(purgeRun, resyncRun) {
     const rElapsed = (resyncRun.finished_at && resyncRun.started_at)
       ? _fmtElapsed(resyncRun.finished_at - resyncRun.started_at) : (resyncRun.state === 'running' ? '…' : '');
     html += `<div style="font-size:.78rem;font-weight:600;margin-bottom:6px;color:var(--text-400);display:flex;align-items:center;gap:8px">
-      <span>Re-index</span>${rElapsed ? `<span style="font-weight:400">${rElapsed}</span>` : ''}
+      <span>Neu indexieren</span>${rElapsed ? `<span style="font-weight:400">${rElapsed}</span>` : ''}
     </div>`;
     html += _syncRunDetailHtml(resyncRun, { hideTitle: true });
   }
 
-  return html || '<span style="color:var(--text-400);font-size:.78rem">No detail recorded.</span>';
+  return html || '<span style="color:var(--text-400);font-size:.78rem">Keine Details aufgezeichnet.</span>';
 }
 
 function _syncRunRowHtml(run) {
@@ -746,9 +746,9 @@ function _syncRunRowHtml(run) {
 
   // Show current totals, not the per-cycle delta
   const statParts = [
-    summary.total_files != null   ? `${summary.total_files} files` : null,
-    summary.total_indexed != null ? `${summary.total_indexed} drawers` : null,
-    summary.total_triples != null && summary.total_triples > 0 ? `${summary.total_triples} triples` : null,
+    summary.total_files != null   ? `${summary.total_files} Dateien` : null,
+    summary.total_indexed != null ? `${summary.total_indexed} Schubladen` : null,
+    summary.total_triples != null && summary.total_triples > 0 ? `${summary.total_triples} Tripel` : null,
   ].filter(Boolean).join(' · ');
 
   const errStr = (summary.errors || []).filter(Boolean).join(', ');
@@ -759,11 +759,11 @@ function _syncRunRowHtml(run) {
     <div class="sh-run-header" style="display:flex;align-items:center;gap:10px;padding:9px 0;cursor:pointer;border-bottom:1px solid var(--border-200)">
       <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0${isPulse ? ';animation:pulse 1.4s ease-in-out infinite' : ''}"></span>
       <span style="font-size:.82rem;color:var(--text-400);min-width:70px">${startedAgo}</span>
-      <span style="font-size:.82rem;font-weight:500;flex:1">${statParts || (run.state === 'running' ? 'Running…' : '—')}</span>
+      <span style="font-size:.82rem;font-weight:500;flex:1">${statParts || (run.state === 'running' ? 'Läuft …' : '—')}</span>
       ${errStr ? `<span style="font-size:.75rem;color:var(--error);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${errStr}">⚠ ${errStr}</span>` : ''}
       ${trigHtml}
       ${elapsed ? `<span style="font-size:.78rem;color:var(--text-400)">${elapsed}</span>` : ''}
-      ${run.state === 'running' ? `<button class="sh-cancel-btn" style="font-size:.75rem;padding:2px 8px;background:color-mix(in srgb,var(--error) 12%,transparent);border:1px solid color-mix(in srgb,var(--error) 30%,transparent);border-radius:4px;color:var(--error);cursor:pointer">Cancel</button>` : ''}
+      ${run.state === 'running' ? `<button class="sh-cancel-btn" style="font-size:.75rem;padding:2px 8px;background:color-mix(in srgb,var(--error) 12%,transparent);border:1px solid color-mix(in srgb,var(--error) 30%,transparent);border-radius:4px;color:var(--error);cursor:pointer">Abbrechen</button>` : ''}
       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="sh-chevron" style="transition:transform .2s;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
     <div class="sh-run-detail" style="display:none;padding:10px 0 4px">
@@ -784,10 +784,10 @@ function _syncRunDetailHtml(run, opts = {}) {
   // Summary totals row (skip for purge runs — they have their own layout)
   if (!opts.hideTitle && run.triggered_by !== 'full_resync_purge') {
     const summaryParts = [
-      summary.total_files != null   ? `${summary.total_files} files` : null,
-      summary.total_indexed != null ? `${summary.total_indexed} drawers` : null,
-      summary.total_triples > 0    ? `${summary.total_triples} triples` : null,
-      summary.folders_seen > 0     ? `${summary.folders_seen} folders` : null,
+      summary.total_files != null   ? `${summary.total_files} Dateien` : null,
+      summary.total_indexed != null ? `${summary.total_indexed} Schubladen` : null,
+      summary.total_triples > 0    ? `${summary.total_triples} Tripel` : null,
+      summary.folders_seen > 0     ? `${summary.folders_seen} Ordner` : null,
     ].filter(Boolean).join('  ·  ');
     if (summaryParts) {
       html += `<div style="font-size:.78rem;color:var(--text-400);margin-bottom:10px">${summaryParts}</div>`;
@@ -829,14 +829,14 @@ function _syncRunDetailHtml(run, opts = {}) {
       const convDetail = convErr
         ? `<span style="color:var(--error)">⚠ ${convErr}</span>`
         : [
-            convSt.converted > 0   ? `${convSt.converted} converted` : null,
-            convSt.unchanged > 0   ? `${convSt.unchanged} unchanged` : null,
-            convSt.failed > 0      ? `<span style="color:var(--error)">${convSt.failed} failed</span>` : null,
-            convSt.stale_removed > 0 ? `${convSt.stale_removed} stale removed` : null,
-            convSt.seen_total === 0 ? 'nothing to convert' : null,
+            convSt.converted > 0   ? `${convSt.converted} konvertiert` : null,
+            convSt.unchanged > 0   ? `${convSt.unchanged} unverändert` : null,
+            convSt.failed > 0      ? `<span style="color:var(--error)">${convSt.failed} fehlgeschlagen</span>` : null,
+            convSt.stale_removed > 0 ? `${convSt.stale_removed} veraltete entfernt` : null,
+            convSt.seen_total === 0 ? 'nichts zu konvertieren' : null,
           ].filter(Boolean).join(', ') || '✓';
       tableRows += `<tr>
-        <td style="${TD_LBL}">Doc convert</td>
+        <td style="${TD_LBL}">Doc-Convert</td>
         <td style="${TD_DET}">${convDetail}</td>
         <td style="${TD_TIME}">${convElapsed}</td>
       </tr>`;
@@ -850,10 +850,10 @@ function _syncRunDetailHtml(run, opts = {}) {
       const idxDetail = idxErr
         ? `<span style="color:var(--error)">⚠ ${idxErr}</span>`
         : indexSt.drawers_created != null
-          ? `${indexSt.drawers_created} drawers added`
+          ? `${indexSt.drawers_created} Schubladen hinzugefügt`
           : '✓';
       tableRows += `<tr>
-        <td style="${TD_LBL}">Indexing</td>
+        <td style="${TD_LBL}">Indexierung</td>
         <td style="${TD_DET}">${idxDetail}</td>
         <td style="${TD_TIME}">${idxElapsed}</td>
       </tr>`;
@@ -865,16 +865,16 @@ function _syncRunDetailHtml(run, opts = {}) {
       const kgParseErrs = kgSt.parse_errors || 0;
       const kgElapsed = kgSt.elapsed_s != null ? _fmtElapsed(kgSt.elapsed_s) : '';
       const kgStats = [
-        kgSt.triples_this_cycle != null ? `+${kgSt.triples_this_cycle} triples` : null,
-        kgSt.triples_total != null      ? `(${kgSt.triples_total} total)` : null,
-        kgSt.drawers_processed != null  ? `${kgSt.drawers_processed} drawers processed` : null,
+        kgSt.triples_this_cycle != null ? `+${kgSt.triples_this_cycle} Tripel` : null,
+        kgSt.triples_total != null      ? `(${kgSt.triples_total} gesamt)` : null,
+        kgSt.drawers_processed != null  ? `${kgSt.drawers_processed} Schubladen verarbeitet` : null,
       ].filter(Boolean).join(' ') || '✓';
       const kgWarn = kgParseErrs > 0
-        ? ` <span style="color:var(--warning,#a06000)" title="${kgErr}">· ${kgParseErrs} parse err</span>`
+        ? ` <span style="color:var(--warning,#a06000)" title="${kgErr}">· ${kgParseErrs} Parse-Fehler</span>`
         : (kgErr ? ` <span style="color:var(--error)" title="${esc(kgErr)}">⚠ ${kgErr}</span>` : '');
       const kgDetail = kgStats + kgWarn;
       tableRows += `<tr>
-        <td style="${TD_LBL}">KG extraction</td>
+        <td style="${TD_LBL}">KG-Extraktion</td>
         <td style="${TD_DET}">${kgDetail}</td>
         <td style="${TD_TIME}">${kgElapsed}</td>
       </tr>`;
@@ -885,8 +885,8 @@ function _syncRunDetailHtml(run, opts = {}) {
   const staleSt = topSteps.stale_path_purge;
   if (staleSt && (staleSt.drawers_deleted > 0 || staleSt.closets_deleted > 0)) {
     tableRows += `<tr>
-      <td style="${TD_LBL}">Stale purge</td>
-      <td style="${TD_DET}">${staleSt.drawers_deleted || 0} drawers, ${staleSt.closets_deleted || 0} closets removed</td>
+      <td style="${TD_LBL}">Veraltete löschen</td>
+      <td style="${TD_DET}">${staleSt.drawers_deleted || 0} Schubladen, ${staleSt.closets_deleted || 0} Closets entfernt</td>
       <td style="${TD_TIME}"></td>
     </tr>`;
   }
@@ -900,10 +900,10 @@ function _syncRunDetailHtml(run, opts = {}) {
     const closetDetail = closetErr
       ? `<span style="color:var(--error)">⚠ ${closetErr}</span>`
       : closetSt.regen_triggered
-        ? `rebuilt (${closetSt.sources_stale || 0}/${closetSt.sources_seen || 0} sources changed)`
-        : `skipped — ${closetSt.sources_seen || 0} sources unchanged`;
+        ? `neu aufgebaut (${closetSt.sources_stale || 0}/${closetSt.sources_seen || 0} Quellen geändert)`
+        : `übersprungen — ${closetSt.sources_seen || 0} Quellen unverändert`;
     tableRows += `<tr>
-      <td style="${TD_LBL}">Closet rerank</td>
+      <td style="${TD_LBL}">Closet-Neusortierung</td>
       <td style="${TD_DET}">${closetDetail}</td>
       <td style="${TD_TIME}">${closetElapsed}</td>
     </tr>`;
@@ -913,7 +913,7 @@ function _syncRunDetailHtml(run, opts = {}) {
     html += `<table style="font-size:.77rem;border-collapse:collapse;width:100%;table-layout:fixed">${tableRows}</table>`;
   }
 
-  return html || '<span style="color:var(--text-400);font-size:.78rem">No detail recorded.</span>';
+  return html || '<span style="color:var(--text-400);font-size:.78rem">Keine Details aufgezeichnet.</span>';
 }
 
 function _fmtElapsed(secs) {
@@ -928,7 +928,7 @@ async function _loadRunDetail(agentId, projectName, rowEl) {
   // For pairs, data-run-id is the primary (resync) run id; purge id is in data-purge-run-id.
   const detailEl = rowEl.querySelector('.sh-run-detail');
   if (!detailEl) return;
-  detailEl.innerHTML = '<span style="color:var(--text-400);font-size:.78rem">Loading…</span>';
+  detailEl.innerHTML = '<span style="color:var(--text-400);font-size:.78rem">Wird geladen …</span>';
 
   try {
     const primaryId = rowEl.dataset.runId;
@@ -942,7 +942,7 @@ async function _loadRunDetail(agentId, projectName, rowEl) {
     const primaryRun = primaryData?.run;
     const purgeRun   = purgeData?.run;
 
-    if (!primaryRun) { detailEl.innerHTML = '<span style="color:var(--text-400);font-size:.78rem">No detail recorded.</span>'; return; }
+    if (!primaryRun) { detailEl.innerHTML = '<span style="color:var(--text-400);font-size:.78rem">Keine Details aufgezeichnet.</span>'; return; }
 
     let html = '';
     if (purgeRun) {
@@ -955,7 +955,7 @@ async function _loadRunDetail(agentId, projectName, rowEl) {
     }
     detailEl.innerHTML = html;
   } catch(e) {
-    detailEl.innerHTML = `<span style="color:var(--error);font-size:.78rem">Failed to load detail.</span>`;
+    detailEl.innerHTML = `<span style="color:var(--error);font-size:.78rem">Details konnten nicht geladen werden.</span>`;
   }
 }
 

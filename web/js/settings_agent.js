@@ -6,7 +6,7 @@ function openAgentSettings() {
   // else. Refuse early so non-admins don't see editable system prompts they
   // can't save, and so /settings + future entry points fail closed.
   if ((state.authUser?.role || 'admin') !== 'admin') {
-    showToast('Agent customization is admin-only', true);
+    showToast('Agent-Anpassung ist nur für Administratoren', true);
     return;
   }
   const agentId = state.activeAgentId || 'main';
@@ -26,18 +26,18 @@ function openAgentSettings() {
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
     </div>
     <div class="modal-tabs modal-tabs-vertical" id="agent-settings-tabs">
-      <div class="sidebar-group-label">Identity</div>
+      <div class="sidebar-group-label">Identität</div>
       <button class="modal-tab active" onclick="switchAgentTab('${esc(agentId)}','soul',this)">Soul</button>
       <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','agent',this)">Agent</button>
 
-      <div class="sidebar-group-label">Capabilities</div>
+      <div class="sidebar-group-label">Fähigkeiten</div>
       <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','skills',this)">Skills</button>
       <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','mcp',this)">MCP</button>
       <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','tokens',this)">Tokens</button>
 
-      <div class="sidebar-group-label">Automation</div>
+      <div class="sidebar-group-label">Automatisierung</div>
       <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','hooks',this)">Hooks</button>
-      <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','schedule',this)">Schedule</button>
+      <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','schedule',this)">Zeitplan</button>
     </div>
     <div class="modal-body" id="settings-tab-content">
     </div>
@@ -67,26 +67,26 @@ async function _refreshAgentsAndTeams() {
 }
 async function _createNewAgent() {
   const id = document.getElementById('new-agent-id')?.value?.trim();
-  if (!id) { showToast('Agent ID is required', true); return; }
+  if (!id) { showToast('Agent-ID ist erforderlich', true); return; }
   const desc = document.getElementById('new-agent-desc')?.value?.trim() || '';
   const soul = document.getElementById('new-agent-soul')?.value?.trim() || '';
   const model = document.getElementById('new-agent-model')?.value || '';
   const displayName = document.getElementById('new-agent-display')?.value?.trim() || '';
   try {
     await API.createAgent({ agent: id, description: desc, soul: soul || undefined, model: model || undefined, display_name: displayName || undefined });
-    showToast(`Agent "${id}" created`);
+    showToast(`Agent „${id}" erstellt`);
     await _refreshAgentsAndTeams();
     switchGeneralTab('agents');
-  } catch(e) { showToast('Create failed: ' + e.message, true); }
+  } catch(e) { showToast('Erstellen fehlgeschlagen: ' + e.message, true); }
 }
 async function _deleteAgent(id) {
-  if (!await showConfirmDanger(`Delete agent "${id}"? It will be moved to .trash.`, 'Delete Agent', 'Delete')) return;
+  if (!await showConfirmDanger(`Agent „${id}" löschen? Er wird nach .trash verschoben.`, 'Agent löschen', 'Löschen')) return;
   try {
     await API.deleteAgent(id);
-    showToast(`Agent "${id}" deleted`);
+    showToast(`Agent „${id}" gelöscht`);
     await _refreshAgentsAndTeams();
     switchGeneralTab('agents');
-  } catch(e) { showToast('Delete failed: ' + e.message, true); }
+  } catch(e) { showToast('Löschen fehlgeschlagen: ' + e.message, true); }
 }
 async function toggleCCSkill(agentId, slug, enabled) {
   try {
@@ -110,23 +110,23 @@ async function searchCCMarketplace(query) {
   const results = document.getElementById('cc-marketplace-results');
   const searchBtn = document.getElementById('cc-marketplace-search-btn');
   if (!query) {
-    results.innerHTML = '<div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Enter a search term to browse plugins</div>';
+    results.innerHTML = '<div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Geben Sie einen Suchbegriff ein, um Plugins zu durchsuchen</div>';
     return;
   }
   results.innerHTML = `<div style="padding:20px;text-align:center">
     <div style="display:inline-block;width:18px;height:18px;border:2px solid #e8e7e0;border-top-color:#d97757;border-radius:50%;animation:spin 0.6s linear infinite"></div>
-    <div style="margin-top:8px;color:#73726c;font-size:12px">Searching marketplace for "${esc(query)}"...</div>
+    <div style="margin-top:8px;color:#73726c;font-size:12px">Marketplace wird nach „${esc(query)}" durchsucht…</div>
   </div>`;
   if (searchBtn) { searchBtn.textContent = '...'; searchBtn.disabled = true; }
   try {
     const data = await API.browseCCPlugins(query);
     const plugins = data.plugins || [];
-    if (searchBtn) { searchBtn.textContent = 'Search'; searchBtn.disabled = false; }
+    if (searchBtn) { searchBtn.textContent = 'Suchen'; searchBtn.disabled = false; }
     if (!plugins.length) {
-      results.innerHTML = `<div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">No plugins found for "${esc(query)}"</div>`;
+      results.innerHTML = `<div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Keine Plugins für „${esc(query)}" gefunden</div>`;
       return;
     }
-    let html = `<div style="padding:4px 0;font-size:11px;color:#a1a09a;margin-bottom:4px">${plugins.length} plugins found</div>`;
+    let html = `<div style="padding:4px 0;font-size:11px;color:#a1a09a;margin-bottom:4px">${plugins.length} Plugins gefunden</div>`;
     for (const p of plugins) {
       html += `
         <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid rgba(31,30,29,0.08);border-radius:8px;margin-bottom:6px;transition:background 0.15s;overflow:hidden" onmouseover="this.style.background='rgba(0,0,0,0.02)'" onmouseout="this.style.background='transparent'">
@@ -135,28 +135,28 @@ async function searchCCMarketplace(query) {
             ${p.description ? `<div style="font-size:11px;color:#73726c;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.description)}</div>` : ''}
           </div>
           <button onclick="installCCPlugin('${esc(typeof p === 'string' ? p : p.name)}',this)"
-            style="${_mcpBtn};padding:4px 12px;flex-shrink:0">Install</button>
+            style="${_mcpBtn};padding:4px 12px;flex-shrink:0">Installieren</button>
         </div>`;
     }
     results.innerHTML = html;
   } catch(e) {
-    if (searchBtn) { searchBtn.textContent = 'Search'; searchBtn.disabled = false; }
+    if (searchBtn) { searchBtn.textContent = 'Suchen'; searchBtn.disabled = false; }
     results.innerHTML = `<div style="padding:24px;text-align:center;color:#dc2626;font-size:12px">${esc(e.message)}</div>`;
   }
 }
 
 async function installCCPlugin(pluginName, btn) {
   btn.disabled = true;
-  btn.textContent = 'Installing...';
+  btn.textContent = 'Installiere…';
   btn.style.opacity = '0.5';
   try {
     await API.installCCPlugin(pluginName);
     const added = document.createElement('span');
-    added.textContent = 'Added';
+    added.textContent = 'Hinzugefügt';
     added.style.cssText = 'font-size:11px;font-weight:500;color:#16a34a;padding:4px 12px';
     btn.replaceWith(added);
   } catch(e) {
-    btn.textContent = 'Failed';
+    btn.textContent = 'Fehlgeschlagen';
     btn.style.cssText = 'font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(220,38,38,0.08);color:#dc2626;border:none;cursor:pointer';
     btn.disabled = false;
   }
@@ -169,7 +169,7 @@ async function switchAgentTab(agentId, tab, btn) {
   }
   const container = document.getElementById('settings-tab-content');
   container.style.overflowY = 'auto';
-  container.innerHTML = '<div style="padding:20px;color:var(--text-400)">Loading...</div>';
+  container.innerHTML = '<div style="padding:20px;color:var(--text-400)">Lädt…</div>';
 
   if (tab === 'soul') {
     try {
@@ -177,28 +177,28 @@ async function switchAgentTab(agentId, tab, btn) {
       const soul = data.content || '';
       container.innerHTML = `
         <div style="display:flex;flex-direction:column;height:100%;padding:16px;overflow:hidden">
-          <div style="font-size:12px;color:var(--text-400);margin-bottom:6px">System prompt — defines agent personality and behavior</div>
+          <div style="font-size:12px;color:var(--text-400);margin-bottom:6px">System-Prompt — definiert Persönlichkeit und Verhalten des Agents</div>
           <textarea id="agent-soul-editor" class="form-textarea" style="flex:3 1 0;min-height:80px;font-size:13px;overflow-y:auto">${esc(soul)}</textarea>
           <div style="display:flex;justify-content:flex-end;gap:8px;margin:6px 0;align-items:center">
             <button type="button" id="agent-soul-editor-refine"
               onclick="refineAgentSoul('${esc(agentId)}')"
-              title="Polish the soul with AI (preserves second-person voice and Markdown structure)"
+              title="Die Soul mit KI verfeinern (bewahrt die Du-/Sie-Anrede und die Markdown-Struktur)"
               class="btn-secondary"
               style="font-size:12px;padding:4px 10px;display:inline-flex;align-items:center;gap:4px">
               <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" style="flex-shrink:0">
                 <path d="M12 2l1.5 4.5L18 8l-4.5 1.5L12 14l-1.5-4.5L6 8l4.5-1.5L12 2z"/>
                 <path d="M19 14l.75 2.25L22 17l-2.25.75L19 20l-.75-2.25L16 17l2.25-.75L19 14z"/>
               </svg>
-              <span id="agent-soul-editor-refine-label">Refine with AI</span>
+              <span id="agent-soul-editor-refine-label">Mit KI verfeinern</span>
             </button>
-            <button class="btn-primary" onclick="saveAgentSoul('${esc(agentId)}')">Save Soul</button>
+            <button class="btn-primary" onclick="saveAgentSoul('${esc(agentId)}')">Soul speichern</button>
           </div>
           <div style="border-top:1px solid var(--border);padding-top:6px;display:flex;flex-direction:column;flex:2 1 0;min-height:60px;overflow:hidden">
-            <div style="font-size:12px;color:var(--text-400);margin-bottom:4px">AI Soul Editor — chat to refine the soul</div>
+            <div style="font-size:12px;color:var(--text-400);margin-bottom:4px">KI-Soul-Editor — per Chat die Soul verfeinern</div>
             <div id="soul-chat-messages" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:4px;padding:2px 4px;min-height:0"></div>
             <div style="display:flex;gap:8px;flex-shrink:0">
-              <input id="soul-chat-input" class="form-input" style="flex:1;font-size:13px" placeholder="Ask AI to edit the soul..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendSoulChat('${esc(agentId)}')}" />
-              <button class="btn-primary" onclick="sendSoulChat('${esc(agentId)}')" id="soul-chat-send">Send</button>
+              <input id="soul-chat-input" class="form-input" style="flex:1;font-size:13px" placeholder="KI bitten, die Soul zu bearbeiten…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendSoulChat('${esc(agentId)}')}" />
+              <button class="btn-primary" onclick="sendSoulChat('${esc(agentId)}')" id="soul-chat-send">Senden</button>
             </div>
           </div>
         </div>
@@ -206,7 +206,7 @@ async function switchAgentTab(agentId, tab, btn) {
       container.style.overflowY = 'hidden';
       window._soulChatHistory = [];
     } catch(e) {
-      container.innerHTML = `<div style="padding:20px;color:var(--error)">Failed to load soul: ${esc(e.message)}</div>`;
+      container.innerHTML = `<div style="padding:20px;color:var(--error)">Soul konnte nicht geladen werden: ${esc(e.message)}</div>`;
     }
   }
 
@@ -215,7 +215,7 @@ async function switchAgentTab(agentId, tab, btn) {
       const data = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
       const cfg = JSON.parse(data.content || '{}');
       const enabledModels = enabledModelsWithCapability('chat');
-      const autoOption = `<option value="auto" title="Automatically picks the best-fitting model for each message"${cfg.model==='auto'?' selected':''}>✨ Auto</option>`;
+      const autoOption = `<option value="auto" title="Wählt für jede Nachricht automatisch das am besten passende Modell"${cfg.model==='auto'?' selected':''}>✨ Auto</option>`;
       const modelOptions = autoOption + enabledModels.map(([mid]) =>
         modelOption(mid, {selected: mid===cfg.model})
       ).join('');
@@ -227,7 +227,7 @@ async function switchAgentTab(agentId, tab, btn) {
       const npsEnabled = nps.enabled !== false;
       const npsModel = nps.model || '';
       const npsMaxWords = nps.max_words != null ? nps.max_words : 15;
-      const npsModelOptions = `<option value="" ${npsModel===''?'selected':''}>(session model — best cache reuse)</option>`
+      const npsModelOptions = `<option value="" ${npsModel===''?'selected':''}>(Sitzungsmodell — beste Cache-Wiederverwendung)</option>`
         + enabledModels.map(([mid]) =>
             modelOption(mid, {selected: mid===npsModel})
           ).join('');
@@ -235,44 +235,44 @@ async function switchAgentTab(agentId, tab, btn) {
       container.innerHTML = `
         <div style="padding:16px;display:grid;gap:16px">
           <div>
-            <label class="form-label">Display Name</label>
+            <label class="form-label">Anzeigename</label>
             <input class="form-input" id="cfg-display-name" value="${esc(cfg.display_name || '')}">
           </div>
           <div>
-            <label class="form-label">Description</label>
+            <label class="form-label">Beschreibung</label>
             <input class="form-input" id="cfg-description" value="${esc(cfg.description || '')}">
           </div>
           <div>
-            <label class="form-label">Model</label>
+            <label class="form-label">Modell</label>
             <select class="form-select" id="cfg-model" style="width:100%">${modelOptions}</select>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <input type="checkbox" id="cfg-paused" ${cfg.paused?'checked':''}>
-            <label for="cfg-paused" style="font-size:14px;color:var(--text-200)">Paused</label>
+            <label for="cfg-paused" style="font-size:14px;color:var(--text-200)">Pausiert</label>
           </div>
           <div style="border-top:1px solid var(--border-100);padding-top:12px;display:grid;gap:10px">
-            <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Next-Prompt Suggestions</div>
-            <div style="font-size:11px;color:var(--text-400)">Ghost-text prediction shown in the composer after each assistant response. Override model when the session model is a slow thinking model (e.g. Qwen3.6) — pick a fast model like Haiku for sub-second suggestions.</div>
+            <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Next-Prompt-Vorschläge</div>
+            <div style="font-size:11px;color:var(--text-400)">Geistertext-Vorhersage, die nach jeder Assistenten-Antwort im Eingabefeld angezeigt wird. Überschreiben Sie das Modell, wenn das Sitzungsmodell ein langsames Denkmodell ist (z. B. Qwen3.6) — wählen Sie ein schnelles Modell wie Haiku für Vorschläge im Sekundenbruchteil.</div>
             <div style="display:flex;align-items:center;gap:8px">
               <input type="checkbox" id="cfg-nps-enabled" ${npsEnabled?'checked':''}>
-              <label for="cfg-nps-enabled" style="font-size:14px;color:var(--text-200)">Enabled</label>
+              <label for="cfg-nps-enabled" style="font-size:14px;color:var(--text-200)">Aktiviert</label>
             </div>
             <div>
-              <label class="form-label">Model Override</label>
+              <label class="form-label">Modell-Überschreibung</label>
               <select class="form-select" id="cfg-nps-model" style="width:100%">${npsModelOptions}</select>
             </div>
             <div>
-              <label class="form-label">Max Words</label>
+              <label class="form-label">Max. Wörter</label>
               <input class="form-input" type="number" id="cfg-nps-max-words" value="${npsMaxWords}" min="3" max="40" style="width:120px">
             </div>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:8px">
-            <button class="btn-primary" onclick="saveAgentJson('${esc(agentId)}')">Save</button>
+            <button class="btn-primary" onclick="saveAgentJson('${esc(agentId)}')">Speichern</button>
           </div>
         </div>
       `;
     } catch(e) {
-      container.innerHTML = `<div style="padding:20px;color:var(--error)">Failed to load config: ${esc(e.message)}</div>`;
+      container.innerHTML = `<div style="padding:20px;color:var(--error)">Konfiguration konnte nicht geladen werden: ${esc(e.message)}</div>`;
     }
   }
 
@@ -292,12 +292,12 @@ async function switchAgentTab(agentId, tab, btn) {
         <div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
             <div style="display:flex;align-items:center;gap:8px">
-              <span style="font-size:14px;font-weight:700;color:#141413">Agent Skills</span>
-              <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(217,119,87,0.12);color:#d97757">${agentSkills.length} installed</span>
+              <span style="font-size:14px;font-weight:700;color:#141413">Agent-Skills</span>
+              <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(217,119,87,0.12);color:#d97757">${agentSkills.length} installiert</span>
             </div>
           </div>`;
       if (!agentSkills.length) {
-        html += '<div style="padding:16px;text-align:center;color:#73726c;font-size:12px">No agent skills installed.</div>';
+        html += '<div style="padding:16px;text-align:center;color:#73726c;font-size:12px">Keine Agent-Skills installiert.</div>';
       } else {
         html += '<div style="display:grid;gap:6px;grid-template-columns:minmax(0,1fr)">';
         for (const s of agentSkills) {
@@ -314,7 +314,7 @@ async function switchAgentTab(agentId, tab, btn) {
               </div>
               <button onclick="removeAgentSkill('${esc(agentId)}','${esc(slug)}')"
                 style="font-size:11px;color:#dc2626;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(220,38,38,0.08);border:none;white-space:nowrap;flex-shrink:0" onmouseover="this.style.background='rgba(220,38,38,0.15)'" onmouseout="this.style.background='rgba(220,38,38,0.08)'"
-                title="Remove skill">Remove</button>
+                title="Skill entfernen">Entfernen</button>
             </div>`;
         }
         html += '</div>';
@@ -327,11 +327,11 @@ async function switchAgentTab(agentId, tab, btn) {
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
             <div>
               <span style="font-size:14px;font-weight:700;color:#141413">Claude Code Skills</span>
-              <div style="font-size:11px;color:#73726c;margin-top:2px">Toggle skills from ~/.claude to enable for this agent</div>
+              <div style="font-size:11px;color:#73726c;margin-top:2px">Skills aus ~/.claude umschalten, um sie für diesen Agent zu aktivieren</div>
             </div>
           </div>`;
       if (!ccSkills.length) {
-        html += '<div style="padding:16px;text-align:center;color:#73726c;font-size:12px">No Claude Code skills found in ~/.claude</div>';
+        html += '<div style="padding:16px;text-align:center;color:#73726c;font-size:12px">Keine Claude Code Skills in ~/.claude gefunden</div>';
       } else {
         html += '<div style="display:grid;gap:6px;grid-template-columns:minmax(0,1fr)">';
         for (const s of ccSkills) {
@@ -363,22 +363,22 @@ async function switchAgentTab(agentId, tab, btn) {
       html += `
         <div style="border-top:1px solid rgba(31,30,29,0.08);padding-top:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-            <span style="font-size:14px;font-weight:700;color:#141413">Browse CC Marketplace</span>
-            <span style="font-size:10px;color:#a1a09a">Claude Code plugins</span>
+            <span style="font-size:14px;font-weight:700;color:#141413">CC Marketplace durchsuchen</span>
+            <span style="font-size:10px;color:#a1a09a">Claude Code Plugins</span>
           </div>
           <div style="position:relative;margin-bottom:10px">
-            <input id="cc-marketplace-search" style="width:100%;box-sizing:border-box;background:#f5f4ed;border:1px solid rgba(31,30,29,0.08);border-radius:8px;padding:9px 80px 9px 12px;font-size:13px;color:#141413;outline:none;transition:border-color 0.15s" placeholder="Search Claude Code plugins..." onfocus="this.style.borderColor='#d97757'" onblur="this.style.borderColor='rgba(31,30,29,0.08)'" onkeydown="if(event.key==='Enter'){event.preventDefault();searchCCMarketplace(this.value)}" oninput="clearTimeout(window._ccMktDebounce);window._ccMktDebounce=setTimeout(()=>searchCCMarketplace(this.value),400)">
-            <button id="cc-marketplace-search-btn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:11px;padding:5px 14px;border-radius:6px;background:#d97757;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="searchCCMarketplace(document.getElementById('cc-marketplace-search').value)">Search</button>
+            <input id="cc-marketplace-search" style="width:100%;box-sizing:border-box;background:#f5f4ed;border:1px solid rgba(31,30,29,0.08);border-radius:8px;padding:9px 80px 9px 12px;font-size:13px;color:#141413;outline:none;transition:border-color 0.15s" placeholder="Claude Code Plugins durchsuchen…" onfocus="this.style.borderColor='#d97757'" onblur="this.style.borderColor='rgba(31,30,29,0.08)'" onkeydown="if(event.key==='Enter'){event.preventDefault();searchCCMarketplace(this.value)}" oninput="clearTimeout(window._ccMktDebounce);window._ccMktDebounce=setTimeout(()=>searchCCMarketplace(this.value),400)">
+            <button id="cc-marketplace-search-btn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:11px;padding:5px 14px;border-radius:6px;background:#d97757;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="searchCCMarketplace(document.getElementById('cc-marketplace-search').value)">Suchen</button>
           </div>
           <div id="cc-marketplace-results" style="display:grid;gap:6px">
-            <div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Type to search the Claude Code plugin marketplace</div>
+            <div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Tippen, um den Claude Code Plugin-Marketplace zu durchsuchen</div>
           </div>
         </div>`;
 
       html += '</div>';
       container.innerHTML = html;
     } catch(e) {
-      container.innerHTML = `<div style="padding:20px;color:#73726c">Skills not available: ${esc(e.message)}</div>`;
+      container.innerHTML = `<div style="padding:20px;color:#73726c">Skills nicht verfügbar: ${esc(e.message)}</div>`;
     }
   }
 
@@ -404,36 +404,36 @@ async function switchAgentTab(agentId, tab, btn) {
           html += `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border-100);border-radius:8px;opacity:${enabled?1:0.5}">
             <span style="width:8px;height:8px;border-radius:50%;background:${isRunning?'var(--accent-brand)':enabled?'var(--success)':'var(--text-400)'};flex-shrink:0;${isRunning?'animation:pulse 1.5s infinite':''}"></span>
             <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:500;color:var(--text-100);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(displayName)}${isSystem?' <span style="font-size:10px;color:var(--text-400);font-weight:400">system</span>':''}</div>
+              <div style="font-size:13px;font-weight:500;color:var(--text-100);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(displayName)}${isSystem?' <span style="font-size:10px;color:var(--text-400);font-weight:400">System</span>':''}</div>
               <div style="font-size:11px;color:var(--text-400);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s.task||'')}">${esc((s.task||'').substring(0,80))}</div>
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0">
               <span style="font-size:11px;font-family:var(--font-mono);color:var(--text-300)">${esc(s.schedule||'')}</span>
-              ${s.next_run ? `<span style="font-size:10px;color:var(--text-400)">next: ${new Date(s.next_run+'Z').toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>` : ''}
+              ${s.next_run ? `<span style="font-size:10px;color:var(--text-400)">nächste: ${new Date(s.next_run+'Z').toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>` : ''}
             </div>
             <div style="display:flex;gap:4px;flex-shrink:0">
-              ${isRunning ? `<button onclick="_schedCancel('${esc(s.name)}')" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--error);background:transparent;color:var(--error);cursor:pointer" title="Cancel running task">Stop</button>` : ''}
-              <button onclick="_schedToggle('${esc(s.name)}',${enabled?0:1})" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer" title="${enabled?'Pause':'Resume'}">${enabled?'Pause':'Resume'}</button>
-              <button onclick="_schedHistory('${esc(s.name)}')" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer" title="View history">Log</button>
-              ${!isSystem ? `<button onclick="_schedDelete('${esc(s.name)}')" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--error);background:transparent;color:var(--error);cursor:pointer" title="Delete">Del</button>` : ''}
+              ${isRunning ? `<button onclick="_schedCancel('${esc(s.name)}')" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--error);background:transparent;color:var(--error);cursor:pointer" title="Laufende Aufgabe abbrechen">Stopp</button>` : ''}
+              <button onclick="_schedToggle('${esc(s.name)}',${enabled?0:1})" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer" title="${enabled?'Pausieren':'Fortsetzen'}">${enabled?'Pause':'Fortsetzen'}</button>
+              <button onclick="_schedHistory('${esc(s.name)}')" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer" title="Verlauf anzeigen">Log</button>
+              ${!isSystem ? `<button onclick="_schedDelete('${esc(s.name)}')" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--error);background:transparent;color:var(--error);cursor:pointer" title="Löschen">Lö</button>` : ''}
             </div>
           </div>`;
         }
       } else {
-        html += '<div id="sched-empty" style="padding:20px;text-align:center;color:var(--text-400)">No scheduled tasks for this agent</div>';
+        html += '<div id="sched-empty" style="padding:20px;text-align:center;color:var(--text-400)">Keine geplanten Aufgaben für diesen Agent</div>';
       }
       html += '</div>';
 
       // History panel (hidden)
-      html += '<div id="sched-history" style="display:none;padding:12px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-200)"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:13px;font-weight:600;color:var(--text-100)" id="sched-history-title">History</span><button onclick="document.getElementById(\'sched-history\').style.display=\'none\'" style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer">Close</button></div><div id="sched-history-body" style="max-height:200px;overflow-y:auto;font-size:12px"></div></div>';
+      html += '<div id="sched-history" style="display:none;padding:12px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-200)"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:13px;font-weight:600;color:var(--text-100)" id="sched-history-title">Verlauf</span><button onclick="document.getElementById(\'sched-history\').style.display=\'none\'" style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer">Schließen</button></div><div id="sched-history-body" style="max-height:200px;overflow-y:auto;font-size:12px"></div></div>';
 
       // Add button + form
       html += `<div style="display:flex;justify-content:flex-start">
-        <button onclick="_schedShowForm()" style="font-size:12px;padding:6px 14px;border-radius:6px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;font-weight:500">+ Add Task</button>
+        <button onclick="_schedShowForm()" style="font-size:12px;padding:6px 14px;border-radius:6px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;font-weight:500">+ Aufgabe hinzufügen</button>
       </div>`;
 
       html += `<div id="sched-form" style="display:none;padding:14px;border:1px solid var(--accent);border-radius:8px;background:var(--bg-200)">
-        <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:10px">New Scheduled Task</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:10px">Neue geplante Aufgabe</div>
         <div style="display:grid;gap:8px">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
             <div>
@@ -441,44 +441,44 @@ async function switchAgentTab(agentId, tab, btn) {
               <input id="sched-f-name" class="form-input" placeholder="daily-report" style="font-size:12px">
             </div>
             <div>
-              <label style="font-size:11px;color:var(--text-400)">Schedule</label>
+              <label style="font-size:11px;color:var(--text-400)">Zeitplan</label>
               <input id="sched-f-schedule" class="form-input" placeholder="daily 09:00" style="font-size:12px;font-family:var(--font-mono)">
             </div>
           </div>
           <div>
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-              <label style="font-size:11px;color:var(--text-400);margin:0">Prompt / Task</label>
+              <label style="font-size:11px;color:var(--text-400);margin:0">Prompt / Aufgabe</label>
               ${_schedRefineControls('sched-f-task')}
             </div>
-            <textarea id="sched-f-task" class="form-input" rows="3" placeholder="What should the agent do..." style="font-size:12px;resize:vertical"></textarea>
+            <textarea id="sched-f-task" class="form-input" rows="3" placeholder="Was soll der Agent tun…" style="font-size:12px;resize:vertical"></textarea>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
             <div>
-              <label style="font-size:11px;color:var(--text-400)">Model (optional)</label>
+              <label style="font-size:11px;color:var(--text-400)">Modell (optional)</label>
               <input id="sched-f-model" class="form-input" placeholder="default" style="font-size:12px;font-family:var(--font-mono)">
             </div>
             <div>
-              <label style="font-size:11px;color:var(--text-400)">Timeout (seconds)</label>
+              <label style="font-size:11px;color:var(--text-400)">Timeout (Sekunden)</label>
               <input id="sched-f-timeout" class="form-input" type="number" value="300" style="font-size:12px">
             </div>
           </div>
           <div style="font-size:10px;color:var(--text-400);line-height:1.4">
-            Formats: <code style="background:var(--bg-100);padding:1px 4px;border-radius:3px">every 5m</code>
+            Formate: <code style="background:var(--bg-100);padding:1px 4px;border-radius:3px">every 5m</code>
             <code style="background:var(--bg-100);padding:1px 4px;border-radius:3px">every 2h</code>
             <code style="background:var(--bg-100);padding:1px 4px;border-radius:3px">daily 09:00</code>
             <code style="background:var(--bg-100);padding:1px 4px;border-radius:3px">weekly mon 14:30</code>
             <code style="background:var(--bg-100);padding:1px 4px;border-radius:3px">once 2026-04-01 12:00</code>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:8px">
-            <button onclick="document.getElementById('sched-form').style.display='none'" style="font-size:12px;padding:5px 12px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer">Cancel</button>
-            <button class="btn-primary" onclick="_schedAdd()" style="font-size:12px;padding:5px 12px">Create</button>
+            <button onclick="document.getElementById('sched-form').style.display='none'" style="font-size:12px;padding:5px 12px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer">Abbrechen</button>
+            <button class="btn-primary" onclick="_schedAdd()" style="font-size:12px;padding:5px 12px">Erstellen</button>
           </div>
         </div>
       </div>`;
 
       container.innerHTML = html + '</div>';
     } catch(e) {
-      container.innerHTML = `<div style="padding:20px;color:var(--error)">Failed to load schedule</div>`;
+      container.innerHTML = `<div style="padding:20px;color:var(--error)">Zeitplan konnte nicht geladen werden</div>`;
     }
   }
 
@@ -497,7 +497,7 @@ async function switchAgentTab(agentId, tab, btn) {
       html += `<div style="display:flex;align-items:center;gap:16px;padding:12px;background:var(--bg-200);border-radius:8px">
         <div style="display:flex;align-items:center;gap:8px;flex:1">
           <input type="checkbox" id="hooks-enabled" ${hooksEnabled?'checked':''} onchange="window._hooksData.enabled=this.checked">
-          <label for="hooks-enabled" style="font-size:14px;font-weight:500;color:var(--text-100)">Hooks enabled</label>
+          <label for="hooks-enabled" style="font-size:14px;font-weight:500;color:var(--text-100)">Hooks aktiviert</label>
         </div>
         <div style="display:flex;align-items:center;gap:6px">
           <label style="font-size:12px;color:var(--text-400)">Timeout (ms)</label>
@@ -512,19 +512,19 @@ async function switchAgentTab(agentId, tab, btn) {
           html += _renderHookRow(scripts[i], i);
         }
       } else {
-        html += '<div id="hooks-empty" style="padding:20px;text-align:center;color:var(--text-400)">No hook scripts configured</div>';
+        html += '<div id="hooks-empty" style="padding:20px;text-align:center;color:var(--text-400)">Keine Hook-Skripte konfiguriert</div>';
       }
       html += '</div>';
 
       // Add + Save buttons
       html += `<div style="display:flex;justify-content:space-between;align-items:center">
-        <button onclick="_hookAdd()" style="font-size:12px;padding:6px 14px;border-radius:6px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;font-weight:500">+ Add Hook</button>
-        <button class="btn-primary" onclick="_hooksSave()">Save</button>
+        <button onclick="_hookAdd()" style="font-size:12px;padding:6px 14px;border-radius:6px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;font-weight:500">+ Hook hinzufügen</button>
+        <button class="btn-primary" onclick="_hooksSave()">Speichern</button>
       </div>`;
 
       // Add/Edit form (hidden initially)
       html += `<div id="hook-form" style="display:none;padding:14px;border:1px solid var(--accent);border-radius:8px;background:var(--bg-200)">
-        <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:10px" id="hook-form-title">Add Hook</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:10px" id="hook-form-title">Hook hinzufügen</div>
         <div style="display:grid;gap:8px">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
             <div>
@@ -532,7 +532,7 @@ async function switchAgentTab(agentId, tab, btn) {
               <input id="hook-f-name" class="form-input" placeholder="my-hook" style="font-size:12px">
             </div>
             <div>
-              <label style="font-size:11px;color:var(--text-400)">Type</label>
+              <label style="font-size:11px;color:var(--text-400)">Typ</label>
               <select id="hook-f-type" class="form-input" style="font-size:12px">
                 <option value="pre">pre</option>
                 <option value="post">post</option>
@@ -541,26 +541,26 @@ async function switchAgentTab(agentId, tab, btn) {
             </div>
           </div>
           <div>
-            <label style="font-size:11px;color:var(--text-400)">Script path (relative to agent dir)</label>
+            <label style="font-size:11px;color:var(--text-400)">Skriptpfad (relativ zum Agent-Verzeichnis)</label>
             <input id="hook-f-script" class="form-input" placeholder="hooks/my-hook.sh" style="font-size:12px;font-family:var(--font-mono)">
           </div>
           <div>
-            <label style="font-size:11px;color:var(--text-400)">Tools (comma-separated, * for all)</label>
+            <label style="font-size:11px;color:var(--text-400)">Tools (kommagetrennt, * für alle)</label>
             <input id="hook-f-tools" class="form-input" placeholder="*" value="*" style="font-size:12px;font-family:var(--font-mono)">
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <input type="checkbox" id="hook-f-enabled" checked>
-            <label for="hook-f-enabled" style="font-size:12px;color:var(--text-200)">Enabled</label>
+            <label for="hook-f-enabled" style="font-size:12px;color:var(--text-200)">Aktiviert</label>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:8px">
-            <button onclick="document.getElementById('hook-form').style.display='none'" style="font-size:12px;padding:5px 12px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer">Cancel</button>
-            <button class="btn-primary" onclick="_hookFormSave()" style="font-size:12px;padding:5px 12px">Save Hook</button>
+            <button onclick="document.getElementById('hook-form').style.display='none'" style="font-size:12px;padding:5px 12px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer">Abbrechen</button>
+            <button class="btn-primary" onclick="_hookFormSave()" style="font-size:12px;padding:5px 12px">Hook speichern</button>
           </div>
         </div>
       </div>`;
 
       container.innerHTML = html + '</div>';
-    } catch(e) { container.innerHTML = '<div style="padding:20px;color:var(--text-400)">Hooks not available</div>'; }
+    } catch(e) { container.innerHTML = '<div style="padding:20px;color:var(--text-400)">Hooks nicht verfügbar</div>'; }
   }
 
 
@@ -607,21 +607,21 @@ async function switchAgentTab(agentId, tab, btn) {
     const _b = 'font-size:9px;padding:2px 6px;border-radius:4px;display:inline-block;';
     let serverCards = '';
     if (!Object.keys(allServers).length) {
-      serverCards = '<div style="padding:16px;text-align:center;color:#73726c;font-size:12px">No MCP servers configured. Add one manually or browse the registry below.</div>';
+      serverCards = '<div style="padding:16px;text-align:center;color:#73726c;font-size:12px">Keine MCP-Server konfiguriert. Fügen Sie manuell einen hinzu oder durchsuchen Sie unten die Registry.</div>';
     } else {
       for (const [name, cfg] of Object.entries(allServers)) {
         const inherited = cfg._source === 'main' && agentId !== 'main';
         const transport = cfg.transport || cfg.type || (cfg.command ? 'stdio' : cfg.url ? 'sse' : '?');
         const target = cfg.command ? `${cfg.command} ${(cfg.args||[]).join(' ')}` : cfg.url || '';
         const live = liveStatus[name];
-        const dot = live ? `<span style="width:7px;height:7px;border-radius:50%;background:${live.connected?'#16a34a':'#a1a09a'};flex-shrink:0" title="${live.connected?'Connected':'Disconnected'}"></span>` : '<span style="width:7px;height:7px;border-radius:50%;background:#d4d4d0;flex-shrink:0" title="Not connected"></span>';
-        const tools = live && live.tools_count ? `<span style="${_b}background:rgba(22,163,74,0.1);color:#16a34a">${live.tools_count} tools</span>` : '';
+        const dot = live ? `<span style="width:7px;height:7px;border-radius:50%;background:${live.connected?'#16a34a':'#a1a09a'};flex-shrink:0" title="${live.connected?'Verbunden':'Getrennt'}"></span>` : '<span style="width:7px;height:7px;border-radius:50%;background:#d4d4d0;flex-shrink:0" title="Nicht verbunden"></span>';
+        const tools = live && live.tools_count ? `<span style="${_b}background:rgba(22,163,74,0.1);color:#16a34a">${live.tools_count} Tools</span>` : '';
         const src = inherited
-          ? `<span style="${_b}background:rgba(120,120,140,0.15);color:#73726c">inherited</span>`
-          : `<span style="${_b}background:rgba(139,92,246,0.15);color:#8b5cf6">local</span>`;
+          ? `<span style="${_b}background:rgba(120,120,140,0.15);color:#73726c">geerbt</span>`
+          : `<span style="${_b}background:rgba(139,92,246,0.15);color:#8b5cf6">lokal</span>`;
         const tp = `<span style="${_b}background:rgba(59,130,246,0.12);color:#3b82f6">${esc(transport)}</span>`;
         const rm = !inherited
-          ? `<button style="font-size:11px;color:#dc2626;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(220,38,38,0.08);border:none;white-space:nowrap" onmouseover="this.style.background='rgba(220,38,38,0.15)'" onmouseout="this.style.background='rgba(220,38,38,0.08)'" onclick="_removeAgentMcp('${esc(agentId)}','${esc(name)}')">Remove</button>`
+          ? `<button style="font-size:11px;color:#dc2626;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(220,38,38,0.08);border:none;white-space:nowrap" onmouseover="this.style.background='rgba(220,38,38,0.15)'" onmouseout="this.style.background='rgba(220,38,38,0.08)'" onclick="_removeAgentMcp('${esc(agentId)}','${esc(name)}')">Entfernen</button>`
           : '';
         serverCards += `
           <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid rgba(31,30,29,0.08);border-radius:8px;transition:background 0.15s" onmouseover="this.style.background='rgba(0,0,0,0.02)'" onmouseout="this.style.background='transparent'">
@@ -641,24 +641,24 @@ async function switchAgentTab(agentId, tab, btn) {
     container.innerHTML = `
       <div style="padding:16px;display:grid;gap:14px">
         <div style="display:flex;align-items:center;justify-content:space-between">
-          <span style="font-size:14px;font-weight:700;color:#141413">MCP Servers</span>
-          <button style="font-size:11px;padding:5px 14px;border-radius:6px;background:#d97757;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="_showAgentMcpAdd('${esc(agentId)}')">+ Add Manually</button>
+          <span style="font-size:14px;font-weight:700;color:#141413">MCP-Server</span>
+          <button style="font-size:11px;padding:5px 14px;border-radius:6px;background:#d97757;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="_showAgentMcpAdd('${esc(agentId)}')">+ Manuell hinzufügen</button>
         </div>
-        ${agentId !== 'main' ? '<div style="font-size:11px;color:#73726c;margin-top:-6px">Inherits servers from main. Add agent-specific servers below.</div>' : ''}
+        ${agentId !== 'main' ? '<div style="font-size:11px;color:#73726c;margin-top:-6px">Erbt Server von main. Fügen Sie unten agent-spezifische Server hinzu.</div>' : ''}
         <div id="agent-mcp-list" style="display:grid;gap:6px">${serverCards}</div>
         <div id="agent-mcp-add-form"></div>
 
         <div style="border-top:1px solid rgba(31,30,29,0.08);padding-top:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-            <span style="font-size:14px;font-weight:700;color:#141413">Browse MCP Registry</span>
+            <span style="font-size:14px;font-weight:700;color:#141413">MCP-Registry durchsuchen</span>
             <span style="font-size:10px;color:#a1a09a">registry.modelcontextprotocol.io</span>
           </div>
           <div style="position:relative;margin-bottom:10px">
-            <input id="mcp-registry-search" style="width:100%;box-sizing:border-box;background:#f5f4ed;border:1px solid rgba(31,30,29,0.08);border-radius:8px;padding:9px 80px 9px 12px;font-size:13px;color:#141413;outline:none;transition:border-color 0.15s" placeholder="Search servers (e.g. github, slack, postgres)..." onfocus="this.style.borderColor='#d97757'" onblur="this.style.borderColor='rgba(31,30,29,0.08)'" onkeydown="if(event.key==='Enter'){event.preventDefault();_searchMcpRegistry('${esc(agentId)}')}" oninput="clearTimeout(window._mcpSearchDebounce);window._mcpSearchDebounce=setTimeout(()=>_searchMcpRegistry('${esc(agentId)}'),400)">
-            <button id="mcp-registry-search-btn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:11px;padding:5px 14px;border-radius:6px;background:#d97757;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="_searchMcpRegistry('${esc(agentId)}')">Search</button>
+            <input id="mcp-registry-search" style="width:100%;box-sizing:border-box;background:#f5f4ed;border:1px solid rgba(31,30,29,0.08);border-radius:8px;padding:9px 80px 9px 12px;font-size:13px;color:#141413;outline:none;transition:border-color 0.15s" placeholder="Server suchen (z. B. github, slack, postgres)…" onfocus="this.style.borderColor='#d97757'" onblur="this.style.borderColor='rgba(31,30,29,0.08)'" onkeydown="if(event.key==='Enter'){event.preventDefault();_searchMcpRegistry('${esc(agentId)}')}" oninput="clearTimeout(window._mcpSearchDebounce);window._mcpSearchDebounce=setTimeout(()=>_searchMcpRegistry('${esc(agentId)}'),400)">
+            <button id="mcp-registry-search-btn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:11px;padding:5px 14px;border-radius:6px;background:#d97757;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="_searchMcpRegistry('${esc(agentId)}')">Suchen</button>
           </div>
           <div id="mcp-registry-results" style="display:grid;gap:6px">
-            <div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Type to search the official MCP server registry</div>
+            <div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Tippen, um die offizielle MCP-Server-Registry zu durchsuchen</div>
           </div>
         </div>
       </div>`;
@@ -695,9 +695,9 @@ async function switchAgentTab(agentId, tab, btn) {
         const sel = current === undefined ? '' : (current ? 'true' : 'false');
         return `<select class="tok-override" data-tool="${esc(toolName)}" data-field="${esc(field)}"
                        style="font-size:11px;padding:2px 4px;font-family:var(--font-mono);background:var(--bg-100);border:1px solid var(--border-100);border-radius:3px;width:90px">
-          <option value="" ${sel===''?'selected':''}>inherit</option>
-          <option value="true" ${sel==='true'?'selected':''}>force on</option>
-          <option value="false" ${sel==='false'?'selected':''}>force off</option>
+          <option value="" ${sel===''?'selected':''}>erben</option>
+          <option value="true" ${sel==='true'?'selected':''}>erzwingen an</option>
+          <option value="false" ${sel==='false'?'selected':''}>erzwingen aus</option>
         </select>`;
       };
 
@@ -708,12 +708,12 @@ async function switchAgentTab(agentId, tab, btn) {
         // Hint badges show what global says vs what the override does
         const enabledBadge = (() => {
           const baseColor = t.enabled ? 'var(--success)' : 'var(--text-400)';
-          const baseLabel = t.enabled ? 'global: on' : 'global: off';
+          const baseLabel = t.enabled ? 'global: an' : 'global: aus';
           return `<span style="font-size:9px;color:${baseColor}">${baseLabel}</span>`;
         })();
         const deferredBadge = (() => {
           const baseColor = t.deferred ? 'var(--warning,#d97706)' : 'var(--text-400)';
-          const baseLabel = t.deferred ? 'global: deferred' : 'global: live';
+          const baseLabel = t.deferred ? 'global: aufgeschoben' : 'global: live';
           return `<span style="font-size:9px;color:${baseColor}">${baseLabel}</span>`;
         })();
         const effColor = effEnabled ? 'var(--success)' : 'var(--text-400)';
@@ -741,14 +741,14 @@ async function switchAgentTab(agentId, tab, btn) {
             <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:4px;background:var(--bg-100)" onclick="toggleTokGroup('${esc(gName)}')">
               <span style="font-size:14px;color:var(--text-400)" id="tok-group-chevron-${esc(gName)}">${hasOverride?'▾':'▸'}</span>
               <span style="font-size:13px;font-weight:600;color:var(--text-100);text-transform:uppercase;letter-spacing:0.04em">${esc(gName)}</span>
-              <span style="font-size:11px;color:var(--text-400)">${tools.length} tool${tools.length===1?'':'s'}</span>
-              ${hasOverride ? `<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(245,158,11,0.12);color:var(--warning,#d97706)">override</span>` : ''}
+              <span style="font-size:11px;color:var(--text-400)">${tools.length} Tool${tools.length===1?'':'s'}</span>
+              ${hasOverride ? `<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(245,158,11,0.12);color:var(--warning,#d97706)">Überschreibung</span>` : ''}
             </div>
             <div id="tok-group-body-${esc(gName)}" style="display:${hasOverride?'block':'none'};padding:6px 0 0 12px">
               <div style="display:grid;grid-template-columns:1fr 110px 110px;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border-100)">
                 <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Tool</span>
-                <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;text-align:right">Enabled</span>
-                <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;text-align:right">Deferred</span>
+                <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;text-align:right">Aktiviert</span>
+                <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;text-align:right">Aufgeschoben</span>
               </div>
               ${tools.map(toolRow).join('')}
             </div>
@@ -757,36 +757,36 @@ async function switchAgentTab(agentId, tab, btn) {
 
       container.innerHTML = `
         <div style="padding:16px;display:grid;gap:14px">
-          <div style="font-size:16px;font-weight:600;color:var(--text-100)">Token Optimization</div>
+          <div style="font-size:16px;font-weight:600;color:var(--text-100)">Token-Optimierung</div>
           <div style="font-size:11px;color:var(--text-400)">
-            Per-tool overrides for this agent. Each tool resolves through:
-            <b>global</b> (Settings → Tools) → <b>agent override</b> → <b>purpose filter</b>.
-            "inherit" defers to the global value; "force on"/"force off" overrides for this agent only.
-            Tool definition costs and per-tool prose live in <b>General Settings → Tools</b>.
+            Pro-Tool-Überschreibungen für diesen Agent. Jedes Tool wird aufgelöst über:
+            <b>global</b> (Einstellungen → Tools) → <b>Agent-Überschreibung</b> → <b>Zweck-Filter</b>.
+            „erben" übernimmt den globalen Wert; „erzwingen an"/„erzwingen aus" überschreibt nur für diesen Agent.
+            Tool-Definitionskosten und Pro-Tool-Text finden Sie unter <b>Allgemeine Einstellungen → Tools</b>.
           </div>
 
           <div style="border:1px solid var(--border-100);border-radius:8px;padding:12px">
             <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">
-              Tool overrides
-              <span style="font-size:11px;color:var(--text-400);font-weight:400">— ${Object.keys(overrides).length} tool${Object.keys(overrides).length===1?'':'s'} currently overridden</span>
+              Tool-Überschreibungen
+              <span style="font-size:11px;color:var(--text-400);font-weight:400">— ${Object.keys(overrides).length} Tool${Object.keys(overrides).length===1?'':'s'} derzeit überschrieben</span>
             </div>
             ${groupOrder.map(g => groupSection(g, byGroup[g])).join('')}
           </div>
 
           <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
-            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Context compaction</div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Kontext-Komprimierung</div>
             <div style="display:flex;align-items:center;gap:8px">
-              <span style="font-size:12px;color:var(--text-300)">Compact threshold:</span>
+              <span style="font-size:12px;color:var(--text-300)">Komprimierungsschwelle:</span>
               <input type="number" id="tok-compact-threshold" value="${tcfg.compact_threshold ? Math.round(tcfg.compact_threshold * 100) : ''}"
                 placeholder="60" min="40" max="95" step="5"
                 class="form-input" style="width:70px;font-size:12px">
-              <span style="font-size:11px;color:var(--text-400)">% (empty = default 60%)</span>
+              <span style="font-size:11px;color:var(--text-400)">% (leer = Standard 60 %)</span>
             </div>
           </div>
 
           <div style="display:flex;justify-content:flex-end;gap:8px">
-            <button class="btn-secondary" onclick="_clearTokenOverrides('${esc(agentId)}')" title="Reset all per-tool overrides for this agent (keeps compact_threshold).">Clear all overrides</button>
-            <button class="btn-primary" onclick="_saveTokenConfig('${esc(agentId)}')">Save Token Config</button>
+            <button class="btn-secondary" onclick="_clearTokenOverrides('${esc(agentId)}')" title="Alle Pro-Tool-Überschreibungen für diesen Agent zurücksetzen (Komprimierungsschwelle bleibt erhalten).">Alle Überschreibungen löschen</button>
+            <button class="btn-primary" onclick="_saveTokenConfig('${esc(agentId)}')">Token-Konfiguration speichern</button>
           </div>
         </div>`;
     } catch(e) {
@@ -838,20 +838,20 @@ window._saveTokenConfig = async function(agentId) {
       name: 'agent.json',
       content: JSON.stringify(cfg, null, 2)
     });
-    showToast(`Saved (${Object.keys(overrides).length} overrides)`);
-  } catch(e) { showToast('Error: ' + e.message, true); }
+    showToast(`Gespeichert (${Object.keys(overrides).length} Überschreibungen)`);
+  } catch(e) { showToast('Fehler: ' + e.message, true); }
 };
 
 window._clearTokenOverrides = async function(agentId) {
-  if (!confirm('Clear ALL per-tool overrides for this agent? Compact threshold and scheduled task settings will be preserved.')) return;
+  if (!confirm('ALLE Pro-Tool-Überschreibungen für diesen Agent löschen? Komprimierungsschwelle und Einstellungen für geplante Aufgaben bleiben erhalten.')) return;
   document.querySelectorAll('.tok-override').forEach(sel => sel.value = '');
-  showToast('Overrides cleared (not saved — click Save to persist)');
+  showToast('Überschreibungen gelöscht (nicht gespeichert — zum Übernehmen auf Speichern klicken)');
 };
 
 window._loadToolBreakdown = async function(agentId) {
   const container = document.getElementById('tok-breakdown');
   if (!container) return;
-  container.innerHTML = '<span style="color:var(--text-400)">Measuring...</span>';
+  container.innerHTML = '<span style="color:var(--text-400)">Wird gemessen…</span>';
   try {
     // Load current filter from agent.json so checkboxes reflect saved state
     try {
@@ -876,9 +876,9 @@ window._loadToolBreakdown = async function(agentId) {
     const segBar = (nm, ds, sc) => {
       const tot = nm + ds + sc || 1;
       return `<div style="display:flex;gap:0;height:4px;border-radius:2px;overflow:hidden;min-width:80px">
-        <div style="flex:${nm};background:#8b5cf6" title="name ${nm} tok"></div>
-        <div style="flex:${ds};background:var(--accent-brand)" title="description ${ds} tok"></div>
-        <div style="flex:${sc};background:var(--success)" title="schema ${sc} tok"></div>
+        <div style="flex:${nm};background:#8b5cf6" title="Name ${nm} Tok"></div>
+        <div style="flex:${ds};background:var(--accent-brand)" title="Beschreibung ${ds} Tok"></div>
+        <div style="flex:${sc};background:var(--success)" title="Schema ${sc} Tok"></div>
       </div>`;
     };
 
@@ -896,9 +896,9 @@ window._loadToolBreakdown = async function(agentId) {
         ${checkbox}
         <span style="font-family:var(--font-mono);color:${heavy?'var(--warning)':'var(--text-200)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc((t.desc||'').toString())}">${esc(t.name)}${heavy?' &#9888;':''}</span>
         ${segBar(t.name_tokens, t.desc_tokens, t.schema_tokens)}
-        <span style="text-align:right;color:#8b5cf6" title="name">${t.name_tokens}</span>
-        <span style="text-align:right;color:var(--accent-brand)" title="description">${t.desc_tokens}</span>
-        <span style="text-align:right;color:var(--success)" title="schema (${t.param_count} params)">${t.schema_tokens}</span>
+        <span style="text-align:right;color:#8b5cf6" title="Name">${t.name_tokens}</span>
+        <span style="text-align:right;color:var(--accent-brand)" title="Beschreibung">${t.desc_tokens}</span>
+        <span style="text-align:right;color:var(--success)" title="Schema (${t.param_count} Parameter)">${t.schema_tokens}</span>
         <span style="text-align:right;font-weight:600;color:var(--text-100)">${t.total_tokens.toLocaleString()}</span>
       </div>`;
     };
@@ -906,11 +906,11 @@ window._loadToolBreakdown = async function(agentId) {
     const rows = groups.map(g => {
       const isMcp = g.source === 'mcp';
       const deferBadge = g.deferred
-        ? '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#fef3c7;color:#d97706">DEFERRED</span>'
+        ? '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#fef3c7;color:#d97706">AUFGESCHOBEN</span>'
         : '';
       const header = `<div style="display:grid;grid-template-columns:${isMcp?'18px ':''}1fr 90px 50px 50px 50px 60px;gap:8px;padding:2px 0 4px;font-size:9px;color:var(--text-400);text-transform:uppercase;border-bottom:1px solid var(--border-050)">
-        ${isMcp?'<span></span>':''}<span>Tool</span><span style="text-align:center">Split</span>
-        <span style="text-align:right">Name</span><span style="text-align:right">Desc</span><span style="text-align:right">Schema</span><span style="text-align:right">Total</span>
+        ${isMcp?'<span></span>':''}<span>Tool</span><span style="text-align:center">Aufteilung</span>
+        <span style="text-align:right">Name</span><span style="text-align:right">Beschr.</span><span style="text-align:right">Schema</span><span style="text-align:right">Gesamt</span>
       </div>`;
       const tools = (g.tools || []).map(t => toolRow(t, isMcp)).join('');
       return `<details style="border-top:1px solid var(--border-050)">
@@ -918,7 +918,7 @@ window._loadToolBreakdown = async function(agentId) {
           <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg-200);color:var(--text-400);text-transform:uppercase">${esc(g.source)}</span>
           <span style="font-size:12px;color:var(--text-200);min-width:100px">${esc(g.name)}</span>
           ${deferBadge}
-          <span style="font-size:11px;color:var(--text-400)">${g.tool_count} tools</span>
+          <span style="font-size:11px;color:var(--text-400)">${g.tool_count} Tools</span>
           <div style="flex:1;min-width:40px;max-width:150px">${bar(g.tokens, total)}</div>
           ${segBar(g.name_tokens||0, g.desc_tokens||0, g.schema_tokens||0)}
           <span style="font-size:12px;font-family:var(--font-mono);min-width:60px;text-align:right;color:${g.deferred?'#d97706':'var(--text-200)'};${g.deferred?'text-decoration:line-through':''}">${g.tokens.toLocaleString()}</span>
@@ -933,46 +933,46 @@ window._loadToolBreakdown = async function(agentId) {
     const mcpActions = (mcp > 0) ? `
       <div style="margin-top:12px;padding:10px;border:1px solid var(--border-050);border-radius:6px;background:var(--bg-100)">
         <div style="font-size:11px;color:var(--text-300);margin-bottom:6px">
-          <b>MCP tool filter:</b> check only the MCP tools this agent should see. Unchecked tools will be excluded from every request.
-          ${filterActive ? `<span style="color:var(--warning)">&nbsp;(filter currently active)</span>` : ''}
+          <b>MCP-Tool-Filter:</b> Markieren Sie nur die MCP-Tools, die dieser Agent sehen soll. Nicht markierte Tools werden aus jeder Anfrage ausgeschlossen.
+          ${filterActive ? `<span style="color:var(--warning)">&nbsp;(Filter derzeit aktiv)</span>` : ''}
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_saveMcpFilter('${esc(agentId)}', false)">Save selection as filter</button>
-          <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_clearMcpFilter('${esc(agentId)}')">Clear filter (allow all)</button>
-          <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_toggleAllMcp(true)">Check all</button>
-          <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_toggleAllMcp(false)">Uncheck all</button>
+          <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_saveMcpFilter('${esc(agentId)}', false)">Auswahl als Filter speichern</button>
+          <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_clearMcpFilter('${esc(agentId)}')">Filter löschen (alle erlauben)</button>
+          <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_toggleAllMcp(true)">Alle markieren</button>
+          <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_toggleAllMcp(false)">Alle abwählen</button>
         </div>
       </div>` : '';
 
     const legend = `<div style="display:flex;gap:14px;margin-top:6px;font-size:10px;color:var(--text-400)">
       <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:#8b5cf6;border-radius:2px"></span>Name</span>
-      <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:var(--accent-brand);border-radius:2px"></span>Description</span>
-      <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:var(--success);border-radius:2px"></span>Schema (parameters)</span>
-      <span style="display:flex;align-items:center;gap:4px;margin-left:auto">&#9888; = schema &gt;60% of total</span>
+      <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:var(--accent-brand);border-radius:2px"></span>Beschreibung</span>
+      <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:var(--success);border-radius:2px"></span>Schema (Parameter)</span>
+      <span style="display:flex;align-items:center;gap:4px;margin-left:auto">&#9888; = Schema &gt;60 % des Gesamtwerts</span>
     </div>`;
 
     const deferNote = defer.deferred
-      ? `<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:var(--bg-200);font-size:11px;color:var(--text-300)">&#9888; MCP deferral <b>active</b> — ~${(defer.tokens_saved_if_deferred||0).toLocaleString()} MCP tokens currently excluded from requests until <code>tool_search</code> discovers them. Threshold: ${(defer.threshold||0).toLocaleString()} tokens.</div>`
+      ? `<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:var(--bg-200);font-size:11px;color:var(--text-300)">&#9888; MCP-Aufschub <b>aktiv</b> — ~${(defer.tokens_saved_if_deferred||0).toLocaleString()} MCP-Tokens derzeit aus Anfragen ausgeschlossen, bis <code>tool_search</code> sie entdeckt. Schwelle: ${(defer.threshold||0).toLocaleString()} Tokens.</div>`
       : (mcp > 0
-          ? `<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:var(--bg-200);font-size:11px;color:var(--text-400)">MCP tools (${mcp.toLocaleString()} tok) are below the 10% auto-defer threshold (${(defer.threshold||0).toLocaleString()} tok) — all MCP schemas are included every request.</div>`
+          ? `<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:var(--bg-200);font-size:11px;color:var(--text-400)">MCP-Tools (${mcp.toLocaleString()} Tok) liegen unter der 10-%-Auto-Aufschub-Schwelle (${(defer.threshold||0).toLocaleString()} Tok) — alle MCP-Schemata werden bei jeder Anfrage eingeschlossen.</div>`
           : '');
 
     const builtinDeferTokens = b.deferred_builtin_tokens || 0;
     const builtinDeferNote = builtinDeferTokens > 0
       ? `<div style="margin-top:8px;padding:8px 10px;border-radius:6px;background:#fef3c7;font-size:11px;color:#92400e">
-          Tool deferral saves ~<b>${builtinDeferTokens.toLocaleString()}</b> tokens/request
-          (${(b.deferred_builtin_groups||[]).join(', ')} deferred until discovered via <code>tool_search</code>).
-          Effective cost: <b>${(total - builtinDeferTokens).toLocaleString()}</b> tokens/request.
+          Tool-Aufschub spart ~<b>${builtinDeferTokens.toLocaleString()}</b> Tokens/Anfrage
+          (${(b.deferred_builtin_groups||[]).join(', ')} aufgeschoben, bis über <code>tool_search</code> entdeckt).
+          Effektive Kosten: <b>${(total - builtinDeferTokens).toLocaleString()}</b> Tokens/Anfrage.
         </div>`
       : '';
 
     container.innerHTML = `
       <div style="display:flex;gap:16px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border-050)">
-        <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">Total</div><div style="font-size:18px;font-weight:600;color:var(--text-100)">${total.toLocaleString()}</div><div style="font-size:10px;color:var(--text-400)">tokens / request</div></div>
-        ${builtinDeferTokens > 0 ? `<div><div style="font-size:10px;color:#d97706;text-transform:uppercase">Deferred</div><div style="font-size:14px;color:#d97706">-${builtinDeferTokens.toLocaleString()}</div></div>` : ''}
-        <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">Built-in</div><div style="font-size:14px;color:var(--text-200)">${builtin.toLocaleString()}</div></div>
+        <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">Gesamt</div><div style="font-size:18px;font-weight:600;color:var(--text-100)">${total.toLocaleString()}</div><div style="font-size:10px;color:var(--text-400)">Tokens / Anfrage</div></div>
+        ${builtinDeferTokens > 0 ? `<div><div style="font-size:10px;color:#d97706;text-transform:uppercase">Aufgeschoben</div><div style="font-size:14px;color:#d97706">-${builtinDeferTokens.toLocaleString()}</div></div>` : ''}
+        <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">Integriert</div><div style="font-size:14px;color:var(--text-200)">${builtin.toLocaleString()}</div></div>
         <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">MCP</div><div style="font-size:14px;color:var(--text-200)">${mcp.toLocaleString()}</div></div>
-        ${b.max_context ? `<div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">% of ctx</div><div style="font-size:14px;color:var(--text-200)">${(total/b.max_context*100).toFixed(1)}%</div></div>` : ''}
+        ${b.max_context ? `<div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">% v. Ktx</div><div style="font-size:14px;color:var(--text-200)">${(total/b.max_context*100).toFixed(1)}%</div></div>` : ''}
       </div>
       ${rows}
       ${legend}
@@ -981,7 +981,7 @@ window._loadToolBreakdown = async function(agentId) {
       ${builtinDeferNote}
     `;
   } catch(e) {
-    container.innerHTML = `<span style="color:var(--error)">Failed: ${esc(e.message)}</span>`;
+    container.innerHTML = `<span style="color:var(--error)">Fehlgeschlagen: ${esc(e.message)}</span>`;
   }
 };
 
@@ -997,7 +997,7 @@ window._saveMcpFilter = async function(agentId, silent) {
   const checked = Array.from(document.querySelectorAll('#tok-breakdown input[data-mcp-tool]:checked'))
     .map(i => i.getAttribute('data-mcp-tool'));
   const all = Array.from(document.querySelectorAll('#tok-breakdown input[data-mcp-tool]'));
-  if (!all.length) { showToast('No MCP tools to filter'); return; }
+  if (!all.length) { showToast('Keine MCP-Tools zum Filtern'); return; }
   try {
     const res = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
     const cfg = JSON.parse(res.content || '{}');
@@ -1008,9 +1008,9 @@ window._saveMcpFilter = async function(agentId, silent) {
       name: 'agent.json',
       content: JSON.stringify(cfg, null, 2)
     });
-    if (!silent) showToast(checked.length === all.length ? 'Filter cleared (all tools allowed)' : `Filter saved: ${checked.length} of ${all.length} tools allowed`);
+    if (!silent) showToast(checked.length === all.length ? 'Filter gelöscht (alle Tools erlaubt)' : `Filter gespeichert: ${checked.length} von ${all.length} Tools erlaubt`);
     _loadToolBreakdown(agentId);
-  } catch(e) { showToast('Error: ' + e.message, true); }
+  } catch(e) { showToast('Fehler: ' + e.message, true); }
 };
 
 window._clearMcpFilter = async function(agentId) {
@@ -1022,9 +1022,9 @@ window._clearMcpFilter = async function(agentId) {
       name: 'agent.json',
       content: JSON.stringify(cfg, null, 2)
     });
-    showToast('Filter cleared');
+    showToast('Filter gelöscht');
     _loadToolBreakdown(agentId);
-  } catch(e) { showToast('Error: ' + e.message, true); }
+  } catch(e) { showToast('Fehler: ' + e.message, true); }
 };
 
 // --- MCP management helpers ---
@@ -1040,31 +1040,31 @@ window._showAgentMcpAdd = function(agentId) {
   if (form.innerHTML.trim()) { form.innerHTML = ''; return; } // toggle
   form.innerHTML = `
     <div style="border:1px solid rgba(31,30,29,0.08);border-radius:8px;padding:14px;display:grid;gap:10px;background:rgba(0,0,0,0.015)">
-      <span style="font-size:13px;font-weight:600;color:#141413">Add MCP Server Manually</span>
+      <span style="font-size:13px;font-weight:600;color:#141413">MCP-Server manuell hinzufügen</span>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div>
           <label style="font-size:10px;color:#73726c;text-transform:uppercase;letter-spacing:0.5px">Name</label>
-          <input id="amcp-name" style="${_mcpInput};margin-top:4px" placeholder="e.g. github">
+          <input id="amcp-name" style="${_mcpInput};margin-top:4px" placeholder="z. B. github">
         </div>
         <div>
           <label style="font-size:10px;color:#73726c;text-transform:uppercase;letter-spacing:0.5px">Transport</label>
-          <select id="amcp-transport" style="${_mcpInput};margin-top:4px" onchange="document.getElementById('amcp-url-label').textContent=this.value==='stdio'?'COMMAND':'URL';document.getElementById('amcp-url').placeholder=this.value==='stdio'?'npx -y @modelcontextprotocol/server-github':'https://...'">
-            <option value="stdio">stdio (command)</option>
+          <select id="amcp-transport" style="${_mcpInput};margin-top:4px" onchange="document.getElementById('amcp-url-label').textContent=this.value==='stdio'?'BEFEHL':'URL';document.getElementById('amcp-url').placeholder=this.value==='stdio'?'npx -y @modelcontextprotocol/server-github':'https://...'">
+            <option value="stdio">stdio (Befehl)</option>
             <option value="sse">SSE (HTTP)</option>
           </select>
         </div>
       </div>
       <div>
-        <label id="amcp-url-label" style="font-size:10px;color:#73726c;text-transform:uppercase;letter-spacing:0.5px">Command</label>
+        <label id="amcp-url-label" style="font-size:10px;color:#73726c;text-transform:uppercase;letter-spacing:0.5px">Befehl</label>
         <input id="amcp-url" style="${_mcpInput};font-family:var(--font-mono);margin-top:4px" placeholder="npx -y @modelcontextprotocol/server-github">
       </div>
       <div>
-        <label style="font-size:10px;color:#73726c;text-transform:uppercase;letter-spacing:0.5px">Args (space-separated, for stdio)</label>
+        <label style="font-size:10px;color:#73726c;text-transform:uppercase;letter-spacing:0.5px">Argumente (leerzeichengetrennt, für stdio)</label>
         <input id="amcp-args" style="${_mcpInput};font-family:var(--font-mono);margin-top:4px" placeholder="--arg1 value1">
       </div>
       <div style="display:flex;gap:8px;margin-top:2px">
-        <button style="${_mcpBtn}" onclick="_doAgentMcpAdd('${esc(agentId)}')">Add Server</button>
-        <button style="${_mcpBtnSec}" onclick="document.getElementById('agent-mcp-add-form').innerHTML=''">Cancel</button>
+        <button style="${_mcpBtn}" onclick="_doAgentMcpAdd('${esc(agentId)}')">Server hinzufügen</button>
+        <button style="${_mcpBtnSec}" onclick="document.getElementById('agent-mcp-add-form').innerHTML=''">Abbrechen</button>
       </div>
     </div>`;
 };
@@ -1074,7 +1074,7 @@ window._doAgentMcpAdd = async function(agentId) {
   const transport = document.getElementById('amcp-transport')?.value;
   const url = document.getElementById('amcp-url')?.value?.trim();
   const argsStr = document.getElementById('amcp-args')?.value?.trim();
-  if (!name || !url) { showToast('Name and command/URL required', true); return; }
+  if (!name || !url) { showToast('Name und Befehl/URL erforderlich', true); return; }
 
   let mcp = {};
   try {
@@ -1098,13 +1098,13 @@ window._doAgentMcpAdd = async function(agentId) {
 
   try {
     await API.post(`/v1/agents/${encodeURIComponent(agentId)}/file`, { name: 'mcp.json', content: JSON.stringify(mcp, null, 2) });
-    showToast(`Added ${name}`);
+    showToast(`${name} hinzugefügt`);
     switchAgentTab(agentId, 'mcp');
   } catch (e) { showToast(e.message, true); }
 };
 
 window._removeAgentMcp = async function(agentId, serverName) {
-  if (!await showConfirmDanger(`Remove MCP server "${serverName}"?`, 'Remove MCP Server', 'Remove')) return;
+  if (!await showConfirmDanger(`MCP-Server „${serverName}" entfernen?`, 'MCP-Server entfernen', 'Entfernen')) return;
   let mcp = {};
   try {
     const res = await API.get(`/v1/agents/${agentId}/file?name=mcp.json`);
@@ -1117,7 +1117,7 @@ window._removeAgentMcp = async function(agentId, serverName) {
 
   try {
     await API.post(`/v1/agents/${encodeURIComponent(agentId)}/file`, { name: 'mcp.json', content: JSON.stringify(mcp, null, 2) });
-    showToast(`Removed ${serverName}`);
+    showToast(`${serverName} entfernt`);
     switchAgentTab(agentId, 'mcp');
   } catch (e) { showToast(e.message, true); }
 };
@@ -1129,14 +1129,14 @@ window._searchMcpRegistry = async function(agentId) {
   const searchBtn = document.getElementById('mcp-registry-search-btn');
   if (!container) return;
   if (!query) {
-    container.innerHTML = '<div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Type to search the official MCP server registry</div>';
+    container.innerHTML = '<div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Tippen, um die offizielle MCP-Server-Registry zu durchsuchen</div>';
     return;
   }
 
   // Show loading state
   container.innerHTML = `<div style="padding:20px;text-align:center">
     <div style="display:inline-block;width:18px;height:18px;border:2px solid #e8e7e0;border-top-color:#d97757;border-radius:50%;animation:spin 0.6s linear infinite"></div>
-    <div style="margin-top:8px;color:#73726c;font-size:12px">Searching registry for "${esc(query)}"...</div>
+    <div style="margin-top:8px;color:#73726c;font-size:12px">Registry wird nach „${esc(query)}" durchsucht…</div>
   </div>`;
   if (searchBtn) { searchBtn.textContent = '...'; searchBtn.disabled = true; }
 
@@ -1163,20 +1163,20 @@ window._searchMcpRegistry = async function(agentId) {
     const data = await API.get(`/v1/mcp/registry?q=${encodeURIComponent(query)}&limit=20`);
     const servers = data.servers || [];
     if (!servers.length) {
-      container.innerHTML = `<div style="padding:24px;text-align:center;color:#73726c;font-size:12px">No servers found for "${esc(query)}". Try a different search term.</div>`;
+      container.innerHTML = `<div style="padding:24px;text-align:center;color:#73726c;font-size:12px">Keine Server für „${esc(query)}" gefunden. Versuchen Sie einen anderen Suchbegriff.</div>`;
       return;
     }
     window._mcpRegistryResults = servers;
 
-    container.innerHTML = `<div style="font-size:11px;color:#a1a09a;margin-bottom:2px">${servers.length} server${servers.length>1?'s':''} found</div>` + servers.map((s, idx) => {
+    container.innerHTML = `<div style="font-size:11px;color:#a1a09a;margin-bottom:2px">${servers.length} Server gefunden</div>` + servers.map((s, idx) => {
       const shortName = (s.name || '').split('/').pop().replace(/^server-/, '');
       const alreadyInstalled = installedNames.has(shortName) || installedNames.has(s.name);
       const typeBadge = s.registry_type ? `<span style="${_mcpBadge}background:rgba(234,179,8,0.15);color:#b45309">${esc(s.registry_type)}</span>` : '';
       const transportBadge = `<span style="${_mcpBadge}background:rgba(59,130,246,0.12);color:#3b82f6">${esc(s.transport || 'stdio')}</span>`;
       const envBadge = s.env_vars?.length ? `<span style="${_mcpBadge}background:rgba(239,68,68,0.1);color:#dc2626">${s.env_vars.length} env</span>` : '';
       const installBtn = alreadyInstalled
-        ? `<span style="font-size:10px;color:#16a34a;padding:3px 10px;background:rgba(22,163,74,0.08);border-radius:5px;white-space:nowrap">Added</span>`
-        : `<button style="${_mcpBtn};padding:4px 12px;font-size:11px" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="_installFromRegistry('${esc(agentId)}',${idx},this)">Add</button>`;
+        ? `<span style="font-size:10px;color:#16a34a;padding:3px 10px;background:rgba(22,163,74,0.08);border-radius:5px;white-space:nowrap">Hinzugefügt</span>`
+        : `<button style="${_mcpBtn};padding:4px 12px;font-size:11px" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="_installFromRegistry('${esc(agentId)}',${idx},this)">Hinzufügen</button>`;
       return `
         <div class="mcp-result-card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid rgba(31,30,29,0.08);border-radius:8px;transition:background 0.15s" onmouseover="this.style.background='rgba(0,0,0,0.02)'" onmouseout="this.style.background='transparent'">
           <div style="flex:1;min-width:0">
@@ -1191,9 +1191,9 @@ window._searchMcpRegistry = async function(agentId) {
         </div>`;
     }).join('');
   } catch (e) {
-    container.innerHTML = `<div style="padding:16px;text-align:center;color:#dc2626;font-size:12px">Error searching registry: ${esc(e.message)}</div>`;
+    container.innerHTML = `<div style="padding:16px;text-align:center;color:#dc2626;font-size:12px">Fehler beim Durchsuchen der Registry: ${esc(e.message)}</div>`;
   } finally {
-    if (searchBtn) { searchBtn.textContent = 'Search'; searchBtn.disabled = false; }
+    if (searchBtn) { searchBtn.textContent = 'Suchen'; searchBtn.disabled = false; }
   }
 };
 
@@ -1209,7 +1209,7 @@ window._installFromRegistry = async function(agentId, idx, btn) {
     if (existing) { existing.remove(); return; }
     let fields = '';
     if (requiredEnv.length) {
-      fields += '<div style="font-size:11px;font-weight:600;color:#141413">Environment variables:</div>';
+      fields += '<div style="font-size:11px;font-weight:600;color:#141413">Umgebungsvariablen:</div>';
       fields += requiredEnv.map(e => `
         <div>
           <label style="font-size:10px;color:#73726c">${esc(e.name)}${e.description ? ' — ' + esc(e.description) : ''}</label>
@@ -1218,7 +1218,7 @@ window._installFromRegistry = async function(agentId, idx, btn) {
       `).join('');
     }
     if (requiredArgs.length) {
-      fields += '<div style="font-size:11px;font-weight:600;color:#141413;margin-top:4px">Arguments:</div>';
+      fields += '<div style="font-size:11px;font-weight:600;color:#141413;margin-top:4px">Argumente:</div>';
       fields += requiredArgs.map(a => `
         <div>
           <label style="font-size:10px;color:#73726c">--${esc(a.name)}${a.description ? ' — ' + esc(a.description) : ''}</label>
@@ -1228,9 +1228,9 @@ window._installFromRegistry = async function(agentId, idx, btn) {
     }
     const formHtml = `
       <div id="${formId}" style="margin-top:8px;padding:12px;border:1px solid rgba(217,119,87,0.3);border-radius:8px;display:grid;gap:8px;background:rgba(217,119,87,0.03)">
-        <div style="font-size:12px;font-weight:600;color:#141413">Configure before adding</div>
+        <div style="font-size:12px;font-weight:600;color:#141413">Vor dem Hinzufügen konfigurieren</div>
         ${fields}
-        <button style="${_mcpBtn};justify-self:start" onclick="window._doRegistryInstall('${esc(agentId)}',${idx},'${formId}')">Add server</button>
+        <button style="${_mcpBtn};justify-self:start" onclick="window._doRegistryInstall('${esc(agentId)}',${idx},'${formId}')">Server hinzufügen</button>
       </div>`;
     btn.closest('.mcp-result-card')?.insertAdjacentHTML('afterend', formHtml);
     return;
@@ -1246,7 +1246,7 @@ window._doRegistryInstall = async function(agentId, idx, formId, btn) {
   const shortName = (s.name || '').split('/').pop().replace(/^server-/, '');
 
   // Show adding state
-  if (btn) { btn.textContent = 'Adding...'; btn.disabled = true; btn.style.opacity = '0.7'; }
+  if (btn) { btn.textContent = 'Wird hinzugefügt…'; btn.disabled = true; btn.style.opacity = '0.7'; }
 
   let env = {};
   let extraArgs = [];
@@ -1285,18 +1285,18 @@ window._doRegistryInstall = async function(agentId, idx, formId, btn) {
 
   try {
     await API.post(`/v1/agents/${encodeURIComponent(agentId)}/file`, { name: 'mcp.json', content: JSON.stringify(mcp, null, 2) });
-    showToast(`Added ${shortName}`);
+    showToast(`${shortName} hinzugefügt`);
     // Remove config form if present
     if (formId) document.getElementById(formId)?.remove();
     // Update button to show "Added"
     if (btn) {
-      btn.outerHTML = `<span style="font-size:10px;color:#16a34a;padding:3px 10px;background:rgba(22,163,74,0.08);border-radius:5px;white-space:nowrap">Added</span>`;
+      btn.outerHTML = `<span style="font-size:10px;color:#16a34a;padding:3px 10px;background:rgba(22,163,74,0.08);border-radius:5px;white-space:nowrap">Hinzugefügt</span>`;
     }
     // Refresh configured servers list at top
     _refreshMcpServerList(agentId);
   } catch (e) {
     showToast(e.message, true);
-    if (btn) { btn.textContent = 'Add'; btn.disabled = false; btn.style.opacity = '1'; }
+    if (btn) { btn.textContent = 'Hinzufügen'; btn.disabled = false; btn.style.opacity = '1'; }
   }
 };
 
@@ -1333,7 +1333,7 @@ window._refreshMcpServerList = async function(agentId) {
   for (const [name, cfg] of Object.entries(mainMcp)) allServers[name] = { ...cfg, _source: 'main' };
   for (const [name, cfg] of Object.entries(agentMcp)) allServers[name] = { ...cfg, _source: agentId };
   if (!Object.keys(allServers).length) {
-    listEl.innerHTML = '<div style="padding:16px;text-align:center;color:#73726c;font-size:12px">No MCP servers configured.</div>';
+    listEl.innerHTML = '<div style="padding:16px;text-align:center;color:#73726c;font-size:12px">Keine MCP-Server konfiguriert.</div>';
     return;
   }
   let html = '';
@@ -1343,10 +1343,10 @@ window._refreshMcpServerList = async function(agentId) {
     const target = cfg.command ? `${cfg.command} ${(cfg.args||[]).join(' ')}` : cfg.url || '';
     const live = liveStatus[name];
     const dot = live ? `<span style="width:7px;height:7px;border-radius:50%;background:${live.connected?'#16a34a':'#a1a09a'};flex-shrink:0"></span>` : '<span style="width:7px;height:7px;border-radius:50%;background:#d4d4d0;flex-shrink:0"></span>';
-    const tools = live && live.tools_count ? `<span style="${_mcpBadge}background:rgba(22,163,74,0.1);color:#16a34a">${live.tools_count} tools</span>` : '';
-    const src = inherited ? `<span style="${_mcpBadge}background:rgba(120,120,140,0.15);color:#73726c">inherited</span>` : `<span style="${_mcpBadge}background:rgba(139,92,246,0.15);color:#8b5cf6">local</span>`;
+    const tools = live && live.tools_count ? `<span style="${_mcpBadge}background:rgba(22,163,74,0.1);color:#16a34a">${live.tools_count} Tools</span>` : '';
+    const src = inherited ? `<span style="${_mcpBadge}background:rgba(120,120,140,0.15);color:#73726c">geerbt</span>` : `<span style="${_mcpBadge}background:rgba(139,92,246,0.15);color:#8b5cf6">lokal</span>`;
     const tp = `<span style="${_mcpBadge}background:rgba(59,130,246,0.12);color:#3b82f6">${esc(transport)}</span>`;
-    const rm = !inherited ? `<button style="font-size:11px;color:#dc2626;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(220,38,38,0.08);border:none;white-space:nowrap" onclick="_removeAgentMcp('${esc(agentId)}','${esc(name)}')">Remove</button>` : '';
+    const rm = !inherited ? `<button style="font-size:11px;color:#dc2626;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(220,38,38,0.08);border:none;white-space:nowrap" onclick="_removeAgentMcp('${esc(agentId)}','${esc(name)}')">Entfernen</button>` : '';
     html += `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid rgba(31,30,29,0.08);border-radius:8px">${dot}<div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span style="font-size:13px;font-weight:600;color:#141413">${esc(name)}</span>${tp} ${src} ${tools}</div><div style="font-size:11px;color:#73726c;font-family:var(--font-mono);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(target.slice(0,100))}</div></div>${rm}</div>`;
   }
   listEl.innerHTML = html;
@@ -1357,9 +1357,9 @@ async function saveAgentSoul(agentId) {
   if (!editor) return;
   try {
     await API.post(`/v1/agents/${agentId}/file`, { name: 'soul.md', content: editor.value });
-    showToast('Soul saved');
+    showToast('Soul gespeichert');
   } catch(e) {
-    showToast('Save failed: ' + e.message, true);
+    showToast('Speichern fehlgeschlagen: ' + e.message, true);
   }
 }
 
@@ -1367,12 +1367,12 @@ async function refineAgentSoul(agentId) {
   const ta = document.getElementById('agent-soul-editor');
   if (!ta) return;
   const text = (ta.value || '').replace(/^\s+|\s+$/g, '');
-  if (!text) { showToast('Write something first', true); return; }
+  if (!text) { showToast('Schreiben Sie zuerst etwas', true); return; }
   const btn = document.getElementById('agent-soul-editor-refine');
   const lbl = document.getElementById('agent-soul-editor-refine-label');
-  const origLabel = lbl?.textContent || 'Refine with AI';
+  const origLabel = lbl?.textContent || 'Mit KI verfeinern';
   if (btn) btn.disabled = true;
-  if (lbl) lbl.textContent = 'Refining…';
+  if (lbl) lbl.textContent = 'Verfeinere…';
   ta.disabled = true;
   const original = ta.value;
   // No caveman here — caveman_system on the agent's model already
@@ -1385,7 +1385,7 @@ async function refineAgentSoul(agentId) {
     });
     if (result && result.refined && result.refined !== text) {
       ta.value = result.refined;
-      if (lbl) lbl.textContent = 'Undo';
+      if (lbl) lbl.textContent = 'Rückgängig';
       if (btn) {
         btn.disabled = false;
         const undoHandler = (ev) => {
@@ -1398,14 +1398,14 @@ async function refineAgentSoul(agentId) {
         };
         btn.onclick = undoHandler;
       }
-      showToast('Refined — review and click Save Soul, or Undo');
+      showToast('Verfeinert — prüfen und auf „Soul speichern" klicken oder Rückgängig');
     } else {
-      showToast('Already clean — no change');
+      showToast('Bereits sauber — keine Änderung');
       if (lbl) lbl.textContent = origLabel;
       if (btn) btn.disabled = false;
     }
   } catch (e) {
-    showToast('Refine failed: ' + (e.message || e), true);
+    showToast('Verfeinern fehlgeschlagen: ' + (e.message || e), true);
     if (lbl) lbl.textContent = origLabel;
     if (btn) btn.disabled = false;
   } finally {
@@ -1432,7 +1432,7 @@ async function sendSoulChat(agentId) {
   // Show thinking indicator
   const thinkBubble = document.createElement('div');
   thinkBubble.style.cssText = 'align-self:flex-start;color:var(--text-400);font-size:12px;font-style:italic;padding:4px 8px';
-  thinkBubble.textContent = 'Thinking...';
+  thinkBubble.textContent = 'Denkt nach…';
   msgContainer.appendChild(thinkBubble);
   msgContainer.scrollTop = msgContainer.scrollHeight;
 
@@ -1466,7 +1466,7 @@ async function sendSoulChat(agentId) {
       const commentary = reply.replace(/```soul\n[\s\S]*?```/, '').trim();
       let html = '';
       if (commentary) html += esc(commentary) + '<br><br>';
-      html += '<div style="display:flex;gap:6px;margin-top:4px"><button class="btn-primary" style="font-size:11px;padding:3px 10px" onclick="applySoulEdit(this)">Apply</button><span style="font-size:11px;color:var(--text-400)">Click to update the editor</span></div>';
+      html += '<div style="display:flex;gap:6px;margin-top:4px"><button class="btn-primary" style="font-size:11px;padding:3px 10px" onclick="applySoulEdit(this)">Übernehmen</button><span style="font-size:11px;color:var(--text-400)">Klicken, um den Editor zu aktualisieren</span></div>';
       asstBubble.innerHTML = html;
       asstBubble.dataset.soul = newSoul;
     } else {
@@ -1479,7 +1479,7 @@ async function sendSoulChat(agentId) {
     thinkBubble.remove();
     const errBubble = document.createElement('div');
     errBubble.style.cssText = 'align-self:flex-start;color:var(--error);font-size:12px;padding:4px 8px';
-    errBubble.textContent = 'Error: ' + e.message;
+    errBubble.textContent = 'Fehler: ' + e.message;
     msgContainer.appendChild(errBubble);
   } finally {
     sendBtn.disabled = false;
@@ -1494,7 +1494,7 @@ function applySoulEdit(btn) {
   const editor = document.getElementById('agent-soul-editor');
   if (editor) {
     editor.value = bubble.dataset.soul;
-    showToast('Soul updated in editor — click Save Soul to persist');
+    showToast('Soul im Editor aktualisiert — auf „Soul speichern" klicken zum Übernehmen');
   }
 }
 
@@ -1524,13 +1524,13 @@ async function saveAgentJson(agentId) {
     }
 
     await API.post(`/v1/agents/${agentId}/file`, { name: 'agent.json', content: JSON.stringify(cfg, null, 2) });
-    showToast('Agent config saved');
+    showToast('Agent-Konfiguration gespeichert');
 
     // Refresh agents list
     const agentsData = await API.getAgents();
     state.agents = agentsData.agents || agentsData || [];
   } catch(e) {
-    showToast('Save failed: ' + e.message, true);
+    showToast('Speichern fehlgeschlagen: ' + e.message, true);
   }
 }
 

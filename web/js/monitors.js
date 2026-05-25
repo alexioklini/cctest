@@ -46,10 +46,10 @@ const ConnectionMonitor = {
     const wrap = document.getElementById('status-connection');
     if (!dot || !wrap) return;
     dot.className = 'connection-dot ' + (connected ? 'connected' : 'disconnected');
-    wrap.title = connected ? 'Server: connected' : 'Server: disconnected';
+    wrap.title = connected ? 'Server: verbunden' : 'Server: getrennt';
     renderUserMenu();
     if (connected && this._failCount === 0) return;
-    if (connected) showToast('Reconnected to server');
+    if (connected) showToast('Wieder mit dem Server verbunden');
   },
 };
 
@@ -102,9 +102,9 @@ function poolTooltip(st) {
   const target = st.target ?? 0;
   const building = st.building ?? 0;
   if (target <= 0) return '';
-  if (ready >= target) return ` · pool ${ready}/${target} ready ✓`;
-  if (ready > 0) return ` · pool ${ready}/${target} ready (building ${building})`;
-  if (building > 0) return ` · pre-baking ${building} session${building>1?'s':''}…`;
+  if (ready >= target) return ` · Pool ${ready}/${target} bereit ✓`;
+  if (ready > 0) return ` · Pool ${ready}/${target} bereit (${building} im Aufbau)`;
+  if (building > 0) return ` · ${building} Session${building>1?'s':''} werden vorbereitet…`;
   return '';
 }
 
@@ -118,12 +118,12 @@ function openWarmPoolModal() {
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
   overlay.innerHTML = `<div class="modal-content" style="max-width:680px;max-height:80vh;display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;padding:20px 24px 0;gap:12px">
-      <h2 style="margin:0;font-size:18px;font-weight:600;color:var(--text-000)">Warm Session Pool</h2>
+      <h2 style="margin:0;font-size:18px;font-weight:600;color:var(--text-000)">Warm-Session-Pool</h2>
       <span id="warmpool-modal-hint" style="font-size:12px;color:var(--text-400)"></span>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()" style="margin-left:auto">&times;</button>
     </div>
     <div id="warmpool-body" style="flex:1;overflow-y:auto;padding:12px 24px 24px">
-      <div style="color:var(--text-400);padding:24px;text-align:center">Loading...</div>
+      <div style="color:var(--text-400);padding:24px;text-align:center">Wird geladen...</div>
     </div>
   </div>`;
   document.body.appendChild(overlay);
@@ -137,19 +137,19 @@ function renderWarmPoolModalBody() {
   const entries = Object.entries(states).filter(([_, st]) => st.enabled);
   const hint = document.getElementById('warmpool-modal-hint');
   if (hint) hint.textContent = entries.length
-    ? `${entries.length} model${entries.length>1?'s':''} with warmup enabled`
-    : 'No models have warmup enabled';
+    ? `${entries.length} Modell${entries.length>1?'e':''} mit aktiviertem Warmup`
+    : 'Kein Modell hat Warmup aktiviert';
   if (!entries.length) {
     body.innerHTML = `<div style="color:var(--text-400);padding:24px;text-align:center">
-      Enable <strong>Warmup</strong> on a model in the Models tab to pre-bake sessions for faster first-token latency.
+      Aktivieren Sie <strong>Warmup</strong> für ein Modell im Tab „Modelle“, um Sessions vorzubereiten und die Latenz bis zum ersten Token zu verringern.
     </div>`;
     return;
   }
   // Short explainer — mode is now per-model (set in Models tab)
   const banner = `<div style="background:var(--bg-200);border-radius:10px;padding:8px 14px;margin-bottom:12px;font-size:11px;color:var(--text-400);line-height:1.5">
-    <span style="color:#22c55e;font-weight:500">full</span>: prefills system+tools into KV cache (~5-6s first response).
-    <span style="color:#8b5cf6;font-weight:500;margin-left:8px">minimal</span>: weights only (~10-15s first response).
-    Configure per model in the Models tab. Full-primed models share GPU memory — if it's tight, they evict each other.
+    <span style="color:#22c55e;font-weight:500">full</span>: lädt System+Tools in den KV-Cache vor (~5-6 s erste Antwort).
+    <span style="color:#8b5cf6;font-weight:500;margin-left:8px">minimal</span>: nur Gewichte (~10-15 s erste Antwort).
+    Pro Modell im Tab „Modelle“ konfigurierbar. Voll vorgeladene Modelle teilen sich den GPU-Speicher — bei Engpässen verdrängen sie sich gegenseitig.
   </div>`;
   entries.sort((a, b) => (a[1].display_name || a[0]).localeCompare(b[1].display_name || b[0]));
   const now = Date.now() / 1000;
@@ -162,17 +162,17 @@ function renderWarmPoolModalBody() {
     const pct = target > 0 ? Math.min(100, Math.round(ready / target * 100)) : 0;
     let stateBadge;
     if (st.state === 'warm') stateBadge = '<span style="color:#22c55e">● warm</span>';
-    else if (st.state === 'warming') stateBadge = '<span style="color:#f59e0b">● warming…</span>';
-    else if (st.state === 'failed') stateBadge = '<span style="color:#ef4444">● failed</span>';
-    else if (st.state === 'skipped_cloud') stateBadge = '<span style="color:var(--text-400)">○ skipped (cloud)</span>';
-    else stateBadge = '<span style="color:var(--text-400)">○ idle</span>';
+    else if (st.state === 'warming') stateBadge = '<span style="color:#f59e0b">● wird aufgewärmt…</span>';
+    else if (st.state === 'failed') stateBadge = '<span style="color:#ef4444">● fehlgeschlagen</span>';
+    else if (st.state === 'skipped_cloud') stateBadge = '<span style="color:var(--text-400)">○ übersprungen (Cloud)</span>';
+    else stateBadge = '<span style="color:var(--text-400)">○ inaktiv</span>';
     const age = (() => {
       const t = st.last_warmup_ts || st.last_used_ts || 0;
-      if (!t) return 'never warmed';
+      if (!t) return 'nie aufgewärmt';
       const secs = Math.max(0, Math.round(now - t));
-      if (secs < 60) return `${secs}s ago`;
-      if (secs < 3600) return `${Math.round(secs/60)}m ago`;
-      return `${Math.round(secs/3600)}h ago`;
+      if (secs < 60) return `vor ${secs} s`;
+      if (secs < 3600) return `vor ${Math.round(secs/60)} Min.`;
+      return `vor ${Math.round(secs/3600)} Std.`;
     })();
     const err = st.last_error ? `<div style="margin-top:6px;color:#ef4444;font-family:var(--font-mono);font-size:11px;background:#ef444411;padding:6px 8px;border-radius:6px;white-space:pre-wrap;word-break:break-word">${esc(st.last_error)}</div>` : '';
     const barColor = st.state === 'failed' ? '#ef4444'
@@ -185,7 +185,7 @@ function renderWarmPoolModalBody() {
     let modeChip = `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${desCol.bg};color:${desCol.fg};font-weight:500">${esc(desired)}</span>`;
     if (actual && actual !== desired) {
       const actCol = chipColor(actual);
-      modeChip += `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${actCol.bg};color:${actCol.fg};font-weight:500" title="Currently primed in ${esc(actual)} mode — keeper will re-prime to ${esc(desired)} on next cycle">${esc(actual)} ⟲</span>`;
+      modeChip += `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${actCol.bg};color:${actCol.fg};font-weight:500" title="Derzeit im Modus ${esc(actual)} vorgeladen — wird im nächsten Zyklus auf ${esc(desired)} umgestellt">${esc(actual)} ⟲</span>`;
     }
     return `<div style="background:var(--bg-200);border-radius:10px;padding:12px 14px;margin-bottom:10px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
@@ -198,9 +198,9 @@ function renderWarmPoolModalBody() {
         <div style="flex:1;height:6px;background:var(--bg-300);border-radius:3px;overflow:hidden">
           <div style="width:${pct}%;height:100%;background:${barColor};transition:width 0.3s"></div>
         </div>
-        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-300)">${ready}/${target}${building ? ` (+${building} building)` : ''}</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-300)">${ready}/${target}${building ? ` (+${building} im Aufbau)` : ''}</span>
         <span style="font-size:11px">${age}</span>
-        <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="triggerPoolWarmup('${esc(mid)}')">Warm now</button>
+        <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="triggerPoolWarmup('${esc(mid)}')">Jetzt aufwärmen</button>
       </div>
       ${err}
     </div>`;
@@ -215,10 +215,10 @@ async function triggerPoolWarmup(modelId) {
       headers: {'Content-Type':'application/json', ...API._headers()},
       body: JSON.stringify({model: modelId}),
     });
-    showToast(`Warming ${modelId}…`);
+    showToast(`${modelId} wird aufgewärmt…`);
     WarmupMonitor._mode = 'fast';
     WarmupMonitor._tick();
-  } catch (e) { showToast(`Warmup failed: ${e}`, true); }
+  } catch (e) { showToast(`Warmup fehlgeschlagen: ${e}`, true); }
 }
 
 // Polls /v1/warmup/status and pushes state into DOM dots (status bar, composer,
@@ -276,7 +276,7 @@ const WarmupMonitor = {
       if (!st) { el.style.display = 'none'; el.className = 'mdl-warmup-dot'; return; }
       el.style.display = 'inline-block';
       el.className = 'mdl-warmup-dot warmup-dot ' + st.state;
-      const age = st.age_seconds != null ? Math.round(st.age_seconds) + 's ago' : 'never';
+      const age = st.age_seconds != null ? 'vor ' + Math.round(st.age_seconds) + ' s' : 'nie';
       el.title = `Warmup: ${st.state}` + (st.state === 'warm' ? ` · ${age}` : '')
               + poolTooltip(st) + (st.last_error ? ` · ${st.last_error}` : '');
     });
@@ -310,10 +310,10 @@ const WarmupMonitor = {
     else if (ready > 0) dotCls = 'warm';
     dot.className = 'warmup-dot ' + dotCls;
     document.getElementById('status-warmpool-label').textContent = `${ready}/${target}`;
-    wrap.title = `Warm pool: ${ready}/${target} ready`
-               + (building ? ` · ${building} building` : '')
-               + (failed ? ` · ${failed} failed` : '')
-               + ' — click for details';
+    wrap.title = `Warm-Pool: ${ready}/${target} bereit`
+               + (building ? ` · ${building} im Aufbau` : '')
+               + (failed ? ` · ${failed} fehlgeschlagen` : '')
+               + ' — für Details klicken';
   },
   _applyComposerDot(id, model) {
     const el = document.getElementById(id);
@@ -322,9 +322,9 @@ const WarmupMonitor = {
     if (!st) { el.style.display = 'none'; return; }
     el.style.display = 'inline-block';
     el.className = 'warmup-dot ' + st.state;
-    const age = st.age_seconds != null ? Math.round(st.age_seconds) + 's ago' : 'never';
-    el.title = `Model warmup: ${st.state}`
-            + (st.state === 'warm' ? ` · prefilled ${age}` : '')
+    const age = st.age_seconds != null ? 'vor ' + Math.round(st.age_seconds) + ' s' : 'nie';
+    el.title = `Modell-Warmup: ${st.state}`
+            + (st.state === 'warm' ? ` · vorgeladen ${age}` : '')
             + poolTooltip(st);
   },
   // Called by the Models tab "Warm now" button (if added later)
@@ -407,8 +407,8 @@ const QueueMonitor = {
     const label = document.getElementById('status-queue-label');
     if (label) label.textContent = waiting > 0 ? `${active}+${waiting}/${capacity}` : `${active}/${capacity}`;
     wrap.title = waiting > 0 || active > 0
-      ? `Provider queue — ${active} running, ${waiting} waiting (capacity ${capacity}) — click for details`
-      : `Provider queue — idle (capacity ${capacity}) — click for details`;
+      ? `Provider-Warteschlange — ${active} aktiv, ${waiting} wartend (Kapazität ${capacity}) — für Details klicken`
+      : `Provider-Warteschlange — inaktiv (Kapazität ${capacity}) — für Details klicken`;
 
     if (document.getElementById('queue-modal')) renderQueueModalBody();
   },
@@ -450,7 +450,7 @@ const QuotaMonitor = {
     if (!wrap) return;
     const st = this.state;
     if (!st || !st.enabled) { wrap.style.display = 'none'; return; }
-    // Hide pill when neither limit is configured (avoids a silent 0-pct donut)
+    // Hide-Pille wenn kein Limit konfiguriert ist (vermeidet stillen 0-%-Donut)
     const dailyOn = (st.daily?.limit_usd || 0) > 0;
     const cycleOn = (st.cycle?.limit_usd || 0) > 0;
     if (!dailyOn && !cycleOn) { wrap.style.display = 'none'; return; }
@@ -462,9 +462,9 @@ const QuotaMonitor = {
     const colorByLevel = { green: 'var(--success)', yellow: 'var(--warning)', red: 'var(--error)' };
     arc.setAttribute('stroke', colorByLevel[st.level] || 'var(--success)');
     document.getElementById('status-quota-label').textContent = pct < 1 && pct > 0 ? '<1%' : `${Math.round(pct)}%`;
-    const lim = (cycleOn ? `cycle ${st.cycle.pct.toFixed(0)}%` : '');
-    const day = (dailyOn ? `today ${st.daily.pct.toFixed(0)}%` : '');
-    wrap.title = `Plan usage — ${[day, lim].filter(Boolean).join(' · ')} — click for details`;
+    const lim = (cycleOn ? `Zyklus ${st.cycle.pct.toFixed(0)}%` : '');
+    const day = (dailyOn ? `heute ${st.daily.pct.toFixed(0)}%` : '');
+    wrap.title = `Plan-Nutzung — ${[day, lim].filter(Boolean).join(' · ')} — für Details klicken`;
   },
 };
 
@@ -513,13 +513,13 @@ function openQuotaModal() {
   const isAdmin = (state.authUser?.role || 'admin') === 'admin';
   pop.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <div style="font-size:13px;font-weight:600;color:var(--text-100);flex:1">Plan usage</div>
+      <div style="font-size:13px;font-weight:600;color:var(--text-100);flex:1">Plan-Nutzung</div>
       ${isAdmin ? `<button onclick="document.getElementById('quota-modal')?.remove();openGeneralSettings();setTimeout(()=>{const t=document.querySelector('.modal-tab[onclick*=&quot;quotas&quot;]');if(t)switchGeneralTab('quotas',t);},50);"
               style="background:transparent;border:1px solid var(--border-100);color:var(--text-300);
                      border-radius:6px;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center"
-              title="Open Quota settings">&#x2192;</button>` : ''}
+              title="Kontingent-Einstellungen öffnen">&#x2192;</button>` : ''}
     </div>
-    <div id="quota-modal-body"><div style="color:var(--text-300);text-align:center;padding:12px">Loading…</div></div>`;
+    <div id="quota-modal-body"><div style="color:var(--text-300);text-align:center;padding:12px">Wird geladen…</div></div>`;
   document.body.appendChild(pop);
 
   // Render synchronously so we can measure the real height before positioning.
@@ -562,21 +562,21 @@ function renderQuotaModalBody() {
   const body = document.getElementById('quota-modal-body');
   if (!body) return;
   const st = QuotaMonitor.state;
-  if (!st) { body.innerHTML = `<div style="color:var(--text-300);text-align:center;padding:20px">Loading…</div>`; return; }
+  if (!st) { body.innerHTML = `<div style="color:var(--text-300);text-align:center;padding:20px">Wird geladen…</div>`; return; }
   if (!st.enabled) {
-    body.innerHTML = `<div style="color:var(--text-300);text-align:center;padding:24px">Quotas are disabled.</div>`;
+    body.innerHTML = `<div style="color:var(--text-300);text-align:center;padding:24px">Kontingente sind deaktiviert.</div>`;
     return;
   }
   const dailyOn = (st.daily?.limit_usd || 0) > 0;
   const cycleOn = (st.cycle?.limit_usd || 0) > 0;
   if (!dailyOn && !cycleOn) {
-    body.innerHTML = `<div style="color:var(--text-300);text-align:center;padding:24px">No limits set for your role (<b>${esc(st.role)}</b>).
-      Ask an admin to configure them in Settings &rarr; Quotas.</div>`;
+    body.innerHTML = `<div style="color:var(--text-300);text-align:center;padding:24px">Für Ihre Rolle (<b>${esc(st.role)}</b>) sind keine Limits gesetzt.
+      Bitten Sie einen Administrator, sie unter Einstellungen &rarr; Kontingente zu konfigurieren.</div>`;
     return;
   }
   const enforce = st.enforce_red || 'warn_only';
-  const enforceLabel = ({warn_only:'warn only', force_local:'force local on red', hard_block:'hard block on red'})[enforce] || enforce;
-  const cycleLabel = ({monthly:'Monthly', weekly:'Weekly', yearly:'Yearly'})[st.billing_cycle] || 'Cycle';
+  const enforceLabel = ({warn_only:'nur warnen', force_local:'bei Rot lokal erzwingen', hard_block:'bei Rot hart blockieren'})[enforce] || enforce;
+  const cycleLabel = ({monthly:'Monatlich', weekly:'Wöchentlich', yearly:'Jährlich'})[st.billing_cycle] || 'Zyklus';
   const fmt = (v) => '$' + (v < 1 ? v.toFixed(3) : v.toFixed(2));
   const row = (label, used, limit, level, resetIso) => {
     if (!(limit > 0)) return '';
@@ -586,7 +586,7 @@ function renderQuotaModalBody() {
         <span style="font-size:12px;color:var(--text-300)">
           <b style="color:var(--text-100)">${(used/limit*100).toFixed(0)}%</b>
           &middot; ${fmt(used)} / ${fmt(limit)}
-          ${resetIso ? ` &middot; resets in ${_quotaResetCountdown(resetIso)}` : ''}
+          ${resetIso ? ` &middot; Zurücksetzung in ${_quotaResetCountdown(resetIso)}` : ''}
         </span>
       </div>
       ${_quotaBar(used, limit, level)}
@@ -594,23 +594,23 @@ function renderQuotaModalBody() {
   };
   const showLocalCTA = st.level === 'red';
   body.innerHTML = `
-    ${row('Daily', st.daily.used_usd, st.daily.limit_usd, st.daily.level, st.daily.resets_at)}
+    ${row('Täglich', st.daily.used_usd, st.daily.limit_usd, st.daily.level, st.daily.resets_at)}
     ${row(cycleLabel, st.cycle.used_usd, st.cycle.limit_usd, st.cycle.level, st.cycle.resets_at)}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:11px;color:var(--text-400)">
-      <span>Role: <b style="color:var(--text-200)">${esc(st.role)}</b>${st.has_override ? ' (override)' : ''}</span>
-      <span>Mode: ${esc(enforceLabel)}</span>
+      <span>Rolle: <b style="color:var(--text-200)">${esc(st.role)}</b>${st.has_override ? ' (überschrieben)' : ''}</span>
+      <span>Modus: ${esc(enforceLabel)}</span>
     </div>
     ${showLocalCTA && enforce === 'force_local' && st.default_local_fallback_model ? `
       <div style="margin-top:12px;padding:10px 12px;background:var(--bg-100);border:1px solid var(--border-100);border-radius:8px;font-size:12px;color:var(--text-200)">
-        Quota exhausted &mdash; new requests automatically route to <b>${esc(modelShortName(st.default_local_fallback_model))}</b>.
+        Kontingent ausgeschöpft &mdash; neue Anfragen werden automatisch an <b>${esc(modelShortName(st.default_local_fallback_model))}</b> geleitet.
       </div>` : ''}
     ${showLocalCTA && enforce === 'hard_block' ? `
       <div style="margin-top:12px;padding:10px 12px;background:var(--bg-100);border:1px solid var(--border-100);border-radius:8px;font-size:12px;color:var(--error)">
-        Quota exhausted &mdash; further requests will be refused until reset. Switch to a local model or ask an admin to raise the limit.
+        Kontingent ausgeschöpft &mdash; weitere Anfragen werden bis zur Zurücksetzung abgelehnt. Wechseln Sie zu einem lokalen Modell oder bitten Sie einen Administrator, das Limit zu erhöhen.
       </div>` : ''}
     ${showLocalCTA && enforce === 'warn_only' ? `
       <div style="margin-top:12px;padding:10px 12px;background:var(--bg-100);border:1px solid var(--border-100);border-radius:8px;font-size:12px;color:var(--warning)">
-        Over the configured limit, but enforcement is set to <b>warn only</b> &mdash; requests are still allowed.
+        Über dem konfigurierten Limit, aber die Durchsetzung steht auf <b>nur warnen</b> &mdash; Anfragen sind weiterhin erlaubt.
       </div>` : ''}
   `;
 }
@@ -626,13 +626,13 @@ function openQueueModal() {
   backdrop.innerHTML = `
     <div class="modal-content" style="max-width:720px;width:92%;max-height:85vh;display:flex;flex-direction:column">
       <div class="modal-header">
-        <h2>Local provider queue</h2>
+        <h2>Lokale Provider-Warteschlange</h2>
         <button class="modal-close" onclick="document.getElementById('queue-modal').remove()" style="margin-left:auto">&times;</button>
       </div>
-      <div class="modal-body" id="queue-modal-body" style="overflow-y:auto"><em style="color:var(--text-muted)">Loading…</em></div>
+      <div class="modal-body" id="queue-modal-body" style="overflow-y:auto"><em style="color:var(--text-muted)">Wird geladen…</em></div>
       <div class="modal-footer" style="color:var(--text-muted);font-size:12px">
-        Providers with <code>max_concurrent &gt; 0</code> in <code>config.json</code> serialise their calls so
-        multiple chats and background tasks don't fight for the same local LLM gateway. FIFO.
+        Provider mit <code>max_concurrent &gt; 0</code> in <code>config.json</code> serialisieren ihre Aufrufe, damit
+        mehrere Chats und Hintergrund-Tasks nicht um dasselbe lokale LLM-Gateway konkurrieren. FIFO.
       </div>
     </div>`;
   document.body.appendChild(backdrop);
@@ -647,7 +647,7 @@ function renderQueueModalBody() {
   if (!body) return;
   const entries = Object.entries(QueueMonitor.providers || {});
   if (!entries.length) {
-    body.innerHTML = `<div style="color:var(--text-muted)">No providers are configured for queueing. Set <code>max_concurrent</code> in <code>config.json</code> → <code>providers.&lt;name&gt;</code> to enable.</div>`;
+    body.innerHTML = `<div style="color:var(--text-muted)">Keine Provider für die Warteschlange konfiguriert. Setzen Sie <code>max_concurrent</code> in <code>config.json</code> → <code>providers.&lt;name&gt;</code>, um sie zu aktivieren.</div>`;
     return;
   }
   const isAdmin = state.authUser?.role === 'admin';
@@ -658,19 +658,19 @@ function renderQueueModalBody() {
   };
   const cancelBtn = (t, state) => {
     if (!isAdmin) return '';
-    const stateLbl = state === 'running' ? 'running' : 'waiting';
+    const stateLbl = state === 'running' ? 'laufende' : 'wartende';
     return `<button class="queue-cancel-btn"
-              onclick="cancelQueueTicket('${esc(t.id)}', '${stateLbl}')"
-              title="Cancel this ${stateLbl} ticket (admin)"
+              onclick="cancelQueueTicket('${esc(t.id)}', '${state}')"
+              title="Dieses ${stateLbl} Ticket abbrechen (Admin)"
               style="background:var(--danger,#c0392b);color:#fff;border:0;padding:2px 8px;
                      border-radius:6px;font-size:11px;cursor:pointer">
-              Cancel
+              Abbrechen
             </button>`;
   };
   const rows = entries.map(([pname, p]) => {
     const active = (p.active || []).map(t => `
       <tr>
-        <td><span class="pill" style="background:var(--accent-brand);color:#fff;padding:1px 8px;border-radius:10px;font-size:11px">running</span></td>
+        <td><span class="pill" style="background:var(--accent-brand);color:#fff;padding:1px 8px;border-radius:10px;font-size:11px">aktiv</span></td>
         <td><code>${esc(t.label || '')}</code></td>
         <td><code>${esc(t.model || '')}</code></td>
         <td>${esc((t.session_id || '').slice(0,8)) || '<em style="color:var(--text-muted)">—</em>'}</td>
@@ -691,25 +691,25 @@ function renderQueueModalBody() {
       </tr>
     `).join('');
     const empty = !active && !waiting
-      ? `<tr><td colspan="7" style="color:var(--text-muted);font-style:italic">Idle</td></tr>` : '';
+      ? `<tr><td colspan="7" style="color:var(--text-muted);font-style:italic">Inaktiv</td></tr>` : '';
     return `
       <div style="margin-bottom:20px">
         <h4 style="margin:0 0 6px 0;font-size:14px">
           <code>${esc(pname)}</code>
           <span style="color:var(--text-muted);font-weight:normal;font-size:12px">
-            · ${p.active_count}/${p.max_concurrent} active${p.waiting_count ? ` · ${p.waiting_count} waiting` : ''}
+            · ${p.active_count}/${p.max_concurrent} aktiv${p.waiting_count ? ` · ${p.waiting_count} wartend` : ''}
           </span>
         </h4>
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <thead>
             <tr style="border-bottom:1px solid var(--border);color:var(--text-muted);text-align:left">
-              <th style="padding:4px">State</th>
-              <th style="padding:4px">Label</th>
-              <th style="padding:4px">Model</th>
+              <th style="padding:4px">Status</th>
+              <th style="padding:4px">Bezeichnung</th>
+              <th style="padding:4px">Modell</th>
               <th style="padding:4px">Session</th>
               <th style="padding:4px">Agent</th>
-              <th style="padding:4px">Age</th>
-              <th style="padding:4px;text-align:right">${isAdmin ? 'Action' : ''}</th>
+              <th style="padding:4px">Alter</th>
+              <th style="padding:4px;text-align:right">${isAdmin ? 'Aktion' : ''}</th>
             </tr>
           </thead>
           <tbody>${active}${waiting}${empty}</tbody>
@@ -722,8 +722,8 @@ function renderQueueModalBody() {
 async function cancelQueueTicket(ticketId, stateLabel) {
   if (!ticketId) return;
   const confirmMsg = stateLabel === 'running'
-    ? 'Cancel this RUNNING LLM call? The active chat will abort.'
-    : 'Cancel this waiting ticket?';
+    ? 'Diesen LAUFENDEN LLM-Aufruf abbrechen? Der aktive Chat wird abgebrochen.'
+    : 'Dieses wartende Ticket abbrechen?';
   if (!await showConfirm(confirmMsg)) return;
   try {
     const resp = await fetch(`${BASE_URL}/v1/queue/cancel`, {
@@ -732,14 +732,14 @@ async function cancelQueueTicket(ticketId, stateLabel) {
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
-      showToast(`Cancel failed: ${data.error || resp.status}`, true);
+      showToast(`Abbrechen fehlgeschlagen: ${data.error || resp.status}`, true);
       return;
     }
-    showToast(`Queue ticket cancelled (${data.state || '?'})`);
+    showToast(`Warteschlangen-Ticket abgebrochen (${data.state || '?'})`);
     // Refresh modal + pill
     QueueMonitor._mode = 'fast';
     QueueMonitor._tick();
   } catch (e) {
-    showToast(`Cancel error: ${e}`, true);
+    showToast(`Abbruchfehler: ${e}`, true);
   }
 }

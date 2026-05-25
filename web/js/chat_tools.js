@@ -34,15 +34,15 @@ function renderMemoryMenuItems(idx) {
 
   // Each item: {label, scope, mode ('memorize'|'purge'), enabled}
   const items = [
-    { label: 'Memorize complete chat',             scope: 'all',   mode: 'memorize', enabled: memOff && totalTurns > 0 },
-    { label: 'Memorize this response',             scope: 'this',  mode: 'memorize', enabled: memOff && !!turnId && !thisMemorized },
-    { label: 'Memorize all above this',            scope: 'above', mode: 'memorize', enabled: memOff && hasAbove },
-    { label: 'Memorize all below this',            scope: 'below', mode: 'memorize', enabled: memOff && hasBelow },
+    { label: 'Gesamten Chat merken',                       scope: 'all',   mode: 'memorize', enabled: memOff && totalTurns > 0 },
+    { label: 'Diese Antwort merken',                       scope: 'this',  mode: 'memorize', enabled: memOff && !!turnId && !thisMemorized },
+    { label: 'Alles oberhalb merken',                      scope: 'above', mode: 'memorize', enabled: memOff && hasAbove },
+    { label: 'Alles unterhalb merken',                     scope: 'below', mode: 'memorize', enabled: memOff && hasBelow },
     { sep: true },
-    { label: 'Remove all memory from this chat',   scope: 'all',   mode: 'purge',    enabled: memOff && hasAny, destructive: true },
-    { label: 'Remove memory from this response',   scope: 'this',  mode: 'purge',    enabled: memOff && !!thisMemorized, destructive: true },
-    { label: 'Remove memory from responses above', scope: 'above', mode: 'purge',    enabled: memOff && hasAbove, destructive: true },
-    { label: 'Remove memory from responses below', scope: 'below', mode: 'purge',    enabled: memOff && hasBelow, destructive: true },
+    { label: 'Gesamten Speicher dieses Chats entfernen',   scope: 'all',   mode: 'purge',    enabled: memOff && hasAny, destructive: true },
+    { label: 'Speicher dieser Antwort entfernen',          scope: 'this',  mode: 'purge',    enabled: memOff && !!thisMemorized, destructive: true },
+    { label: 'Speicher der Antworten oberhalb entfernen',  scope: 'above', mode: 'purge',    enabled: memOff && hasAbove, destructive: true },
+    { label: 'Speicher der Antworten unterhalb entfernen', scope: 'below', mode: 'purge',    enabled: memOff && hasBelow, destructive: true },
   ];
 
   const svgMem = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 10l9-6 9 6v1H3z" fill="currentColor" fill-opacity="0.15"/><line x1="3" y1="11" x2="21" y2="11"/><line x1="3" y1="21" x2="21" y2="21"/></svg>';
@@ -50,7 +50,7 @@ function renderMemoryMenuItems(idx) {
 
   let html = '';
   if (!memOff) {
-    html += `<div class="msg-edit-dropdown-section-label" title="Set chat memory to off to use these actions">Memory mode: ${chat.memoryMode || 'on'} — actions disabled</div>`;
+    html += `<div class="msg-edit-dropdown-section-label" title="Chat-Speicher auf „aus“ setzen, um diese Aktionen zu nutzen">Speichermodus: ${chat.memoryMode || 'on'} — Aktionen deaktiviert</div>`;
   }
   for (const it of items) {
     if (it.sep) { html += '<hr>'; continue; }
@@ -103,23 +103,23 @@ async function runTurnMemoryAction(mode, scope, idx) {
   if (scope !== 'all') payload.anchor_turn_id = turnId;
 
   if (mode === 'purge') {
-    const label = { all: 'all memory for this chat', this: "this response's memory",
-                    above: 'memory for responses above', below: 'memory for responses below' }[scope] || scope;
-    if (!await showConfirmDanger(`Delete ${label}?\n\nThis permanently removes the matching MemPalace drawers and cannot be undone.`, 'Delete Memory', 'Delete')) return;
+    const label = { all: 'den gesamten Speicher dieses Chats', this: 'den Speicher dieser Antwort',
+                    above: 'den Speicher der Antworten oberhalb', below: 'den Speicher der Antworten unterhalb' }[scope] || scope;
+    if (!await showConfirmDanger(`${label} löschen?\n\nDies entfernt die zugehörigen MemPalace-Einträge dauerhaft und kann nicht rückgängig gemacht werden.`, 'Speicher löschen', 'Löschen')) return;
   }
 
   try {
     const resp = await API.post('/v1/sessions/manage', payload);
     if (mode === 'purge') {
-      showToast(`Deleted ${resp.purged || 0} turn(s) from memory`);
+      showToast(`${resp.purged || 0} Anfrage(n) aus dem Speicher gelöscht`);
     } else {
-      showToast(`Memorizing ${resp.memorizing || 0} turn(s)…`);
+      showToast(`${resp.memorizing || 0} Anfrage(n) werden gemerkt…`);
     }
     // Poll twice for updated state (memorize is async)
     setTimeout(refreshMemorizedTurns, 500);
     setTimeout(refreshMemorizedTurns, 2500);
   } catch (e) {
-    showToast('Failed: ' + e.message, true);
+    showToast('Fehlgeschlagen: ' + e.message, true);
   }
 }
 function toolDescribe(name, args) {
@@ -234,11 +234,11 @@ function renderWorkerFlow(wf) {
   const su = wf.summariser_usage || {};
   const suTotal = (su.tokens_in || 0) + (su.tokens_out || 0);
   const suLabel = suTotal > 0
-    ? `<span class="worker-flow-id" title="Summariser LLM: ${(su.tokens_in||0).toLocaleString()} in / ${(su.tokens_out||0).toLocaleString()} out${su.model ? ' · ' + esc(su.model) : ''}">LLM ${suTotal.toLocaleString()} tok</span>`
+    ? `<span class="worker-flow-id" title="Zusammenfassungs-LLM: ${(su.tokens_in||0).toLocaleString()} ein / ${(su.tokens_out||0).toLocaleString()} aus${su.model ? ' · ' + esc(su.model) : ''}">LLM ${suTotal.toLocaleString()} Token</span>`
     : '';
   const header = `
     <div class="worker-flow-header">
-      <span>Worker flow</span>
+      <span>Worker-Ablauf</span>
       <span class="worker-flow-state ${stateCls}">${esc(wf.state || 'RUNNING')}</span>
       <span class="worker-flow-id">${esc(wf.worker_id || '')}</span>
       ${suLabel}
@@ -251,20 +251,20 @@ function renderWorkerFlow(wf) {
     let label = '', meta = '', detail = '', cls = '';
     if (e.kind === 'phase') { label = esc(e.phase || 'step'); cls = isActive ? 'active' : ''; }
     else if (e.kind === 'artifact') {
-      label = 'Artifact stored';
-      meta = e.size_bytes != null ? `${e.size_bytes.toLocaleString()} bytes` : '';
+      label = 'Artefakt gespeichert';
+      meta = e.size_bytes != null ? `${e.size_bytes.toLocaleString()} Bytes` : '';
       detail = esc(e.artifact_id || e.name || '');
     }
     else if (e.kind === 'question') {
-      label = 'Asked user';
+      label = 'Nutzer gefragt';
       cls = 'question';
       detail = esc(e.question || '');
     }
-    else if (e.kind === 'answer') { label = 'Answer received'; cls = 'answer'; detail = esc(e.answer || ''); }
+    else if (e.kind === 'answer') { label = 'Antwort erhalten'; cls = 'answer'; detail = esc(e.answer || ''); }
     else if (e.kind === 'state') { label = esc(e.state || 'state'); meta = e.reason ? esc(e.reason) : ''; cls = 'state'; }
-    else if (e.kind === 'error') { label = 'Error'; cls = 'error'; detail = esc(e.message || ''); }
+    else if (e.kind === 'error') { label = 'Fehler'; cls = 'error'; detail = esc(e.message || ''); }
     else if (e.kind === 'summariser') {
-      label = 'Summariser LLM';
+      label = 'Zusammenfassungs-LLM';
       const ti = e.tokens_in || 0, to = e.tokens_out || 0;
       meta = `${ti.toLocaleString()} in / ${to.toLocaleString()} out`;
       detail = e.model ? esc(e.model) : '';
@@ -285,7 +285,7 @@ function renderWorkerFlow(wf) {
   ).join('');
   return `<div class="worker-flow">
     ${header}
-    ${steps ? `<ul class="worker-flow-timeline">${steps}</ul>` : '<div style="font-size:11px;color:var(--text-400)">No steps yet.</div>'}
+    ${steps ? `<ul class="worker-flow-timeline">${steps}</ul>` : '<div style="font-size:11px;color:var(--text-400)">Noch keine Schritte.</div>'}
     ${artifacts ? `<div class="worker-flow-artifacts">${artifacts}</div>` : ''}
   </div>`;
 }
@@ -413,26 +413,26 @@ function buildToolResultBlock(toolName, args, resultStr, toolUseId) {
   const sizeBadge = `<span class="tool-result-lang">${formatBytes(fullLen)}</span>`;
   // Fetch-method badge (web_fetch only): how the content reached the LLM.
   const _fmTip = {
-    crawl4ai: 'Rendered in a headless browser (page needs JavaScript)',
-    markitdown: 'HTML converted to markdown',
-    raw: 'Raw content, no conversion',
+    crawl4ai: 'In einem Headless-Browser gerendert (Seite benötigt JavaScript)',
+    markitdown: 'HTML zu Markdown konvertiert',
+    raw: 'Rohinhalt, keine Konvertierung',
   }[fetchMethod] || '';
   const fetchBadge = fetchMethod
     ? `<span class="tool-result-fetch-badge" data-fm="${fetchMethod}" title="${esc(_fmTip)}">${esc(fetchMethod)}</span>`
     : '';
-  const expandLabel = truncatedInitial ? 'Show full' : 'Expand';
+  const expandLabel = truncatedInitial ? 'Vollständig anzeigen' : 'Aufklappen';
   const expandBtn = `<button type="button" class="tool-result-btn" data-tres-expand="${id}" onclick="event.stopPropagation(); expandToolResult('${id}', this)">${expandLabel}</button>`;
-  const copyBtn = `<button type="button" class="tool-result-btn" onclick="event.stopPropagation(); copyToolResult('${id}', this)">Copy</button>`;
-  const downloadBtn = `<button type="button" class="tool-result-btn" onclick="event.stopPropagation(); downloadToolResult('${id}', this)">Download</button>`;
+  const copyBtn = `<button type="button" class="tool-result-btn" onclick="event.stopPropagation(); copyToolResult('${id}', this)">Kopieren</button>`;
+  const downloadBtn = `<button type="button" class="tool-result-btn" onclick="event.stopPropagation(); downloadToolResult('${id}', this)">Herunterladen</button>`;
   const highlighted = highlightToolResult(initial, lang);
   const langCls = lang ? ` language-${lang}` : '';
   const termCls = terminal ? ' terminal' : '';
   const truncNote = truncatedAtRender
-    ? `<div class="tool-result-truncated-note">Output exceeds ${formatBytes(TOOL_RESULT_MAX_RENDER)}; rendering capped. Copy returns the rendered slice; Download returns the complete output.</div>`
+    ? `<div class="tool-result-truncated-note">Ausgabe überschreitet ${formatBytes(TOOL_RESULT_MAX_RENDER)}; Darstellung begrenzt. „Kopieren“ liefert den dargestellten Ausschnitt; „Herunterladen“ liefert die vollständige Ausgabe.</div>`
     : '';
   return `<div class="tool-result-section">
     <div class="tool-result-header">
-      <span class="tool-result-label">Response</span>
+      <span class="tool-result-label">Antwort</span>
       ${fetchBadge}
       ${langBadge}
       ${sizeBadge}
@@ -464,7 +464,7 @@ function copyToolResult(id, btn) {
   const done = () => {
     if (!btn) return;
     const orig = btn.textContent;
-    btn.textContent = 'Copied';
+    btn.textContent = 'Kopiert';
     btn.classList.add('copied');
     setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
   };
@@ -520,20 +520,20 @@ async function downloadToolResult(id, btn) {
       if (r.ok) {
         _saveBlobAs(await r.blob(), filename);
         if (btn) { btn.disabled = false; }
-        flash('Saved');
+        flash('Gespeichert');
         return;
       }
       // Fall through to saving the stub if the server has no persisted copy.
-      if (typeof showToast === 'function') showToast('Full output not on server — saving preview', true);
+      if (typeof showToast === 'function') showToast('Vollständige Ausgabe nicht auf dem Server — Vorschau wird gespeichert', true);
     } catch (e) {
-      if (typeof showToast === 'function') showToast('Download failed — saving preview', true);
+      if (typeof showToast === 'function') showToast('Download fehlgeschlagen — Vorschau wird gespeichert', true);
     }
     if (btn) { btn.disabled = false; }
   }
 
   const text = entry.complete != null ? entry.complete : entry.full;
   _saveBlobAs(new Blob([text], { type: 'text/plain;charset=utf-8' }), filename);
-  flash('Saved');
+  flash('Gespeichert');
 }
 function fallbackCopy(text, cb) {
   const ta = document.createElement('textarea');
@@ -602,7 +602,7 @@ function renderToolCall(msg, idx) {
     const wf = findWorkerFlow(msg.name, resultStrForFlow);
     if (wf) bodyHtml = renderWorkerFlow(wf) + bodyHtml;
   }
-  const workerBadge = (isWorker || isRunningWorker) ? '<span class="tool-badge-worker" title="Executed via worker subagent">Hintergrund</span>' : '';
+  const workerBadge = (isWorker || isRunningWorker) ? '<span class="tool-badge-worker" title="Über Worker-Subagent ausgeführt">Hintergrund</span>' : '';
   // Extraction-backend badge for read_document: which of the two surfaces
   // produced the text — markitdown (tried first) or our own fallback
   // (_extract_*), or OCR for scanned PDFs. Reads the `backend` field the
@@ -626,7 +626,7 @@ function renderToolCall(msg, idx) {
   const isParallel = toolRound != null && chat && chat.messages.filter(
     m => m.role === 'tool_call' && m.tool_round === toolRound
   ).length > 1;
-  const parallelBadge = isParallel ? '<span class="tool-badge-parallel" title="Executed in parallel">Parallel</span>' : '';
+  const parallelBadge = isParallel ? '<span class="tool-badge-parallel" title="Parallel ausgeführt">Parallel</span>' : '';
 
   return `
     <div class="tool-block${hasResult ? ' has-result' : ''}" onclick="this.classList.toggle('open')">

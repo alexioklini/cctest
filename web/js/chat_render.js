@@ -27,7 +27,7 @@ function renderMessages() {
     ? (lcmDividerHtml = (() => {
         const { before, after } = chat.messages[0];
         const saved = before && after ? ` — ${before.toLocaleString()}→${after.toLocaleString()} tokens` : '';
-        return `<div class="lcm-divider"><span class="lcm-divider-label">Context compacted${saved}</span></div>`;
+        return `<div class="lcm-divider"><span class="lcm-divider-label">Kontext verdichtet${saved}</span></div>`;
       })(), chat.messages.slice(1))
     : chat.messages;
 
@@ -129,8 +129,8 @@ function renderMessages() {
       const lcmHtml = `<div class="lcm-summary-block" data-turn="${t.turnNum}">
         <div class="lcm-summary-header" onclick="${toggleFn}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;transition:transform .2s;transform:rotate(${isOpen?'0':'-90'}deg)"><polyline points="6 9 12 15 18 9"/></svg>
-          <span style="flex:1">Context compacted</span>
-          <button class="lcm-restore-btn" onclick="event.stopPropagation();restoreLCM('${sessionId}')" title="Restore original messages">Restore</button>
+          <span style="flex:1">Kontext verdichtet</span>
+          <button class="lcm-restore-btn" onclick="event.stopPropagation();restoreLCM('${sessionId}')" title="Ursprüngliche Nachrichten wiederherstellen">Wiederherstellen</button>
         </div>
         ${isOpen ? `<div class="lcm-summary-body">${marked.parse(summaryRaw)}</div>` : ''}
       </div>`;
@@ -637,21 +637,21 @@ function renderUserMessage(msg, idx) {
       ${filesHtml}
       <div class="msg-user">${userTextHtml}</div>
       <div class="msg-actions-bar">
-        <button class="msg-action-btn" onclick="toggleMsgEditMenu(event, ${idx})" title="Edit history">
+        <button class="msg-action-btn" onclick="toggleMsgEditMenu(event, ${idx})" title="Verlauf bearbeiten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
         </button>
         <div class="msg-edit-dropdown" id="msg-edit-menu-${idx}">
           <div class="msg-edit-dropdown-item" onclick="deleteMessages('turn', ${idx})">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18M8 6V4h8v2M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>
-            Remove Q&A pair
+            Frage-Antwort-Paar entfernen
           </div>
           <div class="msg-edit-dropdown-item destructive" onclick="deleteMessages('after', ${idx})">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12l4-4 4 4M14 8l4 4 4-4"/><line x1="2" y1="20" x2="22" y2="20" stroke-dasharray="3 3"/></svg>
-            Remove all after this
+            Alle danach entfernen
           </div>
           <div class="msg-edit-dropdown-item destructive" onclick="deleteMessages('before', ${idx})">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12l4-4 4 4M14 8l4 4 4-4"/><line x1="2" y1="4" x2="22" y2="4" stroke-dasharray="3 3"/></svg>
-            Remove all before this
+            Alle davor entfernen
           </div>
         </div>
       </div>
@@ -679,7 +679,7 @@ function renderAssistantMessage(msg, idx) {
       <div class="thinking-block" onclick="this.classList.toggle('open')">
         <div class="thinking-block-header">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
-          Thinking${summaryNote}
+          Denken${summaryNote}
         </div>
         <div class="thinking-block-body msg-content">${renderMarkdown(msg._thinking)}</div>
       </div>
@@ -689,10 +689,10 @@ function renderAssistantMessage(msg, idx) {
     // Render a non-expandable badge so the user knows it happened.
     const n = msg._thinkingSummary.reasoning_tokens.toLocaleString();
     thinkingHtml = `
-      <div class="thinking-block" style="cursor:default;opacity:0.75;" title="Provider returned reasoning token count but not the text (opaque thinking).">
+      <div class="thinking-block" style="cursor:default;opacity:0.75;" title="Provider hat die Anzahl der Reasoning-Token zurückgegeben, aber nicht den Text (verdecktes Denken).">
         <div class="thinking-block-header">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
-          Thought for ${n} tokens
+          ${n} Token nachgedacht
         </div>
       </div>
     `;
@@ -704,7 +704,7 @@ function renderAssistantMessage(msg, idx) {
     for (const f of msg._files) {
       if (f.artifact_role === 'intermediate') continue;
       const name = f.path ? f.path.split('/').pop() : 'file';
-      const badge = f.action === 'created' ? '<span class="fa-badge created">new</span>' : f.action === 'modified' ? '<span class="fa-badge modified">edit</span>' : '';
+      const badge = f.action === 'created' ? '<span class="fa-badge created">neu</span>' : f.action === 'modified' ? '<span class="fa-badge modified">bearbeitet</span>' : '';
       if (f.artifact_id) {
         filesHtml += `
           <div class="file-attachment-card artifact-card" onclick="openArtifactPanel('${esc(f.artifact_id)}', ${f.artifact_version || ''})">
@@ -853,7 +853,7 @@ function renderAssistantMessage(msg, idx) {
     if (cavChat) cavParts.push('chat ' + cavName(cavChat));
     if (cavParts.length) parts.push('caveman: ' + cavParts.join(' / '));
     if (parts.length) {
-      turnStatsHtml = `<span class="msg-turn-stats" title="Model · duration · speed · turn cost · tokens in/out · thinking · caveman">${parts.join(' · ')}</span>`;
+      turnStatsHtml = `<span class="msg-turn-stats" title="Modell · Dauer · Geschwindigkeit · Kosten der Anfrage · Token ein/aus · Denken · Caveman">${parts.join(' · ')}</span>`;
     }
   }
 
@@ -866,41 +866,41 @@ function renderAssistantMessage(msg, idx) {
       ${refsHtml}
       <div class="msg-actions-bar">
         ${turnStatsHtml}
-        <button class="msg-action-btn" onclick="copyMessage(${idx})" title="Copy">
+        <button class="msg-action-btn" onclick="copyMessage(${idx})" title="Kopieren">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
         </button>
-        <button class="msg-action-btn" onclick="retryMessage(${idx})" title="Retry">
+        <button class="msg-action-btn" onclick="retryMessage(${idx})" title="Erneut versuchen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
         </button>
-        ${messageUsedKnowledge(idx) ? `<button class="msg-action-btn" onclick="openUsedMemoryGraph(${idx})" title="Show used Memory and Relationships">
+        ${messageUsedKnowledge(idx) ? `<button class="msg-action-btn" onclick="openUsedMemoryGraph(${idx})" title="Verwendete Erinnerungen und Beziehungen anzeigen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="7.7" y1="7.5" x2="10.3" y2="16.5"/><line x1="16.3" y1="7.5" x2="13.7" y2="16.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/></svg>
         </button>` : ''}
         <button class="msg-action-btn" onclick="toggleTurnNavMenu(event, ${idx})" title="Anfragen: zuklappen / springen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
         </button>
         <div class="msg-edit-dropdown turn-nav-dropdown" id="turn-nav-menu-${idx}"></div>
-        <button class="msg-action-btn" onclick="toggleMsgEditMenu(event, ${idx})" title="Edit history">
+        <button class="msg-action-btn" onclick="toggleMsgEditMenu(event, ${idx})" title="Verlauf bearbeiten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
         </button>
         <div class="msg-edit-dropdown" id="msg-edit-menu-${idx}">
           <div class="msg-edit-dropdown-item" onclick="deleteMessages('response', ${idx})">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 18L18 6M6 6l12 12"/></svg>
-            Remove this response
+            Diese Antwort entfernen
           </div>
           <div class="msg-edit-dropdown-item" onclick="deleteMessages('turn', ${idx})">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18M8 6V4h8v2M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>
-            Remove Q&A pair
+            Frage-Antwort-Paar entfernen
           </div>
           <div class="msg-edit-dropdown-item destructive" onclick="deleteMessages('after', ${idx})">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12l4-4 4 4M14 8l4 4 4-4"/><line x1="2" y1="20" x2="22" y2="20" stroke-dasharray="3 3"/></svg>
-            Remove all after this
+            Alle danach entfernen
           </div>
           <div class="msg-edit-dropdown-item destructive" onclick="deleteMessages('before', ${idx})">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12l4-4 4 4M14 8l4 4 4-4"/><line x1="2" y1="4" x2="22" y2="4" stroke-dasharray="3 3"/></svg>
-            Remove all before this
+            Alle davor entfernen
           </div>
         </div>
-        <button class="msg-action-btn" onclick="toggleMsgMemoryMenu(event, ${idx})" title="Memory">
+        <button class="msg-action-btn" onclick="toggleMsgMemoryMenu(event, ${idx})" title="Speicher">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-6 9 6v1H3z" fill="currentColor" fill-opacity="0.15"/><line x1="3" y1="11" x2="21" y2="11"/><line x1="3" y1="21" x2="21" y2="21"/><line x1="5" y1="11" x2="5" y2="21"/><line x1="11" y1="11" x2="11" y2="21"/><line x1="17" y1="11" x2="17" y2="21"/><line x1="19" y1="11" x2="19" y2="21"/></svg>
         </button>
         <div class="msg-edit-dropdown" id="msg-memory-menu-${idx}">
@@ -925,17 +925,17 @@ function renderStreamingMessage(chat) {
   const q = chat.queueStatus;
   if (q && q.state === 'waiting' && !chat.thinkingText && !chat.streamingText) {
     const posTxt = q.position > 1
-      ? `position ${q.position} of ${q.waiting}`
-      : 'next up';
-    const provTxt = q.provider ? ` on <code>${esc(q.provider)}</code>` : '';
-    const activeTxt = q.active ? ` · ${q.active}/${q.max_concurrent || '?'} in flight` : '';
+      ? `Position ${q.position} von ${q.waiting}`
+      : 'als Nächstes';
+    const provTxt = q.provider ? ` bei <code>${esc(q.provider)}</code>` : '';
+    const activeTxt = q.active ? ` · ${q.active}/${q.max_concurrent || '?'} aktiv` : '';
     const waitSec = Math.max(0, Math.round((q.wait_ms || 0) / 1000));
     const html = `<div class="msg-turn msg-turn-assistant msg-streaming">
       <div class="msg-assistant msg-content" style="color:var(--text-muted);font-style:italic">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" style="vertical-align:-2px;margin-right:4px">
           <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
         </svg>
-        Waiting in queue${provTxt} — ${posTxt}${activeTxt} · ${waitSec}s
+        In Warteschlange${provTxt} — ${posTxt}${activeTxt} · ${waitSec}s
       </div>
     </div>`;
     injectTarget.insertAdjacentHTML('beforeend', html);
@@ -998,7 +998,7 @@ function renderMarkdown(text) {
     // Add copy buttons to code blocks
     html = html.replace(/<pre><code( class="language-(\w+)")?>/g, (match, cls, lang) => {
       const langLabel = lang || 'code';
-      return `<div class="code-block-header"><span>${esc(langLabel)}</span><button class="code-copy-btn" onclick="copyCodeBlock(this)">Copy</button></div><pre><code${cls || ''}>`;
+      return `<div class="code-block-header"><span>${esc(langLabel)}</span><button class="code-copy-btn" onclick="copyCodeBlock(this)">Kopieren</button></div><pre><code${cls || ''}>`;
     });
 
     // Restore citations as compact pin buttons (don't disrupt text flow)
@@ -1244,7 +1244,7 @@ function renderCitationPin({ file, locator, quote }) {
   const data = encodeURIComponent(JSON.stringify({ file, locator, quote }));
   const tip = quote ? `${file}${locator ? ' · ' + locator : ''}\n\n"${quote}"` : file;
   const bookSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`;
-  return `<button type="button" class="citation-pin" data-citation="${esc(data)}" title="${esc(tip)}" onclick="openCitationPopover(this, event)" aria-label="Citation: ${esc(file)}">${bookSvg}</button>`;
+  return `<button type="button" class="citation-pin" data-citation="${esc(data)}" title="${esc(tip)}" onclick="openCitationPopover(this, event)" aria-label="Quelle: ${esc(file)}">${bookSvg}</button>`;
 }
 // Click handler: open a popover anchored to the pin showing file + locator + quote.
 let _activeCitationPopover = null;

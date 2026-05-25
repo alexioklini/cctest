@@ -48,7 +48,7 @@ function buddyFace(opts = {}) {
 // stroke-width/stroke/fill are set on the host <svg> in CSS (currentColor).
 const BUDDY_SPECIES = {
   cat: {
-    label: 'Cat', color: '#9ca3af',
+    label: 'Katze', color: '#9ca3af',
     face: { cy: 15, eyeDx: 5 },
     body:
       `<path d="M11 8 L13 1 L19 6 M29 8 L27 1 L21 6"/>` +             // small pointed ears
@@ -58,20 +58,20 @@ const BUDDY_SPECIES = {
       `<path d="M29 30 Q38 30 37 22 Q36 18 32 19"/>`,                 // curled tail
   },
   fox: {
-    label: 'Fox', color: '#ea580c',
+    label: 'Fuchs', color: '#ea580c',
     body:
       `<path d="M8 14 L5 4 L15 11 M32 14 L35 4 L25 11"/>` +           // big ears
       `<path d="M7 17 Q20 9 33 17 Q34 28 20 35 Q6 28 7 17 Z"/>`,      // angular head
   },
   dog: {
-    label: 'Dog', color: '#a16207',
+    label: 'Hund', color: '#a16207',
     body:
       `<path d="M9 13 Q3 14 5 24 Q9 24 11 19 M31 13 Q37 14 35 24 Q31 24 29 19"/>` + // floppy ears
       `<circle cx="20" cy="22" r="12"/>` +                            // head
       `<circle class="b-nose" cx="20" cy="25" r="1.6"/>`,             // nose
   },
   bear: {
-    label: 'Bear', color: '#7c5e3c',
+    label: 'Bär', color: '#7c5e3c',
     body:
       `<circle cx="9" cy="11" r="4"/><circle cx="31" cy="11" r="4"/>` + // round ears
       `<circle cx="20" cy="22" r="13"/>` +                             // head
@@ -87,13 +87,13 @@ const BUDDY_SPECIES = {
       `<ellipse class="b-patch" cx="26" cy="20" rx="3.2" ry="4"/>`,
   },
   frog: {
-    label: 'Frog', color: '#16a34a',
+    label: 'Frosch', color: '#16a34a',
     body:
       `<circle cx="12" cy="11" r="5"/><circle cx="28" cy="11" r="5"/>` + // eye bulges
       `<path d="M6 18 Q20 12 34 18 Q34 32 20 33 Q6 32 6 18 Z"/>`,        // wide head
   },
   owl: {
-    label: 'Owl', color: '#7c3aed',
+    label: 'Eule', color: '#7c3aed',
     face: { cx: 20, cy: 16, eyeDx: 6 },
     body:
       `<path d="M9 12 Q7 5 13 7 Q11 9 12 12 M31 12 Q33 5 27 7 Q29 9 28 12"/>` + // feathered ear tufts
@@ -104,14 +104,14 @@ const BUDDY_SPECIES = {
       `<path d="M4 35 h32 M17 34 l0 2 M23 34 l0 2"/>`,                          // branch + feet
   },
   penguin: {
-    label: 'Penguin', color: '#0369a1',
+    label: 'Pinguin', color: '#0369a1',
     body:
       `<path d="M10 13 Q20 4 30 13 Q33 28 20 36 Q7 28 10 13 Z"/>` +    // body
       `<path class="b-belly" d="M14 18 Q20 14 26 18 Q27 28 20 32 Q13 28 14 18 Z"/>` + // belly
       `<path d="M20 24 l-2 2 4 0 z" fill="currentColor"/>`,            // beak
   },
   dragon: {
-    label: 'Dragon', color: '#16a34a',
+    label: 'Drache', color: '#16a34a',
     face: { cy: 15, eyeDx: 5 },
     body:
       `<path d="M12 7 Q8 2 12 0 M28 7 Q32 2 28 0"/>` +                 // curved horns
@@ -123,7 +123,7 @@ const BUDDY_SPECIES = {
       `<circle class="b-nose" cx="21.3" cy="24.4" r="0.6"/>`,
   },
   crab: {
-    label: 'Crab', color: '#ef4444',
+    label: 'Krabbe', color: '#ef4444',
     face: { cy: 11, eyeDx: 6, cx: 20 },
     body:
       `<path d="M8 24 Q8 16 20 16 Q32 16 32 24 Q32 30 20 30 Q8 30 8 24 Z"/>` + // shell
@@ -177,12 +177,12 @@ const BUDDY_TYPING_HOLD_MS = 2500;   // typing reverts to idle after this much q
 // you compose" flavour, distinct from the busy phases.
 const BUDDY_PHASES = {
   idle:       { op: BUDDY_OP_DEEP_IDLE, motion: '',            words: [] },
-  typing:     { op: 0.45,               motion: 'buddy-perk',  words: ['Listening', 'Watching', 'All ears', 'Go on', 'Mm-hmm'] },
-  thinking:   { op: 0.9,                motion: 'buddy-bob',   words: ['Pondering', 'Musing', 'Noodling', 'Mulling', 'Hmm'] },
-  tool:       { op: 0.9,                motion: 'buddy-shake', words: ['Fetching', 'Tinkering', 'Digging', 'Foraging'] },
-  writing:    { op: 0.9,                motion: 'buddy-bob',   words: ['Composing', 'Penning', 'Drafting', 'Inkling'] },
-  warmup:     { op: 0.9,                motion: 'buddy-stretch', words: ['Warming', 'Limbering', 'Booting'] },
-  compacting: { op: 0.9,                motion: 'buddy-squish', words: ['Tidying', 'Folding', 'Squishing'] },
+  typing:     { op: 0.45,               motion: 'buddy-perk',  words: ['Hört zu', 'Schaut zu', 'Ganz Ohr', 'Nur zu', 'Mhm'] },
+  thinking:   { op: 0.9,                motion: 'buddy-bob',   words: ['Grübelt', 'Sinniert', 'Tüftelt', 'Überlegt', 'Hmm'] },
+  tool:       { op: 0.9,                motion: 'buddy-shake', words: ['Holt', 'Werkelt', 'Gräbt', 'Stöbert'] },
+  writing:    { op: 0.9,                motion: 'buddy-bob',   words: ['Verfasst', 'Schreibt', 'Entwirft', 'Formuliert'] },
+  warmup:     { op: 0.9,                motion: 'buddy-stretch', words: ['Wärmt auf', 'Lockert', 'Startet'] },
+  compacting: { op: 0.9,                motion: 'buddy-squish', words: ['Räumt auf', 'Faltet', 'Verdichtet'] },
 };
 const BUDDY_PHASE_CLASSES = Object.keys(BUDDY_PHASES).map(p => 'phase-' + p);
 const BUDDY_MOTION_CLASSES = ['buddy-perk','buddy-bob','buddy-shake','buddy-stretch','buddy-squish'];

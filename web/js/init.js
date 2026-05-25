@@ -41,7 +41,7 @@ function _composerLevelsForFormat(fmt) {
 function cycleThinkingLevel() {
   const fmt = getActiveThinkingFormat();
   if (fmt === 'none') {
-    showToast("Selected model doesn't support thinking", true);
+    showToast('Das gewählte Modell unterstützt kein Denken', true);
     return;
   }
   const levels = _composerLevelsForFormat(fmt);
@@ -58,7 +58,7 @@ function cycleThinkingLevel() {
   state.thinkingLevel = next;
   localStorage.setItem('thinking-level', state.thinkingLevel);
   refreshThinkingButton();
-  showToast(`Thinking: ${state.thinkingLevel}`);
+  showToast(`Denken: ${state.thinkingLevel}`);
 }
 
 // Demote state.thinkingLevel to a value valid for the current model's
@@ -127,7 +127,7 @@ function refreshThinkingButton() {
       btn.style.color = '';
       btn.style.opacity = '0.35';
       btn.style.cursor = 'not-allowed';
-      btn.title = "Model doesn't support thinking";
+      btn.title = 'Modell unterstützt kein Denken';
     } else {
       btn.classList.remove('disabled');
       btn.style.opacity = '';
@@ -136,8 +136,8 @@ function refreshThinkingButton() {
       // Show the levels this model accepts so the user knows what cycling
       // does. e.g. mistral_blocks → "Thinking: off · cycle: off → high".
       const valid = _composerLevelsForFormat(fmt);
-      const cycleHint = valid.length > 1 ? ' · cycle: ' + valid.join(' → ') : '';
-      btn.title = `Thinking: ${level} (${fmt})${cycleHint}`;
+      const cycleHint = valid.length > 1 ? ' · Wechsel: ' + valid.join(' → ') : '';
+      btn.title = `Denken: ${level} (${fmt})${cycleHint}`;
     }
   }
 }
@@ -151,12 +151,12 @@ async function refineInput() {
     || document.getElementById('welcome-input')
     || document.getElementById('project-input');
   const text = input?.value?.trim();
-  if (!text) { showToast('Type a message first', true); return; }
+  if (!text) { showToast('Zuerst eine Nachricht eingeben', true); return; }
 
   const refineBtns = _composerToggleEls('btn-refine');
   try {
     for (const btn of refineBtns) btn.style.opacity = '0.4';
-    showToast('Refining...');
+    showToast('Wird verfeinert...');
 
     // Mirror the chat's caveman setting into the refiner so a caveman-mode
     // chat gets caveman-style rewrites instead of polished prose that
@@ -171,11 +171,11 @@ async function refineInput() {
       input.value = result.refined;
       autoResizeInput(input);
       updateSendButton();
-      showToast('Message refined');
+      showToast('Nachricht verfeinert');
     }
     for (const btn of refineBtns) btn.style.opacity = '';
   } catch(e) {
-    showToast('Refine failed: ' + e.message, true);
+    showToast('Verfeinern fehlgeschlagen: ' + e.message, true);
     for (const btn of refineBtns) btn.style.opacity = '';
   }
 }
@@ -186,11 +186,11 @@ function toggleToolDisplay() {
 
   for (const btn of _composerToggleEls('btn-toggle-tools')) {
     btn.style.color = state.showToolCalls ? 'var(--accent-brand)' : '';
-    btn.title = state.showToolCalls ? 'Tool calls: visible' : 'Tool calls: hidden';
+    btn.title = state.showToolCalls ? 'Tool-Aufrufe: sichtbar' : 'Tool-Aufrufe: ausgeblendet';
   }
 
   renderMessages();
-  showToast(state.showToolCalls ? 'Tool calls visible' : 'Tool calls hidden');
+  showToast(state.showToolCalls ? 'Tool-Aufrufe sichtbar' : 'Tool-Aufrufe ausgeblendet');
 }
 
 // Composer toggle for GDPR detail visibility. Privacy-first default: when
@@ -233,13 +233,13 @@ async function resetGdprActionPref() {
     chat.hasGdprMapping = false;
     updateStatusBar();
     const labels = {
-      'anonymise':   'auto-anonymise',
-      'local_model': 'auto-local-model',
-      'continue':    'auto-continue',
+      'anonymise':   'Auto-Anonymisieren',
+      'local_model': 'Auto-Lokales-Modell',
+      'continue':    'Auto-Fortfahren',
     };
-    showToast(`PII preference reset (was: ${labels[prev] || prev}) — modal will reappear`);
+    showToast(`PII-Einstellung zurückgesetzt (war: ${labels[prev] || prev}) — Dialog erscheint wieder`);
   } catch (e) {
-    showToast('Failed to reset PII preference: ' + e.message, true);
+    showToast('PII-Einstellung konnte nicht zurückgesetzt werden: ' + e.message, true);
   }
 }
 
@@ -264,11 +264,11 @@ async function toggleSaveToMemory() {
   const hasHistory = (chat.messages || []).some(m => m.role === 'user' || m.role === 'assistant');
   if (next === 'off' && (cur === 'on' || cur === 'auto') && hasHistory) {
     const choice = await showDialog({
-      title: 'Memory turned off',
-      message: 'Also delete previously stored memories of this chat from MemPalace?',
+      title: 'Speicher ausgeschaltet',
+      message: 'Auch die bisher gespeicherten Erinnerungen dieses Chats aus MemPalace löschen?',
       buttons: [
-        { label: 'Keep memories', value: 'keep' },
-        { label: 'Delete memories', value: 'delete', primary: true, danger: true },
+        { label: 'Erinnerungen behalten', value: 'keep' },
+        { label: 'Erinnerungen löschen', value: 'delete', primary: true, danger: true },
       ],
     });
     purge = choice === 'delete';
@@ -288,15 +288,15 @@ async function toggleSaveToMemory() {
         await API.post('/v1/sessions/manage', {
           action: 'purge_memory', session_id: chat.sessionId,
         });
-        showToast('Memory: off — stored memories deleted');
+        showToast('Speicher: aus — gespeicherte Erinnerungen gelöscht');
       } catch(e) {
-        showToast('Toggled off, but purge failed: ' + e.message, true);
+        showToast('Ausgeschaltet, aber Löschen fehlgeschlagen: ' + e.message, true);
       }
       return;
     }
-    const labels = { on: 'Memory: on — all messages saved', auto: 'Memory: auto — LLM classifier decides', off: 'Memory: off' };
+    const labels = { on: 'Speicher: an — alle Nachrichten gespeichert', auto: 'Speicher: auto — LLM-Klassifizierer entscheidet', off: 'Speicher: aus' };
     showToast(labels[next]);
-  } catch(e) { showToast('Failed: ' + e.message, true); }
+  } catch(e) { showToast('Fehlgeschlagen: ' + e.message, true); }
 }
 
 // ─── Research-mode override (project chats only) ───────────────────────
@@ -336,7 +336,7 @@ async function toggleResearchModeOverride() {
   const agentId = chat.agentId || state.activeAgentId || 'main';
   const projectDefault = await _projectResearchModeDefault(agentId, chat.project);
   if (projectDefault === null) {
-    showToast('Could not read project default', true);
+    showToast('Projektstandard konnte nicht gelesen werden', true);
     return;
   }
   // Two-state cycle: if override is null, install !projectDefault. Else clear.
@@ -356,13 +356,13 @@ async function toggleResearchModeOverride() {
     let effective = (next === null) ? projectDefault : next;
     let label;
     if (next === null) {
-      label = `Research mode: project default (${projectDefault ? 'on' : 'off'})`;
+      label = `Recherchemodus: Projektstandard (${projectDefault ? 'an' : 'aus'})`;
     } else {
-      label = `Research mode: ${effective ? 'on' : 'off'} (overriding project default)`;
+      label = `Recherchemodus: ${effective ? 'an' : 'aus'} (überschreibt Projektstandard)`;
     }
     showToast(label);
   } catch (e) {
-    showToast('Failed: ' + e.message, true);
+    showToast('Fehlgeschlagen: ' + e.message, true);
   }
 }
 
@@ -390,9 +390,9 @@ async function refreshResearchModeButton() {
     btn.style.opacity = (override === null) ? '' : '1';  // emphasised when overridden
     let tip;
     if (override === null) {
-      tip = `Research mode: ${effective ? 'on' : 'off'} (project default — click to override)`;
+      tip = `Recherchemodus: ${effective ? 'an' : 'aus'} (Projektstandard — klicken zum Überschreiben)`;
     } else {
-      tip = `Research mode: ${effective ? 'on' : 'off'} (session override — click to revert to project default of ${projectDefault ? 'on' : 'off'})`;
+      tip = `Recherchemodus: ${effective ? 'an' : 'aus'} (Sitzungs-Überschreibung — klicken, um zum Projektstandard (${projectDefault ? 'an' : 'aus'}) zurückzukehren)`;
     }
     btn.title = tip;
     // Thin underline marker shows there's an active override.
@@ -410,7 +410,7 @@ async function refreshResearchModeButton() {
 // localStorage('refine-caveman:<textareaId>'); dependants read the
 // current value via _refineCavemanValue(textareaId).
 function _refineCavemanLabel(mode) {
-  return ['off (spaceship)', 'lite (car)', 'full (horse)', 'ultra (campfire)'][mode] || 'off';
+  return ['aus (Raumschiff)', 'lite (Auto)', 'voll (Pferd)', 'ultra (Lagerfeuer)'][mode] || 'aus';
 }
 function _refineCavemanButton(textareaId) {
   let cur = 0;
@@ -420,7 +420,7 @@ function _refineCavemanButton(textareaId) {
   return `<button type="button" id="${textareaId}-refine-caveman"
     data-caveman="${cur}"
     onclick="_refineCavemanCycle('${textareaId}')"
-    title="Refiner caveman: ${_refineCavemanLabel(cur)} — click to cycle"
+    title="Verfeinerer-Caveman: ${_refineCavemanLabel(cur)} — klicken zum Wechseln"
     style="background:transparent;border:1px solid var(--border-light);border-radius:4px;width:24px;height:24px;padding:2px;color:var(--text-300);cursor:pointer;display:inline-flex;align-items:center;justify-content:center">${_sizedCavemanSvg(cur)}</button>`;
 }
 
@@ -438,7 +438,7 @@ function _refineCavemanCycle(textareaId) {
   const next = (cur + 1) % 4;
   btn.dataset.caveman = String(next);
   btn.innerHTML = _sizedCavemanSvg(next);
-  btn.title = `Refiner caveman: ${_refineCavemanLabel(next)} — click to cycle`;
+  btn.title = `Verfeinerer-Caveman: ${_refineCavemanLabel(next)} — klicken zum Wechseln`;
   try { localStorage.setItem('refine-caveman:' + textareaId, String(next)); }
   catch(e) {}
 }
@@ -494,13 +494,13 @@ async function toggleCavemanMode() {
     localStorage.setItem('caveman-chat-mode', String(next));
     updateStatusBar();
     const labels = {
-      0: 'Caveman: off 🚀',
-      1: 'Caveman: lite 🚗 — removes filler',
-      2: 'Caveman: full 🐎 — telegraphic',
-      3: 'Caveman: ultra 🔥 — max compression',
+      0: 'Caveman: aus 🚀',
+      1: 'Caveman: lite 🚗 — entfernt Füllwörter',
+      2: 'Caveman: voll 🐎 — telegrafisch',
+      3: 'Caveman: ultra 🔥 — maximale Komprimierung',
     };
     showToast(labels[next]);
-  } catch(e) { showToast('Failed: ' + e.message, true); }
+  } catch(e) { showToast('Fehlgeschlagen: ' + e.message, true); }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -641,12 +641,12 @@ function _initComposerListeners() {
    SLASH COMMANDS
    ═══════════════════════════════════════════════════════════ */
 const slashCommands = [
-  { cmd: '/new', desc: 'Start new conversation' },
-  { cmd: '/clear', desc: 'Clear messages' },
-  { cmd: '/agent', desc: 'Switch agent' },
-  { cmd: '/model', desc: 'Switch model' },
-  { cmd: '/settings', desc: 'Open settings' },
-  { cmd: '/thinking', desc: 'Toggle thinking level' },
+  { cmd: '/new', desc: 'Neue Unterhaltung starten' },
+  { cmd: '/clear', desc: 'Nachrichten löschen' },
+  { cmd: '/agent', desc: 'Agent wechseln' },
+  { cmd: '/model', desc: 'Modell wechseln' },
+  { cmd: '/settings', desc: 'Einstellungen öffnen' },
+  { cmd: '/thinking', desc: 'Denkstufe umschalten' },
 ];
 
 function showSlashPopup(inputEl) {
@@ -705,7 +705,7 @@ function toggleChatTitleMenu(event) {
   const input = document.createElement('input');
   input.type = 'text';
   input.value = current;
-  input.placeholder = 'Name this chat...';
+  input.placeholder = 'Diesen Chat benennen...';
   input.style.cssText = 'font:inherit;color:inherit;background:var(--bg-200);border:1px solid var(--accent);border-radius:4px;padding:2px 6px;width:240px;outline:none;';
 
   const finish = async () => {
@@ -766,7 +766,7 @@ function showAuthError(msg) {
 async function authLogin() {
   const username = document.getElementById('auth-username').value.trim();
   const password = document.getElementById('auth-password').value;
-  if (!username || !password) { showAuthError('Username and password required'); return; }
+  if (!username || !password) { showAuthError('Benutzername und Passwort erforderlich'); return; }
   try {
     const r = await fetch(`${BASE_URL}/v1/auth/login`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
@@ -785,7 +785,7 @@ async function authLogin() {
     hideAuthOverlay();
     renderUserMenu();
     init();
-  } catch(e) { showAuthError('Connection failed'); }
+  } catch(e) { showAuthError('Verbindung fehlgeschlagen'); }
 }
 
 function authLogout() {
@@ -849,7 +849,7 @@ function renderUserMenu() {
     // Not authenticated — show default "Agent / Connected"
     if (avatarEl) avatarEl.textContent = 'A';
     if (nameEl) nameEl.textContent = 'Agent';
-    if (planEl) { planEl.textContent = state.connected ? 'Connected' : 'Disconnected'; planEl.className = 'sb-user-plan'; }
+    if (planEl) { planEl.textContent = state.connected ? 'Verbunden' : 'Getrennt'; planEl.className = 'sb-user-plan'; }
     if (dropdownEl) dropdownEl.innerHTML = '';
     return;
   }
@@ -868,11 +868,11 @@ function renderUserMenu() {
   // duplicate "Settings" entry that previously mirrored the gear icon.
   if (dropdownEl) {
     dropdownEl.innerHTML = `
-      <div class="sb-user-dropdown-item" onclick="event.stopPropagation(); document.getElementById('sb-user-dropdown')?.classList.remove('open'); openUserSettings()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="7" r="4"/><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/></svg>Account settings</div>
-      ${user.role === 'admin' ? '<div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openUserManagement()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>Manage Users</div>' : ''}
-      ${(user.role === 'admin' || user.role === 'poweruser') ? '<div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openUserTeams()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>User Teams</div>' : ''}
-      ${user.role === 'admin' ? '<div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openGeneralSettings()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>General settings</div>' : ''}
-      <div class="sb-user-dropdown-item danger" onclick="event.stopPropagation(); authLogout()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>Sign out</div>
+      <div class="sb-user-dropdown-item" onclick="event.stopPropagation(); document.getElementById('sb-user-dropdown')?.classList.remove('open'); openUserSettings()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="7" r="4"/><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/></svg>Kontoeinstellungen</div>
+      ${user.role === 'admin' ? '<div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openUserManagement()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>Benutzer verwalten</div>' : ''}
+      ${(user.role === 'admin' || user.role === 'poweruser') ? '<div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openUserTeams()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Benutzer-Teams</div>' : ''}
+      ${user.role === 'admin' ? '<div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openGeneralSettings()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>Allgemeine Einstellungen</div>' : ''}
+      <div class="sb-user-dropdown-item danger" onclick="event.stopPropagation(); authLogout()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>Abmelden</div>
     `;
   }
 
@@ -922,10 +922,10 @@ function getProjectVisibilityHTML() {
   if (!user || !state.authEnabled) return '';
   return `
     <div style="margin-top:8px">
-      <label style="font-size:12px;color:var(--text-secondary)">Visibility</label>
+      <label style="font-size:12px;color:var(--text-secondary)">Sichtbarkeit</label>
       <select id="project-visibility" style="width:100%;padding:8px;margin-top:4px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
-        <option value="global">Global (everyone)</option>
-        <option value="user">Private (me only)</option>
+        <option value="global">Global (alle)</option>
+        <option value="user">Privat (nur ich)</option>
         <option value="team">Team</option>
       </select>
     </div>
@@ -959,13 +959,13 @@ function initComposers() {
       mountId:     'welcome-composer-mount',
       idPrefix:    'welcome-',   // applied to btn-*, model-selector, warmup-dot, model-name, send-btn, stop-btn, image-preview, slash-popup
       inputId:     'welcome-input',
-      placeholder: 'Ask anything...',
+      placeholder: 'Fragen Sie etwas...',
     },
     {
       mountId:     'chat-composer-mount',
       idPrefix:    '',           // btn-thinking etc stay bare; send/stop/model get chat- prefix below
       inputId:     'chat-input',
-      placeholder: 'Reply...',
+      placeholder: 'Antworten...',
       // For chat view the per-element IDs don't all follow one simple prefix rule:
       // buttons keep bare (btn-thinking), send/stop/model/warmup/local get chat- prefix.
       chatStyle:   true,
@@ -974,7 +974,7 @@ function initComposers() {
       mountId:     'project-composer-mount',
       idPrefix:    'project-',
       inputId:     'project-input',
-      placeholder: 'Write your message to Claude',
+      placeholder: 'Schreiben Sie Ihre Nachricht an Claude',
     },
   ];
 
@@ -1114,13 +1114,13 @@ async function init() {
 
   } catch(e) {
     console.error('Init failed:', e);
-    showToast('Failed to connect to server', true);
+    showToast('Verbindung zum Server fehlgeschlagen', true);
   }
 
   // Init button states from stored preferences
   for (const toolBtn of _composerToggleEls('btn-toggle-tools')) {
     toolBtn.style.color = state.showToolCalls ? 'var(--accent-brand)' : '';
-    toolBtn.title = state.showToolCalls ? 'Tool calls: visible' : 'Tool calls: hidden';
+    toolBtn.title = state.showToolCalls ? 'Tool-Aufrufe: sichtbar' : 'Tool-Aufrufe: ausgeblendet';
   }
   for (const gdprBtn of _composerToggleEls('btn-toggle-gdpr-details')) {
     gdprBtn.style.color = state.showGdprDetails ? 'var(--warning, #d97706)' : '';
@@ -1146,7 +1146,7 @@ async function init() {
   const dot = document.getElementById('status-connection-dot');
   if (dot) dot.className = 'connection-dot ' + (state.connected ? 'connected' : 'disconnected');
   const cWrap = document.getElementById('status-connection');
-  if (cWrap) cWrap.title = state.connected ? 'Server: connected' : 'Server: disconnected';
+  if (cWrap) cWrap.title = state.connected ? 'Server: verbunden' : 'Server: getrennt';
   ConnectionMonitor.start();
   MempalaceActivityMonitor.start();
   WarmupMonitor.start();
@@ -1177,7 +1177,7 @@ async function renderPromptCards() {
       ? esc(customIcon)
       : (typeof favouriteTypeGlyphSvg === 'function' ? favouriteTypeGlyphSvg(row.item_type, 20) : '⭐');
     const bg = row.color || row.source_color || def.color || 'var(--chip-bg)';
-    const title = (row.title || '(untitled)').slice(0, 50);
+    const title = (row.title || '(ohne Titel)').slice(0, 50);
     const subtitle = (row.subtitle || '').slice(0, 80);
     return `<button class="prompt-card" data-fav-idx="${i}" style="--card-accent:${esc(bg)}">
       <span class="prompt-card-icon">${iconHtml}</span>
