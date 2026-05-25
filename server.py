@@ -3103,7 +3103,16 @@ def main():
     parser.add_argument("--port", type=int, default=srv_cfg.get("port", 8420))
     parser.add_argument("--api-key", default=provider.get("api_key", ""))
     parser.add_argument("--base-url", default=provider.get("base_url", "http://localhost:8317/v1"))
-    parser.add_argument("-m", "--model", default=provider.get("default_model", ""))
+    # Default-model precedence: explicit --model > top-level config.default_model
+    # (what Settings → Server → Standardmodell persists) > server.default_model >
+    # the default provider's default_model. Previously only the provider field
+    # was read, so a model set in the UI never took effect at boot.
+    _boot_default_model = (
+        file_config.get("default_model")
+        or srv_cfg.get("default_model")
+        or provider.get("default_model", "")
+    )
+    parser.add_argument("-m", "--model", default=_boot_default_model)
     parser.add_argument("--max-context", type=int, default=file_config.get("max_context", 131072))
     args = parser.parse_args()
 

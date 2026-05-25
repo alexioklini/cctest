@@ -381,6 +381,11 @@ class AdminConfigHandlers:
                 if os.path.exists(config_path):
                     with open(config_path) as f:
                         config = json.load(f)
+                # Persist the chosen default model itself — previously only
+                # default_provider was written, so the model never survived a
+                # restart (server.default_model stayed empty → background calls
+                # like Brainy had no fallback model).
+                config["default_model"] = model
                 if provider_name:
                     config["default_provider"] = provider_name
                 with open(config_path, "w") as f:

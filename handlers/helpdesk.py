@@ -56,11 +56,30 @@ def _load_helpdesk_config() -> dict:
 
 
 def _resolve_helpdesk_model(cfg: dict) -> str:
-    """Configured model if available, else the server default. '' if none."""
+    """Pick Brainy's model. Configured Brainy model if available, else "Auto":
+    the server default (boot value → persisted config.default_model), else the
+    best enabled chat model. Returns "" only when the install has no usable
+    model at all."""
     mid = (cfg.get("model") or "").strip()
     if mid and engine._is_model_available(mid):
         return mid
-    return engine._background_model_default() or ""
+    # "Auto". Try, in order: the boot-time server default; the persisted
+    # config.json default_model (covers "set in UI but not yet restarted"); then
+    # the highest-priority enabled model so Brainy always works.
+    cand = (engine._background_model_default() or "").strip()
+    if cand and engine._is_model_available(cand):
+        return cand
+    try:
+        with open(_CONFIG_PATH, encoding="utf-8") as f:
+            cand = (json.load(f).get("default_model") or "").strip()
+        if cand and engine._is_model_available(cand):
+            return cand
+    except (OSError, json.JSONDecodeError):
+        pass
+    try:
+        return engine._resolve_auto_model_tiered(None) or ""
+    except Exception:
+        return ""
 
 
 def _format_view_context(ctx: dict) -> str:

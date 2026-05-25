@@ -23,10 +23,15 @@ async function _genTab_server(C) {
           <span style="font-size:11px;color:${ok?'var(--success)':'var(--error)'}">${esc(info.status||(ok?'running':'stopped'))}</span>
         </div>`;
       }
-      // Default model selector — chat-capable only.
+      // Default model selector — chat-capable only. A leading placeholder is
+      // selected when no default is set (or the saved id is gone), so an empty
+      // default_model shows "— nicht gesetzt —" instead of silently displaying
+      // the first option as if it were chosen.
       const mc = state.modelsConfig?.models || {};
       const enabledModels = enabledModelsWithCapability('chat');
-      const modelOpts = enabledModels.map(([mid])=>modelOption(mid, {selected: mid===srv.default_model})).join('');
+      const _hasDefault = !!srv.default_model && enabledModels.some(([mid]) => mid === srv.default_model);
+      const modelOpts = `<option value="" ${_hasDefault ? '' : 'selected'}>— nicht gesetzt (bestes verfügbares Modell) —</option>`
+        + enabledModels.map(([mid])=>modelOption(mid, {selected: mid===srv.default_model})).join('');
 
       C.innerHTML = P(`<div style="${G('16px')}">
         <div style="display:flex;align-items:center;gap:8px">
