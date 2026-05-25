@@ -286,6 +286,27 @@ def handle_tools_call(handler) -> None:
     tool_use_id = body.get("tool_use_id") or ""
     turn_id = ctx.get("turn_id") or ""
 
+    # Enforce the per-turn tool set. The sidecar only OFFERS the resolved tools,
+    # but a model can still emit a tool_use for any name it knows (e.g.
+    # read_file when only read_document was offered) — and _dispatch would run
+    # it, breaking the purpose contract (and, for helpdesk, the read-only set)
+    # and wasting tool rounds on rejected guesses. `allowed_tools` is the
+    # resolved set from run_turn; empty/absent = no enforcement (legacy callers).
+    allowed = ctx.get("allowed_tools")
+    if isinstance(allowed, list) and allowed and name not in allowed:
+        result_str = json.dumps({
+            "error": f"tool '{name}' is not available in this context. "
+                     f"Available: {', '.join(sorted(allowed))}.",
+        }, ensure_ascii=False)
+        if turn_id:
+            try:
+                from handlers import sidecar_proxy
+                sidecar_proxy.capture_tool_result(turn_id, tool_use_id, name, result_str, True)
+            except Exception:
+                pass
+        handler._send_json({"result": result_str, "is_error": True, "elapsed_ms": 0})
+        return
+
     t0 = time.time()
     # The sidecar runs in a separate process; for tool dispatches coming BACK
     # we rebuild the per-turn context on THIS handler thread. request_context()

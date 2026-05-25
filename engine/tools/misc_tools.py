@@ -84,7 +84,31 @@ def tool_use_skill(args: dict) -> str:
         available = [s.get("slug", s["name"]) for s in agent.list_skills()]
         return _err(f"use_skill: skill '{skill_name}' not found. Available: {', '.join(available) or 'none'}")
 
-    return _ok({"skill": skill_name, "instructions": body})
+    out = {"skill": skill_name, "instructions": body}
+    # Surface the skill's companion pages with their EXACT absolute paths so the
+    # model reads them via read_document instead of guessing relative paths
+    # (the skill text references e.g. "06-user-manual.md" but the skill dir is
+    # NOT the working dir — guessed relative reads fail and waste tool rounds).
+    try:
+        for sk in agent.list_skills():
+            if sk.get("slug") == skill_name or sk.get("name") == skill_name:
+                skill_md = sk.get("path") or ""
+                skill_dir = os.path.dirname(skill_md)
+                if skill_dir and os.path.isdir(skill_dir):
+                    pages = {}
+                    for fn in sorted(os.listdir(skill_dir)):
+                        if fn.endswith(".md") and fn != "SKILL.md":
+                            pages[fn] = os.path.join(skill_dir, fn)
+                    if pages:
+                        out["companion_pages"] = pages
+                        out["read_pages_with"] = (
+                            "Use read_document with one of these ABSOLUTE paths "
+                            "to open a companion page — do not guess relative paths."
+                        )
+                break
+    except OSError:
+        pass
+    return _ok(out)
 
 
 # ─── Remote nodes ─────────────────────────────────────────────────────────────

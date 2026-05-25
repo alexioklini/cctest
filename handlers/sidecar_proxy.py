@@ -485,6 +485,11 @@ def run_turn(
         agent_id=tool_context.get("agent_id") or None,
         mcp_manager=getattr(engine, "_mcp_manager", None),
     )
+    # Carry the resolved tool names so the Brain-side dispatcher can ENFORCE the
+    # set — the model can otherwise call any registered tool (e.g. read_file)
+    # even when it wasn't offered this turn. tool_mcp.handle_tools_call checks
+    # this list; empty/absent = no enforcement (legacy callers unchanged).
+    tool_context["allowed_tools"] = [t.get("name", "") for t in _tools if t.get("name")]
     _log_wire_tools(_tools, turn_id=turn_id, purpose=purpose,
                     agent_id=tool_context.get("agent_id") or None, model=model)
     payload: dict[str, Any] = {
@@ -724,6 +729,11 @@ def run_turn_blocking(
         agent_id=tool_context.get("agent_id") or None,
         mcp_manager=getattr(engine, "_mcp_manager", None),
     )
+    # Carry the resolved tool names so the Brain-side dispatcher can ENFORCE the
+    # set — the model can otherwise call any registered tool (e.g. read_file)
+    # even when it wasn't offered this turn. tool_mcp.handle_tools_call checks
+    # this list; empty/absent = no enforcement (legacy callers unchanged).
+    tool_context["allowed_tools"] = [t.get("name", "") for t in _tools if t.get("name")]
     _log_wire_tools(_tools, turn_id=turn_id, purpose=purpose,
                     agent_id=tool_context.get("agent_id") or None, model=model)
     payload: dict[str, Any] = {

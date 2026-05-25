@@ -36,6 +36,32 @@ def _unwrap(envelope: str) -> dict:
     return data
 
 
+class TestHelpdeskToolSet(unittest.TestCase):
+    """The read-only contract: Brainy may read + look things up freely, but the
+    resolved helpdesk tool set must NEVER include a write/exec/mutate tool. The
+    dispatcher enforces the set (tool_mcp.handle_tools_call), so this guards the
+    source of truth that feeds it."""
+
+    def setUp(self):
+        self.names = {t["name"] for t in brain.resolve_active_tools(
+            purpose="helpdesk", agent_id="main")}
+
+    def test_read_and_lookup_tools_present(self):
+        for t in ("use_skill", "read_file", "read_document", "list_directory",
+                  "search_files", "mempalace_query", "context_search",
+                  "helpdesk_session_info", "helpdesk_user_context",
+                  "helpdesk_user_activity"):
+            self.assertIn(t, self.names, f"{t} should be available to Brainy")
+
+    def test_no_write_or_exec_tools(self):
+        forbidden = {"write_file", "edit_file", "execute_command", "python_exec",
+                     "git_command", "github_command", "gmail_send", "gmail_reply",
+                     "write_document", "edit_document", "delegate_task",
+                     "generate_image", "schedule_modify"}
+        leaked = forbidden & self.names
+        self.assertEqual(leaked, set(), f"write/exec tools leaked into helpdesk: {leaked}")
+
+
 class TestViewContextFormatter(unittest.TestCase):
     def test_empty_when_no_label(self):
         self.assertEqual(_format_view_context({}), "")
