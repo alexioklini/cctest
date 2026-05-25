@@ -7316,12 +7316,38 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
    Brainy 🧠 — Helpdesk-Buddy + Modal (chat_helpdesk.js)
    ═══════════════════════════════════════════════════════════ */
 
-/* The composer crab buddy (buddy.js) opens Brainy on click. On left-click it
-   pops to an "active" state — a brief glow + scale — then eases back. */
-.composer-buddy.buddy-active {
-  filter: drop-shadow(0 0 6px var(--buddy-color, var(--accent-brand)));
-  transform: scale(1.18);
-  transition: transform 0.18s ease, filter 0.18s ease;
+/* Floating action button — the single, always-available way to open Brainy.
+   Fixed bottom-right, visible in EVERY view. Symbol = user's buddy or 🧠. */
+.brainy-fab {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 90;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--brainy-accent, var(--accent-brand));
+  color: #fff;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.28);
+  animation: brainyFloat 3.4s ease-in-out infinite;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.brainy-fab:hover { transform: translateY(-3px) scale(1.06); box-shadow: 0 10px 28px rgba(0,0,0,0.34); }
+.brainy-fab:active { transform: scale(0.96); }
+.brainy-fab-emoji { font-size: 28px; line-height: 1; }
+.brainy-fab-buddy { display: flex; width: 60%; height: 60%; color: #fff; }
+.brainy-fab-buddy .b-svg { width: 100%; height: 100%; }
+@keyframes brainyFloat {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
+}
+@media (max-width: 560px) {
+  .brainy-fab { width: 50px; height: 50px; right: 16px; bottom: 16px; }
 }
 
 /* Modal — a focused mini-chat, narrower than the wide settings modals. */

@@ -3,30 +3,75 @@
 /* ═══════════════════════════════════════════════════════════
    Brainy 🧠 — der freundliche Helpdesk-Bot
    ───────────────────────────────────────────────────────────
-   Schwebender Buddy im Chat + Mini-Chat-Modal. Spricht mit dem
-   eigenen /v1/helpdesk-Endpoint (eigener System-Prompt, eigenes
-   Model, exklusiver brain-agent-guide-Skill) — komplett getrennt
-   vom Haupt-Chat, funktioniert auch während des Streamings.
+   A floating bubble (visible in EVERY view) opens a mini-chat modal that
+   talks to the /v1/helpdesk endpoint (own system prompt, own model, exclusive
+   brain-agent-guide skill) — fully separate from the main chat, works during
+   streaming. The bubble's symbol mirrors the user's buddy species (or 🧠).
 
-   Entry points: the composer crab buddy (buddy.js, when enabled) or the
-   composer '?' help button (when the buddy is off). Both call brainyOpen().
+   Brainy is told which view/modal the user is currently in (brainyViewContext)
+   so it can help contextually even when no chat session is active.
 
-   Globals: brainyState, brainyOpen, brainyClose, brainySend (+ render helpers).
+   Globals: brainyState, brainyOpen, brainyClose, brainySend,
+   brainyRefreshBubble, brainyViewContext (+ render helpers).
    ═══════════════════════════════════════════════════════════ */
 
 const brainyState = {
   open: false,
   streaming: false,
-  sessionId: '',          // chat session Brainy is attached to
+  sessionId: '',          // current chat session (context only; may be empty)
+  viewContext: null,      // where the user is, captured on open
   abort: null,            // AbortController for the in-flight ask
 };
+
+/* ── Floating bubble — its symbol is the user's buddy (or 🧠) ── */
+
+function brainyRefreshBubble() {
+  const fab = document.getElementById('brainy-bubble');
+  if (!fab) return;
+  const svg = (typeof buddySvgMarkup === 'function') ? buddySvgMarkup() : '';
+  fab.innerHTML = svg
+    ? `<span class="brainy-fab-buddy">${svg}</span>`
+    : '<span class="brainy-fab-emoji">🧠</span>';
+  // Tint with the buddy's color (falls back to brand accent).
+  fab.style.setProperty('--brainy-accent',
+    (typeof buddyColor === 'function') ? buddyColor() : 'var(--accent-brand)');
+}
+
+/* ── Where is the user right now? (for context-aware help) ──── */
+
+function brainyViewContext() {
+  // An open General Settings modal takes precedence over the underlying view.
+  const gs = document.getElementById('general-settings-modal')
+          || document.querySelector('#general-settings-tabs');
+  if (gs && gs.offsetParent !== null) {
+    const tab = document.querySelector('#general-settings-tabs .modal-tab.active');
+    const tabLabel = tab ? tab.textContent.trim() : '';
+    return { view: 'settings', label: 'Einstellungen' + (tabLabel ? ' → ' + tabLabel : '') };
+  }
+  const v = (typeof state !== 'undefined' && state.currentView) || '';
+  const LABELS = {
+    welcome: 'Startseite', chat: 'Chat', chats: 'Chat-Liste',
+    projects: 'Projekte-Liste', 'project-detail': 'Projekt',
+    scheduled: 'Geplante Aufgaben', workflows: 'Workflows',
+    translation: 'Übersetzung', favourites: 'Favoriten',
+  };
+  const ctx = { view: v || 'unknown', label: LABELS[v] || v || 'Unbekannt' };
+  if (state.currentProject) {
+    ctx.project = state.currentProject;
+    ctx.label = (v === 'chat' ? 'Projekt-Chat' : 'Projekt') + ' „' + state.currentProject + '"';
+  }
+  if (state.activeChat?.chatTitle) ctx.chat_title = state.activeChat.chatTitle;
+  return ctx;
+}
 
 /* ── Open / close the modal ─────────────────────────────────── */
 
 function brainyOpen() {
-  const sid = state.activeChat?.sessionId || '';
-  if (!sid) { return; }   // Brainy is session-bound
-  brainyState.sessionId = sid;
+  // Visible everywhere — a chat session is optional. When present we attach to
+  // it (session tools work); otherwise Brainy still answers general + view-aware
+  // help. The session id keys the persisted helpdesk history.
+  brainyState.sessionId = state.activeChat?.sessionId || '';
+  brainyState.viewContext = brainyViewContext();
   brainyState.open = true;
 
   // Rebuild each open so the avatar reflects the user's current buddy species.
@@ -89,14 +134,14 @@ async function brainyLoadHistory() {
   box.innerHTML = '';
   let msgs = [];
   try {
-    const r = await API.get(`/v1/helpdesk/history?session_id=${encodeURIComponent(brainyState.sessionId)}`);
+    const r = await API.get('/v1/helpdesk/history');   // per-user, no session key
     msgs = r?.messages || [];
   } catch (e) { /* best-effort */ }
 
   if (!msgs.length) {
     brainyAppendBubble('assistant',
-      'Hi! Ich bin **Brainy** 🧠 — dein Helfer hier im brain-agent. '
-      + 'Frag mich alles: wie die App funktioniert, was in dieser Sitzung gerade passiert, '
+      'Hi! Ich bin **Brainy** 🧠 — dein persönlicher Helfer im brain-agent. '
+      + 'Frag mich alles: wie die App funktioniert, was du gerade vor dir hast, '
       + 'oder wie du etwas erledigst. Womit kann ich helfen?');
     return;
   }
@@ -168,7 +213,11 @@ async function brainySend() {
     const resp = await fetch(`${BASE_URL}/v1/helpdesk`, {
       method: 'POST',
       headers: API._headers(),
-      body: JSON.stringify({ session_id: brainyState.sessionId, message: text }),
+      body: JSON.stringify({
+        message: text,
+        session_id: state.activeChat?.sessionId || '',   // current chat, if any (context)
+        view_context: brainyViewContext(),               // where the user is now
+      }),
       signal: brainyState.abort.signal,
     });
     if (!resp.ok) {

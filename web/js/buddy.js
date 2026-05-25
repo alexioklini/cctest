@@ -237,41 +237,7 @@ class FloatingBuddy {
       `stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">` +
       sp.body + buddyFace(sp.face || {}) +
       `</svg>`;
-    this._els().forEach(el => {
-      el.innerHTML = svg;
-      // Clicking the buddy opens Brainy (the helpdesk bot) + flashes an
-      // "active" state. Wired per-draw; guarded so re-draws don't stack
-      // listeners. The buddy is the Brainy entry point whenever it's enabled,
-      // which is why the composer '?' help button hides while a buddy is shown.
-      if (!el._brainyWired) {
-        el._brainyWired = true;
-        el.style.cursor = 'pointer';
-        el.title = 'Brainy fragen — dein Helfer für brain-agent';
-        el.addEventListener('click', () => {
-          this.flashActive();
-          if (typeof brainyOpen === 'function') brainyOpen();
-        });
-      }
-    });
-  }
-
-  // Brief "active" fade on left-click: pop to full opacity + an active class
-  // the CSS can style, then ease back to the idle opacity.
-  flashActive() {
-    this._els().forEach(el => el.classList.add('buddy-active'));
-    this._setOp(1);
-    if (this._activeTimer) clearTimeout(this._activeTimer);
-    this._activeTimer = setTimeout(() => {
-      this._els().forEach(el => el.classList.remove('buddy-active'));
-      if (this.phase === 'idle') this._setOp(BUDDY_OP_DEEP_IDLE);
-    }, 1400);
-  }
-
-  // Buddy enabled ⇒ it IS the Brainy entry point, so hide the composer '?'
-  // help button (redundant). Buddy off ⇒ show '?' as the fallback entry.
-  _syncHelpButtons(buddyOn) {
-    document.querySelectorAll('[data-id="btn-brainy-help"], #btn-brainy-help')
-      .forEach(b => { b.style.display = buddyOn ? 'none' : ''; });
+    this._els().forEach(el => { el.innerHTML = svg; });
   }
   // Toggle the phase-<name> class on each buddy host so CSS shows the right
   // expression for the current phase.
@@ -349,7 +315,7 @@ class FloatingBuddy {
       this.species = null;
       this._show(false);
       this._setBubble('');
-      this._syncHelpButtons(false);   // buddy off → show '?' fallback
+      if (typeof brainyRefreshBubble === 'function') brainyRefreshBubble();
       return;
     }
     this.species = species;
@@ -360,7 +326,8 @@ class FloatingBuddy {
     this._setColor(BUDDY_SPECIES[species].color);
     this._draw(species);
     this._setPhaseClass('idle');
-    this._syncHelpButtons(true);    // buddy on → it's the Brainy entry; hide '?'
+    // Brainy's floating bubble mirrors the user's buddy symbol — refresh it.
+    if (typeof brainyRefreshBubble === 'function') brainyRefreshBubble();
     // Briefly surface the (possibly just-changed) buddy so a species switch in
     // settings is actually visible — at deep-idle 0.08 the change is invisible.
     // Pulse to visible, then ease back to deep-idle after a couple seconds

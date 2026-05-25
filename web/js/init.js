@@ -1140,6 +1140,8 @@ async function init() {
 
   // Spin up the floating ASCII companion (reads buddy_species from prefs).
   if (typeof buddyInit === 'function') buddyInit();
+  // Fill Brainy's floating action button with its symbol (buddy or 🧠).
+  if (typeof brainyRefreshBubble === 'function') brainyRefreshBubble();
 
   // Start connection health monitor
   ConnectionMonitor._connected = state.connected;

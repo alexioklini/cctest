@@ -610,15 +610,16 @@ class ChatDB:
                 "ON classification_scans(user_id, created_at DESC)"
             )
             # ── Helpdesk ("Brainy") conversation history ──
-            # One row per Brainy message (user question or bot answer), scoped to
-            # the chat session it was opened from so it restores when the user
-            # reopens Brainy on that session. Kept separate from `messages` so the
-            # helpdesk side-conversation never enters the main chat history / wire.
-            # Cascade-dropped in delete_session.
+            # PER-USER personal assistant: one continuous conversation per user,
+            # carried across all views/sessions (keyed by user_id, NOT session).
+            # Private to the user — never shared by project/team; admins read it
+            # only via the audit log. Kept separate from `messages` so it never
+            # enters the main chat history / wire. The session_id column is a
+            # vestige (kept for schema stability) and is left empty.
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS helpdesk_history (
                     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL DEFAULT '',
                     user_id    TEXT NOT NULL DEFAULT '',
                     role       TEXT NOT NULL,
                     content    TEXT NOT NULL DEFAULT '',
@@ -626,8 +627,8 @@ class ChatDB:
                 )
             """)
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_helpdesk_history_session "
-                "ON helpdesk_history(session_id, id)"
+                "CREATE INDEX IF NOT EXISTS idx_helpdesk_history_user "
+                "ON helpdesk_history(user_id, id)"
             )
             conn.commit()
 
@@ -1483,41 +1484,47 @@ class ChatDB:
             # Transparent-anonymisation maps: drop with the session — keeping
             # them would orphan encrypted blobs nobody can act on.
             conn.execute("DELETE FROM pseudonym_maps WHERE session_id = ?", (session_id,))
-            conn.execute("DELETE FROM helpdesk_history WHERE session_id = ?", (session_id,))
+            # NOTE: helpdesk_history is per-USER, not per-session — deliberately
+            # NOT dropped here (deleting a chat must not wipe Brainy's history).
             conn.commit()
         _purge_mempalace_session(session_id)
 
     # ── Helpdesk ("Brainy") history ──
+    # PER-USER, not per-session: Brainy is a personal assistant with ONE
+    # continuous conversation per user, carried across all views/sessions.
+    # Private to the user (not shared by project/team; admins read it only via
+    # the audit log). The legacy `session_id` column is kept for the schema but
+    # is no longer the key — left empty.
 
     @staticmethod
     @_db_safe(default=list)
-    def load_helpdesk_history(session_id, limit=200):
-        """Return Brainy's conversation for a session, oldest first."""
+    def load_helpdesk_history(user_id, limit=400):
+        """Return the user's Brainy conversation, oldest first."""
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT role, content, created_at FROM helpdesk_history "
-                "WHERE session_id = ? ORDER BY id ASC LIMIT ?",
-                (session_id, limit),
+                "WHERE user_id = ? ORDER BY id ASC LIMIT ?",
+                (user_id or "", limit),
             ).fetchall()
             return [dict(r) for r in rows]
 
     @staticmethod
     @_db_safe(default=None)
-    def append_helpdesk_message(session_id, role, content, user_id=""):
+    def append_helpdesk_message(user_id, role, content):
         with _db_conn() as conn:
             conn.execute(
                 "INSERT INTO helpdesk_history (session_id, user_id, role, content) "
-                "VALUES (?, ?, ?, ?)",
-                (session_id, user_id or "", role, content or ""),
+                "VALUES ('', ?, ?, ?)",
+                (user_id or "", role, content or ""),
             )
             conn.commit()
 
     @staticmethod
     @_db_safe(default=None)
-    def clear_helpdesk_history(session_id):
+    def clear_helpdesk_history(user_id):
         with _db_conn() as conn:
-            conn.execute("DELETE FROM helpdesk_history WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM helpdesk_history WHERE user_id = ?", (user_id or "",))
             conn.commit()
 
     @staticmethod

@@ -22,6 +22,7 @@ import os
 import threading
 
 import brain as engine
+import server_lib.auth as _auth_mod
 from server_lib.db import ChatDB
 from server_lib.sse_stream import KEEPALIVE, encode_sse
 from handlers import sidecar_proxy
@@ -62,6 +63,22 @@ def _resolve_helpdesk_model(cfg: dict) -> str:
     return engine._background_model_default() or ""
 
 
+def _format_view_context(ctx: dict) -> str:
+    """A short German note telling Brainy where the user currently is, prepended
+    to the question (not stored). Empty when no useful context."""
+    if not isinstance(ctx, dict):
+        return ""
+    label = (ctx.get("label") or "").strip()
+    if not label:
+        return ""
+    bits = [f"Ansicht: {label}"]
+    if ctx.get("project"):
+        bits.append(f"Projekt: {ctx['project']}")
+    if ctx.get("chat_title"):
+        bits.append(f"Chat: {ctx['chat_title']}")
+    return f"[Kontext — der Nutzer ist gerade hier: {'; '.join(bits)}]\n\n"
+
+
 class HelpdeskHandlerMixin:
 
     # ── POST /v1/helpdesk — ask Brainy (SSE) ──────────────────────────────
@@ -70,11 +87,11 @@ class HelpdeskHandlerMixin:
         if not user:
             return
         body = self._read_json()
-        session_id = (body.get("session_id") or "").strip()
         message = (body.get("message") or "").strip()
-        if not session_id:
-            self._send_json({"error": "session_id required"}, 400)
-            return
+        # session_id is OPTIONAL context (the chat the user has open, if any) —
+        # NOT the history key. History is per-user.
+        session_id = (body.get("session_id") or "").strip()
+        view_ctx = body.get("view_context") or {}
         if not message:
             self._send_json({"error": "message required"}, 400)
             return
@@ -90,18 +107,31 @@ class HelpdeskHandlerMixin:
 
         uid = user.get("id") or ""
 
-        # Build the message list: prior Brainy turns + the new question.
-        history = ChatDB.load_helpdesk_history(session_id, limit=_MAX_HISTORY_TURNS * 2) or []
+        # Audit-only access path for admins (Brainy itself is user-private).
+        try:
+            _auth_mod.AuthDB.audit_write(
+                user, "helpdesk.ask",
+                target=(view_ctx.get("label") or view_ctx.get("view") or ""),
+                details={"q": message[:200], "view": view_ctx.get("view", "")},
+                ip=self.client_address[0] if self.client_address else "")
+        except Exception:
+            pass
+
+        # Build the message list: the user's prior Brainy turns + new question.
+        # A per-turn view-context note is prepended to the question (not stored)
+        # so Brainy knows where the user currently is.
+        history = ChatDB.load_helpdesk_history(uid, limit=_MAX_HISTORY_TURNS * 2) or []
         messages = []
         for row in history:
             role = row.get("role")
             if role in ("user", "assistant"):
                 messages.append({"role": role, "content": row.get("content") or ""})
-        messages.append({"role": "user", "content": message})
+        ctx_note = _format_view_context(view_ctx)
+        messages.append({"role": "user", "content": (ctx_note + message) if ctx_note else message})
 
-        # Persist the question immediately (so a disconnect mid-stream still
-        # records what was asked).
-        ChatDB.append_helpdesk_message(session_id, "user", message, user_id=uid)
+        # Persist the question (the user's text only, without the context note)
+        # immediately, so a disconnect mid-stream still records what was asked.
+        ChatDB.append_helpdesk_message(uid, "user", message)
 
         # ── Open the SSE stream ──
         self.send_response(200)
@@ -157,38 +187,27 @@ class HelpdeskHandlerMixin:
         err = result.get("error")
 
         if final_text:
-            ChatDB.append_helpdesk_message(session_id, "assistant", final_text, user_id=uid)
+            ChatDB.append_helpdesk_message(uid, "assistant", final_text)
 
         emit("done", {"reply": final_text, "error": err})
 
-    # ── GET /v1/helpdesk/history ──────────────────────────────────────────
+    # ── GET /v1/helpdesk/history — the user's own Brainy conversation ─────
     def _handle_helpdesk_history(self):
         user = self._require_auth()
         if not user:
             return
-        from urllib.parse import urlparse, parse_qs
-        qs = parse_qs(urlparse(self.path).query)
-        session_id = (qs.get("session_id", [""])[0] or "").strip()
-        if not session_id:
-            self._send_json({"error": "session_id required"}, 400)
-            return
-        rows = ChatDB.load_helpdesk_history(session_id) or []
+        uid = user.get("id") or ""
+        rows = ChatDB.load_helpdesk_history(uid) or []
         self._send_json({
-            "session_id": session_id,
             "messages": [{"role": r.get("role"), "content": r.get("content")} for r in rows],
         })
 
-    # ── POST /v1/helpdesk/clear ───────────────────────────────────────────
+    # ── POST /v1/helpdesk/clear — wipe the user's own Brainy conversation ─
     def _handle_helpdesk_clear(self):
         user = self._require_auth()
         if not user:
             return
-        body = self._read_json()
-        session_id = (body.get("session_id") or "").strip()
-        if not session_id:
-            self._send_json({"error": "session_id required"}, 400)
-            return
-        ChatDB.clear_helpdesk_history(session_id)
+        ChatDB.clear_helpdesk_history(user.get("id") or "")
         self._send_json({"status": "cleared"})
 
     # ── GET /v1/helpdesk/config (admin) ───────────────────────────────────
