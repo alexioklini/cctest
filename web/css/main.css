@@ -3072,6 +3072,42 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   font-style: italic;
 }
 
+/* "Hilfe" toggle — reveals the per-section help blocks below. */
+.project-panel-help-toggle {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 14px;
+}
+.project-panel-help-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-400);
+  background: none;
+  border: 1px solid var(--border-200);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.project-panel-help-toggle button:hover { background: var(--bg-300); }
+.project-panel-help-toggle button[aria-pressed="true"] {
+  color: var(--brand-text);
+  border-color: var(--brand-text);
+}
+/* Per-section help text: hidden until the panel is in help mode. */
+.project-panel-help {
+  display: none;
+  font-size: 12px;
+  color: var(--text-400);
+  line-height: 1.5;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: var(--bg-300);
+  border-radius: 6px;
+}
+.project-detail-panel.help-on .project-panel-help { display: block; }
+
 /* Instructions section — capped height with vertical scroll so long
    default disciplines (~4KB markdown) don't push attachments + input
    folders below the fold. Markdown rendered via renderMarkdown(). */

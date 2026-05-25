@@ -10,7 +10,7 @@ async function loadProjectInputFolders(agentId, projectName) {
     // Stash for the edit modal so it doesn't need to refetch.
     state._projectInputFolders = folders;
     if (!folders.length) {
-      container.innerHTML = '<span class="project-panel-placeholder">Add folders on disk to ingest into this project\'s memory. Files are scanned every 30 minutes and indexed for semantic search.</span>';
+      container.innerHTML = '<span class="project-panel-placeholder">Noch keine Ordner verknüpft.</span>';
       return;
     }
     container.innerHTML = folders.map((f, idx) => {
@@ -34,14 +34,14 @@ async function loadProjectInputFolders(agentId, projectName) {
         </div>
         <div class="pif-path" dir="ltr" title="${esc(fullPath)}">${esc(fullPath)}</div>
         <div class="pif-badges">
-          <span class="pif-flag">${recursive ? 'recursive' : 'top-level'}</span>
-          ${autoSync ? '' : '<span class="pif-flag" data-flag="paused" title="Excluded from automatic sync cycles — runs only on manual Sync now">auto-sync off</span>'}
+          <span class="pif-flag">${recursive ? 'mit Unterordnern' : 'nur oberste Ebene'}</span>
+          ${autoSync ? '' : '<span class="pif-flag" data-flag="paused" title="Wird nicht automatisch abgeglichen — nur bei „Jetzt abgleichen“">automatischer Abgleich aus</span>'}
           <span data-pif-pill data-pif-kind="folder" data-pif-id="${esc(fullPath)}">${projectItemPillHtml('folder', fullPath)}</span>
         </div>
       </div>
     `;}).join('');
   } catch(e) {
-    container.innerHTML = '<span class="project-panel-placeholder">Failed to load input folders.</span>';
+    container.innerHTML = '<span class="project-panel-placeholder">Ordner konnten nicht geladen werden.</span>';
   }
 }
 
@@ -57,22 +57,22 @@ function addProjectInputFolder() {
   overlay.style.zIndex = '10001';
   overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
   overlay.innerHTML = `<div class="sched-modal" style="max-width:600px">
-    <h2>Add input folder</h2>
-    <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">Pick a folder on disk. Files are scanned periodically and indexed into this project's memory.</div>
+    <h2>Ordner hinzufügen</h2>
+    <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">Wähle einen Ordner auf der Festplatte. Dessen Inhalte werden regelmäßig eingelesen und für dieses Projekt durchsuchbar gemacht.</div>
     <div id="pif-picker-crumbs" style="font-family:var(--font-mono);font-size:12px;color:var(--text-300);padding:6px 10px;background:var(--bg-100);border-radius:6px;margin-bottom:8px;word-break:break-all">…</div>
     <div id="pif-picker-list" style="max-height:340px;overflow-y:auto;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)"></div>
     <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--text-300);cursor:pointer">
       <input type="checkbox" id="pif-picker-recursive" checked>
-      Scan recursively (include all subfolders)
+      Unterordner mit einbeziehen
     </label>
     <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;color:var(--text-300);cursor:pointer">
       <input type="checkbox" id="pif-picker-auto-sync" checked>
-      Include in automatic sync cycles
-      <span style="color:var(--text-400);font-size:12px">— uncheck to only sync manually</span>
+      Automatisch abgleichen
+      <span style="color:var(--text-400);font-size:12px">— abwählen, um nur manuell abzugleichen</span>
     </label>
     <div class="sched-modal-actions">
-      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Cancel</button>
-      <button class="sched-create-btn" onclick="_pifPickerSelect()">Add this folder</button>
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Abbrechen</button>
+      <button class="sched-create-btn" onclick="_pifPickerSelect()">Diesen Ordner hinzufügen</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);

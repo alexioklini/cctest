@@ -434,76 +434,98 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     </div>
     <div class="project-detail-panel" id="project-detail-panel">
       <div class="project-detail-panel-resize-handle" id="project-detail-panel-resize-handle"></div>
+      <div class="project-panel-help-toggle">
+        <button id="project-help-toggle-btn" onclick="toggleProjectHelp()" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          Hilfe
+        </button>
+      </div>
       <div class="project-panel-section">
         <div class="project-panel-section-header">
-          <span class="project-panel-section-title">Project mode</span>
+          <span class="project-panel-section-title">Projektmodus</span>
         </div>
         <div class="project-panel-section-body">
           <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;line-height:1.4">
             <input type="checkbox" id="project-research-mode-checkbox"
                    onchange="toggleProjectResearchMode(this.checked)"
                    style="margin-top:2px;flex-shrink:0">
-            <span>
-              <strong>Research / Q&amp;A project</strong>
-              <div style="color:var(--text-400);margin-top:3px;font-size:12px">
-                Enables strict retrieval discipline (forced 3-step
-                <code>mempalace_query</code> → <code>read_document</code>
-                flow), refusal on missing sources, and per-claim verbatim
-                citation enforcement (server-side validator + automatic
-                re-round). Turn this off for projects that USE indexed
-                content as input for tasks (writing code, drafting
-                documents, building tools).
-              </div>
-            </span>
+            <span><strong>Recherche- / Frage-Antwort-Projekt</strong></span>
           </label>
+          <div class="project-panel-help">
+            Geeignet, wenn du Fragen zu deinen hinterlegten Unterlagen
+            stellst. Das Projekt antwortet dann streng auf Basis der
+            gespeicherten Dokumente, sagt offen Bescheid, wenn etwas nicht
+            belegt ist, und gibt zu jeder Aussage die Quelle an. Schalte das
+            ab, wenn du die Inhalte stattdessen als Material für Aufgaben
+            nutzt – etwa zum Schreiben von Texten oder Code.
+          </div>
         </div>
       </div>
       <div class="project-panel-section">
         <div class="project-panel-section-header">
-          <span class="project-panel-section-title">Instructions</span>
-          <span class="project-panel-section-action" onclick="editProjectInstructions()">Edit</span>
+          <span class="project-panel-section-title">Anweisungen</span>
+          <span class="project-panel-section-action" onclick="editProjectInstructions()">Bearbeiten</span>
+        </div>
+        <div class="project-panel-help">
+          Zusätzliche Hinweise, an die sich das Projekt in jeder Antwort
+          halten soll – zum Beispiel Tonfall, Sprache oder Formatvorgaben.
+          Optional.
         </div>
         <div class="project-panel-section-body" id="project-panel-instructions">
-          <span class="project-panel-placeholder">Add instructions to customize Brain Agent's responses (optional, additive)</span>
+          <span class="project-panel-placeholder">Noch keine Anweisungen hinterlegt.</span>
         </div>
       </div>
       <div class="project-panel-section">
         <div class="project-panel-section-header">
-          <span class="project-panel-section-title">Files</span>
+          <span class="project-panel-section-title">Dateien</span>
           <label class="project-panel-section-action" style="cursor:pointer">
-            Add files
+            Dateien hinzufügen
             <input type="file" multiple style="display:none" onchange="uploadProjectFiles(this.files)">
           </label>
         </div>
+        <div class="project-panel-help">
+          Lade PDFs, Dokumente oder andere Texte hoch. Das Projekt nutzt sie
+          als Wissensquelle und kann Fragen dazu beantworten.
+        </div>
         <div id="project-panel-files">
-          <span class="project-panel-placeholder">Add PDFs, documents, or other texts to use as reference in this project.</span>
+          <span class="project-panel-placeholder">Noch keine Dateien hochgeladen.</span>
         </div>
         <label class="project-upload-btn">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          Upload files
+          Dateien hochladen
           <input type="file" multiple style="display:none" onchange="uploadProjectFiles(this.files)">
         </label>
       </div>
       <div class="project-panel-section">
         <div class="project-panel-section-header">
-          <span class="project-panel-section-title">Input folders</span>
-          <span class="project-panel-section-action" onclick="addProjectInputFolder()">+ Add</span>
+          <span class="project-panel-section-title">Ordner</span>
+          <span class="project-panel-section-action" onclick="addProjectInputFolder()">+ Hinzufügen</span>
+        </div>
+        <div class="project-panel-help">
+          Verknüpfe Ordner auf der Festplatte. Deren Inhalte werden
+          regelmäßig (etwa alle 30 Minuten) eingelesen und durchsuchbar
+          gemacht – neue oder geänderte Dateien automatisch.
         </div>
         <div id="project-panel-input-folders">
-          <span class="project-panel-placeholder">Add folders on disk to ingest into this project's memory. Files are scanned every 30 minutes and indexed for semantic search.</span>
+          <span class="project-panel-placeholder">Noch keine Ordner verknüpft.</span>
         </div>
         <button class="project-upload-btn" onclick="projectSyncNow()" style="margin-top:6px">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          Sync now
+          Jetzt abgleichen
         </button>
       </div>
       <div class="project-panel-section">
         <div class="project-panel-section-header">
-          <span class="project-panel-section-title">Web URLs</span>
-          <span class="project-panel-section-action" onclick="addProjectWebUrl()">+ Add</span>
+          <span class="project-panel-section-title">Web-Adressen</span>
+          <span class="project-panel-section-action" onclick="addProjectWebUrl()">+ Hinzufügen</span>
+        </div>
+        <div class="project-panel-help">
+          Hinterlege Internetseiten als Wissensquelle. Sie werden regelmäßig
+          abgerufen und – wie verknüpfte Ordner – durchsuchbar gemacht. Bei
+          Änderungen wird die Seite automatisch aktualisiert.
         </div>
         <div id="project-panel-web-urls">
-          <span class="project-panel-placeholder">Add URLs to fetch fresh and inject into every chat in this project (no indexing — fetched live each turn). Separate from input folders / memory.</span>
+          <span class="project-panel-placeholder">Noch keine Web-Adressen hinterlegt.</span>
         </div>
       </div>
     </div>

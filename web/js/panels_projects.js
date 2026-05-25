@@ -343,7 +343,7 @@ async function loadProjectDetail(agentId, projectName) {
       instrEl.innerHTML = `<div class="project-panel-instructions-rendered">${renderMarkdown(project.instructions)}</div>`;
       instrEl.classList.remove('project-panel-placeholder');
     } else {
-      instrEl.innerHTML = '<span class="project-panel-placeholder">Add instructions to customize Brain Agent\'s responses (optional, additive)</span>';
+      instrEl.innerHTML = '<span class="project-panel-placeholder">Noch keine Anweisungen hinterlegt.</span>';
     }
 
     // Personalise the composer placeholder with the project name. Falls back
@@ -357,9 +357,12 @@ async function loadProjectDetail(agentId, projectName) {
     // Load project files
     loadProjectFiles(agentId, projectName);
 
-    // Render project-level web URLs (fetched + injected into every chat turn;
-    // no indexing). Read straight off the loaded config.
+    // Render project-level web URLs (mined into the project's memory + KG by
+    // the sync daemon, like input folders). Read straight off the config.
     renderProjectWebUrls(project.web_urls || []);
+
+    // Apply the persisted "Hilfe" toggle state to this freshly-rendered panel.
+    applyProjectHelpState();
 
     // Load input folders + start polling sync status.
     loadProjectInputFolders(agentId, projectName);
@@ -466,7 +469,7 @@ async function loadProjectFiles(agentId, projectName) {
     const data = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/docs`);
     const docs = data.documents || [];
     if (!docs.length) {
-      container.innerHTML = '<span class="project-panel-placeholder">Add PDFs, documents, or other texts to use as reference in this project.</span>';
+      container.innerHTML = '<span class="project-panel-placeholder">Noch keine Dateien hochgeladen.</span>';
       return;
     }
     container.innerHTML = '';
@@ -485,7 +488,7 @@ async function loadProjectFiles(agentId, projectName) {
       container.appendChild(item);
     }
   } catch(e) {
-    container.innerHTML = '<span class="project-panel-placeholder">Failed to load files</span>';
+    container.innerHTML = '<span class="project-panel-placeholder">Dateien konnten nicht geladen werden.</span>';
   }
 }
 
@@ -503,7 +506,7 @@ async function uploadProjectFiles(files) {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      showToast(`Uploading ${file.name}...`);
+      showToast(`${file.name} wird hochgeladen …`);
       const resp = await fetch(`${BASE_URL}/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/ingest`, {
         method: 'POST',
         headers,
@@ -511,12 +514,12 @@ async function uploadProjectFiles(files) {
       });
       const result = await resp.json().catch(() => ({error: `HTTP ${resp.status}`}));
       if (!resp.ok || result.error) {
-        showToast(`Error: ${result.error || resp.statusText}`);
+        showToast(`Fehler: ${result.error || resp.statusText}`);
       } else {
-        showToast(`Uploaded ${file.name}`);
+        showToast(`${file.name} hochgeladen`);
       }
     } catch(e) {
-      showToast(`Failed to upload ${file.name}`);
+      showToast(`${file.name} konnte nicht hochgeladen werden`);
     }
   }
   loadProjectFiles(agentId, projectName);
@@ -526,10 +529,10 @@ async function deleteProjectFile(agentId, projectName, sourceHash) {
   if (!sourceHash) return;
   try {
     await API.del(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/docs/${sourceHash}`);
-    showToast('File removed');
+    showToast('Datei entfernt');
     loadProjectFiles(agentId, projectName);
   } catch(e) {
-    showToast('Failed to remove file');
+    showToast('Datei konnte nicht entfernt werden');
   }
 }
 
@@ -672,32 +675,31 @@ function editProjectInstructions() {
   content.style.maxWidth = '600px';
   content.innerHTML = `
     <div class="modal-header">
-      <span class="modal-title">Project Instructions</span>
+      <span class="modal-title">Projekt-Anweisungen</span>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
     </div>
     <div class="modal-body" style="padding:16px">
       <p style="font-size:13px;color:var(--text-400);margin-bottom:12px">
-        Add instructions to customize how Brain Agent responds within this project.
-        These instructions are appended to every conversation as additive
-        owner guidance. Markdown is supported — use the Preview tab to see
-        how it will render.
+        Hinweise, an die sich das Projekt in jeder Antwort halten soll –
+        zum Beispiel Tonfall, Sprache oder Formatvorgaben. Markdown wird
+        unterstützt; über den Reiter „Vorschau“ siehst du, wie es aussieht.
         <br><br>
-        Leave empty for no extra instructions. Strict retrieval / citation
-        discipline is a separate setting (<em>Research / Q&A project</em> in
-        project settings) and is not controlled here.
+        Leer lassen, wenn keine zusätzlichen Hinweise nötig sind. Ob das
+        Projekt streng auf Basis der Unterlagen antwortet, stellst du separat
+        über den <em>Recherchemodus</em> ein.
       </p>
       <div class="instr-tabs" role="tablist">
-        <button class="instr-tab active" id="instr-tab-edit" role="tab" onclick="switchInstrTab('edit')">Edit</button>
-        <button class="instr-tab" id="instr-tab-preview" role="tab" onclick="switchInstrTab('preview')">Preview</button>
+        <button class="instr-tab active" id="instr-tab-edit" role="tab" onclick="switchInstrTab('edit')">Bearbeiten</button>
+        <button class="instr-tab" id="instr-tab-preview" role="tab" onclick="switchInstrTab('preview')">Vorschau</button>
       </div>
       <textarea class="project-instructions-editor" id="project-instructions-textarea"
-        placeholder="e.g. You are a helpful assistant for our marketing team. Always respond in a professional tone..."
+        placeholder="z. B. Du bist ein hilfsbereiter Assistent für unser Marketing-Team. Antworte stets in einem professionellen Ton..."
       >${esc(project?.instructions || '')}</textarea>
       <div class="instr-preview-pane" id="project-instructions-preview" style="display:none"></div>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border-100)">
-      <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-      <button class="btn-primary" onclick="saveProjectInstructions()">Save</button>
+      <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Abbrechen</button>
+      <button class="btn-primary" onclick="saveProjectInstructions()">Speichern</button>
     </div>
   `;
   overlay.appendChild(content);
@@ -744,10 +746,10 @@ async function toggleProjectResearchMode(enabled) {
       state._projectResearchModeCache[agentId + '::' + projectName] = !!enabled;
     }
     if (typeof refreshResearchModeButton === 'function') refreshResearchModeButton();
-    showToast(enabled ? 'Research mode on for this project'
-                       : 'Research mode off for this project');
+    showToast(enabled ? 'Recherchemodus für dieses Projekt aktiviert'
+                       : 'Recherchemodus für dieses Projekt deaktiviert');
   } catch (e) {
-    showToast('Could not update project mode', true);
+    showToast('Projektmodus konnte nicht geändert werden', true);
     // Revert checkbox to the last known state on failure.
     const cb = document.getElementById('project-research-mode-checkbox');
     if (cb) cb.checked = !enabled;
@@ -755,15 +757,17 @@ async function toggleProjectResearchMode(enabled) {
 }
 
 // ── Project-level web URLs ──────────────────────────────────
-// A project-wide curated source set: URLs fetched fresh and injected into
-// EVERY chat turn in the project (merged with each chat's own Websuche
-// basket). NO MemPalace/KG indexing — purely fetch + inject, like the basket.
+// A project-wide curated source set: each URL is fetched fresh by the
+// project-sync daemon (hash-gated — re-mined only when content changes) and
+// mined into the project's MemPalace wing + KG, just like input folders.
+// Reached via memory/KG retrieval — NOT injected per turn (that's the
+// separate per-chat Websuche basket).
 // Stored in project.json → web_urls as [{url,title}].
 function renderProjectWebUrls(urls) {
   const el = document.getElementById('project-panel-web-urls');
   if (!el) return;
   if (!urls.length) {
-    el.innerHTML = '<span class="project-panel-placeholder">Add URLs to fetch fresh and inject into every chat in this project (no indexing — fetched live each turn). Separate from input folders / memory.</span>';
+    el.innerHTML = '<span class="project-panel-placeholder">Noch keine Web-Adressen hinterlegt.</span>';
     return;
   }
   el.innerHTML = urls.map((u, idx) => {
@@ -792,17 +796,17 @@ async function _saveProjectWebUrls(urls) {
     if (state._projectDetail) state._projectDetail.web_urls = urls;
     renderProjectWebUrls(urls);
   } catch (e) {
-    showToast('Could not save project URLs', true);
+    showToast('Web-Adressen konnten nicht gespeichert werden', true);
   }
 }
 
 function addProjectWebUrl() {
-  let url = (prompt('URL to add (fetched into every chat in this project):') || '').trim();
+  let url = (prompt('Web-Adresse hinzufügen (wird als Wissensquelle eingelesen):') || '').trim();
   if (!url) return;
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-  const title = (prompt('Optional label (leave blank to use the domain):') || '').trim();
+  const title = (prompt('Optionale Bezeichnung (leer lassen für die Domain):') || '').trim();
   const urls = (state._projectDetail?.web_urls || []).slice();
-  if (urls.some(u => u.url === url)) { showToast('That URL is already added'); return; }
+  if (urls.some(u => u.url === url)) { showToast('Diese Adresse ist bereits hinterlegt'); return; }
   urls.push({ url, title });
   _saveProjectWebUrls(urls);
 }
@@ -814,6 +818,23 @@ function removeProjectWebUrl(idx) {
   _saveProjectWebUrls(urls);
 }
 
+// ── Project-settings help toggle ───────────────────────────
+// One "Hilfe" button reveals/hides the per-section help blocks. Preference
+// persisted so it stays on/off across project switches and reloads.
+function applyProjectHelpState() {
+  const on = localStorage.getItem('projectHelpVisible') === '1';
+  const panel = document.getElementById('project-detail-panel');
+  const btn = document.getElementById('project-help-toggle-btn');
+  if (panel) panel.classList.toggle('help-on', on);
+  if (btn) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+function toggleProjectHelp() {
+  const on = localStorage.getItem('projectHelpVisible') === '1';
+  localStorage.setItem('projectHelpVisible', on ? '0' : '1');
+  applyProjectHelpState();
+}
+
 async function saveProjectInstructions() {
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
@@ -823,7 +844,7 @@ async function saveProjectInstructions() {
   const instructions = textarea.value.trim();
   try {
     await API.updateProject(agentId, projectName, { instructions });
-    showToast('Instructions saved');
+    showToast('Anweisungen gespeichert');
     document.querySelector('.modal-overlay')?.remove();
     // Update panel display — render as markdown to match loadProjectDetail.
     const instrEl = document.getElementById('project-panel-instructions');
@@ -831,11 +852,11 @@ async function saveProjectInstructions() {
       instrEl.innerHTML = `<div class="project-panel-instructions-rendered">${renderMarkdown(instructions)}</div>`;
       instrEl.classList.remove('project-panel-placeholder');
     } else {
-      instrEl.innerHTML = '<span class="project-panel-placeholder">Add instructions to customize Brain Agent\'s responses (optional, additive)</span>';
+      instrEl.innerHTML = '<span class="project-panel-placeholder">Noch keine Anweisungen hinterlegt.</span>';
     }
     if (state._projectDetail) state._projectDetail.instructions = instructions;
   } catch(e) {
-    showToast('Failed to save instructions');
+    showToast('Anweisungen konnten nicht gespeichert werden');
   }
 }
 
