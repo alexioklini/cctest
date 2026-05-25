@@ -45,6 +45,7 @@ function openGeneralSettings() {
 
       <div class="sidebar-group-label">Tools</div>
       <button class="modal-tab" onclick="switchGeneralTab('tools',this)">Tools</button>
+      <button class="modal-tab" onclick="switchGeneralTab('helpdesk',this)">Brainy</button>
     </div>
     <div class="modal-body" id="general-tab-content">
     </div>
@@ -267,7 +268,7 @@ async function switchGeneralTab(tab, btn) {
   const C = document.getElementById('general-tab-content');
   C.innerHTML = '<div style="padding:20px;color:var(--text-400)">Lädt…</div>';
   // per-tab body renderers live in settings_general_tabs.js
-  const RENDERERS = { server:_genTab_server, models:_genTab_models, providers:_genTab_providers, agents:_genTab_agents, teams:_genTab_teams, nodes:_genTab_nodes, context:_genTab_context, costs:_genTab_costs, quotas:_genTab_quotas, mempalace:_genTab_mempalace, 'knowledge-graph':_genTab_knowledge_graph, gdpr:_genTab_gdpr, classification:_genTab_classification, tools:_genTab_tools };
+  const RENDERERS = { server:_genTab_server, models:_genTab_models, providers:_genTab_providers, agents:_genTab_agents, teams:_genTab_teams, nodes:_genTab_nodes, context:_genTab_context, costs:_genTab_costs, quotas:_genTab_quotas, mempalace:_genTab_mempalace, 'knowledge-graph':_genTab_knowledge_graph, gdpr:_genTab_gdpr, classification:_genTab_classification, tools:_genTab_tools, helpdesk:_genTab_helpdesk };
   const fn = RENDERERS[tab];
   if (fn) { await fn(C); return; }
 }

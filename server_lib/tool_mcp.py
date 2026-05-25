@@ -96,13 +96,21 @@ def _apply_context(ctx: dict) -> None:
     request-handler thread.
     """
     tl = engine.get_request_context()
-    tl.current_session_id = ctx.get("session_id") or ""
+    # Helpdesk (Brainy) turns run with an empty turn session_id (so they don't
+    # collide with the main chat's active-turn tracking) but still need their
+    # read-only tools scoped to the chat session they were opened from — passed
+    # separately as `helpdesk_session_id`.
+    tl.current_session_id = ctx.get("session_id") or ctx.get("helpdesk_session_id") or ""
+    tl.session_id = tl.current_session_id
     tl.current_user_id = ctx.get("user_id") or ""
     tl.current_team_ids = list(ctx.get("team_ids") or [])
     tl.project = ctx.get("project") or ""
     tl.note_context = ctx.get("note_context") or None
     tl.workflow_run_id = ctx.get("workflow_run_id") or ""
     tl.plan_mode = bool(ctx.get("plan_mode", False))
+    # Helpdesk (Brainy) mode — unlocks the backend-exclusive brain-agent-guide
+    # skill on this dispatch thread so use_skill can load it.
+    tl.helpdesk_mode = bool(ctx.get("helpdesk_mode", False))
     tl.research_mode_override = ctx.get("research_mode_override", None)
     tl.execution_overrides = ctx.get("execution_overrides") or {}
     tl.attachment_image_model = ctx.get("attachment_image_model") or ""

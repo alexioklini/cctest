@@ -43,6 +43,7 @@ function navigateTo(view, opts) {
       document.getElementById('chat-view').classList.add('active');
       updateChatView();
       document.getElementById('status-bar').style.display = '';
+      if (typeof brainyRefreshBuddy === 'function') brainyRefreshBuddy();
       break;
 
     case 'chats':

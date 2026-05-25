@@ -827,6 +827,33 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "helpdesk_session_info",
+        "description": (
+            "Helpdesk only. Get metadata and the recent messages of the chat session the user "
+            "opened the helpdesk from — title, model, project, thinking level, and the last few "
+            "user/assistant turns. Use it to answer questions about what is happening in THIS session."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "helpdesk_user_context",
+        "description": (
+            "Helpdesk only. Get the current user's profile and account preferences — greeting name, "
+            "role/job, communication preferences, and the auto-maintained profile summary. Use it to "
+            "personalise help and address the user appropriately."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "helpdesk_user_activity",
+        "description": (
+            "Helpdesk only. List what the user has done in this system: their recent chat sessions, "
+            "their projects, and their scheduled tasks. Use it to give concrete, personalised tips "
+            "that refer to the user's actual work instead of generic instructions."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "schedule_list",
         "description": "List all scheduled tasks with their status, next run time, and configuration.",
         "input_schema": {

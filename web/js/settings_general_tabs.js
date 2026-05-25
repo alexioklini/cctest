@@ -1738,3 +1738,66 @@ async function _genTab_tools(C) {
       return;
     }
 }
+
+async function _genTab_helpdesk(C) {
+  /* ─── BRAINY (Helpdesk-Bot) ─── */
+  try {
+    const cfg = await API.get('/v1/helpdesk/config');
+    const enabledModels = enabledModelsWithCapability('chat');
+    const modelOpts = enabledModels.map(([mid]) =>
+      modelOption(mid, { selected: mid === (cfg.model || '') })).join('');
+    const rounds = cfg.max_rounds || 6;
+
+    C.innerHTML = P(`<div style="${G('14px')}">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:26px">🧠</span>
+        <div>
+          <div style="font-size:15px;font-weight:600;color:var(--text-000)">Brainy — der Helpdesk-Bot</div>
+          <div style="font-size:12px;color:var(--text-400)">Freundlicher Helfer im Chat. Kennt brain-agent, die aktuelle Sitzung und den Nutzer. Rein lesend.</div>
+        </div>
+      </div>
+
+      ${SEC('Status')}
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-100)">
+        <input type="checkbox" id="hd-enabled" ${cfg.enabled ? 'checked' : ''}>
+        Brainy aktiviert (Buddy + Hilfe-Button im Chat)
+      </label>
+
+      ${SEC('Modell')}
+      <select class="form-select" id="hd-model" style="width:100%">
+        <option value="" ${!cfg.model ? 'selected' : ''}>Auto (Server-Standardmodell verwenden)</option>
+        ${modelOpts}
+      </select>
+      <div style="font-size:11px;color:var(--text-400)">Eigenes Modell für Brainy. Auf Auto greift das Server-Standardmodell.${cfg.resolved_model ? ' Aktuell genutzt: <code>' + esc(cfg.resolved_model) + '</code>' : ''}</div>
+
+      ${SEC('Tool-Runden')}
+      <input type="number" class="form-input" id="hd-max-rounds" min="1" max="12" value="${rounds}" style="width:120px">
+      <div style="font-size:11px;color:var(--text-400)">Wie viele Tool-Runden Brainy pro Frage nutzen darf (1–12). Höher = gründlicher, aber langsamer.</div>
+
+      ${SEC('System-Prompt (Persönlichkeit)')}
+      <textarea class="form-input" id="hd-prompt" rows="12" style="width:100%;font-family:var(--font-mono);font-size:12px;line-height:1.5">${esc(cfg.system_prompt || '')}</textarea>
+      <div style="font-size:11px;color:var(--text-400)">Bestimmt, wie sich Brainy verhält. Anders als der Haupt-Agent: ein freundlicher, kompetenter Helpdesk-Mitarbeiter.</div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button class="btn-primary" onclick="_saveHelpdeskConfig()">Speichern</button>
+      </div>
+    </div>`);
+  } catch (e) {
+    C.innerHTML = P('<div style="color:var(--error)">Brainy-Einstellungen konnten nicht geladen werden: ' + esc(e.message || String(e)) + '</div>');
+  }
+}
+
+async function _saveHelpdeskConfig() {
+  const body = {
+    enabled: document.getElementById('hd-enabled').checked,
+    model: document.getElementById('hd-model').value,
+    max_rounds: parseInt(document.getElementById('hd-max-rounds').value, 10) || 6,
+    system_prompt: document.getElementById('hd-prompt').value,
+  };
+  try {
+    await API.post('/v1/helpdesk/config', body);
+    showToast('Brainy-Einstellungen gespeichert');
+  } catch (e) {
+    showToast('Speichern fehlgeschlagen', true);
+  }
+}

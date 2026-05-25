@@ -272,6 +272,13 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     <button id="scroll-to-bottom" class="scroll-anchor" title="Nach unten scrollen" aria-label="Nach unten scrollen" onclick="scrollToBottom()">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
     </button>
+    <!-- Brainy 🧠 — schwebender Helpdesk-Buddy. Klick öffnet das Brainy-Modal.
+         Ausblendbar (chat_helpdesk.js): dann öffnet der Hilfe-Button im
+         Composer denselben Bot. Sichtbarkeit von brainyRefreshBuddy() gesteuert. -->
+    <button id="brainy-buddy" class="brainy-buddy" title="Brainy fragen — dein Helfer für brain-agent" aria-label="Brainy öffnen" onclick="brainyOpen()" style="display:none">
+      <span class="brainy-buddy-face">🧠</span>
+      <span class="brainy-buddy-label">Hilfe?</span>
+    </button>
     <div class="chat-input-area">
       <div class="chat-composer-wrapper">
         <!-- LCM context-warning banner — shown when context > 60% heading towards 80% -->
@@ -1382,6 +1389,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <button class="composer-btn" data-id="btn-pii-history" data-composer-toggle="btn-pii-history" type="button" title="Personenbezogene Daten im Chat-Verlauf" style="display:none;color:#92400e">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z" fill="#fef3c7" fill-opacity="0.9"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.7" fill="currentColor"/></svg>
         </button>
+        <!-- Brainy-Hilfe: öffnet den Helpdesk-Bot. Immer sichtbar als
+             Rückfallweg, wenn der schwebende Buddy ausgeblendet ist. -->
+        <button class="composer-btn" data-id="btn-brainy-help" type="button" onclick="brainyOpen()" title="Brainy fragen — dein Helfer für brain-agent">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12" y2="17"/></svg>
+        </button>
       </div>
       <!-- Floating ASCII companion (buddy.js) — sits in the gap between the
            toggle buttons and the model selector. The pet reacts to the current
@@ -1414,6 +1426,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/chat_nav.js"></script>
 <script src="js/chat_tools.js"></script>
 <script src="js/chat_send.js"></script>
+<script src="js/chat_helpdesk.js"></script>
 <script src="js/panels_gdpr.js"></script>
 <script src="js/panels_chats.js"></script>
 <script src="js/panels_projects.js"></script>

@@ -609,6 +609,26 @@ class ChatDB:
                 "CREATE INDEX IF NOT EXISTS idx_classification_scans_user "
                 "ON classification_scans(user_id, created_at DESC)"
             )
+            # ── Helpdesk ("Brainy") conversation history ──
+            # One row per Brainy message (user question or bot answer), scoped to
+            # the chat session it was opened from so it restores when the user
+            # reopens Brainy on that session. Kept separate from `messages` so the
+            # helpdesk side-conversation never enters the main chat history / wire.
+            # Cascade-dropped in delete_session.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS helpdesk_history (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    user_id    TEXT NOT NULL DEFAULT '',
+                    role       TEXT NOT NULL,
+                    content    TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL DEFAULT (strftime('%s','now'))
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_helpdesk_history_session "
+                "ON helpdesk_history(session_id, id)"
+            )
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -1463,8 +1483,42 @@ class ChatDB:
             # Transparent-anonymisation maps: drop with the session — keeping
             # them would orphan encrypted blobs nobody can act on.
             conn.execute("DELETE FROM pseudonym_maps WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM helpdesk_history WHERE session_id = ?", (session_id,))
             conn.commit()
         _purge_mempalace_session(session_id)
+
+    # ── Helpdesk ("Brainy") history ──
+
+    @staticmethod
+    @_db_safe(default=list)
+    def load_helpdesk_history(session_id, limit=200):
+        """Return Brainy's conversation for a session, oldest first."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT role, content, created_at FROM helpdesk_history "
+                "WHERE session_id = ? ORDER BY id ASC LIMIT ?",
+                (session_id, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def append_helpdesk_message(session_id, role, content, user_id=""):
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO helpdesk_history (session_id, user_id, role, content) "
+                "VALUES (?, ?, ?, ?)",
+                (session_id, user_id or "", role, content or ""),
+            )
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def clear_helpdesk_history(session_id):
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM helpdesk_history WHERE session_id = ?", (session_id,))
+            conn.commit()
 
     @staticmethod
     @_db_safe(default=None)

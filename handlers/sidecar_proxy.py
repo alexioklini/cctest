@@ -854,3 +854,76 @@ def background_call(
         max_rounds=max_rounds,
         timeout_s=timeout_s,
     )
+
+
+def helpdesk_call(
+    *,
+    messages: list[dict],
+    model: str,
+    system_prompt: str,
+    session_id: str,
+    user_id: str = "",
+    event_callback: Callable,
+    cancel_token: Any = None,
+    max_rounds: int = 6,
+    max_tokens: int | None = None,
+    timeout_s: float = 600.0,
+) -> dict:
+    """Drive one Brainy (helpdesk) turn through the sidecar, STREAMING.
+
+    Like background_call (resolves provider + sampling from the model id) but
+    uses the streaming run_turn path so the helpdesk endpoint can relay SSE to
+    the browser. Pins purpose='helpdesk' (the fixed read-only tool set) and sets
+    helpdesk_mode=True in the tool_context so the dispatch thread can load the
+    backend-exclusive brain-agent-guide skill.
+
+    `session_id` scopes the read-only tools (session info / activity) — it is
+    NOT used as the sidecar turn's persisted session, so the main chat's
+    history, live_stream, and active-turn tracking are untouched.
+    """
+    prov = engine.resolve_provider_for_model(model)
+    inf = engine.get_inference_params(model)
+    _max_tokens = int(max_tokens or inf.get("max_tokens") or engine.get_model_max_output(model))
+    tool_context = {
+        # Empty session_id => run_turn skips active-turn tracking (no collision
+        # with the main chat's resumable-stream bookkeeping). The helpdesk tools
+        # read the chat session from `helpdesk_session_id` instead.
+        "session_id": "",
+        "helpdesk_session_id": session_id,
+        "agent_id": "main",
+        "user_id": user_id or "",
+        "team_ids": [],
+        "project": "",
+        "note_context": None,
+        "workflow_run_id": "",
+        "plan_mode": False,
+        "helpdesk_mode": True,
+        "research_mode_override": None,
+        "execution_overrides": {},
+        "attachment_image_model": "",
+        "caveman_chat": 0,
+        "caveman_system": 0,
+        "trace_id": "",
+    }
+    sampling = {
+        "temperature": inf.get("temperature"),
+        "top_p": inf.get("top_p"),
+        "top_k": inf.get("top_k"),
+        "stop_sequences": inf.get("stop") or inf.get("stop_sequences"),
+    }
+    return run_turn(
+        messages=messages,
+        model=model,
+        api_key=prov["api_key"],
+        base_url=prov["base_url"],
+        system_prompt=system_prompt,
+        purpose="helpdesk",
+        tool_context=tool_context,
+        sampling=sampling,
+        thinking_level=None,
+        max_tokens=_max_tokens,
+        max_rounds=max_rounds,
+        event_callback=event_callback,
+        cancel_token=cancel_token,
+        timeout_s=timeout_s,
+    )

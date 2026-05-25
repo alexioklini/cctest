@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.20.0"
+VERSION = "9.21.0"
 VERSION_DATE = "2026-05-25"
 CHANGELOG = [
+    ("9.21.0", "2026-05-25", "feat(helpdesk): Brainy 🧠 — der freundliche, read-only Helpdesk-Bot im Chat. Ein eigenständiger Helfer (NICHT der Haupt-Agent), der brain-agent-Interna, die aktuelle Sitzung, den Nutzer und seine bisherige Aktivität kennt und konkrete Tipps gibt — funktioniert auch während des Streamings der Haupt-Antwort (wie /btw in Claude Code). (1) **Exklusiver Skill** — der `brain-agent-guide`-Skill wurde aus der allgemeinen Chat-Verfügbarkeit entfernt (HELPDESK_ONLY_SKILLS in brain.py; AgentConfig.list_skills() + load_skill() blenden ihn aus, außer in helpdesk_mode); Brainy nutzt ihn exklusiv. (2) **Eigener Tool-Resolver-Purpose** — neuer `purpose='helpdesk'` in resolve_active_tools/_VALID_PURPOSES erzwingt ein festes read-only Set (use_skill + drei neue Tools + mempalace_query + read_document), unabhängig von der Agent-Tool-Config; überspringt Defer + Purpose-Filter wie research_minimal. (3) **Drei neue read-only Tools** (engine/tools/helpdesk_tools.py, 4-Site-Wiring): helpdesk_session_info (Metadaten + letzte Turns der Sitzung), helpdesk_user_context (Profil + Account-Präferenzen), helpdesk_user_activity (Sessions/Projekte/Schedules des Nutzers). Scope aus dem Request-Context; rein lesend. (4) **Eigener Endpoint** POST /v1/helpdesk (handlers/helpdesk.py, HelpdeskHandlerMixin) — pro Frage ein STREAMING-Call via neuem sidecar_proxy.helpdesk_call() (run_turn mit purpose='helpdesk', eigenem System-Prompt aus config, eigenem Model, helpdesk_mode=True im tool_context → tool_mcp._apply_context entsperrt den Skill auf dem Dispatch-Thread). Turn läuft mit leerer session_id (keine Kollision mit active_turns/live_stream der Haupt-Sitzung); die Lese-Tools bekommen die Chat-Session via helpdesk_session_id. SSE relayt text_delta/tool_call/error/done an den Browser. (5) **Verlauf pro Sitzung** — neue chats.db-Tabelle helpdesk_history (+ load/append/clear-Methoden, cascade-drop in delete_session), GET /v1/helpdesk/history zum Wiederherstellen, POST /v1/helpdesk/clear. (6) **UI** (web/js/chat_helpdesk.js + CSS): schwebender Brainy-Buddy 🧠 unten rechts im Chat (ein-/ausblendbar via localStorage; brainyRefreshBuddy() aus nav.js); wenn ausgeblendet öffnet ein Hilfe-Button im Composer denselben Bot. Freundliches Mini-Chat-Modal (Avatar-Header, Bubble-Verlauf, Typing-Indicator, eigener fetch-SSE-Reader gegen /v1/helpdesk, Tool-Hinweise auf Deutsch). (7) **Settings-Tab 'Brainy'** (General Settings → Tools, _genTab_helpdesk): Aktiviert-Toggle, eigenes Model (Auto = Server-Standard), Tool-Runden (1–12), editierbarer System-Prompt (Persönlichkeit). Admin-gated GET/POST /v1/helpdesk/config; config.json → helpdesk {enabled,model,max_rounds,system_prompt} (per-machine, gitignored; Default-Brainy-Prompt im Handler als Fallback). js_gate green (eslint clean, net-globals 945→960 für die 15 neuen Brainy-Globals, Playwright smoke 5/5, 0 console errors). Backend-Änderungen brauchen einen Server-Neustart."),
     ("9.20.0", "2026-05-25", "ui(i18n): full German UI — translated every user-facing English string across web/index.html + 25 web/js/*.js files (~600+ strings: buttons, headings, tabs, placeholders, title/aria-label tooltips, toasts, confirm/alert/prompt dialogs incl. their button labels, table/column headers, dropdown option labels, status/error messages). Formal 'Sie'. Established technical terms kept in English by design (Agent, Workflow, Token, Provider, Cache, MCP, KG, Caveman, Warmup, Knowledge Graph, Tool, Hook, Skill, Soul) — only the surrounding prose is German (e.g. 'Tool-Aufrufe umschalten', 'Provider-Warteschlange'). Translation.js language-name dropdown translated to German names (English→Englisch …) with language CODE values unchanged. Deliberately NOT translated (not UI copy): console.* debug strings, system-prompt/LLM-instruction text sent to the model, worker abort directives, API endpoint paths, config-key names + literal example values (cron 'daily 09:00', 'hooks/my-hook.sh', model ids, MIME patterns, profile values), server-supplied error/status text echoed verbatim, workflow-DSL keywords (WORKFLOW/CALL/SET/RETURN/TRIGGER), PII-rule brand/ID acronyms (AWS/GitHub/IBAN/BSN…), and element ids/CSS/data-* keys. index.html `<html lang>` en→de. Follow-up: smoke.spec.js selectors updated for the now-German labels (Anmelden / Allgemeine Einstellungen / Modelle / Provider). js_gate green: eslint clean (no new no-undef/no-redeclare), net-globals 945 unchanged (string-only edits add/drop no globals), Playwright smoke 5/5 with ZERO console errors against the live server (login, composer, settings modal + Modelle/Provider tabs, right panel, navigation all render + work in German). Known non-blocking nit: utils.js PIIScanner.formatCounts pluralises by appending 's' to now-German labels — logic not a string, left as-is."),
     ("9.19.1", "2026-05-25", "ui(projects): German-only project-settings panel + collapsible 'Hilfe' help. The right-side project-settings panel mixed English labels with verbose, technical help text inline under every section (e.g. the research-mode toggle exposed `mempalace_query`/`read_document`/'server-side validator + automatic re-round', the Web-URLs hint described mining internals). (1) **One 'Hilfe' toggle** at the top of the panel (`#project-help-toggle-btn` → `toggleProjectHelp()`): each section's explanation moved into a `.project-panel-help` block, hidden by default and revealed only in help mode (panel gets `help-on`, CSS gates `display`). Preference persisted in localStorage (`projectHelpVisible`); `applyProjectHelpState()` re-applies it on every panel render (wired into `loadProjectDetail`). net-globals baseline 943→945 for the two new fns. (2) **All German, non-technical** — labels (Projektmodus / Recherche- / Frage-Antwort-Projekt / Anweisungen / Dateien / Ordner / Web-Adressen), empty-state placeholders shortened ('Noch keine Dateien hochgeladen.'), the instructions edit-modal, the add-folder picker modal + its checkboxes, folder badges (mit Unterordnern / nur oberste Ebene / automatischer Abgleich aus), the add-URL prompts, and all panel toasts. Help text rewritten for a casual user (no tool names / internals); research-mode help now explains it answers strictly from stored documents, flags un-backed claims, and cites sources. Also corrects the Web-Adressen help to match current behavior (mined into the project wing/KG like input folders, NOT per-turn injection). Touched index.html, web/js/panels_projects.js, web/js/panels_project_sync.js, web/css/main.css. js_gate green (smoke 5/5, 0 console errors)."),
     ("9.19.0", "2026-05-24", "feat(web-fetch): headless-browser rendering (crawl4ai) + content-provenance badges + project-level web URLs mined into the project wing/KG. Root problem: `web_fetch` returned RAW HTML on JS-rendered pages — `_html_to_markdown` does `markitdown(text) or text`, and on a client-rendered SvelteKit/React shell markitdown yields nothing → falls back to raw HTML; for a page like wien.wetterheute.at the server HTML has NO content at all (JS paints it). The chat view renders the tool result in a `<pre>` so it looked raw with no signal what (if any) conversion happened. (1) **crawl4ai render service** — own venv (.venv_crawl4ai, Py 3.13; gitignored) + headless Chromium, run as a supervised subprocess (`Crawl4aiSupervisor(ProcessSupervisor)`, port 8422) exactly like the sidecar/SearXNG; module singleton `crawl4ai_supervisor`, wired into server.py main() + server_config copy, admin GET /v1/crawl4ai/status + POST /v1/crawl4ai/restart. `crawl4ai/render_service.py` = stdlib HTTP server, one warm shared AsyncWebCrawler, `POST /render {url}` → markdown. CRITICAL: default arun() returns nothing on JS pages — must use `wait_until='networkidle' + delay_before_return_html` (then the weather URL yields 3715 chars of real forecast). Needs `config.json → crawl4ai {enabled,auto_start:true,url,venv_python}` (gitignored, per-machine) — ProcessSupervisor.start() no-ops without auto_start. (2) **web_fetch fallback + provenance** — `tool_web_fetch` now tags every result with `fetch_method`: `raw` (no conversion) / `markitdown` (our HTML→md) / `crawl4ai` (headless render, which itself returns markdown). markitdown first; crawl4ai fallback fires only when the USABLE (converted) text is empty (<30 chars) on an HTML GET — so static pages that convert fine never pay the browser cost. `brain._crawl4ai_render()`/`_crawl4ai_base_url()` client helpers degrade gracefully (service down → keep HTTP result). (3) **Chat-view badges** — color-coded crawl4ai/markitdown/raw badge on web_fetch results (chat_tools.js `_extractFetchMethod` + CSS) with tooltips, so it's visible what transform the LLM's content went through. (4) **Project-level web URLs** (project.json → `web_urls` [{url,title}]; editor in the project-settings 'Web URLs' section): fetched fresh each sync cycle (JS-rendered via the crawl4ai fallback) into `pdir/web-urls/weburl-<hash>.md`, hash-gated (rewrite→re-mine only on content change), then mined into the project's MemPalace wing + KG by the project-sync daemon (`_sync_project_web_urls` + a new mining branch 1b), reached via mempalace_query/KG like any project knowledge. Removed-URL drawer cleanup via `_is_stale_src` in the stale-path purge (web-urls/ files under pdir need an existence check, not just prefix). This is a DIFFERENT mechanism from the per-chat Websuche basket (ephemeral turn-injection) — the earlier chat-side project-URL merge was reverted to basket-only. js_gate green (smoke 5/5; net-globals 941→942 for _extractFetchMethod); web_fetch fetch_method verified live (weather→crawl4ai 3715c, example.com→markitdown); _sync_project_web_urls verified end-to-end (24 temp tokens mined). Backend changes need a server restart; .venv_crawl4ai must be created per-machine (supervisor prints the command if missing)."),
@@ -584,6 +585,11 @@ from engine.tool_schemas import (  # noqa: E402
 )
 
 # Tool groups for per-agent filtering (agents can specify groups or individual tool names)
+# Skills hidden from normal chat — surfaced only when the request context is in
+# helpdesk mode (the Brainy bot). `brain-agent-guide` is the operator/help skill;
+# it interferes with ordinary chats, so Brainy owns it exclusively.
+HELPDESK_ONLY_SKILLS = {"brain-agent-guide"}
+
 TOOL_GROUPS = {
     "core": {"read_file", "write_file", "edit_file", "list_directory", "search_files",
              "execute_command", "tool_search", "ask_user"},
@@ -601,6 +607,8 @@ TOOL_GROUPS = {
     "scheduler": {"schedule_list", "schedule_history"},
     "mcp": {"mcp_connect", "mcp_disconnect", "mcp_servers"},
     "skills": {"use_skill"},
+    "helpdesk": {"helpdesk_session_info", "helpdesk_user_context",
+                 "helpdesk_user_activity"},
     "nodes": {"list_nodes"},
     "code_exec": {"python_exec"},
     "audio": {"transcribe_audio"},
@@ -1031,13 +1039,23 @@ def _filter_tools(tool_list: list[dict], allowed: set[str] | None,
 # TOOL_DEFINITIONS happens via _filter_tools).
 _MEMORY_SUMMARY_TOOLS = {"mempalace_query", "save_chat_to_memory"}
 
+# Fixed read-only tool set for the helpdesk bot (Brainy). It loads the exclusive
+# brain-agent-guide skill (use_skill), reads the current session + user context,
+# and searches memory — but cannot write, run commands, or fetch the web. This
+# set is forced regardless of the agent's own tool config.
+_HELPDESK_TOOLS = {
+    "use_skill",
+    "helpdesk_session_info", "helpdesk_user_context", "helpdesk_user_activity",
+    "mempalace_query", "read_document",
+}
+
 # research_minimal — harness-style lean purpose. Tools are discovered
 # dynamically by `minimal: True` flag on their TOOL_DEFINITIONS entry; each
 # such tool may also carry `minimal_role` (a one-line phrase composed into
 # the dynamic system prompt). Add a new tool to the purpose by setting these
 # two fields on its definition — no constant to update here. Validated
 # 2026-05-14 (Gate-PT-2) on gemma-4-e4b for autonomous research tasks.
-_VALID_PURPOSES = ("interactive", "transform", "memory_summary", "research_minimal")
+_VALID_PURPOSES = ("interactive", "transform", "memory_summary", "research_minimal", "helpdesk")
 
 # Valid `tool_profile` values for a scheduled task. Empty string = "default"
 # (resolved to research_minimal at fire time, matching Phase A behavior).
@@ -1119,6 +1137,11 @@ def resolve_active_tools(
         base_set = _minimal_tool_names()
         if agent_allowed is not None:
             base_set &= agent_allowed
+    elif purpose == "helpdesk":
+        # The Brainy bot forces a fixed read-only set, independent of the
+        # agent's own tool config. Skips deferral + purpose filter + MCP
+        # (handled like research_minimal — every tool is in-prompt from round 0).
+        base_set = set(_HELPDESK_TOOLS)
     else:  # pragma: no cover — guarded above
         base_set = set()
 
@@ -1134,7 +1157,7 @@ def resolve_active_tools(
     # without an opinion stay live for every purpose. Skipped for
     # research_minimal because base_set is already minimal-flagged tools
     # only — no further filter needed.
-    if purpose != "research_minimal":
+    if purpose not in ("research_minimal", "helpdesk"):
         tools = [t for t in tools if tool_passes_purpose(_name_of(t), purpose)]
 
     # Defer subtraction. A tool is deferred when its EFFECTIVE deferred flag
@@ -1144,7 +1167,7 @@ def resolve_active_tools(
     # live once the model has discovered them this turn (discovered_tools
     # set). Skipped for research_minimal (the lean harness path doesn't
     # use defer — every minimal tool is in-prompt from round 0).
-    if purpose != "research_minimal":
+    if purpose not in ("research_minimal", "helpdesk"):
         # Pre-compute agent overrides once
         agent_overrides: dict = {}
         if agent_id:
@@ -2773,7 +2796,13 @@ Adapt your behavior to the tasks you are given.
             return template + (" " + args if args else "")
 
     def list_skills(self) -> list[dict]:
-        """List all skills for this agent (own + main's global skills)."""
+        """List all skills for this agent (own + main's global skills).
+
+        Backend-exclusive skills (HELPDESK_ONLY_SKILLS, e.g. the
+        `brain-agent-guide` skill that powers Brainy) are hidden from the normal
+        skill list — they only surface when the request context is in helpdesk
+        mode. This keeps them out of the regular chat agent's awareness so they
+        don't interfere with ordinary conversations."""
         skills = {}
         # Load main's skills first (global)
         if self.agent_id != "main":
@@ -2781,6 +2810,9 @@ Adapt your behavior to the tasks you are given.
             skills.update(self._scan_skills(main_skills_dir, source="main"))
         # Load own skills (override globals if same name)
         skills.update(self._scan_skills(self.skills_dir, source=self.agent_id))
+        if not get_request_context().helpdesk_mode:
+            for slug in HELPDESK_ONLY_SKILLS:
+                skills.pop(slug, None)
         return list(skills.values())
 
     def _scan_skills(self, skills_dir: str, source: str) -> dict[str, dict]:
@@ -2827,6 +2859,9 @@ Adapt your behavior to the tasks you are given.
     def load_skill(self, skill_name: str) -> str | None:
         """Load the full SKILL.md body for a specific skill.
         Accepts either the directory name (slug) or the display name."""
+        # Backend-exclusive skills load only in helpdesk mode (the Brainy bot).
+        if skill_name in HELPDESK_ONLY_SKILLS and not get_request_context().helpdesk_mode:
+            return None
         # Try direct match first (slug = directory name)
         own_path = os.path.join(self.skills_dir, skill_name, "SKILL.md")
         if os.path.isfile(own_path):
@@ -10590,6 +10625,7 @@ TOOL_ICONS = {
     "web_fetch": "~", "exa_search": "?",
     "memory_store": "+", "memory_recall": "m", "memory_delete": "-", "memory_shared": "M",
     "delegate_task": ">", "use_skill": "*",
+    "helpdesk_session_info": "i", "helpdesk_user_context": "i", "helpdesk_user_activity": "i",
     "gmail_inbox": "@", "gmail_read": "@", "gmail_search": "@",
     "gmail_send": "@", "gmail_reply": "@",
     "task_status": "?", "task_cancel": "x",
@@ -10606,6 +10642,7 @@ TOOL_VERBS = {
     "web_fetch": "Fetching", "exa_search": "Searching",
     "memory_store": "Remembering", "memory_recall": "Recalling", "memory_delete": "Forgetting", "memory_shared": "Shared Memory",
     "delegate_task": "Delegating", "use_skill": "Loading Skill",
+    "helpdesk_session_info": "Session-Info", "helpdesk_user_context": "Nutzer-Kontext", "helpdesk_user_activity": "Nutzer-Aktivität",
     "gmail_inbox": "Inbox", "gmail_read": "Reading Email", "gmail_search": "Searching Email",
     "gmail_send": "Sending Email", "gmail_reply": "Replying",
     "task_status": "Task Status", "task_cancel": "Cancelling",
@@ -11029,6 +11066,11 @@ from engine.tools.context_tools import (  # noqa: E402
     tool_context_detail,
     tool_context_recall,
 )
+from engine.tools.helpdesk_tools import (  # noqa: E402
+    tool_helpdesk_session_info,
+    tool_helpdesk_user_context,
+    tool_helpdesk_user_activity,
+)
 from engine.tools.translate_tools import (  # noqa: E402
     tool_transcribe_audio,
     tool_translate_text,
@@ -11116,6 +11158,9 @@ TOOL_DISPATCH = {
     "task_status": tool_task_status,
     "task_cancel": tool_task_cancel,
     "use_skill": tool_use_skill,
+    "helpdesk_session_info": tool_helpdesk_session_info,
+    "helpdesk_user_context": tool_helpdesk_user_context,
+    "helpdesk_user_activity": tool_helpdesk_user_activity,
     "list_nodes": tool_list_nodes,
     "context_search": tool_context_search,
     "context_detail": tool_context_detail,

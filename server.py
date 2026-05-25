@@ -953,6 +953,7 @@ from handlers.favourites import FavouritesHandlerMixin
 from handlers.translate import TranslateHandlerMixin
 from handlers.share import ShareHandlerMixin
 from handlers.classification import ClassificationHandlerMixin
+from handlers.helpdesk import HelpdeskHandlerMixin
 
 # Inject server-level globals into handler modules (they were originally
 # defined in the same file and relied on shared module globals).
@@ -1009,6 +1010,7 @@ class BrainAgentHandler(
     TranslateHandlerMixin,
     ShareHandlerMixin,
     ClassificationHandlerMixin,
+    HelpdeskHandlerMixin,
     BaseHTTPRequestHandler,
 ):
     """HTTP request handler for Brain Agent API."""
@@ -1173,6 +1175,7 @@ class BrainAgentHandler(
         "/v1/crawl4ai/status",
         "/v1/gdpr/ner-models",
         "/v1/classification/config",
+        "/v1/helpdesk/config",
     }
 
     _ADMIN_POST_EXACT = {
@@ -1214,6 +1217,7 @@ class BrainAgentHandler(
         "/v1/crawl4ai/restart",
         "/v1/gdpr/ner-models",
         "/v1/classification/config",
+        "/v1/helpdesk/config",
     }
     _ADMIN_POST_PATHS = _ADMIN_POST_EXACT
     _ADMIN_POST_PREFIXES = (
@@ -1528,6 +1532,10 @@ class BrainAgentHandler(
             self._handle_quota_config_get()
         elif path == "/v1/tools/settings":
             self._handle_tool_settings_get()
+        elif path == "/v1/helpdesk/history":
+            self._handle_helpdesk_history()
+        elif path == "/v1/helpdesk/config":
+            self._handle_helpdesk_config_get()
         elif path == "/v1/classification/config":
             self._handle_classification_config_get()
         elif path == "/v1/classification/scans":
@@ -1735,6 +1743,12 @@ class BrainAgentHandler(
             self._handle_chat()
         elif path == "/v1/chat/cancel":
             self._handle_cancel()
+        elif path == "/v1/helpdesk":
+            self._handle_helpdesk()
+        elif path == "/v1/helpdesk/clear":
+            self._handle_helpdesk_clear()
+        elif path == "/v1/helpdesk/config":
+            self._handle_helpdesk_config_save()
         elif path == "/v1/web/search":
             self._handle_web_search()
         elif path == "/v1/tools/call":

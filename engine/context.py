@@ -91,6 +91,11 @@ class RequestContext:
     # resolver. Generic — used by the manual-web-search flow to hard-disable
     # web_search/web_fetch when the user supplies a curated source set.
     exclude_tools: object = None
+    # Helpdesk ("Brainy") mode. Set ONLY by the helpdesk endpoint's background
+    # call. Unlocks the backend-exclusive `brain-agent-guide` skill (hidden from
+    # normal chat) and selects the `helpdesk` tool-resolver purpose. Never set on
+    # a normal chat/scheduler/warmup turn.
+    helpdesk_mode: bool = False
     # --- exec ---
     execution_overrides: object = None
     _intent_action_recovery_count: object = None
