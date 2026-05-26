@@ -496,6 +496,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             antworten. Empfohlen, wenn du die Quellen bewusst kuratiert hast
             und nicht möchtest, dass das Modell stattdessen googelt –
             modell-unabhängig erzwungen, nicht nur als Bitte im Prompt.
+            Auch die Shell (execute_command) und Python (python_exec) werden
+            dann gesperrt, damit das Modell nicht über curl/wget am Web-Verbot
+            vorbei ins Netz kommt.
           </div>
         </div>
       </div>

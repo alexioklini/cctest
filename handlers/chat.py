@@ -2154,7 +2154,15 @@ class ChatHandlerMixin:
                         _pcfg = None
                     if _pcfg and _pcfg.get("disable_web_search"):
                         _existing = engine.get_request_context().exclude_tools or []
-                        _web_tools = ["web_fetch", "exa_search", "searxng_search"]
+                        # Also block execute_command + python_exec: otherwise
+                        # the model just reaches the web through the shell
+                        # (curl/wget) or python (urllib/requests), defeating
+                        # the lockout. Verified: mistral-medium ran 5× `curl`
+                        # via execute_command when only the 3 web tools were
+                        # removed (sched-883). With these out too, the only
+                        # source-of-truth left is the project memory.
+                        _web_tools = ["web_fetch", "exa_search", "searxng_search",
+                                      "execute_command", "python_exec"]
                         engine.get_request_context().exclude_tools = list(
                             set(_existing) | set(_web_tools))
 

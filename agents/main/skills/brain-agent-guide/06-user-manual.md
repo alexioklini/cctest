@@ -163,7 +163,12 @@ aus dem Projektgedächtnis antworten. Das ist eine **harte, modell-
 unabhängige** Sperre (die Tools werden für den Turn entfernt), nicht nur
 eine Bitte im Prompt: manche Modelle (z. B. mistral-medium) ignorieren den
 Prompt-Hinweis und googeln trotzdem — diese Sperre verhindert das
-zuverlässig. Empfohlen für Projekte mit bewusst kuratierten Quellen.
+zuverlässig. **Zusätzlich gesperrt:** Shell (`execute_command`) und Python
+(`python_exec`) — sonst greift das Modell über `curl`/`wget`/`urllib` am
+Web-Verbot vorbei ins Netz (real beobachtet: mistral-medium führte 5× curl
+über die Shell aus). Empfohlen für Projekte mit bewusst kuratierten Quellen;
+beachte, dass damit auch legitime Shell-/Skript-Schritte im Projekt
+entfallen.
 
 **Synchronisierung**: Eingabeordner werden von einem Daemon alle 6 h
 eingespeist. Knöpfe auf der Projektseite:
