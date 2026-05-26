@@ -164,8 +164,12 @@ Tabs **Chats** / **Archiviert** den Tab **Geplante Aufgaben**. Dort legst
 du wiederkehrende, zeitgesteuerte Aufgaben an, die im Kontext genau dieses
 Projekts laufen — sie sehen also dieselben `instructions`, das
 Projektgedächtnis (Wing) und den Recherche-Modus wie ein Projekt-Chat.
-- **Neue Aufgabe** öffnet ein Formular: Name, Aufgabe (Prompt), Zeitplan
-  (z. B. „täglich 09:00", „every 1h", „weekly mon 14:30") und Timeout.
+- **Neue Aufgabe** öffnet dasselbe Formular wie eine normale geplante
+  Aufgabe — Name, Prompt (mit „Mit KI verfeinern"), Modell, Häufigkeit
+  (Stündlich/Täglich/Wöchentlich/Benutzerdefiniert + Uhrzeit), Timeout,
+  Denkstufe und Caveman-Modus. Nur Arbeitsverzeichnis, Tool-Profil und
+  Anhänge fehlen (im Projektkontext nicht nötig); der Agent ist fest der
+  des Projekts.
 - Pro Aufgabe (Drei-Punkte-Menü): **Pausieren/Fortsetzen**, **Jetzt
   ausführen**, **Verlauf** (vergangene Läufe mit Status), **Löschen**.
 - Die Bindung an das Projekt wird automatisch gesetzt — kein Projekt-Dropdown

@@ -753,23 +753,88 @@ function projectSchedMenu(event, name, enabled, running) {
   }), 10);
 }
 
+// Build the create/edit modal as a clone of the real schedule modal
+// (settings_schedule.js) so it carries the SAME fields — Prompt+KI-Verfeinern,
+// Modell, Häufigkeits-Builder, Timeout, Denkstufe, Caveman — minus
+// Arbeitsverzeichnis / Tool-Profil / Anhänge (not needed for project tasks)
+// and minus the Agent picker (fixed to the project's agent). Reuses the same
+// `sched-new-*` element IDs so _schedRefineControls / _schedRefreshThinking /
+// _schedFreqChanged work unchanged. window._projectSchedEdit carries the
+// original name when editing (null = create).
 function projectSchedShowForm(sched) {
-  const modal = document.getElementById('project-sched-modal');
-  if (!modal) return;
   const editing = sched && sched.name;
-  document.getElementById('project-sched-modal-title').textContent =
-    editing ? 'Geplante Aufgabe bearbeiten' : 'Neue geplante Aufgabe';
-  document.getElementById('project-sched-f-orig-name').value = editing ? sched.name : '';
-  document.getElementById('project-sched-f-name').value = editing ? (sched.name || '') : '';
-  document.getElementById('project-sched-f-task').value = editing ? (sched.task || '') : '';
-  document.getElementById('project-sched-f-schedule').value = editing ? (sched.schedule || '') : '';
-  document.getElementById('project-sched-f-timeout').value = editing ? (sched.timeout || 300) : 300;
-  modal.style.display = 'flex';
-}
+  window._projectSchedEdit = editing ? sched.name : null;
 
-function projectSchedCloseForm() {
-  const modal = document.getElementById('project-sched-modal');
-  if (modal) modal.style.display = 'none';
+  // Model options — chat-capable only (mirrors showCreateScheduledModal).
+  const modelOpts = (state.models || []).filter(m => modelHasCapability(m, 'chat')).map(m =>
+    `<option value="${esc(m)}" ${editing && m === sched.model ? 'selected' : ''}>${esc(m)}</option>`
+  ).join('');
+  const cavemanCur = editing ? Number(sched.caveman_chat || 0) : 0;
+  const cavemanOpts = [[0, 'Off'], [1, 'Lite'], [2, 'Full'], [3, 'Ultra']]
+    .map(([v, lbl]) => `<option value="${v}" ${cavemanCur === v ? 'selected' : ''}>${lbl}</option>`).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="sched-modal">
+    <h2>${editing ? 'Bearbeiten: ' + esc(sched.name) : 'Neue geplante Aufgabe'}</h2>
+    <div class="sched-form-group">
+      <label>Name</label>
+      <input id="sched-new-name" placeholder="z. B. Wochenbericht" value="${editing ? esc(sched.name || '') : ''}">
+    </div>
+    <div class="sched-form-group">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <label style="margin:0">Prompt</label>
+        ${_schedRefineControls('sched-new-prompt')}
+      </div>
+      <textarea id="sched-new-prompt" placeholder="Was soll im Kontext dieses Projekts ausgeführt werden?">${editing ? esc(sched.task || '') : ''}</textarea>
+    </div>
+    <div class="sched-form-group">
+      <label>Modell (optional)</label>
+      <select id="sched-new-model" onchange="_schedRefreshThinking('sched-new-model','sched-new-thinking')"><option value="">Standard</option>${modelOpts}</select>
+    </div>
+    <div class="sched-form-row">
+      <div class="sched-form-group">
+        <label>Häufigkeit</label>
+        <select id="sched-new-freq" onchange="_schedFreqChanged()">
+          <option value="every 1h">Stündlich</option>
+          <option value="daily 09:00" ${editing ? '' : 'selected'}>Täglich</option>
+          <option value="weekly mon 09:00">Wöchentlich</option>
+          <option value="custom" ${editing ? 'selected' : ''}>Benutzerdefiniert</option>
+        </select>
+      </div>
+      <div class="sched-form-group">
+        <label>Uhrzeit</label>
+        <input id="sched-new-time" type="time" value="09:00">
+      </div>
+    </div>
+    <div class="sched-form-group" id="sched-custom-row" style="display:${editing ? '' : 'none'}">
+      <label>Benutzerdefinierter Zeitplan</label>
+      <input id="sched-new-custom" placeholder="z. B. every 30m, daily 14:00, weekly fri 17:00" value="${editing ? esc(sched.schedule || '') : ''}" style="font-family:var(--font-mono)">
+    </div>
+    <div class="sched-form-row">
+      <div class="sched-form-group">
+        <label>Timeout (Sekunden)</label>
+        <input id="sched-new-timeout" type="number" value="${editing ? (sched.timeout || 300) : 300}" min="30" max="3600">
+      </div>
+      <div class="sched-form-group">
+        <label>Denkstufe <span style="color:var(--text-400);font-weight:normal;font-size:11px">(Reasoning-Aufwand)</span></label>
+        <select id="sched-new-thinking"></select>
+      </div>
+      <div class="sched-form-group">
+        <label>Caveman-Modus <span style="color:var(--text-400);font-weight:normal;font-size:11px">(Antwortkomprimierung)</span></label>
+        <select id="sched-new-caveman">${cavemanOpts}</select>
+      </div>
+    </div>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Abbrechen</button>
+      <button class="sched-create-btn" onclick="projectSchedSave()">${editing ? 'Speichern' : 'Erstellen'}</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  // Populate the thinking dropdown for the bound model (preselect the task's
+  // level when editing, else generic set with "Inherit").
+  _schedRefreshThinking('sched-new-model', 'sched-new-thinking', editing ? (sched.thinking_level || '') : '');
 }
 
 async function projectSchedSave() {
@@ -777,28 +842,52 @@ async function projectSchedSave() {
   const projectName = state._projectDetailName;
   const projectId = (state._projectDetail || {}).id || '';
   if (!agentId || !projectName) return;
-  const origName = document.getElementById('project-sched-f-orig-name').value;
-  const name = document.getElementById('project-sched-f-name').value.trim();
-  const task = document.getElementById('project-sched-f-task').value.trim();
-  const schedule = document.getElementById('project-sched-f-schedule').value.trim();
-  const timeout = parseInt(document.getElementById('project-sched-f-timeout').value) || 300;
-  if (!name || !task || !schedule) { showToast('Name, Aufgabe und Zeitplan sind erforderlich', true); return; }
+  const origName = window._projectSchedEdit || '';
+  const name = document.getElementById('sched-new-name')?.value?.trim();
+  const task = document.getElementById('sched-new-prompt')?.value?.trim();
+  const model = document.getElementById('sched-new-model')?.value || '';
+  const freq = document.getElementById('sched-new-freq')?.value;
+  const timeVal = document.getElementById('sched-new-time')?.value || '09:00';
+  const customSched = document.getElementById('sched-new-custom')?.value?.trim();
+  const timeout = parseInt(document.getElementById('sched-new-timeout')?.value) || 300;
+  const thinking_level = document.getElementById('sched-new-thinking')?.value || '';
+  const caveman_chat = parseInt(document.getElementById('sched-new-caveman')?.value) || 0;
+  if (!name || !task) { showToast('Name und Prompt sind erforderlich', true); return; }
+
+  // Resolve the frequency builder to a schedule string (same logic as
+  // _createScheduledTask).
+  let schedule;
+  if (freq === 'custom') {
+    schedule = customSched;
+    if (!schedule) { showToast('Benutzerdefinierter Zeitplan ist erforderlich', true); return; }
+  } else if (freq.startsWith('every')) {
+    schedule = freq;
+  } else if (freq.startsWith('daily')) {
+    schedule = `daily ${timeVal}`;
+  } else if (freq.startsWith('weekly')) {
+    schedule = `weekly ${freq.split(' ')[1] || 'mon'} ${timeVal}`;
+  }
+
   try {
     let res;
     if (origName) {
-      // Edit: rename if the name changed; project binding stays as-is.
-      const fields = { action: 'edit', name: origName, task, schedule, timeout };
-      if (name !== origName) fields.new_name = name;
-      res = await API.manageSchedule(fields);
+      // Edit: model='' clears back to Default; project binding stays as-is.
+      const payload = {
+        action: 'edit', name: origName, task, schedule, timeout,
+        model, thinking_level, caveman_chat,
+      };
+      if (name !== origName) payload.new_name = name;
+      res = await API.manageSchedule(payload);
     } else {
       res = await API.manageSchedule({
         action: 'add', name, task, schedule, agent: agentId, timeout,
+        model: model || undefined, thinking_level, caveman_chat,
         project_id: projectId,
       });
     }
     if (res && res.error) { showToast(res.error, true); return; }
     showToast(origName ? 'Aufgabe gespeichert' : 'Aufgabe erstellt');
-    projectSchedCloseForm();
+    document.querySelector('.sched-modal-overlay')?.remove();
     loadProjectSchedules(agentId, projectName);
   } catch (e) { showToast('Fehlgeschlagen: ' + (e.message || e), true); }
 }

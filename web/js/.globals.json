@@ -557,7 +557,6 @@
     "projectItemPillHtml": "writable",
     "projectOpenKnowledgeGraph": "writable",
     "projectSchedCancel": "writable",
-    "projectSchedCloseForm": "writable",
     "projectSchedCloseHistory": "writable",
     "projectSchedDelete": "writable",
     "projectSchedHistory": "writable",
