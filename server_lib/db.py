@@ -468,6 +468,15 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN allow_further_web INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+            # Per-session Websuche basket: the user-curated set of web sources
+            # (JSON list of {url,title,snippet,query,enabled}). Stored per
+            # session so it never leaks between chats — a fresh chat starts
+            # empty. Empty string = no basket. Replaces the old global
+            # localStorage basket (which bled sources across sessions).
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN web_basket TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             # Add team_id + visibility for session team-scoping
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN team_id TEXT DEFAULT ''")
@@ -992,6 +1001,16 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET allow_further_web = ? WHERE id = ?",
                         (1 if value else 0, session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_web_basket(session_id, basket_json):
+        """Persist the per-session Websuche basket. basket_json is a JSON
+        string (list of {url,title,snippet,query,enabled}); '' clears it."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET web_basket = ? WHERE id = ?",
+                        (basket_json or '', session_id))
             conn.commit()
 
     @staticmethod

@@ -85,7 +85,10 @@ streaming_text TEXT, streaming_meta TEXT,
 extra_member_user_ids TEXT (JSON list),
 excluded_user_ids TEXT (JSON list),
 last_system_prompt TEXT, gdpr_action_pref TEXT,
-allow_further_web INTEGER (0/1, sticky; lifts the Websuche tool lockout)
+allow_further_web INTEGER (0/1, sticky; lifts the Websuche tool lockout),
+web_basket TEXT (JSON list of curated Websuche sources
+  {url,title,snippet,query,enabled} — PER SESSION, never shared across
+  chats; '' = empty)
 ```
 
 Status values: `active | archived | note_chat` (note_chat = AI-editing

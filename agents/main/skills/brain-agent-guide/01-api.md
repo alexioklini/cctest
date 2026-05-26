@@ -79,7 +79,11 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `POST /v1/web/search` — `{query, num_results?, force_fresh?}` → `{query,
   results}`. Any logged-in user. Pure `searxng_search` passthrough — no
   fetch, no LLM. Backs the Websuche tab; the curated URLs are sent on the
-  next chat as `body.web_urls_to_fetch` (see `POST /v1/chat`).
+  next chat as `body.web_urls_to_fetch` (see `POST /v1/chat`). The basket is
+  PER SESSION — persisted server-side in `sessions.web_basket` via
+  `POST /v1/sessions/manage {action:"web_basket", value:[...]}` and returned
+  by `GET /messages` as `web_basket`; a fresh chat starts empty (no cross-chat
+  bleed).
 
 ### Send / control
 - `POST /v1/chat` — send message (SSE stream). Body:

@@ -42,6 +42,15 @@ async function ensureSession(chat) {
     // Discard if a newer ensureSession was called (model switched)
     if (chat._sessionGen !== gen) return null;
     chat.sessionId = data.session_id;
+    // A draft chat may already have a Websuche basket curated before the first
+    // send — now that the session has an id, persist it server-side so a later
+    // reload of this chat restores the same sources.
+    if (Array.isArray(chat.webBasket) && chat.webBasket.length
+        && typeof _saveWebBasket === 'function') {
+      API.post('/v1/sessions/manage', {
+        action: 'web_basket', session_id: chat.sessionId, value: chat.webBasket,
+      }).catch(() => {});
+    }
     if (data.max_context) chat.maxContext = data.max_context;
     // Restore user's last caveman chat mode for new sessions
     const savedCaveman = parseInt(localStorage.getItem('caveman-chat-mode')) || 0;
@@ -140,6 +149,9 @@ async function openSession(sessionId, agentId) {
       : !!data.research_mode_override;
     // Sticky 'allow further web search/fetch' escape hatch (Websuche tab).
     chat.allowFurtherWeb = !!data.allow_further_web;
+    // Per-session Websuche basket — load THIS session's own curated sources.
+    // Never inherit the basket of the chat we just left.
+    if (typeof webBasketLoadFromJson === 'function') webBasketLoadFromJson(data.web_basket || '');
     // Sticky transparent-anonymisation preference (step 6.2). Empty string =
     // ask each time. Other allowed values map 1:1 to body.gdpr_action.
     chat.gdprActionPref = ['anonymise', 'local_model', 'continue']
@@ -420,6 +432,10 @@ function newChat() {
   chat.chatTitle = '';
   chat.chatSummary = '';
   chat.workflowRunId = '';
+  // Fresh chat → empty Websuche basket. Prevents the previous chat's marked
+  // URLs from silently coming along into the new conversation.
+  chat.webBasket = [];
+  if (typeof _refreshWebsuche === 'function') _refreshWebsuche();
   // Sticky PII consent ("auto-continue past warnings") is per-session — a
   // fresh chat must re-prompt, never inherit the prior chat's consent.
   chat.gdprActionPref = '';

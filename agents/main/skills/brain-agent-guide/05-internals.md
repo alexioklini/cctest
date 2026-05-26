@@ -123,7 +123,10 @@ chat-view badge.
 
 The Websuche tab is human-curated retrieval. `POST /v1/web/search` is a
 pure `searxng_search` passthrough (no fetch, no LLM). The user marks URLs
-into a client-side basket; on send they ride as `body.web_urls_to_fetch`.
+into a basket that is PER SESSION and persisted server-side
+(`sessions.web_basket`, saved via `manage {action:"web_basket"}`, loaded
+on session open) — it never bleeds from one chat into the next, a fresh chat
+starts empty. On send the enabled entries ride as `body.web_urls_to_fetch`.
 
 - **Turn-time + ephemeral**: the worker fetches each URL `force_fresh=True`
   just before the wire build and injects the markdown into a *transient

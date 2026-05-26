@@ -350,6 +350,10 @@ class Session:
         # them. True = also permit autonomous web access on top. Only bites
         # when the turn carries enabled curated URLs. Persists in sessions DB.
         self.allow_further_web: bool = False
+        # Per-session Websuche basket (curated web sources). JSON string of a
+        # list of {url,title,snippet,query,enabled}. Persists in sessions DB so
+        # it never bleeds across chats. Empty string = no basket.
+        self.web_basket: str = ""
         # Transparent anonymisation sticky preference (step 6.2). When non-
         # empty, the web modal is skipped on every send and this value is
         # forwarded as body.gdpr_action. Allowed: '', 'anonymise',
@@ -435,6 +439,7 @@ class Session:
                 self.research_mode_override = (None if _rmo is None
                                                 else bool(_rmo))
                 self.allow_further_web = bool(info.get("allow_further_web", 0))
+                self.web_basket = info.get("web_basket", "") or ""
                 _pref = info.get("gdpr_action_pref", "") or ""
                 self.gdpr_action_pref = (_pref if _pref in
                     ("anonymise", "local_model", "continue") else "")

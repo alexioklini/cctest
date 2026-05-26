@@ -8,43 +8,69 @@
    body.web_urls_to_fetch + exclude_tools; the server pre-fetches them and
    injects the content (handlers/chat.py).
 
-   The basket is intentionally GLOBAL (not per-session) and persists in
-   localStorage — the user accumulates sources across multiple searches and
-   sessions, fires queries against the whole set, and clears it explicitly.
-   Entries: { url, title, snippet, query, enabled }. Dedup by url.
+   The basket is PER-SESSION and persisted SERVER-SIDE: it lives on the active
+   chat (state.activeChat.webBasket) and is saved to the session row
+   (sessions.web_basket via manage action 'web_basket'), exactly like a chat's
+   own attachments belong to that session. A fresh chat starts empty; opening a
+   session loads ITS basket (from GET /messages → data.web_basket). Sources can
+   never leak from one chat into another. For a brand-new (not-yet-saved) chat
+   the basket lives in memory on the chat object and is flushed to the server
+   once the session id exists (the next manual edit persists it; sending also
+   carries the enabled set). Entries: { url, title, snippet, query, enabled }.
+   Dedup by url, within a session.
    ─────────────────────────────────────────────────────────── */
 
-const WEB_BASKET_KEY = 'websuche-basket-v1';
-
-let _webBasket = _loadWebBasket();
 let _webSearchResults = [];   // last SERP (transient, not persisted)
 let _webSearchBusy = false;
 
-function _loadWebBasket() {
+// The basket array lives on the active chat so it's naturally per-session and
+// swaps automatically when the chat switches. Returns a live array reference.
+function _webBasketArr() {
   try {
-    const raw = localStorage.getItem(WEB_BASKET_KEY);
-    const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr : [];
+    const chat = state.activeChat;
+    if (!chat) return [];
+    if (!Array.isArray(chat.webBasket)) chat.webBasket = [];
+    return chat.webBasket;
   } catch (e) { return []; }
 }
 
+// Persist the active chat's basket to its session row. No-op until the session
+// has an id (lazy chats); the basket is held in memory until then.
 function _saveWebBasket() {
-  try { localStorage.setItem(WEB_BASKET_KEY, JSON.stringify(_webBasket)); } catch (e) {}
+  try {
+    const chat = state.activeChat;
+    const sid = chat && chat.sessionId;
+    if (!sid) return;
+    API.post('/v1/sessions/manage', {
+      action: 'web_basket', session_id: sid, value: _webBasketArr(),
+    }).catch(() => {});
+  } catch (e) {}
 }
 
-function webBasketCount() { return _webBasket.length; }
+// Replace the active chat's basket from a JSON string (server load). Called by
+// openSession after GET /messages.
+function webBasketLoadFromJson(jsonStr) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  let arr = [];
+  try { const p = jsonStr ? JSON.parse(jsonStr) : []; if (Array.isArray(p)) arr = p; } catch (e) {}
+  chat.webBasket = arr;
+  if (typeof _refreshWebsuche === 'function') _refreshWebsuche();
+}
+
+function webBasketCount() { return _webBasketArr().length; }
 
 // Enabled entries — what a chat send will actually fetch.
-function webBasketEnabled() { return _webBasket.filter(e => e.enabled); }
+function webBasketEnabled() { return _webBasketArr().filter(e => e.enabled); }
 
-function _webBasketHas(url) { return _webBasket.some(e => e.url === url); }
+function _webBasketHas(url) { return _webBasketArr().some(e => e.url === url); }
 
 // Add an entry (from SERP, manual, or drop). Dedup by url; enabled by default.
 function addToWebBasket(url, title, snippet, query) {
   url = (url || '').trim();
   if (!url) return false;
   if (_webBasketHas(url)) return false;
-  _webBasket.push({ url, title: (title || '').trim() || url,
+  _webBasketArr().push({ url, title: (title || '').trim() || url,
                     snippet: snippet || '', query: query || '', enabled: true });
   _saveWebBasket();
   _refreshWebsuche();
@@ -52,22 +78,24 @@ function addToWebBasket(url, title, snippet, query) {
 }
 
 function removeFromWebBasket(url) {
-  _webBasket = _webBasket.filter(e => e.url !== url);
+  const chat = state.activeChat;
+  if (chat) chat.webBasket = _webBasketArr().filter(e => e.url !== url);
   _saveWebBasket();
   _refreshWebsuche();
 }
 
 function toggleWebBasketEntry(url) {
-  const e = _webBasket.find(x => x.url === url);
+  const e = _webBasketArr().find(x => x.url === url);
   if (e) { e.enabled = !e.enabled; _saveWebBasket(); _refreshWebsuche(); }
 }
 
 function webBasketBulk(op) {
-  if (op === 'enable') _webBasket.forEach(e => e.enabled = true);
-  else if (op === 'disable') _webBasket.forEach(e => e.enabled = false);
+  const chat = state.activeChat;
+  if (op === 'enable') _webBasketArr().forEach(e => e.enabled = true);
+  else if (op === 'disable') _webBasketArr().forEach(e => e.enabled = false);
   else if (op === 'clear') {
-    if (_webBasket.length && !confirm('Alle ausgewählten Quellen entfernen?')) return;
-    _webBasket = [];
+    if (_webBasketArr().length && !confirm('Alle ausgewählten Quellen entfernen?')) return;
+    if (chat) chat.webBasket = [];
   }
   _saveWebBasket();
   _refreshWebsuche();
@@ -179,8 +207,9 @@ function renderWebsuchePane() {
   const tokensEl = document.getElementById('websuche-basket-tokens');
   const allowRow = document.getElementById('websuche-allow-row');
   const allowCb = document.getElementById('websuche-allow-further');
+  const basket = _webBasketArr();
   const enabledN = webBasketEnabled().length;
-  if (countEl) countEl.textContent = `(${_webBasket.length} · ${enabledN} aktiv)`;
+  if (countEl) countEl.textContent = `(${basket.length} · ${enabledN} aktiv)`;
   if (tokensEl) tokensEl.textContent = enabledN ? `~${_webBasketTokenEstimate().toLocaleString()} Tokens (Schätzung)` : '';
   // The allow-further-web checkbox is only meaningful with enabled sources.
   if (allowRow) allowRow.classList.toggle('disabled', enabledN === 0);
@@ -190,11 +219,11 @@ function renderWebsuchePane() {
     allowCb.checked = !!(sess && sess.allowFurtherWeb);
   }
   if (!basketEl) return;
-  if (!_webBasket.length) {
+  if (!basket.length) {
     basketEl.innerHTML = '<div class="websuche-empty">Noch keine Quellen ausgewählt.<br>Suche oben, hake Ergebnisse an, füge URLs hinzu oder ziehe Links hierher.</div>';
     return;
   }
-  basketEl.innerHTML = _webBasket.map(e => {
+  basketEl.innerHTML = basket.map(e => {
     let host = e.url;
     try { host = new URL(e.url).hostname.replace(/^www\./, ''); } catch (x) {}
     return `
