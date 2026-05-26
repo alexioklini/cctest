@@ -561,6 +561,7 @@
     "projectSchedDelete": "writable",
     "projectSchedHistory": "writable",
     "projectSchedMenu": "writable",
+    "projectSchedRunDetail": "writable",
     "projectSchedRunNow": "writable",
     "projectSchedSave": "writable",
     "projectSchedShowForm": "writable",

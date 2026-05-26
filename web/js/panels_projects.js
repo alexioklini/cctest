@@ -940,14 +940,19 @@ async function projectSchedHistory(name) {
     const res = await API.manageSchedule({ action: 'history', name, limit: 20 });
     const history = res.history || [];
     if (!history.length) { body.innerHTML = '<div style="color:var(--text-400)">Kein Ausführungsverlauf</div>'; return; }
-    let html = '';
+    let html = '<div style="color:var(--text-400);font-size:11px;margin-bottom:6px">Lauf anklicken für Ergebnis, Artefakte und Tool-Verlauf.</div>';
     for (const h of history) {
       const ok = h.status === 'success' || h.status === 'completed';
       const started = h.started_at ? new Date(h.started_at + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
-      html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-100)">
+      // Each run opens the shared deep-detail view (result text, tool
+      // timeline, artifacts) — _schedViewRunDetail is self-contained. We wrap
+      // it so the detail overlay (z-index 1000) is lifted above THIS project
+      // history modal (z-index 9000), otherwise it'd render behind it.
+      html += `<div onclick="projectSchedRunDetail(${Number(h.id)})" style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--border-100);cursor:pointer;border-radius:6px" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''">
         <span style="width:6px;height:6px;border-radius:50%;background:${ok ? 'var(--success)' : 'var(--error)'};flex-shrink:0"></span>
         <span style="flex:1;color:var(--text-200)">${started}</span>
         <span style="color:var(--text-400)">${esc(h.status || '')}</span>
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-400);flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
       </div>`;
     }
     body.innerHTML = html;
@@ -957,6 +962,16 @@ async function projectSchedHistory(name) {
 function projectSchedCloseHistory() {
   const modal = document.getElementById('project-sched-history-modal');
   if (modal) modal.style.display = 'none';
+}
+
+// Open the shared run-detail view from inside the project history modal. The
+// detail overlay defaults to z-index 1000 (< the 9000 history modal), so lift
+// the freshly-created overlay above it.
+function projectSchedRunDetail(runId) {
+  _schedViewRunDetail(runId);
+  const overlays = document.querySelectorAll('.sched-modal-overlay');
+  const top = overlays[overlays.length - 1];
+  if (top) top.style.zIndex = '9100';
 }
 
 function editProjectInstructions() {
