@@ -387,6 +387,19 @@ Startup wipe drops every drawer in `project__*` wings AND clears
   `"interactive"` → `interactive`. Per-task `thinking_level` empty →
   inherit at fire time. `caveman_chat` is per-task. `caveman_system` is
   NOT exposed per task (would invalidate warmup KV prefix).
+- **Shared domain logic (no parallel impl)**: a scheduled task runs the SAME
+  domain logic as a chat in its domain. Two shared functions on `brain` do it:
+  `apply_domain_context(agent_id, project|project_id, user_id,
+  research_mode_override, base_exclude_tools)` sets project scope (+resolves
+  project_id→name), team_ids, research_mode_override and the
+  `disable_web_search` web-tool lockout on the request context;
+  `build_tool_context(session_id, agent_id, user_id, gdpr_mapping_id)`
+  snapshots the context into the tool_context dict for `run_turn`. Both the
+  chat worker (`handlers/chat.py`) and the scheduler fire-path
+  (`engine/scheduler.py`) call them — so the two never drift. The scheduler
+  has NO own project/team/web-lockout logic anymore. (What stays per-path:
+  message history vs single task message, system-prompt build, GDPR-anonymise
+  timing — structurally different, no domain logic in them.)
 - **Same message framing as a chat**: the fire-path prepends the same
   artifact-folder preamble (`_artifact_folder_preamble_text`) to the task's
   user message that `handlers/chat.py` adds to a chat's first message.

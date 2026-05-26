@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.32.5"
+VERSION = "9.33.0"
 VERSION_DATE = "2026-05-26"
 CHANGELOG = [
+    ("9.33.0", "2026-05-26", "refactor(domain): Chat + Scheduled Task teilen EINE Domänen-Logik — keine Parallel-Implementierung mehr. Vom User gefordertes Zielbild: es gibt zwei Domänen (normaler Chat, Projekt-Chat); die jeweiligen Scheduled Tasks haben KEINE eigene Logik, sondern verwenden die Logik des Chats ihrer Domäne. Vorher implementierte engine/scheduler.py die Domänen-Logik (project_id→name-Auflösung, team_ids, research_mode_override, disable_web_search-Lockout) als eigene Kopie neben handlers/chat.py — und sie drifteten (Scheduler hatte z.B. NIE team_ids gesetzt → nicht team-aware; research_mode_override fehlte; der Web-Lockout war eine zweite Kopie). Das war die Wurzel der ganzen Bug-Kette der letzten Iterationen. Konsolidiert auf zwei gemeinsame brain-Funktionen, die beide Pfade rufen: (1) apply_domain_context(*, agent_id, project|project_id, user_id, research_mode_override, base_exclude_tools) setzt im aktiven request_context project-scope (resolved id→name), team_ids (aus AuthDB), research_mode_override und den disable_web_search-Lockout (web_fetch/exa/searxng entfernt, additiv zur Websuche-Basket-Sperre des Chats). (2) build_tool_context(*, session_id, agent_id, user_id, gdpr_mapping_id) snapshottet den Kontext in das tool_context-Dict für run_turn (14 Felder). handlers/chat.py + engine/scheduler.py ersetzen ihre Inline-Blöcke durch diese Aufrufe → identische Domänen-Herstellung, Drift strukturell unmöglich. Der Scheduler ist damit erstmals team-aware (sieht team__-Wings wie ein Chat). NICHT zusammengeführt (strukturell verschieden, kein Domänen-Code darin): Message-Verlauf (Chat=History, Task=Einzelnachricht), System-Prompt-Bau, GDPR-Anonymise-Timing. Chat-tool_context-Felder byte-identisch (reines Dedup, kein Verhaltenswechsel). js_gate grün. Backend — Neustart nötig."),
     ("9.32.5", "2026-05-26", "fix(scheduler): Task-User-Nachricht bekommt denselben Artifact-Folder-Preamble wie ein Chat. Frage des Users: warum baut dasselbe Modell (mistral-medium, Temp 0.2) im Scheduled Task reproduzierbar die mempalace-Query 'Apple News neuigkeiten' und im Chat 'Apple News neuigkeiten aktuelle'? Untersucht: gleicher User-Prompt-Kern ('was sind die neuigkeiten in der apple welt'), gleicher purpose=interactive, gleiche Sampling-Params. Der EINE systematische Unterschied: handlers/chat.py stellt der ersten User-Nachricht einen Artifact-Folder-Preamble voran (_artifact_folder_preamble_text), der Scheduler nicht — der Task sah die Frage also anders gerahmt. Bei Temp 0.2 (nahezu deterministisch → daher 'immer X' bzw. 'immer Y') reicht dieser Kontext-Unterschied, dass das Modell eine leicht andere Suchquery bildet, was bei 80-vs-17-Drawer-Übergewicht die Quell-Gewichtung verschiebt. Fix: der Fire-Path stellt jetzt denselben Preamble voran (engine/scheduler.py, vor task_message), damit Task + Chat identisch gerahmten Input sehen. HYPOTHESE-getrieben — beseitigt einen real existierenden, systematischen Input-Unterschied; ob danach die Queries byte-identisch werden, muss ein Lauf zeigen (andere Faktoren wie das Datum im System-Prompt sind nicht ausgeschlossen). Backend — Neustart nötig."),
     ("9.32.4", "2026-05-26", "fix(scheduler): voller Tool-Result im Run-Inspector (statt 500-Zeichen-Vorschau). Verwirrung am letzten Lauf: das mempalace_query-Ergebnis sah im Inspector abgeschnitten aus (endete mitten im 1. Drawer) → Verdacht, der Task sähe nur eine Quelle. Geklärt: das war NUR die Anzeige-Kappung (result_summary auf 500 Zeichen in trace_audit) — das MODELL bekam das volle Result (count:5, alle Treffer ungekappt als tool_result-Block, result_block.content = result_str ohne Cap). Funktional korrekt, aber die Inspector-Vorschau brach nach dem 1. Treffer ab und war irreführend. Fix (3 Stellen): sidecar trägt result_text jetzt bis 100k (statt 2k); trace_audit.end_span nimmt optional full_result (bis 100k) neben dem 500-Zeichen-result_summary; der Scheduler übergibt result_text als full_result; die Inspector-Tool-Timeline (settings_schedule.js) klappt full_result auf (Fallback result_summary), die Inline-Einzeile bleibt die Kurzvorschau. Damit zeigt der Inspector den vollständigen Tool-Output wie der Chat-View — ein mempalace_query mit mehreren Quellen sieht nicht mehr aus wie 'nur 1 Treffer'. Backend — Neustart nötig."),
     ("9.32.3", "2026-05-26", "revert(projects): disable_web_search sperrt wieder NUR die 3 Web-Tools (execute_command/python_exec-Sperre aus 9.32.1 zurückgenommen). Grund: war die falsche Richtung. Belegt durch Lauf-Korrelation: sched-881 (gleiches Toolset n=25, dieselbe Web-Sperre, dasselbe Modell mistral-medium, Shell IM Toolset vorhanden) nutzte mempalace_query + read_document ERFOLGREICH; sched-883 (identische Config) wich auf curl aus. Gleiche Config, anderes Verhalten → mistral-medium ist nicht-deterministisch, der curl-Umweg ist KEINE Folge davon dass die Shell verfügbar ist. Die Shell-Sperre kappte nur legitime Shell-/Skript-Schritte. Zurück auf [web_fetch, exa_search, searxng_search] in beiden Lockout-Stellen (chat.py + scheduler.py); UI-Hilfe + Skill-Doku entsprechend bereinigt. Der tool_search-Crash-Fix (9.32.2) + die Wing-Fixes (9.31.2/3, korrekt — führen zum 97-Drawer-Wissens-Wing) bleiben. Offen: seit dem Wing-Fix wurde noch kein sauberer Lauf mit tatsächlichem mempalace_query-Aufruf beobachtet — als Nächstes messen. Backend — Neustart nötig."),
@@ -6687,6 +6688,103 @@ def maybe_reprime_for_thinking(model: str, thinking: bool, agent_id: str = "main
     threading.Thread(target=_bg, daemon=True,
                      name=f"reprime-{model[:20]}-think{int(thinking)}").start()
     return True
+
+
+# --- Shared domain context + tool_context construction -----------------
+#
+# A scheduled task in a given domain (plain chat vs. project chat) runs the
+# SAME domain logic as a chat in that domain — it has no parallel
+# implementation. `apply_domain_context` is the single place that turns the
+# domain inputs (agent, project, user) into request-context state:
+#   - project scope (`project` = name; resolved from project_id for callers
+#     that only have the id, like the scheduler)
+#   - team_ids (from the user's auth record) → team-scoped MemPalace wings
+#   - research_mode_override
+#   - the `disable_web_search` project lockout (web tools removed from the
+#     active set, additive to any caller-supplied exclude list)
+# Both the chat worker and the scheduler fire-path call it, so the two never
+# drift. `build_tool_context` then snapshots the request context into the dict
+# `run_turn` consumes — again one definition for both callers.
+
+def apply_domain_context(*, agent_id: str, project: str = "",
+                         project_id: str = "", user_id: str = "",
+                         research_mode_override=None,
+                         base_exclude_tools: list | None = None) -> None:
+    """Set the domain-determining fields on the ACTIVE request context.
+
+    Must be called inside a `with request_context():` scope. Idempotent-ish:
+    overwrites project / team_ids / research_mode_override / exclude_tools.
+
+    project / project_id: pass whichever you have. project_id wins if given
+    (resolved to the project NAME — the value every downstream consumer reads).
+    base_exclude_tools: names to exclude regardless (e.g. the chat's Websuche
+    basket lockout); the project web lockout is unioned on top.
+    """
+    ctx = get_request_context()
+    # 1. Resolve project name. The scheduler stores project_id; the chat passes
+    #    the name directly. Either way the request context holds the NAME.
+    proj_name = (project or "").strip()
+    if project_id and not proj_name:
+        try:
+            for _p in ProjectManager.list_projects(agent_id):
+                if _p.get("id") == project_id:
+                    proj_name = _p.get("name") or ""
+                    break
+        except Exception:
+            proj_name = ""
+    ctx.project = proj_name
+
+    # 2. Team IDs (team-scoped MemPalace wing visibility). Empty for anon.
+    try:
+        from server_lib.auth import AuthDB as _AuthDB
+        ctx.current_team_ids = [
+            t["id"] for t in _AuthDB.get_user_teams(user_id)
+        ] if user_id else []
+    except Exception:
+        ctx.current_team_ids = []
+
+    # 3. Research-mode override (sticky per session; None = project default).
+    ctx.research_mode_override = research_mode_override
+
+    # 4. Web-search lockout. Start from any caller-supplied exclusions (the
+    #    chat's Websuche-basket lockout), then add the 3 web tools when the
+    #    project has `disable_web_search` set. Model-independent enforcement.
+    _excl = set(base_exclude_tools or [])
+    if proj_name:
+        try:
+            _pcfg = ProjectManager.get_project(agent_id, proj_name)
+        except Exception:
+            _pcfg = None
+        if _pcfg and _pcfg.get("disable_web_search"):
+            _excl |= {"web_fetch", "exa_search", "searxng_search"}
+    ctx.exclude_tools = list(_excl) if _excl else None
+
+
+def build_tool_context(*, session_id: str, agent_id: str, user_id: str = "",
+                       gdpr_mapping_id: str = "") -> dict:
+    """Snapshot the active request context into the tool_context dict that
+    `run_turn` passes to the sidecar. Single definition for chat + scheduler so
+    the per-tool-call context rebuild is identical in both. Reads project,
+    team_ids, note_context, workflow_run_id, plan_mode, research_mode_override,
+    execution_overrides, attachment_image_model, caveman_* off the context —
+    so whatever `apply_domain_context` (and the caller) set is reflected."""
+    ctx = get_request_context()
+    return {
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "user_id": user_id or "",
+        "team_ids": list(ctx.current_team_ids or []),
+        "project": ctx.project or "",
+        "note_context": ctx.note_context,
+        "workflow_run_id": ctx.workflow_run_id or "",
+        "plan_mode": bool(ctx.plan_mode),
+        "research_mode_override": ctx.research_mode_override,
+        "execution_overrides": ctx.execution_overrides or {},
+        "attachment_image_model": ctx.attachment_image_model or "",
+        "caveman_chat": int(ctx.caveman_chat or 0),
+        "caveman_system": int(ctx.caveman_system or 0),
+        "gdpr_mapping_id": gdpr_mapping_id or "",
+    }
 
 
 def build_first_turn_prefix(model: str, agent_id: str, *,

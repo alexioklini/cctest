@@ -2102,13 +2102,7 @@ class ChatHandlerMixin:
                 engine.get_request_context().current_agent = agent_config
                 engine.get_request_context().current_session_id = sid
                 engine.get_request_context().current_user_id = session.user_id or ""
-                # Team IDs the user belongs to — used for team-scoped MemPalace wing filtering
-                try:
-                    engine.get_request_context().current_team_ids = [
-                        t["id"] for t in _auth_mod.AuthDB.get_user_teams(session.user_id)
-                    ] if session.user_id else []
-                except Exception:
-                    engine.get_request_context().current_team_ids = []
+                # (team_ids are set below by apply_domain_context — single source)
 
                 # Reset per-request state (prevents cross-session leaks in pooled threads)
                 engine.reset_tool_dedup()
@@ -2119,59 +2113,23 @@ class ChatHandlerMixin:
                 # Set plan mode if requested
                 engine.get_request_context().plan_mode = (chat_mode == "plan")
 
-                # Manual web-search lockout: when the user supplied a curated
-                # source set (pre-fetched above) and didn't enable the
-                # allow_further_web escape hatch, hard-disable the web tools for
-                # this turn. resolve_active_tools subtracts these names.
-                if web_locked:
-                    engine.get_request_context().exclude_tools = [
-                        "web_fetch", "exa_search", "searxng_search",
-                    ]
-
-                # Set project scope if provided
+                # Domain context (project scope, team_ids, research_mode,
+                # disable_web_search lockout) — the SAME shared function the
+                # scheduler calls, so a chat and a scheduled task in the same
+                # domain run identical logic. The Websuche-basket lockout
+                # (web_locked) is passed as the base exclusion; the project
+                # web lockout is unioned on top inside apply_domain_context.
                 if project_name:
                     session.project = project_name
-                    engine.get_request_context().project = project_name
-                else:
-                    engine.get_request_context().project = session.project  # Use session's existing project
-
-                # Project-level web-search lockout. A project with curated
-                # sources (files / input folders / web URLs) can set
-                # `disable_web_search` so its chats MUST work from the project
-                # memory instead of free-searching the web. This is the
-                # model-independent enforcement of the retrieval intent —
-                # prompt instructions alone don't bind (mistral-medium ignores
-                # them and free-searches; verified on the webnews project).
-                # Mirrors the per-turn Websuche lockout, but driven by the
-                # project setting. Additive: extends any exclude_tools already
-                # set above by the Websuche basket lockout.
-                _proj_for_lock = engine.get_request_context().project
-                if _proj_for_lock:
-                    try:
-                        _pcfg = engine.ProjectManager.get_project(
-                            session.agent_id, _proj_for_lock)
-                    except Exception:
-                        _pcfg = None
-                    if _pcfg and _pcfg.get("disable_web_search"):
-                        _existing = engine.get_request_context().exclude_tools or []
-                        # Remove the 3 dedicated web tools. (We tried also
-                        # blocking execute_command/python_exec to stop curl —
-                        # but a verified-good run (sched-881) used mempalace
-                        # WITH the shell present, so that sledgehammer was the
-                        # wrong call and crippled legit shell use. mistral-
-                        # medium's curl detour is non-deterministic, not caused
-                        # by the shell being available.)
-                        _web_tools = ["web_fetch", "exa_search", "searxng_search"]
-                        engine.get_request_context().exclude_tools = list(
-                            set(_existing) | set(_web_tools))
-
-                # Per-session research-mode override (sticky). None = use the
-                # project's own `research_mode` default; True/False = force the
-                # override for this session. _build_system_prompt and the
-                # citation validator both read this off _thread_local so they
-                # never disagree mid-turn.
-                engine.get_request_context().research_mode_override = getattr(
-                    session, "research_mode_override", None)
+                _base_excl = (["web_fetch", "exa_search", "searxng_search"]
+                              if web_locked else None)
+                engine.apply_domain_context(
+                    agent_id=session.agent_id,
+                    project=(project_name or session.project or ""),
+                    user_id=session.user_id or "",
+                    research_mode_override=getattr(session, "research_mode_override", None),
+                    base_exclude_tools=_base_excl,
+                )
 
                 # Set note context for AI-assisted note editing
                 if session.note_context:
@@ -2615,26 +2573,19 @@ class ChatHandlerMixin:
                             _ssp_conn.commit()
                     except Exception:
                         pass
-                    _tool_context = {
-                        "session_id": sid,
-                        "agent_id": session.agent_id,
-                        "user_id": session.user_id or "",
-                        "team_ids": list(engine.get_request_context().current_team_ids or []),
-                        "project": engine.get_request_context().project or "",
-                        "note_context": engine.get_request_context().note_context,
-                        "workflow_run_id": engine.get_request_context().workflow_run_id or "",
-                        "plan_mode": bool(engine.get_request_context().plan_mode),
-                        "research_mode_override": engine.get_request_context().research_mode_override,
-                        "execution_overrides": engine.get_request_context().execution_overrides or {},
-                        "attachment_image_model": engine.get_request_context().attachment_image_model or "",
-                        "caveman_chat": int(engine.get_request_context().caveman_chat or 0),
-                        "caveman_system": int(engine.get_request_context().caveman_system or 0),
-                        # Transparent anonymisation: when set, the tool-dispatch
-                        # thread installs an _after_file_write callback that
-                        # rewrites any file the LLM produces back into real
-                        # values before the UI sees the artifact.
-                        "gdpr_mapping_id": getattr(session, "_gdpr_mapping_id", "") or "",
-                    }
+                    # Snapshot the request context into the tool_context dict —
+                    # the SAME shared builder the scheduler uses, so the
+                    # sidecar's per-tool-call context rebuild is identical in
+                    # both. gdpr_mapping_id carries the transparent-anonymise
+                    # mapping so the tool-dispatch thread installs the
+                    # _after_file_write callback that rewrites produced files
+                    # back to real values.
+                    _tool_context = engine.build_tool_context(
+                        session_id=sid,
+                        agent_id=session.agent_id,
+                        user_id=session.user_id or "",
+                        gdpr_mapping_id=getattr(session, "_gdpr_mapping_id", "") or "",
+                    )
                     _sampling = {
                         "temperature": inf_params.get("temperature"),
                         "top_p": inf_params.get("top_p"),

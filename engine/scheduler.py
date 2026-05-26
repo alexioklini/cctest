@@ -1031,22 +1031,11 @@ class Scheduler:
             _task_caveman = 0
 
         # Optional project binding. The stored value is the stable project_id;
-        # the whole project context (instructions in the system prompt, the
-        # MemPalace project__<id> wing, research_mode) keys off the project
-        # NAME held in request_context().project — so resolve id → name here
-        # and feed both the request_context (below) and _tool_context. If the
-        # project no longer exists, fall back to agent-global silently rather
-        # than failing the run.
+        # apply_domain_context (inside the request_context below) resolves it to
+        # the project NAME and sets the whole project context exactly like a
+        # chat. `_task_project_name` is read back off the context afterwards.
         _task_project_id = (task_row.get("project_id") or "").strip()
         _task_project_name = ""
-        if _task_project_id:
-            try:
-                for _p in _brain.ProjectManager.list_projects(agent_id):
-                    if _p.get("id") == _task_project_id:
-                        _task_project_name = _p.get("name") or ""
-                        break
-            except Exception:
-                _task_project_name = ""
 
         # Init thread context before building the system prompt —
         # _brain._build_system_prompt reads current_agent from thread-local for soul.md.
@@ -1062,33 +1051,27 @@ class Scheduler:
         with request_context():
             init_thread_context(_sched_ctx_pre, agent_config=target)
 
-            # Project scope: _build_system_prompt + mempalace_query + research
-            # mode all read get_request_context().project (a NAME). Setting it
-            # here — before the prompt is built — pulls in the project's
-            # instructions, description, research_mode, and scopes tools to the
-            # project__<id> wing. Empty when unbound (agent-global, unchanged).
-            if _task_project_name:
-                from engine.context import get_request_context as _grc
-                _grc().project = _task_project_name
-                # Project-level web-search lockout (same as the chat worker):
-                # a project with `disable_web_search` forces its tasks to work
-                # from the project memory, not free web search. Model-
-                # independent — prompt instructions alone don't bind on
-                # mistral-medium (verified: sched-878/879/880 free-searched
-                # despite the retrieval hint). resolve_active_tools subtracts
-                # exclude_tools.
-                try:
-                    _pcfg_lock = _brain.ProjectManager.get_project(
-                        agent_id, _task_project_name)
-                except Exception:
-                    _pcfg_lock = None
-                if _pcfg_lock and _pcfg_lock.get("disable_web_search"):
-                    # Remove only the 3 dedicated web tools. (Blocking the
-                    # shell/python too was the wrong direction — sched-881 used
-                    # mempalace successfully WITH the shell present; the curl
-                    # detour is mistral-medium non-determinism, not a
-                    # consequence of the shell being available.)
-                    _grc().exclude_tools = ["web_fetch", "exa_search", "searxng_search"]
+            # Domain context — IDENTICAL to a chat in this domain. A scheduled
+            # task has NO own domain logic: apply_domain_context sets project
+            # scope (resolves project_id→name), team_ids, research_mode_override
+            # and the disable_web_search lockout exactly the way the chat worker
+            # does. _build_system_prompt + mempalace_query + the citation
+            # validator all read get_request_context().project / .exclude_tools
+            # off this. (research_mode_override isn't a per-schedule concept yet
+            # → None = the project's own default, same as a chat with no
+            # override.)
+            _brain.apply_domain_context(
+                agent_id=agent_id,
+                project_id=_task_project_id,
+                user_id=(task_row.get("user_id") or ""),
+                research_mode_override=None,
+            )
+            # The resolved project name now lives on the context; reuse it for
+            # the purpose decision + the artifact preamble below.
+            _task_project_name = _brain.get_request_context().project or ""
+            # Per-task caveman level → context, so build_tool_context (which
+            # reads ctx.caveman_chat) carries it like the chat does.
+            _brain.get_request_context().caveman_chat = _task_caveman
 
             # Build system prompt via the unified builder
             # (PROMPT_TOOLS_UNIFICATION_PLAN.md). Default purpose for scheduled
@@ -1272,26 +1255,16 @@ class Scheduler:
                     # else research_minimal).
                     _sched_purpose = _sched_purpose_pre
 
-                    _tool_context = {
-                        "session_id": sched_session_id,
-                        "agent_id": agent_id,
-                        "user_id": (task_row.get("user_id") or ""),
-                        "team_ids": [],
-                        # Project NAME (resolved from the schedule's stored
-                        # project_id) so the sidecar's per-tool-call context
-                        # rebuild scopes mempalace_query to the project wing.
-                        # Empty for agent-global tasks.
-                        "project": _task_project_name,
-                        "note_context": None,
-                        "workflow_run_id": "",
-                        "plan_mode": False,
-                        "research_mode_override": None,
-                        "execution_overrides": {},
-                        "attachment_image_model": "",
-                        "caveman_chat": _task_caveman,
-                        "caveman_system": 0,
-                        "trace_id": "",
-                    }
+                    # Snapshot the request context into the tool_context dict —
+                    # the SAME builder the chat worker uses, so the sidecar's
+                    # per-tool-call context rebuild is identical (project scope,
+                    # team_ids, research_mode etc. all flow through). caveman_chat
+                    # was set on the context from the task row earlier.
+                    _tool_context = _brain.build_tool_context(
+                        session_id=sched_session_id,
+                        agent_id=agent_id,
+                        user_id=(task_row.get("user_id") or ""),
+                    )
                     _sampling = {
                         "temperature": sched_inf.get("temperature"),
                         "top_p": sched_inf.get("top_p"),
