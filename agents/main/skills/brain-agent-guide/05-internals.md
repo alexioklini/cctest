@@ -310,12 +310,19 @@ Imported as a Python package — no MCP, no subprocess.
 - `_resolve_session_wing` priority: project → team → user → empty.
 - `mempalace_query` in a project chat is **force-scoped** to
   `project__<id>` and refuses if id is missing (never leaks).
-- `mempalace_query`'s `read_hint` lists the DISTINCT source files among the
-  hits; when there's more than one it explicitly tells the model to
-  `read_document` each before summarising — otherwise the model tends to read
-  only the top hit and summarise from a single source (observed: a task whose
-  hits spanned macrumors + caschys read only one). Coverage nudge, applies to
-  chat + task alike.
+- **Per-drawer snippet rule** (universal — every caller, no use-case
+  branching, structural): a `mempalace_query` drawer whose content lives in a
+  readable file on disk (project docs, brain_code, AND artifacts — the
+  synthetic `session/<sid>#artifact/<name>` marker is resolved to
+  `agents/<agent>/artifacts/<date>_<sid>/<name>`) has its `text` OMITTED and
+  `content_via:"read_document"` — the model MUST call `read_document`, so it
+  can't answer from a partial snippet (the documented hallucination cause).
+  Drawers with NO file behind them (chat turns `#turn/`, summaries `#summary`,
+  user-profile sections `#profile/`) keep their `text` in FULL (no truncation —
+  the drawer IS the only copy) and carry `content_via:"snippet"`. The
+  `read_hint` explains this and, when >1 readable doc, lists them so the model
+  reads each before summarising. Replaces the old always-`[:2000]`-snippet
+  behavior.
 - `include_chat_history=true` searches the chat wing `project_chat__<id>`
   **plus** the knowledge wing `project__<id>` (`wing $in [...]`), never the
   chat wing alone. The project chat wing is often empty (chat-sync may not

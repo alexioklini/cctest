@@ -58,6 +58,7 @@ as the single instance — brain's re-export binds the same objects, so
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import json
 import logging
@@ -710,7 +711,51 @@ def tool_mempalace_query(args: dict) -> str:
             full_path = sf_in
         else:
             full_path = basename_to_full.get(sf_in, sf_in)
+        # Artifact drawers carry a synthetic marker `session/<sid>#artifact/
+        # <name>`, not a real path — but the file DOES exist on disk under
+        # agents/<agent>/artifacts/<date>_<sid>/<name>. Resolve it so the
+        # snippet rule below treats it like any other readable document
+        # (read_document, not a possibly-huge inline snippet). Pick the newest
+        # matching folder when a session ran on several days.
+        if not os.path.isfile(full_path) and "#artifact/" in sf_in:
+            try:
+                _sid_part, _name = sf_in.split("#artifact/", 1)
+                _sid = _sid_part.split("/", 1)[-1]  # 'session/sched-76' → 'sched-76'
+                _art_base = os.path.join(_brain.AGENTS_DIR, current_agent_id, "artifacts")
+                _cands = sorted(
+                    glob.glob(os.path.join(_art_base, f"*_{_sid}", _name)),
+                    reverse=True)  # newest date folder first
+                if _cands:
+                    full_path = _cands[0]
+            except Exception:
+                pass
         original_binary = md_to_original.get(full_path, "")
+        # Per-drawer snippet rule (universal — applies to EVERY caller, no
+        # use-case branching): if the drawer points at a readable original
+        # document on disk (read_path or read_path_original is a real file),
+        # OMIT the snippet — the model MUST call read_document to get the
+        # content, so it can never answer from a partial ~800-char snippet
+        # (the documented hallucination cause). This now includes artifacts
+        # (their synthetic marker was resolved to the real file above). If
+        # there's NO readable original (chat-turn / summary / user-profile
+        # drawers — source_file is a synthetic 'session/...#...' marker with
+        # no file behind it), the drawer text IS the verbatim content and the
+        # only source, so we KEEP the snippet (in full). The distinction is
+        # purely structural (is there a file to read?), independent of who
+        # called mempalace_query.
+        _has_readable = bool(
+            (full_path and "/" in full_path and os.path.isfile(full_path))
+            or (original_binary and os.path.isfile(original_binary)))
+        if _has_readable:
+            _text = ""  # force read_document — no snippet to shortcut from
+        else:
+            # No readable original (chat / profile / artifact drawer): the
+            # drawer text is the ONLY copy of the content and read_document
+            # can't fetch it, so deliver it in FULL — never truncate, or the
+            # model could never see the rest. Drawers are atomic ~800-char
+            # chunks, but some (large artifacts, profile sections) exceed
+            # that; they must still come through whole.
+            _text = r.get("text") or ""
         drawers.append({
             "wing": r.get("wing", ""),
             "room": r.get("room", ""),
@@ -725,33 +770,40 @@ def tool_mempalace_query(args: dict) -> str:
             "read_path_original": original_binary,
             "similarity": r.get("similarity"),
             "matched_via": r.get("matched_via", "drawer"),
-            "text": (r.get("text") or "")[:2000],
+            # Empty when a readable original exists (read_document required);
+            # the verbatim snippet otherwise.
+            "text": _text,
+            "content_via": "read_document" if _has_readable else "snippet",
         })
 
-    # Distinct source files among the hits. When the matches span MORE THAN
-    # ONE source, the model tends to read_document only the top one and
-    # summarise from a single source — so surface the full distinct set and
-    # tell it to read each before summarising. Coverage hint only; harmless
-    # for single-source result sets.
-    _distinct_paths = []
+    # Distinct readable sources (drawers whose text was omitted because a real
+    # document exists → read_document required). These are the files the model
+    # MUST load before answering; list them so it reads each, not just the top
+    # one. Drawers that kept their snippet (chat/profile/artifact — no file)
+    # need no read.
+    _read_paths = []
     for _d in drawers:
+        if _d.get("content_via") != "read_document":
+            continue
         _p = _d.get("read_path") or _d.get("source_file")
-        if _p and _p not in _distinct_paths:
-            _distinct_paths.append(_p)
+        if _p and _p not in _read_paths:
+            _read_paths.append(_p)
     _read_hint = (
-        "To follow up on a drawer, call "
-        "`read_document(path=<drawer.read_path>)` — or "
-        "`read_document(path=<drawer.read_path_original>)` for the "
-        "original PDF/DOCX/etc. if you need formula/table fidelity. "
-        "Both paths are absolute and ready to use as-is; do NOT join "
-        "with input-folder paths.")
-    if len(_distinct_paths) > 1:
-        _list = "\n".join(f"  - {p}" for p in _distinct_paths)
+        "Drawers with an empty `text` have `content_via:\"read_document\"` — "
+        "their full content lives in a real document on disk; you MUST call "
+        "`read_document(path=<drawer.read_path>)` (or `read_path_original` for "
+        "the original PDF/DOCX) to read it. NEVER answer about such a drawer "
+        "without reading it — the snippet was deliberately withheld so you "
+        "can't answer from a partial chunk. Drawers WITH a `text` value "
+        "(`content_via:\"snippet\"` — chat history, profile, artifacts) carry "
+        "their verbatim content inline; no read needed. Paths are absolute, "
+        "use as-is; do NOT join with input-folder paths.")
+    if len(_read_paths) > 1:
+        _list = "\n".join(f"  - {p}" for p in _read_paths)
         _read_hint += (
-            f"\n\nIMPORTANT — these hits span {len(_distinct_paths)} DISTINCT "
-            f"sources. Before you summarise, call read_document on EACH of "
-            f"them so the answer covers all sources, not just the top hit:\n"
-            f"{_list}")
+            f"\n\nThese hits span {len(_read_paths)} DISTINCT documents — "
+            f"read_document EACH before summarising so the answer covers all "
+            f"of them, not just the top hit:\n{_list}")
 
     return _ok({
         "query": query,
