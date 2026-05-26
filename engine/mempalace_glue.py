@@ -286,6 +286,49 @@ def tool_mempalace_query(args: dict) -> str:
                        if isinstance(r, dict)
                        and _wing_visible(r.get("wing", ""), own_user, own_teams)]
 
+    # Helpdesk (Brainy) source-code reach: in helpdesk_mode, ADDITIVELY search
+    # the shared `brain_code` wing (the mined brain-agent source) so Brainy can
+    # answer code-level questions the skill docs don't cover — semantic search
+    # over the source replaces the missing GitHub code-search. This is a
+    # SEPARATE Chroma query pinned to wing="brain_code"; it does NOT touch the
+    # force-scope above (project__/user__ filter stays byte-identical), so the
+    # project-isolation guarantee can't weaken — brain_code is a shared wing,
+    # never a project's private knowledge. Only runs for Brainy, and only when
+    # the main scope wasn't already brain_code (avoid double-search).
+    if get_request_context().helpdesk_mode and wing != "brain_code":
+        try:
+            _src_where = _build_where("brain_code", None)
+            _src_res = col.query(
+                query_texts=[query], n_results=n_results,
+                include=["documents", "metadatas", "distances"],
+                where=_src_where,
+            )
+            _sdocs = (_src_res.get("documents") or [[]])[0]
+            _smetas = (_src_res.get("metadatas") or [[]])[0]
+            _sdists = (_src_res.get("distances") or [[]])[0]
+            for doc, meta, dist in zip(_sdocs, _smetas, _sdists):
+                meta = meta or {}
+                # source_file is the on-disk clone path
+                # (<palace>/.brain-source-clone/<wing>/<repo-relative>).
+                # Strip the clone prefix so it's the repo-relative path Brainy
+                # can drop straight into a GitHub raw URL.
+                _sf = meta.get("source_file", "") or ""
+                _m = re.search(r"\.brain-source-clone/[^/]+/(.+)$", _sf)
+                if _m:
+                    _sf = _m.group(1)
+                raw_results.append({
+                    "wing": meta.get("wing", "brain_code"),
+                    "room": meta.get("room", ""),
+                    "source_file": _sf,
+                    "similarity": round(max(0.0, 1.0 - float(dist or 0.0)), 3),
+                    "matched_via": "chroma-vector+source",
+                    "text": doc or "",
+                })
+        except Exception:
+            # Source reach is best-effort — never fail the user's query
+            # because the brain_code wing is empty or unbuilt.
+            pass
+
     # Filename-token boost: lexical re-rank that promotes drawers whose source
     # filename literally contains query tokens. Pure-vector retrieval scores
     # filename-matching files surprisingly low when the query is verbose

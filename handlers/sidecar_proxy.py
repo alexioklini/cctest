@@ -873,6 +873,7 @@ def helpdesk_call(
     system_prompt: str,
     session_id: str,
     user_id: str = "",
+    project: str = "",
     event_callback: Callable,
     cancel_token: Any = None,
     max_rounds: int = 6,
@@ -890,6 +891,12 @@ def helpdesk_call(
     `session_id` scopes the read-only tools (session info / activity) — it is
     NOT used as the sidecar turn's persisted session, so the main chat's
     history, live_stream, and active-turn tracking are untouched.
+
+    `project` (the project NAME, as the main chat carries it) force-scopes
+    mempalace_query / KG to that project's `project__<id>` wing — so when the
+    user asks Brainy from inside a project, Brainy reads the SAME isolated
+    project knowledge the main agent does. Empty when not in a project, leaving
+    the wing scope as before (no project knowledge).
     """
     prov = engine.resolve_provider_for_model(model)
     inf = engine.get_inference_params(model)
@@ -903,7 +910,9 @@ def helpdesk_call(
         "agent_id": "main",
         "user_id": user_id or "",
         "team_ids": [],
-        "project": "",
+        # The project NAME (mempalace_glue resolves name → id and force-scopes
+        # to project__<id>); empty => no project knowledge, as before.
+        "project": project or "",
         "note_context": None,
         "workflow_run_id": "",
         "plan_mode": False,

@@ -25,7 +25,9 @@ import hashlib  # noqa: F401  (chat-sync summary/closet hashing)
 import io  # noqa: F401  (miner stdout capture)
 import json  # noqa: F401  (chat-sync / project-sync payload handling)
 import os
+import re  # noqa: F401  (git-source wing → clone-dir sanitisation)
 import sqlite3
+import subprocess  # noqa: F401  (git clone/pull for source mining)
 import time
 
 import brain as engine
@@ -332,6 +334,85 @@ def _mempalace_miner_loop(srv):
             folders_seen = 0
             folders_skipped_chat = 0
             folders_sched = 0
+            sources_filed = 0
+
+            # ── GitHub source mining (mine.git_sources) ─────────────────
+            # Clone/pull the brain-agent source from GitHub and mine it into a
+            # shared wing (e.g. brain_code) so Brainy can SEARCH the code
+            # semantically — the missing piece behind "look it up in the source
+            # when the docs don't cover it". Source MUST come from GitHub, not
+            # a local path: in production there is no source tree on disk, and
+            # a local checkout would also drift from the deployed build. We
+            # shallow-clone into <palace>/.brain-source-clone/<wing> and `git
+            # pull` on later cycles (cheap, always current within one cycle).
+            # respect_gitignore keeps secrets (config.json etc.) out of the
+            # index since they're gitignored in the repo.
+            for src in (mine2.get("git_sources") or []):
+                repo_url = (src or {}).get("repo_url") or ""
+                src_wing = (src or {}).get("wing") or ""
+                branch = (src or {}).get("branch") or "main"
+                if not repo_url or not src_wing:
+                    continue
+                clone_root = os.path.join(palace_path, ".brain-source-clone")
+                clone_dir = os.path.join(clone_root, re.sub(r"[^A-Za-z0-9_.-]", "_", src_wing))
+                try:
+                    os.makedirs(clone_root, exist_ok=True)
+                    if os.path.isdir(os.path.join(clone_dir, ".git")):
+                        subprocess.run(["git", "-C", clone_dir, "fetch", "--depth", "1", "origin", branch],
+                                       check=True, capture_output=True, timeout=120)
+                        subprocess.run(["git", "-C", clone_dir, "reset", "--hard", f"origin/{branch}"],
+                                       check=True, capture_output=True, timeout=60)
+                    else:
+                        subprocess.run(["git", "clone", "--depth", "1", "--branch", branch,
+                                        repo_url, clone_dir],
+                                       check=True, capture_output=True, timeout=300)
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+                    print(f"[mempalace-miner] git source {src_wing}: clone/pull failed: "
+                          f"{type(e).__name__}: {e}", flush=True)
+                    continue
+                if not _ensure_mempalace_yaml(clone_dir, src_wing):
+                    continue
+                buf = io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(buf):
+                        mp_miner.mine(
+                            project_dir=clone_dir,
+                            palace_path=palace_path,
+                            wing_override=src_wing,
+                            agent="brain-miner-source",
+                            respect_gitignore=True,
+                        )
+                    for line in buf.getvalue().splitlines():
+                        s = line.strip()
+                        if s.startswith("Drawers filed"):
+                            try:
+                                sources_filed += int(s.split(":")[-1].strip().split()[0])
+                            except Exception:
+                                pass
+                            break
+                except SystemExit:
+                    pass
+                except Exception as e:
+                    print(f"[mempalace-miner] git source {src_wing}: mine failed: "
+                          f"{type(e).__name__}: {e}", flush=True)
+
+                # Rebuild the code structure graph from the SAME fresh clone,
+                # so Brainy's code_graph_query (file_summary / callers_of / …)
+                # reflects current source — not a stale local checkout. The
+                # graph DB is a single shared store; we only rebuild it from
+                # the configured code wing (brain_code), incremental so only
+                # changed files re-parse. Best-effort: a graph failure must not
+                # break the mining cycle.
+                if src_wing == "brain_code":
+                    try:
+                        _cg = engine._get_code_graph()
+                        _cg_stats = _cg.build(clone_dir, incremental=True)
+                        if isinstance(_cg_stats, dict) and _cg_stats.get("error"):
+                            print(f"[mempalace-miner] code-graph build: "
+                                  f"{_cg_stats['error']}", flush=True)
+                    except Exception as e:
+                        print(f"[mempalace-miner] code-graph build failed: "
+                              f"{type(e).__name__}: {e}", flush=True)
 
             for agent_id, folder_path, folder_name, kind in _list_chat_artifact_folders():
                 folders_seen += 1
@@ -418,7 +499,8 @@ def _mempalace_miner_loop(srv):
                           f"{type(e).__name__}: {e}", flush=True)
 
             print(f"[mempalace-miner] cycle: filed={drawers_filed} folders={folders_seen} "
-                  f"(sched={folders_sched} chat-skip={folders_skipped_chat})", flush=True)
+                  f"(sched={folders_sched} chat-skip={folders_skipped_chat}) "
+                  f"sources_filed={sources_filed}", flush=True)
         except Exception as e:
             print(f"[mempalace-miner] cycle error: {type(e).__name__}: {e}", flush=True)
 

@@ -329,6 +329,7 @@ class HelpdeskHandlerMixin:
                     system_prompt=cfg["system_prompt"],
                     session_id=session_id,
                     user_id=uid,
+                    project=(view_ctx.get("project") or "").strip(),
                     event_callback=event_callback,
                     max_rounds=cfg["max_rounds"],
                 )

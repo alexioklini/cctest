@@ -164,18 +164,113 @@ main chat agent.
   badge in the UI; it's persisted, so badge + replay survive reload/restart.
 - **Exclusive skill**: this `brain-agent-guide` skill is gated to Brainy
   (`HELPDESK_ONLY_SKILLS`) — hidden from normal chat unless helpdesk_mode.
-- **Fixed read-only tools** (`_HELPDESK_TOOLS`, 15 tools): `use_skill`, the
+- **Fixed read-only tools** (`_HELPDESK_TOOLS`, 16 tools): `use_skill`, the
   three `helpdesk_*` tools, `mempalace_query`, the read/search/context
-  tools, and the three web tools. No write/exec tools.
+  tools, the three web tools, and `code_graph_query`. No write/exec tools.
+- **Source reach** (9.27.0): in helpdesk_mode `mempalace_query` additively
+  searches the shared `brain_code` wing (mined brain-agent source) on top of
+  its normal scope — a separate Chroma query pinned to `brain_code`, so the
+  project-isolation force-scope is untouched. `code_graph_query` adds exact
+  structure lookups (file_summary / callers_of / …) over the same source.
+  See "Reading the brain-agent source" below.
 - **Per-turn tool enforcement** (9.22.0): `run_turn`/`run_turn_blocking`
   put the resolved tool names in `tool_context['allowed_tools']`;
   `tool_mcp.handle_tools_call` rejects any `tool_use` not in that list
   before dispatch (generic, all purposes; empty list = no enforcement).
   `use_skill` returns companion-page **absolute** paths (`companion_pages`)
   so Brainy stops guessing relative paths.
+- **Project-scoped knowledge** (9.26.0): when the user asks Brainy from
+  inside a project, the view context's project NAME is passed through to
+  `helpdesk_call(project=…)` → the turn's `tool_context['project']`, so
+  Brainy's `mempalace_query` force-scopes to that project's `project__<id>`
+  wing — Brainy reads the SAME isolated project knowledge the main agent
+  does (e.g. "what is this project about?" answers from the mined docs, not
+  just metadata). Outside a project, `project` stays empty and Brainy has
+  no project knowledge, as before. Per-project isolation is preserved: it
+  only ever sees the project the user is currently in.
 - **Config**: `config.json → helpdesk {enabled, model, max_rounds,
   system_prompt}`. Model "Auto" resolves to the server default. Edited in
   Settings → Tools → Brainy.
+
+## Reading the brain-agent source (9.27.0)
+
+In production there is **no source code on disk** — only these skill files.
+When a user asks about behaviour these files don't cover (an exact default
+value, a field name, an edge case), you can reach the actual brain-agent
+source in two complementary ways. **Always try these skill files first** —
+they're German, curated, high-signal. Reach for the source only when the
+docs genuinely don't answer a precise code-level question.
+
+**STEP 1 — NARROW DOWN with `mempalace_query`.** The brain-agent source is
+mined into a shared MemPalace wing called **`brain_code`** by the
+source-miner daemon (it clones the public GitHub repo each cycle). In
+helpdesk mode your `mempalace_query` AUTOMATICALLY also searches `brain_code`
+— so query what you're looking for in plain language ("how many helpdesk
+history turns are replayed", "default web_fetch timeout") and you get back
+candidate chunks, each with a repo-relative `source_file` (e.g.
+`handlers/helpdesk.py`, plus `CLAUDE.md` / `05-internals.md` which often rank
+high and themselves point you at the right module).
+
+**Treat these as CANDIDATES, not the final answer.** Code embeddings are
+fuzzy — the exact line you want may not be in the top chunk, and the most
+relevant file may be at rank 2-3 (or hinted at by a CLAUDE.md chunk). Use the
+hits + the repo map below to decide which ONE file actually holds the answer.
+
+**STEP 1b — STRUCTURE lookups with `code_graph_query`** (when you already
+know a symbol or file). The brain-agent source is also indexed as a code
+structure graph. `code_graph_query` takes `query_type` + `target`:
+- `file_summary` + a file path → every function/class/method defined in that
+  file (great for "what's in handlers/helpdesk.py" — returns qualified names
+  like `HelpdeskHandlerMixin._handle_helpdesk`).
+- `callers_of` / `callees_of` + a qualified name → who calls it / what it
+  calls. `imports_of` / `importers_of`, `inheritors_of`, `tests_for`.
+This is exact (not fuzzy) but relation-based: it answers "what's in this
+file" and "what relates to this symbol", NOT "find the file for this plain
+constant" — for the latter, lean on `mempalace_query` + the repo map. Paths
+in results may carry a local clone prefix; strip to the repo-relative part
+(everything after `.brain-source-clone/<wing>/`) before building a GitHub URL.
+
+**STEP 2 — read the FULL, CURRENT file from GitHub.** Once you've identified
+the file, fetch it raw with `web_fetch` and read the precise value there
+(GitHub `main` is live; the mined index can lag by up to one miner cycle):
+`https://raw.githubusercontent.com/alexioklini/cctest/main/<source_file>`
+e.g. `.../main/handlers/helpdesk.py`. Use the `source_file` path
+`mempalace_query` gave you — do NOT invent paths. You can also list every
+path via the git tree:
+`https://api.github.com/repos/alexioklini/cctest/git/trees/main?recursive=1`
+
+**Order: query to narrow, then ONE targeted GitHub fetch to confirm.** Don't
+fetch file after file blindly — let the query + repo map pick the single file
+first, then fetch that one and answer. If the query chunk already shows the
+exact value, you may answer from it directly, but for an exact constant the
+GitHub raw file is the authoritative, current source.
+
+**Repo map** (where things live — mirrors the repo's own CLAUDE.md):
+- `brain.py` — tool wiring (`TOOL_GROUPS`, `TOOL_DISPATCH`), `VERSION` +
+  CHANGELOG, runtime classes, the tool resolver, warmup.
+- `server.py` — HTTP routes (grep the `self.path` dispatch for endpoints).
+- `engine/tool_schemas.py` — `TOOL_DEFINITIONS` (every tool's exact schema).
+- `engine/tools/<group>.py` — each tool's implementation (file/git/gmail/
+  web/translate/delegation/context/misc/ask, and `helpdesk_tools.py`).
+- `engine/` — extracted domains: `loop`, `provider`, `model_select`,
+  `mempalace_glue`, `classification`, `pii_ner`, `doc_convert`, `kg_extract`,
+  `prompt_build`, `context`, `scheduler`, `quotas`, `workflow`, `code_graph`.
+- `handlers/` — HTTP handler modules (`chat.py`, `sessions_handler.py`,
+  `projects.py`, `providers.py`, `admin.py`, `auth.py`, `classification.py`,
+  `helpdesk.py`, `sidecar_proxy.py`).
+- `server_lib/` — DB, auth, sessions, `tool_mcp.py` (dispatch).
+- `web/index.html` + `web/js/` — the single-page UI.
+
+**Caveats to tell the user, not hide:**
+- The mined `brain_code` index can lag the live build by up to one miner
+  cycle; GitHub `main` is current but may itself be a slightly different
+  commit than the deployed server. When the exact value matters, prefer the
+  GitHub raw fetch and cite as "im aktuellen Quellcode (GitHub main)"; you
+  can compare the CHANGELOG top entry in `brain.py` to the running version
+  from `GET /v1/status` to flag a mismatch.
+- You read source to ANSWER, never to act — you are still read-only.
+- Don't paste large code blocks at the user; read it, then explain in plain
+  German what it does and cite the file path + the relevant line(s).
 
 ## Warmup & warm pool
 

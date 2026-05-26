@@ -3,8 +3,10 @@
 # Backstop for the brain-agent-guide skill (Brainy's knowledge base).
 #
 # The skill at agents/main/skills/brain-agent-guide/ must stay in lockstep
-# with the code. This hook flags a push where feature code changed but the
-# skill did not, so the docs Brainy reads don't silently drift.
+# with the code. This hook flags a push where:
+#   (a) feature code changed but the skill did not, OR
+#   (b) the skill's recorded brain_agent_version trails brain.py's VERSION,
+# so the docs Brainy reads don't silently drift.
 #
 # It is a REMINDER, not a judge — it can't tell a docs-irrelevant refactor
 # from a real feature. If the change genuinely needs no skill update, push
@@ -55,6 +57,41 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     fi
   fi
 done
+
+# ── Version-drift check: skill's brain_agent_version vs brain.py VERSION ──
+# Independent of the code-touch check above — a skill left at an old
+# brain_agent_version is stale even if this particular push touches no code.
+version_drift=0
+code_ver=$(sed -n 's/^VERSION = "\([^"]*\)".*/\1/p' brain.py 2>/dev/null | head -1)
+skill_ver=$(sed -n 's/^[[:space:]]*brain_agent_version:[[:space:]]*\(.*\)/\1/p' \
+            "${SKILL_DIR}/SKILL.md" 2>/dev/null | head -1 | tr -d '"'"'"' \r')
+if [[ -n "$code_ver" && -n "$skill_ver" && "$code_ver" != "$skill_ver" ]]; then
+  version_drift=1
+fi
+
+if [[ "$version_drift" == "1" ]]; then
+  cat >&2 <<EOF
+
+──────────────────────────────────────────────────────────────────────
+  brain-agent-guide skill version check
+
+  The skill records  brain_agent_version: ${skill_ver}
+  but brain.py is at  VERSION = ${code_ver}
+
+  The skill is the knowledge base Brainy reads. If the changes since
+  ${skill_ver} added or altered anything a user could ask about, update the
+  matching reference file AND bump brain_agent_version (+ skill_version)
+  in ${SKILL_DIR}/SKILL.md to ${code_ver}.
+
+  If nothing user-facing changed, just bump brain_agent_version to ${code_ver}
+  in the same push, or re-push:
+
+    SKILL_DOC_OK=1 git push        # or:  git push --no-verify
+──────────────────────────────────────────────────────────────────────
+
+EOF
+  exit 1
+fi
 
 if [[ "$needs_check" == "1" && "$drifted" == "1" ]]; then
   cat >&2 <<EOF
