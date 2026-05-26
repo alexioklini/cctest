@@ -377,6 +377,13 @@ Startup wipe drops every drawer in `project__*` wings AND clears
   `"interactive"` → `interactive`. Per-task `thinking_level` empty →
   inherit at fire time. `caveman_chat` is per-task. `caveman_system` is
   NOT exposed per task (would invalidate warmup KV prefix).
+- **No chat history on scheduled runs**: a `sched-<run_id>` session is fresh
+  and isolated, so the project chat wing (`project_chat__`) is always empty.
+  `mempalace_query` force-ignores `include_chat_history` on scheduled runs
+  (always hits the project KNOWLEDGE wing `project__`). Without this, a model
+  that set `include_chat_history=true` searched the empty chat wing → 0 hits
+  → free web fallback (curl via execute_command) — the v9.31.x webnews
+  symptom.
 - **Project binding** (`schedules.project_id`, optional): a project-bound
   task with no explicit `tool_profile` defaults to purpose `interactive`
   (NOT `research_minimal`) — it must behave like a project chat, and the

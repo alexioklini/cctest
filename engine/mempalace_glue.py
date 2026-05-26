@@ -194,6 +194,15 @@ def tool_mempalace_query(args: dict) -> str:
     # Default behaviour pins to the project KNOWLEDGE wing only, so wrong
     # answers in past chats can't outrank the underlying source documents.
     include_chat_history = bool(args.get("include_chat_history") or False)
+    # A scheduled run has no chat history — `sched-<run_id>` is a fresh,
+    # isolated synthetic session, so the project_chat__ wing is always empty.
+    # If the model sets include_chat_history=true on a scheduled run it would
+    # search that empty wing and get 0 hits, then fall back to free web access
+    # (e.g. curl via execute_command) — exactly the v9.31.x webnews symptom.
+    # Force it off here so the query always hits the project KNOWLEDGE wing.
+    _sid = get_request_context().current_session_id or ""
+    if include_chat_history and isinstance(_sid, str) and _sid.startswith("sched-"):
+        include_chat_history = False
     if current_project:
         # Resolve project name → id (uuid hex). Without an id we refuse to
         # search rather than leak across projects.
