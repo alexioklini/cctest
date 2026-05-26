@@ -1083,13 +1083,12 @@ class Scheduler:
                 except Exception:
                     _pcfg_lock = None
                 if _pcfg_lock and _pcfg_lock.get("disable_web_search"):
-                    # Block the shell + python too, not just the 3 web tools —
-                    # otherwise the model reaches the web via curl/urllib
-                    # (verified: mistral-medium ran 5× curl through
-                    # execute_command on sched-883). Forces the task to work
-                    # from the project memory.
-                    _grc().exclude_tools = ["web_fetch", "exa_search", "searxng_search",
-                                            "execute_command", "python_exec"]
+                    # Remove only the 3 dedicated web tools. (Blocking the
+                    # shell/python too was the wrong direction — sched-881 used
+                    # mempalace successfully WITH the shell present; the curl
+                    # detour is mistral-medium non-determinism, not a
+                    # consequence of the shell being available.)
+                    _grc().exclude_tools = ["web_fetch", "exa_search", "searxng_search"]
 
             # Build system prompt via the unified builder
             # (PROMPT_TOOLS_UNIFICATION_PLAN.md). Default purpose for scheduled
