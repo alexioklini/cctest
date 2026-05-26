@@ -423,6 +423,13 @@ if call.purpose not in global.purposes (when set): drop
 if effective_deferred and tool not in discovered_tools: drop (surface via tool_search)
 ```
 
+`tool_search` tracks discovered tools on `RequestContext._discovered_tools`.
+That field defaults to None and is only initialized by the chat worker — so
+non-interactive callers (scheduler, background) had it None, and `tool_search`
+crashed with `'NoneType' has no attribute 'add'` whenever it returned hits on
+a scheduled run. `_tool_search` now initializes the set defensively, so the
+tool works in every execution context.
+
 Purposes: `interactive | transform | memory_summary | research_minimal |
 helpdesk`. Purpose is a property of the call, not the agent — agents
 cannot override it. Since 9.22.0 the resolved tool list is also enforced

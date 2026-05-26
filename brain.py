@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.32.1"
+VERSION = "9.32.2"
 VERSION_DATE = "2026-05-26"
 CHANGELOG = [
+    ("9.32.2", "2026-05-26", "fix(tools): tool_search crashte bei Scheduled-Runs ('NoneType' object has no attribute 'add') → Lauf machte effektiv keine nutzbaren Tool-Calls. Diagnose an sched-884: nach der 9.32.1-Web-Sperre suchte das Modell via tool_search nach den entfernten Web-Tools; tool_search liefert dann Treffer und ruft `_discovered_tools.add(name)` — aber RequestContext._discovered_tools default None und wird NUR vom Chat-Worker initialisiert, nicht im Scheduler-/Background-Pfad → AttributeError, 4 von 5 tool_search-Calls crashten, Lauf gab auf ('technische Probleme mit der Tool-Suche'). Vorbestehender Bug, den die Web-Sperre nur triggerte (Modell griff erstmals zu tool_search). Fix (brain.py _tool_search): _discovered_tools defensiv auf set() initialisieren, wenn None → tool_search funktioniert in JEDEM Kontext (Chat, Scheduler, Background). Backend — Neustart nötig."),
     ("9.32.1", "2026-05-26", "fix(projects): disable_web_search sperrt jetzt auch execute_command + python_exec (Shell-Hintertür geschlossen). Diagnose an sched-883 (lief NACH allen 9.31.x-Fixes, hart eingeordnet über Zeitstempel vs. Commit-Zeiten): das Modell rief mempalace_query GAR NICHT mehr auf, sondern 5× `curl https://www.apple.com/de/newsroom/...` via execute_command. Wire-Log bestätigt: mempalace_query war im Toolset (n=25), die 3 Web-Tools korrekt entfernt — aber execute_command/python_exec blieben, und mistral-medium nutzte die Shell als Web-Weg. NICHT leeres mempalace (nie versucht), nicht der Wing-Bug (Lauf war nach dem Fix) — reine Modell-Sturheit. Fix: bei disable_web_search entfernen Chat-Worker (handlers/chat.py) UND Scheduler (engine/scheduler.py) jetzt zusätzlich execute_command + python_exec aus exclude_tools → kein curl/wget/urllib-Weg mehr → das Modell MUSS aus dem Projektgedächtnis (mempalace_query/read_document) antworten. UI-Hilfe + Skill-Doku weisen darauf hin, dass damit auch legitime Shell-/Skript-Schritte entfallen. Backend — Neustart nötig."),
     ("9.32.0", "2026-05-26", "feat(scheduler): Kosten pro Lauf im Session-Inspector + in der Verlaufs-Liste. Seit v9.30.2 landen die Lauf-Kosten in cost_log (session_id=sched-<run_id>), wurden aber nicht angezeigt. Jetzt: (1) run_detail-Endpoint liefert `cost` (engine._cost_tracker.get_session_cost('sched-<run_id>'), dieselbe Quelle wie das Chat-done-Event); die Inspector-Detailansicht (_schedViewRunDetail) zeigt eine 5. Stats-Kachel 'Kosten' neben Dauer/Tools/Tokens. (2) history-Action annotiert jede Lauf-Zeile mit `cost` → die Verlaufs-Liste (globaler Zeitplan-Tab _schedHistory + Projekt-Tab projectSchedHistory) zeigt die Kosten pro Lauf neben Zeitpunkt+Status. Formatierung: $0.xxxxx bei <1ct, sonst $0.xxxx; leer wenn keine bepreiste Nutzung (z.B. lokales Modell). Kein Schema-Change (cost_log existiert). js_gate grün. Backend — Neustart nötig."),
     ("9.31.3", "2026-05-26", "fix(mempalace): include_chat_history durchsucht jetzt Chat-Wing UND Wissens-Wing (nicht nur Chat) — generelle Wurzel-Lösung statt nur Scheduler. Vom User korrekt erkannt: das in 9.31.2 gefixte curl-Problem (include_chat_history=true → leeres project_chat__-Wing → 0 Treffer → curl-Fallback) ist NICHT scheduler-spezifisch — auch ein normaler Projekt-Chat kann es auslösen, weil das Chat-Wing in den meisten Fällen leer ist (chat-sync lief evtl. nie; verifiziert: project_chat__45e2a66dc68d=0 Drawer, project__=97). Klargestellt: project_chat__<id> ist die GESAMTE Projekt-Chat-Historie über alle Sessions (nicht nur die aktuelle). Fix (engine/mempalace_glue.py): bei include_chat_history=true sucht mempalace_query jetzt `wing $in [project__<id>, project_chat__<id>]` statt nur project_chat__ — eine dünne/leere Chat-Historie kann das Retrieval der kuratierten Quelldokumente nie aushungern. where-Filter direkt gebaut (build_where_filter nimmt nur ein Wing), room-Klausel via $and kombiniert. Beide Wings = dasselbe Projekt → C3-Visibility-Gate unberührt (greift ohnehin nur im _needs_user_filter-Pfad). Der 9.31.2 Scheduler-Force (include_chat_history off bei sched-) bleibt als Optimierung (spart die unnötige Chat-Wing-Suche bei Tasks). Backend — Neustart nötig."),
@@ -11328,8 +11329,15 @@ def _tool_search(args: dict) -> str:
     matches.sort(key=lambda x: x[0], reverse=True)
     results = [m[1] for m in matches[:max_results]]
 
-    # Track discovered tools for deferred loading
+    # Track discovered tools for deferred loading. `_discovered_tools` is a
+    # set initialized by the chat worker, but non-interactive callers (the
+    # scheduler fire-path, background calls) never set it — it's None there,
+    # so `.add()` crashed `tool_search` with "'NoneType' has no attribute
+    # 'add'" whenever a scheduled run called tool_search and got >0 hits
+    # (sched-884). Initialize defensively so the tool works in every context.
     discovered = get_request_context()._discovered_tools
+    if discovered is None:
+        discovered = set()
     for r in results:
         discovered.add(r["name"])
     get_request_context()._discovered_tools = discovered
