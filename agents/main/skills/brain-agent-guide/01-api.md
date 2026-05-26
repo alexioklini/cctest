@@ -162,13 +162,16 @@ streaming call, per-USER history, fixed read-only tool set. See
 ## Scheduler
 
 `GET /v1/schedule` — list visible schedules + currently-running tasks.
+Optional `?project_id=<id>` or `?project=<name>` (+ `?agent=`) filters the list
+to one project's tasks (used by the project view's "Geplante Aufgaben" tab);
+omitting it returns all visible schedules (the agent-global Zeitplan tab).
 
 `POST /v1/schedule` body shape: `{action, ...}`. Action verbs:
 
 | Action | Body | Effect |
 |---|---|---|
-| `add` | `{name, task, schedule, agent="main", model?, timeout=300, attachments=[], working_dir?, thinking_level?, caveman_chat?, tool_profile?}` | Create new schedule. `schedule` is a cron expr or `@every 10m` etc. |
-| `edit` | `{name, task?, schedule?, model?, timeout?, agent?, new_name?, attachments?, working_dir?, thinking_level?, caveman_chat?, tool_profile?}` | Partial update |
+| `add` | `{name, task, schedule, agent="main", model?, timeout=300, attachments=[], working_dir?, thinking_level?, caveman_chat?, tool_profile?, project_id?}` | Create new schedule. `schedule` is a cron expr or `@every 10m` etc. `project_id` (stable uuid) binds the task to a project — the run then executes inside that project's context (instructions, MemPalace `project__<id>` wing, research_mode); the server validates the caller may access the project. |
+| `edit` | `{name, task?, schedule?, model?, timeout?, agent?, new_name?, attachments?, working_dir?, thinking_level?, caveman_chat?, tool_profile?, project_id?}` | Partial update. `project_id=""` clears a project binding back to agent-global. |
 | `pause` / `resume` | `{name}` | Toggle enabled flag |
 | `delete` | `{name}` | Remove schedule (history kept) |
 | `run_now` | `{name}` | Trigger immediately (synthetic session `sched-<run_id>`) |

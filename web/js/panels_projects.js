@@ -585,16 +585,28 @@ async function loadProjectChats(agentId, projectName) {
   }
 }
 
-// Switch active/archived tab and reload list. Server filters by status, so
-// the same loadProjectChats path works for both.
+// Switch active/archived/schedules tab and reload the matching list. Chats use
+// status-filtered loadProjectChats; the schedules tab swaps to a separate list
+// + bulk row (the chat-list container and its bulk buttons hide).
 function setProjectChatsFilter(filter) {
   state._projectChatsFilter = filter;
   document.querySelectorAll('.project-chats-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.pcfilter === filter);
   });
+  const isSched = filter === 'schedules';
+  const chatsEl = document.getElementById('project-detail-chats');
+  const schedEl = document.getElementById('project-detail-schedules');
+  const chatBulk = document.getElementById('project-chats-bulk');
+  const schedBulk = document.getElementById('project-sched-bulk');
+  if (chatsEl) chatsEl.style.display = isSched ? 'none' : '';
+  if (schedEl) schedEl.style.display = isSched ? '' : 'none';
+  if (chatBulk) chatBulk.style.display = isSched ? 'none' : '';
+  if (schedBulk) schedBulk.style.display = isSched ? '' : 'none';
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
-  if (agentId && projectName) loadProjectChats(agentId, projectName);
+  if (!agentId || !projectName) return;
+  if (isSched) loadProjectSchedules(agentId, projectName);
+  else loadProjectChats(agentId, projectName);
 }
 
 async function archiveAllProjectChats() {
@@ -658,6 +670,204 @@ async function unarchiveSession(sessionId) {
     }
     loadAgentSessions(state.activeAgentId);
   } catch(e) { showToast('Wiederherstellen fehlgeschlagen', true); }
+}
+
+// ─── Project-scoped scheduled tasks ────────────────────────────────────────
+// Mirrors the project-chats list pattern. Tasks are bound to the project via
+// project_id (resolved server-side from the current project's id); the list is
+// fetched with the ?project= filter so only this project's tasks show. The
+// editor/history reuse the generic /v1/schedule endpoint via API.manageSchedule.
+
+async function loadProjectSchedules(agentId, projectName) {
+  const container = document.getElementById('project-detail-schedules');
+  if (!container) return;
+  container.innerHTML = '<div style="padding:18px 8px;color:var(--text-400);font-size:13px;text-align:center">Lädt…</div>';
+  try {
+    const data = await API.get(`/v1/schedule?agent=${encodeURIComponent(agentId)}&project=${encodeURIComponent(projectName)}`);
+    const schedules = data.schedules || [];
+    container.innerHTML = '';
+    if (!schedules.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:18px 8px;color:var(--text-400);font-size:13px;text-align:center';
+      empty.textContent = 'Noch keine geplanten Aufgaben in diesem Projekt';
+      container.appendChild(empty);
+      return;
+    }
+    for (const s of schedules) {
+      const item = document.createElement('div');
+      item.className = 'project-chat-item';
+      const enabled = !!s.enabled;
+      const running = !!s.is_running;
+      const next = s.next_run ? formatTimeAgo(new Date(s.next_run + (s.next_run.endsWith('Z') ? '' : 'Z'))) : '';
+      const statusTxt = running ? 'läuft gerade' : (enabled ? (next ? 'nächster Lauf ' + next : 'aktiv') : 'pausiert');
+      const nm = esc(s.name || '');
+      item.innerHTML = `
+        <span class="project-chat-item-title">${nm}</span>
+        <span class="project-chat-item-meta">${esc(s.schedule || '')} · ${statusTxt}</span>
+        <span class="project-chat-item-actions">
+          <button style="color:var(--text-400);padding:4px" onclick="event.stopPropagation(); projectSchedMenu(event, '${nm}', ${enabled}, ${running})" title="Weitere Optionen">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+          </button>
+        </span>
+      `;
+      // Stash the row so the edit modal can prefill without a refetch.
+      item._sched = s;
+      item.onclick = () => projectSchedShowForm(s);
+      container.appendChild(item);
+    }
+  } catch (e) {
+    container.innerHTML = `<div style="padding:18px 8px;color:var(--error);font-size:13px">${esc(e.message || e)}</div>`;
+  }
+}
+
+// Build the per-task context menu, mirroring showProjectChatMenu's .ctx-menu
+// pattern. name is single-quote-escaped for the inline onclick handlers.
+function projectSchedMenu(event, name, enabled, running) {
+  event.stopPropagation();
+  document.querySelectorAll('.ctx-menu').forEach(m => m.remove());
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.style.cssText = `position:fixed;z-index:10000;background:var(--bg-000);border:1px solid var(--border-200);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);padding:4px;min-width:150px`;
+  const itemStyle = `padding:8px 12px;cursor:pointer;border-radius:6px;font-size:13px;color:var(--text-200)`;
+  const dangerStyle = itemStyle + ';color:var(--error)';
+  const nm = (name || '').replace(/'/g, "\\'");
+  const row = (style, fn, label) =>
+    `<div style="${style}" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="${fn}; this.closest('.ctx-menu').remove()">${esc(label)}</div>`;
+  let html = '';
+  if (running) {
+    html += row(itemStyle, `projectSchedCancel('${nm}')`, 'Abbrechen');
+  } else {
+    html += row(itemStyle, `projectSchedToggle('${nm}', ${!enabled})`, enabled ? 'Pausieren' : 'Fortsetzen');
+    html += row(itemStyle, `projectSchedRunNow('${nm}')`, 'Jetzt ausführen');
+  }
+  html += row(itemStyle, `projectSchedHistory('${nm}')`, 'Verlauf');
+  html += row(dangerStyle, `projectSchedDelete('${nm}')`, 'Löschen');
+  menu.innerHTML = html;
+  document.body.appendChild(menu);
+  const r = event.target.closest('button')?.getBoundingClientRect() || { left: event.clientX, bottom: event.clientY };
+  menu.style.left = Math.min(r.left, window.innerWidth - 150) + 'px';
+  menu.style.top = r.bottom + 4 + 'px';
+  setTimeout(() => document.addEventListener('click', function _cl() {
+    menu.remove();
+    document.removeEventListener('click', _cl);
+  }), 10);
+}
+
+function projectSchedShowForm(sched) {
+  const modal = document.getElementById('project-sched-modal');
+  if (!modal) return;
+  const editing = sched && sched.name;
+  document.getElementById('project-sched-modal-title').textContent =
+    editing ? 'Geplante Aufgabe bearbeiten' : 'Neue geplante Aufgabe';
+  document.getElementById('project-sched-f-orig-name').value = editing ? sched.name : '';
+  document.getElementById('project-sched-f-name').value = editing ? (sched.name || '') : '';
+  document.getElementById('project-sched-f-task').value = editing ? (sched.task || '') : '';
+  document.getElementById('project-sched-f-schedule').value = editing ? (sched.schedule || '') : '';
+  document.getElementById('project-sched-f-timeout').value = editing ? (sched.timeout || 300) : 300;
+  modal.style.display = 'flex';
+}
+
+function projectSchedCloseForm() {
+  const modal = document.getElementById('project-sched-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function projectSchedSave() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  const projectId = (state._projectDetail || {}).id || '';
+  if (!agentId || !projectName) return;
+  const origName = document.getElementById('project-sched-f-orig-name').value;
+  const name = document.getElementById('project-sched-f-name').value.trim();
+  const task = document.getElementById('project-sched-f-task').value.trim();
+  const schedule = document.getElementById('project-sched-f-schedule').value.trim();
+  const timeout = parseInt(document.getElementById('project-sched-f-timeout').value) || 300;
+  if (!name || !task || !schedule) { showToast('Name, Aufgabe und Zeitplan sind erforderlich', true); return; }
+  try {
+    let res;
+    if (origName) {
+      // Edit: rename if the name changed; project binding stays as-is.
+      const fields = { action: 'edit', name: origName, task, schedule, timeout };
+      if (name !== origName) fields.new_name = name;
+      res = await API.manageSchedule(fields);
+    } else {
+      res = await API.manageSchedule({
+        action: 'add', name, task, schedule, agent: agentId, timeout,
+        project_id: projectId,
+      });
+    }
+    if (res && res.error) { showToast(res.error, true); return; }
+    showToast(origName ? 'Aufgabe gespeichert' : 'Aufgabe erstellt');
+    projectSchedCloseForm();
+    loadProjectSchedules(agentId, projectName);
+  } catch (e) { showToast('Fehlgeschlagen: ' + (e.message || e), true); }
+}
+
+async function projectSchedToggle(name, enable) {
+  try {
+    const res = await API.manageSchedule({ action: enable ? 'resume' : 'pause', name });
+    if (res && res.error) { showToast(res.error, true); return; }
+    showToast(enable ? 'Fortgesetzt' : 'Pausiert');
+    loadProjectSchedules(state._projectDetailAgent, state._projectDetailName);
+  } catch (e) { showToast('Fehlgeschlagen: ' + (e.message || e), true); }
+}
+
+async function projectSchedRunNow(name) {
+  try {
+    const res = await API.manageSchedule({ action: 'run_now', name });
+    if (res && res.error) { showToast(res.error, true); return; }
+    showToast('Ausführung gestartet');
+    setTimeout(() => loadProjectSchedules(state._projectDetailAgent, state._projectDetailName), 800);
+  } catch (e) { showToast('Fehlgeschlagen: ' + (e.message || e), true); }
+}
+
+async function projectSchedCancel(name) {
+  try {
+    await API.cancelScheduledTask(name);
+    showToast('Wird abgebrochen…');
+    setTimeout(() => loadProjectSchedules(state._projectDetailAgent, state._projectDetailName), 1000);
+  } catch (e) { showToast('Fehlgeschlagen: ' + (e.message || e), true); }
+}
+
+async function projectSchedDelete(name) {
+  if (!await showConfirmDanger(`Geplante Aufgabe „${name}" löschen?`, 'Aufgabe löschen', 'Löschen')) return;
+  try {
+    const res = await API.manageSchedule({ action: 'delete', name });
+    if (res && res.error) { showToast(res.error, true); return; }
+    showToast('Gelöscht');
+    loadProjectSchedules(state._projectDetailAgent, state._projectDetailName);
+  } catch (e) { showToast('Fehlgeschlagen: ' + (e.message || e), true); }
+}
+
+async function projectSchedHistory(name) {
+  const modal = document.getElementById('project-sched-history-modal');
+  const title = document.getElementById('project-sched-history-title');
+  const body = document.getElementById('project-sched-history-body');
+  if (!modal || !body) return;
+  title.textContent = `Verlauf: ${name}`;
+  body.innerHTML = '<div style="color:var(--text-400)">Lädt…</div>';
+  modal.style.display = 'flex';
+  try {
+    const res = await API.manageSchedule({ action: 'history', name, limit: 20 });
+    const history = res.history || [];
+    if (!history.length) { body.innerHTML = '<div style="color:var(--text-400)">Kein Ausführungsverlauf</div>'; return; }
+    let html = '';
+    for (const h of history) {
+      const ok = h.status === 'success' || h.status === 'completed';
+      const started = h.started_at ? new Date(h.started_at + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+      html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-100)">
+        <span style="width:6px;height:6px;border-radius:50%;background:${ok ? 'var(--success)' : 'var(--error)'};flex-shrink:0"></span>
+        <span style="flex:1;color:var(--text-200)">${started}</span>
+        <span style="color:var(--text-400)">${esc(h.status || '')}</span>
+      </div>`;
+    }
+    body.innerHTML = html;
+  } catch (e) { body.innerHTML = `<div style="color:var(--error)">${esc(e.message || e)}</div>`; }
+}
+
+function projectSchedCloseHistory() {
+  const modal = document.getElementById('project-sched-history-modal');
+  if (modal) modal.style.display = 'none';
 }
 
 function editProjectInstructions() {

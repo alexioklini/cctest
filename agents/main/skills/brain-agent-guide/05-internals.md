@@ -363,6 +363,18 @@ Startup wipe drops every drawer in `project__*` wings AND clears
   `"interactive"` → `interactive`. Per-task `thinking_level` empty →
   inherit at fire time. `caveman_chat` is per-task. `caveman_system` is
   NOT exposed per task (would invalidate warmup KV prefix).
+- **Project binding** (`schedules.project_id`, optional): the fire-path
+  resolves the stored id → project NAME and sets
+  `get_request_context().project` (a name) before building the system
+  prompt. That single value pulls in the whole project context — the
+  project's `instructions` + description in the prompt, `research_mode`,
+  and scopes MemPalace `mempalace_query` to the `project__<id>` wing — the
+  same path an interactive project chat uses. The same name also goes into
+  the sidecar tool-call `_tool_context["project"]` so per-tool-call context
+  rebuilds stay scoped. Empty (or a now-deleted project) → agent-global,
+  unchanged. Artifacts stay in the agent-global `sched-<run_id>` folder
+  (no project-tagging); the project view's "Geplante Aufgaben" tab just
+  filters the schedule list by `project_id`.
 
 ## Tool resolution (3-layer)
 

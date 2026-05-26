@@ -118,7 +118,10 @@ thinking_level TEXT (off|low|medium|high|''),
 caveman_chat INTEGER (0..3),
 visibility TEXT, owner_team_id TEXT,
 extra_member_user_ids TEXT, excluded_user_ids TEXT,
-tool_profile TEXT ('' = research_minimal, 'interactive' = full)
+tool_profile TEXT ('' = research_minimal, 'interactive' = full),
+project_id TEXT ('' = agent-global; else stable project uuid — the
+  fire-path resolves id→name and runs the task inside that project's
+  context: instructions, MemPalace project__<id> wing, research_mode)
 ```
 
 ### schedules.db → schedule_history (one row per run)

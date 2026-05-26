@@ -2226,6 +2226,20 @@ class BrainAgentHandler(
                     blk = engine._schedule_share_block(s)
                     return _auth_mod.can_access(user, blk)
                 schedules = [s for s in schedules if _sched_visible(s)]
+            # Optional project scope: ?project_id=<id> or ?project=<name>. The
+            # project view passes this to show only the project's tasks; the
+            # agent-global Zeitplan tab omits it and sees everything (unchanged).
+            qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+            from urllib.parse import unquote
+            params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+            filter_pid = unquote(params.get("project_id", ""))
+            proj_name = unquote(params.get("project", ""))
+            agent_q = unquote(params.get("agent", "")) or "main"
+            if not filter_pid and proj_name:
+                filter_pid = _project_id_for_name(agent_q, proj_name)
+            if filter_pid:
+                schedules = [s for s in schedules
+                             if (s.get("project_id") or "") == filter_pid]
             for s in schedules:
                 s["is_running"] = s.get("name", "") in running_names
             self._send_json({"schedules": schedules, "running": [
@@ -2250,6 +2264,16 @@ class BrainAgentHandler(
                 wd = wd.strip() or None
             actor = getattr(self, "_auth_user", None)
             owner_id = actor.get("id", "") if actor else ""
+            # Optional project binding. Validate the id exists + the actor may
+            # access the project, so a user can't bind a task to a project they
+            # can't see. Empty = agent-global (unchanged behavior).
+            project_id = (body.get("project_id") or "").strip()
+            if project_id:
+                err = self._validate_schedule_project(
+                    body.get("agent", "main"), project_id, actor)
+                if err:
+                    self._send_json({"error": err}, 403)
+                    return
             result = engine._scheduler.add(
                 body.get("name", ""), body.get("task", ""),
                 body.get("schedule", ""), body.get("agent", "main"),
@@ -2259,6 +2283,7 @@ class BrainAgentHandler(
                 thinking_level=body.get("thinking_level", "") or "",
                 caveman_chat=body.get("caveman_chat", 0) or 0,
                 tool_profile=body.get("tool_profile", "") or "",
+                project_id=project_id,
             )
             self._send_json(result)
         elif action == "pause":
@@ -2334,8 +2359,20 @@ class BrainAgentHandler(
             fields = {k: body.get(k) for k in
                       ("task", "schedule", "model", "timeout", "agent",
                        "new_name", "attachments", "working_dir",
-                       "thinking_level", "caveman_chat", "tool_profile")
+                       "thinking_level", "caveman_chat", "tool_profile",
+                       "project_id")
                       if k in body}
+            # Validate project access on (re)binding. Empty string is allowed
+            # (clears the binding back to agent-global).
+            _new_pid = (fields.get("project_id") or "").strip()
+            if _new_pid:
+                _eff_agent = fields.get("agent") or (
+                    (engine._scheduler.get_task(name) or {}).get("agent") or "main")
+                err = self._validate_schedule_project(
+                    _eff_agent, _new_pid, getattr(self, "_auth_user", None))
+                if err:
+                    self._send_json({"error": err}, 403)
+                    return
             res = engine._scheduler.update(name, fields)
             if isinstance(res, dict) and res.get("error"):
                 self._send_json(res, 400)
@@ -2418,6 +2455,27 @@ class BrainAgentHandler(
             })
         else:
             self._send_json({"schedules": engine._scheduler.list_all()})
+
+    def _validate_schedule_project(self, agent_id: str, project_id: str,
+                                   actor: dict | None) -> str:
+        """Validate a project binding for a schedule. Returns "" if OK, else an
+        error message. Confirms the project_id resolves to an existing project
+        the actor may access (so users can't bind to projects they can't see).
+        Admins / system bypass the access check but the project must still
+        exist."""
+        try:
+            projects = engine.ProjectManager.list_projects(agent_id or "main")
+        except Exception:
+            projects = []
+        proj = next((p for p in projects if p.get("id") == project_id), None)
+        if not proj:
+            return f"Project '{project_id}' not found for agent '{agent_id or 'main'}'"
+        is_admin = bool(actor and (actor.get("role") == "admin"
+                                   or actor.get("id") == "__system__"))
+        if not is_admin and actor:
+            if not _auth_mod.can_access_project(actor, proj):
+                return "Forbidden: no access to this project"
+        return ""
 
     def _schedule_owner_check(self, name: str) -> bool:
         """Enforce ownership for non-admin schedule mutations."""

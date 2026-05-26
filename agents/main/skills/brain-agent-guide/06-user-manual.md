@@ -159,6 +159,20 @@ eingespeist. Knöpfe auf der Projektseite:
 Gedächtnis-Abfragen automatisch auf dieses Projekt. Das Modell sieht das
 `instructions`-Feld des Projekts plus die passende Recherche-Disziplin.
 
+**Geplante Aufgaben im Projekt**: Auf der Projektseite gibt es neben den
+Tabs **Chats** / **Archiviert** den Tab **Geplante Aufgaben**. Dort legst
+du wiederkehrende, zeitgesteuerte Aufgaben an, die im Kontext genau dieses
+Projekts laufen — sie sehen also dieselben `instructions`, das
+Projektgedächtnis (Wing) und den Recherche-Modus wie ein Projekt-Chat.
+- **Neue Aufgabe** öffnet ein Formular: Name, Aufgabe (Prompt), Zeitplan
+  (z. B. „täglich 09:00", „every 1h", „weekly mon 14:30") und Timeout.
+- Pro Aufgabe (Drei-Punkte-Menü): **Pausieren/Fortsetzen**, **Jetzt
+  ausführen**, **Verlauf** (vergangene Läufe mit Status), **Löschen**.
+- Die Bindung an das Projekt wird automatisch gesetzt — kein Projekt-Dropdown
+  nötig. Der globale **Zeitplan**-Tab in den Agent-Einstellungen bleibt
+  davon unberührt (Aufgaben ohne Projektbindung laufen wie bisher
+  agent-weit).
+
 ---
 
 ## Übersetzung

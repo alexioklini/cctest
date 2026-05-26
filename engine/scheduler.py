@@ -198,6 +198,14 @@ class Scheduler:
                 "ALTER TABLE schedules ADD COLUMN owner_team_id TEXT DEFAULT ''",
                 "ALTER TABLE schedules ADD COLUMN extra_member_user_ids TEXT DEFAULT '[]'",
                 "ALTER TABLE schedules ADD COLUMN excluded_user_ids TEXT DEFAULT '[]'",
+                # Optional project binding. Stores the stable project_id
+                # (uuid4 hex[:12] from project.json), mirroring
+                # sessions.project_id — survives project renames. Empty
+                # string = agent-global task (the historical behavior). When
+                # set, the fire-path resolves id → name and runs the task
+                # inside that project's context (instructions, MemPalace
+                # project__<id> wing, research_mode).
+                "ALTER TABLE schedules ADD COLUMN project_id TEXT DEFAULT ''",
             ):
                 try:
                     conn.execute(_ddl)
@@ -206,6 +214,11 @@ class Scheduler:
             try:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_sched_user ON schedules(user_id)")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_sched_project ON schedules(project_id)")
             except sqlite3.OperationalError:
                 pass
             # Migration: richer per-run telemetry. Older DBs only have
@@ -244,7 +257,8 @@ class Scheduler:
             user_id: str = "",
             thinking_level: str = "",
             caveman_chat: int = 0,
-            tool_profile: str = "") -> dict:
+            tool_profile: str = "",
+            project_id: str = "") -> dict:
         """Add a scheduled task. timeout in seconds (default: 300 = 5 min).
 
         attachments: list of {name, path, mime, size} dicts. Files must already
@@ -256,6 +270,10 @@ class Scheduler:
         thinking_level: '' (inherit) | 'none' | 'low' | 'medium' | 'high'.
         caveman_chat: 0..3 — chat-style response compression for this task.
         tool_profile: '' (default → research_minimal) | one of _brain._VALID_TOOL_PROFILES.
+        project_id: '' (agent-global, historical default) | stable project_id
+        (uuid4 hex). When set, the fire-path runs the task inside that project's
+        context. Caller (server endpoint) is responsible for validating the id +
+        the user's access to the project.
         """
         next_run = self._calc_next_run(schedule)
         if next_run is None:
@@ -282,15 +300,16 @@ class Scheduler:
         tool_profile = (tool_profile or "").strip()
         if tool_profile not in _brain._VALID_TOOL_PROFILES:
             return {"error": f"Invalid tool_profile: {tool_profile!r}. Valid: {', '.join(repr(p) for p in _brain._VALID_TOOL_PROFILES)}"}
+        project_id = (project_id or "").strip()
         atts_json = json.dumps(attachments or [])
         try:
             with _sched_conn() as conn:
                 conn.execute("""
-                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir, user_id, thinking_level, caveman_chat, tool_profile)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir, user_id, thinking_level, caveman_chat, tool_profile, project_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (name, task, schedule, agent, model, next_run.isoformat(),
                       timeout, atts_json, working_dir, user_id or "",
-                      thinking_level, caveman_chat, tool_profile))
+                      thinking_level, caveman_chat, tool_profile, project_id))
                 conn.commit()
             return {"name": name, "schedule": schedule, "agent": agent,
                     "next_run": next_run.isoformat(), "timeout": timeout,
@@ -299,6 +318,7 @@ class Scheduler:
                     "thinking_level": thinking_level,
                     "caveman_chat": caveman_chat,
                     "tool_profile": tool_profile,
+                    "project_id": project_id,
                     "status": "created"}
         except sqlite3.IntegrityError:
             return {"error": f"Schedule '{name}' already exists"}
@@ -545,7 +565,8 @@ class Scheduler:
         """
         allowed = {"task", "schedule", "model", "timeout", "agent",
                    "attachments", "working_dir",
-                   "thinking_level", "caveman_chat", "tool_profile"}
+                   "thinking_level", "caveman_chat", "tool_profile",
+                   "project_id"}
         updates: dict = {}
         for k in allowed:
             if k not in fields:
@@ -1009,6 +1030,24 @@ class Scheduler:
         except (TypeError, ValueError):
             _task_caveman = 0
 
+        # Optional project binding. The stored value is the stable project_id;
+        # the whole project context (instructions in the system prompt, the
+        # MemPalace project__<id> wing, research_mode) keys off the project
+        # NAME held in request_context().project — so resolve id → name here
+        # and feed both the request_context (below) and _tool_context. If the
+        # project no longer exists, fall back to agent-global silently rather
+        # than failing the run.
+        _task_project_id = (task_row.get("project_id") or "").strip()
+        _task_project_name = ""
+        if _task_project_id:
+            try:
+                for _p in _brain.ProjectManager.list_projects(agent_id):
+                    if _p.get("id") == _task_project_id:
+                        _task_project_name = _p.get("name") or ""
+                        break
+            except Exception:
+                _task_project_name = ""
+
         # Init thread context before building the system prompt —
         # _brain._build_system_prompt reads current_agent from thread-local for soul.md.
         # Pin user_id so quota / audit lookups attribute correctly. Empty for
@@ -1022,6 +1061,15 @@ class Scheduler:
         )
         with request_context():
             init_thread_context(_sched_ctx_pre, agent_config=target)
+
+            # Project scope: _build_system_prompt + mempalace_query + research
+            # mode all read get_request_context().project (a NAME). Setting it
+            # here — before the prompt is built — pulls in the project's
+            # instructions, description, research_mode, and scopes tools to the
+            # project__<id> wing. Empty when unbound (agent-global, unchanged).
+            if _task_project_name:
+                from engine.context import get_request_context as _grc
+                _grc().project = _task_project_name
 
             # Build system prompt via the unified builder
             # (PROMPT_TOOLS_UNIFICATION_PLAN.md). Default purpose for scheduled
@@ -1183,7 +1231,11 @@ class Scheduler:
                         "agent_id": agent_id,
                         "user_id": (task_row.get("user_id") or ""),
                         "team_ids": [],
-                        "project": "",  # schedules don't bind to a project today
+                        # Project NAME (resolved from the schedule's stored
+                        # project_id) so the sidecar's per-tool-call context
+                        # rebuild scopes mempalace_query to the project wing.
+                        # Empty for agent-global tasks.
+                        "project": _task_project_name,
                         "note_context": None,
                         "workflow_run_id": "",
                         "plan_mode": False,

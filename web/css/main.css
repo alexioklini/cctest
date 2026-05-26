@@ -7168,7 +7168,9 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 .cls-history-row .x:hover { color: var(--error,#d33); }
 
 /* ─── Websuche (manual web search) tab ─────────────────────── */
-#tab-pane-websuche { display: flex; flex-direction: column; height: 100%; overflow: hidden; padding: 10px; gap: 8px; }
+/* Layout only — the `display` visibility is owned by `.right-tab-pane`/`.active`
+   (must not force `display:flex` here or the pane shows in every tab). */
+#tab-pane-websuche { flex-direction: column; height: 100%; overflow: hidden; padding: 10px; gap: 8px; }
 .websuche-search, .websuche-manual { display: flex; gap: 6px; }
 .websuche-input {
   flex: 1; min-width: 0; padding: 7px 10px; font-size: 13px;

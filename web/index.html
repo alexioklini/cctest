@@ -421,14 +421,63 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <div class="project-chats-tabs">
             <button class="project-chats-tab active" data-pcfilter="active" onclick="setProjectChatsFilter('active')">Chats</button>
             <button class="project-chats-tab" data-pcfilter="archived" onclick="setProjectChatsFilter('archived')">Archiviert</button>
+            <button class="project-chats-tab" data-pcfilter="schedules" onclick="setProjectChatsFilter('schedules')">Geplante Aufgaben</button>
           </div>
           <div class="project-chats-bulk" id="project-chats-bulk">
             <button class="btn-secondary" style="padding:3px 10px;font-size:11px" onclick="archiveAllProjectChats()">Alle archivieren</button>
             <button class="btn-secondary" style="padding:3px 10px;font-size:11px;color:var(--error)" onclick="deleteAllProjectChats()">Alle löschen</button>
           </div>
+          <div class="project-chats-bulk" id="project-sched-bulk" style="display:none">
+            <button class="btn-secondary" style="padding:3px 10px;font-size:11px" onclick="projectSchedShowForm()">Neue Aufgabe</button>
+          </div>
         </div>
         <div class="project-detail-chats" id="project-detail-chats">
           <!-- Project conversations list -->
+        </div>
+        <div class="project-detail-chats" id="project-detail-schedules" style="display:none">
+          <!-- Project scheduled tasks list -->
+        </div>
+      </div>
+
+      <!-- Project scheduled-task editor modal (create + edit) -->
+      <div id="project-sched-modal" style="display:none;position:fixed;inset:0;z-index:9000;background:var(--modal-overlay);align-items:center;justify-content:center">
+        <div style="background:var(--modal-bg);border:1px solid var(--border-200);border-radius:10px;width:min(640px,96vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+          <div style="display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border-200);gap:10px">
+            <span style="font-weight:600;font-size:.9rem" id="project-sched-modal-title">Neue geplante Aufgabe</span>
+            <span style="flex:1"></span>
+            <button onclick="projectSchedCloseForm()" style="background:none;border:none;color:var(--text-400);cursor:pointer;font-size:1.2rem;padding:2px 6px">&times;</button>
+          </div>
+          <div style="overflow-y:auto;padding:16px 18px;flex:1;min-height:0;display:flex;flex-direction:column;gap:12px">
+            <input type="hidden" id="project-sched-f-orig-name">
+            <label style="font-size:12px;color:var(--text-300)">Name
+              <input id="project-sched-f-name" type="text" placeholder="z. B. Wochenbericht" style="width:100%;margin-top:4px;padding:7px 9px;border:1px solid var(--border-200);border-radius:6px;background:var(--input-bg);color:var(--text-100)">
+            </label>
+            <label style="font-size:12px;color:var(--text-300)">Aufgabe (Prompt)
+              <textarea id="project-sched-f-task" rows="4" placeholder="Was soll im Kontext dieses Projekts ausgeführt werden?" style="width:100%;margin-top:4px;padding:7px 9px;border:1px solid var(--border-200);border-radius:6px;background:var(--input-bg);color:var(--text-100);resize:vertical"></textarea>
+            </label>
+            <label style="font-size:12px;color:var(--text-300)">Zeitplan
+              <input id="project-sched-f-schedule" type="text" placeholder="z. B. täglich 09:00, every 1h, weekly mon 14:30" style="width:100%;margin-top:4px;padding:7px 9px;border:1px solid var(--border-200);border-radius:6px;background:var(--input-bg);color:var(--text-100)">
+            </label>
+            <label style="font-size:12px;color:var(--text-300)">Timeout (Sekunden)
+              <input id="project-sched-f-timeout" type="number" value="300" min="30" style="width:120px;margin-top:4px;padding:7px 9px;border:1px solid var(--border-200);border-radius:6px;background:var(--input-bg);color:var(--text-100)">
+            </label>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--border-200)">
+            <button class="btn-secondary" onclick="projectSchedCloseForm()">Abbrechen</button>
+            <button class="btn-primary" onclick="projectSchedSave()">Speichern</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Project scheduled-task history modal -->
+      <div id="project-sched-history-modal" style="display:none;position:fixed;inset:0;z-index:9000;background:var(--modal-overlay);align-items:center;justify-content:center">
+        <div style="background:var(--modal-bg);border:1px solid var(--border-200);border-radius:10px;width:min(640px,96vw);max-height:85vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+          <div style="display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border-200);gap:10px">
+            <span style="font-weight:600;font-size:.9rem" id="project-sched-history-title">Verlauf</span>
+            <span style="flex:1"></span>
+            <button onclick="projectSchedCloseHistory()" style="background:none;border:none;color:var(--text-400);cursor:pointer;font-size:1.2rem;padding:2px 6px">&times;</button>
+          </div>
+          <div id="project-sched-history-body" style="overflow-y:auto;padding:14px 18px;flex:1;min-height:0"></div>
         </div>
       </div>
     </div>
@@ -1215,21 +1264,21 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
   <div class="right-panel-resize-handle" id="right-panel-resize-handle"></div>
   <div class="right-panel-header">
     <div class="right-panel-tabs">
-      <button class="right-panel-tab active" data-tab="attachments" onclick="selectRightTab('attachments')">
+      <button class="right-panel-tab active" data-tab="attachments" onclick="selectRightTab('attachments')" title="Anhänge">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        Anhänge <span class="right-panel-tab-badge" id="tab-badge-attachments">0</span>
+        <span class="right-panel-tab-badge" id="tab-badge-attachments">0</span>
       </button>
-      <button class="right-panel-tab" data-tab="references" onclick="selectRightTab('references')">
+      <button class="right-panel-tab" data-tab="references" onclick="selectRightTab('references')" title="Referenzen">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a10 10 0 110 20 10 10 0 010-20z"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/></svg>
-        Referenzen <span class="right-panel-tab-badge" id="tab-badge-references">0</span>
+        <span class="right-panel-tab-badge" id="tab-badge-references">0</span>
       </button>
-      <button class="right-panel-tab" data-tab="artifacts" onclick="selectRightTab('artifacts')">
+      <button class="right-panel-tab" data-tab="artifacts" onclick="selectRightTab('artifacts')" title="Dateien">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        Dateien <span class="right-panel-tab-badge" id="tab-badge-artifacts">0</span>
+        <span class="right-panel-tab-badge" id="tab-badge-artifacts">0</span>
       </button>
-      <button class="right-panel-tab" data-tab="websuche" onclick="selectRightTab('websuche')">
+      <button class="right-panel-tab" data-tab="websuche" onclick="selectRightTab('websuche')" title="Websuche">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
-        Websuche <span class="right-panel-tab-badge" id="tab-badge-websuche">0</span>
+        <span class="right-panel-tab-badge" id="tab-badge-websuche">0</span>
       </button>
     </div>
     <button class="right-panel-close-btn" onclick="closeRightPanel(true)" title="Schließen">
