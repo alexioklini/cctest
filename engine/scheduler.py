@@ -1081,15 +1081,29 @@ class Scheduler:
             # Determine the purpose for this scheduled task. Sources, in order:
             #   1. Memory-summary tasks (Brain-internal) — name prefix forces
             #      `memory_summary` purpose.
-            #   2. Per-schedule `tool_profile` field — empty/unset →
-            #      `research_minimal` (default), `interactive` opts into the
-            #      full chat surface.
+            #   2. Project-bound tasks default to `interactive` — they must
+            #      behave like a project chat, which means the full tool
+            #      surface incl. `mempalace_query`/`read_document`. The lean
+            #      `research_minimal` set (write_file/web_fetch/exa_search/
+            #      searxng_search only) CANNOT read the project memory, so a
+            #      project task on research_minimal would never see the mined
+            #      project knowledge and would hallucinate. An explicit
+            #      `tool_profile` still wins (e.g. force research_minimal).
+            #   3. Per-schedule `tool_profile` field — empty/unset →
+            #      `research_minimal` (default for non-project tasks),
+            #      `interactive` opts into the full chat surface.
             # Hoisted up here so the prompt and the wire tool list agree.
             if name.startswith("_memory_summary_"):
                 _sched_purpose_pre = "memory_summary"
             else:
                 _task_profile = (task_row.get("tool_profile") or "").strip()
-                _sched_purpose_pre = "interactive" if _task_profile == "interactive" else "research_minimal"
+                if _task_profile:
+                    _sched_purpose_pre = "interactive" if _task_profile == "interactive" else "research_minimal"
+                elif _task_project_name:
+                    # Project-bound + no explicit profile → full chat surface.
+                    _sched_purpose_pre = "interactive"
+                else:
+                    _sched_purpose_pre = "research_minimal"
             if _sched_purpose_pre == "transform":
                 _sched_active_names: set[str] = set()
             else:

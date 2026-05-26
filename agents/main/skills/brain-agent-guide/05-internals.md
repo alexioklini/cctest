@@ -363,8 +363,13 @@ Startup wipe drops every drawer in `project__*` wings AND clears
   `"interactive"` → `interactive`. Per-task `thinking_level` empty →
   inherit at fire time. `caveman_chat` is per-task. `caveman_system` is
   NOT exposed per task (would invalidate warmup KV prefix).
-- **Project binding** (`schedules.project_id`, optional): the fire-path
-  resolves the stored id → project NAME and sets
+- **Project binding** (`schedules.project_id`, optional): a project-bound
+  task with no explicit `tool_profile` defaults to purpose `interactive`
+  (NOT `research_minimal`) — it must behave like a project chat, and the
+  lean research_minimal set (write_file/web_fetch/exa_search/searxng_search)
+  lacks `mempalace_query`/`read_document`, so it could not read the project
+  memory and would hallucinate. An explicit `tool_profile` still wins. The
+  fire-path resolves the stored id → project NAME and sets
   `get_request_context().project` (a name) before building the system
   prompt. That single value pulls in the whole project context — the
   project's `instructions` + description in the prompt, `research_mode`,
