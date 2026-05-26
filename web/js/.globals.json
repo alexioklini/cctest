@@ -766,6 +766,7 @@
     "toggleMsgEditMenu": "writable",
     "toggleMsgMemoryMenu": "writable",
     "toggleProjectDesc": "writable",
+    "toggleProjectDisableWeb": "writable",
     "toggleProjectHelp": "writable",
     "toggleProjectResearchMode": "writable",
     "toggleProjectStar": "writable",

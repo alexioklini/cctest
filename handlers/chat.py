@@ -2135,6 +2135,29 @@ class ChatHandlerMixin:
                 else:
                     engine.get_request_context().project = session.project  # Use session's existing project
 
+                # Project-level web-search lockout. A project with curated
+                # sources (files / input folders / web URLs) can set
+                # `disable_web_search` so its chats MUST work from the project
+                # memory instead of free-searching the web. This is the
+                # model-independent enforcement of the retrieval intent —
+                # prompt instructions alone don't bind (mistral-medium ignores
+                # them and free-searches; verified on the webnews project).
+                # Mirrors the per-turn Websuche lockout, but driven by the
+                # project setting. Additive: extends any exclude_tools already
+                # set above by the Websuche basket lockout.
+                _proj_for_lock = engine.get_request_context().project
+                if _proj_for_lock:
+                    try:
+                        _pcfg = engine.ProjectManager.get_project(
+                            session.agent_id, _proj_for_lock)
+                    except Exception:
+                        _pcfg = None
+                    if _pcfg and _pcfg.get("disable_web_search"):
+                        _existing = engine.get_request_context().exclude_tools or []
+                        _web_tools = ["web_fetch", "exa_search", "searxng_search"]
+                        engine.get_request_context().exclude_tools = list(
+                            set(_existing) | set(_web_tools))
+
                 # Per-session research-mode override (sticky). None = use the
                 # project's own `research_mode` default; True/False = force the
                 # override for this session. _build_system_prompt and the

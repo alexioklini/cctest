@@ -156,6 +156,15 @@ Die Hilfe auf der Projekt-Einstellungsseite ist ein aufklappbarer
   Disziplin hängt am Recherche-Modus. (So nutzt z. B. ein News-Projekt mit
   hinterlegten URLs wirklich diese Quellen, statt frei zu googeln.)
 
+**Websuche unterbinden** (Projekt-Setting, Checkbox unter dem Projektmodus):
+Wenn aktiv, dürfen Chats UND geplante Aufgaben dieses Projekts die Web-Tools
+(web_fetch / Websuche / exa) NICHT nutzen — das Modell muss ausschließlich
+aus dem Projektgedächtnis antworten. Das ist eine **harte, modell-
+unabhängige** Sperre (die Tools werden für den Turn entfernt), nicht nur
+eine Bitte im Prompt: manche Modelle (z. B. mistral-medium) ignorieren den
+Prompt-Hinweis und googeln trotzdem — diese Sperre verhindert das
+zuverlässig. Empfohlen für Projekte mit bewusst kuratierten Quellen.
+
 **Synchronisierung**: Eingabeordner werden von einem Daemon alle 6 h
 eingespeist. Knöpfe auf der Projektseite:
 - **Jetzt synchronisieren** — neue/geänderte Dateien sofort einspeisen

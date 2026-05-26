@@ -1070,6 +1070,20 @@ class Scheduler:
             if _task_project_name:
                 from engine.context import get_request_context as _grc
                 _grc().project = _task_project_name
+                # Project-level web-search lockout (same as the chat worker):
+                # a project with `disable_web_search` forces its tasks to work
+                # from the project memory, not free web search. Model-
+                # independent — prompt instructions alone don't bind on
+                # mistral-medium (verified: sched-878/879/880 free-searched
+                # despite the retrieval hint). resolve_active_tools subtracts
+                # exclude_tools.
+                try:
+                    _pcfg_lock = _brain.ProjectManager.get_project(
+                        agent_id, _task_project_name)
+                except Exception:
+                    _pcfg_lock = None
+                if _pcfg_lock and _pcfg_lock.get("disable_web_search"):
+                    _grc().exclude_tools = ["web_fetch", "exa_search", "searxng_search"]
 
             # Build system prompt via the unified builder
             # (PROMPT_TOOLS_UNIFICATION_PLAN.md). Default purpose for scheduled

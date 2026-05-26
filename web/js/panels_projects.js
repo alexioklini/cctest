@@ -334,6 +334,11 @@ async function loadProjectDetail(agentId, projectName) {
     if (researchCb) {
       researchCb.checked = !!project.research_mode;
     }
+    // Render the 'disable web search' checkbox state.
+    const disableWebCb = document.getElementById('project-disable-web-checkbox');
+    if (disableWebCb) {
+      disableWebCb.checked = !!project.disable_web_search;
+    }
 
     // Render instructions panel — markdown rendered, capped height with
     // vertical scroll so long default disciplines don't push attachments
@@ -1066,6 +1071,25 @@ async function toggleProjectResearchMode(enabled) {
     showToast('Projektmodus konnte nicht geändert werden', true);
     // Revert checkbox to the last known state on failure.
     const cb = document.getElementById('project-research-mode-checkbox');
+    if (cb) cb.checked = !enabled;
+  }
+}
+
+// Toggle the project-level web-search lockout. When on, chats + scheduled
+// tasks of this project cannot use web_fetch/searxng/exa — the model must
+// work from the project memory (model-independent enforcement).
+async function toggleProjectDisableWeb(enabled) {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  try {
+    await API.updateProject(agentId, projectName, { disable_web_search: !!enabled });
+    if (state._projectDetail) state._projectDetail.disable_web_search = !!enabled;
+    showToast(enabled ? 'Websuche für dieses Projekt unterbunden'
+                       : 'Websuche für dieses Projekt wieder erlaubt');
+  } catch (e) {
+    showToast('Einstellung konnte nicht geändert werden', true);
+    const cb = document.getElementById('project-disable-web-checkbox');
     if (cb) cb.checked = !enabled;
   }
 }

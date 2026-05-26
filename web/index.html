@@ -482,6 +482,21 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             ab, wenn du die Inhalte stattdessen als Material für Aufgaben
             nutzt – etwa zum Schreiben von Texten oder Code.
           </div>
+          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;line-height:1.4;margin-top:12px">
+            <input type="checkbox" id="project-disable-web-checkbox"
+                   onchange="toggleProjectDisableWeb(this.checked)"
+                   style="margin-top:2px;flex-shrink:0">
+            <span><strong>Websuche unterbinden</strong></span>
+          </label>
+          <div class="project-panel-help">
+            Wenn aktiv, dürfen Chats und geplante Aufgaben dieses Projekts
+            NICHT frei im Web suchen (web_fetch / Websuche / exa). Das Modell
+            muss dann ausschließlich aus dem Projektgedächtnis (deine
+            hochgeladenen Dateien, Eingabeordner und hinterlegten Web-URLs)
+            antworten. Empfohlen, wenn du die Quellen bewusst kuratiert hast
+            und nicht möchtest, dass das Modell stattdessen googelt –
+            modell-unabhängig erzwungen, nicht nur als Bitte im Prompt.
+          </div>
         </div>
       </div>
       <div class="project-panel-section">
