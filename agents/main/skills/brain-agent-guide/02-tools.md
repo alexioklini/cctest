@@ -42,16 +42,29 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
 
 - `mempalace_query(query, wing?, room?, limit?)` — semantic search.
   In a project chat, force-scoped to `project__<id>`.
+  - File-backed drawers return the matched chunk widened to its neighbours
+    (prev+match+next, ~2–2.5 KB) inline + `content_via:"snippet+optional_read"`.
+    `read_document(read_path)` when EITHER you need an exact quote/figure/table,
+    OR the answer isn't fully in the window (cut off / detail continues beyond
+    it); if the window answers the question, answer from it — don't read just to
+    be thorough. Drawers with no file behind them (chat/profile/artifact) return
+    their full verbatim text inline + `content_via:"snippet"`. (History:
+    v9.34.0 BLANKED the snippet to force reads; v9.37.0 brought it back, widened
+    + read-optional, to cut token cost — same trade-off as the KG span above.)
 - `mempalace_kg_query(...)` — entity/predicate filter on the KG
 - `mempalace_kg_search(query)` — semantic KG search
 - `mempalace_kg_neighbors(entity, depth?)` — entity neighborhood
   - All three KG tools return triples (subject/predicate/object + source_file
-    + confidence) but **no verbatim `span`** — a triple is a pointer to a fact +
-    its document, NOT a citation. To quote / give exact figures / answer a
-    content question, `read_document(source_file)` first. (The span used to be
-    returned and the tool prose said "if span present, cite directly without
-    read_document" — that drove wrong-document, uncited answers on the eval
-    P2/C2 questions, so it was removed.)
+    + confidence) **plus a short verbatim `span`** (≤400 chars, capped) quoting
+    the source when available. The span quotes a short fact directly;
+    `read_document(source_file)` when you need surrounding context / an exact
+    figure / text beyond the span, OR when the span doesn't itself contain what
+    the question asks. (History: v9.36.0 STRIPPED the span
+    to force reads after the eval P2/C2 wrong-document failures; v9.37.0 brought
+    it back — capped + read-optional — because forcing a full read on every hit
+    blew up token cost. Trade-off: span reopens some mis-cite risk, mitigated by
+    the cap + a hint warning not to answer from a span that doesn't support the
+    claim.)
 - `save_chat_to_memory()` — flip current chat's `save_to_memory` to ON
 
 (`mempalace_get_drawer`, `mempalace_list_drawers` are admin-side; see

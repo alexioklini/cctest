@@ -700,6 +700,60 @@ def tool_mempalace_query(args: dict) -> str:
         except Exception:
             pass
 
+    # Neighbour-stitch cache: for a file-backed drawer we return the matched
+    # chunk PLUS its immediate neighbours (prev+matched+next) so the model sees
+    # ~2-2.5 KB of contiguous context inline and rarely needs read_document.
+    # `_chunks_by_source[full_path]` = list of (chunk_index, text) sorted by
+    # chunk_index, fetched once per source per query. We match the drawer's
+    # text to a chunk_index, then concatenate the window. Falls back to the
+    # bare matched text if anything is missing.
+    _chunks_by_source: dict[str, list] = {}
+
+    def _stitch_neighbours(full_path: str, matched_text: str) -> str:
+        if not full_path or not matched_text:
+            return matched_text
+        try:
+            if full_path not in _chunks_by_source:
+                from mempalace.palace import get_collection as _gc3
+                _col3 = _gc3(palace_path, create=False)
+                rows = []
+                if _col3 is not None:
+                    got = _col3.get(where={"source_file": full_path},
+                                    include=["documents", "metadatas"])
+                    docs = got.get("documents") or []
+                    metas = got.get("metadatas") or []
+                    for _d, _m in zip(docs, metas):
+                        if not isinstance(_d, str):
+                            continue
+                        ci = (_m or {}).get("chunk_index")
+                        try:
+                            ci = int(ci)
+                        except (TypeError, ValueError):
+                            ci = None
+                        rows.append((ci, _d))
+                    # Order by chunk_index; rows with no index sink to the end
+                    # in original order (can't position them, won't stitch).
+                    rows.sort(key=lambda t: (t[0] is None, t[0] if t[0] is not None else 0))
+                _chunks_by_source[full_path] = rows
+            rows = _chunks_by_source[full_path]
+            if not rows:
+                return matched_text
+            # Find the matched chunk by text (fingerprint on first 200 chars,
+            # same normalisation the dedup pass uses).
+            _fp = " ".join(matched_text[:200].split())
+            pos = None
+            for i, (_ci, _d) in enumerate(rows):
+                if " ".join(_d[:200].split()) == _fp:
+                    pos = i
+                    break
+            if pos is None:
+                return matched_text  # couldn't locate — return as-is
+            window = rows[max(0, pos - 1): pos + 2]
+            stitched = "\n\n".join(d for _ci, d in window if isinstance(d, str))
+            return stitched or matched_text
+        except Exception:
+            return matched_text
+
     drawers = []
     for r in deduped[:n_results]:
         if not isinstance(r, dict):
@@ -746,16 +800,30 @@ def tool_mempalace_query(args: dict) -> str:
         _has_readable = bool(
             (full_path and "/" in full_path and os.path.isfile(full_path))
             or (original_binary and os.path.isfile(original_binary)))
-        if _has_readable:
-            _text = ""  # force read_document — no snippet to shortcut from
-        else:
-            # No readable original (chat / profile / artifact drawer): the
-            # drawer text is the ONLY copy of the content and read_document
-            # can't fetch it, so deliver it in FULL — never truncate, or the
-            # model could never see the rest. Drawers are atomic ~800-char
-            # chunks, but some (large artifacts, profile sections) exceed
-            # that; they must still come through whole.
-            _text = r.get("text") or ""
+        # COST/QUALITY trade-off (2026-05-26): we previously BLANKED the snippet
+        # whenever a readable original existed, forcing a full read_document of
+        # every hit. That eliminated partial-chunk hallucinations but blew up
+        # token cost — a query hitting N documents pulled N full documents into
+        # context. We now KEEP the matched chunk inline (it's the searcher's
+        # relevance-ranked best chunk — or the rare-term-substitute chunk when
+        # that pass is on — NOT arbitrary first-800-chars) and make the read
+        # OPTIONAL: the model reads the source only when it needs an exact quote
+        # or figure. The chunk gives it enough to answer or to decide a read is
+        # warranted, without paying for a full read on every hit. The no-file
+        # branch is unchanged — that text is the ONLY copy, delivered in full.
+        # No-file case = verbatim ONLY copy (must come through whole). File-
+        # backed case = the relevance-ranked chunk, widened to prev+match+next
+        # (~2-2.5 KB) so the model has enough context inline and rarely needs
+        # read_document (only for exact quotes/figures/tables beyond the
+        # window). Stitch resolves the absolute source path the same way the
+        # drawer's read_path does.
+        # Stitch keys on the absolute Chroma `source_file`. Chroma stores
+        # absolute paths (the .md companion for binaries — the binary itself
+        # is NOT mined, so original_binary would match no chunks); `full_path`
+        # is that resolved absolute path. Only stitch when we have it.
+        _text = r.get("text") or ""
+        if _has_readable and _text and full_path and "/" in full_path:
+            _text = _stitch_neighbours(full_path, _text)
         drawers.append({
             "wing": r.get("wing", ""),
             "room": r.get("room", ""),
@@ -770,40 +838,51 @@ def tool_mempalace_query(args: dict) -> str:
             "read_path_original": original_binary,
             "similarity": r.get("similarity"),
             "matched_via": r.get("matched_via", "drawer"),
-            # Empty when a readable original exists (read_document required);
-            # the verbatim snippet otherwise.
+            # Always the matched chunk now. When a readable original exists the
+            # chunk is a relevance-ranked excerpt and a full read is OPTIONAL
+            # (only for exact quotes/figures); otherwise it's the verbatim ONLY
+            # copy. content_via distinguishes the two so the hint + any
+            # downstream consumer can tell whether a source file exists to read.
             "text": _text,
-            "content_via": "read_document" if _has_readable else "snippet",
+            "content_via": (
+                "snippet+optional_read" if _has_readable else "snippet"),
         })
 
-    # Distinct readable sources (drawers whose text was omitted because a real
-    # document exists → read_document required). These are the files the model
-    # MUST load before answering; list them so it reads each, not just the top
-    # one. Drawers that kept their snippet (chat/profile/artifact — no file)
-    # need no read.
+    # Distinct readable sources (drawers backed by a real document on disk).
+    # The matched chunk is now inline, so reading is OPTIONAL — list these so
+    # the model knows which files it CAN read for an exact quote/figure, not
+    # files it MUST read. Drawers with no file behind them (chat/profile/
+    # artifact) carry their only copy inline already.
     _read_paths = []
     for _d in drawers:
-        if _d.get("content_via") != "read_document":
+        if _d.get("content_via") != "snippet+optional_read":
             continue
         _p = _d.get("read_path") or _d.get("source_file")
         if _p and _p not in _read_paths:
             _read_paths.append(_p)
     _read_hint = (
-        "Drawers with an empty `text` have `content_via:\"read_document\"` — "
-        "their full content lives in a real document on disk; you MUST call "
-        "`read_document(path=<drawer.read_path>)` (or `read_path_original` for "
-        "the original PDF/DOCX) to read it. NEVER answer about such a drawer "
-        "without reading it — the snippet was deliberately withheld so you "
-        "can't answer from a partial chunk. Drawers WITH a `text` value "
-        "(`content_via:\"snippet\"` — chat history, profile, artifacts) carry "
-        "their verbatim content inline; no read needed. Paths are absolute, "
-        "use as-is; do NOT join with input-folder paths.")
+        "Each drawer's `text` is the matched chunk plus its neighbours — a "
+        "~2-2.5 KB window that already answers most questions inline. Drawers "
+        "with `content_via:\"snippet+optional_read\"` are backed by a real "
+        "document on disk: call `read_document(path=<drawer.read_path>)` (or "
+        "`read_path_original` for the original PDF/DOCX) when EITHER (a) you "
+        "need an exact verbatim quote, a precise figure/number, or table "
+        "content, OR (b) the answer to the question is NOT fully contained in "
+        "the snippet window — the window is an excerpt, so if it cuts off "
+        "mid-topic or the relevant detail clearly continues beyond it, read the "
+        "source rather than guessing or answering from a partial chunk. If the "
+        "window DOES fully answer the question, answer from it directly — do not "
+        "read just to be thorough. Drawers with `content_via:\"snippet\"` (chat "
+        "history, profile, artifacts) carry their full verbatim content inline; "
+        "there is no file to read. Paths are absolute, use as-is; do NOT join "
+        "with input-folder paths.")
     if len(_read_paths) > 1:
         _list = "\n".join(f"  - {p}" for p in _read_paths)
         _read_hint += (
-            f"\n\nThese hits span {len(_read_paths)} DISTINCT documents — "
-            f"read_document EACH before summarising so the answer covers all "
-            f"of them, not just the top hit:\n{_list}")
+            f"\n\nThese hits span {len(_read_paths)} DISTINCT documents. If the "
+            f"question needs precise detail from more than one, read each "
+            f"relevant source rather than answering from a single chunk:\n"
+            f"{_list}")
 
     return _ok({
         "query": query,
@@ -1285,26 +1364,36 @@ def _kg_has_span_column(palace_path: str) -> bool:
     return out
 
 
-# The KG `span` is a ≤200-char verbatim quote stored per triple. It reads like
-# an answer-ready citation, which lured the model into answering straight from
-# the KG tool result without ever calling read_document — yielding weak/absent
-# citations and, worse, answers built on the WRONG document (eval P2=0.45,
-# C2=0.38 used ONLY kg_search, never read_document). So the KG tools now return
-# the triple (subject/predicate/object/source_file/confidence) WITHOUT span:
-# the triple points at a fact + its source document; to quote or answer
-# precisely the model MUST read_document the source_file. Same structural rule
-# as mempalace_query dropping the snippet for on-disk drawers.
-def _kg_strip_span(t: dict) -> dict:
-    if isinstance(t, dict) and "span" in t:
-        t = {k: v for k, v in t.items() if k != "span"}
+# The KG `span` is a ≤200-char verbatim quote stored per triple. We previously
+# STRIPPED it so the model couldn't answer (or mis-cite the wrong document)
+# straight from the tool result without reading the source (eval P2=0.45,
+# C2=0.38 used ONLY kg_search, never read_document). That helped quality but,
+# alongside the mempalace snippet-blanking, forced full reads everywhere and
+# drove token cost up (2026-05-26). We now KEEP the span (it's tiny — ≤200
+# chars) and make the read OPTIONAL via _KG_READ_HINT: the span is enough to
+# quote a short fact; read_document only when the question needs more context
+# than the span carries. _kg_normalize_span bounds a pathological span so a
+# corrupt row can't bloat the result.
+_KG_SPAN_CAP = 400  # generous over the 200-char authoring limit; guards outliers
+
+
+def _kg_normalize_span(t: dict) -> dict:
+    if isinstance(t, dict) and isinstance(t.get("span"), str) \
+            and len(t["span"]) > _KG_SPAN_CAP:
+        t = dict(t)
+        t["span"] = t["span"][:_KG_SPAN_CAP] + "…"
     return t
 
 _KG_READ_HINT = (
-    "Triples state a fact + its `source_file` — they are pointers, NOT quotable "
-    "text (the verbatim span is intentionally omitted). To quote, give exact "
-    "figures, or answer precisely, you MUST `read_document(path=<source_file>)` "
-    "the underlying document. Never answer a content question from triples "
-    "alone; they only tell you WHICH document to read.")
+    "Each triple states a fact + its `source_file`, and (when present) a short "
+    "verbatim `span` quoting the source. The span answers or quotes a short "
+    "fact directly. Call `read_document(path=<source_file>)` when EITHER (a) "
+    "you need surrounding context, an exact figure, or text beyond the span, OR "
+    "(b) the span does NOT itself contain what the question asks — the span is "
+    "a brief excerpt, so if it only hints at the answer or is cut off, read the "
+    "source rather than guessing. If the span fully answers the question, "
+    "answer from it directly. Never build an answer on a span that doesn't "
+    "actually support the claim.")
 
 
 def tool_mempalace_kg_query(args: dict) -> str:
@@ -1346,7 +1435,7 @@ def tool_mempalace_kg_query(args: dict) -> str:
         "as_of": as_of,
         "count": len(in_scope),
         "total_before_scope_filter": len(triples),
-        "triples": [_kg_strip_span(t) for t in in_scope[:200]],
+        "triples": [_kg_normalize_span(t) for t in in_scope[:200]],
         "read_hint": _KG_READ_HINT,
     })
 
@@ -1453,7 +1542,10 @@ def tool_mempalace_kg_search(args: dict) -> str:
             "confidence": r["confidence"],
             "source_file": r["source_file"] or "",
             "source_drawer_id": r["source_drawer_id"] or "",
-            # span intentionally omitted — see _KG_READ_HINT.
+            # Short verbatim quote (capped); read_document for more — _KG_READ_HINT.
+            "span": ((r["span"] or "")[:_KG_SPAN_CAP] + "…")
+                    if r["span"] and len(r["span"]) > _KG_SPAN_CAP
+                    else (r["span"] or ""),
             "valid_from": r["valid_from"] or "",
         })
     return _ok({
@@ -1514,7 +1606,8 @@ def tool_mempalace_kg_neighbors(args: dict) -> str:
                         "object": t.get("object", ""),
                         "confidence": t.get("confidence"),
                         "source_file": t.get("source_file", "") or "",
-                        # span intentionally omitted — see _KG_READ_HINT.
+                        # Short verbatim quote (capped); read_document for more.
+                        "span": _kg_normalize_span(t).get("span", "") or "",
                         "hop": hop + 1,
                     })
                     other = t.get("object") if t.get("subject") == ent \
