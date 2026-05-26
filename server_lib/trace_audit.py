@@ -113,8 +113,15 @@ class TraceManager:
         }
 
     def end_span(self, span: dict, status: str = "ok",
-                 result_summary: str = "", tokens_in: int = 0, tokens_out: int = 0):
-        """End a span: compute duration and persist to DB."""
+                 result_summary: str = "", tokens_in: int = 0, tokens_out: int = 0,
+                 full_result: str = ""):
+        """End a span: compute duration and persist to DB.
+
+        `result_summary` is the short preview (capped at 500 chars) shown
+        inline. `full_result`, when provided, stores the complete tool output
+        (capped at 100k to bound DB growth) under metadata.full_result so a
+        run-detail inspector can show the expandable full result — the same
+        the model received — instead of just the first 500 chars."""
         now = datetime.datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
         duration_ms = int((time.time() - span.get("_start_time", time.time())) * 1000)
         span["ended_at"] = now
@@ -126,6 +133,8 @@ class TraceManager:
             span["tokens_out"] = tokens_out
         if result_summary:
             span["metadata"]["result_summary"] = result_summary[:500]
+        if full_result:
+            span["metadata"]["full_result"] = full_result[:100000]
         try:
             with _traces_conn() as conn:
                 conn.execute("""

@@ -372,9 +372,12 @@ Startup wipe drops every drawer in `project__*` wings AND clears
   COUNT — no token in/out, no cost, no per-tool list (regression since the
   v9.0.0 SDK migration dropped the native loop that used to log these). Each
   tool span's `result_summary` is filled from `tool_events[].result_text` —
-  a capped copy of each tool's output the sidecar now carries for
-  non-streaming consumers — so the run-detail inspector shows what each tool
-  returned, not just its name.
+  a copy of each tool's output the sidecar now carries for non-streaming
+  consumers — so the run-detail inspector shows what each tool returned, not
+  just its name. The span stores BOTH a 500-char `result_summary` (inline
+  preview) and `full_result` (the complete output the model received, capped
+  100k); the inspector expands the full result like the chat view, so a
+  multi-hit mempalace_query no longer looks truncated to the first hit.
 - Per-task `attachments` are referenced in place; never per-run copies.
   `_purge_attachment_paths()` refuses paths without the
   `scheduled_attachments` segment.

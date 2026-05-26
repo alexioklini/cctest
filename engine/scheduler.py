@@ -1391,7 +1391,16 @@ class Scheduler:
                                         "tool_call", _nm, agent=agent_id,
                                         model=model, trace_id=_trace_id,
                                         session_id=sched_session_id)
-                                    _tm.end_span(_sp, status=_st, result_summary=_summ)
+                                    # full_result = the complete tool output the
+                                    # model received (result_text, up to 100k);
+                                    # result_summary stays the short inline
+                                    # preview. Lets the inspector expand the full
+                                    # result like the chat view.
+                                    _full = ""
+                                    if isinstance(_ev, dict):
+                                        _full = str(_ev.get("result_text") or _ev.get("result") or "")
+                                    _tm.end_span(_sp, status=_st, result_summary=_summ,
+                                                 full_result=_full)
                             else:
                                 for _entry in (run_info.get("tool_log") or []):
                                     _nm = str(_entry).split("(", 1)[0] or "?"

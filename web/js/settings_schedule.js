@@ -444,8 +444,12 @@ async function _schedViewRunDetail(runId) {
         const dur = s.duration_ms != null ? `${s.duration_ms}ms` : '—';
         let meta = {};
         try { meta = s.metadata ? JSON.parse(s.metadata) : {}; } catch(e) {}
-        const fullSummary = (meta.result_summary || '').toString();
-        const shortSummary = fullSummary.length > 140 ? fullSummary.slice(0,140) + '…' : fullSummary;
+        // Expanded view prefers the FULL tool result (what the model actually
+        // received, up to 100k) when present; falls back to the 500-char
+        // summary. The inline one-liner always uses the short summary.
+        const summaryStr = (meta.result_summary || '').toString();
+        const fullSummary = (meta.full_result || summaryStr || '').toString();
+        const shortSummary = summaryStr.length > 140 ? summaryStr.slice(0,140) + '…' : summaryStr;
         const tOffset = s.started_at && t0
           ? `+${((new Date(s.started_at).getTime() - t0)/1000).toFixed(1)}s`
           : '';

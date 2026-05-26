@@ -629,11 +629,13 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
                 "elapsed_ms": int(elapsed * 1000),
                 "result_chars": len(result_str),
                 "is_error": is_error,
-                # Capped result text so non-streaming consumers (the scheduler
+                # Result text so non-streaming consumers (the scheduler
                 # run-detail inspector) can show what each tool returned, not
-                # just a count. Interactive callers ignore this — they get the
+                # just a count. Capped at 100k (matches the trace-store cap) so
+                # the inspector can show the FULL result expandably, like the
+                # chat view. Interactive callers ignore this — they get the
                 # full result via the tool_result SSE event.
-                "result_text": (result_str or "")[:2000],
+                "result_text": (result_str or "")[:100000],
             })
             result_block: dict[str, Any] = {
                 "type": "tool_result",
