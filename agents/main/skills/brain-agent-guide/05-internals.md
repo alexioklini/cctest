@@ -363,7 +363,11 @@ Startup wipe drops every drawer in `project__*` wings AND clears
   tool + one `llm_call` span carrying token in/out into `traces.db` via
   `_trace_manager`. Without this the run-detail inspector showed only a tool
   COUNT — no token in/out, no cost, no per-tool list (regression since the
-  v9.0.0 SDK migration dropped the native loop that used to log these).
+  v9.0.0 SDK migration dropped the native loop that used to log these). Each
+  tool span's `result_summary` is filled from `tool_events[].result_text` —
+  a capped copy of each tool's output the sidecar now carries for
+  non-streaming consumers — so the run-detail inspector shows what each tool
+  returned, not just its name.
 - Per-task `attachments` are referenced in place; never per-run copies.
   `_purge_attachment_paths()` refuses paths without the
   `scheduled_attachments` segment.

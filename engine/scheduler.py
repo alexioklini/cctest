@@ -1363,12 +1363,30 @@ class Scheduler:
                                     _nm = (_ev.get("name") if isinstance(_ev, dict) else str(_ev)) or "?"
                                     _summ = ""
                                     if isinstance(_ev, dict):
-                                        _summ = str(_ev.get("result") or _ev.get("result_summary") or "")
+                                        # Prefer the capped result text the sidecar
+                                        # now carries; fall back to a synthesized
+                                        # summary (args + size + error flag) so the
+                                        # inspector always shows *something* per tool.
+                                        _summ = str(_ev.get("result_text")
+                                                    or _ev.get("result")
+                                                    or _ev.get("result_summary") or "")
+                                        if not _summ:
+                                            _args = _ev.get("args")
+                                            _chars = _ev.get("result_chars")
+                                            _bits = []
+                                            if _args:
+                                                _bits.append(f"args: {str(_args)[:200]}")
+                                            if _chars is not None:
+                                                _bits.append(f"{_chars} Zeichen")
+                                            if _ev.get("is_error"):
+                                                _bits.append("FEHLER")
+                                            _summ = " · ".join(_bits)
+                                    _st = "error" if (isinstance(_ev, dict) and _ev.get("is_error")) else "ok"
                                     _sp = _tm.start_span(
                                         "tool_call", _nm, agent=agent_id,
                                         model=model, trace_id=_trace_id,
                                         session_id=sched_session_id)
-                                    _tm.end_span(_sp, status="ok", result_summary=_summ)
+                                    _tm.end_span(_sp, status=_st, result_summary=_summ)
                             else:
                                 for _entry in (run_info.get("tool_log") or []):
                                     _nm = str(_entry).split("(", 1)[0] or "?"
