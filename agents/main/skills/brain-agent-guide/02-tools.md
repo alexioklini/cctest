@@ -45,6 +45,13 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
 - `mempalace_kg_query(...)` — entity/predicate filter on the KG
 - `mempalace_kg_search(query)` — semantic KG search
 - `mempalace_kg_neighbors(entity, depth?)` — entity neighborhood
+  - All three KG tools return triples (subject/predicate/object + source_file
+    + confidence) but **no verbatim `span`** — a triple is a pointer to a fact +
+    its document, NOT a citation. To quote / give exact figures / answer a
+    content question, `read_document(source_file)` first. (The span used to be
+    returned and the tool prose said "if span present, cite directly without
+    read_document" — that drove wrong-document, uncited answers on the eval
+    P2/C2 questions, so it was removed.)
 - `save_chat_to_memory()` — flip current chat's `save_to_memory` to ON
 
 (`mempalace_get_drawer`, `mempalace_list_drawers` are admin-side; see

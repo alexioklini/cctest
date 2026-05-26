@@ -1285,6 +1285,28 @@ def _kg_has_span_column(palace_path: str) -> bool:
     return out
 
 
+# The KG `span` is a ≤200-char verbatim quote stored per triple. It reads like
+# an answer-ready citation, which lured the model into answering straight from
+# the KG tool result without ever calling read_document — yielding weak/absent
+# citations and, worse, answers built on the WRONG document (eval P2=0.45,
+# C2=0.38 used ONLY kg_search, never read_document). So the KG tools now return
+# the triple (subject/predicate/object/source_file/confidence) WITHOUT span:
+# the triple points at a fact + its source document; to quote or answer
+# precisely the model MUST read_document the source_file. Same structural rule
+# as mempalace_query dropping the snippet for on-disk drawers.
+def _kg_strip_span(t: dict) -> dict:
+    if isinstance(t, dict) and "span" in t:
+        t = {k: v for k, v in t.items() if k != "span"}
+    return t
+
+_KG_READ_HINT = (
+    "Triples state a fact + its `source_file` — they are pointers, NOT quotable "
+    "text (the verbatim span is intentionally omitted). To quote, give exact "
+    "figures, or answer precisely, you MUST `read_document(path=<source_file>)` "
+    "the underlying document. Never answer a content question from triples "
+    "alone; they only tell you WHICH document to read.")
+
+
 def tool_mempalace_kg_query(args: dict) -> str:
     """Entity-first KG lookup, scoped to the caller's current project."""
     palace_path, prefixes, err = _kg_resolve_project_scope()
@@ -1324,7 +1346,8 @@ def tool_mempalace_kg_query(args: dict) -> str:
         "as_of": as_of,
         "count": len(in_scope),
         "total_before_scope_filter": len(triples),
-        "triples": in_scope[:200],
+        "triples": [_kg_strip_span(t) for t in in_scope[:200]],
+        "read_hint": _KG_READ_HINT,
     })
 
 
@@ -1430,7 +1453,7 @@ def tool_mempalace_kg_search(args: dict) -> str:
             "confidence": r["confidence"],
             "source_file": r["source_file"] or "",
             "source_drawer_id": r["source_drawer_id"] or "",
-            "span": r["span"] or "",
+            # span intentionally omitted — see _KG_READ_HINT.
             "valid_from": r["valid_from"] or "",
         })
     return _ok({
@@ -1441,6 +1464,7 @@ def tool_mempalace_kg_search(args: dict) -> str:
         "object_contains": obj_q or None,
         "count": len(triples),
         "triples": triples,
+        "read_hint": _KG_READ_HINT,
     })
 
 
@@ -1490,7 +1514,7 @@ def tool_mempalace_kg_neighbors(args: dict) -> str:
                         "object": t.get("object", ""),
                         "confidence": t.get("confidence"),
                         "source_file": t.get("source_file", "") or "",
-                        "span": t.get("span") or "",
+                        # span intentionally omitted — see _KG_READ_HINT.
                         "hop": hop + 1,
                     })
                     other = t.get("object") if t.get("subject") == ent \
@@ -1511,4 +1535,5 @@ def tool_mempalace_kg_neighbors(args: dict) -> str:
         "entities_reached": sorted(visited),
         "edge_count": len(edges),
         "edges": edges[:300],
+        "read_hint": _KG_READ_HINT,
     })
