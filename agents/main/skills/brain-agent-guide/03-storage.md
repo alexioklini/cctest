@@ -19,9 +19,10 @@ agents/
                                # input_folders, sync_status
         ingested/              # uploaded files (ingest-<hash>-NNN.md)
         web-urls/              # mined project web_urls, one .md per URL named
-                               #   <url-slug>-<urlhash8>_<YYYY-MM-DD-HHMM>.md
-                               #   (timestamp = last CONTENT change/mine; file
-                               #   kept unchanged when content is unchanged)
+                               #   <url-slug>_<YYYY-MM-DD-HHMM>.md (a -<hash8>
+                               #   is inserted before the _ ONLY when two URLs
+                               #   slugify the same). timestamp = last CONTENT
+                               #   change/mine; file kept when content unchanged
         .trash/                # soft-deleted
     artifacts/                 # turn output dir tree
       <YYYY-MM-DD>_<sid_prefix>/   # one folder per chat session

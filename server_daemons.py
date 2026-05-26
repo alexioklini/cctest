@@ -934,9 +934,12 @@ def _sync_project_web_urls(pdir, web_urls):
     # content keeps its file (name + timestamp) and is NOT re-mined; changed
     # content gets a fresh timestamped file and the old slug file(s) are
     # deleted (the loop's _is_stale_src then drops the old drawers because
-    # their .md path no longer exists). A short URL-hash is appended to the
-    # slug so two URLs that slugify the same never collide.
-    def _url_slug(_u):
+    # their .md path no longer exists). The slug is clean by default
+    # (www-macrumors-com); a short URL-hash is appended ONLY when two
+    # configured URLs would otherwise slugify to the same name (http vs
+    # https, trailing slash, long paths sharing a 60-char prefix) — so the
+    # common case stays readable and collisions still never overwrite.
+    def _base_slug(_u):
         from urllib.parse import urlparse as _up
         try:
             p = _up(_u)
@@ -944,9 +947,22 @@ def _sync_project_web_urls(pdir, web_urls):
         except Exception:
             base = _u
         s = re.sub(r"[^A-Za-z0-9]+", "-", base).strip("-").lower()
-        s = s[:60] or "url"
-        h = _hl.sha256(_u.encode("utf-8")).hexdigest()[:8]
-        return f"{s}-{h}"
+        return s[:60] or "url"
+
+    # Which base slugs collide across the configured URL set → those need the
+    # disambiguating hash; everyone else gets the clean slug.
+    _all_urls = [(u.get("url") or "").strip() for u in (web_urls or [])
+                 if isinstance(u, dict) and (u.get("url") or "").strip()]
+    _slug_counts = {}
+    for _u in _all_urls:
+        _b = _base_slug(_u)
+        _slug_counts[_b] = _slug_counts.get(_b, 0) + 1
+
+    def _url_slug(_u):
+        b = _base_slug(_u)
+        if _slug_counts.get(b, 0) > 1:
+            return f"{b}-{_hl.sha256(_u.encode('utf-8')).hexdigest()[:8]}"
+        return b
 
     # Recognise a web-url companion (current slug scheme OR legacy weburl-<hash>).
     def _is_weburl_md(fn):
