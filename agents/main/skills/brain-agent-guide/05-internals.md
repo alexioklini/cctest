@@ -310,6 +310,13 @@ Imported as a Python package — no MCP, no subprocess.
 - `_resolve_session_wing` priority: project → team → user → empty.
 - `mempalace_query` in a project chat is **force-scoped** to
   `project__<id>` and refuses if id is missing (never leaks).
+- `include_chat_history=true` searches the chat wing `project_chat__<id>`
+  **plus** the knowledge wing `project__<id>` (`wing $in [...]`), never the
+  chat wing alone. The project chat wing is often empty (chat-sync may not
+  have run), and searching it alone returns 0 hits → the model falls back to
+  free web access (the v9.31.x curl symptom). Including the knowledge wing
+  guarantees the curated source documents are always reachable. Both wings
+  belong to the same project, so the C3 visibility gate is not weakened.
 
 ### Two daemons
 

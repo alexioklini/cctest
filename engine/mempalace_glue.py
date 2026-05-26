@@ -203,6 +203,14 @@ def tool_mempalace_query(args: dict) -> str:
     _sid = get_request_context().current_session_id or ""
     if include_chat_history and isinstance(_sid, str) and _sid.startswith("sched-"):
         include_chat_history = False
+    # When the caller wants chat history, we search the chat wing AND the
+    # knowledge wing (not chat-only). The project chat wing is often empty
+    # (chat-sync may never have run, or this is a fresh project) — searching
+    # it alone returns 0 hits and the model falls back to free web access
+    # (the v9.31.x webnews curl symptom). Including the knowledge wing means
+    # a thin/empty chat history can never starve retrieval of the underlying
+    # curated source documents. `_extra_wings` is searched alongside `wing`.
+    _extra_wings: list[str] = []
     if current_project:
         # Resolve project name → id (uuid hex). Without an id we refuse to
         # search rather than leak across projects.
@@ -210,8 +218,10 @@ def tool_mempalace_query(args: dict) -> str:
         proj_id = (proj_cfg or {}).get("id") or ""
         if proj_id:
             safe_pid = re.sub(r"[^A-Za-z0-9_.-]", "_", proj_id)
-            wing = (f"project_chat__{safe_pid}" if include_chat_history
-                    else f"project__{safe_pid}")
+            wing = f"project__{safe_pid}"  # knowledge wing is always searched
+            if include_chat_history:
+                # Add the chat-history wing on top of the knowledge wing.
+                _extra_wings.append(f"project_chat__{safe_pid}")
             project_pinned = True
         else:
             return _err("mempalace_query: project has no id (run a sync first)")
@@ -254,6 +264,18 @@ def tool_mempalace_query(args: dict) -> str:
             if col is None:
                 return _err(f"mempalace_query: palace collection not found at {palace_path}")
             where_filter = _build_where(wing, room)
+            # Multi-wing search (knowledge + chat history): replace the single
+            # wing equality with a `wing $in [...]` clause so a thin chat wing
+            # can't starve retrieval of the knowledge wing. Built directly
+            # (not via _build_where, which takes one wing) and combined with
+            # the room clause the same way _build_where would.
+            if _extra_wings:
+                _all_wings = [wing] + _extra_wings
+                _wing_clause = {"wing": {"$in": _all_wings}}
+                if room:
+                    where_filter = {"$and": [_wing_clause, {"room": room}]}
+                else:
+                    where_filter = _wing_clause
             kwargs = {
                 "query_texts": [query],
                 "n_results": fetch_n,
