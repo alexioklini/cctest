@@ -2321,8 +2321,20 @@ class BrainAgentHandler(
             name = body.get("name")
             if name and not self._schedule_owner_check(name):
                 return
-            self._send_json({"history": engine._scheduler.get_history(
-                name, body.get("limit", 20))})
+            _hist = engine._scheduler.get_history(name, body.get("limit", 20))
+            # Annotate each run with its cost (sum of cost_log rows for the
+            # synthetic sched-<run_id> session) so the history list can show it
+            # without a per-row run_detail fetch.
+            if engine._cost_tracker:
+                for _h in _hist:
+                    try:
+                        _rid = _h.get("id")
+                        if _rid is not None:
+                            _sc = engine._cost_tracker.get_session_cost(f"sched-{_rid}")
+                            _h["cost"] = round(_sc.get("cost", 0.0), 4)
+                    except Exception:
+                        pass
+            self._send_json({"history": _hist})
         elif action == "delete_run":
             try:
                 run_id = int(body.get("run_id") or 0)
@@ -2452,11 +2464,21 @@ class BrainAgentHandler(
                                     "size": size,
                                     "path": fpath,
                                 })
+            # Cost of this run: sum of cost_log rows for the synthetic
+            # sched-<run_id> session (same source the chat done-event uses).
+            run_cost = None
+            try:
+                if engine._cost_tracker:
+                    _sc = engine._cost_tracker.get_session_cost(session_id)
+                    run_cost = round(_sc.get("cost", 0.0), 4)
+            except Exception:
+                run_cost = None
             self._send_json({
                 "run": row,
                 "session_id": session_id,
                 "spans": spans,
                 "artifacts": artifacts,
+                "cost": run_cost,
             })
         else:
             self._send_json({"schedules": engine._scheduler.list_all()})

@@ -140,9 +140,11 @@ async function _schedHistory(name) {
       const ok = h.status === 'success' || h.status === 'completed';
       const started = h.started_at ? new Date(h.started_at+'Z').toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
       const finished = h.finished_at ? new Date(h.finished_at+'Z').toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+      const costStr = (h.cost != null && h.cost > 0) ? '$' + h.cost.toFixed(h.cost < 0.01 ? 5 : 4) : '';
       html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-100)">
         <span style="width:6px;height:6px;border-radius:50%;background:${ok?'var(--success)':'var(--error)'};flex-shrink:0"></span>
         <span style="flex:1;color:var(--text-200)">${started}</span>
+        ${costStr ? `<span style="color:var(--text-400);font-family:var(--font-mono);font-size:11px">${costStr}</span>` : ''}
         <span style="color:var(--text-400)">${esc(h.status||'')}</span>
       </div>`;
     }
@@ -408,12 +410,17 @@ async function _schedViewRunDetail(runId) {
     let html = `<h3 style="margin:0 0 4px;font-size:17px;color:var(--text-000)">Ausführung #${runId} · ${esc(run.schedule_name||'')}</h3>
     <div style="color:var(--text-400);font-size:12px;margin-bottom:12px"><span style="color:${statusColor};font-weight:500">${esc(run.status||'?')}</span> · ${esc(run.agent||'main')}${run.model ? ` · ${esc(run.model)}` : ''}</div>`;
 
-    // Stats block
-    html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;padding:10px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
+    // Stats block. Cost comes from the run_detail response (sum of cost_log
+    // rows for the sched-<run_id> session); '—' when no priced usage.
+    const costLabel = (res.cost != null && res.cost > 0)
+      ? '$' + res.cost.toFixed(res.cost < 0.01 ? 5 : 4)
+      : (res.cost === 0 ? '$0' : '—');
+    html += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:16px;padding:10px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
       <div><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em">Dauer</div><div style="font-size:15px;color:var(--text-100);font-family:var(--font-mono)">${durLabel}</div></div>
       <div><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em">Tools</div><div style="font-size:15px;color:var(--text-100);font-family:var(--font-mono)">${run.tool_calls ?? 0}</div></div>
       <div><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em">Tokens ein</div><div style="font-size:15px;color:var(--text-100);font-family:var(--font-mono)">${tokensIn.toLocaleString()}</div></div>
       <div><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em">Tokens aus</div><div style="font-size:15px;color:var(--text-100);font-family:var(--font-mono)">${tokensOut.toLocaleString()}</div></div>
+      <div><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em">Kosten</div><div style="font-size:15px;color:var(--text-100);font-family:var(--font-mono)">${costLabel}</div></div>
     </div>`;
 
     // Times

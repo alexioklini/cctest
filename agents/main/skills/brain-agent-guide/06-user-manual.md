@@ -191,11 +191,11 @@ Projektgedächtnis (Wing) und den Recherche-Modus wie ein Projekt-Chat.
   des Projekts.
 - Pro Aufgabe (Drei-Punkte-Menü): **Pausieren/Fortsetzen**, **Jetzt
   ausführen**, **Verlauf**, **Löschen**.
-- Im **Verlauf** stehen die vergangenen Läufe mit Zeitpunkt + Status
-  (grün = erfolgreich, rot = Fehler). Ein Klick auf einen Lauf öffnet die
-  Detailansicht mit dem **Ergebnis-Text**, den erzeugten **Artefakten** und
-  dem **Tool-Verlauf** des Laufs (dieselbe Detailansicht wie im globalen
-  Zeitplan-Tab).
+- Im **Verlauf** stehen die vergangenen Läufe mit Zeitpunkt, Status
+  (grün = erfolgreich, rot = Fehler) und **Kosten** des Laufs. Ein Klick auf
+  einen Lauf öffnet die Detailansicht mit **Dauer · Tools · Tokens ein/aus ·
+  Kosten**, dem **Ergebnis-Text**, den erzeugten **Artefakten** und dem
+  **Tool-Verlauf** (dieselbe Detailansicht wie im globalen Zeitplan-Tab).
 - Die Bindung an das Projekt wird automatisch gesetzt — kein Projekt-Dropdown
   nötig. Der globale **Zeitplan**-Tab in den Agent-Einstellungen bleibt
   davon unberührt (Aufgaben ohne Projektbindung laufen wie bisher
