@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.36.0"
+VERSION = "9.36.1"
 VERSION_DATE = "2026-05-26"
 CHANGELOG = [
+    ("9.36.1", "2026-05-26", "fix(lcm): manuelle ✂️-Kompaktierung eines Ein-Turn-Chats lieferte eine nutzlose Zusammenfassung. Beobachtet auf Chat 41f524e4 (1 Turn: User-Frage + 8KB-Antwort mit Zitaten): die Zusammenfassung beschrieb NUR die User-Frage + das Working-Dir-Preamble, die Antwort fehlte komplett, und die verbatim-Antwort hing danach ohne zugehörige Frage in der History. Ursache in ContextManager.check_and_compact: der `n_turns <= 1`-Zweig setzte `to_compress = real_msgs[:-1]` — komprimierte also die User-Hälfte des einzigen Turns und behielt die Assistant-Antwort als Tail. Damit wurde ein User+Assistant-Paar AUFGESPALTEN (die Invariante, die der 9.9.15-Fix ausdrücklich wahren sollte: 'ein Turn wird nie gespalten') UND der Summarizer bekam nur die User-Nachricht → Antwort fiel raus. Fix: `len(real_msgs) <= 1` und `n_turns <= 1` zu EINEM Zweig zusammengeführt, der den GANZEN Turn komprimiert (`fresh_tail_count=0`, `to_compress=real_msgs`) — der Summarizer sieht jetzt das volle Paar, keine Hälfte bleibt verwaist. Mehr-Turn-Pfade (50%-Regel + Long-Chat) unverändert; der Schnitt liegt dort immer auf einem `user`-Index, sodass auch turns mit thinking/tool_use/tool_result-Runden atomar bleiben (per Simulation über 8 Szenarien verifiziert). Backend — Neustart nötig (erledigt). Live verifiziert auf 41f524e4."),
     ("9.36.0", "2026-05-26", "fix(kg): KG-Tools liefern kein `span` mehr → erzwingen read_document (Wurzel der schwachen Eval-Citation-Fragen). Eval-Forensik (P2_archivierung 0.45, C2_passwort_zitat 0.38): diese Fragen riefen NUR mempalace_kg_search (4×), NIE read_document → schwache/fehlende Zitate + falsches Dokument. Ursache: (a) jedes KG-Tripel trug ein `span` (≤200-Zeichen wörtliches Zitat) im Tool-Ergebnis, (b) die config-Tool-Prosa sagte EXPLIZIT 'if span is non-empty, it IS your citation — you do NOT need read_document'. Das Modell befolgte das wörtlich → Antwort aus span des FALSCHEN Dokuments (KG traf Löschkonzept statt Archivierungs-ARL), ohne je den Volltext zu lesen. Dieselbe Snippet-Falle wie mempalace_query vor v9.34, nur über den KG-Pfad. Fix: alle drei KG-Tools (engine/mempalace_glue.py: kg_query/kg_search/kg_neighbors) entfernen `span` aus dem Ergebnis (subject/predicate/object/source_file/confidence bleiben) + neuer _KG_READ_HINT 'Tripel ist Pointer, kein Zitat — read_document(source_file) für Inhalt/Zitate'. config.json tool_settings (kg_search/kg_query) span-als-Zitat-Sätze ersetzt durch read_document-Pflicht (gitignored, per-Maschine — beim nächsten Server-Neustart wirksam). KG bleibt für 'welches Dokument'-Findung + reine Relations-Fragen nutzbar, ist aber kein Zitat-Ersatz mehr. Skill-Doku (02). Backend — Neustart nötig. NOCH NICHT eval-gemessen."),
     ("9.35.2", "2026-05-26", "polish(web-urls): URL-Hash im Dateinamen nur noch bei Slug-Kollision. Statt immer `www-macrumors-com-93d68ee6_<ts>.md` jetzt im Normalfall der saubere `www-macrumors-com_<ts>.md`; der 8-Zeichen-URL-Hash wird NUR eingefügt, wenn zwei konfigurierte URLs des Projekts denselben Basis-Slug ergäben (http vs https, trailing slash, lange Pfade mit gleichem 60-Zeichen-Präfix) — dann bekommen die kollidierenden den Hash, alle anderen bleiben sauber. _base_slug + Pre-Pass über alle Projekt-URLs (Kollisions-Count) in server_daemons._sync_project_web_urls. Übergang selbstheilend: alte hash-benannte Dateien matchen den neuen sauberen Slug nicht → werden beim nächsten Sync neu gemined + alte als stale gepurged (kein Datenverlust). Backend — Neustart nötig."),
     ("9.35.1", "2026-05-26", "fix(project-sync): gelöschte Einzeldatei in lebendem Ordner hinterlässt keine verwaisten Drawer mehr (keine Source-Historie). Lücke: _is_stale_src prüfte Datei-Existenz NUR für web-urls; für normale Eingabeordner-Dokumente nur den Ordner-Präfix → eine einzeln gelöschte Datei (Ordner bleibt konfiguriert) ließ ihre Drawer im Wing zurück = veralteter Stand in mempalace_query. Belegt: project__db06d555a32e 295/295 + project__e7c64a7bee9e 192/438 Drawer zeigen auf nicht-mehr-existente Dateien (gelöschte/geleerte Projekte). Fix (server_daemons._is_stale_src): zusätzlich stale, wenn source_file ein ABSOLUTER Pfad ist (echte Datei erwartet) und nicht mehr existiert — deckt web-urls UND Eingabeordner-Dateien ab. Geschützt per führendem '/', sodass synthetische Marker (session/...#..., user/...#profile) NIE getroffen werden (Chat-/Profil-/Summary-Memory bleibt). Wing-lokal (läuft pro Projekt-Sync), kein wing-übergreifender Löschpfad. Ergänzt das bestehende: GEÄNDERTE Datei → content-hash-Re-Mine + _invalidate_source_in_kg (KG-Triples der Source gelöscht). Damit: weder Folder-Dateien noch KG behalten alten Stand — query sieht nur den aktuellen. toter _weburl_dir_real entfernt. Backend — Neustart nötig (greift beim nächsten Projekt-Sync-Zyklus)."),
@@ -8603,35 +8604,32 @@ class ContextManager:
         prefix = _count_synthetic_summary_prefix(messages)
         real_msgs = messages[prefix:]
 
-        # With only 1 real message, summarize it entirely (no tail to keep).
-        if len(real_msgs) <= 1:
+        # Whole-turn boundaries. A turn starts at each user message; compressing
+        # always cuts at a turn boundary so a user+assistant pair is never split
+        # across the summary/verbatim line (splitting it strands the answer from
+        # its question — the bug behind the "useless summary" on 1-turn chats).
+        turn_starts = [i for i, m in enumerate(real_msgs) if m.get("role") == "user"]
+        n_turns = len(turn_starts)
+        if len(real_msgs) <= 1 or n_turns <= 1:
+            # Single (or partial) turn: nothing older to keep verbatim, and the
+            # pair must not be split — compress the whole thing into one summary.
             fresh_tail_count = 0
             to_compress = real_msgs
         else:
-            # Split on whole-turn boundaries. A turn starts at each user message;
-            # compressing always cuts at a turn boundary so a user+assistant pair
-            # is never split across the summary/verbatim line.
-            turn_starts = [i for i, m in enumerate(real_msgs) if m.get("role") == "user"]
-            n_turns = len(turn_starts)
-            if n_turns <= 1:
-                # No clean turn boundary to cut on — keep one message as tail.
-                fresh_tail_count = max(1, len(real_msgs) - 1)
-                to_compress = real_msgs[:-fresh_tail_count]
+            # fresh_tail_count is a TURN count.
+            fresh_tail_turns = cfg.get("fresh_tail_count", 16)
+            if n_turns > fresh_tail_turns:
+                # Long chat: keep the last `fresh_tail_turns` turns verbatim,
+                # compress everything older.
+                compress_turns = n_turns - fresh_tail_turns
             else:
-                # fresh_tail_count is a TURN count.
-                fresh_tail_turns = cfg.get("fresh_tail_count", 16)
-                if n_turns > fresh_tail_turns:
-                    # Long chat: keep the last `fresh_tail_turns` turns verbatim,
-                    # compress everything older.
-                    compress_turns = n_turns - fresh_tail_turns
-                else:
-                    # Short chat (turns ≤ fresh_tail): 50% rule. Compress
-                    # floor(turns / 2); on an odd turn count the half falls to
-                    # the kept side — 3 turns → compress 1, keep 2.
-                    compress_turns = max(1, n_turns // 2)
-                boundary = turn_starts[compress_turns]  # first kept message
-                fresh_tail_count = len(real_msgs) - boundary
-                to_compress = real_msgs[:boundary]
+                # Short chat (turns ≤ fresh_tail): 50% rule. Compress
+                # floor(turns / 2); on an odd turn count the half falls to
+                # the kept side — 3 turns → compress 1, keep 2.
+                compress_turns = max(1, n_turns // 2)
+            boundary = turn_starts[compress_turns]  # first kept message
+            fresh_tail_count = len(real_msgs) - boundary
+            to_compress = real_msgs[:boundary]
 
         if not to_compress:
             # Nothing new to compress (e.g. all real turns fit in the fresh tail).
