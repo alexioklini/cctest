@@ -387,6 +387,14 @@ Startup wipe drops every drawer in `project__*` wings AND clears
   `"interactive"` → `interactive`. Per-task `thinking_level` empty →
   inherit at fire time. `caveman_chat` is per-task. `caveman_system` is
   NOT exposed per task (would invalidate warmup KV prefix).
+- **Same message framing as a chat**: the fire-path prepends the same
+  artifact-folder preamble (`_artifact_folder_preamble_text`) to the task's
+  user message that `handlers/chat.py` adds to a chat's first message.
+  Without it the task framed the question differently than an equivalent
+  chat, and at temperature 0.2 (near-deterministic) that made the model build
+  a slightly different mempalace_query — shifting source weighting on a wing
+  with uneven per-source drawer counts. Same framing → same query → same
+  result as the chat.
 - **No chat history on scheduled runs**: a `sched-<run_id>` session is fresh
   and isolated, so the project chat wing (`project_chat__`) is always empty.
   `mempalace_query` force-ignores `include_chat_history` on scheduled runs

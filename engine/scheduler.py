@@ -1152,6 +1152,19 @@ class Scheduler:
             # and are persisted with the schedule definition; deletion of the
             # schedule purges them.
             task_message = task
+            # Prepend the same artifact-folder preamble the interactive chat
+            # adds to its first user message (handlers/chat.py). Without it the
+            # task's user message is framed differently than a chat's, and at
+            # temperature 0.2 that systematic input difference made the model
+            # build a slightly different mempalace_query (chat: "… aktuelle",
+            # task: without) → different source weighting. Same framing → same
+            # query → same result as the equivalent chat.
+            try:
+                _pre = _brain._artifact_folder_preamble_text(agent_id, sched_session_id)
+                if _pre:
+                    task_message = f"{_pre}\n\n{task_message}"
+            except Exception:
+                pass
             attachments_meta = []
             try:
                 atts_raw = task_row.get("attachments") or "[]"
