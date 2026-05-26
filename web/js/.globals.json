@@ -895,6 +895,7 @@
     "updatePageHeader": "writable",
     "updatePIIBadge": "writable",
     "updateRightPanelBadges": "writable",
+    "updateRightPanelButtonVisibility": "writable",
     "updateSbAgentDisplay": "writable",
     "updateScrollAnchors": "writable",
     "updateSendButton": "writable",

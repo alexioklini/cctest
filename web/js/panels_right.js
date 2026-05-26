@@ -89,6 +89,22 @@ function syncRightPanelToggle() {
   if (btn) btn.classList.toggle('active', state.rightPanelOpen);
 }
 
+// The right panel (attachments / references / artifacts / Websuche) only
+// makes sense for an active chat session. On every other view (welcome,
+// chats list, projects, project-detail, artifacts browse, scheduled,
+// workflows, translation, data, favourites) there's no session in scope, so
+// hide the toggle button entirely and close the panel if it was left open.
+// The close is programmatic (not userInitiated) so returning to a chat
+// restores the panel's prior auto-open behaviour. Called at the end of
+// navigateTo.
+function updateRightPanelButtonVisibility() {
+  const btn = document.getElementById('toggle-right-panel-btn');
+  const makesSense = state.currentView === 'chat'
+    && !!(state.activeChat && state.activeChat.sessionId);
+  if (btn) btn.style.display = makesSense ? '' : 'none';
+  if (!makesSense && state.rightPanelOpen) closeRightPanel(false);
+}
+
 function closeRightPanel(userInitiated = false) {
   const panel = document.getElementById('right-panel');
   if (panel) panel.classList.remove('open');

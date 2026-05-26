@@ -152,6 +152,10 @@ function navigateTo(view, opts) {
     });
   }
 
+  // Show the right-panel toggle only where a panel makes sense (active chat
+  // session); hide it elsewhere and close any panel left open.
+  if (typeof updateRightPanelButtonVisibility === 'function') updateRightPanelButtonVisibility();
+
   closeMobileSidebar();
 }
 

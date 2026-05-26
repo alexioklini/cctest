@@ -35,7 +35,11 @@ wechsle zu `04-recipes.md` und führe sie aus.
 **Hauptbereich** — die jeweils gewählte Ansicht. Die Willkommensansicht
 zeigt Begrüßung + Eingabefeld + Prompt-Karten.
 
-**Rechtes Panel** (oben rechts ein-/ausblenden) — Tabs mit Inhalt:
+**Rechtes Panel** (oben rechts ein-/ausblenden) — Tabs mit Inhalt. Der
+**Panel**-Knopf erscheint nur in einem offenen Chat (dort gibt es Anhänge/
+Referenzen/Dateien/Websuche); in Listen- und Übersichts-Ansichten
+(Chats, Projekte, Artefakte, Geplant …) ist er ausgeblendet und ein offenes
+Panel wird beim Verlassen geschlossen. Tabs mit Inhalt:
 - **Anhänge** — in diesen Chat hochgeladene Dateien
 - **Referenzen** — Quellen, die das Modell in diesem Turn gelesen hat
   (Web-Abrufe, Dokument-Lesungen)
