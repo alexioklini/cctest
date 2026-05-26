@@ -338,22 +338,50 @@ def _build_system_prompt(include_memory_summary: bool = True,
                 )
             else:
                 # Soft variant for non-research projects (research_mode=False).
-                # Project memory is available; the model isn't forced
-                # into the strict regime. Used for projects whose chats
-                # USE the indexed content as input for tasks (writing
-                # code, drafting docs, building tools) rather than
-                # reproducing it verbatim with citations.
-                system_instruction += (
-                    "\nPROJECT MEMORY:\n"
-                    "This project has a dedicated, isolated memory store. "
-                    "Call `mempalace_query` whenever the user's request "
-                    "could plausibly draw on the project's indexed "
-                    "documents, input folders, or prior facts. The tool's "
-                    "own description carries the search and read flow "
-                    "details — do not refuse to help when memory has "
-                    "nothing to offer; fall back to general capability "
-                    "and the user's own input as you normally would.\n\n"
-                )
+                # research_mode is DECOUPLED into two concerns: (1) the
+                # retrieval hint "use the project's own sources first" and
+                # (2) the strict output discipline (REFUSE-on-empty +
+                # mandatory citations). research_mode gates ONLY (2). (1)
+                # must hold whenever the owner curated sources — it makes no
+                # sense to specify files/folders/URLs for a project and then
+                # have a task ignore them and free-search the web instead
+                # (the v9.30.x webnews bug: a project with two curated URLs
+                # had research_mode off, so the task ran searxng+web_fetch and
+                # never touched the mined project memory).
+                _has_sources = bool(
+                    (proj_cfg.get("web_urls") or [])
+                    or (proj_cfg.get("input_folders") or []))
+                if _has_sources:
+                    # Curated sources exist → prefer them over the open web,
+                    # but without the strict refuse/cite regime.
+                    system_instruction += (
+                        "\nPROJECT MEMORY:\n"
+                        "This project has its own curated sources (uploaded "
+                        "documents, input folders, and/or web URLs) mined into "
+                        "a dedicated, isolated memory store. For any request "
+                        "that could draw on those sources, query the project "
+                        "memory FIRST (`mempalace_query`) and prefer what it "
+                        "returns over an open web search — the owner curated "
+                        "these sources on purpose. Only fall back to the web "
+                        "tools (`web_fetch`/`searxng_search`/`exa_search`) when "
+                        "the project memory genuinely lacks what's needed (e.g. "
+                        "fresher information than what was last synced). You are "
+                        "NOT required to quote-and-cite or to refuse when memory "
+                        "is empty — that strict regime is the Research mode.\n\n"
+                    )
+                else:
+                    # No curated sources — purely soft hint.
+                    system_instruction += (
+                        "\nPROJECT MEMORY:\n"
+                        "This project has a dedicated, isolated memory store. "
+                        "Call `mempalace_query` whenever the user's request "
+                        "could plausibly draw on the project's indexed "
+                        "documents, input folders, or prior facts. The tool's "
+                        "own description carries the search and read flow "
+                        "details — do not refuse to help when memory has "
+                        "nothing to offer; fall back to general capability "
+                        "and the user's own input as you normally would.\n\n"
+                    )
         # Research-mode disciplines: REFUSAL + PRECISION + CITATION rules
         # that gate the strict retrieval/refusal regime. Emitted by Brain
         # directly when research_mode is on — NOT folded into the owner's

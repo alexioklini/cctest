@@ -147,8 +147,14 @@ Die Hilfe auf der Projekt-Einstellungsseite ist ein aufklappbarer
   Das Modell muss zuerst das Projektgedächtnis konsultieren, verweigert
   bei leerem Treffer, muss pro Aussage mit wörtlichem Zitat belegen. Ein
   serverseitiger Zitat-Validator läuft mit.
-- **AUS** — für Codegen/Entwurf/Bauen-mit-Kontext. Gedächtnis verfügbar,
-  aber nicht zwingend; das Modell darf auf sein Training zurückgreifen.
+- **AUS** — für Codegen/Entwurf/Bauen-mit-Kontext. Kein Zwang zu Zitaten,
+  keine Verweigerung bei leerem Treffer; das Modell darf auf sein Training
+  zurückgreifen. **Wichtig (entkoppelt):** Hat das Projekt eigene kuratierte
+  Quellen (hochgeladene Dateien, Eingabeordner oder Web-URLs), wird das
+  Projektgedächtnis trotzdem ZUERST abgefragt und den freien Web-Tools
+  vorgezogen — auch ohne Recherche-Modus. Nur die strenge Zitier-/Refuse-
+  Disziplin hängt am Recherche-Modus. (So nutzt z. B. ein News-Projekt mit
+  hinterlegten URLs wirklich diese Quellen, statt frei zu googeln.)
 
 **Synchronisierung**: Eingabeordner werden von einem Daemon alle 6 h
 eingespeist. Knöpfe auf der Projektseite:
