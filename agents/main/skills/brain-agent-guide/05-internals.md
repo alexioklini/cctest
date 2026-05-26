@@ -144,6 +144,16 @@ starts empty. On send the enabled entries ride as `body.web_urls_to_fetch`.
   when the basket is empty; when on, curated sources are still pre-fetched
   but the model may also search/fetch.
 
+No version history is kept for project sources: a CHANGED file is re-mined
+(content-hash dedup) and its KG triples invalidated (`_invalidate_source_in_kg`
+on mtime/size shift); a DELETED file's drawers are purged by `_is_stale_src`
+— which flags a drawer stale when its source_file is outside every current
+input-folder/pdir prefix OR is an absolute path whose file no longer exists
+(covers a single deleted file in a still-configured folder; synthetic markers
+like `session/...#...` are never path-checked, so chat/profile/summary
+memory is never purged). So a query only ever sees the current state of each
+source — no stale/old-version noise.
+
 This is a DIFFERENT mechanism from project `web_urls` (mined into the
 project wing/KG by the project-sync daemon) — do not merge them.
 

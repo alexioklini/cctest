@@ -1468,19 +1468,28 @@ def _project_sync_loop(srv):
                             )
                             _wing_sp = wing
                             # A drawer is stale if its source_file is outside
-                            # every current input folder/pdir prefix, OR it's a
-                            # web-urls/ companion whose .md no longer exists
-                            # (the URL was removed from the project). The latter
-                            # can't be caught by prefix alone since web-urls/ is
-                            # under pdir (a kept prefix).
-                            _weburl_dir_real = (os.path.realpath(_weburl_folder) + os.sep
-                                                if _weburl_folder else None)
+                            # every current input folder/pdir prefix, OR it's an
+                            # absolute-path source whose file no longer exists
+                            # (single deleted file — web-url companion or
+                            # ordinary input-folder doc — while its folder stays
+                            # configured; prefix alone can't catch that since
+                            # the folder is a kept prefix).
                             def _is_stale_src(_src):
                                 _src = _src or ""
+                                # (a) Outside every current input folder / pdir
+                                # prefix → the folder was removed.
                                 if not any(_src.startswith(_p) for _p in _current_folder_prefixes):
                                     return True
-                                if (_weburl_dir_real and _src.startswith(_weburl_dir_real)
-                                        and not os.path.exists(_src)):
+                                # (b) A drawer whose source_file is an absolute
+                                # path (a real file was expected) but the file
+                                # no longer exists → the single file was deleted
+                                # while its folder stayed configured. Covers
+                                # web-urls AND ordinary input-folder files, so a
+                                # deleted file leaves no orphan drawers. Guarded
+                                # on a leading '/' so synthetic markers
+                                # (session/...#..., user/...#profile) — which are
+                                # never files — are NEVER treated as stale.
+                                if _src.startswith("/") and not os.path.exists(_src):
                                     return True
                                 return False
                             _col_sp = _get_col_sp(_palace_sp, create=False)
