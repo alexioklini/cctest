@@ -310,6 +310,12 @@ Imported as a Python package — no MCP, no subprocess.
 - `_resolve_session_wing` priority: project → team → user → empty.
 - `mempalace_query` in a project chat is **force-scoped** to
   `project__<id>` and refuses if id is missing (never leaks).
+- `mempalace_query`'s `read_hint` lists the DISTINCT source files among the
+  hits; when there's more than one it explicitly tells the model to
+  `read_document` each before summarising — otherwise the model tends to read
+  only the top hit and summarise from a single source (observed: a task whose
+  hits spanned macrumors + caschys read only one). Coverage nudge, applies to
+  chat + task alike.
 - `include_chat_history=true` searches the chat wing `project_chat__<id>`
   **plus** the knowledge wing `project__<id>` (`wing $in [...]`), never the
   chat wing alone. The project chat wing is often empty (chat-sync may not

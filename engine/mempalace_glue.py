@@ -728,6 +728,31 @@ def tool_mempalace_query(args: dict) -> str:
             "text": (r.get("text") or "")[:2000],
         })
 
+    # Distinct source files among the hits. When the matches span MORE THAN
+    # ONE source, the model tends to read_document only the top one and
+    # summarise from a single source — so surface the full distinct set and
+    # tell it to read each before summarising. Coverage hint only; harmless
+    # for single-source result sets.
+    _distinct_paths = []
+    for _d in drawers:
+        _p = _d.get("read_path") or _d.get("source_file")
+        if _p and _p not in _distinct_paths:
+            _distinct_paths.append(_p)
+    _read_hint = (
+        "To follow up on a drawer, call "
+        "`read_document(path=<drawer.read_path>)` — or "
+        "`read_document(path=<drawer.read_path_original>)` for the "
+        "original PDF/DOCX/etc. if you need formula/table fidelity. "
+        "Both paths are absolute and ready to use as-is; do NOT join "
+        "with input-folder paths.")
+    if len(_distinct_paths) > 1:
+        _list = "\n".join(f"  - {p}" for p in _distinct_paths)
+        _read_hint += (
+            f"\n\nIMPORTANT — these hits span {len(_distinct_paths)} DISTINCT "
+            f"sources. Before you summarise, call read_document on EACH of "
+            f"them so the answer covers all sources, not just the top hit:\n"
+            f"{_list}")
+
     return _ok({
         "query": query,
         "wing": wing,
@@ -737,14 +762,8 @@ def tool_mempalace_query(args: dict) -> str:
         "drawers": drawers,
         # Hint to the model: every drawer has a `read_path` field that's a
         # ready-to-use absolute path for read_document — no string-joining
-        # required.
-        "read_hint": (
-            "To follow up on a drawer, call "
-            "`read_document(path=<drawer.read_path>)` — or "
-            "`read_document(path=<drawer.read_path_original>)` for the "
-            "original PDF/DOCX/etc. if you need formula/table fidelity. "
-            "Both paths are absolute and ready to use as-is; do NOT join "
-            "with input-folder paths."),
+        # required. When >1 distinct source, also nudges to read each.
+        "read_hint": _read_hint,
     })
 
 
