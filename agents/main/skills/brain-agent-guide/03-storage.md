@@ -17,7 +17,11 @@ agents/
       <project_name>/
         project.json           # id, instructions, research_mode,
                                # input_folders, sync_status
-        ingested/              # uploaded files
+        ingested/              # uploaded files (ingest-<hash>-NNN.md)
+        web-urls/              # mined project web_urls, one .md per URL named
+                               #   <url-slug>-<urlhash8>_<YYYY-MM-DD-HHMM>.md
+                               #   (timestamp = last CONTENT change/mine; file
+                               #   kept unchanged when content is unchanged)
         .trash/                # soft-deleted
     artifacts/                 # turn output dir tree
       <YYYY-MM-DD>_<sid_prefix>/   # one folder per chat session

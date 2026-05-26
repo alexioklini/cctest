@@ -924,23 +924,48 @@ def _sync_project_web_urls(pdir, web_urls):
     "" when there are no URLs configured.
     """
     import hashlib as _hl
+    import datetime as _dt
     folder = os.path.join(pdir, "web-urls")
     urls = [(u.get("url") or "").strip() for u in (web_urls or []) if isinstance(u, dict)]
     urls = [u for u in urls if u]
+    # Filename scheme: `<url-slug>_<YYYY-MM-DD-HHMM>.md`. The slug is the stable
+    # per-URL identity (same URL → same slug every cycle); the timestamp marks
+    # the LAST CONTENT CHANGE (= last mine), not the last fetch. So: unchanged
+    # content keeps its file (name + timestamp) and is NOT re-mined; changed
+    # content gets a fresh timestamped file and the old slug file(s) are
+    # deleted (the loop's _is_stale_src then drops the old drawers because
+    # their .md path no longer exists). A short URL-hash is appended to the
+    # slug so two URLs that slugify the same never collide.
+    def _url_slug(_u):
+        from urllib.parse import urlparse as _up
+        try:
+            p = _up(_u)
+            base = (p.netloc + p.path).strip("/")
+        except Exception:
+            base = _u
+        s = re.sub(r"[^A-Za-z0-9]+", "-", base).strip("-").lower()
+        s = s[:60] or "url"
+        h = _hl.sha256(_u.encode("utf-8")).hexdigest()[:8]
+        return f"{s}-{h}"
+
+    # Recognise a web-url companion (current slug scheme OR legacy weburl-<hash>).
+    def _is_weburl_md(fn):
+        return fn.endswith(".md") and (fn.startswith("weburl-") or "_" in fn)
+
     if not urls:
         # No URLs: drop the folder's contents so stale-purge removes any
         # previously-mined URL drawers.
         if os.path.isdir(folder):
             for fn in os.listdir(folder):
-                if fn.startswith("weburl-") and fn.endswith(".md"):
+                if _is_weburl_md(fn):
                     try:
                         os.remove(os.path.join(folder, fn))
                     except OSError:
                         pass
         return folder if os.path.isdir(folder) else ""
     os.makedirs(folder, exist_ok=True)
-    # Map of expected filenames so we can prune removed URLs.
-    expected = set()
+    # Slugs we keep this cycle; any other web-url .md is pruned at the end.
+    kept_files = set()
     for entry in (web_urls or []):
         if not isinstance(entry, dict):
             continue
@@ -948,39 +973,59 @@ def _sync_project_web_urls(pdir, web_urls):
         if not url:
             continue
         title = (entry.get("title") or "").strip()
-        uh = _hl.sha256(url.encode("utf-8")).hexdigest()[:16]
-        fname = f"weburl-{uh}.md"
-        expected.add(fname)
-        fpath = os.path.join(folder, fname)
+        slug = _url_slug(url)
+        # Find an existing file for this slug (any timestamp).
+        existing = sorted(
+            fn for fn in os.listdir(folder)
+            if fn.startswith(slug + "_") and fn.endswith(".md"))
         try:
             parsed = json.loads(engine.tool_web_fetch({"url": url, "force_fresh": True}))
         except (ValueError, TypeError):
             parsed = {}
         if parsed.get("error") or "content" not in parsed:
-            # Leave any prior good copy in place on a transient fetch failure.
+            # Transient fetch failure: keep the prior good copy untouched.
             print(f"[project-sync.weburl] fetch failed {url}: "
                   f"{parsed.get('error', 'unknown')}", flush=True)
+            kept_files.update(existing)
             continue
         body = (f"<!-- brain-source: {url} -->\n"
                 f"# {title or parsed.get('url', url)}\n\n"
                 f"Source URL: {parsed.get('url', url)}\n\n{parsed['content']}\n")
         new_hash = _hl.sha256(body.encode('utf-8')).hexdigest()
+        # Compare against the newest existing slug file (content hash).
         old_hash = ""
-        if os.path.exists(fpath):
+        if existing:
             try:
-                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                with open(os.path.join(folder, existing[-1]), "r",
+                          encoding="utf-8", errors="replace") as f:
                     old_hash = _hl.sha256(f.read().encode('utf-8')).hexdigest()
             except OSError:
                 pass
-        if new_hash != old_hash:
-            try:
-                with open(fpath, "w", encoding="utf-8") as f:
-                    f.write(body)
-            except OSError as e:
-                print(f"[project-sync.weburl] write failed {fpath}: {e}", flush=True)
-    # Prune files for URLs no longer configured.
+        if new_hash == old_hash:
+            # Unchanged content → keep the existing file as-is (no re-mine).
+            kept_files.add(existing[-1])
+            continue
+        # Changed (or new) → write a fresh timestamped file, drop old ones.
+        ts = _dt.datetime.now().strftime("%Y-%m-%d-%H%M")
+        fname = f"{slug}_{ts}.md"
+        fpath = os.path.join(folder, fname)
+        try:
+            with open(fpath, "w", encoding="utf-8") as f:
+                f.write(body)
+            kept_files.add(fname)
+            # Delete previous versions of this slug so their drawers go stale.
+            for old in existing:
+                if old != fname:
+                    try:
+                        os.remove(os.path.join(folder, old))
+                    except OSError:
+                        pass
+        except OSError as e:
+            print(f"[project-sync.weburl] write failed {fpath}: {e}", flush=True)
+            kept_files.update(existing)
+    # Prune any web-url .md not kept this cycle (removed URLs + legacy files).
     for fn in os.listdir(folder):
-        if fn.startswith("weburl-") and fn.endswith(".md") and fn not in expected:
+        if _is_weburl_md(fn) and fn not in kept_files:
             try:
                 os.remove(os.path.join(folder, fn))
             except OSError:
@@ -1718,11 +1763,12 @@ def _project_sync_loop(srv):
                 # 1b. Project web URLs — fetched into pdir/web-urls/ as .md
                 #     above (_sync_project_web_urls). Already markdown, so no
                 #     convert pass — just mine + KG, same as ingested. Each URL
-                #     is a weburl-<hash>.md file; mine the folder in one pass,
-                #     then run KG scoped to the whole folder.
+                #     is a `<slug>_<timestamp>.md` file (legacy: weburl-<hash>.md);
+                #     mine the folder in one pass, then run KG scoped to it.
                 if _weburl_folder and os.path.isdir(_weburl_folder):
                     _wu_files = [fn for fn in os.listdir(_weburl_folder)
-                                 if fn.startswith("weburl-") and fn.endswith(".md")]
+                                 if fn.endswith(".md")
+                                 and (fn.startswith("weburl-") or "_" in fn)]
                     if _wu_files and _ensure_mempalace_yaml(_weburl_folder, wing):
                         folders_seen += 1
                         _wu_err = ""
