@@ -357,6 +357,13 @@ Startup wipe drops every drawer in `project__*` wings AND clears
 - `engine._scheduler` is a singleton. APScheduler-style cron + `@every`.
 - Each run = immutable `schedule_history` row (id = run_id).
 - Synthetic `session_id = sched-<run_id>` scopes artifacts + traces.
+- **Cost + tool/LLM spans** are logged after the run's `run_turn` returns
+  (keyed by `sched-<run_id>` + the turn's trace_id): token cost into
+  `cost_log` via `_log_call_cost`, and one `tool_call` span per executed
+  tool + one `llm_call` span carrying token in/out into `traces.db` via
+  `_trace_manager`. Without this the run-detail inspector showed only a tool
+  COUNT — no token in/out, no cost, no per-tool list (regression since the
+  v9.0.0 SDK migration dropped the native loop that used to log these).
 - Per-task `attachments` are referenced in place; never per-run copies.
   `_purge_attachment_paths()` refuses paths without the
   `scheduled_attachments` segment.

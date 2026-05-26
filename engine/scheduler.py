@@ -1314,6 +1314,64 @@ class Scheduler:
                     # missed start events if the worker died mid-turn.
                     run_info["tool_calls"] = max(
                         run_info["tool_calls"], int(_result.get("tool_calls_total") or 0))
+
+                    # ── Cost + trace logging for the run ──
+                    # The interactive chat worker logs token cost (chat.py) and
+                    # the run-detail view reads tool/LLM spans from traces.db.
+                    # The scheduler fire-path did NEITHER since the SDK
+                    # migration (v9.0.0 dropped the native loop that used to do
+                    # it), so a scheduled run showed only a tool COUNT — no
+                    # token in/out, no cost, no per-tool list in the inspector.
+                    # Reconstruct both from run_turn's return: usage_total
+                    # (token totals) + tool_events (which tools ran), keyed by
+                    # the synthetic sched session id + the turn's trace_id so
+                    # run_detail's get_trace(trace_id) picks them up.
+                    try:
+                        _usage = _result.get("usage_total") or {}
+                        _tok_in = (int(_usage.get("input_tokens", 0) or 0)
+                                   + int(_usage.get("cache_creation_input_tokens", 0) or 0)
+                                   + int(_usage.get("cache_read_input_tokens", 0) or 0))
+                        _tok_out = int(_usage.get("output_tokens", 0) or 0)
+                        _trace_id = _result.get("turn_id") or None
+                        # Cost ledger (cost_log) keyed by the sched session id.
+                        if _tok_in or _tok_out:
+                            _brain._log_call_cost(
+                                model, _tok_in, _tok_out,
+                                session_id=sched_session_id,
+                                api_key=_prov.get("api_key"))
+                        # Spans for the inspector. tool_events is the authoritative
+                        # per-tool list; fall back to the on_event tool_log strings.
+                        _tm = getattr(_brain, "_trace_manager", None)
+                        if _tm and _trace_id:
+                            _tool_events = _result.get("tool_events") or []
+                            if _tool_events:
+                                for _ev in _tool_events:
+                                    _nm = (_ev.get("name") if isinstance(_ev, dict) else str(_ev)) or "?"
+                                    _summ = ""
+                                    if isinstance(_ev, dict):
+                                        _summ = str(_ev.get("result") or _ev.get("result_summary") or "")
+                                    _sp = _tm.start_span(
+                                        "tool_call", _nm, agent=agent_id,
+                                        model=model, trace_id=_trace_id,
+                                        session_id=sched_session_id)
+                                    _tm.end_span(_sp, status="ok", result_summary=_summ)
+                            else:
+                                for _entry in (run_info.get("tool_log") or []):
+                                    _nm = str(_entry).split("(", 1)[0] or "?"
+                                    _sp = _tm.start_span(
+                                        "tool_call", _nm, agent=agent_id,
+                                        model=model, trace_id=_trace_id,
+                                        session_id=sched_session_id)
+                                    _tm.end_span(_sp, status="ok")
+                            # One LLM span carrying the token totals so the
+                            # run-detail stats block shows tokens in/out.
+                            _llm = _tm.start_span(
+                                "llm_call", model, agent=agent_id, model=model,
+                                trace_id=_trace_id, session_id=sched_session_id)
+                            _tm.end_span(_llm, status="ok",
+                                         tokens_in=_tok_in, tokens_out=_tok_out)
+                    except Exception as _obs_e:
+                        print(f"  [WARN] sched observability log failed: {_obs_e}", flush=True)
                 # Check if the loop returned an error string instead of raising.
                 # Strip the redundant 'Delegation error: ' prefix and the trailing
                 # colon-with-nothing-after that comes from bare-exception args, and
