@@ -8,8 +8,8 @@ metadata:
   #   reconciled against — a drift indicator. The pre-push hook warns when it
   #   falls behind brain.VERSION (override with SKILL_DOC_OK=1). Keep both in
   #   sync with the change that touches the skill.
-  skill_version: 1.5.0
-  brain_agent_version: 9.27.0
+  skill_version: 1.7.0
+  brain_agent_version: 9.28.0
 ---
 
 # Brain-Agent Operator Guide
@@ -49,9 +49,12 @@ Load it whenever the user:
    - "Do X for me" / operate the system → `04-recipes.md`
    - Endpoint / DB / tool details → `01-api.md` / `02-tools.md` / `03-storage.md`
    - "Why does it behave this way" → `05-internals.md`
-   - A code-level detail none of the above cover → read the actual source
-     from GitHub via `web_fetch` (last resort) — see `05-internals.md`
-     "Reading the brain-agent source from GitHub".
+   - Anything these files don't (fully) cover — an exact value, a limit, a
+     default, "how does X work internally" → look it up in the actual
+     brain-agent SOURCE: `mempalace_query` (searches the `brain_code` wing in
+     helpdesk mode) + `code_graph_query` to find the file, then `web_fetch`
+     the raw file from GitHub for the precise current value. See
+     `05-internals.md` "Reading the brain-agent source".
 2. **Read the file before acting.** These curated files are your primary
    ground truth — do not invent endpoints, column names, tool args, button
    names, or file paths. The local source code is **not on disk in
@@ -67,10 +70,18 @@ Load it whenever the user:
    show the user the created row, offer to run-now.
 6. When the user asks "how do I", give them the **shortest correct
    answer** from `06-user-manual.md` — don't paste the whole section.
-7. If a fact isn't in these files, don't guess. Either read the source from
-   GitHub (step 1's last bullet) and answer from there, or say plainly that
-   it's not documented. A missing detail also means the skill needs updating
-   — never invent one.
+7. **If these files don't (fully) answer it, do NOT guess and do NOT say "it
+   doesn't exist" — go to the source.** Whenever the docs are silent,
+   incomplete, or you're unsure about an internal mechanism (a limit, a
+   default, exact behaviour, "what happens when…"), you MUST look it up in the
+   brain-agent source before answering: `mempalace_query` (the `brain_code`
+   wing) + `code_graph_query` to locate the file, then `web_fetch` the raw
+   GitHub file to read the precise value. THEN answer from what the source
+   actually says, citing the file. Inventing an answer or wrongly claiming a
+   feature is absent (e.g. "there is no tool-round limit" when the code has
+   one) is the worst outcome — the source is there precisely so you don't
+   have to guess. Only if the source genuinely doesn't cover it do you say
+   so plainly. A persistent doc gap also means the skill needs updating.
 
 ## Reference files (read on demand)
 

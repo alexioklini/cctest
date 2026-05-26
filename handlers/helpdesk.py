@@ -161,6 +161,135 @@ def _format_view_context(ctx: dict) -> str:
     return f"[Kontext — der Nutzer ist gerade hier: {'; '.join(bits)}]\n\n"
 
 
+# Source-context injection knobs. The mined brain-agent source lives in the
+# shared `brain_code` MemPalace wing; we pre-search it for EVERY Brainy turn
+# and inject the top chunks so the model always has the real code in front of
+# it — rather than relying on it to call a tool (mistral-small follows
+# tool-discipline prompts unreliably; see project memory). Kept compact so
+# trivial questions don't pay much: a handful of short snippets.
+_SOURCE_CTX_N = 6          # semantic chunks to inject (code embeddings are
+                           # fuzzy — over-fetch a bit)
+_SOURCE_CTX_LEX = 3        # extra chunks per lexical ($contains) token
+_SOURCE_CTX_CHARS = 600    # per-chunk text cap
+_SOURCE_CTX_MAX = 10       # total chunks injected (after merge/dedup)
+
+
+def _translate_question_to_code_terms(question: str, model: str) -> list[str]:
+    """Best-effort: turn a (often German) user question into English code
+    search terms / likely identifiers, so lexical `$contains` can bridge the
+    natural-language ↔ source-token gap ("Tool-Runden" → "max_tool_rounds").
+    One cheap LLM round; on any failure returns [] (caller falls back to the
+    raw question only). Never raises."""
+    if not model:
+        return []
+    try:
+        sys_p = (
+            "You map a user question about the brain-agent codebase to LIKELY "
+            "source-code identifiers and English search keywords. Output ONLY a "
+            "comma-separated list of 3-8 terms — snake_case identifiers, class "
+            "names, config keys, or short English keywords that would literally "
+            "appear in the Python/JS source. No prose, no explanation."
+        )
+        out = sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": question}],
+            model=model, system_prompt=sys_p, purpose="transform",
+            max_tokens=80, max_rounds=1, timeout_s=30.0,
+        )
+        raw = (out.get("reply") or "").strip()
+        if not raw:
+            return []
+        # split on commas/newlines; keep terms that look like code/keywords
+        import re as _re
+        terms = []
+        for part in _re.split(r"[,\n]", raw):
+            t = part.strip().strip("`'\"")
+            if t and len(t) <= 40 and _re.match(r"^[A-Za-z][A-Za-z0-9_./-]*$", t):
+                terms.append(t)
+        return terms[:8]
+    except Exception:
+        return []
+
+
+def _build_source_context(question: str, model: str = "") -> str:
+    """Search the `brain_code` wing for the question and return a compact
+    German preamble with the top source snippets — injected into the wire copy
+    of the user's message so Brainy answers from the real code without having
+    to call a tool first.
+
+    Hybrid retrieval to beat the language/embedding gap:
+      1. semantic vector search on the raw question (concept questions);
+      2. lexical `$contains` search on code terms translated from the question
+         (exact identifiers like `max_tool_rounds` that embeddings miss).
+    Results are merged + deduped by (file, text). Best-effort throughout —
+    returns '' if the wing is empty / search fails (never blocks the turn)."""
+    q = (question or "").strip()
+    if not q:
+        return ""
+    try:
+        engine._ensure_mempalace_importable()
+        from mempalace.palace import get_collection as _gc
+        from mempalace.searcher import build_where_filter as _bw
+        import re as _re
+        palace = (engine._load_mempalace_config() or {}).get("palace_path", "")
+        if not palace:
+            return ""
+        col = _gc(palace, create=False)
+        if col is None:
+            return ""
+        where = _bw("brain_code", None)
+
+        collected = []  # (source_file, snippet)
+        seen = set()
+
+        def _add(docs, metas):
+            for doc, meta in zip(docs or [], metas or []):
+                sf = ((meta or {}).get("source_file") or "")
+                m = _re.search(r"\.brain-source-clone/[^/]+/(.+)$", sf)
+                if m:
+                    sf = m.group(1)
+                snippet = (doc or "").strip()[:_SOURCE_CTX_CHARS]
+                key = (sf, snippet[:80])
+                if snippet and key not in seen:
+                    seen.add(key)
+                    collected.append((sf, snippet))
+
+        # 1) Semantic
+        res = col.query(query_texts=[q], n_results=_SOURCE_CTX_N,
+                        include=["documents", "metadatas"], where=where)
+        _add((res.get("documents") or [[]])[0], (res.get("metadatas") or [[]])[0])
+
+        # 2) Lexical $contains on translated code terms (+ the question's own
+        #    long-ish ascii tokens as a cheap fallback when translation is off).
+        terms = _translate_question_to_code_terms(q, model)
+        if not terms:
+            terms = [t for t in _re.findall(r"[A-Za-z_]{5,}", q)][:5]
+        for term in terms:
+            try:
+                lres = col.query(
+                    query_texts=[q], n_results=_SOURCE_CTX_LEX,
+                    include=["documents", "metadatas"], where=where,
+                    where_document={"$contains": term})
+                _add((lres.get("documents") or [[]])[0],
+                     (lres.get("metadatas") or [[]])[0])
+            except Exception:
+                continue
+
+        if not collected:
+            return ""
+        lines = [f"--- {sf} ---\n{snip}" for sf, snip in collected[:_SOURCE_CTX_MAX]]
+        body = "\n\n".join(lines)
+        return (
+            "[Quellcode-Kontext (automatisch aus dem brain-agent-Source gesucht — "
+            "nutze ihn, um die Frage faktisch korrekt zu beantworten; wenn die "
+            "Skill-Doku schweigt, ist DIES die Wahrheit; rate nicht und behaupte "
+            "nicht, etwas existiere nicht, wenn der Code es zeigt; ist der Auszug "
+            "uneindeutig, sag das offen statt zu raten):\n"
+            f"{body}\n--- Ende Quellcode-Kontext ---]\n\n"
+        )
+    except Exception:
+        return ""
+
+
 # Replay-window knobs. Keep the conversation cheap + on-topic without
 # fragmenting storage: replay turns from the user's CURRENT context plus a
 # few most-recent regardless of context (so an immediate follow-up after a
@@ -277,6 +406,23 @@ class HelpdeskHandlerMixin:
         # The context label is persisted with it → survives reload + restart and
         # drives both the badge and context-filtered replay.
         ChatDB.append_helpdesk_message(uid, "user", message, context_label=label)
+
+        # Server-side source-context injection (v9.28.0): pre-search the mined
+        # brain-agent source (`brain_code` wing) for this question and prepend
+        # the top snippets to the LAST user message that goes to the model.
+        # This makes Brainy answer code-level questions from the real source
+        # WITHOUT depending on it to call a tool — mistral-small follows
+        # tool-discipline prompts unreliably (verified: it kept answering from
+        # skill docs / guessing on "tool-round limit"). Ephemeral: `messages`
+        # is the per-request wire list; the persisted question above is the
+        # user's plain text, so the source preamble never enters history.
+        _src_ctx = _build_source_context(message, model=model)
+        if _src_ctx and messages:
+            for _i in range(len(messages) - 1, -1, -1):
+                if messages[_i].get("role") == "user":
+                    messages[_i] = {**messages[_i],
+                                    "content": _src_ctx + messages[_i].get("content", "")}
+                    break
 
         # ── Open the SSE stream ──
         self.send_response(200)
