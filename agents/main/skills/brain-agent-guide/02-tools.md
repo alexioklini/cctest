@@ -51,6 +51,15 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
     their full verbatim text inline + `content_via:"snippet"`. (History:
     v9.34.0 BLANKED the snippet to force reads; v9.37.0 brought it back, widened
     + read-optional, to cut token cost — same trade-off as the KG span above.)
+  - **Matched-regions auto-read** (v9.39.0): mempalace_query records which
+    chunk_indices of each file matched this session; a follow-up
+    `read_document(read_path)` on that `.md` returns ONLY the matched regions
+    (union of ±2-chunk windows around each matched chunk), `format:"text-regions"`,
+    not the whole file — files often match on scattered chunks, so this gets
+    every relevant region at a fraction of the bytes. Automatic (no flag). Falls
+    back to a full read when offset/limit is given, the file wasn't a query hit,
+    or the regions cover ~the whole file. Eval: read bytes -71% (461->130 KB) at
+    a measured -0.07 mean quality cost (occasionally clips needed context).
   - **Cross-encoder reranker** (v9.38.0, `config.json → mempalace.reranker`,
     default ON): after vector retrieval, a BAAI/bge-reranker-v2-m3 cross-encoder
     re-ranks the top `top_k_in` (40) candidates by joint (query,passage) scoring;

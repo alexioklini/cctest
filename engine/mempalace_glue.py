@@ -312,6 +312,10 @@ def tool_mempalace_query(args: dict) -> str:
                     "similarity": round(similarity, 3),
                     "matched_via": "chroma-vector",
                     "text": doc or "",
+                    # Carried so read_document can return only the matched
+                    # regions of a file (union of windows around each matched
+                    # chunk) instead of the whole document.
+                    "chunk_index": meta.get("chunk_index"),
                 })
             results = {"results": raw, "total_before_filter": len(raw)}
         except Exception as e:
@@ -859,6 +863,11 @@ def tool_mempalace_query(args: dict) -> str:
             "content_via": (
                 "snippet+optional_read" if _has_readable else "snippet"),
         })
+        # Record this match so a later read_document(read_path) returns only
+        # the matched regions of the file, not the whole thing. Keyed on the
+        # absolute .md path read_document resolves to (full_path).
+        if _has_readable and full_path and "/" in full_path:
+            _brain._record_match_regions(full_path, [r.get("chunk_index")])
 
     # Distinct readable sources (drawers backed by a real document on disk).
     # The matched chunk is now inline, so reading is OPTIONAL — list these so

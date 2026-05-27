@@ -223,6 +223,47 @@ def _record_session_read_path(path: str) -> None:
         bucket.add(abs_path)
 
 
+# --- Matched-regions tracker -------------------------------------------------
+# mempalace_query records, per session, which chunk_indices of each file matched
+# the query. read_document consults this so that a follow-up read of a
+# mempalace-sourced file returns ONLY the matched regions (union of windows
+# around each matched chunk) instead of the whole file — files commonly match
+# on several SCATTERED chunks (measured: a Löschkonzept matched chunks 2/18/20/48),
+# so a single window misses most and a full read drags the entire doc in.
+# Keyed by the absolute .brain-extracted/*.md path (what the chunk store keys on
+# AND what read_path resolves to). Unknown file → caller falls back to full read.
+_session_match_regions_lock = threading.Lock()
+_session_match_regions: dict[str, dict[str, set]] = {}  # sid -> {abs_md_path -> {chunk_index,...}}
+
+
+def _record_match_regions(md_path: str, chunk_indices) -> None:
+    """mempalace_query → note which chunk_indices of md_path matched this turn."""
+    if not md_path:
+        return
+    cis = {int(c) for c in chunk_indices if c is not None}
+    if not cis:
+        return
+    try:
+        abs_path = os.path.abspath(os.path.expanduser(md_path))
+    except Exception:
+        return
+    sid = _session_read_paths_sid()
+    with _session_match_regions_lock:
+        bysid = _session_match_regions.setdefault(sid, {})
+        bysid.setdefault(abs_path, set()).update(cis)
+
+
+def _get_match_regions(md_path: str) -> set:
+    """read_document → matched chunk_indices for md_path this session, or empty."""
+    try:
+        abs_path = os.path.abspath(os.path.expanduser(md_path))
+    except Exception:
+        return set()
+    sid = _session_read_paths_sid()
+    with _session_match_regions_lock:
+        return set((_session_match_regions.get(sid) or {}).get(abs_path) or set())
+
+
 def _read_doc_cache_session_paths(session_id: str | None = None) -> list[str]:
     """Return absolute paths the given session has read via read_document /
     read_file. Name kept for backward compatibility with the citation

@@ -42,6 +42,65 @@ from engine.tool_exec import (
 )
 
 
+def _read_matched_regions(md_path: str, matched: set, radius: int = 2):
+    """Return the union of chunk windows around each matched chunk_index of
+    md_path, joined in order with a marker at skipped gaps. None on any failure
+    (caller then falls back to a full read — never silently truncates).
+    """
+    import brain as _brain
+    try:
+        cfg = _brain._load_mempalace_config()
+        palace = cfg.get("palace_path", "")
+        if not palace or not os.path.isdir(palace):
+            return None
+        ok, _ = _brain._ensure_mempalace_importable()
+        if not ok:
+            return None
+        from mempalace.palace import get_collection
+        col = get_collection(palace, create=False)
+        if col is None:
+            return None
+        got = col.get(where={"source_file": md_path},
+                      include=["documents", "metadatas"])
+        docs = got.get("documents") or []
+        metas = got.get("metadatas") or []
+        rows = []
+        for d, m in zip(docs, metas):
+            if not isinstance(d, str):
+                continue
+            try:
+                ci = int((m or {}).get("chunk_index"))
+            except (TypeError, ValueError):
+                continue
+            rows.append((ci, d))
+        if not rows:
+            return None
+        rows.sort(key=lambda t: t[0])
+        # Union of [ci-radius .. ci+radius] over all matched chunks.
+        keep = set()
+        for ci in matched:
+            for j in range(ci - radius, ci + radius + 1):
+                keep.add(j)
+        out, prev = [], None
+        for ci, d in rows:
+            if ci not in keep:
+                continue
+            if prev is not None and ci > prev + 1:
+                out.append(f"\n[... {ci - prev - 1} chunk(s) omitted — not matched ...]\n")
+            out.append(d)
+            prev = ci
+        if not out:
+            return None
+        # Safety: if the matched regions cover ~the whole file anyway, the
+        # caller's full read is simpler — signal fallback.
+        kept = sum(1 for ci, _ in rows if ci in keep)
+        if kept >= len(rows):
+            return None
+        return "\n\n".join(out)
+    except Exception:
+        return None
+
+
 def tool_read_file(args: dict) -> str:
     import brain as _brain
     node_result = _brain._route_to_node("read_file", args)
@@ -268,6 +327,24 @@ def tool_read_document(args: dict) -> str:
             return _ok_and_cache({"path": path, "format": "svg", "content": content})
 
         else:
+            # Matched-regions auto-read: when this exact .md file came from a
+            # mempalace_query this session, the relevant content is the few
+            # chunks that matched — typically SCATTERED across the doc (a
+            # Löschkonzept matched chunks 2/18/20/48). Return the union of small
+            # windows around those matched chunks instead of the whole file —
+            # the model gets every relevant region at a fraction of the bytes,
+            # automatically (no new tool / no model decision). Falls back to a
+            # full read when (a) the model paginated explicitly (offset/limit),
+            # or (b) this file wasn't a query hit (regions unknown) — so an
+            # ad-hoc read or a "give me everything" never silently truncates.
+            _regions = (set() if (args.get("offset") or args.get("limit"))
+                        else _brain._get_match_regions(path))
+            if _regions:
+                _rr = _read_matched_regions(path, _regions, radius=2)
+                if _rr is not None:
+                    return _ok_and_cache({"path": path, "format": "text-regions",
+                                          "matched_chunks": sorted(_regions),
+                                          "content": _rr})
             # Plain-text / markdown / unknown-extension read. Honor explicit
             # offset+limit when the model paginates; otherwise read the whole
             # file. The previous hard-cap at 500 lines truncated mid-document
