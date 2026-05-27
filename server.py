@@ -963,6 +963,16 @@ from handlers.classification import ClassificationHandlerMixin
 from handlers.helpdesk import HelpdeskHandlerMixin
 from handlers.feedback import FeedbackHandlerMixin
 
+
+def _fb_id_from_path(path: str) -> int:
+    """Pull the numeric feedback id from /v1/feedback/<id>/<verb>. Returns -1
+    on a malformed path so the handler resolves to a clean 404, not a 500."""
+    parts = path.strip("/").split("/")
+    try:
+        return int(parts[2])  # v1 / feedback / <id> / <verb>
+    except (ValueError, IndexError):
+        return -1
+
 # Inject server-level globals into handler modules (they were originally
 # defined in the same file and relied on shared module globals).
 # We inject into each handler module's __dict__ so bare-name lookups work.
@@ -1668,6 +1678,8 @@ class BrainAgentHandler(
             self._handle_favourites_image_get(path)
         elif path == "/v1/feedback/mine":
             self._handle_feedback_mine()
+        elif path.startswith("/v1/feedback/") and path.endswith("/thread"):
+            self._handle_feedback_thread(_fb_id_from_path(path))
         elif path == "/v1/feedback":
             self._handle_feedback_list()
         elif path == "/v1/share":
@@ -1746,6 +1758,10 @@ class BrainAgentHandler(
             self._handle_favourites_image_upload(path)
         elif path == "/v1/feedback":
             self._handle_feedback_submit()
+        elif path.startswith("/v1/feedback/") and path.endswith("/message"):
+            self._handle_feedback_message(_fb_id_from_path(path))
+        elif path.startswith("/v1/feedback/") and path.endswith("/seen"):
+            self._handle_feedback_seen(_fb_id_from_path(path))
         elif path == "/v1/share":
             self._handle_share_update()
         elif path == "/v1/share/transfer":

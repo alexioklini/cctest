@@ -105,10 +105,12 @@ function brainyOpen() {
         </div>
         <div id="brainy-list"></div>
       </div>
-      <button id="brainy-to-top" class="brainy-anchor" title="Nach oben" onclick="brainyScrollTop()" style="display:none">
+      <button id="brainy-up" class="brainy-anchor" title="Klick: ein Eintrag hoch · Halten: ganz nach oben" style="display:none">
+        <svg class="lp-ring" viewBox="0 0 36 36" width="30" height="30" aria-hidden="true"><circle cx="18" cy="18" r="16"/></svg>
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
       </button>
-      <button id="brainy-to-bottom" class="brainy-anchor brainy-anchor-bottom" title="Nach unten" onclick="brainyScrollBottom()" style="display:none">
+      <button id="brainy-down" class="brainy-anchor brainy-anchor-bottom" title="Klick: ein Eintrag runter · Halten: ganz nach unten" style="display:none">
+        <svg class="lp-ring" viewBox="0 0 36 36" width="30" height="30" aria-hidden="true"><circle cx="18" cy="18" r="16"/></svg>
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <div class="brainy-input-row">
@@ -123,6 +125,9 @@ function brainyOpen() {
     </div>`;
   document.body.appendChild(overlay);
   overlay.style.display = 'flex';
+  // Short press steps one exchange; long press jumps to top/bottom.
+  wireLongPress(document.getElementById('brainy-up'), () => brainyScrollTurn(-1), () => brainyScrollTop());
+  wireLongPress(document.getElementById('brainy-down'), () => brainyScrollTurn(1), () => brainyScrollBottom());
   // Lazy warmup: prime Brainy's KV prefix now (fire-and-forget). No-op unless
   // Brainy's model is local + warmup-enabled; server debounces re-opens.
   try { API.post('/v1/helpdesk/warmup', {}); } catch (e) {}
@@ -207,7 +212,7 @@ async function brainyLoadHistory() {
   if (msgs.length) brainyState.oldestId = msgs[0].id;   // chronological → first is oldest
   brainyState.exchanges = brainyPairExchanges(msgs);
   brainyRenderHistory();
-  brainyScrollBottom();
+  brainyScrollBottom(true);   // open → snap to latest, no animation
 }
 
 // Fetch the next older page (cursor = current oldest id), prepend, keep scroll.
@@ -319,13 +324,13 @@ function brainyExchangeHTML(x) {
   const badge = brainyContextBadge(x.ctx);
   const badgeHTML = badge
     ? `<div class="brainy-ctx-badge" title="Gefragt in: ${esc(badge)}">${esc(badge)}</div>` : '';
-  const q = x.q ? `<div class="brainy-bubble brainy-user">${badgeHTML}<div class="brainy-bubble-body">${esc(x.q)}</div></div>` : '';
+  const delBtn = `<button class="brainy-ex-del" title="Diesen Eintrag löschen" onclick="brainyDeleteExchange(${delId})">&times;</button>`;
+  const q = x.q ? `<div class="brainy-bubble brainy-user">${badgeHTML}<div class="brainy-bubble-body">${delBtn}${esc(x.q)}</div></div>` : '';
   const fb = (x.aid && typeof renderFeedbackControl === 'function')
     ? `<div class="brainy-bubble-fb">${renderFeedbackControl('brainy', x.aid, '', x.a || '')}</div>` : '';
   const a = (x.a || x.aid) ? `<div class="brainy-bubble brainy-bot"><span class="brainy-bubble-avatar">${brainyAvatarHTML()}</span>`
     + `<div class="brainy-bubble-body">${typeof renderMarkdown === 'function' ? renderMarkdown(x.a || '') : esc(x.a || '')}${fb}</div></div>` : '';
   return `<div class="brainy-exchange" data-id="${delId}">
-    <button class="brainy-ex-del" title="Diesen Eintrag löschen" onclick="brainyDeleteExchange(${delId})">&times;</button>
     ${q}${a}
     <div class="brainy-ex-time">${esc(brainyFmtTime(x.ts))}</div>
   </div>`;
@@ -339,7 +344,7 @@ function brainyToggleGroup(key) {
 /* ── Delete ─────────────────────────────────────────────────── */
 
 async function brainyDeleteExchange(id) {
-  if (!confirm('Diesen Brainy-Eintrag löschen?')) return;
+  if (!(await showConfirmDanger('Diesen Brainy-Eintrag löschen?', 'Eintrag löschen'))) return;
   const x = brainyState.exchanges.find((e) => (e.uid || e.aid) === id);
   if (!x) return;
   // An exchange spans two rows (question + answer) — delete BOTH, else the
@@ -353,7 +358,7 @@ async function brainyDeleteExchange(id) {
 }
 
 async function brainyDeleteGroup(key, startTs, endTs) {
-  if (!confirm('Alle Einträge dieser Gruppe löschen?')) return;
+  if (!(await showConfirmDanger('Alle Einträge dieser Gruppe löschen?', 'Gruppe löschen'))) return;
   try {
     await API.post('/v1/helpdesk/delete', { start_ts: startTs, end_ts: endTs });
     brainyState.exchanges = brainyState.exchanges.filter((x) => brainyGroupOf(x.ts).key !== key);
@@ -367,15 +372,47 @@ function brainyOnScroll() {
   const box = document.getElementById('brainy-messages');
   if (!box) return;
   if (box.scrollTop < 40) brainyLoadOlder();    // near the top → fetch older
-  const top = document.getElementById('brainy-to-top');
-  const bot = document.getElementById('brainy-to-bottom');
+  // One button per direction: short press steps an exchange, long press jumps
+  // top/bottom (wired in brainyOpen). Shown whenever not already at that edge.
+  const up = document.getElementById('brainy-up');
+  const down = document.getElementById('brainy-down');
   const far = box.scrollHeight - box.clientHeight;
-  if (top) top.style.display = box.scrollTop > 120 ? '' : 'none';
-  if (bot) bot.style.display = (far - box.scrollTop) > 120 ? '' : 'none';
+  if (up) up.style.display = box.scrollTop > 120 ? '' : 'none';
+  if (down) down.style.display = (far - box.scrollTop) > 120 ? '' : 'none';
 }
-function brainyScrollTop() { const b = document.getElementById('brainy-messages'); if (b) b.scrollTop = 0; }
-function brainyScrollBottom() { const b = document.getElementById('brainy-messages'); if (b) b.scrollTop = b.scrollHeight; }
-function brainyScroll() { brainyScrollBottom(); }
+// User-initiated jumps animate. `instant=true` for internal callers that must
+// not animate: initial open-to-bottom + load-older scroll-position restore
+// (a smooth animation there visibly jumps the view).
+function brainyScrollTop(instant) {
+  const b = document.getElementById('brainy-messages');
+  if (b) b.scrollTo({ top: 0, behavior: instant ? 'auto' : 'smooth' });
+}
+function brainyScrollBottom(instant) {
+  const b = document.getElementById('brainy-messages');
+  if (b) b.scrollTo({ top: b.scrollHeight, behavior: instant ? 'auto' : 'smooth' });
+}
+// Jump one exchange up (-1) or down (+1) relative to the viewport top edge.
+function brainyScrollTurn(dir) {
+  const box = document.getElementById('brainy-messages');
+  if (!box) return;
+  const items = Array.from(box.querySelectorAll('.brainy-exchange'));
+  if (!items.length) return;
+  const boxTop = box.getBoundingClientRect().top;
+  const tops = items.map(g => g.getBoundingClientRect().top - boxTop);
+  const EPS = 2;
+  let target = null;
+  if (dir < 0) {
+    for (let i = tops.length - 1; i >= 0; i--) { if (tops[i] < -EPS) { target = items[i]; break; } }
+  } else {
+    for (let i = 0; i < tops.length; i++) { if (tops[i] > EPS) { target = items[i]; break; } }
+  }
+  if (!target) { if (dir < 0) brainyScrollTop(); else brainyScrollBottom(); return; }
+  // Animate the box's own scrollTop (not scrollIntoView, which targets the
+  // page viewport and snaps inside the modal) — matches top/bottom smoothness.
+  const offset = target.getBoundingClientRect().top - boxTop; // px from viewport top edge
+  box.scrollTo({ top: box.scrollTop + offset, behavior: 'smooth' });
+}
+function brainyScroll() { brainyScrollBottom(true); }   // streaming follow → instant, no per-token animation
 
 function brainyAutogrow(el) {
   el.style.height = 'auto';
@@ -412,7 +449,7 @@ async function brainySend() {
     + `<div class="brainy-bubble-body" data-live-body><span class="brainy-typing"><span></span><span></span><span></span></span></div></div>`;
   list.appendChild(live);
   const bodyEl = live.querySelector('[data-live-body]');
-  brainyScrollBottom();
+  brainyScrollBottom(true);   // new send → snap so the typing bubble is visible
 
   brainyState.streaming = true;
   const sendBtn = document.getElementById('brainy-send-btn');

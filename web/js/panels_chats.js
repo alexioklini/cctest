@@ -261,16 +261,54 @@ function scrollToTop() {
   if (el) el.scrollTop = 0;
 }
 
-// Show the top arrow only when scrolled away from the top, the bottom arrow
-// only when scrolled away from the bottom. The arrows are position:fixed, so
-// we anchor them to the message area's current viewport rect each call
-// (centered horizontally, just inside the top / bottom edge of the scroll
-// area — the bottom edge already sits above the composer).
+// Count turn-groups whose top edge sits above (-) / below (+) the viewport
+// top edge. Used both to pick the step target and to decide when a step
+// button is redundant with the full top/bottom jump.
+function _turnsRelToViewport(el) {
+  const groups = Array.from(el.querySelectorAll('.turn-group'));
+  const elTop = el.getBoundingClientRect().top;
+  const EPS = 2; // px slack so the current top group counts as neither
+  let above = 0, below = 0;
+  for (const g of groups) {
+    const off = g.getBoundingClientRect().top - elTop;
+    if (off < -EPS) above++;
+    else if (off > EPS) below++;
+  }
+  return { groups, above, below };
+}
+
+// Jump one turn (= one user-question .turn-group) up (-1) or down (+1) relative
+// to what's currently at the top of the message viewport. Scrolls the target
+// turn header to the top edge.
+function scrollTurn(dir) {
+  const el = document.getElementById('messages-scroll');
+  if (!el) return;
+  const { groups } = _turnsRelToViewport(el);
+  if (!groups.length) return;
+  const elTop = el.getBoundingClientRect().top;
+  const tops = groups.map(g => g.getBoundingClientRect().top - elTop);
+  const EPS = 2;
+  let target = null;
+  if (dir < 0) {
+    for (let i = tops.length - 1; i >= 0; i--) { if (tops[i] < -EPS) { target = groups[i]; break; } }
+  } else {
+    for (let i = 0; i < tops.length; i++) { if (tops[i] > EPS) { target = groups[i]; break; } }
+  }
+  if (!target) { if (dir < 0) scrollToTop(); else scrollToBottom(); return; }
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// One button per direction (short press = step a turn, long press = top/bottom;
+// see wireLongPress). Show the up arrow only when scrolled away from the top,
+// the down arrow only when away from the bottom. The arrows are position:fixed,
+// so we anchor them to the message area's current viewport rect each call
+// (centered horizontally, just inside the top / bottom edge of the scroll area
+// — the bottom edge already sits above the composer).
 function updateScrollAnchors() {
   const el = document.getElementById('messages-scroll');
-  const topBtn = document.getElementById('scroll-to-top');
-  const botBtn = document.getElementById('scroll-to-bottom');
-  if (!el || !topBtn || !botBtn) return;
+  const upBtn = document.getElementById('scroll-up');
+  const downBtn = document.getElementById('scroll-down');
+  if (!el || !upBtn || !downBtn) return;
   const PAD = 24; // px slack so the arrow hides when "basically" at the edge
   const scrollable = el.scrollHeight - el.clientHeight;
   const atTop = el.scrollTop <= PAD;
@@ -285,12 +323,12 @@ function updateScrollAnchors() {
   const cx = Math.round(Math.min(Math.max(r.left + r.width / 2, HALF + 1), vw - HALF - 1));
   const topY = Math.round(Math.min(Math.max(r.top + 12, 1), vh - BTN - 1));
   const botY = Math.round(Math.min(Math.max(r.bottom - 46, 1), vh - BTN - 1));
-  topBtn.style.left = cx + 'px';
-  topBtn.style.top = topY + 'px';
-  botBtn.style.left = cx + 'px';
-  botBtn.style.top = botY + 'px';
-  topBtn.classList.toggle('visible', !atTop && r.height > 0);
-  botBtn.classList.toggle('visible', !atBottom && r.height > 0);
+  upBtn.style.left = cx + 'px';
+  upBtn.style.top = topY + 'px';
+  downBtn.style.left = cx + 'px';
+  downBtn.style.top = botY + 'px';
+  upBtn.classList.toggle('visible', !atTop && r.height > 0);
+  downBtn.classList.toggle('visible', !atBottom && r.height > 0);
 }
 
 function initScrollAnchors() {
@@ -299,6 +337,38 @@ function initScrollAnchors() {
   el._scrollAnchorsWired = true;
   el.addEventListener('scroll', updateScrollAnchors, { passive: true });
   window.addEventListener('resize', updateScrollAnchors, { passive: true });
+  const upBtn = document.getElementById('scroll-up');
+  const downBtn = document.getElementById('scroll-down');
+  wireLongPress(upBtn, () => scrollTurn(-1), () => scrollToTop());
+  wireLongPress(downBtn, () => scrollTurn(1), () => scrollToBottom());
+  // Reveal the buttons only while the mouse is actively moving inside the chat
+  // area; fade them out after a short idle pause or when the pointer leaves.
+  // The buttons are position:fixed siblings (not children) of the scroll area,
+  // so we also treat hovering a button as activity — otherwise reaching for one
+  // would count as leaving the chat area and fade it out from under the cursor.
+  const IDLE_MS = 1500;
+  let idleTimer = null;
+  const setActive = (on) => {
+    if (upBtn) upBtn.classList.toggle('mouse-active', on);
+    if (downBtn) downBtn.classList.toggle('mouse-active', on);
+  };
+  const poke = () => {
+    setActive(true);
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => setActive(false), IDLE_MS);
+  };
+  const leave = () => {
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+    setActive(false);
+  };
+  el.addEventListener('mousemove', poke, { passive: true });
+  el.addEventListener('scroll', poke, { passive: true });   // scrolling also reveals, then idle-fades
+  el.addEventListener('mouseleave', leave);
+  [upBtn, downBtn].forEach((b) => {
+    if (!b) return;
+    b.addEventListener('mousemove', poke, { passive: true });
+    b.addEventListener('mouseleave', leave);
+  });
   updateScrollAnchors();
 }
 

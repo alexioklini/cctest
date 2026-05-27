@@ -1152,3 +1152,43 @@ const NextPrompt = {
   },
 };
 
+// Wire a scroll-anchor button so a SHORT press calls onShort() and a LONG
+// press (held ≥ HOLD_MS) calls onLong() instead. While held, a CSS-driven
+// progress ring fills (the button gets `.lp-charging`; the ring animation
+// duration matches HOLD_MS). Pointer-events based → works on mouse + touch.
+// Releasing/leaving/moving-away before the threshold = short press. Idempotent
+// per element (guarded by _lpWired).
+function wireLongPress(btn, onShort, onLong) {
+  if (!btn || btn._lpWired) return;
+  btn._lpWired = true;
+  const HOLD_MS = 500;
+  let timer = null, fired = false, downId = null;
+  const clear = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    btn.classList.remove('lp-charging');
+    downId = null;
+  };
+  btn.addEventListener('pointerdown', (e) => {
+    if (e.button != null && e.button !== 0) return;   // primary button only
+    fired = false;
+    downId = e.pointerId;
+    btn.classList.add('lp-charging');
+    timer = setTimeout(() => {
+      fired = true;
+      btn.classList.remove('lp-charging');
+      timer = null;
+      try { onLong(); } catch (err) { /* best-effort */ }
+    }, HOLD_MS);
+  });
+  btn.addEventListener('pointerup', (e) => {
+    if (downId !== null && e.pointerId !== downId) return;
+    const wasCharging = timer !== null;
+    clear();
+    if (wasCharging && !fired) { try { onShort(); } catch (err) { /* best-effort */ } }
+  });
+  // Pointer left the button or got cancelled before the threshold → abort
+  // (no short fire — the user moved off intentionally).
+  btn.addEventListener('pointerleave', clear);
+  btn.addEventListener('pointercancel', clear);
+}
+

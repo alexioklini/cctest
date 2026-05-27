@@ -1436,12 +1436,31 @@ async function _genTab_feedback(C) {
           ? `<button class="fb-jump" title="Zum Inhalt springen"
                onclick="feedbackJumpTo('${esc(r.surface)}','${esc(String(r.target_id))}','${esc(r.session_id || '')}')">↗</button>`
           : `<span class="fb-jump fb-jump-disabled" title="Kein direkter Sprung verfügbar">·</span>`;
+        // Inline conversation thread + admin reply box. Messages older→newer;
+        // 'admin' bubbles flush-left ("Team"), 'user' flush-right.
+        const thread = Array.isArray(r.thread) ? r.thread : [];
+        const threadHtml = thread.length
+          ? `<div class="fb-admin-thread">${thread.map(m => {
+              const isAdmin = m.author_role === 'admin';
+              return `<div class="fb-bubble ${isAdmin ? 'fb-bubble-them' : 'fb-bubble-mine'}">`
+                + `${isAdmin ? '<span class="fb-bubble-who">Team</span>' : ''}`
+                + `<span class="fb-bubble-text">${esc(m.text || '')}</span></div>`;
+            }).join('')}</div>`
+          : '';
         return `
         <div class="fb-admin-row">
           <span>${esc(SURF_LABELS[r.surface] || r.surface)}</span>
           <span class="${r.rating === 'down' ? 'fb-badge-down' : 'fb-badge-up'}">${r.rating === 'down' ? '👎' : '👍'}</span>
           <span>${r.comment ? esc(r.comment) : '<i style="color:var(--text-400)">— kein Kommentar —</i>'}
-            ${r.context_snapshot ? `<div class="fb-snap">↳ ${esc(r.context_snapshot)}</div>` : ''}</span>
+            ${r.context_snapshot ? `<div class="fb-snap">↳ ${esc(r.context_snapshot)}</div>` : ''}
+            ${threadHtml}
+            <div class="fb-admin-reply">
+              <input type="text" class="fb-admin-reply-input" maxlength="300"
+                     placeholder="Eine Zeile antworten… (Enter)"
+                     onkeydown="if(event.key==='Enter'){event.preventDefault();feedbackAdminReply(${r.id},this);}">
+              <button class="fb-admin-reply-send" onclick="feedbackAdminReply(${r.id},this.previousElementSibling)">➤</button>
+            </div>
+          </span>
           <span style="font-size:12px;color:var(--text-400)">${esc(r.user_name || r.user_id || '—')}</span>
           <span style="font-size:12px;color:var(--text-400)">${esc(fmtDate(r.updated_at))}</span>
           ${jump}
@@ -1466,6 +1485,21 @@ async function _genTab_feedback(C) {
       </div>
       ${body}
     </div>`;
+}
+
+// Admin posts a one-line reply into a feedback thread, then re-renders the tab
+// so the new bubble + bumped timestamp show. Restores the text on failure.
+async function feedbackAdminReply(fbId, input) {
+  const text = (input.value || '').trim();
+  if (!text) return;
+  input.value = '';
+  try {
+    await API.feedbackMessage(fbId, text);
+    _genTab_feedback(document.getElementById('general-tab-content'));
+  } catch (e) {
+    input.value = text;
+    if (typeof showToast === 'function') showToast('Antwort fehlgeschlagen', true);
+  }
 }
 
 async function _genTab_classification(C) {

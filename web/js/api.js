@@ -395,6 +395,10 @@ class API {
     return this.get('/v1/feedback/mine' + (qs ? '?' + qs : ''));
   }
   static deleteFeedback(id) { return this.del(`/v1/feedback/${id}`); }
+  // Threaded conversation on one feedback row (user ↔ admin, one-liners).
+  static feedbackThread(id) { return this.get(`/v1/feedback/${id}/thread`); }
+  static feedbackMessage(id, text) { return this.post(`/v1/feedback/${id}/message`, { text }); }
+  static feedbackSeen(id) { return this.post(`/v1/feedback/${id}/seen`, {}); }
 }
 
 

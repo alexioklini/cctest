@@ -213,6 +213,22 @@ classification=scan_id). **Per-user** — the UNIQUE key means a user re-rating 
 same response overwrites their own row (created_at preserved). Written by
 `POST /v1/feedback`; admin reads via `GET /v1/feedback`.
 
+### chats.db → feedback_messages + feedback_seen (threaded conversation)
+```
+feedback_messages: id INTEGER PK, feedback_id INTEGER (FK→feedback.id),
+  author_role TEXT ('user'|'admin'), author_user_id TEXT, text TEXT,
+  created_at REAL                       -- index idx_fbmsg_fid(feedback_id)
+feedback_seen: feedback_id INTEGER, user_id TEXT, last_seen_at REAL,
+  UNIQUE(feedback_id, user_id)
+```
+The feedback row is the **anchor** (rating + first comment); each further
+one-line message (emoji welcome, ≤300 chars) is a `feedback_messages` row.
+`author_role` distinguishes the rater (`user`) from an admin reply (`admin`).
+`feedback_seen` is a per-user read cursor: an admin message newer than
+`last_seen_at` counts as unread → the widget's unread dot. A new message bumps
+the anchor's `updated_at` (re-sorts it to the top of the admin list). Written by
+`POST /v1/feedback/<id>/message` + `/seen`; read via `/thread`.
+
 ### context.db (LCM)
 Nodes + edges of the lossless context manager DAG. `nodes(id, session_id,
 depth, content, token_count, …)`, `edges(parent_id, child_id, kind)`.

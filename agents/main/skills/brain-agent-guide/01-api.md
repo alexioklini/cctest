@@ -338,11 +338,30 @@ user re-rating the same response upserts their own row.
   schedule | translation | classification`; `rating` ∈ `up | down`. Any
   authenticated user. 400 on bad surface/rating/missing target_id.
 - `GET /v1/feedback/mine?surface=&session_id=` — the caller's own feedback rows
-  (used by the UI to restore the highlighted thumb after reload).
+  (used by the UI to restore the highlighted thumb after reload). Each row also
+  carries `msg_count` and `unread` (admin replies the user hasn't seen → the
+  widget's unread dot).
 - `GET /v1/feedback?surface=&rating=` — **admin only** — list all feedback
   (403 for non-admins). Each row is enriched with `user_name` (resolved
-  display_name → username → id) so the admin UI shows a name, not just the id.
+  display_name → username → id) and a `thread` array (the conversation).
 - `DELETE /v1/feedback/<id>` — **admin only**.
+
+### Feedback conversation (threaded)
+
+Once a feedback row exists, user and admin exchange short one-line messages
+(emoji welcome, capped at 300 chars). The feedback row stays the anchor (rating
++ first comment); the back-and-forth lives in `feedback_messages`.
+
+- `GET /v1/feedback/<id>/thread` — messages for one feedback row, oldest first.
+  Readable by the **rater** (matching `user_id`) or an **admin**; 403 otherwise,
+  404 if the anchor is gone. Returns `{feedback, thread}`.
+- `POST /v1/feedback/<id>/message` — body `{text}`. Appends one message;
+  `author_role` is derived from the caller (admin → `admin`, else `user`). Only
+  the rater + admins may post. Posting marks the thread read for the author and
+  bumps the anchor's `updated_at`. Returns `{message, thread}`. 400 on empty
+  text / bad role.
+- `POST /v1/feedback/<id>/seen` — the rater records having read the thread
+  (clears their unread dot).
 
 ## Services / Notifications / Backup / Status
 

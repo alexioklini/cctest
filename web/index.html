@@ -266,10 +266,15 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     <!-- Scroll anchors: centered overlay arrows, shown only when the
          corresponding end is off-screen (see updateScrollAnchors).
          position:fixed; JS positions them over the message area. -->
-    <button id="scroll-to-top" class="scroll-anchor" title="Nach oben scrollen" aria-label="Nach oben scrollen" onclick="scrollToTop()">
+    <!-- One button per direction: short press steps one turn, long press
+         jumps to the very top/bottom. Wired via wireLongPress() in
+         initScrollAnchors(); the .lp-ring circle fills during the hold. -->
+    <button id="scroll-up" class="scroll-anchor" title="Klick: eine Anfrage hoch · Halten: ganz nach oben" aria-label="Eine Anfrage hoch (halten: ganz nach oben)">
+      <svg class="lp-ring" viewBox="0 0 36 36" width="34" height="34" aria-hidden="true"><circle cx="18" cy="18" r="16"/></svg>
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
     </button>
-    <button id="scroll-to-bottom" class="scroll-anchor" title="Nach unten scrollen" aria-label="Nach unten scrollen" onclick="scrollToBottom()">
+    <button id="scroll-down" class="scroll-anchor" title="Klick: eine Anfrage runter · Halten: ganz nach unten" aria-label="Eine Anfrage runter (halten: ganz nach unten)">
+      <svg class="lp-ring" viewBox="0 0 36 36" width="34" height="34" aria-hidden="true"><circle cx="18" cy="18" r="16"/></svg>
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
     </button>
     <div class="chat-input-area">

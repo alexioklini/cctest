@@ -334,8 +334,17 @@ bleibt markiert (auch nach dem Neuladen). Du kannst deine Bewertung jederzeit
 ändern — die neue ersetzt die alte. Feedback ist pro Person: nur du siehst
 deine eigene Markierung.
 
+**Weiterschreiben — eine kleine Unterhaltung:** Nach der ersten Bewertung wird
+aus dem Kommentarfeld ein **Verlauf**. Klick erneut auf deinen Daumen, und du
+siehst die bisherige Konversation und kannst **jederzeit eine weitere Zeile**
+hinzufügen (Enter zum Senden, Emoji-Knopf für 🙂🎉👍). Das Team kann hier
+direkt antworten — immer nur kurze Einzeiler, keine Romane. Sobald eine neue
+Team-Antwort vorliegt, erscheint ein kleiner **Punkt** am Daumen; er
+verschwindet, sobald du den Verlauf öffnest.
+
 Administratoren finden alle eingegangenen Bewertungen gebündelt unter
-**Einstellungen → Feedback** (siehe unten).
+**Einstellungen → Feedback** (siehe unten) — dort sehen sie den ganzen Verlauf
+je Eintrag und können mit einer Zeile antworten.
 
 ---
 
@@ -404,7 +413,10 @@ Zahnrad, unten links. Je nach Rolle zwei Bereiche:
   Bewertung; einzelne Einträge löschbar. Pro Zeile springt der **↗-Button**
   direkt zum bewerteten Inhalt (Chat → Sitzung öffnen und zur Antwort scrollen;
   Workflow/Aufgabe → Lauf-Detail; Übersetzung/Klassifizierung → die jeweilige
-  Ansicht). Brainy hat keinen Sprung-Ziel.
+  Ansicht). Brainy hat keinen Sprung-Ziel. Jede Zeile zeigt zudem den
+  **Verlauf der Unterhaltung** mit dem Nutzer und ein **Antwortfeld** (eine
+  Zeile, Enter zum Senden) — die Antwort erscheint beim Nutzer am Daumen als
+  Ungelesen-Punkt.
 - **GDPR** — PII-Scanner, Kategorie-Aktionen, NER-Modelle, Regel-Overrides
 - **Kontext** — LCM-Schwellen (Lossless Context Manager)
 - **MemPalace** — Chat-Sync-Klassifizierer, Wing-Regeln

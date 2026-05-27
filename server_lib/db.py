@@ -1243,16 +1243,16 @@ class ChatDB:
         with _db_conn() as conn:
             if include_compacted:
                 rows = conn.execute(
-                    "SELECT id, role, content, metadata, compacted FROM messages WHERE session_id = ? ORDER BY id",
+                    "SELECT id, role, content, metadata, compacted, created_at FROM messages WHERE session_id = ? ORDER BY id",
                     (session_id,)
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT id, role, content, metadata, compacted FROM messages WHERE session_id = ? AND (compacted = 0 OR compacted IS NULL) ORDER BY id",
+                    "SELECT id, role, content, metadata, compacted, created_at FROM messages WHERE session_id = ? AND (compacted = 0 OR compacted IS NULL) ORDER BY id",
                     (session_id,)
                 ).fetchall()
             messages = []
-            for mid, role, content, metadata, compacted in rows:
+            for mid, role, content, metadata, compacted, created_at in rows:
                 try:
                     parsed = json.loads(content)
                 except (json.JSONDecodeError, TypeError):
@@ -1267,6 +1267,8 @@ class ChatDB:
                         pass
                 if compacted:
                     msg["compacted"] = True
+                if created_at is not None:
+                    msg["created_at"] = created_at
                 messages.append(msg)
             return messages
 

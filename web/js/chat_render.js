@@ -103,12 +103,19 @@ function renderMessages() {
     const hintInner = showUserGdpr
       ? renderPlainTextWithGdprHighlights(fullQ, userSpans)
       : esc(fullQ);
+    // Turn start = the user message's server timestamp (Unix seconds). Absent
+    // on a just-sent message mid-stream → omit until the persisted row lands.
+    const startTs = t.userMsg?.created_at;
+    const startTime = startTs
+      ? `<span class="turn-group-time" title="Anfrage gestartet: ${esc(new Date(startTs * 1000).toLocaleString('de-DE'))}">${esc(new Date(startTs * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }))}</span>`
+      : '';
     const badge = t.turnNum > 0
       ? `<div class="turn-group-header">
            <span class="turn-group-badge" onclick="toggleTurnCollapse(${t.turnNum})" title="Klick zum ${isCollapsed ? 'Aufklappen' : 'Zuklappen'} dieser Anfrage">
              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
              Anfrage ${t.turnNum}
            </span>
+           ${startTime}
            <span class="${hintCls}">${hintInner}</span>
            ${chevron}
          </div>`
@@ -508,6 +515,17 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   // Absent key = history load = closed (matches pre-merge tool-block UX).
   const stateVal = chat?._activityStates?.get(turnNum);
   const isOpen = stateVal === 'auto-open' || stateVal === 'user-open';
+
+  // When the body is empty there's nothing to disclose — e.g. tool calls are
+  // suppressed (state.showToolCalls=false) and there are no thinking/GDPR rows.
+  // Render a static header without the chevron/<details> so the user isn't
+  // offered an expander that reveals nothing.
+  if (!bodyHtml.trim()) {
+    const staticHeader = `<div class="activity-summary-header-static">${esc(label)}</div>`;
+    return lastResponseMemberPos === -1
+      ? staticHeader
+      : `${staticHeader}${responseHtml}`;
+  }
 
   const summaryEl = `<summary class="activity-summary-header" onclick="event.preventDefault();toggleActivitySummary(${turnNum})">
         <svg class="activity-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>

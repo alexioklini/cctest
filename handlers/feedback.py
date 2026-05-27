@@ -91,6 +91,65 @@ class FeedbackHandlerMixin:
                                     session_id=session_id)
         self._send_json({"feedback": rows})
 
+    # ── GET /v1/feedback/<id>/thread ──
+
+    def _handle_feedback_thread(self, fb_id: int):
+        """Conversation messages for one feedback row. The rater or an admin
+        may read it; anyone else is refused."""
+        user, is_admin = self._feedback_caller()
+        anchor = FeedbackDB.get(fb_id)
+        if not anchor:
+            self._send_json({"error": "not found"}, 404)
+            return
+        if not is_admin and anchor.get("user_id") != (user.get("id") or ""):
+            self._send_json({"error": "forbidden"}, 403)
+            return
+        self._send_json({"feedback": anchor, "thread": FeedbackDB.thread(fb_id)})
+
+    # ── POST /v1/feedback/<id>/message {text} ──
+
+    def _handle_feedback_message(self, fb_id: int):
+        """Append a one-line message to a thread. author_role is derived from
+        the caller (admin → 'admin', else 'user'); the rater and admins may
+        post, nobody else. Posting also marks the thread read for the author."""
+        user, is_admin = self._feedback_caller()
+        anchor = FeedbackDB.get(fb_id)
+        if not anchor:
+            self._send_json({"error": "not found"}, 404)
+            return
+        is_owner = anchor.get("user_id") == (user.get("id") or "")
+        if not is_admin and not is_owner:
+            self._send_json({"error": "forbidden"}, 403)
+            return
+        body = self._read_json()
+        text = str(body.get("text") or "")
+        role = "admin" if is_admin else "user"
+        result = FeedbackDB.add_message(
+            feedback_id=fb_id, author_role=role,
+            author_user_id=user.get("id") or "", text=text,
+        )
+        if result is None:
+            self._send_json({"error": "save failed"}, 500)
+            return
+        if "error" in result:
+            self._send_json(result, 400)
+            return
+        # The author has by definition now seen everything up to their post.
+        FeedbackDB.mark_seen(fb_id, user.get("id") or "")
+        self._send_json({"message": result, "thread": FeedbackDB.thread(fb_id)})
+
+    # ── POST /v1/feedback/<id>/seen ──
+
+    def _handle_feedback_seen(self, fb_id: int):
+        """The rater marks the thread read — clears their unread dot."""
+        user, _ = self._feedback_caller()
+        anchor = FeedbackDB.get(fb_id)
+        if not anchor:
+            self._send_json({"error": "not found"}, 404)
+            return
+        FeedbackDB.mark_seen(fb_id, user.get("id") or "")
+        self._send_json({"ok": True})
+
     # ── DELETE /v1/feedback/<id> (admin) ──
 
     def _handle_feedback_remove(self, path: str):
