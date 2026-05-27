@@ -1023,13 +1023,6 @@ textarea { resize: none; }
 }
 .turn-group.collapsed .turn-group-badge svg { transform: rotate(-90deg); }
 /* Turn start time, sits right after the "Anfrage N" badge. */
-.turn-group-time {
-  flex-shrink: 0;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-400);
-  white-space: nowrap;
-}
 .turn-group-collapsed-hint {
   font-family: var(--font-ui);
   font-size: 16px;
@@ -1172,6 +1165,8 @@ textarea { resize: none; }
   margin-right: 8px;
   white-space: nowrap;
 }
+/* Turn-start time leads the stats line — slightly emphasised vs. the metrics. */
+.msg-turn-stats .msg-turn-time { color: var(--text-300); font-weight: 600; }
 
 /* Message edit dropdown */
 .msg-edit-dropdown {

@@ -320,12 +320,17 @@ function updateScrollAnchors() {
   const BTN = 34, HALF = BTN / 2;
   const vw = document.documentElement.clientWidth;
   const vh = document.documentElement.clientHeight;
-  const cx = Math.round(Math.min(Math.max(r.left + r.width / 2, HALF + 1), vw - HALF - 1));
-  const topY = Math.round(Math.min(Math.max(r.top + 12, 1), vh - BTN - 1));
+  const cx = Math.round(r.left + r.width / 2);
+  // Both buttons sit on the same bottom row, side by side around the centre:
+  // ↑ left of centre, ↓ right of centre. GAP/2 keeps them from touching while
+  // clamping each so it can't poke past the viewport edge (fractional zoom).
+  const GAP = 12;
+  const off = HALF + GAP / 2;
+  const clampX = (x) => Math.round(Math.min(Math.max(x, HALF + 1), vw - HALF - 1));
   const botY = Math.round(Math.min(Math.max(r.bottom - 46, 1), vh - BTN - 1));
-  upBtn.style.left = cx + 'px';
-  upBtn.style.top = topY + 'px';
-  downBtn.style.left = cx + 'px';
+  upBtn.style.left = clampX(cx - off) + 'px';
+  upBtn.style.top = botY + 'px';
+  downBtn.style.left = clampX(cx + off) + 'px';
   downBtn.style.top = botY + 'px';
   upBtn.classList.toggle('visible', !atTop && r.height > 0);
   downBtn.classList.toggle('visible', !atBottom && r.height > 0);

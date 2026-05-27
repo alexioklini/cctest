@@ -103,19 +103,14 @@ function renderMessages() {
     const hintInner = showUserGdpr
       ? renderPlainTextWithGdprHighlights(fullQ, userSpans)
       : esc(fullQ);
-    // Turn start = the user message's server timestamp (Unix seconds). Absent
-    // on a just-sent message mid-stream → omit until the persisted row lands.
-    const startTs = t.userMsg?.created_at;
-    const startTime = startTs
-      ? `<span class="turn-group-time" title="Anfrage gestartet: ${esc(new Date(startTs * 1000).toLocaleString('de-DE'))}">${esc(new Date(startTs * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }))}</span>`
-      : '';
+    // Turn-start time lives in the per-turn stats line (renderAssistantMessage),
+    // not the group header.
     const badge = t.turnNum > 0
       ? `<div class="turn-group-header">
            <span class="turn-group-badge" onclick="toggleTurnCollapse(${t.turnNum})" title="Klick zum ${isCollapsed ? 'Aufklappen' : 'Zuklappen'} dieser Anfrage">
              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
              Anfrage ${t.turnNum}
            </span>
-           ${startTime}
            <span class="${hintCls}">${hintInner}</span>
            ${chevron}
          </div>`
@@ -855,6 +850,27 @@ function renderAssistantMessage(msg, idx) {
     const tokOut = meta.tokens_out || 0;
     const speed = (dur > 0 && tokOut > 0) ? Math.round(tokOut / dur) : null;
     const parts = [];
+    // Turn start = the timestamp of the user message that opened this turn (the
+    // nearest preceding user row). created_at is Unix seconds from the server;
+    // omit if it hasn't been persisted yet (just-sent turn mid-stream).
+    {
+      const allMsgs2 = state.activeChat?.messages || [];
+      let startTs = null;
+      for (let pi = idx - 1; pi >= 0; pi--) {
+        if (allMsgs2[pi]?.role === 'user') { startTs = allMsgs2[pi].created_at; break; }
+      }
+      if (startTs) {
+        const d = new Date(startTs * 1000);
+        // Compact date + time (e.g. "27.05.26, 15:02") so the stats line stays
+        // on one row; full datetime in the tooltip.
+        const shown = d.toLocaleString('de-DE', {
+          day: '2-digit', month: '2-digit', year: '2-digit',
+          hour: '2-digit', minute: '2-digit',
+        });
+        parts.push(`<span class="msg-turn-time" title="Anfrage gestartet: ${esc(d.toLocaleString('de-DE'))}">`
+          + `${esc(shown)}</span>`);
+      }
+    }
     if (meta.model) parts.push(esc(modelShortName(meta.model, false) || meta.model));
     if (dur > 0) parts.push(dur.toFixed(1) + 's');
     if (speed) parts.push(speed + ' tok/s');
