@@ -264,6 +264,39 @@ def _get_match_regions(md_path: str) -> set:
         return set((_session_match_regions.get(sid) or {}).get(abs_path) or set())
 
 
+# --- brain_code fetch-trim tracker -------------------------------------------
+# Brainy (helpdesk) finds source via mempalace_query against the `brain_code`
+# wing, then reads the WHOLE file from GitHub raw (live main — there's no local
+# checkout in prod). The query already knows which chunk(s) matched; this tracker
+# remembers their TEXT per session, keyed by repo-relative path, so web_fetch can
+# return ONLY the matched regions of the fetched file to the LLM instead of the
+# whole source. Text-keyed (not chunk_index) because brain_code drawers carry no
+# line/char positions — we relocate each chunk in the fetched file by fingerprint.
+_brain_code_regions_lock = threading.Lock()
+_brain_code_regions: dict[str, dict[str, list]] = {}  # sid -> {repo_rel_path -> [chunk_text,...]}
+
+
+def _record_brain_code_region(repo_path: str, chunk_text: str) -> None:
+    """brain_code query hit → remember this chunk's text for later fetch-trim."""
+    if not repo_path or not chunk_text or not chunk_text.strip():
+        return
+    sid = _session_read_paths_sid()
+    with _brain_code_regions_lock:
+        bysid = _brain_code_regions.setdefault(sid, {})
+        lst = bysid.setdefault(repo_path, [])
+        if chunk_text not in lst and len(lst) < 32:
+            lst.append(chunk_text)
+
+
+def _get_brain_code_regions(repo_path: str) -> list:
+    """web_fetch → matched chunk texts for this repo-relative path this session."""
+    if not repo_path:
+        return []
+    sid = _session_read_paths_sid()
+    with _brain_code_regions_lock:
+        return list((_brain_code_regions.get(sid) or {}).get(repo_path) or [])
+
+
 def _read_doc_cache_session_paths(session_id: str | None = None) -> list[str]:
     """Return absolute paths the given session has read via read_document /
     read_file. Name kept for backward compatibility with the citation

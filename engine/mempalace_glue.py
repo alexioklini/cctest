@@ -372,6 +372,11 @@ def tool_mempalace_query(args: dict) -> str:
                     "matched_via": "chroma-vector+source",
                     "text": doc or "",
                 })
+                # Remember this chunk's text so a later web_fetch of the file's
+                # GitHub-raw URL returns only the matched region(s), not the
+                # whole source. Keyed by the repo-relative path (_sf) — the same
+                # path the model composes into the raw URL.
+                _brain._record_brain_code_region(_sf, doc or "")
         except Exception:
             # Source reach is best-effort — never fail the user's query
             # because the brain_code wing is empty or unbuilt.

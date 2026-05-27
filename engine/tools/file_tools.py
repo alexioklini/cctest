@@ -76,6 +76,13 @@ def _read_matched_regions(md_path: str, matched: set, radius: int = 2):
         if not rows:
             return None
         rows.sort(key=lambda t: t[0])
+        # Small-file shortcut: if the file is small, trimming buys nothing —
+        # the gap-markers + lost context cost more than the few KB saved, and
+        # the model is better off seeing the whole thing. Return None (full read)
+        # when the doc has few chunks OR is small in total characters.
+        _total_chars = sum(len(d) for _ci, d in rows)
+        if len(rows) <= 8 or _total_chars <= 6000:
+            return None
         # Union of [ci-radius .. ci+radius] over all matched chunks.
         keep = set()
         for ci in matched:
@@ -91,12 +98,16 @@ def _read_matched_regions(md_path: str, matched: set, radius: int = 2):
             prev = ci
         if not out:
             return None
-        # Safety: if the matched regions cover ~the whole file anyway, the
-        # caller's full read is simpler — signal fallback.
-        kept = sum(1 for ci, _ in rows if ci in keep)
-        if kept >= len(rows):
+        stitched = "\n\n".join(out)
+        # Worth-it gate: many matched chunks (or wide radius) make the union of
+        # regions add up to ~the whole file — once you count overlap + the gap
+        # markers, trimming saves little or nothing. Only trim when the result
+        # is meaningfully smaller than the full file; otherwise return None so
+        # the caller reads the whole thing (full context, no fragmentation).
+        _full_chars = sum(len(d) for _ci, d in rows)
+        if len(stitched) >= 0.75 * _full_chars:
             return None
-        return "\n\n".join(out)
+        return stitched
     except Exception:
         return None
 

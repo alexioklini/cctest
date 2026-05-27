@@ -60,6 +60,10 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
     back to a full read when offset/limit is given, the file wasn't a query hit,
     or the regions cover ~the whole file. Eval: read bytes -71% (461->130 KB) at
     a measured -0.07 mean quality cost (occasionally clips needed context).
+    Smart gates (v9.40.0): returns the WHOLE file (no trim) when the file is
+    small (≤8 chunks / ≤6 KB) OR when the matched regions would add up to ≥75%
+    of the file anyway (many scattered small matches negate the saving) —
+    trims only when a large file has genuinely sparse matches.
   - **Cross-encoder reranker** (v9.38.0, `config.json → mempalace.reranker`,
     default ON): after vector retrieval, a BAAI/bge-reranker-v2-m3 cross-encoder
     re-ranks the top `top_k_in` (40) candidates by joint (query,passage) scoring;

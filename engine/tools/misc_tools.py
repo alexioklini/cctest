@@ -265,6 +265,63 @@ def tool_get_artifact_detail(args: dict) -> str:
 
 # ─── web_fetch ────────────────────────────────────────────────────────────────
 
+def _github_raw_repo_path(url: str) -> str:
+    """raw.githubusercontent.com/<owner>/<repo>/<ref>/<path> → '<path>', else ''.
+    Also handles github.com/<owner>/<repo>/(raw|blob)/<ref>/<path>."""
+    import re
+    m = re.match(r"https?://raw\.githubusercontent\.com/[^/]+/[^/]+/[^/]+/(.+)$", url)
+    if m:
+        return m.group(1).split("?")[0].split("#")[0]
+    m = re.match(r"https?://github\.com/[^/]+/[^/]+/(?:raw|blob)/[^/]+/(.+)$", url)
+    if m:
+        return m.group(1).split("?")[0].split("#")[0]
+    return ""
+
+
+def _trim_to_brain_code_regions(text: str, chunks: list, ctx_lines: int = 8):
+    """Return only the regions of `text` that contain the matched brain_code
+    chunks (each ± ctx_lines of surrounding context), joined with gap markers.
+    None when no chunk could be located (caller keeps the full text — never
+    silently drops content)."""
+    # Small-file shortcut: trimming a small source file buys nothing — return
+    # None so the caller hands the model the whole file (full context, no gap
+    # noise). Threshold matched to read_document's region path (~6 KB).
+    if len(text) <= 6000:
+        return None
+    lines = text.splitlines()
+    keep = set()
+    found = 0
+    for chunk in chunks:
+        # Locate the chunk by its first non-trivial line (fingerprint), since
+        # chunk boundaries may not align to line starts in the fetched file.
+        anchor = next((ln.strip() for ln in chunk.splitlines() if len(ln.strip()) >= 12), "")
+        if not anchor:
+            continue
+        chunk_len = max(1, len(chunk.splitlines()))
+        for i, ln in enumerate(lines):
+            if anchor in ln:
+                found += 1
+                lo = max(0, i - ctx_lines)
+                hi = min(len(lines), i + chunk_len + ctx_lines)
+                keep.update(range(lo, hi))
+                break
+    if not found or not keep:
+        return None
+    out, prev = [], None
+    for i in sorted(keep):
+        if prev is not None and i > prev + 1:
+            out.append(f"\n[... {i - prev - 1} line(s) omitted — not in matched region ...]\n")
+        out.append(lines[i])
+        prev = i
+    trimmed = "\n".join(out)
+    # Worth-it gate: many matched chunks (or wide context) make the kept regions
+    # add up to ~the whole file — trimming then saves little once you count the
+    # gap markers. Only trim when meaningfully smaller; else None (return full).
+    if len(trimmed) >= 0.75 * len(text):
+        return None
+    return trimmed
+
+
 def tool_web_fetch(args: dict) -> str:
     import brain as _brain
     url = args.get("url", "")
@@ -284,6 +341,17 @@ def tool_web_fetch(args: dict) -> str:
         cached = _brain._web_cache.get(cache_key)
         if cached is not None:
             cached["cached"] = True
+            # The cache holds the FULL file. Apply the brain_code region-trim
+            # here too so a cached hit returns just the matched regions to the
+            # LLM (same as a fresh fetch). Trims a copy — cache stays full.
+            _rp = _github_raw_repo_path(cached.get("url") or url) or _github_raw_repo_path(url)
+            if _rp:
+                _bcc = _brain._get_brain_code_regions(_rp)
+                if _bcc:
+                    _tr = _trim_to_brain_code_regions(cached.get("content") or "", _bcc)
+                    if _tr is not None:
+                        cached = dict(cached, content=_tr, length=len(_tr),
+                                      fetch_method=f"{cached.get('fetch_method','raw')}+brain_code_regions")
             return _ok(cached)
 
     try:
@@ -340,10 +408,27 @@ def tool_web_fetch(args: dict) -> str:
 
         if len(text) > max_length:
             text = text[:max_length] + "\n... (truncated)"
+        # brain_code fetch-trim: if this is a GitHub-raw URL for a file the
+        # model just found via mempalace_query(brain_code), return ONLY the
+        # matched region(s) of the fetched source — Brainy gets the live file
+        # (full fetch, current `main`) but the LLM sees just the relevant code,
+        # not the whole module. Falls back to full content when the URL isn't a
+        # recorded brain_code hit or no chunk could be located. The trim applies
+        # ONLY to the returned content — the cache keeps the FULL file so a
+        # later non-Brainy fetch (or a fetch without a recorded hit) of the same
+        # URL still gets everything.
         result = {"url": final_url, "status": resp.status, "length": len(text),
                   "content": text, "fetch_method": fetch_method}
         if cache_key:
             _brain._web_cache.put(cache_key, dict(result))
+        _repo_path = _github_raw_repo_path(final_url) or _github_raw_repo_path(url)
+        if _repo_path:
+            _bc_chunks = _brain._get_brain_code_regions(_repo_path)
+            if _bc_chunks:
+                _trimmed = _trim_to_brain_code_regions(text, _bc_chunks)
+                if _trimmed is not None:
+                    result = dict(result, content=_trimmed, length=len(_trimmed),
+                                  fetch_method=f"{fetch_method}+brain_code_regions")
         return _ok(result)
     except urllib.error.HTTPError as e:
         body_text = ""

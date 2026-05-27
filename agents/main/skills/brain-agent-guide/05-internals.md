@@ -248,8 +248,12 @@ the file, fetch it raw with `web_fetch` and read the precise value there
 (GitHub `main` is live; the mined index can lag by up to one miner cycle):
 `https://raw.githubusercontent.com/alexioklini/cctest/main/<source_file>`
 e.g. `.../main/handlers/helpdesk.py`. Use the `source_file` path
-`mempalace_query` gave you — do NOT invent paths. You can also list every
-path via the git tree:
+`mempalace_query` gave you — do NOT invent paths. (v9.40.0: when the URL is a
+GitHub-raw URL for a file you just found via `mempalace_query`, `web_fetch`
+fetches the full live file but returns ONLY the matched region(s) to you —
+`fetch_method` shows `+brain_code_regions`. You get the current code without
+the whole module; small files or many-match files come back whole.) You can
+also list every path via the git tree:
 `https://api.github.com/repos/alexioklini/cctest/git/trees/main?recursive=1`
 
 **Order: query to narrow, then ONE targeted GitHub fetch to confirm.** Don't
