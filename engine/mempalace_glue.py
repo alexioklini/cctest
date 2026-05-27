@@ -243,6 +243,18 @@ def tool_mempalace_query(args: dict) -> str:
     _needs_user_filter = bool(current_user_id and not wing and not project_pinned)
     fetch_n = n_results * 4 if _needs_user_filter else n_results
 
+    # When the cross-encoder reranker is on, the rerank pass below can only
+    # RE-ORDER candidates that vector retrieval already fetched — it can't pull
+    # in a drawer that wasn't in the pool. A bi-encoder often ranks the correct
+    # doc well outside the model-requested n_results (measured: the canonical
+    # ISMS-Ziele doc sat at vector-rank ~19 for a 5-result query, so the reranker
+    # never saw it). Widen the Chroma fetch to the reranker's top_k_in so the
+    # cross-encoder has the full pool to re-rank; the final deduped[:n_results]
+    # trim still hands the model only what it asked for, so this stays internal.
+    _rr_cfg_pre = (cfg.get("reranker") or {}) if isinstance(cfg, dict) else {}
+    if _rr_cfg_pre.get("enabled"):
+        fetch_n = max(fetch_n, max(8, min(80, int(_rr_cfg_pre.get("top_k_in", 40)))))
+
     # Use direct Chroma query (mirrors `mempalace search` CLI's `search()`
     # function) instead of the higher-level `search_memories()`. The latter
     # runs a closet-boost + drawer-grep-enrichment pass that produces the

@@ -5,12 +5,12 @@ You are answering questions about a corpus of German bank IT-policy documents th
 ## Where to look
 
 - **Wing**: `project__f201b24ff6a2`
-- **Room**: `general` for the policy content (1372 drawers)
+- **Room**: `artifacts` for the policy content (1691 drawers)
 - The corpus is 58 PDFs covering IT, core banking, data protection, and information security policies (filenames like `4_1_0_ARL_Systemberechtigungen.pdf`, `20_2_1_2_ARL_ISMS Risikomanagement Handbuch.pdf`, etc.)
 
 ## How to search
 
-When you call `mempalace_search`, pass `wing="project__f201b24ff6a2"` and (when the question is clearly about policy content) `room="general"`. Use 2–4 content-bearing keywords in German — drop generic filler like "Regelung", "Policy", "wie", "was".
+When you call `mempalace_search`, pass `wing="project__f201b24ff6a2"` and (when the question is clearly about policy content) `room="artifacts"`. Use 2–4 content-bearing keywords in German — drop generic filler like "Regelung", "Policy", "wie", "was".
 
 If a search returns drawers from `.brain-extracted/<name>.<ext>.md` files, that is the markdown companion of an original binary at the same folder root. The original binary lives at `<folder>/<name>.<ext>` — you can read either form, but **cite the original binary's basename** (without the `.md` suffix).
 

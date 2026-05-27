@@ -51,6 +51,12 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
     their full verbatim text inline + `content_via:"snippet"`. (History:
     v9.34.0 BLANKED the snippet to force reads; v9.37.0 brought it back, widened
     + read-optional, to cut token cost — same trade-off as the KG span above.)
+  - **Cross-encoder reranker** (v9.38.0, `config.json → mempalace.reranker`,
+    default ON): after vector retrieval, a BAAI/bge-reranker-v2-m3 cross-encoder
+    re-ranks the top `top_k_in` (40) candidates by joint (query,passage) scoring;
+    `matched_via` gains `+rerank`. Skipped when the top hit has a strong filename
+    boost (≥0.20). Eval lifted wrong-doc-choice cases (C3/P2/C2) but slightly hurt
+    out-of-corpus refusal (surfaces plausible-but-irrelevant passages).
 - `mempalace_kg_query(...)` — entity/predicate filter on the KG
 - `mempalace_kg_search(query)` — semantic KG search
 - `mempalace_kg_neighbors(entity, depth?)` — entity neighborhood

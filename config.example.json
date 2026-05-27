@@ -1,20 +1,3085 @@
 {
   "server": {
-    "host": "127.0.0.1",
+    "host": "0.0.0.0",
     "port": 8420
   },
   "providers": {
-    "inferencer": {
-      "base_url": "http://192.168.1.221:8081/v1",
-      "api_key": "YOUR_API_KEY",
+    "local-mlx-whisper": {
+      "base_url": "",
+      "api_key": "",
+      "default_model": "",
+      "type": "in_process",
+      "is_local": true
+    },
+    "Lokal": {
+      "base_url": "http://localhost:8000/v1",
       "type": "openai",
-      "default_model": "YOUR_MODEL_NAME"
+      "api_key": "YOUR_API_KEY",
+      "default_model": "",
+      "max_concurrent": 1,
+      "api_keys": [
+        {
+          "name": "default",
+          "key": "YOUR_API_KEY",
+          "usage": "round_robin"
+        }
+      ],
+      "supports_chat_template_kwargs": true,
+      "is_local": true
+    },
+    "CLIProxyAPI": {
+      "base_url": "http://127.0.0.1:8317/v1",
+      "type": "anthropic",
+      "api_key": "YOUR_API_KEY",
+      "default_model": "",
+      "api_keys": [
+        {
+          "name": "default",
+          "key": "YOUR_API_KEY",
+          "usage": "preferred"
+        }
+      ],
+      "is_local": false,
+      "_comment": "CLIProxyAPI on :8317. Speaks Anthropic /v1/messages, proxies to Mistral upstream. Use through the Phase 2 sidecar (config.sidecar.enabled=true). Brain's OpenAI loop uses native Mistral; the sidecar uses this provider."
+    },
+    "mistral-direct": {
+      "base_url": "https://api.mistral.ai/v1",
+      "type": "openai",
+      "api_key": "YOUR_API_KEY",
+      "api_keys": [
+        {
+          "name": "vibe-cli",
+          "key": "YOUR_API_KEY",
+          "usage": "preferred"
+        }
+      ],
+      "is_local": false,
+      "_comment": "Direct Mistral REST for image generation tool (api.mistral.ai/v1/agents+conversations+files). Not used for chat — CLIProxyAPI handles that."
     }
   },
-  "default_provider": "inferencer",
+  "ocr": {
+    "engine": "mistral_ocr",
+    "provider": "mistral-experimental",
+    "model": "mistral-ocr-latest",
+    "max_pages_per_cycle": 1000,
+    "trigger_chars_per_page": 50,
+    "cost_per_page_usd": 0.001,
+    "local_vision_model": "gemma-4-26B-A4B-it-MLX-4bit",
+    "local_vision_render_dpi": 200,
+    "local_vision_max_tokens": 4096
+  },
+  "default_provider": "CLIProxyAPI",
   "max_context": 131072,
   "telegram": {
     "bot_token": "YOUR_BOT_TOKEN",
-    "allowed_users": []
+    "allowed_users": [
+      8336139166
+    ],
+    "enabled": false,
+    "model": "claude-opus-4-6"
+  },
+  "models": {
+    "whisper-tiny": {
+      "enabled": true,
+      "shortname": "whisper-tiny",
+      "display_name": "Whisper tiny",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "local-mlx-whisper",
+      "is_local": true,
+      "warmup": false,
+      "manual": true,
+      "max_context": 0,
+      "_caps_canonical": true
+    },
+    "whisper-base": {
+      "enabled": true,
+      "shortname": "whisper-base",
+      "display_name": "Whisper base",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "local-mlx-whisper",
+      "is_local": true,
+      "warmup": false,
+      "manual": true,
+      "max_context": 0,
+      "_caps_canonical": true
+    },
+    "whisper-small": {
+      "enabled": true,
+      "shortname": "whisper-small",
+      "display_name": "Whisper small",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "local-mlx-whisper",
+      "is_local": true,
+      "warmup": false,
+      "manual": true,
+      "max_context": 0,
+      "_caps_canonical": true
+    },
+    "whisper-medium": {
+      "enabled": true,
+      "shortname": "whisper-medium",
+      "display_name": "Whisper medium",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "local-mlx-whisper",
+      "is_local": true,
+      "warmup": false,
+      "manual": true,
+      "max_context": 0,
+      "_caps_canonical": true
+    },
+    "whisper-large-v3": {
+      "enabled": true,
+      "shortname": "whisper-large-v3",
+      "display_name": "Whisper large-v3",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "local-mlx-whisper",
+      "is_local": true,
+      "warmup": false,
+      "manual": true,
+      "max_context": 0,
+      "_caps_canonical": true
+    },
+    "CLIProxyAPI/mistral-medium-3.5": {
+      "enabled": true,
+      "shortname": "mistral-medium-3.5",
+      "display_name": "Mistral Medium-3.5",
+      "icon": "🌬️",
+      "priority": 60,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 256000,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.2,
+        "top_p": 0.85
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "CLIProxyAPI",
+      "base_model_id": "mistral-medium-3.5",
+      "profile": "balanced",
+      "is_local": false,
+      "warmup": false,
+      "_caps_canonical": true,
+      "description": "Groß (Mistral) — komplexe Analysen, lange Dokumente, 256k Kontext.",
+      "parallel_tool_calls": false,
+      "cost_input": 1.5,
+      "cost_output": 7.5
+    },
+    "gemini-3.1-flash-lite-preview": {
+      "enabled": false,
+      "shortname": "gemini-3.1-flash-lite-preview",
+      "display_name": "gemini-3.1-flash-lite-preview",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "CLIProxyAPI",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "CLIProxyAPI/mistral-small-latest": {
+      "enabled": true,
+      "shortname": "mistral-small-latest",
+      "display_name": "mistral-small-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "CLIProxyAPI",
+      "base_model_id": "mistral-small-latest",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false,
+      "cost_input": 0.1,
+      "cost_output": 0.3
+    },
+    "gemini-2.5-flash": {
+      "enabled": false,
+      "shortname": "gemini-2.5-flash",
+      "display_name": "gemini-2.5-flash",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "CLIProxyAPI",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "gemini-2.5-flash-lite": {
+      "enabled": false,
+      "shortname": "gemini-2.5-flash-lite",
+      "display_name": "gemini-2.5-flash-lite",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "CLIProxyAPI",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "gemini-3-pro-preview": {
+      "enabled": false,
+      "shortname": "gemini-3-pro-preview",
+      "display_name": "gemini-3-pro-preview",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "CLIProxyAPI",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "gemini-3.1-pro-preview": {
+      "enabled": false,
+      "shortname": "gemini-3.1-pro-preview",
+      "display_name": "gemini-3.1-pro-preview",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "CLIProxyAPI",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "gemini-3-flash-preview": {
+      "enabled": false,
+      "shortname": "gemini-3-flash-preview",
+      "display_name": "gemini-3-flash-preview",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "CLIProxyAPI",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "CLIProxyAPI/mistral-medium-latest": {
+      "enabled": false,
+      "shortname": "mistral-medium-latest",
+      "display_name": "mistral-medium-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "CLIProxyAPI",
+      "base_model_id": "mistral-medium-latest",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "CLIProxyAPI/magistral-medium-latest": {
+      "enabled": false,
+      "shortname": "magistral-medium-latest",
+      "display_name": "magistral-medium-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "mistral_blocks",
+      "provider": "CLIProxyAPI",
+      "base_model_id": "magistral-medium-latest",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "gemini-2.5-pro": {
+      "enabled": false,
+      "shortname": "gemini-2.5-pro",
+      "display_name": "gemini-2.5-pro",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "CLIProxyAPI",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-medium-3.5": {
+      "enabled": false,
+      "shortname": "mistral-medium-3.5",
+      "display_name": "mistral-medium-3.5",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "CLIProxyAPI",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-small-latest": {
+      "enabled": false,
+      "shortname": "mistral-small-latest",
+      "display_name": "mistral-small-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "CLIProxyAPI",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-medium-latest": {
+      "enabled": false,
+      "shortname": "mistral-medium-latest",
+      "display_name": "mistral-medium-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "CLIProxyAPI",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "magistral-medium-latest": {
+      "enabled": false,
+      "shortname": "magistral-medium-latest",
+      "display_name": "magistral-medium-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "mistral_blocks",
+      "provider": "CLIProxyAPI",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "gemma-4-26B-A4B-it-MLX-4bit": {
+      "enabled": true,
+      "shortname": "gemma-4-26B-A4B-it-MLX-4bit",
+      "display_name": "gemma-4-26B-A4B-it-MLX-4bit",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 256000,
+      "max_output": 16000,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": true
+    },
+    "gemma-4-e2b-it-4bit": {
+      "enabled": true,
+      "shortname": "gemma-4-e2b-it-4bit",
+      "display_name": "gemma-4-e2b-it-4bit",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false,
+      "warmup_allow_cloud": true
+    },
+    "gemma-4-e4b-it-4bit": {
+      "enabled": true,
+      "shortname": "gemma-4-e4b-it-4bit",
+      "display_name": "gemma-4-e4b-it-4bit",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131000,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
+    },
+    "mistral-medium-2505": {
+      "enabled": false,
+      "shortname": "mistral-medium-2505",
+      "display_name": "mistral-medium-2505",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-medium-2508": {
+      "enabled": false,
+      "shortname": "mistral-medium-2508",
+      "display_name": "mistral-medium-2508",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-direct/mistral-medium-latest": {
+      "enabled": false,
+      "shortname": "mistral-medium-latest",
+      "display_name": "mistral-medium-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "base_model_id": "mistral-medium-latest",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-medium": {
+      "enabled": false,
+      "shortname": "mistral-medium",
+      "display_name": "mistral-medium",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-vibe-cli-with-tools": {
+      "enabled": false,
+      "shortname": "mistral-vibe-cli-with-tools",
+      "display_name": "mistral-vibe-cli-with-tools",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "open-mistral-nemo": {
+      "enabled": false,
+      "shortname": "open-mistral-nemo",
+      "display_name": "open-mistral-nemo",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "open-mistral-nemo-2407": {
+      "enabled": false,
+      "shortname": "open-mistral-nemo-2407",
+      "display_name": "open-mistral-nemo-2407",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-tiny-2407": {
+      "enabled": false,
+      "shortname": "mistral-tiny-2407",
+      "display_name": "mistral-tiny-2407",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-tiny-latest": {
+      "enabled": false,
+      "shortname": "mistral-tiny-latest",
+      "display_name": "mistral-tiny-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "codestral-2508": {
+      "enabled": false,
+      "shortname": "codestral-2508",
+      "display_name": "codestral-2508",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "codestral-latest": {
+      "enabled": false,
+      "shortname": "codestral-latest",
+      "display_name": "codestral-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "devstral-2512": {
+      "enabled": false,
+      "shortname": "devstral-2512",
+      "display_name": "devstral-2512",
+      "icon": "🌬️",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 256000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "devstral-medium-latest": {
+      "enabled": false,
+      "shortname": "devstral-medium-latest",
+      "display_name": "devstral-medium-latest",
+      "icon": "🌬️",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 256000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "devstral-latest": {
+      "enabled": false,
+      "shortname": "devstral-latest",
+      "display_name": "devstral-latest",
+      "icon": "🌬️",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 256000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-small-2603": {
+      "enabled": false,
+      "shortname": "mistral-small-2603",
+      "display_name": "mistral-small-2603",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-direct/mistral-small-latest": {
+      "enabled": false,
+      "shortname": "mistral-small-latest",
+      "display_name": "mistral-small-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "base_model_id": "mistral-small-latest",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-vibe-cli-fast": {
+      "enabled": false,
+      "shortname": "mistral-vibe-cli-fast",
+      "display_name": "mistral-vibe-cli-fast",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "magistral-small-latest": {
+      "enabled": false,
+      "shortname": "magistral-small-latest",
+      "display_name": "magistral-small-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "magistral-medium-2509": {
+      "enabled": false,
+      "shortname": "magistral-medium-2509",
+      "display_name": "magistral-medium-2509",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-direct/magistral-medium-latest": {
+      "enabled": false,
+      "shortname": "magistral-medium-latest",
+      "display_name": "magistral-medium-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "mistral-direct",
+      "base_model_id": "magistral-medium-latest",
+      "profile": "balanced",
+      "max_context": 131072,
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "voxtral-small-2507": {
+      "enabled": true,
+      "shortname": "voxtral-small-2507",
+      "display_name": "voxtral-small-2507",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "voxtral-small-latest": {
+      "enabled": true,
+      "shortname": "voxtral-small-latest",
+      "display_name": "voxtral-small-latest",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "labs-leanstral-2603": {
+      "enabled": false,
+      "shortname": "labs-leanstral-2603",
+      "display_name": "labs-leanstral-2603",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-large-2512": {
+      "enabled": false,
+      "shortname": "mistral-large-2512",
+      "display_name": "mistral-large-2512",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-large-latest": {
+      "enabled": false,
+      "shortname": "mistral-large-latest",
+      "display_name": "mistral-large-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "ministral-3b-2512": {
+      "enabled": false,
+      "shortname": "ministral-3b-2512",
+      "display_name": "ministral-3b-2512",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "ministral-3b-latest": {
+      "enabled": false,
+      "shortname": "ministral-3b-latest",
+      "display_name": "ministral-3b-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "ministral-8b-2512": {
+      "enabled": false,
+      "shortname": "ministral-8b-2512",
+      "display_name": "ministral-8b-2512",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "ministral-8b-latest": {
+      "enabled": false,
+      "shortname": "ministral-8b-latest",
+      "display_name": "ministral-8b-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "ministral-14b-2512": {
+      "enabled": false,
+      "shortname": "ministral-14b-2512",
+      "display_name": "ministral-14b-2512",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "ministral-14b-latest": {
+      "enabled": false,
+      "shortname": "ministral-14b-latest",
+      "display_name": "ministral-14b-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-direct/mistral-medium-3.5": {
+      "enabled": false,
+      "shortname": "mistral-medium-3.5",
+      "display_name": "mistral-medium-3.5",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "base_model_id": "mistral-medium-3.5",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-medium-3": {
+      "enabled": false,
+      "shortname": "mistral-medium-3",
+      "display_name": "mistral-medium-3",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-medium-2604": {
+      "enabled": false,
+      "shortname": "mistral-medium-2604",
+      "display_name": "mistral-medium-2604",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-medium-c21211-r0-75": {
+      "enabled": false,
+      "shortname": "mistral-medium-c21211-r0-75",
+      "display_name": "mistral-medium-c21211-r0-75",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-vibe-cli-latest": {
+      "enabled": false,
+      "shortname": "mistral-vibe-cli-latest",
+      "display_name": "mistral-vibe-cli-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-large-2411": {
+      "enabled": false,
+      "shortname": "mistral-large-2411",
+      "display_name": "mistral-large-2411",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "pixtral-large-2411": {
+      "enabled": false,
+      "shortname": "pixtral-large-2411",
+      "display_name": "pixtral-large-2411",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "pixtral-large-latest": {
+      "enabled": false,
+      "shortname": "pixtral-large-latest",
+      "display_name": "pixtral-large-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-large-pixtral-2411": {
+      "enabled": false,
+      "shortname": "mistral-large-pixtral-2411",
+      "display_name": "mistral-large-pixtral-2411",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "devstral-small-2507": {
+      "enabled": false,
+      "shortname": "devstral-small-2507",
+      "display_name": "devstral-small-2507",
+      "icon": "🌬️",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 256000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "devstral-medium-2507": {
+      "enabled": false,
+      "shortname": "devstral-medium-2507",
+      "display_name": "devstral-medium-2507",
+      "icon": "🌬️",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 256000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "voxtral-mini-2507": {
+      "enabled": true,
+      "shortname": "voxtral-mini-2507",
+      "display_name": "voxtral-mini-2507",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "voxtral-mini-latest": {
+      "enabled": true,
+      "shortname": "voxtral-mini-latest",
+      "display_name": "voxtral-mini-latest",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "magistral-small-2509": {
+      "enabled": false,
+      "shortname": "magistral-small-2509",
+      "display_name": "magistral-small-2509",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-small-2506": {
+      "enabled": false,
+      "shortname": "mistral-small-2506",
+      "display_name": "mistral-small-2506",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-embed-2312": {
+      "enabled": false,
+      "shortname": "mistral-embed-2312",
+      "display_name": "mistral-embed-2312",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-embed": {
+      "enabled": false,
+      "shortname": "mistral-embed",
+      "display_name": "mistral-embed",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "codestral-embed": {
+      "enabled": false,
+      "shortname": "codestral-embed",
+      "display_name": "codestral-embed",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "codestral-embed-2505": {
+      "enabled": false,
+      "shortname": "codestral-embed-2505",
+      "display_name": "codestral-embed-2505",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-moderation-2603": {
+      "enabled": false,
+      "shortname": "mistral-moderation-2603",
+      "display_name": "mistral-moderation-2603",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-moderation-2411": {
+      "enabled": false,
+      "shortname": "mistral-moderation-2411",
+      "display_name": "mistral-moderation-2411",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-moderation-latest": {
+      "enabled": false,
+      "shortname": "mistral-moderation-latest",
+      "display_name": "mistral-moderation-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-ocr-2512": {
+      "enabled": false,
+      "shortname": "mistral-ocr-2512",
+      "display_name": "mistral-ocr-2512",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-ocr-latest": {
+      "enabled": false,
+      "shortname": "mistral-ocr-latest",
+      "display_name": "mistral-ocr-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "mistral-ocr-2505": {
+      "enabled": false,
+      "shortname": "mistral-ocr-2505",
+      "display_name": "mistral-ocr-2505",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "voxtral-mini-2602": {
+      "enabled": true,
+      "shortname": "voxtral-mini-2602",
+      "display_name": "voxtral-mini-2602",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "voxtral-mini-transcribe-realtime-2602": {
+      "enabled": true,
+      "shortname": "voxtral-mini-transcribe-realtime-2602",
+      "display_name": "voxtral-mini-transcribe-realtime-2602",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "voxtral-mini-realtime-2602": {
+      "enabled": true,
+      "shortname": "voxtral-mini-realtime-2602",
+      "display_name": "voxtral-mini-realtime-2602",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "voxtral-mini-realtime-latest": {
+      "enabled": true,
+      "shortname": "voxtral-mini-realtime-latest",
+      "display_name": "voxtral-mini-realtime-latest",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "voxtral-mini-transcribe-2507": {
+      "enabled": true,
+      "shortname": "voxtral-mini-transcribe-2507",
+      "display_name": "voxtral-mini-transcribe-2507",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "voxtral-mini-tts-2603": {
+      "enabled": true,
+      "shortname": "voxtral-mini-tts-2603",
+      "display_name": "voxtral-mini-tts-2603",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "tts"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "voxtral-mini-tts-latest": {
+      "enabled": true,
+      "shortname": "voxtral-mini-tts-latest",
+      "display_name": "voxtral-mini-tts-latest",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "tts"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "gemma-4-26B-A4B-it-DFlash": {
+      "enabled": false,
+      "shortname": "gemma-4-26B-A4B-it-DFlash",
+      "display_name": "gemma-4-26B-A4B-it-DFlash",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
+    },
+    "gemma-4-26B-A4B-it-assistant": {
+      "enabled": false,
+      "shortname": "gemma-4-26B-A4B-it-assistant",
+      "display_name": "gemma-4-26B-A4B-it-assistant",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
+    },
+    "gemma-4-26b-cloud": {
+      "enabled": true,
+      "shortname": "gemma-4-26b-cloud",
+      "display_name": "gemma-4-26b-cloud",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 256000,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "CLIProxyAPI",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "gemma-4-31b-cloud": {
+      "enabled": true,
+      "shortname": "gemma-4-31b-cloud",
+      "display_name": "gemma-4-31b-cloud",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 256000,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "CLIProxyAPI",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    }
+  },
+  "nodes": {},
+  "auth": {
+    "enabled": true,
+    "registration_enabled": false,
+    "default_role": "user",
+    "token_expiry_seconds": 86400,
+    "jwt_secret": "CHANGE_ME_RANDOM_SECRET"
+  },
+  "attachments": {
+    "image_model": "CLIProxyAPI/mistral-medium-3.5"
+  },
+  "mempalace": {
+    "enabled": true,
+    "palace_path": "/Users/alexander/.mempalace/brain",
+    "venv_site_packages": "/Users/alexander/.mempalace/venv/lib/python3.14/site-packages",
+    "mine": {
+      "enabled": true,
+      "interval_seconds": 1800,
+      "respect_gitignore": true,
+      "git_sources": [
+        {
+          "repo_url": "https://github.com/alexioklini/cctest.git",
+          "branch": "main",
+          "wing": "brain_code"
+        }
+      ]
+    },
+    "chat_sync": {
+      "enabled": true,
+      "interval_seconds": 60,
+      "wing_strategy": "per_agent",
+      "room": "chat",
+      "include_roles": [
+        "user",
+        "assistant"
+      ],
+      "include_tool_results": [
+        "exa_search",
+        "web_fetch",
+        "read_document"
+      ],
+      "include_session_summary": true,
+      "attachment_metadata_drawer": true,
+      "max_chars_per_message": 8000,
+      "build_closets": true,
+      "closet_content_head_chars": 5000,
+      "classifier": {
+        "enabled": true,
+        "model": "CLIProxyAPI/mistral-medium-3.5",
+        "categories_to_file": [
+          "fact",
+          "preference",
+          "decision",
+          "reference"
+        ],
+        "min_turns": 2,
+        "default_mode": 0
+      }
+    },
+    "kg": {
+      "enabled": true,
+      "extraction_model": "mistral-experimental/mistral-small-2603",
+      "scopes": [
+        "projects"
+      ],
+      "max_triples_per_drawer": 12,
+      "min_confidence": 0.5,
+      "batch_size": 20,
+      "max_drawer_chars": 6000,
+      "chunking_mode": "source_file",
+      "source_chunk_chars": 3500,
+      "regenerate_closets": true,
+      "profile": "normative"
+    },
+    "reranker": {
+      "enabled": true,
+      "model": "BAAI/bge-reranker-v2-m3",
+      "device": "auto",
+      "top_k_in": 40,
+      "max_chars_per_passage": 1500,
+      "batch_size": 16
+    },
+    "citation_reround": {
+      "enabled": true,
+      "temperature": 0.2,
+      "top_p": 0.85,
+      "timeout_seconds": 180
+    },
+    "chunk_substitute": {
+      "enabled": false
+    }
+  },
+  "deleted_models": [
+    "Qwen3.6-35B-A3B-oQ2",
+    "Mistral/mistral-medium-3-5",
+    "mistral-medium-3-5",
+    "charaf/Huihui-Qwen3.6-27B-abliterated-mlx-nvfp4:instruct",
+    "qwen3.6:27b",
+    "Qwen3.6-35B-A3B-4bit"
+  ],
+  "gdpr_scanner": {
+    "enabled": true,
+    "server_log": true,
+    "server_block": true,
+    "default_local_fallback_model": "gemma-4-26B-A4B-it-MLX-4bit",
+    "categories": {
+      "secrets": {
+        "action": "block"
+      },
+      "national_id": {
+        "action": "warn"
+      },
+      "national_id_ctx": {
+        "action": "warn"
+      },
+      "financial": {
+        "action": "warn"
+      },
+      "contact": {
+        "action": "warn"
+      },
+      "network": {
+        "action": "warn"
+      },
+      "personal": {
+        "action": "warn"
+      },
+      "bare_id": {
+        "action": "warn"
+      }
+    },
+    "rule_overrides": {
+      "name": "ignore",
+      "organisation": "ignore"
+    },
+    "email_allowlist": [],
+    "background_pii_action": "anonymise",
+    "background_anonymise_fail_action": "swap_to_local"
+  },
+  "quotas": {
+    "enabled": true,
+    "billing_cycle": "monthly",
+    "cycle_start_day": 1,
+    "warn_pct": 70,
+    "block_pct": 100,
+    "enforce_red": "warn_only",
+    "default_local_fallback_model": "",
+    "limits": {
+      "admin": {
+        "daily_usd": 50.0,
+        "cycle_usd": 800.0
+      },
+      "poweruser": {
+        "daily_usd": 20.0,
+        "cycle_usd": 200.0
+      },
+      "user": {
+        "daily_usd": 5.0,
+        "cycle_usd": 50.0
+      }
+    },
+    "user_overrides": {}
+  },
+  "conversion": {
+    "use_markitdown": true
+  },
+  "_local_mlx_whisper_seeded": true,
+  "mistral_image_agent_id": "ag_019e09234bdc739c90fdabc0ac4959bb",
+  "sidecar": {
+    "enabled": true,
+    "auto_start": true,
+    "tool_list_log": true,
+    "url": "http://127.0.0.1:8421",
+    "venv_python": ".venv_sdk/bin/python",
+    "tool_endpoint_internal": "http://127.0.0.1:8420/v1/tools/call",
+    "tool_call_timeout_s": 120
+  },
+  "searxng": {
+    "enabled": true,
+    "auto_start": true,
+    "url": "http://127.0.0.1:8088",
+    "venv_python": ".venv_searxng/bin/python",
+    "settings_path": "searxng_settings.yml"
+  },
+  "tool_settings": {
+    "execute_command": {
+      "description": "### Rules\n- Commands run with **no TTY, no stdin, TERM=dumb**. Interactive programs will hang and timeout.\n- Default timeout is 15 seconds. Long-running commands: pipe through `head` or use flags to limit output.\n\n### Banned Commands (interactive, will timeout)\n`top`, `htop`, `less`, `more`, `vim`, `nvim`, `nano`, `emacs`, `watch`, `dialog`,\n`python`/`node` (without `-c`/`-e`), `ssh` (interactive), `ftp`, `telnet`, `man` (use `--help` instead)\n\n### Non-Interactive Alternatives\n| Want | Use |\n|---|---|\n| CPU/process info | `top -l 1 -n 10` (macOS) or `top -bn1` (Linux) |\n| Process list | `ps aux --sort=-%cpu \\| head -20` |\n| Memory | `vm_stat` (macOS), `free -h` (Linux) |\n| File viewing | `cat`, `head -n 50`, `tail -n 50` |\n| Git | Use `git --no-pager` for log/diff |\n| Manual pages | `<cmd> --help 2>&1 \\| head -40` |\n\n### Output Management\n- Pipe through `head -N` for large output\n- Use `2>/dev/null` to suppress noisy stderr\n- Use `|| true` to prevent non-zero exit codes when failure is expected",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "exa_search": {
+      "description": "**Always prefer `exa_search` over any server-side search tools** (e.g. duckduckgo). It returns URLs and titles only — no page content;\n\nAfter `exa_search`, you MUST fetch ALL returned URLs with `web_fetch` before answering. Never answer from titles or URLs alone.\n\n**Rules — no exceptions:**\n- Fetch every URL returned by `exa_search`, up to 5 at a time in parallel\n- Only after all URLs are fetched: synthesise and answer\n- If more than 5 URLs were returned: fetch the first 5, then the next 5, and so on until all are done",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [
+        "web_fetch"
+      ],
+      "enabled": false,
+      "deferred": false,
+      "purposes": [
+        "interactive",
+        "research_minimal"
+      ]
+    },
+    "python_exec": {
+      "description": "Runs Python in a subprocess. The working directory is your artifacts folder — files you write there become user-visible artifacts.\n\n### When to use instead of multiple tool calls\nEach tool round re-sends the full conversation to the LLM. One `python_exec` replacing 3+ tool calls saves significant tokens.\n\n**Prefer python_exec for:**\n- Multi-file reads: `open()` several files, extract what you need, print a summary\n- Search + aggregate: `os.walk` + regex across files, count/filter/group results\n- Data processing: parse CSV/JSON, compute stats, transform data\n- Bulk file operations: rename, copy, filter files by pattern\n- Document processing (see below)\n\n**Keep using native tools for:**\n- Single file read/write (tool is simpler, no overhead)\n- Git operations (`git_command`)\n- Web/API calls (`web_fetch`, `exa_search`)\n- Memory, delegation, scheduling (Brain-internal)\n\n### Document processing\nThese packages are available — use them directly in python_exec instead of chaining read_document/write_document/edit_document:\n\n| Package | Use for |\n|---|---|\n| `docx` (python-docx) | Read/write/edit DOCX — paragraphs, tables, styles, headers |\n| `openpyxl` | Read/write/edit XLSX — cells, sheets, formulas, charts |\n| `pptx` (python-pptx) | Read/write/edit PPTX — slides, shapes, text, images |\n| `reportlab` | Generate PDFs from scratch (layouts, tables, graphics) |\n| `PIL` (Pillow) | Image processing — resize, crop, convert, annotate |\n| `csv` | CSV read/write (stdlib) |\n\nExample — read a DOCX table and create a summary CSV:\n```python\nfrom docx import Document\nimport csv\ndoc = Document('/path/to/report.docx')\nwith open('summary.csv', 'w', newline='') as f:\n    w = csv.writer(f)\n    for table in doc.tables:\n        for row in table.rows:\n            w.writerow([cell.text for cell in row.cells])\nprint(f\"Extracted {len(doc.tables)} tables to summary.csv\")\n```\n\n### Output rules\n- **Large results**: write to a file (becomes an artifact), print only a short summary\n- **Small results** (<20 lines): print directly to stdout\n- The system auto-saves stdout >1K chars as an artifact, but writing files yourself gives you control over filename and format",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "mempalace_query": {
+      "description": "Long-term memory: searches the user's stored facts, past chats, project documents, and indexed knowledge. The memory is private to the user — searching it is not a privacy decision, it IS the answer. Never ask permission to search; just search.\n\n**When to search**:\n- Any 'do you remember', 'what did we discuss', or reference to the past.\n- Direct personal-info questions about the user (family, preferences, past decisions, anything you couldn't know without prior context).\n- Any question whose answer plausibly lives in indexed project documents — policies, specs, references the user has loaded.\n- When in doubt: query first, answer second. Don't refuse on grounds of 'I don't have access to personal information' — the memory IS that information.\n\n**Query discipline — keep queries short and content-bearing**:\nQueries are matched by vector similarity. Long verbose queries with filler tokens drag the embedding toward generic chunks and HIDE the documents that match perfectly on filename or topic. Use 2–4 content-bearing keywords (the actual subject of the question) and drop everything else. Do NOT write the user's full question into the query.\n\n- Drop filler/generic tokens like: 'policy', 'rule', 'regulation', 'guideline', 'process', 'overview', 'definition', 'general', 'company', 'how', 'what', 'which', and their equivalents in the user's language.\n- Keep the rare, specific subject keywords — those discriminate between documents.\n- If the first short query returns nothing matching, try a different rare keyword pair, NOT a longer version of the same query. At most 2–3 query rephrasings before giving up — do not spin on retrieval forever.\n\n**Read for precision, not by default (every caller — chat or project)**:\nEach drawer carries the matched chunk plus its neighbours in `text` — a ~2-2.5 KB window of the source that matched your query. For most questions this window is enough to answer. A drawer backed by a real document on disk has `content_via:\"snippet+optional_read\"` and a `read_path`: call `read_document(path=<drawer.read_path>)` when EITHER (a) you need an exact verbatim quote, a precise figure/number, or table content, OR (b) the answer to the question is NOT fully contained in the window — the window is an excerpt, so if it cuts off mid-topic or the relevant detail clearly continues beyond it, read the source rather than answering from a partial chunk. If the window DOES fully answer the question, answer from it directly — do NOT read just to be thorough (that wastes tokens). Never quote the chunk as if it were the whole document. Drawers with `content_via:\"snippet\"` (chat history, profile, artifacts) carry their full verbatim content inline — there is no file to read. If you do read and `read_document` errors, re-issue with the corrected path or refuse cleanly — NEVER fall back to training data. Documented hallucination causes on indexed corpora: (a) treating an excerpt chunk as the complete passage, (b) answering from training data after a read_document error.\n\n**Saving**: when the user says 'remember this' or wants to persist a fact / decision / preference, call `save_chat_to_memory`.\n\n---\n\n**Project memory layer (when invoked inside a project chat)**:\nThis project has a dedicated, isolated memory store. By default `mempalace_query` searches ONLY this knowledge layer (mined documents) — it does NOT include past chat turns or chat summaries. This is deliberate: a wrong answer in an earlier turn must never outrank the underlying source document. If the user explicitly asks about something said earlier in this project's chats ('what did we discuss', 'remember when I said'), call `mempalace_query` again with `include_chat_history=true` to search the chat layer.\n\n**Don't pass these arguments**:\n- `wing` — set automatically by Brain\n- `room` — unless you have verified the exact room name from a previous successful result. Brain's project miner uses `room='general'` for all policy/document content; invented values like 'document' or 'documentation' silently return zero drawers and lead to fabricated 'not in the documents' answers. The default (no room filter) searches everything in the wing — that is what you want.\n- `include_chat_history=true` for 'how is X calculated' / 'what does the policy say' questions — that flag switches the search to the PROJECT CHAT wing (past conversations) instead of the PROJECT KNOWLEDGE wing (the actual indexed documents). Use it ONLY when the user explicitly references prior chat ('what did we discuss about X', 'remember when I said Y').",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive",
+        "memory_summary"
+      ]
+    },
+    "write_file": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive",
+        "research_minimal"
+      ]
+    },
+    "web_fetch": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive",
+        "research_minimal"
+      ]
+    },
+    "read_file": {
+      "description": "**Plain-text files only** — `.txt`, `.md`, `.py`, `.json`, `.log`, `.csv`, `.yaml`, source code. For binary documents (PDF, DOCX, XLSX, PPTX, EML, MSG) use `read_document` instead — `read_file` will return raw bytes which are not useful to you.",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "edit_file": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "transcribe_audio": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "translate_text": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "translate_document": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "detect_language": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "list_glossaries": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "get_glossary": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "ask_user_for_file": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "ask_llm": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "list_directory": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "search_files": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "mempalace_kg_query": {
+      "description": "**Entity neighbourhood search** — useful for 'what do we say about <specific entity>'. Returns triples where the given entity appears as subject OR object, plus a short context window around each.\n\nKG triples carry subject/predicate/object + `source_file` + confidence, plus a short verbatim `span` quoting the source when available. The span answers or quotes a short fact directly. `read_document(path=<source_file>)` when EITHER (a) you need surrounding context, an exact figure, or text beyond the span, OR (b) the span does NOT itself contain what the question asks — the span is a brief excerpt, so if it only hints at the answer or is cut off, read the source rather than guessing. If the span fully answers the question, answer from it directly; never build an answer on a span that doesn't support the claim. Use the KG to FIND the right document(s) and quote short facts; read the source for anything more.\n\nDo NOT pass a `wing` argument — set automatically.",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [
+        "mempalace_query"
+      ],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "mempalace_kg_search": {
+      "description": "**Structured triple search by predicate** — useful for: 'which laws are cited' (predicate=cites), 'who is responsible for X' (predicate=responsible_party), 'what does X require' (predicate=requires), contradiction-detection ('all requires-triples about retention'), coverage analysis, responsibility matrices.\n\nKG triples carry subject/predicate/object + `source_file` + confidence, plus a short verbatim `span` quoting the source when available. The span answers or quotes a short fact directly. `read_document(path=<source_file>)` when EITHER (a) you need surrounding context, an exact figure, or text beyond the span, OR (b) the span does NOT itself contain what the question asks — the span is a brief excerpt, so if it only hints at the answer or is cut off, read the source rather than guessing. If the span fully answers the question, answer from it directly; never build an answer on a span that doesn't support the claim. Use the KG to FIND the right document(s) and quote short facts; read the source for anything more.\n\n\n**Preferred flow for factual policy questions**:\n  1. `mempalace_kg_search(predicate=requires/forbids/etc.)` — the span often answers directly; read_document the source_file when you need exact figures or more context\n  2. `mempalace_query` — the matched chunk often answers; read_document the source for exact quotes/full context\n\n**Examples**:\n  • 'Was muss X tun?' → `kg_search(predicate=requires, subject_contains=X)` first, then read_document the source_file to cite\n  • 'Was ist verboten?' → `kg_search(predicate=forbids)`, then read_document the source_file to cite\n  • 'Welche Gesetze werden zitiert?' → `kg_search(predicate=cites)`\n  • 'Wie wird X berechnet?' → 3-step flow (formula lives in document, not in triples)\n  • 'Wer ist verantwortlich für IT-Security?' → `kg_search(predicate=responsible_party)`\n\nDo NOT pass a `wing` argument — it is set automatically.",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [
+        "mempalace_query"
+      ],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "mempalace_kg_neighbors": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "save_chat_to_memory": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive",
+        "memory_summary"
+      ]
+    },
+    "memory_store": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "memory_recall": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "memory_delete": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "memory_shared": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "gmail_inbox": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "gmail_read": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "gmail_search": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "gmail_send": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "gmail_reply": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "delegate_task": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "task_status": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "task_cancel": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "use_skill": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "list_nodes": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "context_search": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "context_detail": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "context_recall": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "schedule_list": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "schedule_history": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "read_document": {
+      "description": "**USE THIS TOOL for every binary document the user attached** — PDF, DOCX, XLSX, PPTX, CSV, EML, MSG. It parses the format server-side and returns clean extracted text. **Do NOT call `read_file` on binary documents** — `read_file` returns raw bytes (ZIP/PDF headers etc.) which are useless. **Do NOT call `python_exec` or `execute_command` to manually unzip / open / cat a binary attachment** — `read_document` already handles every common format with the right parser.\n\n**Step 2 of the project memory flow** (see `mempalace_query` for the full 3-step flow context).\n\n**HOW TO CALL READ_DOCUMENT for project drawers**: every drawer returned by `mempalace_query` carries a `read_path` field — absolute path to the curated `.brain-extracted/<name>.<ext>.md` companion. Pass it verbatim as `path`. Do NOT pass `source_file=...` (wrong parameter name; call silently fails). Do NOT construct paths from basenames + input-folder roots (the file may live in a subfolder you don't know about).\n\n**Always prefer `read_path` (the .md)** over `read_path_original` (the binary). The .md is what Microsoft markitdown produced from the binary — better table structure, heading hierarchy, OCR — and it's the exact text the drawer search ranked. Reading the original PDF re-extracts with a different (worse) extractor; you'd lose the curation. Use `read_path_original` only as a fallback when `read_path` errors or is empty.\n\nWorked example: drawer returns `read_path=\"/private/tmp/kg-real-policies/.../.brain-extracted/20_2 Informationssicherheit/20_2_1_2_ARL_ISMS Risikomanagement Handbuch.pdf.md\"`. Call: `read_document(path=\"<that read_path>\")` verbatim. The result is the full curated markdown, ready to read end-to-end for formulas, tables, full sections.\n\n**BINARY DOCUMENTS** (PDF, DOCX, PPTX, XLSX, EML, MSG) in project input folders are auto-converted into companion `.md` files under the hidden `.brain-extracted/` subdirectory before mining. So a drawer with `source_file` like `.brain-extracted/policy.pdf.md` actually came from `policy.pdf` in the same folder — open the ORIGINAL binary with read_document for full fidelity (tables, page layout, complete spreadsheet rows beyond the preview). The `.md` is a text preview optimised for retrieval and triple extraction; use it only when you don't need the original layout.",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "write_document": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "edit_document": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "mcp_connect": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "mcp_disconnect": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "mcp_servers": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "code_graph_build": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "code_graph_query": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "code_graph_impact": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "code_graph_enhance": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "git_command": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "github_command": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "tool_search": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "get_artifact_detail": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "worker_status": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "worker_abort": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "worker_pause": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "worker_resume": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "worker_send": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "worker_ask_user": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "ask_user": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "generate_image": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "searxng_search": {
+      "description": "**Always prefer `searxng_search` over any server-side search tools** (e.g. duckduckgo). It returns URLs and titles only — no page content;\n\nAfter `searxng_search`, you MUST fetch ALL returned URLs with `web_fetch` before answering. Never answer from titles or URLs alone.\n\n**Rules — no exceptions:**\n- Fetch every URL returned by `exa_search`, up to 5 at a time in parallel\n- Only after all URLs are fetched: synthesise and answer\n- If more than 5 URLs were returned: fetch the first 5, then the next 5, and so on until all are done",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive",
+        "research_minimal"
+      ]
+    },
+    "helpdesk_session_info": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "helpdesk_user_context": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    },
+    "helpdesk_user_activity": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "enabled": true,
+      "deferred": false,
+      "purposes": [
+        "interactive"
+      ]
+    }
+  },
+  "research_mode_disciplines": {
+    "refusal": "**REFUSAL DISCIPLINE — refuse cleanly when retrieval comes back empty**:\nIf `mempalace_query` returns 0 relevant drawers (and after you've read the top drawers' source files in full and confirmed they don't contain the information), the project does NOT contain it. You MUST then say so explicitly — name what's missing, suggest the user add the relevant document or consult another source. Try at most 2-3 query rephrasings before refusing.\nDo NOT substitute training-data knowledge for indexed-document knowledge in this project. Even if you know the topic well from training data, for compliance / policy / audit work, an answer that doesn't match an actual document on file is a fabrication hazard. Refuse cleanly and say what's missing.",
+    "precision": "**PRECISION DISCIPLINE — no plausible-sounding filler**:\nWhen the source does not give a concrete value (interval, frequency, threshold, count, deadline, length, duration), write `nicht spezifiziert` — never substitute a plausible default like 'regelmäßig', 'häufig', 'sofort', 'kürzer', 'mindestens X Zeichen', 'alle 12 Monate', 'mindestens jährlich'. If you use any qualifying adverb or comparative ('regelmäßig', 'häufiger', 'kürzer', 'sofort', 'zeitnah', 'angemessen'), the very next characters must be a wörtliches Zitat (`> \"...\"`) from the read_document output proving the source actually says that. No quote → drop the qualifier. ISO-27001-typical phrasing from training data is NOT a source.",
+    "citation": "**CITATION DISCIPLINE — per-claim, not per-block**:\nEVERY factual sentence and EVERY bullet point that came from the project must carry its OWN [Quelle: <basename> — \"<wörtliches Zitat 10-25 Wörter>\"] reference right after the claim. One citation at the end of a 5-bullet list is INSUFFICIENT — the reader cannot tell which bullet came from which source, and bullets without an explicit citation are where paraphrase drift and fabrication slip in. Treat each bullet as an independent claim that must stand on its own with its own claim and quote. A bulltet without a claim and just a citation is not correct. A claim consists of the claim itself and a citation.\nIf you cannot find a verbatim quote in the read_document output that supports a specific bullet — DELETE that bullet. Do not write claims you cannot cite. A shorter, fully-cited answer is always preferable to a longer answer with uncited bullets.\nThe verbatim quote (10-25 words, copied EXACTLY from the read_document output) is mandatory — it lets the user search the original PDF with Cmd+F and verify the claim. Without a quote, the citation is unverifiable.\nTwo correct examples:\n  • Single-sentence claim:\n    'Multilogin-Berechtigungen müssen vom Datenowner genehmigt werden [Quelle: 4_1_0_ARL_Systemberechtigungen.pdf — \"Berechtigungen können ferner angeben, ob es sich um eine Berechtigung handelt, wo die Zugangsdaten nicht einer einzelnen Person zugewiesen werden kann\"].'\n  • Bullet list (each bullet has its own quote):\n    - Multilogin = nicht zuordenbar [Quelle: 4_1_0_ARL_Systemberechtigungen.pdf — \"Zugangsdaten nicht einer einzelnen Person zugewiesen werden\"].\n    - Genehmigung durch Datenowner [Quelle: 4_1_0_ARL_Systemberechtigungen.pdf — \"Vor Veränderungen ist eine Zustimmung des jeweiligen Datenowners einzuholen\"].\n    - (kein dritter Bullet, weil keine weitere Aussage im read_document gefunden — lieber weglassen als raten.)\nUse the basename only (e.g. `4_0_0_ARL_IKT Strategie.pdf` — not the full path). **STRIP THE `.md` COMPANION SUFFIX**: when a drawer's `source_file` ends in `.brain-extracted/<name>.<ext>.md`, cite the ORIGINAL binary's name (e.g. `policy.pdf`, NOT `policy.pdf.md`). **DO NOT invent paragraph numbers like `§164` or `§3.2`** — the `.md` companions do NOT preserve the original document's paragraph numbering; any `§N` you write will be fabricated. Only add a locator if it is genuinely present in the read_document text: `Page N` for PDFs (markitdown marks page boundaries), `Slide N` for PPTX, `Sheet \"Name\"` for XLSX. If no clean locator exists, the verbatim quote alone is sufficient.\nMultiple sources for one claim → repeat the bracket: [Quelle: A.pdf — \"...\"] [Quelle: B.docx — \"...\"]."
+  },
+  "chat_summary_model": "CLIProxyAPI/mistral-small-latest",
+  "classification": {
+    "keywords": {
+      "internal": [
+        "CISO",
+        "Hauspost",
+        "CRYPTSHARE",
+        "Mitarbeiter",
+        "Bereichsleiter",
+        "Informationseigentümer",
+        "IT-Sicherheitsbeauftragter",
+        "Arbeitsrichtlinie"
+      ],
+      "confidential": [
+        "Vorstand",
+        "Aufsichtsrat",
+        "interner Bericht",
+        "Strategie",
+        "M&A",
+        "Personalakt",
+        "Gehaltsliste",
+        "Bonus",
+        "Geschäftsgeheimnis",
+        "Kundenakte",
+        "Kundendaten",
+        "Compliance-Vorfall",
+        "Risikobericht",
+        "Vorstandssitzung",
+        "Vorstandsbeschluss"
+      ],
+      "strict": [
+        "Vorstandsprotokoll",
+        "Aufsichtsratsprotokoll",
+        "Ad-hoc",
+        "Disziplinarverfahren",
+        "Kündigungsgrund"
+      ]
+    },
+    "extra_patterns": []
+  },
+  "classification_scanner": {
+    "enabled": true,
+    "server_block": false,
+    "server_log": true,
+    "default_local_fallback_model": "gemma-4-26B-A4B-it-MLX-4bit",
+    "per_level_action": {
+      "public": "ignore",
+      "internal": "warn",
+      "confidential": "warn",
+      "unmarked": "warn"
+    }
+  },
+  "crawl4ai": {
+    "enabled": true,
+    "auto_start": true,
+    "url": "http://127.0.0.1:8422",
+    "venv_python": ".venv_crawl4ai/bin/python"
+  },
+  "helpdesk": {
+    "enabled": true,
+    "model": "CLIProxyAPI/mistral-small-latest",
+    "max_rounds": 6,
+    "system_prompt": "Du bist Brainy 🧠 — der freundliche, kompetente Helpdesk-Assistent von brain-agent. Du hilfst dem angemeldeten Nutzer direkt im Chat: bei allgemeinen Fragen zur App UND zur aktuellen Sitzung. Du bist NICHT der normale Chat-Agent — du bist ein eigenständiger Helfer mit Insider-Wissen über brain-agent.\n\nPersönlichkeit: warm, geduldig, permanent hilfsbereit, leicht verspielt, niemals herablassend. Antworte kurz und konkret. Sprich den Nutzer freundlich und auf Deutsch an (außer der Nutzer schreibt in einer anderen Sprache — dann passe dich an).\n\nVorgehen:\n1. Lade ZUERST den Skill `brain-agent-guide` mit dem Tool use_skill — er enthält die komplette Bedienungsanleitung, FAQ, Rezepte, API, Tools, Speicherorte und Interna von brain-agent. Stütze deine Antworten darauf, statt zu raten.\n2. Für Fragen zur laufenden Sitzung nutze helpdesk_session_info. Für persönliche/zugeschnittene Hilfe helpdesk_user_context (wer ist der Nutzer) und helpdesk_user_activity (was hat er bisher gemacht — Chats, Projekte, Schedules).\n3. Gib konkrete, umsetzbare Tipps und nenne, WO in der Oberfläche etwas zu finden ist (Tab, Button, Einstellung).\n\nGrenzen: Du bist rein lesend. Du kannst nichts ändern, nichts senden, keine Befehle ausführen und keine Dateien schreiben. Wenn der Nutzer eine Aktion ausführen will, erkläre ihm Schritt für Schritt, wie ER sie selbst durchführt. Wenn du etwas nicht sicher weißt, sag es ehrlich und verweise auf die passende Stelle in der App.\n\nTon & Humor: Du darfst trocken-charmant sein, mit Augenzwinkern. WICHTIG: Die Antwort selbst bleibt immer korrekt und sachlich — Witz kommt obendrauf, nie statt der Antwort und nie auf Kosten der Genauigkeit. Wenn die Daten eine augenzwinkernde Pointe hergeben (z.B. der Nutzer hat 7-mal nach dem Wetter gefragt), hänge HÖCHSTENS einen lockeren Schlusssatz an — etwa: „Vielleicht mal eine neue Frage ausdenken? Wird langsam zur Gewohnheit. ☂️\". Setze das sparsam ein (nicht bei jeder Antwort, sonst nutzt es sich ab), und NIE bei Fehlern, bei Datenschutz/PII-Themen oder wenn der Nutzer gestresst/frustriert wirkt — dann hilf einfach ruhig und sachlich. Die Pointe ist eine augenzwinkernde Beobachtung zum erkannten Muster selbst (z.B. „denk dir mal eine andere Frage aus, das wird öde ☂️\") — NICHT ein proaktives Feature-Angebot oder ein erfundener Tipp. Erfinde dafür keine Funktionen; wenn du eine App-Funktion nennst, muss sie real und durch den brain-agent-guide-Skill gedeckt sein.\n\nBeispiele für den richtigen Schluss (Frage: „Wie oft habe ich nach dem Wetter gefragt?\", 7 Treffer):\n✅ GUT: „Du hast 7-mal nach dem Wetter gefragt. Vielleicht mal eine andere Frage ausdenken — wird langsam zur Gewohnheit. ☂️\"\n❌ FALSCH (erfundenes Feature-Angebot): „… Soll ich dir zeigen, wie du Wetterdaten speichern kannst? Nutze die Artifacts-Funktion!\" — verboten: das ist eine ausgedachte Funktion und kein Witz.\n❌ FALSCH (proaktives Hilfsangebot statt Pointe): „… Möchtest du, dass ich dir etwas anderes heraussuche?\" — die Spitze kommentiert das MUSTER, sie bietet keine Zusatzaktion an.\nDie Schlusszeile ist eine kurze, selbstironische Beobachtung zum Muster — sonst nichts."
+  },
+  "default_model": "CLIProxyAPI/mistral-medium-3.5",
+  "warmup": {
+    "pool_depth": 10
   }
 }
