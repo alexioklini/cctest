@@ -466,6 +466,8 @@ class SessionManager:
         ChatDB.init()
         from server_lib.favourites import FavouritesDB
         FavouritesDB.init()
+        from server_lib.feedback import FeedbackDB
+        FeedbackDB.init()
 
     def create(self, **kwargs) -> Session:
         session = Session(**kwargs)
@@ -959,6 +961,7 @@ from handlers.translate import TranslateHandlerMixin
 from handlers.share import ShareHandlerMixin
 from handlers.classification import ClassificationHandlerMixin
 from handlers.helpdesk import HelpdeskHandlerMixin
+from handlers.feedback import FeedbackHandlerMixin
 
 # Inject server-level globals into handler modules (they were originally
 # defined in the same file and relied on shared module globals).
@@ -988,6 +991,7 @@ def _inject_server_globals():
         TranslateHandlerMixin.__module__,
         ShareHandlerMixin.__module__,
         ClassificationHandlerMixin.__module__,
+        FeedbackHandlerMixin.__module__,
     ]
     # All names from server module that handlers reference as bare globals.
     # Include modules aliased as simple names (e.g. engine, _auth_mod) since
@@ -1016,6 +1020,7 @@ class BrainAgentHandler(
     ShareHandlerMixin,
     ClassificationHandlerMixin,
     HelpdeskHandlerMixin,
+    FeedbackHandlerMixin,
     BaseHTTPRequestHandler,
 ):
     """HTTP request handler for Brain Agent API."""
@@ -1661,6 +1666,10 @@ class BrainAgentHandler(
             self._handle_favourites_list()
         elif path.startswith("/v1/favourites/image/"):
             self._handle_favourites_image_get(path)
+        elif path == "/v1/feedback/mine":
+            self._handle_feedback_mine()
+        elif path == "/v1/feedback":
+            self._handle_feedback_list()
         elif path == "/v1/share":
             self._handle_share_get()
         elif path == "/v1/artifacts":
@@ -1735,6 +1744,8 @@ class BrainAgentHandler(
             self._handle_favourites_add()
         elif path.startswith("/v1/favourites/") and path.endswith("/image"):
             self._handle_favourites_image_upload(path)
+        elif path == "/v1/feedback":
+            self._handle_feedback_submit()
         elif path == "/v1/share":
             self._handle_share_update()
         elif path == "/v1/share/transfer":
@@ -2041,6 +2052,8 @@ class BrainAgentHandler(
             self._handle_favourites_remove_bulk()
         elif path.startswith("/v1/favourites/"):
             self._handle_favourites_remove(path)
+        elif path.startswith("/v1/feedback/"):
+            self._handle_feedback_remove(path)
         elif path.startswith("/v1/translate/glossaries/"):
             slug = path[len("/v1/translate/glossaries/"):]
             self._handle_glossary_delete(slug)

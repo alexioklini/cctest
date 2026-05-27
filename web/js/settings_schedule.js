@@ -313,6 +313,9 @@ function _schedRenderRuns(body, name, history) {
     const agentId = h.agent || 'main';
     const runId = h.id;
     const deleteDisabled = running ? 'disabled title="Laufende Aufgabe kann nicht gelöscht werden"' : '';
+    const fb = (!running && typeof renderFeedbackControl === 'function')
+      ? renderFeedbackControl('schedule', runId, `sched-${runId}`, `${name} · ${h.status||''}`)
+      : '';
     html += `<div class="sched-run-row" data-run-id="${runId}">
       <span class="r-dot" style="background:${statusColor}"></span>
       <span class="r-time">${started}</span>
@@ -323,6 +326,7 @@ function _schedRenderRuns(body, name, history) {
         <button onclick="openScheduledArtifact(${runId}, 'sched-${runId}', '${esc(agentId)}', null)">Öffnen</button>
         <button onclick="_schedViewRunDetail(${runId})">Details</button>
         <button class="danger" ${deleteDisabled} onclick="_schedDeleteRun('${esc(name)}', ${runId}, this)">Löschen</button>
+        ${fb}
       </span>
     </div>`;
   }
@@ -330,6 +334,7 @@ function _schedRenderRuns(body, name, history) {
     <button class="danger" onclick="_schedClearHistory('${esc(name)}', this)">Gesamten Verlauf löschen</button>
   </div>`;
   body.innerHTML = html;
+  if (typeof feedbackHydrateState === 'function') feedbackHydrateState('schedule', '');
 }
 
 async function _schedDeleteRun(name, runId, btn) {

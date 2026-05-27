@@ -320,8 +320,29 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 - `POST /v1/share/transfer` — `{kind, id, new_owner_user_id}` admin
 - `GET /v1/teams` / `POST /v1/teams` — team CRUD
 - `GET /v1/user-teams` — caller's team memberships
-- `GET /v1/favourites` / `POST /v1/favourites` / image variant
+- `GET /v1/favourites` / `POST /v1/favourites` / image variant.
+  `item_type` ∈ `chat | project_chat | project | workflow | schedule |
+  artifact | translation`. For `translation`, `item_id` is either a tab name
+  (`text|document|audio|live` — pins the tab) or a `translate_history` entry id
+  (pins a specific saved translation, owner-scoped).
 - `GET /v1/channels` — list team channels
+
+## Feedback (👍/👎 on responses)
+
+Per-user thumbs-up/down (+ optional comment) on any assistant response or
+result, across all surfaces. Keyed `UNIQUE(surface, target_id, user_id)` — a
+user re-rating the same response upserts their own row.
+
+- `POST /v1/feedback` — submit/upsert. Body `{surface, target_id, session_id?,
+  rating, comment?, context_snapshot?}`. `surface` ∈ `chat | brainy | workflow |
+  schedule | translation | classification`; `rating` ∈ `up | down`. Any
+  authenticated user. 400 on bad surface/rating/missing target_id.
+- `GET /v1/feedback/mine?surface=&session_id=` — the caller's own feedback rows
+  (used by the UI to restore the highlighted thumb after reload).
+- `GET /v1/feedback?surface=&rating=` — **admin only** — list all feedback
+  (403 for non-admins). Each row is enriched with `user_name` (resolved
+  display_name → username → id) so the admin UI shows a name, not just the id.
+- `DELETE /v1/feedback/<id>` — **admin only**.
 
 ## Services / Notifications / Backup / Status
 

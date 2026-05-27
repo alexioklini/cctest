@@ -266,6 +266,8 @@ function brainyFmtTime(ts) {
 function brainyRenderHistory() {
   const list = document.getElementById('brainy-list');
   if (!list) return;
+  // After the DOM is (re)built below, restore this user's 👍/👎 selections.
+  if (typeof feedbackHydrateState === 'function') setTimeout(() => feedbackHydrateState('brainy', ''), 0);
   const ex = brainyState.exchanges;
   document.getElementById('brainy-load-more').style.display = brainyState.hasMore ? '' : 'none';
 
@@ -318,8 +320,10 @@ function brainyExchangeHTML(x) {
   const badgeHTML = badge
     ? `<div class="brainy-ctx-badge" title="Gefragt in: ${esc(badge)}">${esc(badge)}</div>` : '';
   const q = x.q ? `<div class="brainy-bubble brainy-user">${badgeHTML}<div class="brainy-bubble-body">${esc(x.q)}</div></div>` : '';
+  const fb = (x.aid && typeof renderFeedbackControl === 'function')
+    ? `<div class="brainy-bubble-fb">${renderFeedbackControl('brainy', x.aid, '', x.a || '')}</div>` : '';
   const a = (x.a || x.aid) ? `<div class="brainy-bubble brainy-bot"><span class="brainy-bubble-avatar">${brainyAvatarHTML()}</span>`
-    + `<div class="brainy-bubble-body">${typeof renderMarkdown === 'function' ? renderMarkdown(x.a || '') : esc(x.a || '')}</div></div>` : '';
+    + `<div class="brainy-bubble-body">${typeof renderMarkdown === 'function' ? renderMarkdown(x.a || '') : esc(x.a || '')}${fb}</div></div>` : '';
   return `<div class="brainy-exchange" data-id="${delId}">
     <button class="brainy-ex-del" title="Diesen Eintrag löschen" onclick="brainyDeleteExchange(${delId})">&times;</button>
     ${q}${a}

@@ -377,6 +377,24 @@ class API {
   static abortStreamAttach() {
     if (this._streamController) { try { this._streamController.abort(); } catch(e){} this._streamController = null; }
   }
+
+  // Feedback (👍/👎 + optional comment on any assistant response/result)
+  static submitFeedback(body) { return this.post('/v1/feedback', body); }
+  static listFeedback(surface, rating) {
+    const q = new URLSearchParams();
+    if (surface) q.set('surface', surface);
+    if (rating) q.set('rating', rating);
+    const qs = q.toString();
+    return this.get('/v1/feedback' + (qs ? '?' + qs : ''));
+  }
+  static myFeedback(surface, sessionId) {
+    const q = new URLSearchParams();
+    if (surface) q.set('surface', surface);
+    if (sessionId) q.set('session_id', sessionId);
+    const qs = q.toString();
+    return this.get('/v1/feedback/mine' + (qs ? '?' + qs : ''));
+  }
+  static deleteFeedback(id) { return this.del(`/v1/feedback/${id}`); }
 }
 
 

@@ -326,9 +326,11 @@ async function clsLoadHistory() {
             <div class="meta">${clsEsc(s.source_kind || '')} · ${date}</div>
           </div>
           <div class="stat">${counts}</div>
+          <span onclick="event.stopPropagation()">${typeof renderFeedbackControl === 'function' ? renderFeedbackControl('classification', s.scan_id, '', s.source_label || s.source_kind || '') : ''}</span>
           <span class="x" onclick="event.stopPropagation();clsDeleteScan('${clsEsc(s.scan_id)}')" title="Löschen">✕</span>
         </div>`;
     }).join('');
+    if (typeof feedbackHydrateState === 'function') feedbackHydrateState('classification', '');
   } catch (e) {
     box.innerHTML = `<div style="color:var(--error,#d33);font-size:13px">${clsEsc(e.message || String(e))}</div>`;
   }

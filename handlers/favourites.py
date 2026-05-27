@@ -173,14 +173,35 @@ _TRANSLATION_TAB_TITLES = {
 
 
 def _hydrate_translation(item_id: str, agent_id: str, user, team_ids, is_admin) -> dict:
-    """Translation tabs are static UI — always available, no DB lookup needed."""
-    title = _TRANSLATION_TAB_TITLES.get(item_id, "Translation")
+    """Two flavours of translation favourite:
+      - item_id is a tab name (text|document|audio|live) → legacy tab favourite,
+        static UI, always available.
+      - item_id is a translate_history entry id (uuid hex) → a specific saved
+        translation; hydrate from translate_history (title + type), owner-scoped.
+    """
+    if item_id in _TRANSLATION_TAB_TITLES:
+        return {
+            "available": True,
+            "title": _TRANSLATION_TAB_TITLES[item_id],
+            "subtitle": "",
+            "visibility": "user",
+            "owner_user_id": user.get("id") or "",
+            "team_id": "",
+        }
+    # Specific entry: only the owner (or an admin) may see it.
+    from server_lib.db import TranslateHistoryDB
+    entry = TranslateHistoryDB.get(item_id, user.get("id") or "", admin=is_admin)
+    if not entry:
+        return {"available": False, "title": "(gelöschte Übersetzung)"}
+    title = (entry.get("title") or "").strip() or "Übersetzung"
     return {
         "available": True,
         "title": title,
-        "subtitle": "",
+        "subtitle": _TRANSLATION_TAB_TITLES.get(
+            "audio" if entry.get("type") == "media" else entry.get("type"), ""),
+        "updated_at": float(entry.get("created_at") or 0),
         "visibility": "user",
-        "owner_user_id": user.get("id") or "",
+        "owner_user_id": entry.get("user_id") or user.get("id") or "",
         "team_id": "",
     }
 

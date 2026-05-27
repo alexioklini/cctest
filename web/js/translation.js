@@ -1546,6 +1546,18 @@ function _trHistoryRenderTab(tab) {
     return;
   }
   list.innerHTML = entries.map(e => _trHistoryRowHtml(e, tab)).join('');
+  if (typeof feedbackHydrateState === 'function') feedbackHydrateState('translation', '');
+  // Mount a favourite-star per row (simple on/off toggle); item_id = entry id.
+  if (window.Favourites?.mount) {
+    list.querySelectorAll('.tr-fav-star').forEach(span => {
+      if (span.dataset.mounted) return;
+      span.dataset.mounted = '1';
+      window.Favourites.mount(span, {
+        item_type: 'translation', item_id: span.dataset.favEntry,
+        agent_id: 'main', simple: true,
+      });
+    });
+  }
 }
 
 function _trHistoryRowHtml(entry, tab) {
@@ -1558,13 +1570,15 @@ function _trHistoryRowHtml(entry, tab) {
     : '';
   const expanded = !!_trHistoryExpanded[entry.id];
   const detail = expanded ? _trHistoryDetailHtml(entry) : '';
-  return `<div class="tr-history-row${expanded ? ' expanded' : ''}">
+  return `<div class="tr-history-row${expanded ? ' expanded' : ''}" data-tr-history="${escapeHtml(entry.id)}">
     <div class="tr-history-row-head" onclick="trHistoryToggle('${escapeHtml(entry.id)}','${tab}')">
       <span class="tr-history-row-title">${escapeHtml(entry.title || '—')}</span>
       <span class="tr-history-row-meta">${langs ? escapeHtml(langs) + ' · ' : ''}${escapeHtml(date)}</span>
       ${ownerBadge}
+      <span class="tr-fav-star" data-fav-entry="${escapeHtml(entry.id)}" onclick="event.stopPropagation()"></span>
       <button class="tr-history-row-del" title="Löschen"
         onclick="event.stopPropagation();trHistoryDelete('${escapeHtml(entry.id)}')">×</button>
+      <span onclick="event.stopPropagation()">${typeof renderFeedbackControl === 'function' ? renderFeedbackControl('translation', entry.id, '', entry.title || '') : ''}</span>
     </div>
     ${detail}
   </div>`;
@@ -1698,6 +1712,35 @@ function _trHistoryDetailLive(entry, result) {
 function trHistoryToggle(id, tab) {
   _trHistoryExpanded[id] = !_trHistoryExpanded[id];
   _trHistoryRenderTab(tab);
+}
+
+// Open the translation history entry `entryId`: resolve its type → switch to
+// the right tab → scroll the row into view + flash it. Reusable by the feedback
+// jump button and favourites. Polls because history loads async on view mount.
+// `entry.type` is text|document|media|live; the media type lives in the UI tab
+// labelled 'audio', so map it. Returns true once handled.
+function trJumpToHistoryEntry(entryId, tries) {
+  tries = tries || 0;
+  const entry = _trHistoryEntries.find(e => String(e.id) === String(entryId));
+  if (!entry) {
+    if (tries < 25) { setTimeout(() => trJumpToHistoryEntry(entryId, tries + 1), 200); }
+    else if (typeof showToast === 'function') showToast('Übersetzung nicht im Verlauf gefunden', true);
+    return false;
+  }
+  const uiTab = entry.type === 'media' ? 'audio' : entry.type;  // panel id mapping
+  if (typeof trSwitchTab === 'function') trSwitchTab(uiTab);
+  // Re-render that tab's history list (it may have been collapsed/filtered) and
+  // scroll after the DOM settles.
+  if (typeof _trHistoryRenderTab === 'function') _trHistoryRenderTab(entry.type);
+  setTimeout(() => {
+    const row = document.querySelector(`[data-tr-history="${String(entryId).replace(/(["\\])/g, '\\$1')}"]`);
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.classList.add('fb-flash');
+      setTimeout(() => row.classList.remove('fb-flash'), 1600);
+    }
+  }, 60);
+  return true;
 }
 
 function trHistoryRestoreText(id) {

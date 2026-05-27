@@ -36,7 +36,7 @@ agents/
     chats.db                   # sessions, messages, artifacts, artifact_versions,
                                # active_turns, pseudonym_maps, translate_history,
                                # auth_tokens, channel_members, team_channels,
-                               # data_sessions, favourites, reactions,
+                               # data_sessions, favourites, feedback, reactions,
                                # read_cursors, kg_extraction_log/progress/state,
                                # chat_mempalace_sync, closet_regen_progress,
                                # project_sync_runs, helpdesk_history
@@ -196,6 +196,22 @@ cascade-dropped when a chat session is deleted. Served newest-first +
 cursor-paginated by `GET /v1/helpdesk/history`. `context_label` (written on
 both rows of an exchange) drives the per-question UI badge AND
 context-filtered replay (see `05-internals.md` → Brainy).
+
+### chats.db → feedback (👍/👎 on responses)
+```
+id INTEGER PK AUTOINCREMENT, surface TEXT, target_id TEXT,
+session_id TEXT (''=none, e.g. Brainy), user_id TEXT, rating TEXT ('up'|'down'),
+comment TEXT, context_snapshot TEXT (short copy of the rated response/title),
+created_at REAL, updated_at REAL,
+UNIQUE(surface, target_id, user_id)
+```
+Indexes `idx_fb_surface(surface)`, `idx_fb_rating(rating)`. `surface` ∈
+`chat | brainy | workflow | schedule | translation | classification`;
+`target_id` is that surface's stable id (chat=message id, brainy=helpdesk_history
+id, workflow=execution_id, schedule=run id, translation=entry id,
+classification=scan_id). **Per-user** — the UNIQUE key means a user re-rating the
+same response overwrites their own row (created_at preserved). Written by
+`POST /v1/feedback`; admin reads via `GET /v1/feedback`.
 
 ### context.db (LCM)
 Nodes + edges of the lossless context manager DAG. `nodes(id, session_id,

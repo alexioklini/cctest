@@ -202,6 +202,8 @@ function renderMessages() {
   // scrolling a turn into view drives the right panel's per-turn focus. Cheap +
   // idempotent (disconnects then re-observes), so run it whenever anything moved.
   if (changedRoots.length && typeof initTurnScrollSync === 'function') initTurnScrollSync();
+  // Restore this user's 👍/👎 selections for the chat's responses (by data-attr).
+  if (typeof feedbackHydrateState === 'function' && chat.sessionId) feedbackHydrateState('chat', chat.sessionId);
 }
 // Reconcile an ordered list of {key, html, hash} blocks against `container`'s
 // direct children. Returns the array of element roots that were newly inserted
@@ -858,7 +860,7 @@ function renderAssistantMessage(msg, idx) {
   }
 
   return `
-    <div class="msg-turn msg-turn-assistant">
+    <div class="msg-turn msg-turn-assistant"${msg.id != null ? ` data-msg-id="${msg.id}"` : ''}>
       ${thinkingHtml}
       <div class="msg-assistant msg-content">${rendered}</div>
       ${filesHtml}
@@ -866,6 +868,7 @@ function renderAssistantMessage(msg, idx) {
       ${refsHtml}
       <div class="msg-actions-bar">
         ${turnStatsHtml}
+        ${msg.id != null ? renderFeedbackControl('chat', msg.id, state.activeChat?.sessionId || '', content) : ''}
         <button class="msg-action-btn" onclick="copyMessage(${idx})" title="Kopieren">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
         </button>

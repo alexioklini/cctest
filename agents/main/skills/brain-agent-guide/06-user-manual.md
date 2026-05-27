@@ -305,9 +305,37 @@ Jeder Schreib-/Bearbeitungsvorgang erzeugt eine **Artifact-Version**
 
 ## Favoriten
 
-Beliebiges für Schnellzugriff anheften: Chats, Artifacts, Prompts, Bilder.
-Seitenleiste → **Favoriten** listet sie. ★ in einer Listenzeile klicken
-oder über das Teilen-Menü.
+Beliebiges für Schnellzugriff anheften: Chats, Artifacts, Prompts, Bilder,
+**einzelne Übersetzungen** (★ in der jeweiligen Verlaufs-Zeile im
+Übersetzungs-Tab — öffnet beim Anklicken direkt die richtige Übersetzung im
+passenden Typ-Tab). Seitenleiste → **Favoriten** listet sie. ★ in einer
+Listenzeile klicken oder über das Teilen-Menü.
+
+---
+
+## Feedback geben (👍/👎)
+
+Jede Antwort und jedes Ergebnis kannst du bewerten — das hilft uns, die
+Qualität zu verbessern. Du findest zwei Daumen (👍/👎) bei:
+
+- **Chat & Projekt-Chat** — in der Aktionsleiste unter jeder Antwort
+  (neben Kopieren/Erneut versuchen).
+- **Brainy** (der Helpdesk-Bot) — unter jeder Brainy-Antwort.
+- **Workflow-Läufe** — in jeder abgeschlossenen Verlaufs-Zeile.
+- **Geplante Aufgaben** — in jeder Lauf-Zeile (Einstellungen → Zeitplan, bzw.
+  im Projekt-Tab).
+- **Übersetzungen** — in jeder Verlaufs-Zeile.
+- **Klassifizierung** — in jeder Scan-Zeile.
+
+So funktioniert's: Daumen klicken → ein kleines Feld öffnet sich, in dem du
+**optional** kurz schreiben kannst, was gut bzw. nicht gut war → **Senden**.
+Danach erscheint eine kurze „Danke!"-Animation, und dein gewählter Daumen
+bleibt markiert (auch nach dem Neuladen). Du kannst deine Bewertung jederzeit
+ändern — die neue ersetzt die alte. Feedback ist pro Person: nur du siehst
+deine eigene Markierung.
+
+Administratoren finden alle eingegangenen Bewertungen gebündelt unter
+**Einstellungen → Feedback** (siehe unten).
 
 ---
 
@@ -371,6 +399,12 @@ Zahnrad, unten links. Je nach Rolle zwei Bereiche:
 - **Teams** — Team-CRUD + ACLs
 - **Kosten** — globale Kostenansicht pro Nutzer/Modell/Tag
 - **Kontingente** — Pro-Nutzer Tages- + Zyklus-Limits + Durchsetzungsmodus
+- **Feedback** — alle eingegangenen 👍/👎-Bewertungen (mit Kommentar,
+  Kontext-Ausschnitt, **Benutzername**, Zeitpunkt), filterbar nach Bereich und
+  Bewertung; einzelne Einträge löschbar. Pro Zeile springt der **↗-Button**
+  direkt zum bewerteten Inhalt (Chat → Sitzung öffnen und zur Antwort scrollen;
+  Workflow/Aufgabe → Lauf-Detail; Übersetzung/Klassifizierung → die jeweilige
+  Ansicht). Brainy hat keinen Sprung-Ziel.
 - **GDPR** — PII-Scanner, Kategorie-Aktionen, NER-Modelle, Regel-Overrides
 - **Kontext** — LCM-Schwellen (Lossless Context Manager)
 - **MemPalace** — Chat-Sync-Klassifizierer, Wing-Regeln

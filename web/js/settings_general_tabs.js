@@ -1401,6 +1401,73 @@ async function _genTab_gdpr(C) {
     }
 }
 
+async function _genTab_feedback(C) {
+  /* ─── FEEDBACK (admin: examine all 👍/👎 + comments) ─── */
+  const SURF_LABELS = {
+    chat: 'Chat', brainy: 'Brainy', workflow: 'Workflow',
+    schedule: 'Aufgabe', translation: 'Übersetzung', classification: 'Klassifizierung',
+  };
+  // Preserve the current filter selection across re-renders.
+  const surfSel = C.querySelector('#fb-filter-surface')?.value || '';
+  const rateSel = C.querySelector('#fb-filter-rating')?.value || '';
+  const surfOpts = ['<option value="">Alle Bereiche</option>']
+    .concat(Object.entries(SURF_LABELS).map(([k, v]) =>
+      `<option value="${k}" ${k === surfSel ? 'selected' : ''}>${esc(v)}</option>`)).join('');
+  const rateOpts = `<option value="">👍 + 👎</option>`
+    + `<option value="up" ${rateSel === 'up' ? 'selected' : ''}>Nur 👍</option>`
+    + `<option value="down" ${rateSel === 'down' ? 'selected' : ''}>Nur 👎</option>`;
+
+  let rows = [];
+  try {
+    rows = (await API.listFeedback(surfSel || null, rateSel || null)).feedback || [];
+  } catch (e) {
+    C.innerHTML = `<div style="padding:20px;color:var(--error)">Feedback konnte nicht geladen werden: ${esc(e.message || String(e))}</div>`;
+    return;
+  }
+
+  const fmtDate = (ts) => ts ? new Date(ts * 1000).toLocaleString(undefined,
+    { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+  const reload = `_genTab_feedback(document.getElementById('general-tab-content'))`;
+
+  const canJump = (s) => s !== 'brainy';  // brainy has no deep-link target
+  const body = rows.length
+    ? rows.map(r => {
+        const jump = canJump(r.surface)
+          ? `<button class="fb-jump" title="Zum Inhalt springen"
+               onclick="feedbackJumpTo('${esc(r.surface)}','${esc(String(r.target_id))}','${esc(r.session_id || '')}')">↗</button>`
+          : `<span class="fb-jump fb-jump-disabled" title="Kein direkter Sprung verfügbar">·</span>`;
+        return `
+        <div class="fb-admin-row">
+          <span>${esc(SURF_LABELS[r.surface] || r.surface)}</span>
+          <span class="${r.rating === 'down' ? 'fb-badge-down' : 'fb-badge-up'}">${r.rating === 'down' ? '👎' : '👍'}</span>
+          <span>${r.comment ? esc(r.comment) : '<i style="color:var(--text-400)">— kein Kommentar —</i>'}
+            ${r.context_snapshot ? `<div class="fb-snap">↳ ${esc(r.context_snapshot)}</div>` : ''}</span>
+          <span style="font-size:12px;color:var(--text-400)">${esc(r.user_name || r.user_id || '—')}</span>
+          <span style="font-size:12px;color:var(--text-400)">${esc(fmtDate(r.updated_at))}</span>
+          ${jump}
+          <button class="fb-del" title="Löschen" onclick="API.deleteFeedback(${r.id}).then(()=>${reload})">✕</button>
+        </div>`;
+      }).join('')
+    : `<div style="padding:24px;text-align:center;color:var(--text-400)">Noch kein Feedback in dieser Auswahl.</div>`;
+
+  C.innerHTML = `
+    <div style="padding:20px">
+      <h3 style="margin:0 0 4px">Feedback</h3>
+      <div style="font-size:13px;color:var(--text-400);margin-bottom:16px">
+        Bewertungen der Nutzer (👍/👎 + optionaler Kommentar) zu Antworten und Ergebnissen — über alle Bereiche.
+      </div>
+      <div class="fb-admin-filters">
+        <select class="form-select" id="fb-filter-surface" style="width:200px" onchange="${reload}">${surfOpts}</select>
+        <select class="form-select" id="fb-filter-rating" style="width:160px" onchange="${reload}">${rateOpts}</select>
+        <span style="font-size:12px;color:var(--text-400)">${rows.length} Einträge</span>
+      </div>
+      <div class="fb-admin-row fb-admin-head">
+        <span>Bereich</span><span>Bew.</span><span>Kommentar / Kontext</span><span>Benutzer</span><span>Aktualisiert</span><span></span><span></span>
+      </div>
+      ${body}
+    </div>`;
+}
+
 async function _genTab_classification(C) {
   /* ─── CLASSIFICATION ─── */
     try {

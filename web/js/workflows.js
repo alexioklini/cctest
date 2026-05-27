@@ -132,6 +132,7 @@ function wfRenderHistoryRows(root, rows) {
         ${rows.map(r => wfHistoryRowHtml(r)).join('')}
       </tbody>
     </table>`;
+  if (typeof feedbackHydrateState === 'function') feedbackHydrateState('workflow', '');
 }
 
 function wfHistoryRowActions(r) {
@@ -146,11 +147,16 @@ function wfHistoryRowActions(r) {
   const deleteBtn = isCancelable
     ? ''
     : `<button class="wf-btn wf-btn-mini wf-btn-delete" title="Diesen Verlaufseintrag löschen" onclick="wfDeleteRunFromHistory('${escapeJs(r.execution_id)}', event)">Löschen</button>`;
+  // Feedback only on terminal runs (a result exists to rate).
+  const fb = (!isCancelable && typeof renderFeedbackControl === 'function')
+    ? renderFeedbackControl('workflow', r.execution_id, '', `${r.workflow_name || ''} · ${status}`)
+    : '';
   return `
     <div class="wf-hist-actions">
       <button class="wf-btn wf-btn-ghost wf-btn-mini" onclick="wfShowHistoryDetail('${escapeJs(r.execution_id)}')">Anzeigen</button>
       ${cancelBtn}
       ${deleteBtn}
+      ${fb}
     </div>`;
 }
 

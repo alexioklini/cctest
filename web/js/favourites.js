@@ -557,8 +557,14 @@ function openFavouriteRow(row) {
       if (typeof openArtifactPanel === 'function') return openArtifactPanel(id);
     } else if (t === 'translation') {
       navigateTo('translation');
-      const tab = id;
-      setTimeout(() => { try { trSwitchTab(tab); } catch(_){} }, 100);
+      const TABS = ['text', 'document', 'audio', 'live'];
+      if (TABS.includes(id)) {
+        // Legacy tab-level favourite.
+        setTimeout(() => { try { trSwitchTab(id); } catch(_){} }, 100);
+      } else if (typeof trJumpToHistoryEntry === 'function') {
+        // Specific saved translation: resolve type → tab → scroll/flash.
+        trJumpToHistoryEntry(id);
+      }
       return;
     }
   } catch (e) {
