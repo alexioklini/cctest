@@ -120,8 +120,8 @@ def tool_run_background_task(args: dict) -> str:
     task id; the result is delivered to this session on its NEXT turn (see
     handlers/chat.py next-turn injection). Distinct from delegate_task (which
     targets ANOTHER agent and can block for the result)."""
+    import sys as _sys
     from engine.background_tasks import background_task_runner
-    import server as _server
 
     title = (args.get("title") or "").strip()
     prompt = (args.get("prompt") or "").strip()
@@ -131,7 +131,15 @@ def tool_run_background_task(args: dict) -> str:
     session_id = get_request_context().current_session_id or ""
     if not session_id:
         return _err("run_background_task: no active session")
-    session = _server.sessions.peek(session_id)
+    # The live SessionManager singleton lives in the entry-point module, which
+    # is `__main__` under launchd (NOT `server` — `import server` would create a
+    # SECOND module with an empty session cache). Resolve the same way
+    # server.py's `_inject_server_globals` does.
+    _srv = _sys.modules.get("__main__") or _sys.modules.get("server")
+    _sessions = getattr(_srv, "sessions", None) if _srv else None
+    if _sessions is None:
+        return _err("run_background_task: session manager unavailable")
+    session = _sessions.peek(session_id) or _sessions.get(session_id)
     if session is None:
         return _err("run_background_task: session not loaded")
 
