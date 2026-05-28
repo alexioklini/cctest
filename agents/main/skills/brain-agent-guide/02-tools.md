@@ -133,9 +133,9 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
 - `run_background_task(title, prompt)` — spin off a long, output-heavy run as a
   DETACHED background task (same agent, same model/tools as the chat). Returns
   immediately with a `task_id`; the spawning turn ends — it does NOT block.
-  The full result is delivered back automatically on the user's NEXT message
-  (wire-only, then dropped — never enters chat history), so just acknowledge
-  it's started and stop. Differs from `delegate_task` (which targets ANOTHER
+  When it finishes, the server **auto-delivers** the result into the chat (an
+  auto-fired turn if the chat is idle; otherwise it rides the next user turn),
+  so just acknowledge it's started and stop. Differs from `delegate_task` (which targets ANOTHER
   agent and can wait for the result). The user sees/controls it in the
   "Hintergrundaufgaben" panel (live progress, Stopp, Transkript). Use only for
   genuinely long work; quick lookups stay inline.

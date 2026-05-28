@@ -404,12 +404,12 @@ oben rechts) siehst du:
 - **Transkript anzeigen** — klappt den (live mitlaufenden bzw. fertigen)
   Arbeitsverlauf der Aufgabe auf.
 
-Wenn eine Aufgabe fertig ist, fließt ihr **vollständiges Ergebnis automatisch in
-deine NÄCHSTE Nachricht** ein — der Assistent arbeitet damit weiter, als hättest
-du es ihm gegeben. Wichtig: Das Ergebnis landet **nicht** dauerhaft im
-Chat-Verlauf und bläht den Kontext nicht auf — es wird genau einmal verwendet und
-fällt danach wieder heraus (wie ein Werkzeug-Ergebnis). **Stopp** behält das
-bis dahin erzeugte Teilergebnis.
+Wenn eine Aufgabe fertig ist, **liefert der Assistent das Ergebnis von selbst** in
+den Chat: ist der Chat gerade ruhig, erscheint automatisch eine neue Antwort, die
+das Ergebnis zusammenfasst/damit weiterarbeitet — du musst nichts tun. (Schreibst
+du gerade selbst eine Nachricht, während die Aufgabe fertig wird, fließt das
+Ergebnis in genau diese Antwort ein.) Das Ergebnis wird genau einmal verwendet.
+**Stopp** behält das bis dahin erzeugte Teilergebnis.
 
 ---
 

@@ -183,6 +183,15 @@ class BackgroundTaskRunner:
                 usage_in=usage_in, usage_out=usage_out, tool_calls=tool_calls)
             with self._lock:
                 self._live.pop(task_id, None)
+            # Auto-deliver the result into the chat. Idle-only + single-flight
+            # are enforced inside deliver_background_results; if a turn is
+            # running, it no-ops and the in-flight turn's next-turn injection
+            # picks the result up instead. Runs on THIS (daemon) thread.
+            try:
+                from handlers.chat import deliver_background_results
+                deliver_background_results(snap["session_id"])
+            except Exception as e:  # never let delivery kill the runner thread
+                print(f"[bgtask] auto-deliver failed: {e}", flush=True)
 
 
 # Process-wide singleton.

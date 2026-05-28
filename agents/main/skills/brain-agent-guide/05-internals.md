@@ -172,16 +172,23 @@ run WITHOUT blocking the chat. Mechanics (`engine/background_tasks.py`,
   cancel via the sidecar's `POST /cancel/<turn_id>` — the same endpoint chat
   uses). It passes the SAME `gdpr_pick_model_for_background` gate as every
   background call (no bypass).
-- **Result return — next turn, wire-only**: on the user's NEXT message the chat
-  worker calls `_build_background_task_preamble(session_id)` →
-  `pop_unconsumed_background_tasks` (finished, not-yet-consumed) and injects
-  their full output into the wire copy of the last user message via
-  `_inject_web_preamble_into_wire` — the SAME ephemeral seam as Websuche.
-  `pop_unconsumed` marks them `consumed_at` in the same transaction. So the
-  result reaches the model exactly once, never enters `session.messages`/DB, and
-  drops out of context after that turn — exactly like a tool result (which Brain
-  never replays across turns anyway). That is the whole "does not pollute the
-  context window" guarantee.
+- **Result return — auto-delivery**: when a task finishes, the runner's
+  `finally` calls `handlers.chat.deliver_background_results(session_id)`.
+  - If the chat is **idle** (no turn streaming), it auto-fires a delivery turn:
+    appends a real user-role message built from `_build_background_task_preamble`
+    (the full output + "fahre fort"), opens a `LiveStream` on the session and
+    runs the SAME `run_session_turn` the HTTP path uses — so any open browser tab
+    renders it live via the resumable-streaming seam. Idle-gate + single-flight
+    (`_bg_delivery_inflight`) prevent double-delivery; no loop because
+    `pop_unconsumed_background_tasks` marks `consumed_at`, so the delivery turn
+    finds nothing on its own completion.
+  - If a turn **is** streaming, delivery no-ops and the in-flight turn's
+    next-turn injection picks the result up instead: `run_session_turn` calls
+    `_build_background_task_preamble` → `pop_unconsumed` and injects the output
+    wire-only via `_inject_web_preamble_into_wire` (same ephemeral seam as
+    Websuche), so it reaches the model once, never enters `session.messages`/DB,
+    and drops out of context after that turn — like a tool result.
+  Either path consumes the task exactly once.
 - **Cancel = partial kept**: Stopp trips a flag + cancels the sidecar turn; the
   worker stores whatever output it had and marks the row `cancelled`.
 - **Panel**: the "Hintergrundaufgaben" right-panel tab + top-bar pill
