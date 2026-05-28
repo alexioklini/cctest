@@ -144,15 +144,15 @@ function stopBackgroundTasksPoll() {
   if (_bgPollHandle) { clearInterval(_bgPollHandle); _bgPollHandle = null; }
 }
 
-// Top-bar pill: shown whenever the session has ANY background task (running,
-// finished, or already delivered) so they stay findable after a reload; clears
-// only when the user deletes them. The count itself highlights still-active
-// ones, but presence is driven by the total.
+// Top-bar pill: shown whenever the session has ANY activity entry — synchronous
+// tool calls OR background tasks — so the panel is findable as soon as the model
+// uses a tool (not only for background tasks). Count highlights still-running
+// ones; presence is driven by the total activity count.
 function refreshBackgroundTasksPill() {
   const pill = document.getElementById('bgtasks-pill');
   const countEl = document.getElementById('bgtasks-pill-count');
   if (!pill) return;
-  const total = backgroundTasksTotalCount();
+  const total = backgroundActivityCount();
   const active = backgroundTasksActiveCount();
   if (countEl) countEl.textContent = active || total;
   pill.style.display = total > 0 ? '' : 'none';

@@ -131,6 +131,10 @@ function closeRightPanel(userInitiated = false) {
 // the turn (the streaming events only opportunistically refreshed it).
 function refreshRightPanelContent() {
   updateRightPanelBadges();
+  // Update the activity pill immediately from this turn's tool calls (reads
+  // chat.messages synchronously) — don't wait on the async background-task
+  // fetch, which only covers async tasks and may report 0 for a sync-only turn.
+  if (typeof refreshBackgroundTasksPill === 'function') refreshBackgroundTasksPill();
   // A turn may have spawned a background task — reload so the pill/panel pick
   // it up and the poll starts.
   if (typeof loadBackgroundTasks === 'function') loadBackgroundTasks();
