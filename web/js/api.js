@@ -210,9 +210,10 @@ class API {
   static getBackgroundTasks(sessionId) { return this.get(`/v1/background-tasks?session_id=${encodeURIComponent(sessionId)}`); }
   static cancelBackgroundTask(taskId) { return this.post('/v1/background-tasks/cancel', {task_id: taskId}); }
   static deleteBackgroundTask(taskId) { return this.del(`/v1/background-tasks?task_id=${encodeURIComponent(taskId)}`); }
-  // Live/replay transcript SSE. `onText` gets appended chunks, `onDone` the
-  // terminal payload. Returns an AbortController so the caller can stop it.
-  static streamBackgroundTranscript(taskId, onText, onDone) {
+  // Live/replay transcript SSE. `onRequest` gets {title,prompt} first (the
+  // ANFRAGE), `onText` appended output chunks, `onDone` the terminal payload.
+  // Returns an AbortController so the caller can stop it.
+  static streamBackgroundTranscript(taskId, onText, onDone, onRequest) {
     const ctrl = new AbortController();
     (async () => {
       let resp;
@@ -236,7 +237,8 @@ class API {
             if (line.startsWith('event:')) ev = line.slice(6).trim();
             else if (line.startsWith('data:')) {
               let d = {}; try { d = JSON.parse(line.slice(5).trim()); } catch (_) {}
-              if (ev === 'text_delta' && onText) onText(d.text || '');
+              if (ev === 'request' && onRequest) onRequest(d);
+              else if (ev === 'text_delta' && onText) onText(d.text || '');
               else if (ev === 'done' && onDone) onDone(d);
             }
           }

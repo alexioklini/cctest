@@ -103,6 +103,11 @@ class BackgroundTasksHandlerMixin:
             except (OSError, BrokenPipeError):
                 return False
 
+        # Always lead with the request that started this task, so the transcript
+        # shows the ANFRAGE (prompt + title), not just the run's result — for
+        # both the live and the stored-replay path below.
+        emit("request", {"title": row.get("title") or "", "prompt": row.get("prompt") or ""})
+
         turn_id = row.get("turn_id") or ""
         if row.get("status") == "running" and turn_id:
             import handlers.sidecar_proxy as _sp

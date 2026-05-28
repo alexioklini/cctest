@@ -7789,4 +7789,10 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 .bgtask-link:hover { background: none; text-decoration: underline; }
 .bgtask-transcript { margin-top: 8px; padding: 8px; max-height: 280px; overflow-y: auto;
   background: var(--bg-100); border: 1px solid var(--border-100); border-radius: 6px;
-  font-size: 11px; white-space: pre-wrap; word-break: break-word; color: var(--text-200); }
+  font-size: 11px; word-break: break-word; color: var(--text-200); }
+.bgtask-tr-label { font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-400); margin: 2px 0 3px; }
+.bgtask-tr-label:not(:first-child) { margin-top: 10px; }
+.bgtask-tr-request { white-space: pre-wrap; word-break: break-word; color: var(--text-300);
+  padding-bottom: 6px; border-bottom: 1px solid var(--border-100); }
+.bgtask-tr-output { white-space: pre-wrap; word-break: break-word; }

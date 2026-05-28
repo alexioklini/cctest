@@ -250,10 +250,19 @@ function openBgTranscript(taskId) {
   }
   if (_bgTranscriptCtrl) { _bgTranscriptCtrl.abort(); _bgTranscriptCtrl = null; }
   box.style.display = '';
-  box.textContent = '';
+  // Two labelled sections: Anfrage (the prompt that started the task) +
+  // Ergebnis (the run's output). textContent on each keeps it injection-safe.
+  box.innerHTML =
+    '<div class="bgtask-tr-label">Anfrage</div>' +
+    '<div class="bgtask-tr-request" id="bgtask-tr-req-' + taskId + '"></div>' +
+    '<div class="bgtask-tr-label">Ergebnis</div>' +
+    '<div class="bgtask-tr-output" id="bgtask-tr-out-' + taskId + '"></div>';
+  const reqEl = document.getElementById('bgtask-tr-req-' + taskId);
+  const outEl = document.getElementById('bgtask-tr-out-' + taskId);
   _bgTranscriptCtrl = API.streamBackgroundTranscript(
     taskId,
-    (chunk) => { box.textContent += chunk; box.scrollTop = box.scrollHeight; },
-    (d) => { if (d && d.error && !box.textContent) box.textContent = '(Fehler: ' + d.error + ')'; }
+    (chunk) => { if (outEl) { outEl.textContent += chunk; box.scrollTop = box.scrollHeight; } },
+    (d) => { if (d && d.error && outEl && !outEl.textContent) outEl.textContent = '(Fehler: ' + d.error + ')'; },
+    (req) => { if (reqEl) reqEl.textContent = req.prompt || '(keine Anfrage gespeichert)'; }
   );
 }

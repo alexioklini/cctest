@@ -401,8 +401,9 @@ oben rechts) siehst du:
 - **Wird ausgeführt** — laufende Aufgaben mit Live-Zählern (Dauer, Tokens,
   Tool-Verwendungen) und einem **Stopp**-Knopf.
 - **Fertig** — abgeschlossene/abgebrochene Aufgaben mit **Löschen**-Knopf.
-- **Transkript anzeigen** — klappt den (live mitlaufenden bzw. fertigen)
-  Arbeitsverlauf der Aufgabe auf.
+- **Transkript anzeigen** — klappt zwei Abschnitte auf: **Anfrage** (der Prompt,
+  mit dem die Aufgabe gestartet wurde) und **Ergebnis** (der live mitlaufende
+  bzw. fertige Arbeitsverlauf).
 
 Wenn eine Aufgabe fertig ist, **liefert der Assistent das Ergebnis von selbst** in
 den Chat: ist der Chat gerade ruhig, erscheint automatisch eine neue Antwort, die
