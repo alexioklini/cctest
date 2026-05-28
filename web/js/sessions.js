@@ -42,6 +42,11 @@ async function ensureSession(chat) {
     // Discard if a newer ensureSession was called (model switched)
     if (chat._sessionGen !== gen) return null;
     chat.sessionId = data.session_id;
+    // The chat view was entered (navigateTo('chat')) BEFORE the session existed,
+    // so the right-panel toggle button + activity pill stayed hidden (both gate
+    // on sessionId). Now that the id exists, re-evaluate their visibility — else
+    // they only appear after a reload.
+    if (typeof updateRightPanelButtonVisibility === 'function') updateRightPanelButtonVisibility();
     // A draft chat may already have a Websuche basket curated before the first
     // send — now that the session has an id, persist it server-side so a later
     // reload of this chat restores the same sources.
