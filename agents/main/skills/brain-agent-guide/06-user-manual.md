@@ -419,11 +419,31 @@ Zahnrad, unten links. Je nach Rolle zwei Bereiche:
   Ungelesen-Punkt.
 - **GDPR** — PII-Scanner, Kategorie-Aktionen, NER-Modelle, Regel-Overrides
 - **Kontext** — LCM-Schwellen (Lossless Context Manager)
-- **MemPalace** — Chat-Sync-Klassifizierer, Wing-Regeln
+- **MemPalace** — Statistik (Drawers/Closets/Wings/Rooms/Halls/DB-Größe),
+  Palace-Explorer, Chat-Sync-Klassifizierer, Wing-Regeln, **Daemons** — und der
+  Knopf **„🗄️ MemPalace Dashboard öffnen"** (siehe unten)
 - **Knowledge Graph** — Extraktionsprofil + Closet-Konfiguration
 - **Tools** — Pro-Tool aktivieren/deferren/Purpose + Prosatexte; enthält
   auch den **Brainy**-Tab (siehe unten)
 - **Recherche-Modus** — Disziplintexte (Verweigerung / Präzision / Zitat)
+
+### MemPalace Dashboard (Admin)
+Ein visueller Browser und Kurator für das Gedächtnis (die Palace), erreichbar
+über **Einstellungen → MemPalace → „🗄️ MemPalace Dashboard öffnen"** (öffnet in
+einem neuen Tab, nur für Admins). Es zeigt und bearbeitet **dieselbe** Live-Palace,
+die Brain nutzt — kein separater Dienst, kein zweites Login (es läuft über deine
+bestehende Brain-Anmeldung; remote über denselben Tunnel wie Brain).
+
+Damit kannst du:
+- Drawers, Wings und Rooms durchsuchen und ansehen
+- Einträge anlegen, bearbeiten, umbenennen und löschen (mit Versions-Rückgängig)
+- Knowledge-Graph-Fakten ansehen, hinzufügen und für ungültig erklären
+- Tunnel zwischen Rooms anlegen/auflisten, Duplikate prüfen, Daten exportieren
+
+⚠️ **Achtung:** Schreibzugriffe gehen direkt auf die Live-Palace, die parallel von
+den Mining-Daemons beschrieben wird. Anlegen/Löschen/Umbenennen wirkt sofort und
+ist nicht über eine Vorschau abgesichert — mit Bedacht nutzen. Der **Entwürfe**-
+Bereich (drafts) ist in dieser Version deaktiviert.
 
 ### Konto (jeder Nutzer)
 Nutzermenü (Avatar oben rechts):

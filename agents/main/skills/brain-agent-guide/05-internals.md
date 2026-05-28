@@ -374,6 +374,41 @@ orphan-entity sweep.
 KG path: `<palace_path>/knowledge_graph.sqlite3`, NOT
 `~/.mempalace/knowledge_graph.sqlite3`.
 
+### MemPalace Dashboard (`/memdash/`, 9.44.0)
+
+The open-source MemPalace Dashboard frontend (github.com/epinethrone/
+mempalace-frontend, MIT) folded INTO Brain — a visual browser/curator for
+drawers, wings, rooms, tunnels, and KG facts, working on Brain's live `brain`
+palace. **No separate port, no dashboard login.** Brain serves the vendored
+frontend (`web/memdash/`) under `/memdash/` and reimplements its `/api/*` as
+`handlers/memdash.py` over the **in-process** `mempalace.mcp_server.tool_*`.
+Remote access rides Brain's existing Cloudflare tunnel; admin RBAC is the gate.
+
+- **Palace binding (the #1 correctness point)**: the `tool_*` resolve their
+  palace from `MEMPALACE_PALACE_PATH`; the handler `setdefault`s it to the
+  `brain` palace (same as the chat-sync daemon in `server_daemons.py`).
+  Without it the tools would default to `~/.mempalace/palace` (wrong palace,
+  empty/foreign). Verify: `/memdash/api/palace` counts == `/v1/mempalace/stats`.
+- **Read paths** (`/palace`, `/search`, `/system`, `/export`) read the palace +
+  KG sqlite DBs directly (mirror the dashboard's own SQL); Lab + write paths
+  call the tools in-process (the dashboard shells out to a subprocess — Brain
+  doesn't need to).
+- **Auth model**: static assets load without auth (like Brain's SPA at `/` — no
+  secrets); the DATA is protected at the API layer (`/memdash/api/*` is
+  admin-gated via `_memdash_admin_gate` in server.py). A browser navigation
+  can't carry the Bearer header, so gating the HTML would lock the admin out.
+- **Frontend patches** (`web/memdash/app.js`, marked `BRAIN-PATCH`,
+  re-apply on dashboard upgrade): `/api/*`→`/memdash/api/*` prefix; auth via
+  Brain's `localStorage['auth-token']` → `Authorization: Bearer`; 401/403 and
+  logout redirect to Brain's UI.
+- **Phase 1 scope**: drafts inbox STUBBED (disabled); version-undo log is
+  file-backed under `agents/main/memdash/versions.jsonl` (so update/delete/
+  restore undo still works); login/logout/credentials/session replaced by Brain
+  auth (`/api/session` → synthetic-authed).
+- **Concurrent-write caveat** (accepted): writes hit the live palace the mining
+  daemons also write — same in-process pattern as Brain's existing writes, but
+  the chroma HNSW-flush fragility still applies; surfaced as a UI warning.
+
 ## Project sync daemon
 
 `mempalace-project-sync` (every 6h default), **single-threaded** —
