@@ -199,6 +199,38 @@ def _inject_web_preamble_into_wire(messages, preamble):
     return wire
 
 
+def _build_background_task_preamble(session_id: str) -> str:
+    """Fold any finished-but-unconsumed background tasks for this session into a
+    wire-only preamble. Returns "" when there are none. Marks them consumed in
+    the same DB transaction (`pop_unconsumed_background_tasks`), so a task's
+    output is delivered to the model on exactly one turn and never persists into
+    chat history — the whole 'does not pollute the context window' guarantee."""
+    # pop_unconsumed is @_db_safe (returns [] on any SQLite/OS error), so no
+    # extra guard is needed — a non-empty return means real finished tasks.
+    tasks = ChatDB.pop_unconsumed_background_tasks(session_id)
+    if not tasks:
+        return ""
+    blocks = []
+    for t in tasks:
+        title = t.get("title") or "Hintergrundaufgabe"
+        if t.get("status") == "cancelled":
+            head = f"### Hintergrundaufgabe „{title}“ (abgebrochen — Teilergebnis)"
+        else:
+            head = f"### Ergebnis der Hintergrundaufgabe „{title}“"
+        body = (t.get("output") or "").strip()
+        if not body and t.get("error"):
+            body = f"(Kein Ergebnis — Fehler: {t.get('error')})"
+        blocks.append(f"{head}\n\n{body}")
+    intro = (
+        "[Eine oder mehrere von dir gestartete Hintergrundaufgaben sind fertig. "
+        "Ihr vollständiges Ergebnis steht dir HIER für diese Antwort zur "
+        "Verfügung — nutze es, um die Nachricht des Nutzers zu beantworten. "
+        "Dieser Block erscheint nur dieses eine Mal und ist danach nicht mehr im "
+        "Verlauf.]"
+    )
+    return intro + "\n\n" + "\n\n".join(blocks)
+
+
 def _pseudonymize_history_for_wire(messages, mapping, scanner_cfg):
     """Walk prior `session.messages` and produce a wire-only pseudonymised
     copy. The reused mapping's `forward` table short-circuits already-known
@@ -2656,6 +2688,16 @@ class ChatHandlerMixin:
                         if _web_pre:
                             _wire_messages = _inject_web_preamble_into_wire(
                                 _wire_messages, _web_pre)
+                    # Detached background tasks: any that FINISHED since the last
+                    # turn have their full output folded into THIS turn wire-only
+                    # (same ephemeral seam as web sources — never persisted, so it
+                    # drops out of context after this turn exactly like a tool
+                    # result). pop_unconsumed marks them consumed in the same
+                    # transaction, so each task's output reaches the model once.
+                    _bg_pre = _build_background_task_preamble(sid)
+                    if _bg_pre:
+                        _wire_messages = _inject_web_preamble_into_wire(
+                            _wire_messages, _bg_pre)
                     _result = sidecar_proxy.run_turn(
                         messages=_wire_messages,
                         model=session.model,

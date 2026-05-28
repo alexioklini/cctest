@@ -650,6 +650,41 @@ class ChatDB:
                 conn.execute("ALTER TABLE helpdesk_history ADD COLUMN context_label TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # ── Background tasks ──
+            # Detached, same-agent/same-config agentic runs spawned mid-turn via
+            # the run_background_task tool. The full `output` lives here only; it
+            # is injected wire-only into the spawning session's NEXT turn (then
+            # marked consumed_at) so it never enters chat history / the wire on
+            # later turns. status: running|done|cancelled|error.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS background_tasks (
+                    id           TEXT PRIMARY KEY,
+                    session_id   TEXT NOT NULL,
+                    agent_id     TEXT NOT NULL DEFAULT 'main',
+                    model        TEXT NOT NULL DEFAULT '',
+                    title        TEXT NOT NULL DEFAULT '',
+                    prompt       TEXT NOT NULL DEFAULT '',
+                    status       TEXT NOT NULL DEFAULT 'running',
+                    turn_id      TEXT NOT NULL DEFAULT '',
+                    output       TEXT NOT NULL DEFAULT '',
+                    error        TEXT NOT NULL DEFAULT '',
+                    usage_in     INTEGER DEFAULT 0,
+                    usage_out    INTEGER DEFAULT 0,
+                    tool_calls   INTEGER DEFAULT 0,
+                    created_at   REAL DEFAULT (strftime('%s','now')),
+                    finished_at  REAL,
+                    consumed_at  REAL
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_bgtask_session ON background_tasks(session_id, created_at)")
+            # Crash reconcile: any task still 'running' at boot lost its thread on
+            # the previous shutdown — mark it errored so the panel never shows a
+            # zombie running forever.
+            conn.execute(
+                "UPDATE background_tasks SET status='error', "
+                "error='Server restart — task lost', "
+                "finished_at=strftime('%s','now') WHERE status='running'")
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -881,6 +916,108 @@ class ChatDB:
                         pass
             conn.commit()
         return count
+
+    # ── Background-task CRUD ──
+
+    @staticmethod
+    @_db_safe(default=None)
+    def create_background_task(task_id, session_id, agent_id, model, title, prompt):
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO background_tasks (id, session_id, agent_id, model, title, prompt, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'running')",
+                (task_id, session_id, agent_id, model, title, prompt))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def set_background_task_turn(task_id, turn_id):
+        """Record the sidecar turn_id once the run has started (enables cancel +
+        live transcript attach)."""
+        with _db_conn() as conn:
+            conn.execute(
+                "UPDATE background_tasks SET turn_id=? WHERE id=?", (turn_id, task_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def finish_background_task(task_id, status, output="", error="",
+                              usage_in=0, usage_out=0, tool_calls=0):
+        """Terminal write: status in done|cancelled|error. `output` holds the
+        run's full final text (incl. partial on cancel)."""
+        with _db_conn() as conn:
+            conn.execute(
+                "UPDATE background_tasks SET status=?, output=?, error=?, "
+                "usage_in=?, usage_out=?, tool_calls=?, finished_at=strftime('%s','now') "
+                "WHERE id=?",
+                (status, output, error, usage_in, usage_out, tool_calls, task_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_background_tasks(session_id):
+        """All tasks for a session (panel display), newest first. Excludes the
+        full `output`/`prompt` blobs to keep the list light."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, session_id, agent_id, model, title, status, turn_id, error, "
+                "usage_in, usage_out, tool_calls, created_at, finished_at, consumed_at, "
+                "length(output) AS output_len "
+                "FROM background_tasks WHERE session_id=? ORDER BY created_at DESC",
+                (session_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_background_task(task_id):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM background_tasks WHERE id=?", (task_id,)).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    @_db_safe(default=list)
+    def pop_unconsumed_background_tasks(session_id):
+        """Return finished (done|cancelled) tasks not yet folded into a turn, and
+        mark them consumed in the same transaction. The caller injects their
+        `output` wire-only into the next turn; consumed_at guarantees each task's
+        output reaches the model exactly once."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, title, status, output, error FROM background_tasks "
+                "WHERE session_id=? AND status IN ('done','cancelled') AND consumed_at IS NULL "
+                "ORDER BY finished_at",
+                (session_id,)).fetchall()
+            tasks = [dict(r) for r in rows]
+            if tasks:
+                conn.execute(
+                    "UPDATE background_tasks SET consumed_at=strftime('%s','now') "
+                    "WHERE session_id=? AND status IN ('done','cancelled') AND consumed_at IS NULL",
+                    (session_id,))
+                conn.commit()
+            return tasks
+
+    @staticmethod
+    @_db_safe(default=0)
+    def count_active_background_tasks(session_id):
+        """Tasks worth a top-bar badge: running, or finished-but-not-yet-consumed."""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM background_tasks WHERE session_id=? AND "
+                "(status='running' OR (status IN ('done','cancelled') AND consumed_at IS NULL))",
+                (session_id,)).fetchone()
+            return row[0] if row else 0
+
+    @staticmethod
+    @_db_safe(default=False)
+    def delete_background_task(task_id):
+        with _db_conn() as conn:
+            cur = conn.execute("DELETE FROM background_tasks WHERE id=?", (task_id,))
+            conn.commit()
+            return cur.rowcount > 0
 
     @staticmethod
     @_db_safe(default=None)

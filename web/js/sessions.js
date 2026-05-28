@@ -328,6 +328,10 @@ async function openSession(sessionId, agentId) {
   // Close artifact and references panels when switching sessions
   closeRightPanel();
 
+  // Load this session's background tasks (top-bar pill + panel). Starts/stops
+  // its own 2s poll based on whether any task is still running.
+  if (typeof loadBackgroundTasks === 'function') loadBackgroundTasks();
+
   // Reset the composer so the previous session's draft / attachments don't
   // leak into the newly opened one. Without this the PII badge can stay lit
   // from a draft typed for chat A while chat B is open. Drafts are not

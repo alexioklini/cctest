@@ -426,6 +426,26 @@ Once a feedback row exists, user and admin exchange short one-line messages
 
 - `GET /v1/tasks` — delegated tasks visible to caller
 
+## Background tasks (Hintergrundaufgaben)
+
+Detached, same-agent runs spawned by the `run_background_task` tool. Any
+logged-in user (not admin-gated).
+
+- `GET /v1/background-tasks?session_id=` — list this session's tasks
+  (`{tasks: [{id,title,status,turn_id,usage_in,usage_out,tool_calls,
+  created_at,finished_at,consumed_at,output_len}]}`; status =
+  running|done|cancelled|error). Output body is NOT in the list.
+- `POST /v1/background-tasks/cancel` — `{task_id}`. Cancels a running task;
+  the partial output is kept and the row goes `cancelled`.
+- `DELETE /v1/background-tasks?task_id=` — remove a finished/aborted row
+  (refuses a still-running task with 409 — cancel it first).
+- `GET /v1/background-tasks/<id>/transcript` — SSE. Running → live sidecar
+  events; finished (or log purged) → one `text_delta` replay of the stored
+  output + a terminal `done`.
+
+The finished result is delivered into the spawning chat's NEXT turn wire-only
+(never persisted) — see `05-internals.md`.
+
 ## Notes on response shapes
 
 - Errors: `{"error": "<message>"}` with non-2xx status.

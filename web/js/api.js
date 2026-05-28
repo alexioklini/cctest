@@ -206,6 +206,46 @@ class API {
   static getArtifactContent(id, version) { return this.get(`/v1/artifacts/${id}/content${version ? '?version=' + version : ''}`); }
   static getArtifactDownloadUrl(id, version) { return `${BASE_URL}/v1/artifacts/${id}/download${version ? '?version=' + version : ''}`; }
 
+  // Background tasks (Hintergrundaufgaben)
+  static getBackgroundTasks(sessionId) { return this.get(`/v1/background-tasks?session_id=${encodeURIComponent(sessionId)}`); }
+  static cancelBackgroundTask(taskId) { return this.post('/v1/background-tasks/cancel', {task_id: taskId}); }
+  static deleteBackgroundTask(taskId) { return this.del(`/v1/background-tasks?task_id=${encodeURIComponent(taskId)}`); }
+  // Live/replay transcript SSE. `onText` gets appended chunks, `onDone` the
+  // terminal payload. Returns an AbortController so the caller can stop it.
+  static streamBackgroundTranscript(taskId, onText, onDone) {
+    const ctrl = new AbortController();
+    (async () => {
+      let resp;
+      try {
+        resp = await fetch(`${BASE_URL}/v1/background-tasks/${encodeURIComponent(taskId)}/transcript`, {
+          headers: this._headers(), signal: ctrl.signal,
+        });
+      } catch (e) { if (onDone) onDone({error: String(e)}); return; }
+      if (!resp.ok || !resp.body) { if (onDone) onDone({error: `HTTP ${resp.status}`}); return; }
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '', ev = '';
+      try {
+        while (true) {
+          const {done, value} = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, {stream: true});
+          let idx;
+          while ((idx = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, idx); buf = buf.slice(idx + 1);
+            if (line.startsWith('event:')) ev = line.slice(6).trim();
+            else if (line.startsWith('data:')) {
+              let d = {}; try { d = JSON.parse(line.slice(5).trim()); } catch (_) {}
+              if (ev === 'text_delta' && onText) onText(d.text || '');
+              else if (ev === 'done' && onDone) onDone(d);
+            }
+          }
+        }
+      } catch (_) { /* aborted or connection closed */ }
+    })();
+    return ctrl;
+  }
+
   // Skills
   static getClaudeCodeSkills(agent) { return this.get(`/v1/skills/claude-code?agent=${agent}`); }
   static toggleCCSkill(agent, slug, enabled) { return this.post('/v1/skills/claude-code', {agent, slug, enabled}); }

@@ -212,6 +212,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       </div>
     </div>
     <div class="page-header-right" id="page-header-right">
+      <button class="bgtasks-pill" id="bgtasks-pill" onclick="openRightPanel('bgtasks')" title="Hintergrundaufgaben" style="display:none">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+        <span class="bgtasks-pill-count" id="bgtasks-pill-count">0</span>
+      </button>
       <button class="right-panel-toggle-btn" id="toggle-right-panel-btn" onclick="toggleRightPanel()" title="Seitenpanel umschalten (Anhänge, Referenzen, Dateien)">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
         Panel
@@ -1274,6 +1278,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
         <span class="right-panel-tab-badge" id="tab-badge-websuche">0</span>
       </button>
+      <button class="right-panel-tab" data-tab="bgtasks" onclick="selectRightTab('bgtasks')" title="Hintergrundaufgaben">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+        <span class="right-panel-tab-badge" id="tab-badge-bgtasks">0</span>
+      </button>
     </div>
     <button class="right-panel-close-btn" onclick="closeRightPanel(true)" title="Schließen">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -1357,6 +1365,13 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     </div>
     <div class="websuche-basket" id="websuche-basket"
          ondragover="onWebBasketDragOver(event)" ondragleave="onWebBasketDragLeave(event)" ondrop="onWebBasketDrop(event)">
+    </div>
+  </div>
+
+  <!-- Hintergrundaufgaben (detached background tasks) pane -->
+  <div class="right-tab-pane" id="tab-pane-bgtasks">
+    <div class="bgtasks-content" id="bgtasks-content">
+      <div class="bgtasks-empty" id="bgtasks-empty">Keine Hintergrundaufgaben</div>
     </div>
   </div>
 </div>
@@ -1472,6 +1487,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/panels_project_sync.js"></script>
 <script src="js/panels_right.js"></script>
 <script src="js/panels_websuche.js"></script>
+<script src="js/panels_background.js"></script>
 <script src="js/panels_artifacts.js"></script>
 <script src="js/settings_teams.js"></script>
 <script src="js/settings_general.js"></script>

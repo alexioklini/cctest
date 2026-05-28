@@ -963,6 +963,7 @@ from handlers.classification import ClassificationHandlerMixin
 from handlers.helpdesk import HelpdeskHandlerMixin
 from handlers.feedback import FeedbackHandlerMixin
 from handlers.memdash import MemDashHandlerMixin
+from handlers.background import BackgroundTasksHandlerMixin
 
 
 def _fb_id_from_path(path: str) -> int:
@@ -1004,6 +1005,7 @@ def _inject_server_globals():
         ClassificationHandlerMixin.__module__,
         FeedbackHandlerMixin.__module__,
         MemDashHandlerMixin.__module__,
+        BackgroundTasksHandlerMixin.__module__,
     ]
     # All names from server module that handlers reference as bare globals.
     # Include modules aliased as simple names (e.g. engine, _auth_mod) since
@@ -1034,6 +1036,7 @@ class BrainAgentHandler(
     HelpdeskHandlerMixin,
     FeedbackHandlerMixin,
     MemDashHandlerMixin,
+    BackgroundTasksHandlerMixin,
     BaseHTTPRequestHandler,
 ):
     """HTTP request handler for Brain Agent API."""
@@ -1721,6 +1724,10 @@ class BrainAgentHandler(
             self._handle_feedback_list()
         elif path == "/v1/share":
             self._handle_share_get()
+        elif path == "/v1/background-tasks":
+            self._handle_background_tasks_list()
+        elif path.startswith("/v1/background-tasks/") and path.endswith("/transcript"):
+            self._handle_background_task_transcript(path)
         elif path == "/v1/artifacts":
             self._handle_artifacts_list()
         elif path == "/v1/artifacts/browse":
@@ -1819,6 +1826,8 @@ class BrainAgentHandler(
             self._handle_chat()
         elif path == "/v1/chat/cancel":
             self._handle_cancel()
+        elif path == "/v1/background-tasks/cancel":
+            self._handle_background_task_cancel()
         elif path == "/v1/helpdesk":
             self._handle_helpdesk()
         elif path == "/v1/helpdesk/clear":
@@ -2071,6 +2080,9 @@ class BrainAgentHandler(
             if not user:
                 return
             self._auth_user = user
+        if path == "/v1/background-tasks":
+            self._handle_background_task_delete()
+            return
         if path.startswith("/v1/sessions/"):
             sid = path.split("/")[-1]
             if self._session_access_check(sid, require_manage=True) is None:

@@ -115,6 +115,36 @@ def tool_task_cancel(args: dict) -> str:
     return _err(f"Cannot cancel task '{task_id}' — not found or not running")
 
 
+def tool_run_background_task(args: dict) -> str:
+    """Spawn a DETACHED, same-agent background run. Returns immediately with a
+    task id; the result is delivered to this session on its NEXT turn (see
+    handlers/chat.py next-turn injection). Distinct from delegate_task (which
+    targets ANOTHER agent and can block for the result)."""
+    from engine.background_tasks import background_task_runner
+    import server as _server
+
+    title = (args.get("title") or "").strip()
+    prompt = (args.get("prompt") or "").strip()
+    if not prompt:
+        return _err("run_background_task: prompt is required")
+
+    session_id = get_request_context().current_session_id or ""
+    if not session_id:
+        return _err("run_background_task: no active session")
+    session = _server.sessions.peek(session_id)
+    if session is None:
+        return _err("run_background_task: session not loaded")
+
+    task_id = background_task_runner.spawn(session=session, title=title, prompt=prompt)
+    return _ok({
+        "task_id": task_id,
+        "status": "running",
+        "note": ("Background task started. Tell the user it's running in the "
+                 "Hintergrundaufgaben panel; its result will arrive on their "
+                 "next message. Do NOT wait for it — finish this turn now."),
+    })
+
+
 def tool_worker_status(args: dict) -> str:
     """Get current state of worker subagents."""
     from execution import get_worker_registry

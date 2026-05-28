@@ -157,6 +157,42 @@ source — no stale/old-version noise.
 This is a DIFFERENT mechanism from project `web_urls` (mined into the
 project wing/KG by the project-sync daemon) — do not merge them.
 
+## Background tasks (detached, Claude-Desktop-style)
+
+The `run_background_task(title, prompt)` tool spins off a long, output-heavy
+run WITHOUT blocking the chat. Mechanics (`engine/background_tasks.py`,
+`BackgroundTaskRunner`):
+
+- **Spawn**: the tool inserts a `running` row (`background_tasks` table) and
+  starts a daemon thread, returning a `task_id` immediately. The spawning chat
+  turn ends normally — nothing waits.
+- **Same agent/config**: the thread replicates the session's system prompt +
+  tools via `build_first_turn_prefix(model, agent_id)` and runs a fresh
+  `sidecar_proxy.background_call(...)` with a pre-minted `turn_id` (so Stopp can
+  cancel via the sidecar's `POST /cancel/<turn_id>` — the same endpoint chat
+  uses). It passes the SAME `gdpr_pick_model_for_background` gate as every
+  background call (no bypass).
+- **Result return — next turn, wire-only**: on the user's NEXT message the chat
+  worker calls `_build_background_task_preamble(session_id)` →
+  `pop_unconsumed_background_tasks` (finished, not-yet-consumed) and injects
+  their full output into the wire copy of the last user message via
+  `_inject_web_preamble_into_wire` — the SAME ephemeral seam as Websuche.
+  `pop_unconsumed` marks them `consumed_at` in the same transaction. So the
+  result reaches the model exactly once, never enters `session.messages`/DB, and
+  drops out of context after that turn — exactly like a tool result (which Brain
+  never replays across turns anyway). That is the whole "does not pollute the
+  context window" guarantee.
+- **Cancel = partial kept**: Stopp trips a flag + cancels the sidecar turn; the
+  worker stores whatever output it had and marks the row `cancelled`.
+- **Panel**: the "Hintergrundaufgaben" right-panel tab + top-bar pill
+  (`web/js/panels_background.js`) poll `GET /v1/background-tasks` every 2s while
+  ≥1 task runs (no new SSE channel). "Transkript anzeigen" hits the transcript
+  endpoint (live sidecar SSE while running, stored replay once finished).
+- **Boot reconcile**: a `running` row whose thread died on shutdown is set to
+  `error` at startup so the panel never shows a zombie.
+
+Differs from `delegate_task` (targets ANOTHER agent, can block for the result).
+
 ## Brainy helpdesk bot
 
 A read-only helpdesk assistant (the floating bubble), separate from the

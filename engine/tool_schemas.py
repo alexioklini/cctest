@@ -812,6 +812,30 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "run_background_task",
+        "description": (
+            "Spin off a long-running, high-output piece of work (deep research, "
+            "multi-source synthesis, a big sweep) as a DETACHED background task "
+            "so it doesn't block the conversation. Runs as YOU — same agent, same "
+            "model, same tools — in its own context. Returns IMMEDIATELY with a "
+            "task id; you do NOT get the result in this turn. The user sees the "
+            "task in the 'Hintergrundaufgaben' panel (live progress, can stop it). "
+            "When it finishes, its full result is delivered to you automatically "
+            "on the user's NEXT message — so just acknowledge that you've started "
+            "it and stop. Use this ONLY when the work is genuinely long and the "
+            "bulky output would otherwise clog the chat; for quick lookups, just "
+            "do the work inline."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Short label shown in the panel (e.g. 'Marktanalyse E-Bikes')"},
+                "prompt": {"type": "string", "description": "The full, self-contained instruction for the background run — it does NOT see this conversation, so include all needed context."},
+            },
+            "required": ["title", "prompt"],
+        },
+    },
+    {
         "name": "use_skill",
         "description": (
             "Load a skill's instructions into context. Skills provide specialized knowledge "

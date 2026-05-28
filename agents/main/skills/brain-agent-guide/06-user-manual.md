@@ -45,6 +45,11 @@ Panel wird beim Verlassen geschlossen. Tabs mit Inhalt:
   (Web-Abrufe, Dokument-Lesungen)
 - **Dateien** — Artifacts, die das Modell in diesem Turn erzeugt hat
 - **Websuche** — kuratierte Web-Quellen für den nächsten Turn (siehe unten)
+- **Hintergrundaufgaben** — abgekoppelte Langläufer-Aufgaben (siehe unten)
+
+Neben dem **Panel**-Knopf erscheint zusätzlich eine kleine **Uhren-Pille mit
+Zähler**, sobald es Hintergrundaufgaben gibt — ein Klick öffnet direkt den
+Hintergrundaufgaben-Tab.
 
 Das Panel öffnet sich automatisch nur bei einem neuen **Output**-Artifact;
 sonst glüht das Symbol kurz auf. Es öffnet beim ersten Tab mit Inhalt,
@@ -378,6 +383,33 @@ Kästchen ist wirkungslos, solange der Korb leer ist.
 
 (Anderer Mechanismus als die **Web-Adressen** eines Projekts, die dauerhaft
 ins Projektgedächtnis eingespeist werden.)
+
+---
+
+## Hintergrundaufgaben
+
+Für lange, ausgabe-intensive Recherchen kann der Assistent eine Aufgabe
+**abkoppeln**, statt den Chat zu blockieren — ähnlich wie in der
+Claude-Desktop-App. Das entscheidet das Modell selbst: erkennt es, dass eine
+Aufgabe lange läuft und viel Ausgabe erzeugt, startet es sie im Hintergrund und
+antwortet sofort mit „läuft im Hintergrund". Der Chat bleibt frei.
+
+Die Aufgabe läuft als **derselbe Agent** (gleiches Modell, gleiche Werkzeuge) in
+einem eigenen Lauf. Im Tab **Hintergrundaufgaben** (oder über die Uhren-Pille
+oben rechts) siehst du:
+
+- **Wird ausgeführt** — laufende Aufgaben mit Live-Zählern (Dauer, Tokens,
+  Tool-Verwendungen) und einem **Stopp**-Knopf.
+- **Fertig** — abgeschlossene/abgebrochene Aufgaben mit **Löschen**-Knopf.
+- **Transkript anzeigen** — klappt den (live mitlaufenden bzw. fertigen)
+  Arbeitsverlauf der Aufgabe auf.
+
+Wenn eine Aufgabe fertig ist, fließt ihr **vollständiges Ergebnis automatisch in
+deine NÄCHSTE Nachricht** ein — der Assistent arbeitet damit weiter, als hättest
+du es ihm gegeben. Wichtig: Das Ergebnis landet **nicht** dauerhaft im
+Chat-Verlauf und bläht den Kontext nicht auf — es wird genau einmal verwendet und
+fällt danach wieder heraus (wie ein Werkzeug-Ergebnis). **Stopp** behält das
+bis dahin erzeugte Teilergebnis.
 
 ---
 

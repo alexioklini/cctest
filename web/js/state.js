@@ -61,6 +61,7 @@ const state = {
   get referencesPanelOpen() { return this.rightPanelOpen && this.rightPanelTab === 'references'; },
   chatReferences: {},  // sessionId -> [{title, link, snippet, domain, favicon}]
   artifacts: {},           // { sessionId: [artifact objects] }
+  backgroundTasks: {},     // { sessionId: [background task objects] }
   activeArtifactId: null,
   activeArtifactVersion: null,
   artifactSourceMode: false,

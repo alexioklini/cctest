@@ -39,7 +39,8 @@ agents/
                                # data_sessions, favourites, feedback, reactions,
                                # read_cursors, kg_extraction_log/progress/state,
                                # chat_mempalace_sync, closet_regen_progress,
-                               # project_sync_runs, helpdesk_history
+                               # project_sync_runs, helpdesk_history,
+                               # background_tasks
     scheduler.db               # legacy / migrating
     schedules.db               # schedules, schedule_history, workflow_history
     costs.db                   # cost_log
@@ -196,6 +197,21 @@ cascade-dropped when a chat session is deleted. Served newest-first +
 cursor-paginated by `GET /v1/helpdesk/history`. `context_label` (written on
 both rows of an exchange) drives the per-question UI badge AND
 context-filtered replay (see `05-internals.md` → Brainy).
+
+### chats.db → background_tasks (Hintergrundaufgaben)
+```
+id TEXT PK, session_id TEXT, agent_id TEXT, model TEXT, title TEXT,
+prompt TEXT, status TEXT (running|done|cancelled|error), turn_id TEXT,
+output TEXT (full final text — incl. partial on cancel), error TEXT,
+usage_in INTEGER, usage_out INTEGER, tool_calls INTEGER,
+created_at REAL, finished_at REAL, consumed_at REAL
+```
+Index `idx_bgtask_session(session_id, created_at)`. Rows are written by
+`engine/background_tasks.py` (the detached runner). `consumed_at` is set when
+the finished `output` has been folded into a chat turn (wire-only) — guarantees
+each result reaches the model exactly once and never re-enters history. At boot,
+any leftover `running` row is reconciled to `error` ("Server restart — task
+lost") so the panel shows no zombie. See `05-internals.md` → Background tasks.
 
 ### chats.db → feedback (👍/👎 on responses)
 ```

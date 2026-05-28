@@ -103,6 +103,14 @@ function updateRightPanelButtonVisibility() {
     && !!(state.activeChat && state.activeChat.sessionId);
   if (btn) btn.style.display = makesSense ? '' : 'none';
   if (!makesSense && state.rightPanelOpen) closeRightPanel(false);
+  // Off the chat view: no session in scope — stop polling and hide the pill.
+  if (!makesSense) {
+    if (typeof stopBackgroundTasksPoll === 'function') stopBackgroundTasksPoll();
+    const pill = document.getElementById('bgtasks-pill');
+    if (pill) pill.style.display = 'none';
+  } else if (typeof refreshBackgroundTasksPill === 'function') {
+    refreshBackgroundTasksPill();
+  }
 }
 
 function closeRightPanel(userInitiated = false) {
@@ -123,11 +131,15 @@ function closeRightPanel(userInitiated = false) {
 // the turn (the streaming events only opportunistically refreshed it).
 function refreshRightPanelContent() {
   updateRightPanelBadges();
+  // A turn may have spawned a background task — reload so the pill/panel pick
+  // it up and the poll starts.
+  if (typeof loadBackgroundTasks === 'function') loadBackgroundTasks();
   if (!state.rightPanelOpen) return;
   const tab = state.rightPanelTab;
   if (tab === 'attachments') renderAttachmentsPane();
   else if (tab === 'references') renderReferencesPane();
   else if (tab === 'artifacts' && !state.activeArtifactId) showArtifactList();
+  else if (tab === 'bgtasks' && typeof renderBackgroundTasksPane === 'function') renderBackgroundTasksPane();
   if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);
 }
 
@@ -153,6 +165,7 @@ function switchRightTab(tabName) {
   if (tabName === 'references') renderReferencesPane();
   if (tabName === 'artifacts' && !state.activeArtifactId) showArtifactList();
   if (tabName === 'websuche' && typeof renderWebsuchePane === 'function') renderWebsuchePane();
+  if (tabName === 'bgtasks' && typeof renderBackgroundTasksPane === 'function') renderBackgroundTasksPane();
   updateRightPanelBadges();
   // Re-apply the active-turn focus to the freshly rendered pane.
   if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);
@@ -259,6 +272,10 @@ function updateRightPanelBadges() {
   // Websuche basket count
   const webBadge = document.getElementById('tab-badge-websuche');
   if (webBadge) webBadge.textContent = (typeof webBasketCount === 'function' ? webBasketCount() : 0) || '0';
+  // Background-tasks count (running + finished-not-yet-consumed)
+  const bgCount = (typeof backgroundTasksActiveCount === 'function') ? backgroundTasksActiveCount() : 0;
+  const bgBadge = document.getElementById('tab-badge-bgtasks');
+  if (bgBadge) bgBadge.textContent = bgCount || '0';
 }
 
 /* ───────────────────────────────────────────────────────────

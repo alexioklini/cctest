@@ -7753,3 +7753,40 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   flex: 0 0 auto; width: 30px; border-radius: 50%; border: none; cursor: pointer;
   background: var(--accent-brand); color: #fff; font-size: 14px;
 }
+
+/* ── Hintergrundaufgaben (background tasks) ── */
+.bgtasks-pill {
+  display: inline-flex; align-items: center; gap: 4px; height: 20px;
+  background: none; border: 1px solid var(--border-100); border-radius: 5px;
+  padding: 1px 7px; cursor: pointer; color: var(--accent-brand); font-size: 10px;
+  transition: all 0.15s;
+}
+.bgtasks-pill:hover { background: color-mix(in srgb, var(--accent-brand) 8%, transparent); border-color: var(--accent-brand); }
+.bgtasks-pill-count { font-weight: 600; }
+.bgtasks-content { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.bgtasks-empty { color: var(--text-400); font-size: 12px; text-align: center; padding: 24px 8px; }
+.bgtasks-section-label { font-size: 11px; color: var(--text-400); text-transform: none; margin: 4px 0 0; }
+.bgtask-card { background: var(--bg-000); border: 1px solid var(--border-100); border-radius: 8px; padding: 9px 10px; }
+.bgtask-row1 { display: flex; align-items: center; gap: 7px; }
+.bgtask-title { font-size: 13px; font-weight: 500; color: var(--text-100); }
+.bgtask-row2 { font-size: 11px; color: var(--text-300); margin-top: 3px; }
+.bgtask-status { font-weight: 600; }
+.bgtask-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--text-400); }
+.bgtask-dot.bg-st-running { background: var(--accent-brand); animation: bgtask-pulse 1.4s ease-in-out infinite; }
+.bgtask-dot.bg-st-done { background: #16a34a; }
+.bgtask-dot.bg-st-cancelled { background: #d97706; }
+.bgtask-dot.bg-st-error { background: var(--error, #d33); }
+.bgtask-status.bg-st-running { color: var(--accent-brand); }
+.bgtask-status.bg-st-error { color: var(--error, #d33); }
+@keyframes bgtask-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+.bgtask-error { font-size: 11px; color: var(--error, #d33); margin-top: 4px; }
+.bgtask-actions { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+.bgtask-action { background: none; border: 1px solid var(--border-100); border-radius: 6px;
+  padding: 3px 9px; font-size: 11px; cursor: pointer; color: var(--text-200); transition: all 0.15s; }
+.bgtask-action:hover { background: var(--bg-200); border-color: var(--border-200); }
+.bgtask-action-del:hover { color: var(--error, #d33); border-color: var(--error, #d33); }
+.bgtask-link { border-color: transparent; color: var(--accent-brand); padding-left: 2px; }
+.bgtask-link:hover { background: none; text-decoration: underline; }
+.bgtask-transcript { margin-top: 8px; padding: 8px; max-height: 280px; overflow-y: auto;
+  background: var(--bg-100); border: 1px solid var(--border-100); border-radius: 6px;
+  font-size: 11px; white-space: pre-wrap; word-break: break-word; color: var(--text-200); }

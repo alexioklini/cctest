@@ -436,5 +436,80 @@ class TestGdprAfterFileWriteCallback(unittest.TestCase):
                 self.assertIn("DE89370400440532013000", f.read())
 
 
+# ---------------------------------------------------------------------------
+# Background-task next-turn injection — the core "does not pollute context"
+# invariant. A finished task's full output must be folded into the NEXT turn
+# wire-only, exactly once, then never re-appear.
+# ---------------------------------------------------------------------------
+
+
+class TestBackgroundTaskInjection(unittest.TestCase):
+    """Uses a real (temp) ChatDB so the consumed_at bookkeeping is exercised end
+    to end — that bookkeeping IS the invariant under test."""
+
+    def setUp(self):
+        import server_lib.db as db
+        from handlers import chat as chat_mod
+        self.db = db
+        self.chat_mod = chat_mod
+        self.tmp = tempfile.mkdtemp()
+        self._orig_path = db.CHAT_DB
+        db.CHAT_DB = os.path.join(self.tmp, "chats.db")
+        db.ChatDB.init()
+        # `handlers.chat` reaches ChatDB as a server-injected global (server.py
+        # injects it at boot); under the bare test interpreter we inject it
+        # ourselves so the helper resolves the name — same pattern the other
+        # classes in this file use.
+        self._had_chatdb = hasattr(chat_mod, "ChatDB")
+        self._orig_chatdb = getattr(chat_mod, "ChatDB", None)
+        chat_mod.ChatDB = db.ChatDB
+
+    def tearDown(self):
+        self.db.CHAT_DB = self._orig_path
+        if self._had_chatdb:
+            self.chat_mod.ChatDB = self._orig_chatdb
+        else:
+            delattr(self.chat_mod, "ChatDB")
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_finished_output_injected_once_then_consumed(self):
+        ChatDB = self.db.ChatDB
+        sid = "sess-bg-1"
+        ChatDB.create_background_task("bg1", sid, "main", "m", "Recherche", "do it")
+        ChatDB.finish_background_task("bg1", "done", output="DIE ANTWORT")
+
+        # First turn: the preamble carries the full output.
+        pre = self.chat_mod._build_background_task_preamble(sid)
+        self.assertIn("DIE ANTWORT", pre)
+        self.assertIn("Recherche", pre)
+
+        # Wire injection must NOT mutate the stored messages (wire ≠ stored).
+        stored = [{"role": "user", "content": "und jetzt?"}]
+        wire = self.chat_mod._inject_web_preamble_into_wire(stored, pre)
+        self.assertIn("DIE ANTWORT", wire[-1]["content"])
+        self.assertEqual(stored[-1]["content"], "und jetzt?",
+                         "stored history must stay clean — output never persists")
+
+        # Second turn: already consumed → empty, so it never re-enters context.
+        self.assertEqual(self.chat_mod._build_background_task_preamble(sid), "",
+                         "a finished task's output must reach the model exactly once")
+
+    def test_cancelled_partial_is_injected(self):
+        ChatDB = self.db.ChatDB
+        sid = "sess-bg-2"
+        ChatDB.create_background_task("bg2", sid, "main", "m", "Lang", "x")
+        ChatDB.finish_background_task("bg2", "cancelled", output="TEILERGEBNIS")
+        pre = self.chat_mod._build_background_task_preamble(sid)
+        self.assertIn("TEILERGEBNIS", pre)
+        self.assertIn("abgebrochen", pre.lower())
+
+    def test_running_task_not_injected(self):
+        ChatDB = self.db.ChatDB
+        sid = "sess-bg-3"
+        ChatDB.create_background_task("bg3", sid, "main", "m", "Läuft", "x")
+        # Still running → nothing to fold in yet.
+        self.assertEqual(self.chat_mod._build_background_task_preamble(sid), "")
+
+
 if __name__ == "__main__":
     unittest.main()

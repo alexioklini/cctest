@@ -61,6 +61,21 @@ def tool_endpoint_internal() -> str:
     return cfg.get("tool_endpoint_internal") or "http://127.0.0.1:8420/v1/tools/call"
 
 
+def cancel_turn(turn_id: str) -> bool:
+    """POST /cancel/<turn_id> to the sidecar — the same endpoint the chat
+    cancel-watch thread hits. Used by detached background tasks (which have no
+    Session.cancel_token to poll). Best-effort: returns True on a 2xx."""
+    if not turn_id:
+        return False
+    try:
+        req = urllib.request.Request(
+            sidecar_url() + f"/cancel/{turn_id}", data=b"", method="POST")
+        resp = urllib.request.urlopen(req, timeout=10)
+        return 200 <= getattr(resp, "status", 200) < 300
+    except Exception:
+        return False
+
+
 # ---------- Message + tool conversion ----------
 
 def _to_anthropic_messages(messages: list[dict]) -> list[dict]:
@@ -712,14 +727,19 @@ def run_turn_blocking(
     max_tokens: int,
     max_rounds: int,
     timeout_s: float = 1800.0,
+    turn_id: str | None = None,
 ) -> dict:
     """Non-streaming variant for background callers (scheduler, summariser,
     classifier, refine, ...). Returns the same shape as run_turn() minus the
     live event_callback hook. Phase 3 + 4 use this.
+
+    `turn_id`: callers that need to cancel the run mid-flight (background tasks)
+    or attach a live transcript pass a pre-minted id; the sidecar's
+    `POST /cancel/<turn_id>` then targets it. Default None → mint as before.
     """
     sid = tool_context.get("session_id") or ""
     nonce = tool_mcp.mint_nonce(sid)
-    turn_id = uuid.uuid4().hex
+    turn_id = turn_id or uuid.uuid4().hex
     tool_context = dict(tool_context)
     tool_context.setdefault("model", model)
     tool_context["turn_id"] = turn_id
@@ -809,6 +829,7 @@ def background_call(
     thinking_level: str | None = None,
     timeout_s: float = 1800.0,
     provider_resolver=None,
+    turn_id: str | None = None,
 ) -> dict:
     """Thin convenience wrapper around `run_turn_blocking` for background /
     non-interactive LLM calls (Phase 4).
@@ -863,6 +884,7 @@ def background_call(
         max_tokens=_max_tokens,
         max_rounds=max_rounds,
         timeout_s=timeout_s,
+        turn_id=turn_id,
     )
 
 

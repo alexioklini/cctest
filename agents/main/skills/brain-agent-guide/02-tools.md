@@ -128,6 +128,18 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
   `worker_send(id, msg)` / `worker_ask_user(id, q)`
 - `get_artifact_detail(id)` — artifact metadata
 
+## Background tasks (group `background`)
+
+- `run_background_task(title, prompt)` — spin off a long, output-heavy run as a
+  DETACHED background task (same agent, same model/tools as the chat). Returns
+  immediately with a `task_id`; the spawning turn ends — it does NOT block.
+  The full result is delivered back automatically on the user's NEXT message
+  (wire-only, then dropped — never enters chat history), so just acknowledge
+  it's started and stop. Differs from `delegate_task` (which targets ANOTHER
+  agent and can wait for the result). The user sees/controls it in the
+  "Hintergrundaufgaben" panel (live progress, Stopp, Transkript). Use only for
+  genuinely long work; quick lookups stay inline.
+
 ## Scheduler (admin-side from chat)
 
 - `schedule_list()` — every visible schedule (read-only)
@@ -216,6 +228,7 @@ context       context_search context_detail context_recall
 web           web_fetch exa_search searxng_search
 email         gmail_inbox gmail_read gmail_search gmail_send gmail_reply
 delegation    delegate_task task_status task_cancel
+background     run_background_task
 code_graph    code_graph_build code_graph_query code_graph_impact
               code_graph_enhance
 git           git_command github_command
