@@ -21,13 +21,23 @@ function _bgTasksFor(sessionId) {
   return state.backgroundTasks[sessionId] || [];
 }
 
-// Count worth a badge/pill: running, or finished-but-not-yet-pulled-into-chat.
+// "Active" = running, or finished-but-not-yet-pulled-into-chat. Used for the
+// right-panel TAB badge (transient attention signal).
 function backgroundTasksActiveCount() {
   const sid = state.activeChat?.sessionId;
   if (!sid) return 0;
   return _bgTasksFor(sid).filter(t =>
     t.status === 'running' || (t.consumed_at == null && (t.status === 'done' || t.status === 'cancelled'))
   ).length;
+}
+
+// Total tasks for the session, regardless of status/consumed. Drives the
+// top-bar PILL so finished+delivered tasks stay findable after a reload — the
+// pill clears only when the user deletes them (Löschen).
+function backgroundTasksTotalCount() {
+  const sid = state.activeChat?.sessionId;
+  if (!sid) return 0;
+  return _bgTasksFor(sid).length;
 }
 
 function _bgAnyRunning() {
@@ -39,6 +49,8 @@ function _bgAnyRunning() {
 async function loadBackgroundTasks() {
   const sid = state.activeChat?.sessionId;
   if (!sid) return;
+  const _prev = _bgTasksFor(sid);
+  const _prevRunning = new Set(_prev.filter(t => t.status === 'running').map(t => t.id));
   try {
     const resp = await API.getBackgroundTasks(sid);
     if (!state.backgroundTasks) state.backgroundTasks = {};
@@ -50,9 +62,71 @@ async function loadBackgroundTasks() {
   refreshBackgroundTasksPill();
   if (typeof updateRightPanelBadges === 'function') updateRightPanelBadges();
   if (state.rightPanelOpen && state.rightPanelTab === 'bgtasks') renderBackgroundTasksPane();
+
+  // Live delivery (poll-reattach): if a task just went running -> terminal, the
+  // server may have auto-fired a delivery turn into this idle session. An idle
+  // client holds no chat stream, so attach now to render that turn live (rather
+  // than only on the next reload). attachStream replays from the turn start; if
+  // no turn is actually live it emits `idle` and harmlessly returns.
+  const _justFinished = _bgTasksFor(sid).some(
+    t => _prevRunning.has(t.id) && t.status !== 'running');
+  if (_justFinished) _reattachForBackgroundDelivery(sid);
+
   // Self-regulate the poll: run while anything is still going, stop otherwise.
   if (_bgAnyRunning()) startBackgroundTasksPoll();
   else stopBackgroundTasksPoll();
+}
+
+// Attach to the (possibly just-started) delivery turn for the active session so
+// it renders live in the open chat. Mirrors openSession's resume-streaming
+// block. Safe to call when idle: attachStream → `idle` → no-op. Guarded so we
+// don't stomp a turn the user is already watching.
+function _reattachForBackgroundDelivery(sid, _attempt) {
+  _attempt = _attempt || 0;
+  const chat = state.activeChat;
+  if (!chat || chat.sessionId !== sid) return;       // session switched away
+  if (chat.streaming) return;                        // already watching a turn
+  const isActive = () => state.activeChat === chat && chat.sessionId === sid;
+  const cbs = buildStreamCallbacks(chat, isActive);
+  const _origDone = cbs.done;
+  cbs.done = (d) => { if (_origDone) _origDone(d); refreshBackgroundTasksPill(); };
+  // Only flip the streaming UI on once we actually see the turn begin — `idle`
+  // means there was nothing to attach to, so leave the chat untouched.
+  let _started = false;
+  const _begin = () => {
+    if (_started) return;
+    _started = true;
+    chat.streaming = true;
+    chat.streamingText = '';
+    chat.thinkingText = '';
+    chat._streamGen = (chat._streamGen || 0) + 1;
+    chat._streamStartTime = Date.now();
+    clearInterval(chat._streamTimerInterval);
+    chat._streamTimerInterval = setInterval(() => updateStreamTimer(chat), 100);
+    if (isActive()) updateStreamingUI(true, chat);
+  };
+  for (const ev of ['text_block_start', 'text_delta', 'thinking_start', 'tool_call']) {
+    const orig = cbs[ev];
+    cbs[ev] = (d) => { _begin(); if (orig) orig(d); };
+  }
+  // Timing: the server fires the delivery turn from the runner's `finally`,
+  // slightly AFTER the task row flips to done. Two races to cover:
+  //   - too early: turn hasn't started yet → `idle`. Retry briefly.
+  //   - too late: a FAST delivery turn already finished + tore down its
+  //     live_stream before we attached → `idle`, but the turn is persisted.
+  //     Reload the session so the now-saved delivery turn renders (no manual
+  //     F5). We can't tell the two apart from `idle` alone, so: retry a couple
+  //     times, then fall back to a reload.
+  cbs.idle = () => {
+    if (!isActive() || chat.streaming) return;
+    if (_attempt < 2) {
+      setTimeout(() => _reattachForBackgroundDelivery(sid, _attempt + 1), 1500);
+    } else if (typeof openSession === 'function') {
+      // Give up on live attach; pull the persisted delivery turn in.
+      openSession(sid, chat.agent);
+    }
+  };
+  API.attachStream(sid, cbs);
 }
 
 function startBackgroundTasksPoll() {
@@ -64,14 +138,18 @@ function stopBackgroundTasksPoll() {
   if (_bgPollHandle) { clearInterval(_bgPollHandle); _bgPollHandle = null; }
 }
 
-// Top-bar pill: count of active tasks; hidden when zero.
+// Top-bar pill: shown whenever the session has ANY background task (running,
+// finished, or already delivered) so they stay findable after a reload; clears
+// only when the user deletes them. The count itself highlights still-active
+// ones, but presence is driven by the total.
 function refreshBackgroundTasksPill() {
   const pill = document.getElementById('bgtasks-pill');
   const countEl = document.getElementById('bgtasks-pill-count');
   if (!pill) return;
-  const n = backgroundTasksActiveCount();
-  if (countEl) countEl.textContent = n;
-  pill.style.display = n > 0 ? '' : 'none';
+  const total = backgroundTasksTotalCount();
+  const active = backgroundTasksActiveCount();
+  if (countEl) countEl.textContent = active || total;
+  pill.style.display = total > 0 ? '' : 'none';
 }
 
 const _BG_STATUS = {

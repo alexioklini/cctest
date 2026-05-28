@@ -411,6 +411,10 @@ du gerade selbst eine Nachricht, während die Aufgabe fertig wird, fließt das
 Ergebnis in genau diese Antwort ein.) Das Ergebnis wird genau einmal verwendet.
 **Stopp** behält das bis dahin erzeugte Teilergebnis.
 
+Die Aufgaben einer Sitzung bleiben erhalten: nach einem Browser-Reload zeigt die
+Uhren-Pille sie wieder an, und im Panel stehen die fertigen unter „Fertig", bis
+du sie per **Löschen** entfernst.
+
 ---
 
 ## Einstellungen
