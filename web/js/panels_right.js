@@ -272,8 +272,8 @@ function updateRightPanelBadges() {
   // Websuche basket count
   const webBadge = document.getElementById('tab-badge-websuche');
   if (webBadge) webBadge.textContent = (typeof webBasketCount === 'function' ? webBasketCount() : 0) || '0';
-  // Background-tasks count (running + finished-not-yet-consumed)
-  const bgCount = (typeof backgroundTasksActiveCount === 'function') ? backgroundTasksActiveCount() : 0;
+  // Activity count: all tool calls (sync + background) of this session.
+  const bgCount = (typeof backgroundActivityCount === 'function') ? backgroundActivityCount() : 0;
   const bgBadge = document.getElementById('tab-badge-bgtasks');
   if (bgBadge) bgBadge.textContent = bgCount || '0';
 }

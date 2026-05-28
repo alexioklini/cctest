@@ -45,7 +45,8 @@ Panel wird beim Verlassen geschlossen. Tabs mit Inhalt:
   (Web-Abrufe, Dokument-Lesungen)
 - **Dateien** — Artifacts, die das Modell in diesem Turn erzeugt hat
 - **Websuche** — kuratierte Web-Quellen für den nächsten Turn (siehe unten)
-- **Hintergrundaufgaben** — abgekoppelte Langläufer-Aufgaben (siehe unten)
+- **Aktivität** — alle Tool-Aufrufe dieses Chats (synchrone + Hintergrund­aufgaben),
+  chronologisch (neueste oben) in „Laufend" / „Abgeschlossen" (siehe unten)
 
 Neben dem **Panel**-Knopf erscheint zusätzlich eine kleine **Uhren-Pille mit
 Zähler**, sobald es Hintergrundaufgaben gibt — ein Klick öffnet direkt den
@@ -386,7 +387,21 @@ ins Projektgedächtnis eingespeist werden.)
 
 ---
 
-## Hintergrundaufgaben
+## Aktivität (Tool-Aufrufe) & Hintergrundaufgaben
+
+Der **Aktivität**-Tab im rechten Panel zeigt **alle Tool-Aufrufe dieses Chats** an
+einem Ort — sowohl die synchronen (während eines normalen Turns, z.B. `web_fetch`,
+`read_document`) als auch die abgekoppelten **Hintergrundaufgaben**. Chronologisch
+sortiert (neueste oben), in zwei Bereichen **Laufend** / **Abgeschlossen**. Jeder
+Eintrag trägt seinen Typ (Tool-Name oder „Hintergrundaufgabe") und asynchrone
+Einträge zusätzlich ein **Hintergrund**-Badge.
+
+**Vollansicht, Kopieren und Herunterladen** eines Tool-Ergebnisses passieren hier
+im Panel. Im Chat selbst steht pro Tool-Aufruf nur noch eine **kompakte Zeile**
+(Name + kurze Vorschau) — ein Klick darauf öffnet den passenden Eintrag im Panel.
+(Reasoning/Thinking bleibt weiterhin direkt im Chat.)
+
+### Hintergrundaufgaben
 
 Für lange, ausgabe-intensive Recherchen kann der Assistent eine Aufgabe
 **abkoppeln**, statt den Chat zu blockieren — ähnlich wie in der

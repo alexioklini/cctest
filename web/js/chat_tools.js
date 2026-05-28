@@ -628,16 +628,23 @@ function renderToolCall(msg, idx) {
   ).length > 1;
   const parallelBadge = isParallel ? '<span class="tool-badge-parallel" title="Parallel ausgeführt">Parallel</span>' : '';
 
+  // Capped, NON-expandable preview. Full view + copy + download moved to the
+  // Aktivitäts-Panel (right panel). One flat line per tool call: icon + name +
+  // badges + timing + a short truncated result preview. Click opens the panel.
+  let preview = '';
+  if (resultStrForFlow) {
+    const flat = resultStrForFlow.replace(/\s+/g, ' ').trim();
+    if (flat) preview = `<span class="tool-line-preview">${esc(flat.slice(0, 80))}${flat.length > 80 ? '…' : ''}</span>`;
+  }
+  const actId = msg.tool_use_id || ('tc-' + (msg._seq || idx));
   return `
-    <div class="tool-block${hasResult ? ' has-result' : ''}" onclick="this.classList.toggle('open')">
-      <div class="tool-block-header">
-        ${icon}
-        <span class="tool-name">${desc}</span>
-        ${workerBadge}${parallelBadge}${backendBadge}
-        ${timing}
-        <span class="tool-chevron">&#9656;</span>
-      </div>
-      <div class="tool-block-body">${bodyHtml}</div>
+    <div class="tool-line${hasResult ? ' has-result' : ''}" title="Im Aktivitäts-Panel öffnen"
+         onclick="openActivityEntry('${esc(actId)}')">
+      ${icon}
+      <span class="tool-name">${desc}</span>
+      ${workerBadge}${parallelBadge}${backendBadge}
+      ${timing}
+      ${preview}
     </div>
   `;
 }

@@ -40,6 +40,12 @@ function backgroundTasksTotalCount() {
   return _bgTasksFor(sid).length;
 }
 
+// All activity entries (sync tool calls + background tasks) for the session —
+// drives the right-panel TAB badge now that the panel shows everything.
+function backgroundActivityCount() {
+  return _collectActivityEntries().length;
+}
+
 function _bgAnyRunning() {
   const sid = state.activeChat?.sessionId;
   if (!sid) return false;
@@ -192,6 +198,7 @@ function _bgCard(t) {
       <div class="bgtask-row1">
         <span class="bgtask-dot ${st.cls}"></span>
         <span class="bgtask-title">${escapeHtml(t.title || 'Hintergrundaufgabe')}</span>
+        <span class="act-type-badge act-type-bg">Hintergrund</span>
       </div>
       <div class="bgtask-row2"><span class="bgtask-status ${st.cls}">${st.label}</span>${meta ? ' · ' + escapeHtml(meta) : ''}</div>
       ${errLine}
@@ -200,27 +207,183 @@ function _bgCard(t) {
     </div>`;
 }
 
-function renderBackgroundTasksPane() {
+/* ───────────────────────────────────────────────────────────
+   Activity entries: the panel shows ALL tool calls of the CURRENT session,
+   synchronous (in-chat tool_call/tool_result, or assistant.metadata.tools after
+   reload) AND asynchronous (background_tasks). One normaliser produces a single
+   chronologically-sorted list (newest first) that the pane renders. Full-view /
+   copy / download for a tool result reuse chat_tools.js's buildToolResultBlock +
+   handlers (single-sourced — those live in the panel now, capped-out of chat).
+   ─────────────────────────────────────────────────────────── */
+
+// Sort: newest first (per user). `_seq`/`id` break ties within the same ms.
+function _bgSortNewestFirst(a, b) {
+  if (b.ts !== a.ts) return b.ts - a.ts;
+  return (b.seq || 0) - (a.seq || 0);
+}
+
+// Collect the current session's synchronous tool calls as activity entries.
+// Live: tool_call/tool_result message pairs in chat.messages. After reload the
+// raw pairs are gone, but assistant.metadata.tools[] carries them — covered by
+// _toolEntriesFromMetadata below.
+function _syncToolEntries() {
+  const chat = state.activeChat;
+  if (!chat || !Array.isArray(chat.messages)) return [];
+  const msgs = chat.messages;
+  const out = [];
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    if (!m || m.role !== 'tool_call' || m.synthetic) continue;
+    // Pair with its result (match by tool_use_id, else name; don't cross turns).
+    let result = null, resTs = null;
+    for (let j = i + 1; j < msgs.length; j++) {
+      const n = msgs[j];
+      if (n.role === 'tool_result') {
+        const idMatch = m.tool_use_id && n.tool_use_id && m.tool_use_id === n.tool_use_id;
+        const nameMatch = !m.tool_use_id && n.name === m.name;
+        if (idMatch || nameMatch) { result = n.result; resTs = n._ts; break; }
+      }
+      if (n.role === 'assistant' || n.role === 'user') break;
+    }
+    out.push({
+      kind: 'tool',
+      id: m.tool_use_id || ('tc-' + (m._seq || i)),
+      type: m.name || 'tool',
+      args: m.args || {},
+      status: result != null ? 'done' : 'running',
+      result: result,
+      ts: m._ts || 0,
+      seq: m._seq || 0,
+      isBackground: false,
+    });
+  }
+  return out;
+}
+
+// After a reload there are no live tool_call rows — reconstruct from each
+// assistant message's metadata.tools[] instead.
+function _toolEntriesFromMetadata() {
+  const chat = state.activeChat;
+  if (!chat || !Array.isArray(chat.messages)) return [];
+  // Only use this when there are NO live tool_call rows (avoid double-listing).
+  if (chat.messages.some(m => m && m.role === 'tool_call')) return [];
+  const out = [];
+  let seq = 0;
+  for (const m of chat.messages) {
+    if (!m || m.role !== 'assistant') continue;
+    const tools = m.metadata && Array.isArray(m.metadata.tools) ? m.metadata.tools : null;
+    if (!tools) continue;
+    for (const t of tools) {
+      out.push({
+        kind: 'tool',
+        id: t.tool_use_id || ('tm-' + seq),
+        type: t.name || 'tool',
+        args: t.args || {},
+        status: 'done',
+        result: typeof t.result === 'string' ? t.result : (t.result != null ? JSON.stringify(t.result) : null),
+        ts: (m.metadata && m.metadata.ts) || seq,  // metadata has no per-tool ts; keep turn order
+        seq: seq++,
+        isBackground: false,
+      });
+    }
+  }
+  return out;
+}
+
+// Background tasks normalised to the same shape.
+function _bgEntries() {
   const sid = state.activeChat?.sessionId;
+  if (!sid) return [];
+  return _bgTasksFor(sid).map(t => ({
+    kind: 'bgtask',
+    id: t.id,
+    type: 'Hintergrundaufgabe',
+    title: t.title,
+    status: t.status,
+    ts: t.created_at || 0,
+    seq: 0,
+    isBackground: true,
+    raw: t,
+  }));
+}
+
+// The unified, sorted activity list for the current session.
+function _collectActivityEntries() {
+  const sync = _syncToolEntries();
+  const synced = sync.length ? sync : _toolEntriesFromMetadata();
+  return synced.concat(_bgEntries()).sort(_bgSortNewestFirst);
+}
+
+// One capped, expandable card for a synchronous tool-call entry. Reuses
+// chat_tools.js's buildToolResultBlock (full view + copy + download) so that
+// logic stays single-sourced — it just lives in the panel now.
+function _toolEntryCard(e) {
+  const desc = (typeof toolDescribe === 'function') ? toolDescribe(e.type, e.args) : escapeHtml(e.type);
+  const st = e.status === 'running' ? _BG_STATUS.running : _BG_STATUS.done;
+  const argsTable = (typeof renderToolArgsTable === 'function')
+    ? renderToolArgsTable(e.type === 'python_exec'
+        ? Object.fromEntries(Object.entries(e.args || {}).filter(([k]) => k !== 'code'))
+        : (e.args || {}))
+    : '';
+  const resultBlock = (e.result != null && typeof buildToolResultBlock === 'function')
+    ? buildToolResultBlock(e.type, e.args || {}, (typeof e.result === 'string' ? e.result : JSON.stringify(e.result, null, 2)), e.id)
+    : '';
+  return `
+    <div class="bgtask-card act-tool-card" data-act="${escapeHtml(e.id)}">
+      <div class="bgtask-row1">
+        <span class="bgtask-dot ${st.cls}"></span>
+        <span class="bgtask-title">${desc}</span>
+      </div>
+      <div class="bgtask-row2"><span class="bgtask-status ${st.cls}">${st.label}</span></div>
+      <div class="act-tool-body">${argsTable}${resultBlock}</div>
+    </div>`;
+}
+
+// Render one activity entry (background task OR synchronous tool call) using
+// the matching card builder.
+function _activityCard(e) {
+  return e.kind === 'bgtask' ? _bgCard(e.raw) : _toolEntryCard(e);
+}
+
+function renderBackgroundTasksPane() {
   const host = document.getElementById('bgtasks-content');
   if (!host) return;
-  const tasks = sid ? _bgTasksFor(sid) : [];
-  if (!tasks.length) {
-    host.innerHTML = '<div class="bgtasks-empty" id="bgtasks-empty">Keine Hintergrundaufgaben</div>';
+  const entries = _collectActivityEntries();
+  if (!entries.length) {
+    host.innerHTML = '<div class="bgtasks-empty" id="bgtasks-empty">Keine Aktivität in diesem Chat</div>';
     return;
   }
-  const running = tasks.filter(t => t.status === 'running');
-  const finished = tasks.filter(t => t.status !== 'running');
+  const running = entries.filter(e => e.status === 'running');
+  const finished = entries.filter(e => e.status !== 'running');
   let html = '';
   if (running.length) {
-    html += '<div class="bgtasks-section-label">Wird ausgeführt</div>';
-    html += running.map(_bgCard).join('');
+    html += '<div class="bgtasks-section-label">Laufend</div>';
+    html += running.map(_activityCard).join('');
   }
   if (finished.length) {
-    html += '<div class="bgtasks-section-label">Fertig</div>';
-    html += finished.map(_bgCard).join('');
+    html += '<div class="bgtasks-section-label">Abgeschlossen</div>';
+    html += finished.map(_activityCard).join('');
   }
   host.innerHTML = html;
+}
+
+// Open the activity panel and scroll/highlight a specific entry. Called from a
+// capped tool-line in the chat (the in-chat block no longer expands).
+function openActivityEntry(entryId) {
+  if (typeof openRightPanel === 'function') openRightPanel('bgtasks');
+  // Defer so the pane has rendered, then locate the card by data-act/data-task.
+  setTimeout(() => {
+    const host = document.getElementById('bgtasks-content');
+    if (!host) return;
+    const _esc = (window.CSS && window.CSS.escape) ? window.CSS.escape(entryId) : entryId;
+    const sel = `[data-act="${_esc}"],[data-task="${_esc}"]`;
+    const card = host.querySelector(sel);
+    if (card) {
+      card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      card.classList.add('act-highlight');
+      setTimeout(() => card.classList.remove('act-highlight'), 1600);
+    }
+  }, 60);
 }
 
 async function cancelBgTask(taskId) {
