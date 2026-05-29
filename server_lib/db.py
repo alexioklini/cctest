@@ -673,11 +673,30 @@ class ChatDB:
                     tool_calls   INTEGER DEFAULT 0,
                     created_at   REAL DEFAULT (strftime('%s','now')),
                     finished_at  REAL,
-                    consumed_at  REAL
+                    consumed_at  REAL,
+                    -- Fan-out / join (v9.47.0). group_id links calls the model
+                    -- emitted together; follow_up is the recombine instruction;
+                    -- group_done_at is the atomic single-flight join marker;
+                    -- parent_task_id is the nesting guard. All NULL = standalone
+                    -- single task (the pre-9.47 behaviour, unchanged).
+                    group_id      TEXT,
+                    follow_up     TEXT,
+                    group_done_at REAL,
+                    parent_task_id TEXT
                 )
             """)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_bgtask_session ON background_tasks(session_id, created_at)")
+            # Additive migrations for the fan-out columns (existing DBs) — MUST run
+            # before the group index, which references group_id.
+            for _col, _decl in (("group_id", "TEXT"), ("follow_up", "TEXT"),
+                                ("group_done_at", "REAL"), ("parent_task_id", "TEXT")):
+                try:
+                    conn.execute(f"ALTER TABLE background_tasks ADD COLUMN {_col} {_decl}")
+                except sqlite3.OperationalError:
+                    pass
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_bgtask_group ON background_tasks(session_id, group_id)")
             # Crash reconcile: any task still 'running' at boot lost its thread on
             # the previous shutdown — mark it errored so the panel never shows a
             # zombie running forever.
@@ -921,12 +940,19 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def create_background_task(task_id, session_id, agent_id, model, title, prompt):
+    def create_background_task(task_id, session_id, agent_id, model, title, prompt,
+                               group_id=None, follow_up=None, parent_task_id=None):
+        """Insert a running task. group_id/follow_up are the fan-out fields
+        (NULL = standalone). parent_task_id is set when spawned from inside a
+        background run (nesting guard — caller refuses to spawn at depth>0)."""
         with _db_conn() as conn:
             conn.execute(
-                "INSERT INTO background_tasks (id, session_id, agent_id, model, title, prompt, status) "
-                "VALUES (?, ?, ?, ?, ?, ?, 'running')",
-                (task_id, session_id, agent_id, model, title, prompt))
+                "INSERT INTO background_tasks "
+                "(id, session_id, agent_id, model, title, prompt, status, "
+                " group_id, follow_up, parent_task_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)",
+                (task_id, session_id, agent_id, model, title, prompt,
+                 group_id or None, follow_up or None, parent_task_id or None))
             conn.commit()
 
     @staticmethod
@@ -999,6 +1025,80 @@ class ChatDB:
                     (session_id,))
                 conn.commit()
             return tasks
+
+    @staticmethod
+    @_db_safe(default=None)
+    def claim_background_group(group_id):
+        """ATOMIC join + single-flight. Returns the group's member rows (for
+        delivery) IFF: the group exists, EVERY member is terminal
+        (done|cancelled|error), and no one has claimed it yet — and in the SAME
+        transaction stamps group_done_at so a concurrent finisher's claim returns
+        None. This is the "last finisher delivers exactly once" guarantee, enforced
+        by the DB rather than by thread timing.
+
+        Returns: list[dict] of members (id,title,status,output,error,follow_up,
+        session_id) on a winning claim; None if not-all-terminal or already claimed.
+
+        NOTE: a single task spawned without an explicit group is a group-of-one
+        (the runner assigns every task a group_id at spawn — see background_tasks).
+        """
+        if not group_id:
+            return None
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            # Single-statement claim: stamp group_done_at only if unclaimed AND
+            # no member is still running. UPDATE...WHERE NOT EXISTS(running) is
+            # atomic under SQLite's write lock — exactly one concurrent caller
+            # gets rowcount==1.
+            cur = conn.execute(
+                "UPDATE background_tasks SET group_done_at=strftime('%s','now') "
+                "WHERE group_id=? AND group_done_at IS NULL "
+                "AND NOT EXISTS (SELECT 1 FROM background_tasks b2 "
+                "                WHERE b2.group_id=? AND b2.status='running')",
+                (group_id, group_id))
+            if cur.rowcount == 0:
+                conn.rollback()
+                return None  # still running, or someone else already claimed it
+            rows = conn.execute(
+                "SELECT id, session_id, title, status, output, error, follow_up "
+                "FROM background_tasks WHERE group_id=? ORDER BY created_at",
+                (group_id,)).fetchall()
+            conn.commit()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_background_groups(session_id):
+        """Group rollup for the panel: one row per group_id with member counts +
+        aggregate status. Standalone tasks (group_id NULL) are omitted here — the
+        panel lists those via list_background_tasks as before."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT group_id, COUNT(*) AS total, "
+                "SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running, "
+                "SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) AS done, "
+                "SUM(CASE WHEN status IN ('error','cancelled') THEN 1 ELSE 0 END) AS failed, "
+                "MIN(created_at) AS created_at, MAX(follow_up) AS follow_up "
+                "FROM background_tasks WHERE session_id=? AND group_id IS NOT NULL "
+                "GROUP BY group_id ORDER BY created_at DESC",
+                (session_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=0)
+    def count_unconsumed_background_tasks(session_id):
+        """Finished (done|cancelled) tasks not yet folded into a turn. A non-
+        consuming PEEK — lets delivery check 'is there anything?' before claiming
+        the idle gate, so a 'busy' bail never consumes (and thus never loses)
+        tasks. (error-status tasks are delivered via the group path, not this
+        standalone pop, so they're excluded here to match pop_unconsumed.)"""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM background_tasks WHERE session_id=? AND "
+                "status IN ('done','cancelled') AND consumed_at IS NULL",
+                (session_id,)).fetchone()
+            return row[0] if row else 0
 
     @staticmethod
     @_db_safe(default=0)

@@ -257,31 +257,49 @@ def deliver_background_results(session_id: str) -> bool:
     if session is None:
         return False
 
-    # Single-flight + idle gate under the session lock.
+    # Delivery-vs-delivery single-flight (module-level set).
     with _bg_delivery_lock:
         if session_id in _bg_delivery_inflight:
             return False
-        if getattr(session, "_streaming", False) or getattr(session, "live_stream", None):
-            return False  # a turn is running — let its injection handle it
         _bg_delivery_inflight.add(session_id)
 
     try:
-        # Build the delivery message from the finished tasks (this consumes
-        # them). If nothing is pending, bail without firing a turn.
+        # Peek WITHOUT consuming — is there anything finished to deliver? If not,
+        # bail before touching session state. (Consuming happens only after we
+        # win the idle gate below, so a "busy" bail never loses tasks — they stay
+        # unconsumed for the live turn's injection to pick up.)
+        if ChatDB.count_unconsumed_background_tasks(session_id) == 0:
+            return False
+
+        # ATOMIC idle-gate + streaming-set under session.lock. The check and the
+        # set MUST be in one critical section: otherwise a concurrent POST /v1/chat
+        # can slip between a separate "is idle?" check and the state-set, and both
+        # turns end up active (overwriting live_stream, orphaning active_turns).
+        # If a turn is already running, we bail — its normal next-turn injection
+        # (_build_background_task_preamble in run_session_turn) carries the result.
+        live = LiveStream()
+        with session.lock:
+            if getattr(session, "_streaming", False) or getattr(session, "live_stream", None):
+                return False  # busy — injection on the live turn will deliver
+            session.cancel_token = engine.CancelToken()
+            session._streaming = True
+            session.live_stream = live
+
+        # We own the turn now. Build the delivery message (THIS consumes the
+        # tasks — only happens on the winning path).
         preamble = _build_background_task_preamble(session_id)
         if not preamble:
+            # Race: someone consumed between the peek and here. Release the
+            # streaming state we just claimed and bail cleanly.
+            with session.lock:
+                session._streaming = False
+                session.live_stream = None
             return False
         delivery_msg = (
             preamble
             + "\n\n[Bitte fasse das Ergebnis für den Nutzer zusammen bzw. arbeite "
             "damit weiter — der Nutzer wartet darauf.]"
         )
-
-        live = LiveStream()
-        with session.lock:
-            session.cancel_token = engine.CancelToken()
-            session._streaming = True
-            session.live_stream = live
         try:
             ChatDB.set_streaming_text(session.id, "")
         except Exception:
