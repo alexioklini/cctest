@@ -310,6 +310,10 @@ async function saveModelsConfig() {
       const profile = row.querySelector('.mdl-profile')?.value;
       if (profile && profile !== 'custom') mc[mid].profile = profile;
       else delete mc[mid].profile;
+      // Fan-out model: leaf tasks of this chat model offload here ('' = none)
+      const bgModel = row.querySelector('.mdl-bgtask-model')?.value?.trim();
+      if (bgModel) mc[mid].background_task_model = bgModel;
+      else delete mc[mid].background_task_model;
       // Context & output
       const maxCtx = readNum(row, 'mdl-max-context');
       if (maxCtx !== undefined) mc[mid].max_context = maxCtx; else delete mc[mid].max_context;

@@ -470,7 +470,10 @@ Zahnrad, unten links. Je nach Rolle zwei Bereiche:
   Auswahlfeld „— nicht gesetzt —", wenn keins gesetzt ist (seit 9.21.4).
 - **Provider** — OpenAI-kompatible Provider hinzufügen/bearbeiten/testen
 - **Nodes** — verteilte Compute-Peers
-- **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost)
+- **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost). Pro
+  Modell über das ⚙-Icon: u.a. **Fan-out-Modell** — teilt dieses Chat-Modell im
+  Chat eine Hintergrundaufgabe per Fan-out auf, laufen die Leaf-Tasks auf dem
+  hier gewählten (meist günstigeren) Modell; leer = bleiben auf diesem Modell.
 - **Agents** — Liste + anlegen
 - **Teams** — Team-CRUD + ACLs
 - **Kosten** — globale Kostenansicht pro Nutzer/Modell/Tag

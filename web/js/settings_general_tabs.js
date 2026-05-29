@@ -117,6 +117,11 @@ async function _genTab_server(C) {
 async function _genTab_models(C) {
   /* ─── MODELS ─── */
     const mc = state.modelsConfig?.models || {};
+    // Chat-capable model ids, used to populate the per-model "fan-out model"
+    // dropdown (a leaf-task offload target may be any chat model).
+    const _chatModelIds = Object.entries(mc)
+      .filter(([, c]) => (c.capabilities || ['chat']).includes('chat'))
+      .map(([id]) => id).sort();
     // Group by provider, skipping models from non-existent providers
     const existingProviders = new Set((state.providers || []).map(p => p.name));
     const byProvider = {};
@@ -221,6 +226,12 @@ async function _genTab_models(C) {
               </div>
               <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Standard-Denkstufe für dieses Modell. Wird verwendet, wenn ein Chat oder eine geplante Aufgabe „Vom Modell erben" auswählt. Verfügbare Optionen hängen vom Thinking-Format ab.">Denkstufe</label>
                 <select class="mdl-thinking-level" data-mid="${esc(mid)}" data-current="${esc((inf||{}).thinking_level||'')}" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
+                </select>
+              </div>
+              <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Wenn dieses Modell im Chat eine Hintergrundaufgabe per Fan-out aufteilt, laufen die Leaf-Tasks auf dem hier gewählten (i.d.R. günstigeren) Modell. Die Orchestrierung bleibt auf diesem Chat-Modell. Leer = Leaf-Tasks bleiben auf diesem Modell. Die Denkstufe wird beim Wechsel automatisch passend gesetzt.">Fan-out-Modell</label>
+                <select class="mdl-bgtask-model" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
+                  <option value="">— keins (auf diesem Modell) —</option>
+                  ${_chatModelIds.filter(id => id !== mid).map(id => `<option value="${esc(id)}"${cfg.background_task_model===id?' selected':''}>${esc(modelShortName(id, false))}</option>`).join('')}
                 </select>
               </div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-parallel-tools" ${cfg.parallel_tool_calls !== false ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer">Parallele Tool-Aufrufe</label></div>
