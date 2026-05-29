@@ -938,7 +938,7 @@ def tool_execute_command(args: dict) -> str:
         # only snapshot when cwd IS the artifact folder; commands run outside
         # it shouldn't pollute the artifact panel.
         _artifact_cwd = None
-        _pre_files: set[str] = set()
+        _pre_files: dict[str, tuple[float, int]] = {}
         _session_id = get_request_context().current_session_id
         _agent = get_request_context().current_agent or _brain._current_agent
         if cwd and _session_id and _agent:
@@ -946,10 +946,7 @@ def tool_execute_command(args: dict) -> str:
                                      _get_artifact_session_folder(_session_id))
             if os.path.realpath(cwd) == os.path.realpath(_expected):
                 _artifact_cwd = _expected
-                try:
-                    _pre_files = set(os.listdir(_artifact_cwd))
-                except OSError:
-                    _pre_files = set()
+                _pre_files = _snapshot_dir(_artifact_cwd)
 
         # Use streaming version if event_callback is available
         ecb = get_request_context().event_callback
@@ -1016,28 +1013,63 @@ def tool_execute_command(args: dict) -> str:
         return _err(f"execute_command: {e}")
 
 
-def _register_new_artifacts(artifact_cwd: str | None, pre_files: set,
+def _snapshot_dir(dir_path: str) -> dict[str, tuple[float, int]]:
+    """Map each file in dir_path to (mtime, size). Used to detect files that a
+    python_exec script / execute_command run created OR overwrote in place — a
+    plain name-set diff would miss in-place rewrites of pre-existing artifacts."""
+    snap: dict[str, tuple[float, int]] = {}
+    try:
+        with os.scandir(dir_path) as it:
+            for e in it:
+                try:
+                    if e.is_file():
+                        st = e.stat()
+                        snap[e.name] = (st.st_mtime, st.st_size)
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return snap
+
+
+def _changed_files(dir_path: str, pre: dict[str, tuple[float, int]],
+                   exclude: set | None = None) -> list[tuple[str, bool]]:
+    """Return [(filename, was_new), ...] for files that are new since `pre` or
+    whose (mtime, size) changed (in-place overwrite). `pre` is a _snapshot_dir
+    mapping. was_new=False marks an overwrite (caller emits 'modified')."""
+    exclude = exclude or set()
+    out: list[tuple[str, bool]] = []
+    for fname, sig in sorted(_snapshot_dir(dir_path).items()):
+        if fname in exclude:
+            continue
+        prev = pre.get(fname)
+        if prev is None:
+            out.append((fname, True))
+        elif prev != sig:
+            out.append((fname, False))
+    return out
+
+
+def _register_new_artifacts(artifact_cwd: str | None,
+                            pre_files: dict[str, tuple[float, int]],
                             agent) -> list[str]:
-    """Diff artifact_cwd against pre_files; register each new file via
-    `_after_file_write` so it shows in the Artifacts panel. Returns the list
-    of newly registered basenames (for inclusion in the tool result)."""
+    """Diff artifact_cwd against the pre-exec snapshot; register each created
+    OR overwritten file via `_after_file_write` so it shows in the Artifacts
+    panel. Returns the registered basenames (for inclusion in the tool result)."""
     import brain as _brain
     if not artifact_cwd or not agent:
         return []
-    try:
-        post_files = set(os.listdir(artifact_cwd))
-    except OSError:
-        return []
-    new_files = sorted(post_files - pre_files)
-    if not new_files:
+    changed = _changed_files(artifact_cwd, pre_files)
+    if not changed:
         return []
     agent_id = agent.agent_id
     created = []
-    for fname in new_files:
+    for fname, was_new in changed:
         fpath = os.path.join(artifact_cwd, fname)
         if os.path.isfile(fpath):
             try:
-                _brain._after_file_write(fpath, "created", agent_id)
+                _brain._after_file_write(
+                    fpath, "created" if was_new else "modified", agent_id)
                 created.append(fname)
             except Exception:
                 pass
@@ -1142,8 +1174,12 @@ def tool_python_exec(args: dict) -> str:
         work_dir = os.path.join(tempfile.gettempdir(), "brain-pyexec")
     os.makedirs(work_dir, exist_ok=True)
 
-    # Snapshot existing files before execution
-    pre_files = set(os.listdir(work_dir))
+    # Snapshot existing files before execution. Capture (mtime, size) per file
+    # — not just names — so the post-exec diff catches files the script
+    # OVERWROTE in place, not only freshly-created ones. (A re-run that rewrites
+    # an already-existing artifact, e.g. swapping image URLs in a prior .html,
+    # must register as a new version, not vanish from the Artifacts panel.)
+    pre_files = _snapshot_dir(work_dir)
 
     # Save script as a numbered artifact (persisted for reuse)
     counter = 1
@@ -1229,21 +1265,24 @@ def tool_python_exec(args: dict) -> str:
         if _stray:
             result["output"] = (result.get("output") or "") + _stray
 
-        # Register any new files created by the script as artifacts
-        post_files = set(os.listdir(work_dir))
-        new_files = sorted(post_files - pre_files - {script_name})
-        if new_files and agent:
+        # Register files the script created OR overwrote in place as artifacts.
+        # _changed_files compares the post-exec snapshot against pre_files by
+        # (mtime, size), so a re-run that rewrites an existing artifact bumps
+        # its version instead of being skipped (the script itself is excluded).
+        changed = _changed_files(work_dir, pre_files, exclude={script_name})
+        if changed and agent:
             created = []
-            for fname in new_files:
+            for fname, was_new in changed:
                 fpath = os.path.join(work_dir, fname)
                 if os.path.isfile(fpath):
-                    _brain._after_file_write(fpath, "created", agent_id)
+                    _brain._after_file_write(
+                        fpath, "created" if was_new else "modified", agent_id)
                     created.append(fname)
             if created:
                 result["artifacts"] = created
 
         # Always save stdout as an artifact when the script didn't write any files
-        if output and proc.returncode == 0 and not new_files and agent:
+        if output and proc.returncode == 0 and not changed and agent:
             try:
                 artifact_path = os.path.join(work_dir, "output.txt")
                 counter = 1
