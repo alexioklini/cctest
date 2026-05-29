@@ -184,16 +184,16 @@ function _bgCard(t, inGroup) {
   if (tokens) metaBits.push(`${(tokens / 1000).toFixed(1)}k Tokens`);
   if (t.tool_calls) metaBits.push(`${t.tool_calls} Tool-Verwendungen`);
   const meta = metaBits.join(' · ');
-  // Single right-aligned primary action (Claude-desktop style): Stopp while
-  // running, else Löschen. Inside a GROUP, members are sub-items: keep only the
-  // running Stopp, drop per-member Löschen (the group/section owns delete) — keeps
-  // the expanded member list clean like the reference.
-  let action = '';
+  // Right-aligned actions. Always an explicit "Transkript anzeigen" link (the
+  // affordance users expect); plus Stopp while running, or Löschen when finished
+  // (Löschen dropped for in-GROUP members — the group/section owns delete).
+  const actions = [];
   if (t.status === 'running') {
-    action = `<button class="bgtask-action" onclick="event.stopPropagation();cancelBgTask('${t.id}')">Stopp</button>`;
+    actions.push(`<button class="bgtask-action" onclick="event.stopPropagation();cancelBgTask('${t.id}')">Stopp</button>`);
   } else if (!inGroup) {
-    action = `<button class="bgtask-action bgtask-action-del" onclick="event.stopPropagation();deleteBgTask('${t.id}')">Löschen</button>`;
+    actions.push(`<button class="bgtask-action bgtask-action-del" onclick="event.stopPropagation();deleteBgTask('${t.id}')">Löschen</button>`);
   }
+  actions.push(`<button class="bgtask-action bgtask-link" onclick="event.stopPropagation();openBgTranscript('${t.id}')">Transkript anzeigen</button>`);
   const errLine = (t.status === 'error' && t.error)
     ? `<div class="bgtask-error">${escapeHtml(t.error)}</div>` : '';
   return `
@@ -201,7 +201,7 @@ function _bgCard(t, inGroup) {
       <div class="bgtask-row1">
         <span class="bgtask-dot ${st.cls}"></span>
         <span class="bgtask-title">${escapeHtml(t.title || 'Hintergrundaufgabe')}</span>
-        ${action}
+        ${actions.join('')}
       </div>
       <div class="bgtask-row2 ${st.cls}">${escapeHtml(meta)}</div>
       ${errLine}

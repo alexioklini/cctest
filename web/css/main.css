@@ -7820,11 +7820,16 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 .bgtask-dot.bg-st-error { background: var(--error, #d33); }
 @keyframes bgtask-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 .bgtask-error { font-size: 11px; color: var(--error, #d33); margin: 2px 0 0 16px; }
-/* Single right-aligned primary action — text button, no box (Claude desktop). */
-.bgtask-action { margin-left: auto; flex: 0 0 auto; background: none; border: none;
+/* Right-aligned text-button actions (no box, Claude desktop). The first action
+   carries margin-left:auto so the whole action group sits flush right with an
+   even gap; the rest follow via row1's gap. */
+.bgtask-action { flex: 0 0 auto; background: none; border: none;
   padding: 2px 4px; font-size: 11px; cursor: pointer; color: var(--text-300); transition: color 0.15s; }
+.bgtask-action:first-of-type { margin-left: auto; }
 .bgtask-action:hover { color: var(--text-100); }
 .bgtask-action-del:hover { color: var(--error, #d33); }
+.bgtask-link { color: var(--accent-brand); }
+.bgtask-link:hover { color: var(--accent-brand); text-decoration: underline; }
 
 /* Fan-out group rollup — a card whose header is the summary; chevron rotates. */
 .bggroup-card { background: var(--bg-000); border: 1px solid var(--border-100); border-radius: 10px;
