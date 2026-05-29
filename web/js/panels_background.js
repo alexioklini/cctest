@@ -377,7 +377,7 @@ function _toolEntryCard(e) {
         <span class="bgtask-title">${desc}</span>
         ${hasBody ? '<svg class="bggroup-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
       </summary>
-      <div class="bgtask-row2 ${st.cls}">${st.label}</div>
+      <div class="bgtask-row2 ${st.cls}">${escapeHtml(e.type)} · ${st.label}</div>
       ${hasBody ? `<div class="act-tool-body">${argsTable}${resultBlock}</div>` : ''}
     </details>`;
 }

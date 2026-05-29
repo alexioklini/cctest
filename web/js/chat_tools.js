@@ -134,6 +134,7 @@ function toolDescribe(name, args) {
     python_exec: () => `Python ausführen (${(a.code || '').split('\n').length} Zeilen)`,
     web_fetch: () => { try { return `Webseite abrufen: ${a.url ? new URL(a.url).hostname : '...'}`; } catch(e) { return `Webseite abrufen: ${a.url || '...'}`; } },
     exa_search: () => `Im Web suchen nach „${a.query || '...'}"`,
+    searxng_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     gmail_inbox: () => 'Posteingang prüfen',
     gmail_read: () => `E-Mail lesen${a.id ? ' #' + a.id : ''}`,
     gmail_search: () => `E-Mails suchen: „${a.query || '...'}"`,
