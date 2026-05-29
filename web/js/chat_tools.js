@@ -135,6 +135,7 @@ function toolDescribe(name, args) {
     web_fetch: () => { try { return `Webseite abrufen: ${a.url ? new URL(a.url).hostname : '...'}`; } catch(e) { return `Webseite abrufen: ${a.url || '...'}`; } },
     exa_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     searxng_search: () => `Im Web suchen nach „${a.query || '...'}"`,
+    run_background_task: () => a.title ? `Hintergrundaufgabe: ${a.title}` : 'Hintergrundaufgabe starten',
     gmail_inbox: () => 'Posteingang prüfen',
     gmail_read: () => `E-Mail lesen${a.id ? ' #' + a.id : ''}`,
     gmail_search: () => `E-Mails suchen: „${a.query || '...'}"`,
@@ -629,14 +630,12 @@ function renderToolCall(msg, idx) {
   ).length > 1;
   const parallelBadge = isParallel ? '<span class="tool-badge-parallel" title="Parallel ausgeführt">Parallel</span>' : '';
 
-  // Capped, NON-expandable preview. Full view + copy + download moved to the
-  // Aktivitäts-Panel (right panel). One flat line per tool call: icon + name +
-  // badges + timing + a short truncated result preview. Click opens the panel.
-  let preview = '';
-  if (resultStrForFlow) {
-    const flat = resultStrForFlow.replace(/\s+/g, ' ').trim();
-    if (flat) preview = `<span class="tool-line-preview">${esc(flat.slice(0, 80))}${flat.length > 80 ? '…' : ''}</span>`;
-  }
+  // One flat line per tool call: icon + title + badges + timing. Click opens the
+  // Aktivitäts-Panel (full args + result + copy/download live there).
+  // Chat view shows ONLY the tool's title (desc) — no params, no result-JSON
+  // preview (that was noise: trailing {"query":…}/{"url":…}). The full args +
+  // result stay one click away in the Aktivitäts-Panel.
+  const preview = '';
   const actId = msg.tool_use_id || ('tc-' + (msg._seq || idx));
   return `
     <div class="tool-line${hasResult ? ' has-result' : ''}" title="Im Aktivitäts-Panel öffnen"
