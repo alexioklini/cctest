@@ -259,6 +259,28 @@ _bg_delivery_inflight = set()
 _bg_delivery_lock = threading.Lock()
 
 
+def _resolve_session_auto_model(session) -> bool:
+    """If `session.model` is the literal "auto", resolve it to a concrete model
+    in place (model + provider fields, mirroring the per-turn router in
+    _handle_chat) so an auto_route=None delivery turn runs — and cost-logs —
+    under a real model id, not "auto" (which has no rate → bills $0).
+
+    Returns True if a swap happened (caller restores "auto" afterwards so the
+    composer keeps showing Auto), False otherwise."""
+    if session.model != "auto":
+        return False
+    resolved = engine.resolve_model("auto")
+    if not resolved or resolved == "auto":
+        return False  # nothing enabled to resolve to — leave as-is
+    provider = engine.resolve_provider_for_model(resolved)
+    with session.lock:
+        session.model = resolved
+        session.api_key = provider["api_key"]
+        session.base_url = provider["base_url"]
+        session.max_context = engine.get_model_max_context(resolved)
+    return True
+
+
 def deliver_background_results(session_id: str) -> bool:
     """Auto-fire a chat turn that delivers finished background-task output into
     the conversation, when the chat is idle. Called from the background-task
@@ -331,6 +353,10 @@ def deliver_background_results(session_id: str) -> bool:
         session.add_message("user", delivery_msg,
                             metadata={"background_delivery": True})
 
+        # Resolve a still-"auto" session model to a concrete one (see the same
+        # guard in deliver_background_group) so the auto_route=None delivery turn
+        # and its cost row aren't tagged "auto" (= $0). Restore after.
+        _restore_auto = _resolve_session_auto_model(session)
         # Re-establish request context on this fresh thread (mirrors
         # _recover_one_turn / the chat worker setup).
         with engine.request_context():
@@ -349,6 +375,9 @@ def deliver_background_results(session_id: str) -> bool:
                 disk_files=[], auto_route=None, want_auto=False,
             )
             t.join()  # run synchronously on this delivery thread
+        if _restore_auto:
+            with session.lock:
+                session.model = "auto"
         return True
     except Exception as e:  # never let a delivery failure kill the runner thread
         print(f"[bg-delivery] failed for {session_id[:8]}: {e}", flush=True)
@@ -442,6 +471,12 @@ def deliver_background_group(session_id: str, group_id: str, members: list) -> b
         session.add_message("user", delivery_msg,
                             metadata={"background_delivery": True, "group_id": group_id})
 
+        # The delivery turn runs with auto_route=None (no per-turn router). If the
+        # session model is still the literal "auto" (the originating turn reset it
+        # in its finally), resolve it to a concrete model first — else the turn
+        # AND its cost-log row run tagged "auto", which bills $0 (no rate for the
+        # literal). Restore "auto" after so the composer still shows Auto.
+        _restore_auto = _resolve_session_auto_model(session)
         with engine.request_context():
             engine.get_request_context().current_session_id = session_id
             engine.get_request_context().current_user_id = session.user_id or ""
@@ -457,6 +492,9 @@ def deliver_background_group(session_id: str, group_id: str, members: list) -> b
                 disk_files=[], auto_route=None, want_auto=False,
             )
             t.join()
+        if _restore_auto:
+            with session.lock:
+                session.model = "auto"
         return True
     except Exception as e:
         print(f"[bg-group-delivery] failed for {session_id[:8]} grp {group_id}: {e}", flush=True)
