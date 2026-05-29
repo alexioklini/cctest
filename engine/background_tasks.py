@@ -196,6 +196,7 @@ class BackgroundTaskRunner:
                     thinking_level=snap["thinking_level"] or None,
                     timeout_s=_TIMEOUT_S,
                     turn_id=turn_id,
+                    bg_task=True,  # nesting guard: this run can't spawn bg-tasks
                 )
             output = res.get("reply") or ""
             usage = res.get("usage_total") or {}

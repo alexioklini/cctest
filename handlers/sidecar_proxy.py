@@ -830,9 +830,15 @@ def background_call(
     timeout_s: float = 1800.0,
     provider_resolver=None,
     turn_id: str | None = None,
+    bg_task: bool = False,
 ) -> dict:
     """Thin convenience wrapper around `run_turn_blocking` for background /
     non-interactive LLM calls (Phase 4).
+
+    `bg_task=True` marks this as a detached background-task run so the tool
+    dispatch context carries `current_bg_task` — the run_background_task nesting
+    guard reads it to refuse spawning further background tasks (no runaway
+    fan-out). Default False (scheduler/summariser/etc. are not bg-tasks).
 
     Resolves provider + inference params + sampling from the model id, builds
     a minimal `tool_context`, and calls the sidecar. Caller picks the model;
@@ -864,6 +870,7 @@ def background_call(
         "caveman_chat": 0,
         "caveman_system": 0,
         "trace_id": "",
+        "bg_task": bool(bg_task),
     }
     sampling = {
         "temperature": inf.get("temperature"),

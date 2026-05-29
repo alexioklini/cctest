@@ -107,6 +107,12 @@ def _apply_context(ctx: dict) -> None:
     # omits an explicit group_id, esp. local models; the turn is the reliable
     # co-occurrence signal).
     tl.current_turn_id = ctx.get("turn_id") or ""
+    # Nesting guard: when this dispatch is happening INSIDE a detached background
+    # task (background_call passed bg_task=True → tool_context.bg_task), restore
+    # the flag so run_background_task refuses to spawn further tasks. The sidecar
+    # runs in a separate process, so the runner-thread's RequestContext flag does
+    # NOT reach here — it must travel through the tool_context payload.
+    tl.current_bg_task = bool(ctx.get("bg_task", False))
     tl.current_user_id = ctx.get("user_id") or ""
     tl.current_team_ids = list(ctx.get("team_ids") or [])
     tl.project = ctx.get("project") or ""
