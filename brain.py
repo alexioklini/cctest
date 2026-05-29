@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.49.0"
+VERSION = "9.49.1"
 VERSION_DATE = "2026-05-29"
 CHANGELOG = [
+    ("9.49.1", "2026-05-29", "cleanup(qmd): die Reste der qmd-MemoryStore-Integration entschaerft (qmd war als Backend reverted, aber Code/Service/Config lebten noch). Alle qmd-Eintrittspunkte in brain.py sind jetzt No-Ops: _qmd_debounced_embed, _qmd_rpc (->None), _qmd_ensure_collection, MemoryStore.reindex, delete_project-Collection-Cleanup; kein qmd-Subprozess + kein Netz-Call zum (entfernten) qmd-MCP auf Port 8181 mehr. MemoryStore.recall faellt auf File-Scan zurueck. Begleitend (nicht im Repo): com.brain-agent.qmd launchd-Service ausgehaengt + plist archiviert, qmd-Prozess beendet, config.json tool_settings.qmd_query entfernt. KONTEXT: Eine Policy-Eval kam zunaechst auf brain 0.50 (statt ~0.76) — Ursache war NICHT der Code, sondern ein KORRUPTER chromadb-Vektorstore (mempalace_query: 'Error finding id'; ~30 .drift-Quarantaeneordner aus der qmd-Experiment+Crashloop-Phase). Nach komplettem MemPalace-Rebuild (Store quarantaeniert+gesichert, full-resync re-mine; Palace-Lock-Race beim ersten Versuch -> Retry) + Health-Check (mempalace_query liefert wieder Treffer) ergab die Re-Eval brain 0.76 (Δ-0.16 vs gold) — im normalen Band, KEINE Fan-out-Interferenz (0 run_background_task-Calls in der Eval), keine Retrieval-Fehler. Das neue Verhalten (Fan-out, tool_use_id-Pairing, UI) ist regressionsfrei."),
     ("9.49.0", "2026-05-29", "feat(activity-panel bullets) + fix(group-timeout-inversion): die Status-Punkte im rechten Panel zeigen jetzt den Aufgabenstatus per Farbe — grün=läuft (<80% der erlaubten Zeit) · gelb=80–90% · orange=90–100% · rot=Timeout (≥100%)/Fehler/Abgebrochen · grau=fertig. Neu in web/js/panels_background.js: _bgDotClass(t) (Status + elapsed/_BG_TASK_TIMEOUT_S=3600s) und _bgGroupDotClass(members) (Gruppen-Punkt = SCHLIMMSTER Mitglied-Status, Severity rot>orange>gelb>grün>grau). Der 2s-Poll re-rendert laufende Tasks, sodass die Zeitbänder live eskalieren. CSS: bg-st-running jetzt grün (#16a34a, vorher Brand-Orange), bg-st-done grau (vorher grün!), neu bg-st-warn (gelb) + bg-st-warn2 (orange); cancelled→rot. AUSSERDEM behoben: _GROUP_TIMEOUT_S war 600s < _TIMEOUT_S 3600s — eine Gruppe hätte ein Mitglied nach 10 min zwangs-fehlgeschlagen, obwohl es allein 60 min darf. Jetzt _GROUP_TIMEOUT_S = _TIMEOUT_S + 120s (Backstop NACH dem eigenen Task-Timeout, nie davor). js_gate grün (net-globals 1042→1046: 4 neue Top-Level-Defs, Baseline aktualisiert; smoke 5/5)."),
     ("9.48.5", "2026-05-29", "fix(chat-view tool lines): Tool-Aufrufe im Chat zeigen jetzt NUR den Titel, keine Parameter/Ergebnis-JSON mehr. (1) Das nachgestellte Ergebnis-JSON-Preview ({\"query\":…}/{\"url\":…}/{\"task_id\":…}) in renderToolCall (web/js/chat_tools.js) für ALLE Tools entfernt — die Zeile ist jetzt Icon + Titel + Badges + Timing; volle Args/Ergebnis bleiben einen Klick entfernt im Aktivitäts-Panel. (2) run_background_task war nicht in toolDescribe → Fallback 'Run Background Task' (englisch); jetzt 'Hintergrundaufgabe: <Titel>' (deutsch, aus args.title). Rein clientseitig, js_gate grün (smoke 5/5)."),
     ("9.48.4", "2026-05-29", "fix(activity-panel UI): aufgeklappte Tool-Karten — Innenbereich aufgehellt. (1) Der Ergebnis-Block im Chat (.tool-result-pre) hat ein fast-schwarzes #11161d — im Panel störend. Panel-skopierte Überschreibung: .act-tool-card/.bgtask-transcript .tool-result-pre nutzt jetzt helles var(--bg-100) (terminal-Variante var(--bg-200)) mit dunklem Text. Der Chat-Tool-View bleibt unverändert. (2) .act-tool-card .act-tool-body bekommt helles Inset (var(--bg-000), 8px radius) wie die Mitglieder gruppierter Karten. Rein CSS, js_gate grün."),
@@ -3691,8 +3692,10 @@ _QMD_IGNORE_FILES = {"soul.md", "tools.md"}
 
 
 def _qmd_rpc(method: str, params: dict | None = None) -> dict | None:
-    """Send a JSON-RPC request to the QMD MCP HTTP daemon. Returns result or None on failure."""
-    global _qmd_session_id
+    """DISABLED — qmd reverted. Always None so callers take their fallback path
+    (MemoryStore.recall → file-scan). No network call to the (removed) qmd MCP."""
+    return None
+    global _qmd_session_id  # noqa: F811 — unreachable
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
     data = json.dumps(payload).encode()
     headers = dict(_QMD_HEADERS)
@@ -3732,8 +3735,10 @@ def _qmd_init_session() -> bool:
 
 
 def _qmd_ensure_collection(name: str, directory: str):
-    """Register a collection with QMD if it doesn't exist (via CLI)."""
-    try:
+    """DISABLED — qmd reverted. No-op so init never shells out to the (removed)
+    qmd CLI / spawns a collection registration."""
+    return
+    try:  # noqa — unreachable below
         result = subprocess.run(
             ["qmd", "collection", "show", name],
             capture_output=True, text=True, timeout=5,
@@ -3751,10 +3756,11 @@ def _qmd_ensure_collection(name: str, directory: str):
 
 
 def _qmd_debounced_embed(collection: str):
-    """Schedule a debounced qmd update+embed for a collection (2s delay).
-    Each collection gets its own timer so concurrent writes to different
-    collections don't cancel each other's embed."""
-    def _do_embed():
+    """DISABLED — qmd was reverted (failed experiment). No-op so memory writes +
+    ingest never invoke the qmd subprocess/MCP. Kept as a stub so existing call
+    sites (engine/ingest.py, MemoryStore.store) don't need touching."""
+    return
+    def _do_embed():  # noqa: F811 — unreachable, retained for reference
         try:
             subprocess.run(
                 ["qmd", "update"], capture_output=True, text=True, timeout=30,
@@ -4175,19 +4181,9 @@ agent: {self.agent_id}
         return results
 
     def reindex(self) -> dict:
-        """Trigger QMD update+embed for this collection."""
-        try:
-            r1 = subprocess.run(
-                ["qmd", "update"], capture_output=True, text=True, timeout=30,
-            )
-            r2 = subprocess.run(
-                ["qmd", "embed", "-c", self._collection],
-                capture_output=True, text=True, timeout=60,
-            )
-            return {"agent": self.agent_id, "status": "reindexed",
-                    "update": r1.returncode == 0, "embed": r2.returncode == 0}
-        except Exception as e:
-            return {"agent": self.agent_id, "status": "error", "error": str(e)}
+        """DISABLED — qmd reverted. No-op (no qmd subprocess)."""
+        return {"agent": self.agent_id, "status": "disabled",
+                "note": "qmd reverted; reindex is a no-op"}
 
 
 # Global memory store instance (set in _run_interactive)
@@ -4460,28 +4456,7 @@ class ProjectManager:
         os.makedirs(trash_dir, exist_ok=True)
         dest = os.path.join(trash_dir, f"{agent_id}_project_{name}_{int(time.time())}")
         shutil.move(pdir, dest)
-        # Remove QMD collection
-        collection_name = f"{agent_id}/{name}"
-        def _find_qmd():
-            p = shutil.which("qmd")
-            if p:
-                return p
-            # Common locations when running under launchd
-            for candidate in [
-                os.path.expanduser("~/.nvm/versions/node/v22.20.0/bin/qmd"),
-                "/opt/homebrew/bin/qmd",
-                "/usr/local/bin/qmd",
-            ]:
-                if os.path.isfile(candidate):
-                    return candidate
-            return "qmd"
-        try:
-            subprocess.run(
-                [_find_qmd(), "collection", "remove", collection_name],
-                capture_output=True, text=True, timeout=5,
-            )
-        except Exception:
-            pass
+        # (qmd reverted — no collection to remove)
         return {"name": name, "status": "deleted", "moved_to": dest}
 
 
