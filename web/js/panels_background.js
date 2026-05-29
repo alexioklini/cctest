@@ -175,6 +175,48 @@ function _bgDuration(t) {
   return `${m}m ${r}s`;
 }
 
+// Per-task allowed wall-clock, mirrors engine.background_tasks._TIMEOUT_S (3600s).
+// Keep in sync if the server constant changes.
+const _BG_TASK_TIMEOUT_S = 3600;
+
+// Bullet (dot) state-color for a single task:
+//   green  = running, < 80% of allowed time
+//   yellow = running, 80–90%
+//   orange = running, 90–100%
+//   red    = running ≥ 100% (timeout) OR cancelled/error
+//   grey   = done
+// Returns the dot CSS class.
+function _bgDotClass(t) {
+  const status = t.status;
+  if (status === 'cancelled' || status === 'error') return 'bg-st-error';
+  if (status === 'done') return 'bg-st-done';
+  if (status === 'running') {
+    const start = t.created_at;
+    if (start) {
+      const elapsed = Math.max(0, (Date.now() / 1000) - start);
+      const pct = elapsed / _BG_TASK_TIMEOUT_S;
+      if (pct >= 1.0) return 'bg-st-error';   // timed out
+      if (pct >= 0.9) return 'bg-st-warn2';   // orange
+      if (pct >= 0.8) return 'bg-st-warn';    // yellow
+    }
+    return 'bg-st-running';                    // green
+  }
+  return 'bg-st-running';
+}
+
+// Group bullet = the WORST member state (most-urgent wins), so the collapsed
+// group header signals trouble without expanding. Priority:
+//   red (error/cancelled/timeout) > orange > yellow > green (running) > grey (done).
+const _BG_DOT_SEVERITY = { 'bg-st-error': 5, 'bg-st-warn2': 4, 'bg-st-warn': 3, 'bg-st-running': 2, 'bg-st-done': 1 };
+function _bgGroupDotClass(members) {
+  let worst = 'bg-st-done';
+  for (const m of (members || [])) {
+    const c = _bgDotClass(m);
+    if ((_BG_DOT_SEVERITY[c] || 0) > (_BG_DOT_SEVERITY[worst] || 0)) worst = c;
+  }
+  return worst;
+}
+
 function _bgCard(t, inGroup) {
   const st = _BG_STATUS[t.status] || _BG_STATUS.running;
   const dur = _bgDuration(t);
@@ -196,10 +238,11 @@ function _bgCard(t, inGroup) {
   actions.push(`<button class="bgtask-action bgtask-link" onclick="event.stopPropagation();openBgTranscript('${t.id}')">Transkript anzeigen</button>`);
   const errLine = (t.status === 'error' && t.error)
     ? `<div class="bgtask-error">${escapeHtml(t.error)}</div>` : '';
+  const dotCls = _bgDotClass(t);
   return `
     <div class="bgtask-card" data-task="${t.id}" onclick="openBgTranscript('${t.id}')" title="Transkript anzeigen">
       <div class="bgtask-row1">
-        <span class="bgtask-dot ${st.cls}"></span>
+        <span class="bgtask-dot ${dotCls}"></span>
         <span class="bgtask-title">${escapeHtml(t.title || 'Hintergrundaufgabe')}</span>
         ${actions.join('')}
       </div>
@@ -397,10 +440,11 @@ function _bgGroupCard(e) {
   const memberCards = members.map(m => _bgCard(m, true)).join('');
   const fuLine = followUp
     ? `<div class="bggroup-followup">Zusammenführung: ${escapeHtml(followUp)}</div>` : '';
+  const groupDot = _bgGroupDotClass(members);
   return `
     <details class="bggroup-card" data-group="${escapeHtml(e.id)}"${running ? ' open' : ''}>
       <summary class="bggroup-summary">
-        <span class="bgtask-dot ${st.cls}"></span>
+        <span class="bgtask-dot ${groupDot}"></span>
         <span class="bgtask-title">Parallele Recherche (${total} Aufgaben)</span>
         <span class="bggroup-count ${st.cls}">${done} von ${total} fertig${failBit}</span>
         <svg class="bggroup-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>

@@ -7817,11 +7817,16 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 .bgtask-row2 { font-size: 13px; color: var(--text-400); margin: 3px 0 0 19px; }
 .bgtask-row2.bg-st-running { color: var(--accent-brand); }
 .bgtask-row2.bg-st-error { color: var(--error, #d33); }
+/* Bullet state colors (set per-task by _bgDotClass; group = worst member):
+   green=running · yellow=80-90% time · orange=90-100% · red=timeout/error/cancel
+   · grey=done. */
 .bgtask-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: var(--text-400); }
-.bgtask-dot.bg-st-running { background: var(--accent-brand); animation: bgtask-pulse 1.4s ease-in-out infinite; }
-.bgtask-dot.bg-st-done { background: #16a34a; }
-.bgtask-dot.bg-st-cancelled { background: #d97706; }
-.bgtask-dot.bg-st-error { background: var(--error, #d33); }
+.bgtask-dot.bg-st-running  { background: #16a34a; animation: bgtask-pulse 1.4s ease-in-out infinite; }
+.bgtask-dot.bg-st-warn     { background: #eab308; animation: bgtask-pulse 1.4s ease-in-out infinite; }  /* yellow 80-90% */
+.bgtask-dot.bg-st-warn2    { background: #f97316; animation: bgtask-pulse 1.4s ease-in-out infinite; }  /* orange 90-100% */
+.bgtask-dot.bg-st-done     { background: var(--text-400); }                                              /* grey */
+.bgtask-dot.bg-st-cancelled { background: var(--error, #d33); }                                          /* red */
+.bgtask-dot.bg-st-error    { background: var(--error, #d33); }                                           /* red */
 @keyframes bgtask-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 .bgtask-error { font-size: 12px; color: var(--error, #d33); margin: 3px 0 0 19px; }
 /* Right-aligned actions — plain text buttons (Stopp / Löschen / Transkript). */

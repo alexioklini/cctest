@@ -29,10 +29,12 @@ from server_lib.db import ChatDB
 # the case where a high round budget is wanted, since it isn't blocking anyone.)
 _MAX_ROUNDS = 40
 _TIMEOUT_S = 3600.0
-# Group-level straggler deadline: once a fan-out group is partially done, don't
-# wait the full per-task _TIMEOUT_S (1h) on a stuck member — after this long a
-# still-running member is force-failed so the group delivers as a partial.
-_GROUP_TIMEOUT_S = 600.0  # 10 min
+# Group-level straggler deadline. MUST be >= the per-task timeout: a member is
+# allowed its full _TIMEOUT_S on its own, so the group can't force-fail it
+# sooner. This is a BACKSTOP that fires shortly AFTER a straggler's own timeout
+# would have terminated it, in case that didn't take — then the group delivers
+# as a partial. (Was 600s < _TIMEOUT_S, which wrongly killed members early.)
+_GROUP_TIMEOUT_S = _TIMEOUT_S + 120.0  # per-task timeout + 2 min grace
 
 
 class _Cancelled(Exception):

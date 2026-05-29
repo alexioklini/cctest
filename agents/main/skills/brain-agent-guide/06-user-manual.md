@@ -415,6 +415,10 @@ oben rechts) siehst du:
 
 - **Wird ausgeführt** — laufende Aufgaben mit Live-Untertitel (Status · Dauer ·
   Tokens · Tool-Verwendungen) und einem rechtsbündigen **Stopp**-Knopf.
+- **Der Status-Punkt** links zeigt per Farbe den Zustand: **grün** = läuft,
+  **gelb** = über 80 % der erlaubten Laufzeit, **orange** = 90–100 %,
+  **rot** = Timeout/Fehler/abgebrochen, **grau** = fertig. Bei einer Gruppe
+  zeigt der Punkt den ungünstigsten Zustand ihrer Teilaufgaben.
 - **Fertig** — abgeschlossene/abgebrochene Aufgaben. **Löschen** sitzt oben rechts
   an der „Fertig"-Sektion und entfernt alle fertigen Aufgaben auf einmal.
 - **Klick auf eine Zeile** klappt das **Transkript** auf: **Anfrage** (der Prompt,
