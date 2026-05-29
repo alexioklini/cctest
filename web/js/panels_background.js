@@ -15,6 +15,10 @@
 
 let _bgPollHandle = null;
 let _bgTranscriptCtrl = null;
+// Signature of the last full pane render ("<id>:<status>|…") — lets the 2s poll
+// skip a redundant innerHTML rebuild when nothing structural changed (preserves
+// expanded tool cards on running tasks; live updates are targeted instead).
+let _bgPaneSig = null;
 
 // Live tool-activity subscriptions for RUNNING tasks. The sidecar already emits
 // tool_dispatch_start/done + text deltas on its per-turn event log, and the
@@ -128,7 +132,16 @@ async function loadBackgroundTasks() {
   }
   refreshBackgroundTasksPill();
   if (typeof updateRightPanelBadges === 'function') updateRightPanelBadges();
-  if (state.rightPanelOpen && state.rightPanelTab === 'bgtasks') renderBackgroundTasksPane();
+  // Full pane re-render only when the STRUCTURE changed (task added/removed or a
+  // status transition) — a plain 2s tick on unchanged running tasks must NOT
+  // rebuild innerHTML, or it would collapse tool cards the user just expanded.
+  // Live tool/text updates for running tasks go through _bgLiveRenderCard
+  // (targeted, in-place) instead. A status flip to terminal re-renders so the
+  // card switches from live data to the persisted (expandable-result) tool_events.
+  if (state.rightPanelOpen && state.rightPanelTab === 'bgtasks') {
+    const sig = _bgTasksFor(sid).map(t => t.id + ':' + t.status).join('|');
+    if (sig !== _bgPaneSig) { _bgPaneSig = sig; renderBackgroundTasksPane(); }
+  }
 
   // Live delivery (poll-reattach): if a task just went running -> terminal, the
   // server may have auto-fired a delivery turn into this idle session. An idle
@@ -309,10 +322,19 @@ function _bgCard(t, inGroup) {
   const errLine = (t.status === 'error' && t.error)
     ? `<div class="bgtask-error">${escapeHtml(t.error)}</div>` : '';
   const dotCls = _bgDotClass(t);
-  // Live activity (running tasks only): tool timeline + streamed answer so far,
-  // filled in-place by _bgLiveRenderCard as transcript events arrive.
-  const liveBlock = (t.status === 'running')
-    ? `<div class="bgtask-live" id="bgtask-live-${t.id}">${_bgLiveInner(t.id)}</div>` : '';
+  // Request shown IMMEDIATELY (no transcript expand needed) — the prompt that
+  // started this task. list_background_tasks carries it.
+  const reqText = t.prompt || '';
+  const reqBlock = reqText
+    ? `<div class="bgtask-req"><div class="bgtask-req-label">Anfrage</div>`
+      + `<div class="bgtask-req-text">${escapeHtml(reqText)}</div></div>` : '';
+  // Tool calls as the SAME expandable cards as in-chat tools (live for running
+  // tasks, persisted tool_events after reload). Filled by _bgToolsRender; the
+  // wrapper is updated in place as live events arrive.
+  const toolsBlock = `<div class="bgtask-tools" id="bgtask-tools-${t.id}" onclick="event.stopPropagation()">${_bgToolsInner(t)}</div>`;
+  // Streamed answer-so-far (running only) — the live text deltas.
+  const liveText = (t.status === 'running')
+    ? `<div class="bgtask-live-text" id="bgtask-live-text-${t.id}">${_bgLiveTextInner(t.id)}</div>` : '';
   return `
     <div class="bgtask-card" data-task="${t.id}" onclick="openBgTranscript('${t.id}')" title="Transkript anzeigen">
       <div class="bgtask-row1">
@@ -322,44 +344,65 @@ function _bgCard(t, inGroup) {
       </div>
       <div class="bgtask-row2 ${st.cls}">${escapeHtml(meta)}</div>
       ${errLine}
-      ${liveBlock}
+      ${reqBlock}
+      ${toolsBlock}
+      ${liveText}
       <div class="bgtask-transcript" id="bgtask-transcript-${t.id}" style="display:none" onclick="event.stopPropagation()"></div>
     </div>`;
 }
 
-// Inner HTML of a running task's live block: one line per tool call (name +
-// args summary + running/done + elapsed) plus the streamed answer-so-far. Built
-// from _bgLive[taskId]; empty string until the first event arrives.
-function _bgLiveInner(taskId) {
-  const L = _bgLive[taskId];
-  if (!L || (!L.tools.length && !L.text)) return '';
-  let html = '';
-  if (L.tools.length) {
-    const rows = L.tools.map(tool => {
-      const desc = (typeof toolDescribe === 'function')
-        ? toolDescribe(tool.name, tool.args) : escapeHtml(tool.name || 'tool');
-      const dotCls = tool.is_error ? 'bg-st-error' : (tool.status === 'done' ? 'bg-st-done' : 'bg-st-running');
-      const elapsed = (tool.elapsed_ms != null) ? ` · ${(tool.elapsed_ms / 1000).toFixed(1)}s` : '';
-      const stLabel = tool.is_error ? 'Fehler' : (tool.status === 'done' ? 'fertig' : 'läuft…');
-      return `<div class="bgtask-live-tool"><span class="bgtask-dot ${dotCls}"></span>`
-           + `<span class="bgtask-live-toolname">${desc}</span>`
-           + `<span class="bgtask-live-toolmeta">${stLabel}${elapsed}</span></div>`;
-    }).join('');
-    html += `<div class="bgtask-live-tools">${rows}</div>`;
+// Normalise a bg-task's tool calls to the activity-entry shape _toolEntryCard
+// renders. Source of truth: the live stream while running (real-time, so cards
+// appear as calls happen), the persisted tool_events otherwise (survives reload).
+function _bgToolEntries(t) {
+  const L = _bgLive[t.id];
+  if (t.status === 'running' && L && L.tools.length) {
+    return L.tools.map((tool, i) => ({
+      kind: 'tool',
+      id: tool.id || ('bglive-' + t.id + '-' + i),
+      type: tool.name || 'tool',
+      args: tool.args || {},
+      status: tool.status === 'done' ? 'done' : 'running',
+      result: tool.result != null ? tool.result : null,  // live stream has no result text
+      isBackground: true,
+    }));
   }
-  if (L.text) {
-    html += `<div class="bgtask-live-text">${escapeHtml(L.text)}</div>`;
-  }
-  return html;
+  const evs = Array.isArray(t.tool_events) ? t.tool_events : [];
+  return evs.map((ev, i) => ({
+    kind: 'tool',
+    id: ev.tool_use_id || ('bgte-' + t.id + '-' + i),
+    type: ev.name || 'tool',
+    args: ev.args || {},
+    status: 'done',
+    result: typeof ev.result === 'string' ? ev.result : (ev.result != null ? JSON.stringify(ev.result) : null),
+    isBackground: true,
+  }));
 }
 
-// Targeted in-place update of one running card's live block, so streaming events
-// don't trigger a full pane rebuild (which would fight the 2s poll + reset the
-// transcript toggle / scroll state of sibling cards).
+// Inner HTML of a task's tool block: one standard _toolEntryCard per tool call.
+function _bgToolsInner(t) {
+  const entries = _bgToolEntries(t);
+  if (!entries.length) return '';
+  return entries.map(_toolEntryCard).join('');
+}
+
+// Streamed answer-so-far for a running task (live text deltas).
+function _bgLiveTextInner(taskId) {
+  const L = _bgLive[taskId];
+  return (L && L.text) ? escapeHtml(L.text) : '';
+}
+
+// Targeted in-place update of one running card's tool list + live text, so
+// streaming events don't trigger a full pane rebuild (which would fight the 2s
+// poll + reset the transcript toggle / scroll of sibling cards). Finds the task
+// row by id across the session list (handles grouped + standalone alike).
 function _bgLiveRenderCard(taskId) {
-  const el = document.getElementById('bgtask-live-' + taskId);
-  if (!el) { return; }
-  el.innerHTML = _bgLiveInner(taskId);
+  const sid = state.activeChat?.sessionId;
+  const t = (sid ? _bgTasksFor(sid) : []).find(x => x.id === taskId);
+  const toolsEl = document.getElementById('bgtask-tools-' + taskId);
+  if (toolsEl && t) toolsEl.innerHTML = _bgToolsInner(t);
+  const textEl = document.getElementById('bgtask-live-text-' + taskId);
+  if (textEl) textEl.innerHTML = _bgLiveTextInner(taskId);
 }
 
 /* ───────────────────────────────────────────────────────────
@@ -574,6 +617,10 @@ function _activityCard(e) {
 function renderBackgroundTasksPane() {
   const host = document.getElementById('bgtasks-content');
   if (!host) return;
+  // Sync the poll's skip-signature to what we're about to render, so the next
+  // 2s tick only rebuilds on a real structural change.
+  const _sid = state.activeChat?.sessionId;
+  _bgPaneSig = (_sid ? _bgTasksFor(_sid) : []).map(t => t.id + ':' + t.status).join('|');
   const entries = _collectActivityEntries();
   if (!entries.length) {
     host.innerHTML = '<div class="bgtasks-empty" id="bgtasks-empty">Keine Aktivität in diesem Chat</div>';

@@ -201,6 +201,7 @@ class BackgroundTaskRunner:
         output = ""
         error = ""
         usage_in = usage_out = tool_calls = 0
+        tool_events = []
         try:
             if cancel_ev.is_set():
                 raise _Cancelled()
@@ -256,6 +257,22 @@ class BackgroundTaskRunner:
             usage_in = int(usage.get("input_tokens") or 0)
             usage_out = int(usage.get("output_tokens") or 0)
             tool_calls = int(res.get("tool_calls_total") or 0)
+            # Map the sidecar's tool_events to the assistant.metadata.tools[]
+            # shape the Activity panel already renders (so bg-task tool calls
+            # become the SAME expandable cards as in-chat tools, and survive a
+            # reload). Synthesise a tool_use_id per entry (the blocking path
+            # doesn't surface the real ids) so the client can key cards stably.
+            tool_events = []
+            for _i, _ev in enumerate(res.get("tool_events") or []):
+                tool_events.append({
+                    "name": _ev.get("name", ""),
+                    "args": _ev.get("args") or {},
+                    "tool_use_id": _ev.get("tool_use_id") or f"bg-{task_id}-{_i}",
+                    "tool_round": _ev.get("round"),
+                    "result": _ev.get("result_text") or "",
+                    "is_error": bool(_ev.get("is_error")),
+                    "elapsed_ms": _ev.get("elapsed_ms"),
+                })
             # Cost logging — keyed by `model`, which by here is the ACTUAL
             # executing model (fan-out offload swap + any GDPR force-local swap
             # both already applied). Still inside the request_context above, so
@@ -284,7 +301,8 @@ class BackgroundTaskRunner:
                 status = "cancelled"
             ChatDB.finish_background_task(
                 task_id, status, output=output, error=error,
-                usage_in=usage_in, usage_out=usage_out, tool_calls=tool_calls)
+                usage_in=usage_in, usage_out=usage_out, tool_calls=tool_calls,
+                tool_events=tool_events)
             with self._lock:
                 self._live.pop(task_id, None)
             # Group-aware delivery. If this task belongs to a group, attempt the

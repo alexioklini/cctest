@@ -203,7 +203,11 @@ context-filtered replay (see `05-internals.md` → Brainy).
 id TEXT PK, session_id TEXT, agent_id TEXT, model TEXT, title TEXT,
 prompt TEXT, status TEXT (running|done|cancelled|error), turn_id TEXT,
 output TEXT (full final text — incl. partial on cancel), error TEXT,
-usage_in INTEGER, usage_out INTEGER, tool_calls INTEGER,
+usage_in INTEGER, usage_out INTEGER, tool_calls INTEGER (count),
+tool_events TEXT (JSON per-tool list [{name,args,tool_use_id,result,is_error,elapsed_ms}]
+                  — assistant.metadata.tools[] shape; drives the panel's tool cards
+                  live AND after reload),
+group_id TEXT, follow_up TEXT, group_done_at REAL, parent_task_id TEXT (fan-out/join),
 created_at REAL, finished_at REAL, consumed_at REAL
 ```
 Index `idx_bgtask_session(session_id, created_at)`. Rows are written by

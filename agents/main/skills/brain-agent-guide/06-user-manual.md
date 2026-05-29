@@ -418,11 +418,14 @@ günstigeres **Fan-out-Modell** sein, wenn das Chat-Modell eines gesetzt hat
 - **Wird ausgeführt** — laufende Aufgaben mit Live-Untertitel (Status · Dauer ·
   Tokens · Tool-Verwendungen · **ausführendes Modell**) und einem rechtsbündigen
   **Stopp**-Knopf. Am Modell-Namen erkennst du, ob eine Aufgabe auf dem
-  Fan-out-Modell statt dem Chat-Modell lief. Direkt unter der Aufgabe läuft eine
-  **Live-Tool-Timeline** mit: jeder Tool-Aufruf erscheint, **sobald er passiert**
-  (Tool-Name · „läuft…"/„fertig" · Dauer), zusammen mit dem streamenden
-  Antworttext — du musst nicht bis zum Abschluss warten. Den vollständigen
-  Tool-Ergebnis-Text gibt es nach Abschluss über **Transkript anzeigen**.
+  Fan-out-Modell statt dem Chat-Modell lief. In der Karte steht **sofort** die
+  **Anfrage** (der Prompt, der die Aufgabe gestartet hat), und darunter die
+  **Tool-Aufrufe als dieselben ausklappbaren Karten wie im Chat** (Argumente +
+  Ergebnis): jeder Aufruf erscheint, **sobald er passiert**, zusammen mit dem
+  streamenden Antworttext — du musst nicht bis zum Abschluss warten. Diese
+  Tool-Karten **bleiben auch nach einem Reload** erhalten (sie werden
+  gespeichert, nicht nur live gestreamt). Den vollständigen Lauf gibt es
+  zusätzlich über **Transkript anzeigen**.
 - **Der Status-Punkt** links zeigt per Farbe den Zustand: **grün** = läuft,
   **gelb** = über 80 % der erlaubten Laufzeit, **orange** = 90–100 %,
   **rot** = Timeout/Fehler/abgebrochen, **grau** = fertig. Bei einer Gruppe

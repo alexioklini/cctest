@@ -7857,17 +7857,20 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 .bgtask-dot.bg-st-error    { background: var(--error, #d33); }                                           /* red */
 @keyframes bgtask-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 .bgtask-error { font-size: 12px; color: var(--error, #d33); margin: 3px 0 0 19px; }
-/* Live activity for a RUNNING task: tool timeline (one row per call) + the
-   streamed answer-so-far. Filled by _bgLiveRenderCard as transcript events
-   arrive, so tool calls show up when they happen, not after completion. */
-.bgtask-live { margin: 6px 0 0 19px; }
-.bgtask-live-tools { display: flex; flex-direction: column; gap: 2px; }
-.bgtask-live-tool { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-300); }
-.bgtask-live-tool .bgtask-dot { width: 7px; height: 7px; }
-.bgtask-live-toolname { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bgtask-live-toolmeta { flex: 0 0 auto; color: var(--text-400); font-variant-numeric: tabular-nums; }
-.bgtask-live-text { margin-top: 6px; font-size: 12px; color: var(--text-400);
+/* Per-task detail in the Activity panel: the Anfrage (shown immediately), the
+   tool calls (same expandable _toolEntryCard look as in-chat tools — live while
+   running, persisted tool_events after reload), and the streamed answer-so-far
+   (running only). */
+.bgtask-req { margin: 6px 0 0 19px; }
+.bgtask-req-label { font-size: 11px; font-weight: 600; color: var(--text-400);
+  text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 2px; }
+.bgtask-req-text { font-size: 12px; color: var(--text-300); white-space: pre-wrap;
+  word-break: break-word; max-height: 7em; overflow-y: auto; }
+.bgtask-tools { margin: 6px 0 0 19px; display: flex; flex-direction: column; gap: 4px; }
+.bgtask-tools .act-tool-card { margin: 0; }
+.bgtask-live-text { margin: 6px 0 0 19px; font-size: 12px; color: var(--text-400);
   white-space: pre-wrap; word-break: break-word; max-height: 8.5em; overflow-y: auto; }
+.bgtask-live-text:empty { display: none; }
 /* Right-aligned actions — plain text buttons (Stopp / Löschen / Transkript). */
 .bgtask-action { flex: 0 0 auto; background: none; border: none;
   padding: 2px 4px; font-size: 13px; cursor: pointer; color: var(--text-300); transition: color 0.15s; }

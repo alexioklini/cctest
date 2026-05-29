@@ -682,7 +682,14 @@ class ChatDB:
                     group_id      TEXT,
                     follow_up     TEXT,
                     group_done_at REAL,
-                    parent_task_id TEXT
+                    parent_task_id TEXT,
+                    -- Per-tool detail (v9.51.6) as JSON: the run's tool_events
+                    -- mapped to the assistant.metadata.tools[] shape
+                    -- ({name,args,tool_use_id,result}) so the Activity panel can
+                    -- render bg-task tool calls as the SAME expandable cards as
+                    -- in-chat tools — AND show them after a reload (the live SSE
+                    -- stream is gone by then; this column is the durable source).
+                    tool_events   TEXT
                 )
             """)
             conn.execute(
@@ -690,7 +697,8 @@ class ChatDB:
             # Additive migrations for the fan-out columns (existing DBs) — MUST run
             # before the group index, which references group_id.
             for _col, _decl in (("group_id", "TEXT"), ("follow_up", "TEXT"),
-                                ("group_done_at", "REAL"), ("parent_task_id", "TEXT")):
+                                ("group_done_at", "REAL"), ("parent_task_id", "TEXT"),
+                                ("tool_events", "TEXT")):
                 try:
                     conn.execute(f"ALTER TABLE background_tasks ADD COLUMN {_col} {_decl}")
                 except sqlite3.OperationalError:
@@ -968,15 +976,20 @@ class ChatDB:
     @staticmethod
     @_db_safe(default=None)
     def finish_background_task(task_id, status, output="", error="",
-                              usage_in=0, usage_out=0, tool_calls=0):
+                              usage_in=0, usage_out=0, tool_calls=0,
+                              tool_events=None):
         """Terminal write: status in done|cancelled|error. `output` holds the
-        run's full final text (incl. partial on cancel)."""
+        run's full final text (incl. partial on cancel). `tool_events` is the
+        run's per-tool list (assistant.metadata.tools[] shape) — stored as JSON
+        so the Activity panel can render + reload the bg-task's tool cards."""
+        _te_json = json.dumps(tool_events, ensure_ascii=False) if tool_events else None
         with _db_conn() as conn:
             conn.execute(
                 "UPDATE background_tasks SET status=?, output=?, error=?, "
-                "usage_in=?, usage_out=?, tool_calls=?, finished_at=strftime('%s','now') "
+                "usage_in=?, usage_out=?, tool_calls=?, tool_events=?, "
+                "finished_at=strftime('%s','now') "
                 "WHERE id=?",
-                (status, output, error, usage_in, usage_out, tool_calls, task_id))
+                (status, output, error, usage_in, usage_out, tool_calls, _te_json, task_id))
             conn.commit()
 
     @staticmethod
@@ -989,10 +1002,21 @@ class ChatDB:
             rows = conn.execute(
                 "SELECT id, session_id, agent_id, model, title, status, turn_id, error, "
                 "usage_in, usage_out, tool_calls, created_at, finished_at, consumed_at, "
-                "group_id, follow_up, length(output) AS output_len "
+                "group_id, follow_up, prompt, tool_events, length(output) AS output_len "
                 "FROM background_tasks WHERE session_id=? ORDER BY created_at DESC",
                 (session_id,)).fetchall()
-            return [dict(r) for r in rows]
+            out = []
+            for r in rows:
+                d = dict(r)
+                # Parse the stored per-tool JSON so the panel renders the same
+                # expandable cards as in-chat tools (live OR after reload).
+                if d.get("tool_events"):
+                    try:
+                        d["tool_events"] = json.loads(d["tool_events"])
+                    except (ValueError, TypeError):
+                        d["tool_events"] = []
+                out.append(d)
+            return out
 
     @staticmethod
     @_db_safe(default=None)
@@ -1001,7 +1025,15 @@ class ChatDB:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM background_tasks WHERE id=?", (task_id,)).fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            d = dict(row)
+            if d.get("tool_events"):
+                try:
+                    d["tool_events"] = json.loads(d["tool_events"])
+                except (ValueError, TypeError):
+                    d["tool_events"] = []
+            return d
 
     @staticmethod
     @_db_safe(default=list)
