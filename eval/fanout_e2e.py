@@ -145,50 +145,41 @@ def get_messages(token, sid):
     return body.get("messages", [])
 
 
-def run_scenario(token, sc, model):
-    print(f"\n=== [{sc['id']}] model={model} ===")
+def spawn_fanout(token, sc, model):
+    """Fire the spawning turn, retrying (fresh session) until the model fans out.
+    The fan-out DECISION is stochastic (~1/5 inline on medium); that's the model's
+    judgment, NOT the plumbing. Returns (sid, tasks) or (sid, []) if it never
+    fanned out within SPAWN_ATTEMPTS."""
     sid = create_session(token, model)
-    # 1) Spawning turn. The fan-out DECISION is stochastic (the model answers
-    # inline ~1 in 5 on medium — measured in fanout_probe.py); that's the model's
-    # judgment, NOT the plumbing under test here. So retry the spawn turn (fresh
-    # session each time) up to SPAWN_ATTEMPTS until the model actually fans out,
-    # then assert the PLUMBING. A run where it never fans out is reported as
-    # "model-declined" (not a plumbing failure).
-    tasks0 = []
     for attempt in range(1, SPAWN_ATTEMPTS + 1):
-        spawn_text, tools = chat_turn(token, sid, sc["user"], CHAT_TIMEOUT)
+        spawn_text, _tools = chat_turn(token, sid, sc["user"], CHAT_TIMEOUT)
         tasks0 = list_tasks(token, sid)
-        print(f"  spawn attempt {attempt}: {len(tasks0)} task row(s) created · "
-              f"ack={spawn_text[:70]!r}")
+        print(f"  spawn attempt {attempt}: {len(tasks0)} task row(s) · ack={spawn_text[:60]!r}")
         if tasks0:
-            break
+            return sid, tasks0
         if attempt < SPAWN_ATTEMPTS:
-            sid = create_session(token, model)  # fresh session, retry
-    if not tasks0:
-        return {"id": sc["id"], "ok": None,
-                "why": f"model declined to fan out in {SPAWN_ATTEMPTS} attempts (stochastic; not a plumbing failure)"}
+            sid = create_session(token, model)
+    return sid, []
 
-    groups = {t.get("group_id") for t in tasks0 if t.get("group_id")}
-    print(f"  group_id(s): {groups or '(none)'}  ·  task count: {len(tasks0)}")
 
-    # 2) Wait for ALL tasks terminal AND the join delivery turn to appear.
+def wait_for_join(token, sid):
+    """Poll until ALL tasks terminal AND the join delivery turn appears. Returns
+    (tasks, delivered_turn|None)."""
     deadline = time.time() + GROUP_DEADLINE
     delivered_turn = None
     last_status = ""
     while time.time() < deadline:
         tasks = list_tasks(token, sid)
         running = [t for t in tasks if t.get("status") == "running"]
-        status = " ".join(f"{t['title'][:14]}:{t['status']}" for t in tasks)
+        status = " ".join(f"{t['title'][:12]}:{t['status']}" for t in tasks)
         if status != last_status:
             print(f"    … {len(tasks)-len(running)}/{len(tasks)} terminal | {status}")
             last_status = status
         if not running and tasks:
-            # All tasks terminal — look for the delivery turn (real join fired).
             msgs = get_messages(token, sid)
             for i, m in enumerate(msgs):
                 md = m.get("metadata") or {}
                 if m.get("role") in ("user", "human") and md.get("background_delivery"):
-                    # the assistant answer right after it is the join result
                     nxt = msgs[i + 1] if i + 1 < len(msgs) else None
                     if nxt and nxt.get("role") == "assistant" and (nxt.get("content") or "").strip():
                         delivered_turn = nxt
@@ -196,40 +187,106 @@ def run_scenario(token, sc, model):
             if delivered_turn:
                 break
         time.sleep(3)
+    return list_tasks(token, sid), delivered_turn
 
-    tasks = list_tasks(token, sid)
+
+def run_scenario(token, sc, model):
+    """Happy path: fan out → all done → group delivers."""
+    print(f"\n=== [{sc['id']}] deliver · model={model} ===")
+    sid, tasks0 = spawn_fanout(token, sc, model)
+    if not tasks0:
+        return {"id": sc["id"], "ok": None, "why": f"model declined in {SPAWN_ATTEMPTS} attempts"}
+    grps = {t.get("group_id") for t in tasks0 if t.get("group_id")}
+    print(f"  group(s): {grps}  · task count: {len(tasks0)}")
+    tasks, delivered = wait_for_join(token, sid)
     terminal = [t for t in tasks if t.get("status") != "running"]
-    # Assertions — the REAL plumbing contract.
     checks = {
         "spawned_min": len(tasks) >= sc["min_tasks"],
         "one_group": len({t.get("group_id") for t in tasks if t.get("group_id")}) == 1,
         "all_terminal": len(terminal) == len(tasks) and len(tasks) > 0,
-        "join_delivered": delivered_turn is not None,
-        "join_nonempty": bool(delivered_turn and (delivered_turn.get("content") or "").strip()),
+        "join_delivered": delivered is not None,
+        "join_nonempty": bool(delivered and (delivered.get("content") or "").strip()),
     }
     ok = all(checks.values())
     print(f"  RESULT: {'✅ PASS' if ok else '❌ FAIL'}  {checks}")
-    if delivered_turn:
-        print(f"  join answer: {(delivered_turn.get('content') or '')[:160]!r}")
-    return {"id": sc["id"], "ok": ok, "checks": checks,
-            "tasks": len(tasks), "delivered": delivered_turn is not None}
+    if delivered:
+        print(f"  join answer: {(delivered.get('content') or '')[:160]!r}")
+    return {"id": sc["id"], "ok": ok, "checks": checks}
+
+
+def run_cancel_scenario(token, sc, model):
+    """Messy path: fan out, then CANCEL one running member mid-group. The group
+    must still deliver the rest, with the cancelled member surfaced as partial
+    (deliver-with-failures). Proves a non-`done` terminal member doesn't stall
+    or break the join on the LIVE path."""
+    print(f"\n=== [{sc['id']}] cancel · model={model} ===")
+    sid, tasks0 = spawn_fanout(token, sc, model)
+    if not tasks0:
+        return {"id": sc["id"] + "+cancel", "ok": None, "why": f"model declined in {SPAWN_ATTEMPTS} attempts"}
+    # Cancel the first still-running member immediately.
+    victim = next((t for t in tasks0 if t.get("status") == "running"), tasks0[0])
+    code, resp = _post("/v1/background-tasks/cancel", {"task_id": victim["id"]}, token=token)
+    print(f"  cancelled '{victim['title'][:30]}' → {resp}")
+    tasks, delivered = wait_for_join(token, sid)
+    statuses = [t.get("status") for t in tasks]
+    checks = {
+        "has_cancelled_member": "cancelled" in statuses,
+        "all_terminal": all(s != "running" for s in statuses) and len(tasks) > 0,
+        "one_group": len({t.get("group_id") for t in tasks if t.get("group_id")}) == 1,
+        "join_delivered": delivered is not None,
+        "join_nonempty": bool(delivered and (delivered.get("content") or "").strip()),
+    }
+    ok = all(checks.values())
+    print(f"  statuses: {statuses}")
+    print(f"  RESULT: {'✅ PASS' if ok else '❌ FAIL'}  {checks}")
+    return {"id": sc["id"] + "+cancel", "ok": ok, "checks": checks}
+
+
+def run_decision_batch(token, sc, model, n):
+    """Decision-rate probe against the REAL deployed schema/description: fire the
+    same fan-out request n times (fresh session each), count fan-out vs inline.
+    Confirms the probe's ~12/15 rate holds with the shipped tool description.
+    No plumbing assertion — this measures the model's CHOICE only."""
+    print(f"\n=== [{sc['id']}] decision-rate x{n} · model={model} ===")
+    fanned = 0
+    for i in range(1, n + 1):
+        sid = create_session(token, model)
+        spawn_text, _ = chat_turn(token, sid, sc["user"], CHAT_TIMEOUT)
+        tasks = list_tasks(token, sid)
+        did = len(tasks) >= 2
+        fanned += 1 if did else 0
+        print(f"  run {i}: {'FAN-OUT ' + str(len(tasks)) + ' tasks' if did else 'inline'}")
+    rate = fanned / n if n else 0
+    print(f"  RESULT: fanned out {fanned}/{n}  (rate {rate:.0%})")
+    # Informational — not a hard pass/fail (stochastic). Flag if surprisingly low.
+    return {"id": sc["id"] + "+decision", "ok": True if fanned > 0 else None,
+            "why": f"fan-out {fanned}/{n} ({rate:.0%})"}
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="mistral-medium-3.5")
     ap.add_argument("--only", default=None)
+    ap.add_argument("--mode", default="deliver", choices=["deliver", "cancel", "decision"],
+                    help="deliver=happy path; cancel=cancel one member mid-group; "
+                         "decision=fan-out rate batch (no plumbing assertion)")
+    ap.add_argument("--n", type=int, default=5, help="runs for --mode decision")
     args = ap.parse_args()
     user = os.environ.get("BRAIN_USER", "admin")
     pwd = os.environ.get("BRAIN_PASS", "admin")
     token = login(user, pwd)
     scenarios = [s for s in SCENARIOS if (not args.only or s["id"] == args.only)]
 
-    print(f"# e2e against {BASE}  model={args.model}  (LIVE — no stubs)")
+    print(f"# e2e against {BASE}  model={args.model}  mode={args.mode}  (LIVE — no stubs)")
     results = []
     for sc in scenarios:
         try:
-            results.append(run_scenario(token, sc, args.model))
+            if args.mode == "cancel":
+                results.append(run_cancel_scenario(token, sc, args.model))
+            elif args.mode == "decision":
+                results.append(run_decision_batch(token, sc, args.model, args.n))
+            else:
+                results.append(run_scenario(token, sc, args.model))
         except Exception as e:
             print(f"  ERROR [{sc['id']}]: {type(e).__name__}: {e}")
             results.append({"id": sc["id"], "ok": False, "why": str(e)})
