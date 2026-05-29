@@ -73,6 +73,11 @@ class BackgroundTaskRunner:
                 "thinking_level": getattr(session, "thinking_level", "") or "",
                 "group_id": group_id or None,
             }
+        # Per-model fan-out offload: a chat model may declare a cheaper model to
+        # run its fanned-out leaf tasks (e.g. mistral-medium chats offload to
+        # mistral-small). The decompose/orchestrate reasoning stays on the chat
+        # model; only the leaf runs swap. Empty/unset → leaf stays on chat model.
+        snapshot["model"] = self._resolve_fanout_model(snapshot["model"], snapshot)
         title = (title or "Hintergrundaufgabe").strip()[:200]
         prompt = (prompt or "").strip()
         ChatDB.create_background_task(
@@ -132,6 +137,52 @@ class BackgroundTaskRunner:
             except Exception as e:
                 print(f"[bgtask-sweep] deliver failed grp {gid}: {e}", flush=True)
         return delivered
+
+    def _resolve_fanout_model(self, chat_model: str, snapshot: dict) -> str:
+        """Resolve the model a fanned-out leaf task should run on.
+
+        The chat model's registry entry may carry `background_task_model` — a
+        cheaper model its leaf tasks offload to. Empty/unset, or pointing at a
+        model that isn't enabled, falls back to the chat model unchanged. When
+        we swap, the chat's thinking_level is smart-matched to the leaf model's
+        reasoning granularity (see `_match_thinking_level`)."""
+        import brain as _brain
+        cfg = (_brain._models_config or {}).get(chat_model) or {}
+        target = (cfg.get("background_task_model") or "").strip()
+        if not target or target == chat_model:
+            return chat_model
+        tcfg = (_brain._models_config or {}).get(target)
+        if not tcfg or not tcfg.get("enabled", True):
+            # Configured but missing/disabled — don't silently route to a dead
+            # model; keep the chat model and leave a breadcrumb.
+            print(f"[bgtask] background_task_model '{target}' for '{chat_model}' "
+                  f"missing/disabled — leaf stays on chat model", flush=True)
+            return chat_model
+        snapshot["thinking_level"] = self._match_thinking_level(
+            snapshot.get("thinking_level"), target, tcfg)
+        return target
+
+    @staticmethod
+    def _match_thinking_level(level: str | None, target: str, tcfg: dict) -> str:
+        """Smart-match a requested thinking_level to the leaf model's reasoning
+        granularity, preserving intent rather than dropping it:
+
+        - '' / 'none'                  → kept verbatim (no thinking requested).
+        - target can't reason (none)   → '' (model default; thinking impossible).
+        - target is on/off-only        → low/medium/high collapse to 'high'
+          (inline_tags / mistral_blocks)   ('thinking on' stays on, not dropped).
+        - target has full granularity  → kept verbatim (reasoning_field /
+          (reasoning_field/openai_opaque)  openai_opaque accept low/medium/high).
+        """
+        lvl = (level or "").strip().lower()
+        if lvl in ("", "none"):
+            return lvl
+        fmt = (tcfg or {}).get("thinking_format", "none")
+        if fmt == "none":
+            return ""
+        if fmt in ("inline_tags", "mistral_blocks"):
+            return "high"  # on/off models: any positive level → on
+        return lvl  # reasoning_field / openai_opaque: full low/medium/high
 
     # ---- worker -----------------------------------------------------------
 

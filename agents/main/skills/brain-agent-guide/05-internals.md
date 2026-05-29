@@ -172,6 +172,17 @@ run WITHOUT blocking the chat. Mechanics (`engine/background_tasks.py`,
   cancel via the sidecar's `POST /cancel/<turn_id>` — the same endpoint chat
   uses). It passes the SAME `gdpr_pick_model_for_background` gate as every
   background call (no bypass).
+- **Model offload (per-model fan-out model)**: the chat model's registry entry
+  may carry `config.json → models.<id>.background_task_model` — a (usually
+  cheaper) model its fanned-out leaf tasks run on. The decompose/orchestrate
+  reasoning stays on the chat model; only the `run_background_task` leaf runs
+  swap. Resolved in `_resolve_fanout_model` before the DB row is written (so the
+  panel, GDPR pick, and sidecar call all see the leaf model). Empty/unset, or a
+  target that's missing/disabled, leaves the leaf on the chat model. On swap the
+  `thinking_level` is smart-matched to the leaf model's reasoning granularity
+  (`_match_thinking_level`): on/off models (inline_tags/mistral_blocks) collapse
+  low/medium/high → `high`; non-reasoning models drop to model default; full
+  reasoning models keep the level verbatim.
 - **Result return — auto-delivery**: when a task finishes, the runner's
   `finally` calls `handlers.chat.deliver_background_results(session_id)`.
   - If the chat is **idle** (no turn streaming), it auto-fires a delivery turn:
