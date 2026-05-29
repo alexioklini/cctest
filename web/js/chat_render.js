@@ -464,15 +464,22 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
       const r = entry.round;
       let roundHtml = '';
       if (r.thinking) {
-        roundHtml += `<div class="activity-item activity-thinking">${renderMessage(r.thinking.m, r.thinking.idx)}</div>`;
+        const th = renderMessage(r.thinking.m, r.thinking.idx);
+        if (th.trim()) roundHtml += `<div class="activity-item activity-thinking">${th}</div>`;
       }
       if (r.tools.length) {
-        const toolsHtml = r.tools.map(t =>
-          `<div class="activity-item activity-tool">${renderMessage(t.m, t.idx)}</div>`
-        ).join('');
-        roundHtml += `<div class="activity-tools-group${r.thinking ? ' activity-tools-indented' : ''}">${toolsHtml}</div>`;
+        // renderMessage returns '' for tool calls when state.showToolCalls is
+        // off — skip those so we don't emit empty wrapper divs that make the
+        // disclosure body look non-empty and offer an expander revealing nothing.
+        const toolsHtml = r.tools.map(t => {
+          const tc = renderMessage(t.m, t.idx);
+          return tc.trim() ? `<div class="activity-item activity-tool">${tc}</div>` : '';
+        }).join('');
+        if (toolsHtml.trim()) {
+          roundHtml += `<div class="activity-tools-group${r.thinking ? ' activity-tools-indented' : ''}">${toolsHtml}</div>`;
+        }
       }
-      bodyHtml += `<div class="activity-round">${roundHtml}</div>`;
+      if (roundHtml.trim()) bodyHtml += `<div class="activity-round">${roundHtml}</div>`;
     } else if (entry.kind === 'privacy') {
       if (!state.showGdprDetails) continue;
       const it = entry.item;
