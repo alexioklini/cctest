@@ -264,7 +264,7 @@ Tree-sitter AST, SQLite `code-graph.db`, 14 langs. Qualified names `{file_path}:
 
 `ProjectManager` CRUD; `instructions` in `project.json` injected into prompt; multipart upload to `IngestManager`. **Project ID** = uuid4 hex[:12] (MemPalace wing key — renaming doesn't strand drawers). Archive keeps files (`status: archived`); delete soft to `.trash/`.
 
-`research_mode` (bool, per-project + per-session `research_mode_override`) gates the output-format discipline (Topic B: REFUSAL/PRECISION/CITATION + citation validator/re-round). Topic A (retrieval discipline) renders for every chat w/ the tool. Project input folders are mined into the project's private `project__<id>` MemPalace wing by the `mempalace-project-sync` daemon (single-threaded, startup wipes all `project__*`). Full detail (Topic A/B split, mode ON/OFF behavior, legacy migration, token optimisations, input-folder sync, KV-cache invariants): **[INVARIANTS.md → Projects & Project Mode](INVARIANTS.md#projects--project-mode)**.
+`research_mode` (bool, per-project + per-session `research_mode_override`) gates the output-format discipline (Topic B: REFUSAL/PRECISION/CITATION + citation validator/re-round). Topic A (retrieval discipline) renders for every chat w/ the tool. Project input folders are mined into the project's private `project__<id>` MemPalace wing by the `mempalace-project-sync` daemon (single-threaded, mtime-gated incremental — the legacy startup-wipe of all `project__*` was removed 2026-04-28; restarts no longer re-wipe/re-mine). Full detail (Topic A/B split, mode ON/OFF behavior, legacy migration, token optimisations, input-folder sync, KV-cache invariants): **[INVARIANTS.md → Projects & Project Mode](INVARIANTS.md#projects--project-mode)**.
 
 ## Empty-Session Cleanup
 
