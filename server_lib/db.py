@@ -1638,7 +1638,18 @@ class ChatDB:
     def list_sessions(agent_id=None, status=None, project=None, visible_user_ids=None, visible_team_ids=None, project_id=None, caller_user_id=None):
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
-            q = ("SELECT s.*, "
+            # Explicit column list (NOT s.*): the sessions table carries heavy
+            # per-session blobs — last_system_prompt (~20KB each), streaming_text,
+            # streaming_meta, web_basket — that the session-list views never read.
+            # Selecting them dragged ~11MB out of SQLite + over the wire per call
+            # (×agent-count on the recent list), which was the real list-load lag.
+            # Keep only what list rendering + the visibility filter below need.
+            q = ("SELECT s.id, s.agent_id, s.model, s.title, s.status, "
+                 "s.created_at, s.last_active, s.project, s.summary, s.user_id, "
+                 "s.save_to_memory, s.caveman_mode, s.team_id, s.visibility, "
+                 "s.project_id, s.workflow_run_id, s.research_mode_override, "
+                 "s.extra_member_user_ids, s.excluded_user_ids, "
+                 "s.gdpr_action_pref, s.allow_further_web, "
                  "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND (m.compacted = 0 OR m.compacted IS NULL)) as message_count, "
                  "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.metadata LIKE '%\"files\"%') as has_attachments "
                  "FROM sessions s WHERE 1=1")
