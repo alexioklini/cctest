@@ -175,35 +175,37 @@ function _bgDuration(t) {
   return `${m}m ${r}s`;
 }
 
-function _bgCard(t) {
+function _bgCard(t, inGroup) {
   const st = _BG_STATUS[t.status] || _BG_STATUS.running;
   const dur = _bgDuration(t);
   const tokens = (t.usage_in || 0) + (t.usage_out || 0);
-  const metaBits = [];
+  const metaBits = [st.label];
   if (dur) metaBits.push(dur);
   if (tokens) metaBits.push(`${(tokens / 1000).toFixed(1)}k Tokens`);
   if (t.tool_calls) metaBits.push(`${t.tool_calls} Tool-Verwendungen`);
   const meta = metaBits.join(' · ');
-  const actions = [];
+  // Single right-aligned primary action (Claude-desktop style): Stopp while
+  // running, else Löschen. Inside a GROUP, members are sub-items: keep only the
+  // running Stopp, drop per-member Löschen (the group/section owns delete) — keeps
+  // the expanded member list clean like the reference.
+  let action = '';
   if (t.status === 'running') {
-    actions.push(`<button class="bgtask-action" onclick="cancelBgTask('${t.id}')">Stopp</button>`);
-  } else {
-    actions.push(`<button class="bgtask-action bgtask-action-del" onclick="deleteBgTask('${t.id}')">Löschen</button>`);
+    action = `<button class="bgtask-action" onclick="event.stopPropagation();cancelBgTask('${t.id}')">Stopp</button>`;
+  } else if (!inGroup) {
+    action = `<button class="bgtask-action bgtask-action-del" onclick="event.stopPropagation();deleteBgTask('${t.id}')">Löschen</button>`;
   }
-  actions.push(`<button class="bgtask-action bgtask-link" onclick="openBgTranscript('${t.id}')">Transkript anzeigen</button>`);
   const errLine = (t.status === 'error' && t.error)
     ? `<div class="bgtask-error">${escapeHtml(t.error)}</div>` : '';
   return `
-    <div class="bgtask-card" data-task="${t.id}">
+    <div class="bgtask-card" data-task="${t.id}" onclick="openBgTranscript('${t.id}')" title="Transkript anzeigen">
       <div class="bgtask-row1">
         <span class="bgtask-dot ${st.cls}"></span>
         <span class="bgtask-title">${escapeHtml(t.title || 'Hintergrundaufgabe')}</span>
-        <span class="act-type-badge act-type-bg">Hintergrund</span>
+        ${action}
       </div>
-      <div class="bgtask-row2"><span class="bgtask-status ${st.cls}">${st.label}</span>${meta ? ' · ' + escapeHtml(meta) : ''}</div>
+      <div class="bgtask-row2 ${st.cls}">${escapeHtml(meta)}</div>
       ${errLine}
-      <div class="bgtask-actions">${actions.join('')}</div>
-      <div class="bgtask-transcript" id="bgtask-transcript-${t.id}" style="display:none"></div>
+      <div class="bgtask-transcript" id="bgtask-transcript-${t.id}" style="display:none" onclick="event.stopPropagation()"></div>
     </div>`;
 }
 
@@ -362,15 +364,17 @@ function _toolEntryCard(e) {
   const resultBlock = (e.result != null && typeof buildToolResultBlock === 'function')
     ? buildToolResultBlock(e.type, e.args || {}, (typeof e.result === 'string' ? e.result : JSON.stringify(e.result, null, 2)), e.id)
     : '';
+  const hasBody = !!(argsTable || resultBlock);
   return `
-    <div class="bgtask-card act-tool-card" data-act="${escapeHtml(e.id)}">
-      <div class="bgtask-row1">
+    <details class="bgtask-card act-tool-card" data-act="${escapeHtml(e.id)}"${hasBody ? '' : ' open'}>
+      <summary class="bgtask-summary">
         <span class="bgtask-dot ${st.cls}"></span>
         <span class="bgtask-title">${desc}</span>
-      </div>
-      <div class="bgtask-row2"><span class="bgtask-status ${st.cls}">${st.label}</span></div>
-      <div class="act-tool-body">${argsTable}${resultBlock}</div>
-    </div>`;
+        ${hasBody ? '<svg class="bggroup-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
+      </summary>
+      <div class="bgtask-row2 ${st.cls}">${st.label}</div>
+      ${hasBody ? `<div class="act-tool-body">${argsTable}${resultBlock}</div>` : ''}
+    </details>`;
 }
 
 // A fan-out group: one header card (X von N fertig + follow_up) wrapping the
@@ -385,16 +389,16 @@ function _bgGroupCard(e) {
   const st = running ? _BG_STATUS.running : _BG_STATUS.done;
   const followUp = (members.find(m => m.follow_up) || {}).follow_up || '';
   const failBit = failed ? ` · ${failed} fehlgeschlagen` : '';
-  const memberCards = members.map(_bgCard).join('');
+  const memberCards = members.map(m => _bgCard(m, true)).join('');
   const fuLine = followUp
-    ? `<div class="bgtask-row2 bggroup-followup">Zusammenführung: ${escapeHtml(followUp)}</div>` : '';
+    ? `<div class="bggroup-followup">Zusammenführung: ${escapeHtml(followUp)}</div>` : '';
   return `
-    <details class="bgtask-card bggroup-card" data-group="${escapeHtml(e.id)}"${running ? ' open' : ''}>
+    <details class="bggroup-card" data-group="${escapeHtml(e.id)}"${running ? ' open' : ''}>
       <summary class="bggroup-summary">
         <span class="bgtask-dot ${st.cls}"></span>
         <span class="bgtask-title">Parallele Recherche (${total} Aufgaben)</span>
-        <span class="act-type-badge act-type-bg">Gruppe</span>
-        <span class="bgtask-status ${st.cls}">${done} von ${total} fertig${failBit}</span>
+        <span class="bggroup-count ${st.cls}">${done} von ${total} fertig${failBit}</span>
+        <svg class="bggroup-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </summary>
       ${fuLine}
       <div class="bggroup-members">${memberCards}</div>
@@ -418,16 +422,37 @@ function renderBackgroundTasksPane() {
   }
   const running = entries.filter(e => e.status === 'running');
   const finished = entries.filter(e => e.status !== 'running');
+  // Are there any deletable finished BACKGROUND tasks? (sync tool entries +
+  // groups aren't individually deletable — only real bg-task rows are.)
+  const anyDeletable = finished.some(e => e.kind === 'bgtask'
+    || (e.kind === 'bggroup' && (e.members || []).length));
   let html = '';
   if (running.length) {
-    html += '<div class="bgtasks-section-label">Laufend</div>';
+    html += '<div class="bgtasks-section-label">Wird ausgeführt</div>';
     html += running.map(_activityCard).join('');
   }
   if (finished.length) {
-    html += '<div class="bgtasks-section-label">Abgeschlossen</div>';
+    const del = anyDeletable
+      ? '<button class="bgtasks-section-action" onclick="clearFinishedBgTasks()">Löschen</button>' : '';
+    html += `<div class="bgtasks-section-head"><span class="bgtasks-section-label">Fertig</span>${del}</div>`;
     html += finished.map(_activityCard).join('');
   }
   host.innerHTML = html;
+}
+
+// Header-level "Löschen" on the Fertig section: delete all finished background
+// tasks of the active session (Claude-desktop puts delete at the section level,
+// not per-card). Sync tool entries + group wrappers aren't DB rows, so only real
+// bgtask rows are deleted; the panel re-renders from what's left.
+async function clearFinishedBgTasks() {
+  const sid = state.activeChat?.sessionId;
+  if (!sid) return;
+  const tasks = _bgTasksFor(sid).filter(t => t.status !== 'running');
+  for (const t of tasks) {
+    try { await API.deleteBackgroundTask(t.id); } catch (e) {}
+  }
+  if (typeof loadBackgroundTasks === 'function') { try { await loadBackgroundTasks(); } catch (e) {} }
+  renderBackgroundTasksPane();
 }
 
 // Open the activity panel and scroll/highlight a specific entry. Called from a

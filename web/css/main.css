@@ -7785,41 +7785,65 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 }
 .bgtasks-pill:hover { background: color-mix(in srgb, var(--accent-brand) 8%, transparent); border-color: var(--accent-brand); }
 .bgtasks-pill-count { font-weight: 600; }
-.bgtasks-content { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+/* Activity panel — flat, Claude-desktop style: borderless rows, bold title +
+   right-aligned primary action, dim status subtitle, section labels. */
+.bgtasks-content { flex: 1; overflow-y: auto; padding: 6px 4px 14px; display: flex; flex-direction: column; gap: 1px; }
 .bgtasks-empty { color: var(--text-400); font-size: 12px; text-align: center; padding: 24px 8px; }
-.bgtasks-section-label { font-size: 11px; color: var(--text-400); text-transform: none; margin: 4px 0 0; }
-.bgtask-card { background: var(--bg-000); border: 1px solid var(--border-100); border-radius: 8px; padding: 9px 10px; }
-.bgtask-row1 { display: flex; align-items: center; gap: 7px; }
-.bgtask-title { font-size: 13px; font-weight: 500; color: var(--text-100); }
-.bgtask-row2 { font-size: 11px; color: var(--text-300); margin-top: 3px; }
-.bgtask-status { font-weight: 600; }
+.bgtasks-section-label { font-size: 11px; font-weight: 600; color: var(--text-400); text-transform: none;
+  letter-spacing: 0.02em; }
+.bgtasks-section-head { display: flex; align-items: baseline; justify-content: space-between;
+  padding: 12px 10px 4px; }
+.bgtasks-section-head .bgtasks-section-label { padding: 0; }
+.bgtasks-section-action { background: none; border: none; padding: 0; cursor: pointer;
+  font-size: 11px; color: var(--text-400); transition: color 0.15s; }
+.bgtasks-section-action:hover { color: var(--error, #d33); }
+/* a bare section label that is NOT inside a head (the running section) */
+.bgtasks-content > .bgtasks-section-label { padding: 12px 10px 4px; }
+
+/* Flat row card (used by bg tasks, sync tool entries, group members). No border,
+   no fill — a subtle hover only. */
+.bgtask-card { border-radius: 8px; padding: 7px 10px; cursor: pointer; transition: background 0.12s; }
+.bgtask-card:hover { background: var(--bg-100); }
+.bgtask-summary { display: flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; }
+.bgtask-summary::-webkit-details-marker { display: none; }
+.bgtask-row1 { display: flex; align-items: center; gap: 8px; }
+.bgtask-title { font-size: 13px; font-weight: 600; color: var(--text-100); flex: 1 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bgtask-row2 { font-size: 11.5px; color: var(--text-400); margin: 2px 0 0 16px; }
+.bgtask-row2.bg-st-running { color: var(--accent-brand); }
+.bgtask-row2.bg-st-error { color: var(--error, #d33); }
 .bgtask-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--text-400); }
 .bgtask-dot.bg-st-running { background: var(--accent-brand); animation: bgtask-pulse 1.4s ease-in-out infinite; }
 .bgtask-dot.bg-st-done { background: #16a34a; }
 .bgtask-dot.bg-st-cancelled { background: #d97706; }
 .bgtask-dot.bg-st-error { background: var(--error, #d33); }
-.bgtask-status.bg-st-running { color: var(--accent-brand); }
-.bgtask-status.bg-st-error { color: var(--error, #d33); }
 @keyframes bgtask-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
-.bgtask-error { font-size: 11px; color: var(--error, #d33); margin-top: 4px; }
-.bgtask-actions { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
-.bgtask-action { background: none; border: 1px solid var(--border-100); border-radius: 6px;
-  padding: 3px 9px; font-size: 11px; cursor: pointer; color: var(--text-200); transition: all 0.15s; }
-.bgtask-action:hover { background: var(--bg-200); border-color: var(--border-200); }
-.bgtask-action-del:hover { color: var(--error, #d33); border-color: var(--error, #d33); }
-/* Fan-out group rollup */
-.bggroup-card { padding: 0; }
-.bggroup-summary { display: flex; align-items: center; gap: 7px; padding: 9px 10px; cursor: pointer; list-style: none; }
+.bgtask-error { font-size: 11px; color: var(--error, #d33); margin: 2px 0 0 16px; }
+/* Single right-aligned primary action — text button, no box (Claude desktop). */
+.bgtask-action { margin-left: auto; flex: 0 0 auto; background: none; border: none;
+  padding: 2px 4px; font-size: 11px; cursor: pointer; color: var(--text-300); transition: color 0.15s; }
+.bgtask-action:hover { color: var(--text-100); }
+.bgtask-action-del:hover { color: var(--error, #d33); }
+
+/* Fan-out group rollup — same flat language; chevron rotates on open. */
+.bggroup-card { border-radius: 8px; }
+.bggroup-summary { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer;
+  list-style: none; border-radius: 8px; transition: background 0.12s; }
+.bggroup-summary:hover { background: var(--bg-100); }
 .bggroup-summary::-webkit-details-marker { display: none; }
-.bggroup-summary .bgtask-status { margin-left: auto; font-size: 11px; }
-.bggroup-followup { padding: 0 10px 6px 25px; font-style: italic; }
-.bggroup-members { padding: 0 10px 10px 10px; display: flex; flex-direction: column; gap: 7px; }
-.bggroup-members .bgtask-card { background: var(--bg-100); }
-.bgtask-link { border-color: transparent; color: var(--accent-brand); padding-left: 2px; }
-.bgtask-link:hover { background: none; text-decoration: underline; }
-.bgtask-transcript { margin-top: 8px; padding: 8px; max-height: 280px; overflow-y: auto;
+.bggroup-count { margin-left: auto; flex: 0 0 auto; font-size: 11px; color: var(--text-400); }
+.bggroup-count.bg-st-running { color: var(--accent-brand); }
+.bggroup-chev { flex: 0 0 auto; color: var(--text-400); transition: transform 0.15s; }
+.bggroup-card[open] > .bggroup-summary .bggroup-chev { transform: rotate(180deg); }
+.act-tool-card[open] > .bgtask-summary .bggroup-chev { transform: rotate(180deg); }
+.bggroup-followup { padding: 0 10px 6px 28px; font-size: 11px; font-style: italic; color: var(--text-400); }
+.bggroup-members { padding: 0 0 4px 14px; display: flex; flex-direction: column; gap: 1px;
+  border-left: 1px solid var(--border-100); margin-left: 14px; }
+
+.bgtask-transcript { margin: 8px 0 4px 16px; padding: 8px; max-height: 280px; overflow-y: auto;
   background: var(--bg-100); border: 1px solid var(--border-100); border-radius: 6px;
-  font-size: 11px; word-break: break-word; color: var(--text-200); }
+  font-size: 11px; word-break: break-word; color: var(--text-200); cursor: default; }
+.act-tool-body { margin: 6px 0 4px 16px; }
 .bgtask-tr-label { font-size: 10px; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.04em; color: var(--text-400); margin: 2px 0 3px; }
 .bgtask-tr-label:not(:first-child) { margin-top: 10px; }

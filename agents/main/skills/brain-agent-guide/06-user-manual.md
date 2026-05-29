@@ -413,12 +413,13 @@ Die Aufgabe läuft als **derselbe Agent** (gleiches Modell, gleiche Werkzeuge) i
 einem eigenen Lauf. Im Tab **Hintergrundaufgaben** (oder über die Uhren-Pille
 oben rechts) siehst du:
 
-- **Wird ausgeführt** — laufende Aufgaben mit Live-Zählern (Dauer, Tokens,
-  Tool-Verwendungen) und einem **Stopp**-Knopf.
-- **Fertig** — abgeschlossene/abgebrochene Aufgaben mit **Löschen**-Knopf.
-- **Transkript anzeigen** — klappt zwei Abschnitte auf: **Anfrage** (der Prompt,
-  mit dem die Aufgabe gestartet wurde) und **Ergebnis** (der live mitlaufende
-  bzw. fertige Arbeitsverlauf).
+- **Wird ausgeführt** — laufende Aufgaben mit Live-Untertitel (Status · Dauer ·
+  Tokens · Tool-Verwendungen) und einem rechtsbündigen **Stopp**-Knopf.
+- **Fertig** — abgeschlossene/abgebrochene Aufgaben. **Löschen** sitzt oben rechts
+  an der „Fertig"-Sektion und entfernt alle fertigen Aufgaben auf einmal.
+- **Klick auf eine Zeile** klappt das **Transkript** auf: **Anfrage** (der Prompt,
+  mit dem die Aufgabe gestartet wurde) und **Ergebnis** (der live mitlaufende bzw.
+  fertige Arbeitsverlauf).
 
 **Parallele Recherchen (Fan-out):** deckt eine Anfrage mehrere unabhängige
 Themen ab (z.B. „vergleiche Anbieter A, B und C"), startet das Modell sie als

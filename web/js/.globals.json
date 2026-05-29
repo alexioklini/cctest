@@ -363,6 +363,7 @@
     "classificationActionModal": "writable",
     "classificationBlockActive": "writable",
     "classificationStrictBlockActive": "writable",
+    "clearFinishedBgTasks": "writable",
     "closeAllDropdowns": "writable",
     "closeArtifactPanel": "writable",
     "closeCitationPopover": "writable",
