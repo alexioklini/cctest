@@ -109,11 +109,15 @@ class BackgroundTaskRunner:
         return True
 
     def cancel_tool(self, task_id: str, tool_use_id: str) -> bool:
-        """Cancel ONE in-flight tool call of a running task: resolve the task's
-        live turn_id and forward to the sidecar's per-tool cancel. The task
-        keeps running (the loop gets a synthetic error result for that tool and
-        proceeds). Returns True if the task was live and the tool was in flight."""
+        """Cancel ONE in-flight tool call of a running task. Resolve the task's
+        live turn_id, then BOTH: (1) if the tool is a subprocess-backed tool
+        (python_exec / execute_command) registered for kill, SIGKILL its process
+        group — a TRUE kill, the work actually stops; (2) trip the sidecar's
+        per-tool cancel so the loop is unblocked immediately either way (covers
+        non-killable tools + races where the kill lands first). The TASK keeps
+        running. Returns True if the task was live and we acted on the tool."""
         import handlers.sidecar_proxy as sidecar_proxy
+        from engine.tool_exec import kill_tool_process
         with self._lock:
             live = self._live.get(task_id)
         if not live:
@@ -121,7 +125,11 @@ class BackgroundTaskRunner:
         turn_id = live.get("turn_id") or ""
         if not turn_id:
             return False
-        return sidecar_proxy.cancel_tool(turn_id, tool_use_id)
+        # (1) Real kill for subprocess-backed tools (no-op if not registered).
+        killed = kill_tool_process(turn_id, tool_use_id)
+        # (2) Always unblock the sidecar loop's wait for this tool.
+        unblocked = sidecar_proxy.cancel_tool(turn_id, tool_use_id)
+        return bool(killed or unblocked)
 
     def sweep_group_timeouts(self) -> int:
         """Force-deliver fan-out groups stalled on a straggler past

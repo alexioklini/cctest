@@ -372,13 +372,52 @@ def _visible_text(text: str) -> str:
     return s
 
 
+def _parse_tool_input_json(buf: str):
+    """Parse a streamed tool_use input_json buffer. Returns the dict on success,
+    None on unrecoverable failure. Tries strict JSON first, then a couple of
+    tolerant repairs for the failure modes large LLM-emitted arguments hit
+    (trailing comma, an unterminated final string from a truncated stream).
+    Conservative: only returns non-None when the result is a dict."""
+    if not buf:
+        return None
+    try:
+        v = json.loads(buf)
+        return v if isinstance(v, dict) else None
+    except Exception:
+        pass
+    # Repair 1: strip a trailing comma before the closing brace.
+    try:
+        import re as _re
+        repaired = _re.sub(r",\s*}\s*$", "}", buf.strip())
+        v = json.loads(repaired)
+        if isinstance(v, dict):
+            return v
+    except Exception:
+        pass
+    # Repair 2: a stream cut mid-string leaves an unterminated value — close the
+    # string and the object and retry (recovers the partial arg rather than
+    # discarding the whole call).
+    try:
+        s = buf.strip()
+        if s.count('"') % 2 == 1:
+            s = s + '"'
+        if not s.endswith("}"):
+            s = s + "}"
+        v = json.loads(s)
+        if isinstance(v, dict):
+            return v
+    except Exception:
+        pass
+    return None
+
+
 class _AccumulatedBlock:
     """A single content block assembled from raw stream events.
 
     Exposes the subset of the SDK block attributes the loop reads:
     `.type`, `.text`, `.thinking`, `.signature`, `.id`, `.name`, `.input`."""
     __slots__ = ("type", "text", "thinking", "signature", "id", "name",
-                 "_json_buf", "input")
+                 "_json_buf", "input", "input_parse_error")
 
     def __init__(self, content_block: dict):
         self.type = content_block.get("type", "")
@@ -391,14 +430,24 @@ class _AccumulatedBlock:
         # tool_use input may arrive whole in content_block_start or piecemeal
         # via input_json_delta; default to whatever start carried.
         self.input = content_block.get("input", {}) or {}
+        # When the streamed input_json_delta buffer won't parse, record why so
+        # the dispatch can surface a REAL diagnostic instead of silently sending
+        # empty args (which the tool then rejects as e.g. "no code provided" —
+        # observed with deepseek-v4-flash emitting a 32KB python_exec `code` arg).
+        self.input_parse_error = ""
 
     def finalise(self) -> None:
         if self.type == "tool_use" and self._json_buf:
-            try:
-                self.input = json.loads(self._json_buf)
-            except Exception:
-                # Leave the start-provided input; better than crashing the turn.
-                pass
+            parsed = _parse_tool_input_json(self._json_buf)
+            if parsed is not None:
+                self.input = parsed
+            elif not self.input:
+                # Buffer present but unparseable AND start carried no input →
+                # we have NOTHING usable. Flag it so dispatch returns a clear,
+                # retryable error rather than confusing empty-args behaviour.
+                self.input_parse_error = (
+                    f"the streamed tool arguments were not valid JSON "
+                    f"({len(self._json_buf)} chars received)")
 
 
 class _AccumulatedMessage:
@@ -698,6 +747,32 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
                 "name": tu.name,
                 "args": tu_args,
             })
+            # Unparseable streamed arguments → return a clear, retryable error
+            # rather than dispatching empty args (which the tool rejects with a
+            # misleading message like "no code provided"). The model sees this
+            # tool_result and can re-emit the call with valid JSON.
+            _parse_err = getattr(tu, "input_parse_error", "")
+            if _parse_err:
+                result_str = json.dumps({
+                    "error": f"tool '{tu.name}': {_parse_err}. Re-send this tool "
+                             f"call with valid JSON arguments (the previous "
+                             f"arguments did not arrive intact).",
+                }, ensure_ascii=False)
+                is_error, elapsed = True, 0.0
+                emit("tool_dispatch_done", {
+                    "round": round_no, "tool_use_id": tu.id, "name": tu.name,
+                    "elapsed_ms": 0, "result_chars": len(result_str), "is_error": True,
+                })
+                tool_events.append({
+                    "round": round_no, "name": tu.name, "args": tu_args,
+                    "elapsed_ms": 0, "result_chars": len(result_str),
+                    "is_error": True, "result_text": result_str,
+                })
+                result_blocks.append({
+                    "type": "tool_result", "tool_use_id": tu.id,
+                    "content": result_str, "is_error": True,
+                })
+                continue
             result_str, is_error, elapsed = _dispatch_tool_cancellable(
                 tool_endpoint, tool_endpoint_auth, tu.name, tu_args, trace_id,
                 tool_context=tool_context, tool_use_id=tu.id, turn_id=turn_id)

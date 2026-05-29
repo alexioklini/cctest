@@ -177,6 +177,66 @@ def reset_tool_dedup():
         _dedup_gc_locked()
 
 
+# --- Live tool subprocess registry (per-tool kill) ---------------------------
+#
+# python_exec / execute_command spawn a real subprocess (own process group via
+# start_new_session=True). We register each live Popen under (turn_id,
+# tool_use_id) so a per-tool cancel (POST /v1/background-tasks/cancel-tool →
+# kill_tool_process) can SIGKILL the process group mid-run — a true kill, not
+# just abandoning the wait. Unregistered in the tool's finally. Other tools
+# (network/in-process) have no killable handle and aren't registered; for those
+# the sidecar's loop-unblock remains the only cancellation. Keyed on the pair so
+# concurrent tasks/tools never collide.
+_tool_procs_lock = threading.Lock()
+_tool_procs: dict[tuple, object] = {}  # (turn_id, tool_use_id) -> subprocess.Popen
+
+
+def register_tool_process(proc) -> tuple | None:
+    """Register a live subprocess under the current turn's (turn_id, tool_use_id)
+    so kill_tool_process can reach it. Reads both off the request context. Returns
+    the key (pass to unregister_tool_process) or None when not addressable (no
+    ids — e.g. a non-sidecar caller); the caller then just skips unregister."""
+    ctx = get_request_context()
+    turn_id = getattr(ctx, "current_turn_id", "") or ""
+    tool_use_id = getattr(ctx, "tool_use_id", "") or ""
+    if not turn_id or not tool_use_id:
+        return None
+    key = (turn_id, tool_use_id)
+    with _tool_procs_lock:
+        _tool_procs[key] = proc
+    return key
+
+
+def unregister_tool_process(key) -> None:
+    if not key:
+        return
+    with _tool_procs_lock:
+        _tool_procs.pop(key, None)
+
+
+def kill_tool_process(turn_id: str, tool_use_id: str) -> bool:
+    """SIGKILL the registered subprocess (its whole process group) for one
+    in-flight tool call. Returns True if a live process was found + signalled.
+    The tool's own communicate() then returns and the function completes with a
+    killed-process result — the loop gets a real, prompt tool_result."""
+    if not turn_id or not tool_use_id:
+        return False
+    with _tool_procs_lock:
+        proc = _tool_procs.get((turn_id, tool_use_id))
+    if proc is None:
+        return False
+    import signal as _sig
+    try:
+        os.killpg(proc.pid, _sig.SIGKILL)
+        return True
+    except (OSError, ProcessLookupError):
+        try:
+            proc.kill()
+            return True
+        except Exception:
+            return False
+
+
 # --- Per-session read-path tracker -------------------------------------
 #
 # Thin record of which files the model has called read_document / read_file

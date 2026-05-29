@@ -428,8 +428,11 @@ günstigeres **Fan-out-Modell** sein, wenn das Chat-Modell eines gesetzt hat
   zusätzlich über **Transkript anzeigen**. An einer **gerade laufenden**
   Tool-Karte erscheint ein **✕** — damit brichst du **diesen einen Tool-Aufruf**
   ab (die Aufgabe selbst läuft weiter; das Modell bekommt für diesen Aufruf ein
-  Abbruch-Ergebnis und macht weiter). Den ganzen Lauf stoppst du weiterhin mit
-  **Stopp**.
+  Abbruch-Ergebnis und macht weiter). Bei **`python_exec`** und
+  **`execute_command`** wird der laufende Prozess dabei **wirklich beendet**
+  (hartes Kill der Prozessgruppe); bei Netz-/Speicher-Tools wird nur das Warten
+  abgebrochen (die laufende Abfrage selbst kann nicht hart gestoppt werden). Den
+  ganzen Lauf stoppst du weiterhin mit **Stopp**.
 - **Der Status-Punkt** links zeigt per Farbe den Zustand: **grün** = läuft,
   **gelb** = über 80 % der erlaubten Laufzeit, **orange** = 90–100 %,
   **rot** = Timeout/Fehler/abgebrochen, **grau** = fertig. Bei einer Gruppe

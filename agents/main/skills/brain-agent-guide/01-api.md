@@ -438,9 +438,11 @@ logged-in user (not admin-gated).
 - `POST /v1/background-tasks/cancel` — `{task_id}`. Cancels a running task;
   the partial output is kept and the row goes `cancelled`.
 - `POST /v1/background-tasks/cancel-tool` — `{task_id, tool_use_id}`. Cancels
-  ONE in-flight tool call of a running task (the task keeps going): the sidecar
-  abandons the wait and feeds the loop a synthetic error result for that tool.
-  200 if the tool was in flight, 409 otherwise (already returned / not live).
+  ONE in-flight tool call of a running task (the task keeps going). For
+  subprocess-backed tools (`python_exec`/`execute_command`) the process group is
+  SIGKILLed — a real kill; for other tools the sidecar just abandons the wait and
+  feeds the loop a synthetic error result. 200 if acted on, 409 otherwise
+  (already returned / not live).
 - `DELETE /v1/background-tasks?task_id=` — remove a finished/aborted row
   (refuses a still-running task with 409 — cancel it first).
 - `GET /v1/background-tasks/<id>/transcript` — SSE. Running → live sidecar

@@ -324,6 +324,9 @@ def handle_tools_call(handler) -> None:
     # owns teardown (token-reset on exit) — no scattered per-attribute clear.
     with engine.request_context():
         _apply_context(ctx)
+        # Expose the tool_use_id so a tool that spawns a subprocess can register
+        # it under (turn_id, tool_use_id) for per-tool kill (kill_tool_process).
+        engine.get_request_context().tool_use_id = tool_use_id
         result_str, is_error = _dispatch(name, args)
     elapsed_ms = int((time.time() - t0) * 1000)
 

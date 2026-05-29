@@ -39,6 +39,8 @@ from engine.tool_exec import (
     _err,
     _get_artifact_session_folder,
     _record_session_read_path,
+    register_tool_process,
+    unregister_tool_process,
 )
 
 
@@ -854,6 +856,7 @@ def _streaming_execute_command(command: str, timeout: int, cwd: str | None,
         stdin=subprocess.DEVNULL, cwd=cwd, env=env,
         start_new_session=True,
     )
+    _proc_key = register_tool_process(proc)  # per-tool kill registration
     output_lines = []
     import io
     deadline = time.time() + timeout
@@ -889,6 +892,14 @@ def _streaming_execute_command(command: str, timeout: int, cwd: str | None,
         except OSError:
             proc.kill()
         proc.wait(timeout=5)
+    finally:
+        unregister_tool_process(_proc_key)
+
+    # External per-tool kill mid-stream → process group SIGKILLed.
+    if proc.returncode is not None and proc.returncode < 0:
+        import signal as sig
+        if proc.returncode == -sig.SIGKILL:
+            return _err("execute_command: cancelled by user (process killed).")
 
     output = "".join(output_lines)
     stderr_data = proc.stderr.read() if proc.stderr else b""
@@ -973,6 +984,7 @@ def tool_execute_command(args: dict) -> str:
             stdin=subprocess.DEVNULL, cwd=cwd, env=env,
             start_new_session=True,  # own process group so we can kill the tree
         )
+        _proc_key = register_tool_process(proc)  # per-tool kill registration
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -989,6 +1001,13 @@ def tool_execute_command(args: dict) -> str:
             if len(output) > 50000:
                 output = output[:50000] + "\n... (truncated)"
             return _err(f"execute_command: timed out after {timeout}s (partial output below). Use non-interactive commands, e.g. 'top -l 1' not 'top'.\n{output}")
+        finally:
+            unregister_tool_process(_proc_key)
+        # External per-tool kill → process group SIGKILLed mid-run.
+        if proc.returncode is not None and proc.returncode < 0:
+            import signal as sig
+            if proc.returncode == -sig.SIGKILL:
+                return _err("execute_command: cancelled by user (process killed).")
 
         output = _strip_ansi(stdout.decode("utf-8", errors="replace"))
         if stderr:
@@ -1198,6 +1217,7 @@ def tool_python_exec(args: dict) -> str:
     if venv_path and os.path.isdir(venv_path):
         env["PYTHONPATH"] = venv_path + ((":" + env.get("PYTHONPATH", "")) if env.get("PYTHONPATH") else "")
 
+    _proc_key = None
     try:
         proc = subprocess.Popen(
             [sys.executable, script_path],
@@ -1205,6 +1225,9 @@ def tool_python_exec(args: dict) -> str:
             stdin=subprocess.DEVNULL, cwd=work_dir, env=env,
             start_new_session=True,
         )
+        # Register for per-tool kill: a cancel SIGKILLs this process group and
+        # communicate() returns promptly with a negative returncode (the signal).
+        _proc_key = register_tool_process(proc)
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -1220,6 +1243,15 @@ def tool_python_exec(args: dict) -> str:
             if len(output) > max_output:
                 output = output[:max_output] + "\n... (truncated)"
             return _err(f"python_exec: timed out after {timeout}s\n{output}")
+        finally:
+            unregister_tool_process(_proc_key)
+        # External per-tool kill: communicate() returned because the process
+        # group was SIGKILLed (negative returncode = -signal). Surface a clear
+        # cancelled result so the model knows this tool was aborted on purpose.
+        if proc.returncode is not None and proc.returncode < 0:
+            import signal as sig
+            if proc.returncode == -sig.SIGKILL:
+                return _err("python_exec: cancelled by user (process killed).")
 
         output = stdout.decode("utf-8", errors="replace")
         if stderr:
