@@ -54,6 +54,22 @@ class BackgroundTasksHandlerMixin:
             return
         self._send_json({"task_id": task_id, "cancelled": True})
 
+    def _handle_background_task_cancel_tool(self):
+        """POST /v1/background-tasks/cancel-tool {task_id, tool_use_id} — cancel
+        ONE in-flight tool call of a running task. The task itself keeps going."""
+        from engine.background_tasks import background_task_runner
+        body = self._read_json()
+        task_id = (body.get("task_id") or "").strip()
+        tool_use_id = (body.get("tool_use_id") or "").strip()
+        if not task_id or not tool_use_id:
+            self._send_json({"error": "task_id and tool_use_id required"}, 400)
+            return
+        ok = background_task_runner.cancel_tool(task_id, tool_use_id)
+        # Not live / already returned → report so the UI reconciles (the tool may
+        # have finished between render and click). Not an error.
+        self._send_json({"task_id": task_id, "tool_use_id": tool_use_id,
+                         "cancelled": bool(ok)}, 200 if ok else 409)
+
     def _handle_background_task_delete(self):
         """DELETE /v1/background-tasks?task_id=X — Löschen. Refuses a running
         task (cancel it first) so we never orphan a live thread's final write."""

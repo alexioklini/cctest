@@ -108,6 +108,21 @@ class BackgroundTaskRunner:
             sidecar_proxy.cancel_turn(turn_id)
         return True
 
+    def cancel_tool(self, task_id: str, tool_use_id: str) -> bool:
+        """Cancel ONE in-flight tool call of a running task: resolve the task's
+        live turn_id and forward to the sidecar's per-tool cancel. The task
+        keeps running (the loop gets a synthetic error result for that tool and
+        proceeds). Returns True if the task was live and the tool was in flight."""
+        import handlers.sidecar_proxy as sidecar_proxy
+        with self._lock:
+            live = self._live.get(task_id)
+        if not live:
+            return False
+        turn_id = live.get("turn_id") or ""
+        if not turn_id:
+            return False
+        return sidecar_proxy.cancel_tool(turn_id, tool_use_id)
+
     def sweep_group_timeouts(self) -> int:
         """Force-deliver fan-out groups stalled on a straggler past
         _GROUP_TIMEOUT_S. Marks the running members error (DB), trips their live

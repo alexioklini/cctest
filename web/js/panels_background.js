@@ -365,6 +365,10 @@ function _bgToolEntries(t) {
       status: tool.status === 'done' ? 'done' : 'running',
       result: tool.result != null ? tool.result : null,  // live stream has no result text
       isBackground: true,
+      // Running tool of a running task → show the per-tool cancel (✕). The id is
+      // the real sidecar tool_use_id (carried on the live event), which the
+      // sidecar's /cancel-tool addresses.
+      cancelTaskId: (tool.status !== 'done' && tool.id) ? t.id : null,
     }));
   }
   const evs = Array.isArray(t.tool_events) ? t.tool_events : [];
@@ -566,11 +570,20 @@ function _toolEntryCard(e) {
     ? buildToolResultBlock(e.type, e.args || {}, (typeof e.result === 'string' ? e.result : JSON.stringify(e.result, null, 2)), e.id)
     : '';
   const hasBody = !!(argsTable || resultBlock);
+  // Cancel (✕) for a still-running bg-task tool call. Only when the entry opts
+  // in via cancelTaskId (a running background task's tool) — sync in-chat tool
+  // entries don't set it, so the button is bg-only. stopPropagation so the click
+  // neither toggles the <details> nor bubbles to the card's transcript opener.
+  const cancelBtn = (e.status === 'running' && e.cancelTaskId)
+    ? `<button class="bgtask-action act-tool-cancel" title="Tool-Aufruf abbrechen"`
+      + ` onclick="event.stopPropagation();event.preventDefault();cancelBgTool('${e.cancelTaskId}','${escapeHtml(e.id)}')">✕</button>`
+    : '';
   return `
     <details class="bgtask-card act-tool-card" data-act="${escapeHtml(e.id)}"${hasBody ? '' : ' open'}>
       <summary class="bgtask-summary">
         <span class="bgtask-dot ${st.cls}"></span>
         <span class="bgtask-title">${desc}</span>
+        ${cancelBtn}
         ${hasBody ? '<svg class="bggroup-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
       </summary>
       <div class="bgtask-row2 ${st.cls}">${escapeHtml(e.type)} · ${st.label}</div>
@@ -683,6 +696,19 @@ function openActivityEntry(entryId) {
 async function cancelBgTask(taskId) {
   try { await API.cancelBackgroundTask(taskId); } catch (_) {}
   loadBackgroundTasks();
+}
+
+// Cancel ONE in-flight tool call of a running task. The task keeps running; the
+// sidecar returns a synthetic error result for this tool and proceeds. Mark the
+// entry done locally for instant feedback, then let the live stream reconcile.
+async function cancelBgTool(taskId, toolUseId) {
+  const L = _bgLive[taskId];
+  if (L) {
+    const tool = L.tools.find(x => x.id === toolUseId);
+    if (tool && tool.status !== 'done') { tool.status = 'done'; tool.is_error = true; }
+    _bgLiveRenderCard(taskId);
+  }
+  try { await API.cancelBackgroundTool(taskId, toolUseId); } catch (_) {}
 }
 
 async function deleteBgTask(taskId) {

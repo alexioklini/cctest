@@ -76,6 +76,23 @@ def cancel_turn(turn_id: str) -> bool:
         return False
 
 
+def cancel_tool(turn_id: str, tool_use_id: str) -> bool:
+    """POST /cancel-tool/<turn_id>/<tool_use_id> — cancel ONE in-flight tool
+    dispatch within a turn (the sidecar loop returns a synthetic error result
+    for it and proceeds). Best-effort: True on a 2xx (a matching in-flight tool
+    was found); 404 → already finished / unknown → False."""
+    if not turn_id or not tool_use_id:
+        return False
+    try:
+        req = urllib.request.Request(
+            sidecar_url() + f"/cancel-tool/{turn_id}/{tool_use_id}",
+            data=b"", method="POST")
+        resp = urllib.request.urlopen(req, timeout=10)
+        return 200 <= getattr(resp, "status", 200) < 300
+    except Exception:
+        return False
+
+
 # ---------- Message + tool conversion ----------
 
 def _to_anthropic_messages(messages: list[dict]) -> list[dict]:

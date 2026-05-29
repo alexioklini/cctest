@@ -28,6 +28,45 @@ from typing import Any
 _TURN_CANCELS: dict[str, threading.Event] = {}
 _TURN_CANCELS_LOCK = threading.Lock()
 
+# Per-tool cancel: turn_id -> {tool_use_id: Event}. POST /cancel-tool/<turn_id>/
+# <tool_use_id> sets the event; an in-flight dispatch_tool_via_http (run in a
+# worker thread, see _dispatch_tool_cancellable) abandons its wait and returns a
+# synthetic error result so the loop still gets a valid tool_result and proceeds.
+# Registered lazily per tool dispatch, popped when that dispatch returns.
+_TOOL_CANCELS: dict[str, dict[str, threading.Event]] = {}
+_TOOL_CANCELS_LOCK = threading.Lock()
+
+
+def _register_tool_cancel(turn_id: str, tool_use_id: str) -> threading.Event:
+    ev = threading.Event()
+    if not turn_id or not tool_use_id:
+        return ev
+    with _TOOL_CANCELS_LOCK:
+        _TOOL_CANCELS.setdefault(turn_id, {})[tool_use_id] = ev
+    return ev
+
+
+def _unregister_tool_cancel(turn_id: str, tool_use_id: str) -> None:
+    if not turn_id or not tool_use_id:
+        return
+    with _TOOL_CANCELS_LOCK:
+        d = _TOOL_CANCELS.get(turn_id)
+        if d:
+            d.pop(tool_use_id, None)
+            if not d:
+                _TOOL_CANCELS.pop(turn_id, None)
+
+
+def _signal_tool_cancel(turn_id: str, tool_use_id: str) -> bool:
+    """Trip the cancel event for one in-flight tool dispatch. Returns True if a
+    matching in-flight tool was found."""
+    with _TOOL_CANCELS_LOCK:
+        ev = (_TOOL_CANCELS.get(turn_id) or {}).get(tool_use_id)
+    if ev is not None:
+        ev.set()
+        return True
+    return False
+
 
 # Per-turn replay log: turn_id -> {"events": [(seq, type, data), ...],
 #                                  "done": bool, "done_at": float | None,
@@ -257,6 +296,50 @@ def dispatch_tool_via_http(endpoint: str, auth: str, name: str, args: dict,
         return f"tool dispatch failed: {type(e).__name__}: {e}", True, elapsed
 
 
+def _dispatch_tool_cancellable(endpoint, auth, name, args, trace_id, *,
+                               tool_context, tool_use_id, turn_id,
+                               timeout_s=120.0):
+    """Like dispatch_tool_via_http but interruptible per tool. Runs the blocking
+    HTTP dispatch in a worker thread and waits on completion OR a per-tool cancel
+    event (POST /cancel-tool/<turn_id>/<tool_use_id>). On cancel we stop WAITING
+    and return a synthetic error result immediately, so the loop still appends a
+    valid tool_result for this tool_use_id and the turn proceeds. The worker
+    thread is daemon — the abandoned HTTP call drains in the background (Brain
+    can't truly kill an already-running tool; this unblocks the loop, which is
+    what the user asked for).
+
+    Returns (result_string, is_error, elapsed_seconds).
+    """
+    cancel_ev = _register_tool_cancel(turn_id, tool_use_id)
+    box: dict[str, Any] = {}
+    done = threading.Event()
+    t0 = time.time()
+
+    def _work():
+        try:
+            box["res"] = dispatch_tool_via_http(
+                endpoint, auth, name, args, trace_id,
+                tool_context=tool_context, tool_use_id=tool_use_id,
+                timeout_s=timeout_s)
+        except Exception as e:  # defensive — dispatch_tool_via_http catches its own
+            box["res"] = (f"tool dispatch failed: {type(e).__name__}: {e}", True, time.time() - t0)
+        finally:
+            done.set()
+
+    th = threading.Thread(target=_work, daemon=True, name=f"tool-{tool_use_id[:8]}")
+    th.start()
+    try:
+        # Wake on either the worker finishing or a cancel request. Poll the cancel
+        # event on a short interval so a set() between waits isn't missed.
+        while not done.wait(0.1):
+            if cancel_ev.is_set():
+                elapsed = time.time() - t0
+                return ("Tool call cancelled by user.", True, elapsed)
+        return box.get("res", ("tool dispatch failed: no result", True, time.time() - t0))
+    finally:
+        _unregister_tool_cancel(turn_id, tool_use_id)
+
+
 # ---------- Core loop (streaming) ----------
 
 # End-of-sequence tokens that some local models (gemma-4-e4b on oMLX, qwen3,
@@ -372,8 +455,12 @@ class _AccumulatedMessage:
         return list(self._blocks.values())
 
 
-def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = None) -> dict:
+def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = None,
+                       turn_id: str = "") -> dict:
     """Execute one turn. `emit(type, data)` writes an SSE event to the client.
+
+    `turn_id` scopes per-tool cancellation (POST /cancel-tool/<turn_id>/
+    <tool_use_id>) — passed through to the interruptible tool dispatch.
 
     Returns a dict suitable for the non-streaming response (also used to build
     the final `done` event in streaming mode).
@@ -611,9 +698,9 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
                 "name": tu.name,
                 "args": tu_args,
             })
-            result_str, is_error, elapsed = dispatch_tool_via_http(
+            result_str, is_error, elapsed = _dispatch_tool_cancellable(
                 tool_endpoint, tool_endpoint_auth, tu.name, tu_args, trace_id,
-                tool_context=tool_context, tool_use_id=tu.id)
+                tool_context=tool_context, tool_use_id=tu.id, turn_id=turn_id)
             emit("tool_dispatch_done", {
                 "round": round_no,
                 "tool_use_id": tu.id,
@@ -781,6 +868,22 @@ class SidecarHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
 
+        # POST /cancel-tool/<turn_id>/<tool_use_id> — cancel ONE in-flight tool
+        # dispatch (the loop returns a synthetic error result for it + proceeds).
+        # Checked before /cancel/ since that prefix would otherwise swallow it.
+        if parsed.path.startswith("/cancel-tool/"):
+            rest = parsed.path[len("/cancel-tool/"):]
+            t_id, _, tu_id = rest.partition("/")
+            found = _signal_tool_cancel(t_id, tu_id)
+            body = json.dumps({"cancelled": found, "turn_id": t_id,
+                               "tool_use_id": tu_id}).encode("utf-8")
+            self.send_response(200 if found else 404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         # POST /cancel/<turn_id> — flips the cancel flag for an in-flight turn.
         if parsed.path.startswith("/cancel/"):
             turn_id = parsed.path[len("/cancel/"):]
@@ -875,7 +978,8 @@ class SidecarHandler(http.server.BaseHTTPRequestHandler):
                 pass
 
         try:
-            summary = run_turn_streaming(req_body, emit, cancel_event=cancel_event)
+            summary = run_turn_streaming(req_body, emit, cancel_event=cancel_event,
+                                         turn_id=turn_id)
             emit("done", summary)
         except Exception as e:
             emit("error", {"message": f"{type(e).__name__}: {e}",
@@ -900,7 +1004,8 @@ class SidecarHandler(http.server.BaseHTTPRequestHandler):
             _log_event(turn_id, et, d)
         try:
             summary = run_turn_streaming(req_body, _bg_emit,
-                                          cancel_event=cancel_event)
+                                          cancel_event=cancel_event,
+                                          turn_id=turn_id)
             body = json.dumps(summary, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

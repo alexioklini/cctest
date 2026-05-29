@@ -368,6 +368,7 @@
     "buildToolIntegrationRec": "writable",
     "buildToolResultBlock": "writable",
     "cancelBgTask": "writable",
+    "cancelBgTool": "writable",
     "cancelQueueTicket": "writable",
     "cavemanIconFor": "writable",
     "changeUserRole": "writable",
