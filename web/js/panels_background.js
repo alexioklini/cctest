@@ -225,6 +225,9 @@ function _bgCard(t, inGroup) {
   if (dur) metaBits.push(dur);
   if (tokens) metaBits.push(`${(tokens / 1000).toFixed(1)}k Tokens`);
   if (t.tool_calls) metaBits.push(`${t.tool_calls} Tool-Verwendungen`);
+  // Executing model — for fanned-out tasks this is the (often cheaper) offload
+  // model the chat model declared via background_task_model, so surface it.
+  if (t.model) metaBits.push(modelShortName(t.model, false));
   const meta = metaBits.join(' · ');
   // Right-aligned actions. Always an explicit "Transkript anzeigen" link (the
   // affordance users expect); plus Stopp while running, or Löschen when finished

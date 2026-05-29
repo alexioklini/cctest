@@ -409,12 +409,16 @@ Claude-Desktop-App. Das entscheidet das Modell selbst: erkennt es, dass eine
 Aufgabe lange läuft und viel Ausgabe erzeugt, startet es sie im Hintergrund und
 antwortet sofort mit „läuft im Hintergrund". Der Chat bleibt frei.
 
-Die Aufgabe läuft als **derselbe Agent** (gleiches Modell, gleiche Werkzeuge) in
-einem eigenen Lauf. Im Tab **Hintergrundaufgaben** (oder über die Uhren-Pille
-oben rechts) siehst du:
+Die Aufgabe läuft als **derselbe Agent** (gleiche Werkzeuge) in einem eigenen
+Lauf. Das **ausführende Modell** ist standardmäßig das Chat-Modell, kann aber ein
+günstigeres **Fan-out-Modell** sein, wenn das Chat-Modell eines gesetzt hat
+(Einstellungen → Modelle → ⚙ → Fan-out-Modell). Im Tab **Hintergrundaufgaben**
+(oder über die Uhren-Pille oben rechts) siehst du:
 
 - **Wird ausgeführt** — laufende Aufgaben mit Live-Untertitel (Status · Dauer ·
-  Tokens · Tool-Verwendungen) und einem rechtsbündigen **Stopp**-Knopf.
+  Tokens · Tool-Verwendungen · **ausführendes Modell**) und einem rechtsbündigen
+  **Stopp**-Knopf. Am Modell-Namen erkennst du, ob eine Aufgabe auf dem
+  Fan-out-Modell statt dem Chat-Modell lief.
 - **Der Status-Punkt** links zeigt per Farbe den Zustand: **grün** = läuft,
   **gelb** = über 80 % der erlaubten Laufzeit, **orange** = 90–100 %,
   **rot** = Timeout/Fehler/abgebrochen, **grau** = fertig. Bei einer Gruppe
