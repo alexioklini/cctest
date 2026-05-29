@@ -7861,3 +7861,14 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 .bgtask-tr-request { white-space: pre-wrap; word-break: break-word; color: var(--text-300);
   padding-bottom: 6px; border-bottom: 1px solid var(--border-100); }
 .bgtask-tr-output { white-space: pre-wrap; word-break: break-word; }
+
+/* When a tool card is OPEN, its inner body uses the lighter inset grey (like the
+   grouped-card members) instead of the chat's near-black code block — keeps the
+   panel calm. Scoped to the panel so the in-chat tool view is unchanged. */
+.act-tool-card .act-tool-body { background: var(--bg-000); border-radius: 8px; padding: 8px 10px; }
+.act-tool-card .tool-result-pre,
+.bgtask-transcript .tool-result-pre {
+  background: var(--bg-100); color: var(--text-200); border-color: var(--border-100); }
+.act-tool-card .tool-result-pre.terminal,
+.bgtask-transcript .tool-result-pre.terminal {
+  background: var(--bg-200); color: var(--text-100); }
