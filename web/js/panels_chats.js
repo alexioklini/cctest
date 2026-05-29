@@ -334,6 +334,12 @@ function updateScrollAnchors() {
   downBtn.style.top = botY + 'px';
   upBtn.classList.toggle('visible', !atTop && r.height > 0);
   downBtn.classList.toggle('visible', !atBottom && r.height > 0);
+  // Edge fade mask (Claude-desktop style): fade the top/bottom of the scroll
+  // area only when there is hidden content beyond that edge. Drive a CSS
+  // mask-image via data attributes the .messages-scroll rule reads.
+  const hasOverflow = scrollable > PAD;
+  el.dataset.fadeTop = (hasOverflow && !atTop) ? '1' : '0';
+  el.dataset.fadeBottom = (hasOverflow && !atBottom) ? '1' : '0';
 }
 
 function initScrollAnchors() {

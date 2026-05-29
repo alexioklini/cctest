@@ -862,12 +862,40 @@ textarea { resize: none; }
 }
 @keyframes lp-fill { to { stroke-dashoffset: 0; } }
 
+/* Registered so the edge-fade band heights can animate (transition on a bare
+   custom property is ignored without @property). */
+@property --fade-top {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --fade-bottom {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
 /* Messages area */
 .messages-scroll {
   flex: 1;
   overflow-y: auto;
   scroll-behavior: smooth;
+  /* Edge fade mask (Claude-desktop style). --fade-top/--fade-bottom are the
+     fade-band heights; updateScrollAnchors() flips data-fade-top/-bottom to
+     toggle them so an edge only fades when content is hidden beyond it. The
+     transition smooths the fade in/out as you reach an edge. */
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0, #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)), transparent 100%);
+  mask-image: linear-gradient(to bottom,
+    transparent 0, #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)), transparent 100%);
+  transition: --fade-top 0.2s ease, --fade-bottom 0.2s ease;
 }
+.messages-scroll[data-fade-top="1"] { --fade-top: 48px; }
+.messages-scroll[data-fade-bottom="1"] { --fade-bottom: 48px; }
 .messages-container {
   max-width: 48rem;
   margin: 0 auto;
