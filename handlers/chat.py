@@ -3272,12 +3272,16 @@ class ChatHandlerMixin:
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
 
-        # Pre-processing: tool result budget + microcompact
-        with engine.request_context(current_session_id=session.id):
-            if len(session.messages) > 4:
-                engine._apply_tool_result_budget(session.messages, session_id=session.id,
-                                                  agent_id=session.agent_id)
-                session.messages, _mc_freed = engine._microcompact(session.messages, keep_recent=5)
+        # No tool-result pre-processing: `_apply_tool_result_budget` /
+        # `_microcompact` both scan `session.messages` for role=="tool" /
+        # tool_result blocks, but in the sidecar architecture those NEVER live
+        # in `session.messages` — the sidecar owns the per-turn ephemeral tool
+        # exchange end-to-end (see sidecar_proxy._to_anthropic_messages, which
+        # keeps only user/assistant). The worker only ever persists user /
+        # assistant / thinking rows, so both functions were no-ops on this path
+        # (native-loop relics). Tool results reach the model UNCAPPED in the
+        # turn that calls them (tool_mcp returns them verbatim) and are never
+        # replayed on later turns — neither full nor stubbed.
 
         # LCM is manual-only (status-bar ✂️ button → POST /v1/context/compact).
         # No automatic trigger here; the user decides when to compact.
