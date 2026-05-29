@@ -7787,7 +7787,7 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 .bgtasks-pill-count { font-weight: 600; }
 /* Activity panel — flat, Claude-desktop style: borderless rows, bold title +
    right-aligned primary action, dim status subtitle, section labels. */
-.bgtasks-content { flex: 1; overflow-y: auto; padding: 6px 4px 14px; display: flex; flex-direction: column; gap: 1px; }
+.bgtasks-content { flex: 1; overflow-y: auto; padding: 6px 10px 14px; display: flex; flex-direction: column; gap: 6px; }
 .bgtasks-empty { color: var(--text-400); font-size: 12px; text-align: center; padding: 24px 8px; }
 .bgtasks-section-label { font-size: 11px; font-weight: 600; color: var(--text-400); text-transform: none;
   letter-spacing: 0.02em; }
@@ -7798,12 +7798,13 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   font-size: 11px; color: var(--text-400); transition: color 0.15s; }
 .bgtasks-section-action:hover { color: var(--error, #d33); }
 /* a bare section label that is NOT inside a head (the running section) */
-.bgtasks-content > .bgtasks-section-label { padding: 12px 10px 4px; }
+.bgtasks-content > .bgtasks-section-label { padding: 6px 0 2px; }
+.bgtasks-section-head { padding: 6px 0 2px; }
 
-/* Flat row card (used by bg tasks, sync tool entries, group members). No border,
-   no fill — a subtle hover only. */
-.bgtask-card { border-radius: 8px; padding: 7px 10px; cursor: pointer; transition: background 0.12s; }
-.bgtask-card:hover { background: var(--bg-100); }
+/* Card: soft filled, bordered container per top-level item (Claude-desktop). */
+.bgtask-card { background: var(--bg-000); border: 1px solid var(--border-100); border-radius: 10px;
+  padding: 9px 11px; cursor: pointer; transition: border-color 0.12s, background 0.12s; }
+.bgtask-card:hover { border-color: var(--border-200); }
 .bgtask-summary { display: flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; }
 .bgtask-summary::-webkit-details-marker { display: none; }
 .bgtask-row1 { display: flex; align-items: center; gap: 8px; }
@@ -7825,20 +7826,23 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 .bgtask-action:hover { color: var(--text-100); }
 .bgtask-action-del:hover { color: var(--error, #d33); }
 
-/* Fan-out group rollup — same flat language; chevron rotates on open. */
-.bggroup-card { border-radius: 8px; }
-.bggroup-summary { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer;
-  list-style: none; border-radius: 8px; transition: background 0.12s; }
-.bggroup-summary:hover { background: var(--bg-100); }
+/* Fan-out group rollup — a card whose header is the summary; chevron rotates. */
+.bggroup-card { background: var(--bg-000); border: 1px solid var(--border-100); border-radius: 10px;
+  transition: border-color 0.12s; }
+.bggroup-card:hover { border-color: var(--border-200); }
+.bggroup-summary { display: flex; align-items: center; gap: 8px; padding: 9px 11px; cursor: pointer;
+  list-style: none; }
 .bggroup-summary::-webkit-details-marker { display: none; }
 .bggroup-count { margin-left: auto; flex: 0 0 auto; font-size: 11px; color: var(--text-400); }
 .bggroup-count.bg-st-running { color: var(--accent-brand); }
 .bggroup-chev { flex: 0 0 auto; color: var(--text-400); transition: transform 0.15s; }
 .bggroup-card[open] > .bggroup-summary .bggroup-chev { transform: rotate(180deg); }
 .act-tool-card[open] > .bgtask-summary .bggroup-chev { transform: rotate(180deg); }
-.bggroup-followup { padding: 0 10px 6px 28px; font-size: 11px; font-style: italic; color: var(--text-400); }
-.bggroup-members { padding: 0 0 4px 14px; display: flex; flex-direction: column; gap: 1px;
-  border-left: 1px solid var(--border-100); margin-left: 14px; }
+.bggroup-followup { padding: 0 11px 8px 30px; font-size: 11px; font-style: italic; color: var(--text-400); }
+/* Members nested inside the group card: lighter (no own border), indented rule. */
+.bggroup-members { padding: 0 11px 9px; display: flex; flex-direction: column; gap: 5px; }
+.bggroup-members .bgtask-card { background: var(--bg-100); border-color: transparent; }
+.bggroup-members .bgtask-card:hover { border-color: var(--border-100); }
 
 .bgtask-transcript { margin: 8px 0 4px 16px; padding: 8px; max-height: 280px; overflow-y: auto;
   background: var(--bg-100); border: 1px solid var(--border-100); border-radius: 6px;

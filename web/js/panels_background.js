@@ -347,7 +347,12 @@ function _bgEntries() {
 function _collectActivityEntries() {
   const sync = _syncToolEntries();
   const synced = sync.length ? sync : _toolEntriesFromMetadata();
-  return synced.concat(_bgEntries()).sort(_bgSortNewestFirst);
+  // Drop run_background_task tool-CALL entries: they're just the trigger for
+  // background tasks, which already appear (grouped) via _bgEntries. Showing the
+  // spawning call too double-lists every fan-out (the call rows AND the resulting
+  // task group).
+  const syncedReal = synced.filter(e => e.type !== 'run_background_task');
+  return syncedReal.concat(_bgEntries()).sort(_bgSortNewestFirst);
 }
 
 // One capped, expandable card for a synchronous tool-call entry. Reuses
