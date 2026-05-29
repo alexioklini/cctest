@@ -29,6 +29,10 @@ from server_lib.db import ChatDB
 # the case where a high round budget is wanted, since it isn't blocking anyone.)
 _MAX_ROUNDS = 40
 _TIMEOUT_S = 3600.0
+# Group-level straggler deadline: once a fan-out group is partially done, don't
+# wait the full per-task _TIMEOUT_S (1h) on a stuck member — after this long a
+# still-running member is force-failed so the group delivers as a partial.
+_GROUP_TIMEOUT_S = 600.0  # 10 min
 
 
 class _Cancelled(Exception):
@@ -96,6 +100,36 @@ class BackgroundTaskRunner:
         if turn_id:
             sidecar_proxy.cancel_turn(turn_id)
         return True
+
+    def sweep_group_timeouts(self) -> int:
+        """Force-deliver fan-out groups stalled on a straggler past
+        _GROUP_TIMEOUT_S. Marks the running members error (DB), trips their live
+        cancel flags so the sidecar turns stop, then claims + delivers each group
+        as a partial. Driven by the bgtask-group-timeout daemon loop. Returns the
+        number of groups delivered."""
+        from server_lib.db import ChatDB
+        delivered = 0
+        affected = ChatDB.sweep_stalled_groups(_GROUP_TIMEOUT_S) or []
+        for session_id, gid in affected:
+            # Stop any still-live straggler threads for this group (best effort —
+            # the DB row is already error, so a late finish_background_task is a
+            # harmless overwrite).
+            try:
+                rows = ChatDB.list_background_tasks(session_id) or []
+                for r in rows:
+                    if r.get("status") == "running":  # shouldn't remain, but be safe
+                        self.cancel(r.get("id"))
+            except Exception:
+                pass
+            try:
+                members = ChatDB.claim_background_group(gid)
+                if members:
+                    from handlers.chat import deliver_background_group
+                    deliver_background_group(session_id, gid, members)
+                    delivered += 1
+            except Exception as e:
+                print(f"[bgtask-sweep] deliver failed grp {gid}: {e}", flush=True)
+        return delivered
 
     # ---- worker -----------------------------------------------------------
 

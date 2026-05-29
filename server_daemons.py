@@ -2179,6 +2179,26 @@ def _searxng_engine_health_loop(srv):
         time.sleep(_SEARXNG_HEALTH_INTERVAL_SEC)
 
 
+_BGTASK_GROUP_SWEEP_INTERVAL_SEC = 120  # check stalled fan-out groups every 2 min
+
+
+def _bgtask_group_timeout_loop(srv):
+    """Force-deliver fan-out groups stalled on a straggler past the group
+    deadline (engine.background_tasks._GROUP_TIMEOUT_S). The per-task 1h timeout
+    is the absolute backstop; this loop delivers a partial much sooner once a
+    group's other members are done. Cheap query, runs every 2 min."""
+    import engine.background_tasks as _bgt
+    time.sleep(45)
+    while True:
+        try:
+            n = _bgt.background_task_runner.sweep_group_timeouts()
+            if n:
+                print(f"[bgtask-group-timeout] delivered {n} stalled group(s) as partial", flush=True)
+        except Exception as e:
+            print(f"[bgtask-group-timeout] cycle error: {type(e).__name__}: {e}", flush=True)
+        time.sleep(_BGTASK_GROUP_SWEEP_INTERVAL_SEC)
+
+
 def _user_profile_loop(srv):
     time.sleep(60)
     while True:

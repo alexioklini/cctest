@@ -420,12 +420,22 @@ oben rechts) siehst du:
   mit dem die Aufgabe gestartet wurde) und **Ergebnis** (der live mitlaufende
   bzw. fertige Arbeitsverlauf).
 
-Wenn eine Aufgabe fertig ist, **liefert der Assistent das Ergebnis von selbst** in
-den Chat: ist der Chat gerade ruhig, erscheint automatisch eine neue Antwort, die
-das Ergebnis zusammenfasst/damit weiterarbeitet — du musst nichts tun. (Schreibst
-du gerade selbst eine Nachricht, während die Aufgabe fertig wird, fließt das
-Ergebnis in genau diese Antwort ein.) Das Ergebnis wird genau einmal verwendet.
-**Stopp** behält das bis dahin erzeugte Teilergebnis.
+**Parallele Recherchen (Fan-out):** deckt eine Anfrage mehrere unabhängige
+Themen ab (z.B. „vergleiche Anbieter A, B und C"), startet das Modell sie als
+**Gruppe** parallel. Im Panel erscheinen sie dann unter einer aufklappbaren Karte
+„Parallele Recherche (N Aufgaben) · X von N fertig" mit der Zusammenführungs-
+Aufgabe darunter; jede Teilaufgabe behält ihre eigenen Knöpfe. Sobald **alle**
+Teile fertig sind, liefert der Assistent das **kombinierte** Ergebnis in einer
+einzigen Antwort. Hängt eine Teilaufgabe zu lange, wird die Gruppe nach kurzer
+Zeit mit den vorhandenen Teilergebnissen ausgeliefert (die hängende als
+fehlgeschlagen markiert) — sie wartet nicht ewig.
+
+Wenn eine Aufgabe (bzw. eine ganze Gruppe) fertig ist, **liefert der Assistent das
+Ergebnis von selbst** in den Chat: ist der Chat gerade ruhig, erscheint automatisch
+eine neue Antwort, die das Ergebnis zusammenfasst/damit weiterarbeitet — du musst
+nichts tun. (Schreibst du gerade selbst eine Nachricht, während die Aufgabe fertig
+wird, fließt das Ergebnis in genau diese Antwort ein.) Das Ergebnis wird genau
+einmal verwendet. **Stopp** behält das bis dahin erzeugte Teilergebnis.
 
 Die Aufgaben einer Sitzung bleiben erhalten: nach einem Browser-Reload zeigt die
 Uhren-Pille sie wieder an, und im Panel stehen die fertigen unter „Fertig", bis

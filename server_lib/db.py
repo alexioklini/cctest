@@ -989,7 +989,7 @@ class ChatDB:
             rows = conn.execute(
                 "SELECT id, session_id, agent_id, model, title, status, turn_id, error, "
                 "usage_in, usage_out, tool_calls, created_at, finished_at, consumed_at, "
-                "length(output) AS output_len "
+                "group_id, follow_up, length(output) AS output_len "
                 "FROM background_tasks WHERE session_id=? ORDER BY created_at DESC",
                 (session_id,)).fetchall()
             return [dict(r) for r in rows]
@@ -1090,6 +1090,44 @@ class ChatDB:
                 "GROUP BY group_id ORDER BY created_at DESC",
                 (session_id,)).fetchall()
             return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=list)
+    def sweep_stalled_groups(deadline_secs):
+        """Group-level partial-delivery guard. Per-task _TIMEOUT_S (1h) bounds the
+        absolute worst case, but a group shouldn't wait an hour on one straggler
+        once its other members are done. This finds groups that are PARTIALLY done
+        (≥1 member terminal) AND still have a running member whose run started more
+        than `deadline_secs` ago, and force-marks those stragglers status='error'
+        (error='Gruppen-Timeout — Teilergebnis geliefert') so the group becomes
+        fully terminal and the normal claim path can deliver it as a partial.
+
+        Returns the affected [(session_id, group_id)] so the caller can claim +
+        deliver each. Idempotent: a group already fully terminal isn't touched
+        (no running members to mark)."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            # Groups with ≥1 terminal member AND ≥1 running member older than the
+            # deadline, not yet group-claimed.
+            stalled = conn.execute(
+                "SELECT DISTINCT g.session_id, g.group_id FROM background_tasks g "
+                "WHERE g.group_id IS NOT NULL AND g.group_done_at IS NULL "
+                "AND EXISTS (SELECT 1 FROM background_tasks t WHERE t.group_id=g.group_id "
+                "            AND t.status IN ('done','cancelled','error')) "
+                "AND EXISTS (SELECT 1 FROM background_tasks r WHERE r.group_id=g.group_id "
+                "            AND r.status='running' "
+                "            AND r.created_at < strftime('%s','now') - ?)",
+                (int(deadline_secs),)).fetchall()
+            affected = [(r["session_id"], r["group_id"]) for r in stalled]
+            for _sid, gid in affected:
+                conn.execute(
+                    "UPDATE background_tasks SET status='error', "
+                    "error='Gruppen-Timeout — Teilergebnis geliefert', "
+                    "finished_at=strftime('%s','now') "
+                    "WHERE group_id=? AND status='running'", (gid,))
+            if affected:
+                conn.commit()
+            return affected
 
     @staticmethod
     @_db_safe(default=None)

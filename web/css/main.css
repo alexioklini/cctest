@@ -7807,6 +7807,14 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   padding: 3px 9px; font-size: 11px; cursor: pointer; color: var(--text-200); transition: all 0.15s; }
 .bgtask-action:hover { background: var(--bg-200); border-color: var(--border-200); }
 .bgtask-action-del:hover { color: var(--error, #d33); border-color: var(--error, #d33); }
+/* Fan-out group rollup */
+.bggroup-card { padding: 0; }
+.bggroup-summary { display: flex; align-items: center; gap: 7px; padding: 9px 10px; cursor: pointer; list-style: none; }
+.bggroup-summary::-webkit-details-marker { display: none; }
+.bggroup-summary .bgtask-status { margin-left: auto; font-size: 11px; }
+.bggroup-followup { padding: 0 10px 6px 25px; font-style: italic; }
+.bggroup-members { padding: 0 10px 10px 10px; display: flex; flex-direction: column; gap: 7px; }
+.bggroup-members .bgtask-card { background: var(--bg-100); }
 .bgtask-link { border-color: transparent; color: var(--accent-brand); padding-left: 2px; }
 .bgtask-link:hover { background: none; text-decoration: underline; }
 .bgtask-transcript { margin-top: 8px; padding: 8px; max-height: 280px; overflow-y: auto;

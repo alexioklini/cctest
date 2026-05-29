@@ -294,17 +294,51 @@ function _toolEntriesFromMetadata() {
 function _bgEntries() {
   const sid = state.activeChat?.sessionId;
   if (!sid) return [];
-  return _bgTasksFor(sid).map(t => ({
-    kind: 'bgtask',
-    id: t.id,
-    type: 'Hintergrundaufgabe',
-    title: t.title,
-    status: t.status,
-    ts: t.created_at || 0,
-    seq: 0,
-    isBackground: true,
-    raw: t,
-  }));
+  const tasks = _bgTasksFor(sid);
+  // Group fan-out tasks (shared group_id, incl. auto-<turn>) into one entry; a
+  // lone task in a group still renders as a single card (group-of-one), so only
+  // collapse when ≥2 members share a group_id. Tasks with no group_id stay
+  // individual (legacy + true standalone).
+  const groups = {};
+  for (const t of tasks) {
+    const g = t.group_id;
+    if (g) (groups[g] = groups[g] || []).push(t);
+  }
+  const entries = [];
+  const grouped = new Set();
+  for (const t of tasks) {
+    const g = t.group_id;
+    if (g && groups[g].length >= 2) {
+      if (grouped.has(g)) continue;        // group already emitted
+      grouped.add(g);
+      const members = groups[g];
+      const running = members.some(m => m.status === 'running');
+      entries.push({
+        kind: 'bggroup',
+        id: 'grp-' + g,
+        type: 'Hintergrund-Gruppe',
+        title: '',
+        status: running ? 'running' : 'done',
+        ts: Math.max(...members.map(m => m.created_at || 0)),
+        seq: 0,
+        isBackground: true,
+        members,
+      });
+    } else {
+      entries.push({
+        kind: 'bgtask',
+        id: t.id,
+        type: 'Hintergrundaufgabe',
+        title: t.title,
+        status: t.status,
+        ts: t.created_at || 0,
+        seq: 0,
+        isBackground: true,
+        raw: t,
+      });
+    }
+  }
+  return entries;
 }
 
 // The unified, sorted activity list for the current session.
@@ -339,9 +373,38 @@ function _toolEntryCard(e) {
     </div>`;
 }
 
-// Render one activity entry (background task OR synchronous tool call) using
-// the matching card builder.
+// A fan-out group: one header card (X von N fertig + follow_up) wrapping the
+// member task cards. Reuses _bgCard for each member so per-task transcript /
+// stop / delete stay identical.
+function _bgGroupCard(e) {
+  const members = e.members || [];
+  const total = members.length;
+  const done = members.filter(m => m.status !== 'running').length;
+  const failed = members.filter(m => m.status === 'error' || m.status === 'cancelled').length;
+  const running = total - done;
+  const st = running ? _BG_STATUS.running : _BG_STATUS.done;
+  const followUp = (members.find(m => m.follow_up) || {}).follow_up || '';
+  const failBit = failed ? ` · ${failed} fehlgeschlagen` : '';
+  const memberCards = members.map(_bgCard).join('');
+  const fuLine = followUp
+    ? `<div class="bgtask-row2 bggroup-followup">Zusammenführung: ${escapeHtml(followUp)}</div>` : '';
+  return `
+    <details class="bgtask-card bggroup-card" data-group="${escapeHtml(e.id)}"${running ? ' open' : ''}>
+      <summary class="bggroup-summary">
+        <span class="bgtask-dot ${st.cls}"></span>
+        <span class="bgtask-title">Parallele Recherche (${total} Aufgaben)</span>
+        <span class="act-type-badge act-type-bg">Gruppe</span>
+        <span class="bgtask-status ${st.cls}">${done} von ${total} fertig${failBit}</span>
+      </summary>
+      ${fuLine}
+      <div class="bggroup-members">${memberCards}</div>
+    </details>`;
+}
+
+// Render one activity entry (group, background task, OR synchronous tool call)
+// using the matching card builder.
 function _activityCard(e) {
+  if (e.kind === 'bggroup') return _bgGroupCard(e);
   return e.kind === 'bgtask' ? _bgCard(e.raw) : _toolEntryCard(e);
 }
 

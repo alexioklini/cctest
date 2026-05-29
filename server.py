@@ -4036,6 +4036,7 @@ def main():
     # SearXNG per-engine health probe — hourly, so the Server-settings panel
     # shows a recent up/down + latency per search engine without manual testing.
     threading.Thread(target=server_daemons._searxng_engine_health_loop, args=(_srv,), daemon=True, name="searxng-engine-health").start()
+    threading.Thread(target=server_daemons._bgtask_group_timeout_loop, args=(_srv,), daemon=True, name="bgtask-group-timeout").start()
 
     # Warmup keeper — fires minimal prefill requests at models flagged with
     # warmup=true so their first real turn lands on a warm KV cache. Runs

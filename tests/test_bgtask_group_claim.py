@@ -152,6 +152,40 @@ class TestGroupClaim(unittest.TestCase):
         ChatDB.mark_group_consumed("gc")
         self.assertEqual(ChatDB.pop_undelivered_groups(self.SID), [])
 
+    def test_sweep_stalled_group(self):
+        # A group with one done + one long-running member past the deadline gets
+        # the straggler force-failed so the group becomes claimable.
+        self._members("gs", 2)
+        ChatDB.finish_background_task("gs-task-0", "done", output="A")
+        # gs-task-1 stays running; backdate its created_at to 20 min ago
+        with _db_conn() as c:
+            c.execute("UPDATE background_tasks SET created_at=strftime('%s','now')-1200 "
+                      "WHERE id='gs-task-1'")
+            c.commit()
+        # deadline 600s → the straggler is past it
+        affected = ChatDB.sweep_stalled_groups(600)
+        self.assertIn((self.SID, "gs"), affected)
+        # straggler now error, group fully terminal → claimable
+        members = ChatDB.claim_background_group("gs")
+        self.assertEqual(len(members), 2)
+        statuses = sorted(m["status"] for m in members)
+        self.assertEqual(statuses, ["done", "error"])
+        timed = next(m for m in members if m["status"] == "error")
+        self.assertIn("Timeout", timed["error"])
+
+    def test_sweep_ignores_fresh_and_complete_groups(self):
+        # A group still within the deadline is NOT swept.
+        self._members("gfresh", 2)
+        ChatDB.finish_background_task("gfresh-task-0", "done", output="A")
+        # gfresh-task-1 running but created just now (within deadline)
+        self.assertEqual(ChatDB.sweep_stalled_groups(600), [])
+        # A fully-done group is also not swept (no running member).
+        self._members("gdone", 2)
+        for i in range(2):
+            ChatDB.finish_background_task(f"gdone-task-{i}", "done", output=str(i))
+        affected = ChatDB.sweep_stalled_groups(600)
+        self.assertNotIn((self.SID, "gdone"), affected)
+
     def test_list_groups_rollup(self):
         self._members("g6", 3)
         ChatDB.finish_background_task("g6-task-0", "done", output="A")

@@ -3098,6 +3098,24 @@ class ChatHandlerMixin:
                 session.api_key = provider["api_key"]
                 session.base_url = provider["base_url"]
 
+        # Yield to an in-flight BACKGROUND-DELIVERY turn before claiming the
+        # stream. A server-fired group/standalone delivery turn (which the user
+        # didn't initiate) may be mid-flight; if this user POST set live_stream
+        # now it would clobber the delivery's stream and orphan its active_turns
+        # row. Background deliveries are short and synchronous, so a brief bounded
+        # wait lets it finish, then we proceed cleanly. We wait only while the
+        # current stream is a background delivery (metadata flag on the in-flight
+        # turn); a normal user turn already streaming is the pre-existing
+        # double-POST case and is left as-is (wait expires → proceed). Best-effort:
+        # the wait is capped so a stuck delivery never blocks the user for long.
+        _wait_deadline = time.time() + 5.0
+        while time.time() < _wait_deadline:
+            with session.lock:
+                busy = getattr(session, "_streaming", False) or getattr(session, "live_stream", None)
+            if not busy or session.id not in _bg_delivery_inflight:
+                break  # idle, or the busy turn isn't a background delivery
+            time.sleep(0.05)
+
         # Reset cancel token + open a fresh live-event buffer for this turn.
         # The worker thread (below) emits every SSE event into `live`; the HTTP
         # response loop at the end of this method just attaches as one subscriber.

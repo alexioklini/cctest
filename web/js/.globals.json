@@ -20,6 +20,7 @@
     "_bgCard": "writable",
     "_bgDuration": "writable",
     "_bgEntries": "writable",
+    "_bgGroupCard": "writable",
     "_bgPollHandle": "writable",
     "_bgSortNewestFirst": "writable",
     "_bgTasksFor": "writable",
