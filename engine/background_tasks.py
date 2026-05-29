@@ -256,6 +256,13 @@ class BackgroundTaskRunner:
             usage_in = int(usage.get("input_tokens") or 0)
             usage_out = int(usage.get("output_tokens") or 0)
             tool_calls = int(res.get("tool_calls_total") or 0)
+            # Cost logging — keyed by `model`, which by here is the ACTUAL
+            # executing model (fan-out offload swap + any GDPR force-local swap
+            # both already applied). Still inside the request_context above, so
+            # agent/user resolve like every other _log_call_cost caller. Skips
+            # itself when usage is 0 (cancel/error before any tokens).
+            _brain._log_call_cost(model, usage_in, usage_out,
+                                  session_id=snap["session_id"])
             if cancel_ev.is_set():
                 status = "cancelled"
             elif res.get("error"):

@@ -183,6 +183,11 @@ run WITHOUT blocking the chat. Mechanics (`engine/background_tasks.py`,
   (`_match_thinking_level`): on/off models (inline_tags/mistral_blocks) collapse
   low/medium/high → `high`; non-reasoning models drop to model default; full
   reasoning models keep the level verbatim.
+- **Cost logging**: after the run, the worker calls `_log_call_cost(model, …)`
+  keyed by the **actually executing** model — the fan-out offload swap and any
+  GDPR force-local swap are already applied — so an offloaded leaf is billed at
+  the cheaper model's rate, and a `cost_log` row lands in `costs.db` like a chat
+  turn (was missing before v9.51.0 — bg-task LLM calls were unbilled).
 - **Result return — auto-delivery**: when a task finishes, the runner's
   `finally` calls `handlers.chat.deliver_background_results(session_id)`.
   - If the chat is **idle** (no turn streaming), it auto-fires a delivery turn:
