@@ -970,15 +970,24 @@ def build_chat_event_callback(session, live, sid):
             name = data.get("name", "")
             args = data.get("args", {})
             tr = data.get("tool_round")
-            # Update existing entry if re-emitted with full args, else append
+            tuid = data.get("tool_use_id", "")
+            # Update existing entry if re-emitted with full args, else append.
+            # Carry tool_use_id so the matching tool_result can pair by ID — name
+            # matching breaks when one round has two calls of the same tool (e.g.
+            # two read_document) whose results arrive out of order under parallel
+            # tool calls (model emits N tool_use blocks; parallel_tool_calls=True).
             if args and _partial_tools and _partial_tools[-1].get("name") == name and not _partial_tools[-1].get("args"):
                 _partial_tools[-1]["args"] = args
                 if tr is not None:
                     _partial_tools[-1]["tool_round"] = tr
+                if tuid and not _partial_tools[-1].get("tool_use_id"):
+                    _partial_tools[-1]["tool_use_id"] = tuid
             else:
                 entry = {"name": name, "args": args}
                 if tr is not None:
                     entry["tool_round"] = tr
+                if tuid:
+                    entry["tool_use_id"] = tuid
                 _partial_tools.append(entry)
         elif event_type == "tool_result":
             # Attach result to the last matching tool entry and extract
@@ -987,6 +996,7 @@ def build_chat_event_callback(session, live, sid):
             # separately in t["references"] so the client never needs to
             # re-parse the raw result JSON to render the references panel.
             tool_name = data.get("name", "")
+            result_tuid = data.get("tool_use_id", "")
             result_str = str(data.get("result", ""))
             if tool_name in ("read_document", "read_file",
                              "read_path", "read_path_original"):
@@ -1007,12 +1017,26 @@ def build_chat_event_callback(session, live, sid):
                 fm = _re.search(r'"fetch_method"\s*:\s*"(?:crawl4ai|markitdown|raw)"', result_str)
                 if fm:
                     capped += " …" + fm.group(0)
-            for t in reversed(_partial_tools):
-                if t["name"] == tool_name and "result" not in t:
-                    t["result"] = capped
-                    if refs:
-                        t["references"] = refs
-                    break
+            # Pair the result to its tool_call by tool_use_id (robust to two
+            # same-named calls in one round whose results arrive out of order).
+            # Fall back to last-unfilled-by-name only when no id is available
+            # (legacy / id-less events) — preserves the prior behavior there.
+            matched = False
+            if result_tuid:
+                for t in _partial_tools:
+                    if t.get("tool_use_id") == result_tuid and "result" not in t:
+                        t["result"] = capped
+                        if refs:
+                            t["references"] = refs
+                        matched = True
+                        break
+            if not matched:
+                for t in reversed(_partial_tools):
+                    if t["name"] == tool_name and "result" not in t:
+                        t["result"] = capped
+                        if refs:
+                            t["references"] = refs
+                        break
             if refs:
                 live.emit("references", {
                     "tool_name": tool_name,
