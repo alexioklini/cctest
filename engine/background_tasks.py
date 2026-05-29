@@ -45,11 +45,17 @@ class BackgroundTaskRunner:
 
     # ---- public API -------------------------------------------------------
 
-    def spawn(self, *, session, title: str, prompt: str) -> str:
+    def spawn(self, *, session, title: str, prompt: str,
+              group_id=None, follow_up=None, parent_task_id=None) -> str:
         """Insert a running row + launch the worker thread. Returns task_id
         immediately. `session` is the live Session the tool was called from —
         we snapshot the fields we need under its lock, never hand the object to
-        the thread."""
+        the thread.
+
+        Fan-out: group_id links calls the model emitted together; follow_up is
+        the recombine instruction carried out once the whole group is done.
+        parent_task_id is set when spawned from inside a background run (the
+        tool refuses this — nesting guard — so it's belt-and-suspenders)."""
         task_id = uuid.uuid4().hex
         with session.lock:
             snapshot = {
@@ -59,12 +65,14 @@ class BackgroundTaskRunner:
                 "user_id": getattr(session, "user_id", "") or "",
                 "project": getattr(session, "project", "") or "",
                 "thinking_level": getattr(session, "thinking_level", "") or "",
+                "group_id": group_id or None,
             }
         title = (title or "Hintergrundaufgabe").strip()[:200]
         prompt = (prompt or "").strip()
         ChatDB.create_background_task(
             task_id, snapshot["session_id"], snapshot["agent_id"],
-            snapshot["model"], title, prompt)
+            snapshot["model"], title, prompt,
+            group_id=group_id, follow_up=follow_up, parent_task_id=parent_task_id)
         cancel_ev = threading.Event()
         with self._lock:
             self._live[task_id] = {"turn_id": "", "cancel": cancel_ev}
@@ -119,6 +127,7 @@ class BackgroundTaskRunner:
             with request_context(
                 current_agent=_brain.AgentConfig(snap["agent_id"]),
                 current_user_id=snap["user_id"],
+                current_bg_task=True,  # nesting guard: run_background_task refuses here
             ):
                 system_prompt, _tools, _ = _brain.build_first_turn_prefix(
                     model, snap["agent_id"],
@@ -183,13 +192,22 @@ class BackgroundTaskRunner:
                 usage_in=usage_in, usage_out=usage_out, tool_calls=tool_calls)
             with self._lock:
                 self._live.pop(task_id, None)
-            # Auto-deliver the result into the chat. Idle-only + single-flight
-            # are enforced inside deliver_background_results; if a turn is
-            # running, it no-ops and the in-flight turn's next-turn injection
-            # picks the result up instead. Runs on THIS (daemon) thread.
+            # Group-aware delivery. If this task belongs to a group, attempt the
+            # ATOMIC claim — only the LAST finisher (rowcount==1) wins and fires
+            # the join delivery; the others no-op. A standalone task (no group_id)
+            # falls back to the legacy per-task delivery. Idle-only + single-flight
+            # are enforced inside the delivery fns; runs on THIS (daemon) thread.
             try:
-                from handlers.chat import deliver_background_results
-                deliver_background_results(snap["session_id"])
+                gid = snap.get("group_id")
+                if gid:
+                    members = ChatDB.claim_background_group(gid)
+                    if members:  # we are the last finisher — deliver the group
+                        from handlers.chat import deliver_background_group
+                        deliver_background_group(snap["session_id"], gid, members)
+                    # members is None → not last, or already claimed → no-op
+                else:
+                    from handlers.chat import deliver_background_results
+                    deliver_background_results(snap["session_id"])
             except Exception as e:  # never let delivery kill the runner thread
                 print(f"[bgtask] auto-deliver failed: {e}", flush=True)
 

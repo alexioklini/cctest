@@ -96,6 +96,10 @@ class RequestContext:
     # normal chat) and selects the `helpdesk` tool-resolver purpose. Never set on
     # a normal chat/scheduler/warmup turn.
     helpdesk_mode: bool = False
+    # True while a detached background task is executing (engine/background_tasks
+    # ._run). run_background_task reads it to refuse nested spawns (no fan-out
+    # regress). Never set on a normal chat/scheduler/warmup turn.
+    current_bg_task: bool = False
     # --- exec ---
     execution_overrides: object = None
     _intent_action_recovery_count: object = None

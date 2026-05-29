@@ -813,24 +813,44 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "run_background_task",
+        # Description validated in eval/fanout_probe.py against Mistral medium/small
+        # + gemma-4-26b: the worked example + "do NOT make a separate summary task"
+        # line drove follow_up/group_id reliability to ~15/15 on cloud models.
         "description": (
             "Spin off a long-running, high-output piece of work (deep research, "
-            "multi-source synthesis, a big sweep) as a DETACHED background task "
-            "so it doesn't block the conversation. Runs as YOU — same agent, same "
-            "model, same tools — in its own context. Returns IMMEDIATELY with a "
-            "task id; you do NOT get the result in this turn. The user sees the "
-            "task in the 'Hintergrundaufgaben' panel (live progress, can stop it). "
-            "When it finishes, its full result is delivered to you automatically "
-            "on the user's NEXT message — so just acknowledge that you've started "
-            "it and stop. Use this ONLY when the work is genuinely long and the "
-            "bulky output would otherwise clog the chat; for quick lookups, just "
-            "do the work inline."
+            "multi-source synthesis, a big sweep) as a DETACHED background task so "
+            "it doesn't block the conversation. Runs as YOU — same agent, model, "
+            "tools — in its own context. Returns IMMEDIATELY with a task id; you do "
+            "NOT get the result in this turn — it is delivered to you automatically "
+            "once finished. The user sees live progress in the 'Hintergrundaufgaben' "
+            "panel and can stop it.\n\n"
+            "FAN-OUT (parallel): when a request covers SEVERAL INDEPENDENT SUBJECTS "
+            "that can be researched at the same time (e.g. three vendors, five "
+            "topics, two separate documents), make ONE call PER SUBJECT and give "
+            "every one of those calls the SAME group_id (a short string you pick, "
+            "e.g. 'g1'). Fan out across independent SUBJECTS — not aspects of one "
+            "subject.\n\n"
+            "THE COMBINE STEP: put what to do once ALL parts finish (compare, write "
+            "the report, recommend) into follow_up. Do NOT create a separate task "
+            "for the summary/comparison — follow_up IS the combine step; its result "
+            "comes back to you in one delivery.\n\n"
+            "EXAMPLE — \"compare A, B, C and recommend one\" → exactly THREE calls, "
+            "each {group_id:'g1', follow_up:'Compare A/B/C and recommend one'}, with "
+            "prompts 'Research A …' / 'Research B …' / 'Research C …'. (NOT a fourth "
+            "summary call.)\n\n"
+            "Each prompt is run by a FRESH agent that does NOT see this conversation "
+            "— make every prompt fully self-contained (name the exact subject). Use "
+            "background tasks ONLY for genuinely long work; for a quick lookup, do it "
+            "inline. After spawning, acknowledge to the user that you've started and "
+            "STOP — do not try to use the results now."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "title": {"type": "string", "description": "Short label shown in the panel (e.g. 'Marktanalyse E-Bikes')"},
                 "prompt": {"type": "string", "description": "The full, self-contained instruction for the background run — it does NOT see this conversation, so include all needed context."},
+                "group_id": {"type": "string", "description": "REQUIRED whenever you make more than one call for the same request: pick a short string and use the IDENTICAL value on every call of the fan-out. Omit for a standalone single task."},
+                "follow_up": {"type": "string", "description": "The combine/synthesis instruction carried out after ALL tasks in the group finish (e.g. 'compare the results and recommend one'). Set this instead of making a separate summary task."},
             },
             "required": ["title", "prompt"],
         },

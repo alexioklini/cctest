@@ -102,6 +102,11 @@ def _apply_context(ctx: dict) -> None:
     # separately as `helpdesk_session_id`.
     tl.current_session_id = ctx.get("session_id") or ctx.get("helpdesk_session_id") or ""
     tl.session_id = tl.current_session_id
+    # The sidecar turn id — used by run_background_task to group all fan-out
+    # calls emitted in the SAME turn into one implicit group (the model often
+    # omits an explicit group_id, esp. local models; the turn is the reliable
+    # co-occurrence signal).
+    tl.current_turn_id = ctx.get("turn_id") or ""
     tl.current_user_id = ctx.get("user_id") or ""
     tl.current_team_ids = list(ctx.get("team_ids") or [])
     tl.project = ctx.get("project") or ""

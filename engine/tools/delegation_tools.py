@@ -128,7 +128,14 @@ def tool_run_background_task(args: dict) -> str:
     if not prompt:
         return _err("run_background_task: prompt is required")
 
-    session_id = get_request_context().current_session_id or ""
+    ctx = get_request_context()
+    # Nesting guard: a background run must NOT spawn further background tasks
+    # (unbounded fan-out / infinite regress). Background runs set current_bg_task.
+    if getattr(ctx, "current_bg_task", False):
+        return _err("run_background_task: cannot start a background task from "
+                    "inside a background task — do the work directly here.")
+
+    session_id = ctx.current_session_id or ""
     if not session_id:
         return _err("run_background_task: no active session")
     # The live SessionManager singleton lives in the entry-point module, which
@@ -143,13 +150,30 @@ def tool_run_background_task(args: dict) -> str:
     if session is None:
         return _err("run_background_task: session not loaded")
 
-    task_id = background_task_runner.spawn(session=session, title=title, prompt=prompt)
+    # Same-turn grouping: every fan-out call the model emits in ONE turn belongs
+    # to one group. Prefer the model's explicit group_id; otherwise synthesize a
+    # stable one from the turn id so sibling calls collapse together WITHOUT
+    # relying on the model (it drops group_id ~half the time, esp. local models —
+    # measured in eval/fanout_probe.py). A lone call in a turn becomes a
+    # group-of-one, which the join handles transparently.
+    group_id = (args.get("group_id") or "").strip() or None
+    follow_up = (args.get("follow_up") or "").strip() or None
+    if not group_id:
+        turn_id = getattr(ctx, "current_turn_id", "") or ""
+        group_id = f"auto-{turn_id}" if turn_id else f"auto-{session_id}-solo-{__import__('uuid').uuid4().hex[:8]}"
+
+    task_id = background_task_runner.spawn(
+        session=session, title=title, prompt=prompt,
+        group_id=group_id, follow_up=follow_up)
     return _ok({
         "task_id": task_id,
         "status": "running",
+        "group_id": group_id,
         "note": ("Background task started. Tell the user it's running in the "
-                 "Hintergrundaufgaben panel; its result will arrive on their "
-                 "next message. Do NOT wait for it — finish this turn now."),
+                 "Hintergrundaufgaben panel; its result will arrive automatically "
+                 "once finished. Do NOT wait for it — finish this turn now. If you "
+                 "started several tasks for one request, give them all the SAME "
+                 "group_id and put the combine step in follow_up."),
     })
 
 

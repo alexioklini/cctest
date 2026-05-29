@@ -130,15 +130,22 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
 
 ## Background tasks (group `background`)
 
-- `run_background_task(title, prompt)` — spin off a long, output-heavy run as a
-  DETACHED background task (same agent, same model/tools as the chat). Returns
-  immediately with a `task_id`; the spawning turn ends — it does NOT block.
-  When it finishes, the server **auto-delivers** the result into the chat (an
-  auto-fired turn if the chat is idle; otherwise it rides the next user turn),
-  so just acknowledge it's started and stop. Differs from `delegate_task` (which targets ANOTHER
-  agent and can wait for the result). The user sees/controls it in the
-  "Hintergrundaufgaben" panel (live progress, Stopp, Transkript). Use only for
-  genuinely long work; quick lookups stay inline.
+- `run_background_task(title, prompt, group_id?, follow_up?)` — spin off a long,
+  output-heavy run as a DETACHED background task (same agent, same model/tools as
+  the chat). Returns immediately with a `task_id`; the spawning turn ends — it
+  does NOT block. When it finishes, the server **auto-delivers** the result into
+  the chat (an auto-fired turn if the chat is idle; otherwise it rides the next
+  user turn), so just acknowledge it's started and stop. Differs from
+  `delegate_task` (which targets ANOTHER agent and can wait for the result). The
+  user sees/controls it in the "Hintergrundaufgaben" panel (live progress, Stopp,
+  Transkript). Use only for genuinely long work; quick lookups stay inline.
+  **Fan-out (parallel):** for a request with several INDEPENDENT subjects, make
+  one call per subject sharing the SAME `group_id`, and put the recombine step
+  (compare/summarise/recommend) in `follow_up`. The parts run concurrently and
+  the whole group is delivered back in ONE join turn that carries out `follow_up`
+  — do NOT create a separate summary task. Calls made in the same turn are
+  grouped automatically even without an explicit `group_id`. A background task
+  may NOT itself start background tasks (no nesting).
 
 ## Scheduler (admin-side from chat)
 

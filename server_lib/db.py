@@ -1010,18 +1010,24 @@ class ChatDB:
         mark them consumed in the same transaction. The caller injects their
         `output` wire-only into the next turn; consumed_at guarantees each task's
         output reaches the model exactly once."""
+        # group_id IS NULL → standalone tasks only. Grouped (fan-out) tasks are
+        # delivered via the group path (claim_background_group + the
+        # pop_undelivered_groups injection floor), never here — prevents double
+        # delivery.
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT id, title, status, output, error FROM background_tasks "
-                "WHERE session_id=? AND status IN ('done','cancelled') AND consumed_at IS NULL "
+                "WHERE session_id=? AND group_id IS NULL "
+                "AND status IN ('done','cancelled') AND consumed_at IS NULL "
                 "ORDER BY finished_at",
                 (session_id,)).fetchall()
             tasks = [dict(r) for r in rows]
             if tasks:
                 conn.execute(
                     "UPDATE background_tasks SET consumed_at=strftime('%s','now') "
-                    "WHERE session_id=? AND status IN ('done','cancelled') AND consumed_at IS NULL",
+                    "WHERE session_id=? AND group_id IS NULL "
+                    "AND status IN ('done','cancelled') AND consumed_at IS NULL",
                     (session_id,))
                 conn.commit()
             return tasks
@@ -1086,6 +1092,48 @@ class ChatDB:
             return [dict(r) for r in rows]
 
     @staticmethod
+    @_db_safe(default=None)
+    def mark_group_consumed(group_id):
+        """Stamp consumed_at on every member of a delivered group, so the
+        next-turn injection floor (pop_undelivered_groups) won't re-deliver it.
+        Called after a successful proactive group delivery."""
+        if not group_id:
+            return
+        with _db_conn() as conn:
+            conn.execute(
+                "UPDATE background_tasks SET consumed_at=strftime('%s','now') "
+                "WHERE group_id=? AND consumed_at IS NULL", (group_id,))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=list)
+    def pop_undelivered_groups(session_id):
+        """Next-turn injection FLOOR for fan-out groups: groups that are fully
+        terminal (claimed — group_done_at set) but whose proactive delivery never
+        fired (busy-bail), so members are still consumed_at IS NULL. Returns the
+        member rows grouped, marks them consumed in the same transaction.
+        Ensures a group completing while the user is mid-turn is delivered on
+        their NEXT turn rather than silently lost."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, group_id, title, status, output, error, follow_up "
+                "FROM background_tasks "
+                "WHERE session_id=? AND group_id IS NOT NULL "
+                "AND group_done_at IS NOT NULL AND consumed_at IS NULL "
+                "ORDER BY group_id, created_at",
+                (session_id,)).fetchall()
+            members = [dict(r) for r in rows]
+            if members:
+                conn.execute(
+                    "UPDATE background_tasks SET consumed_at=strftime('%s','now') "
+                    "WHERE session_id=? AND group_id IS NOT NULL "
+                    "AND group_done_at IS NOT NULL AND consumed_at IS NULL",
+                    (session_id,))
+                conn.commit()
+            return members
+
+    @staticmethod
     @_db_safe(default=0)
     def count_unconsumed_background_tasks(session_id):
         """Finished (done|cancelled) tasks not yet folded into a turn. A non-
@@ -1096,7 +1144,7 @@ class ChatDB:
         with _db_conn() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM background_tasks WHERE session_id=? AND "
-                "status IN ('done','cancelled') AND consumed_at IS NULL",
+                "group_id IS NULL AND status IN ('done','cancelled') AND consumed_at IS NULL",
                 (session_id,)).fetchone()
             return row[0] if row else 0
 

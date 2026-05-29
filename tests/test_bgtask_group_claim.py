@@ -105,18 +105,52 @@ class TestGroupClaim(unittest.TestCase):
         self.assertIsNone(ChatDB.claim_background_group(""))
 
     def test_count_unconsumed_peek_does_not_consume(self):
-        # The peek used by deliver_background_results before claiming the idle
-        # gate MUST NOT consume — else a 'busy' bail would lose the tasks.
-        self._members("g7", 2, follow_up=None)
-        ChatDB.finish_background_task("g7-task-0", "done", output="A")
-        ChatDB.finish_background_task("g7-task-1", "done", output="B")
+        # The STANDALONE peek/pop (group_id IS NULL) — used by
+        # deliver_background_results. Peek MUST NOT consume; pop does. Grouped
+        # tasks are excluded from this path (they go via the group floor).
+        ChatDB.create_background_task("s0", self.SID, "main", "m", "S0", "p")  # no group
+        ChatDB.create_background_task("s1", self.SID, "main", "m", "S1", "p")
+        ChatDB.finish_background_task("s0", "done", output="A")
+        ChatDB.finish_background_task("s1", "done", output="B")
         self.assertEqual(ChatDB.count_unconsumed_background_tasks(self.SID), 2)
-        # peeking again still sees them (no consume)
-        self.assertEqual(ChatDB.count_unconsumed_background_tasks(self.SID), 2)
-        # pop DOES consume
+        self.assertEqual(ChatDB.count_unconsumed_background_tasks(self.SID), 2)  # no consume
         popped = ChatDB.pop_unconsumed_background_tasks(self.SID)
         self.assertEqual(len(popped), 2)
         self.assertEqual(ChatDB.count_unconsumed_background_tasks(self.SID), 0)
+
+    def test_standalone_pop_excludes_grouped(self):
+        # A grouped task must NOT appear in the standalone pop (prevents double
+        # delivery — groups go via claim/floor).
+        ChatDB.create_background_task("solo", self.SID, "main", "m", "Solo", "p")  # no group
+        self._members("gx", 2)  # grouped
+        ChatDB.finish_background_task("solo", "done", output="S")
+        for i in range(2):
+            ChatDB.finish_background_task(f"gx-task-{i}", "done", output=str(i))
+        popped = ChatDB.pop_unconsumed_background_tasks(self.SID)
+        self.assertEqual([p["id"] for p in popped], ["solo"])
+
+    def test_undelivered_group_floor(self):
+        # A claimed-but-not-proactively-delivered group is picked up by the
+        # next-turn floor (pop_undelivered_groups), then marked consumed.
+        self._members("gf", 2)
+        for i in range(2):
+            ChatDB.finish_background_task(f"gf-task-{i}", "done", output=str(i))
+        # claim (as the last finisher would) but do NOT mark consumed (busy bail)
+        self.assertIsNotNone(ChatDB.claim_background_group("gf"))
+        floor = ChatDB.pop_undelivered_groups(self.SID)
+        self.assertEqual(len(floor), 2)
+        self.assertTrue(all(m["group_id"] == "gf" for m in floor))
+        # consumed now — floor is empty on a second pass
+        self.assertEqual(ChatDB.pop_undelivered_groups(self.SID), [])
+
+    def test_mark_group_consumed_blocks_floor(self):
+        # If proactive delivery fired (mark_group_consumed), the floor skips it.
+        self._members("gc", 2)
+        for i in range(2):
+            ChatDB.finish_background_task(f"gc-task-{i}", "done", output=str(i))
+        self.assertIsNotNone(ChatDB.claim_background_group("gc"))
+        ChatDB.mark_group_consumed("gc")
+        self.assertEqual(ChatDB.pop_undelivered_groups(self.SID), [])
 
     def test_list_groups_rollup(self):
         self._members("g6", 3)

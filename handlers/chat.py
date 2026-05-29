@@ -199,6 +199,20 @@ def _inject_web_preamble_into_wire(messages, preamble):
     return wire
 
 
+def _undelivered_groups_preamble(session_id: str) -> str:
+    """Next-turn injection floor for fan-out groups: any completed group whose
+    proactive push didn't fire (busy chat) is delivered here. Pops + marks
+    consumed in one transaction (ChatDB.pop_undelivered_groups), groups members
+    by group_id, formats each via _build_group_preamble. Wire-only."""
+    members = ChatDB.pop_undelivered_groups(session_id)
+    if not members:
+        return ""
+    by_group = {}
+    for m in members:
+        by_group.setdefault(m.get("group_id"), []).append(m)
+    return "\n\n".join(_build_group_preamble(g) for g in by_group.values() if g)
+
+
 def _build_background_task_preamble(session_id: str) -> str:
     """Fold any finished-but-unconsumed background tasks for this session into a
     wire-only preamble. Returns "" when there are none. Marks them consumed in
@@ -206,29 +220,36 @@ def _build_background_task_preamble(session_id: str) -> str:
     output is delivered to the model on exactly one turn and never persists into
     chat history — the whole 'does not pollute the context window' guarantee."""
     # pop_unconsumed is @_db_safe (returns [] on any SQLite/OS error), so no
-    # extra guard is needed — a non-empty return means real finished tasks.
+    # extra guard is needed — a non-empty return means real finished STANDALONE
+    # tasks (grouped tasks are excluded; they come via the group floor below).
     tasks = ChatDB.pop_unconsumed_background_tasks(session_id)
-    if not tasks:
-        return ""
-    blocks = []
-    for t in tasks:
-        title = t.get("title") or "Hintergrundaufgabe"
-        if t.get("status") == "cancelled":
-            head = f"### Hintergrundaufgabe „{title}“ (abgebrochen — Teilergebnis)"
-        else:
-            head = f"### Ergebnis der Hintergrundaufgabe „{title}“"
-        body = (t.get("output") or "").strip()
-        if not body and t.get("error"):
-            body = f"(Kein Ergebnis — Fehler: {t.get('error')})"
-        blocks.append(f"{head}\n\n{body}")
-    intro = (
-        "[Eine oder mehrere von dir gestartete Hintergrundaufgaben sind fertig. "
-        "Ihr vollständiges Ergebnis steht dir HIER für diese Antwort zur "
-        "Verfügung — nutze es, um die Nachricht des Nutzers zu beantworten. "
-        "Dieser Block erscheint nur dieses eine Mal und ist danach nicht mehr im "
-        "Verlauf.]"
-    )
-    return intro + "\n\n" + "\n\n".join(blocks)
+    parts = []
+    if tasks:
+        blocks = []
+        for t in tasks:
+            title = t.get("title") or "Hintergrundaufgabe"
+            if t.get("status") == "cancelled":
+                head = f"### Hintergrundaufgabe „{title}“ (abgebrochen — Teilergebnis)"
+            else:
+                head = f"### Ergebnis der Hintergrundaufgabe „{title}“"
+            body = (t.get("output") or "").strip()
+            if not body and t.get("error"):
+                body = f"(Kein Ergebnis — Fehler: {t.get('error')})"
+            blocks.append(f"{head}\n\n{body}")
+        intro = (
+            "[Eine oder mehrere von dir gestartete Hintergrundaufgaben sind fertig. "
+            "Ihr vollständiges Ergebnis steht dir HIER für diese Antwort zur "
+            "Verfügung — nutze es, um die Nachricht des Nutzers zu beantworten. "
+            "Dieser Block erscheint nur dieses eine Mal und ist danach nicht mehr im "
+            "Verlauf.]"
+        )
+        parts.append(intro + "\n\n" + "\n\n".join(blocks))
+    # Fan-out group FLOOR: any completed group whose proactive delivery didn't
+    # fire (user was mid-turn) is delivered here on the next turn.
+    grp = _undelivered_groups_preamble(session_id)
+    if grp:
+        parts.append(grp)
+    return "\n\n".join(parts)
 
 
 # Guards concurrent auto-fire delivery: at most one delivery turn per session in
@@ -331,6 +352,114 @@ def deliver_background_results(session_id: str) -> bool:
         return True
     except Exception as e:  # never let a delivery failure kill the runner thread
         print(f"[bg-delivery] failed for {session_id[:8]}: {e}", flush=True)
+        return False
+    finally:
+        with _bg_delivery_lock:
+            _bg_delivery_inflight.discard(session_id)
+
+
+def _build_group_preamble(members: list) -> str:
+    """Wire-only preamble for a finished fan-out GROUP. `members` are the rows
+    returned by ChatDB.claim_background_group (already single-flight-claimed, so
+    no consume/pop here). Includes each member's output-or-error (deliver-with-
+    failures) plus the group's follow_up (the recombine instruction)."""
+    if not members:
+        return ""
+    follow_up = ""
+    blocks = []
+    for m in members:
+        title = m.get("title") or "Hintergrundaufgabe"
+        st = m.get("status")
+        if st == "cancelled":
+            head = f"### Hintergrundaufgabe „{title}“ (abgebrochen — Teilergebnis)"
+        elif st == "error":
+            head = f"### Hintergrundaufgabe „{title}“ (fehlgeschlagen)"
+        else:
+            head = f"### Ergebnis der Hintergrundaufgabe „{title}“"
+        body = (m.get("output") or "").strip()
+        if not body and m.get("error"):
+            body = f"(Kein Ergebnis — Fehler: {m.get('error')})"
+        blocks.append(f"{head}\n\n{body}")
+        if not follow_up and (m.get("follow_up") or "").strip():
+            follow_up = m["follow_up"].strip()
+    intro = (
+        "[Alle von dir parallel gestarteten Hintergrundaufgaben sind fertig. "
+        "Ihre vollständigen Ergebnisse stehen dir HIER für diese Antwort zur "
+        "Verfügung. Dieser Block erscheint nur dieses eine Mal und ist danach "
+        "nicht mehr im Verlauf.]"
+    )
+    tail = (
+        f"\n\n[Aufgabe zum Zusammenführen: {follow_up}]" if follow_up
+        else "\n\n[Bitte fasse die Ergebnisse für den Nutzer zusammen bzw. arbeite damit weiter.]"
+    )
+    return intro + "\n\n" + "\n\n".join(blocks) + tail
+
+
+def deliver_background_group(session_id: str, group_id: str, members: list) -> bool:
+    """Fire a JOIN/synthesis turn for a completed fan-out group. Called by the
+    background-task runner's LAST finisher only (the atomic claim already
+    selected exactly one caller — see ChatDB.claim_background_group). `members`
+    is the claimed row set. Mirrors deliver_background_results' atomic idle-gate.
+    On a successful proactive turn we mark the group consumed (mark_group_consumed)
+    so the injection floor never re-delivers it. If the chat is busy we bail
+    WITHOUT consuming — the members stay group_done_at-set + consumed_at-NULL, so
+    the next user turn's injection floor (ChatDB.pop_undelivered_groups, folded
+    into _build_background_task_preamble) delivers them then. Best-effort proactive
+    push with a guaranteed next-turn floor — the group is never lost."""
+    try:
+        session = sessions.get(session_id)  # noqa: F821 — server-injected
+    except Exception:
+        return False
+    if session is None:
+        return False
+
+    preamble = _build_group_preamble(members)
+    if not preamble:
+        return False
+    delivery_msg = preamble
+
+    with _bg_delivery_lock:
+        if session_id in _bg_delivery_inflight:
+            return False
+        _bg_delivery_inflight.add(session_id)
+    try:
+        # Atomic idle-gate + streaming-set (same invariant as the standalone path).
+        live = LiveStream()
+        with session.lock:
+            if getattr(session, "_streaming", False) or getattr(session, "live_stream", None):
+                return False  # busy — best-effort; group stays visible in the panel
+            session.cancel_token = engine.CancelToken()
+            session._streaming = True
+            session.live_stream = live
+        # We own the turn — commit the group to THIS delivery (mark consumed) so
+        # the next-turn injection floor never re-delivers it, even if the turn
+        # below errors mid-flight.
+        ChatDB.mark_group_consumed(group_id)
+        try:
+            ChatDB.set_streaming_text(session.id, "")
+        except Exception:
+            pass
+        session.add_message("user", delivery_msg,
+                            metadata={"background_delivery": True, "group_id": group_id})
+
+        with engine.request_context():
+            engine.get_request_context().current_session_id = session_id
+            engine.get_request_context().current_user_id = session.user_id or ""
+            engine.get_request_context().current_agent = engine.AgentConfig(session.agent_id)
+            engine.get_request_context().memory_store = session.memory
+            engine.get_request_context().mcp_manager = engine._mcp_manager
+            engine.get_request_context().project = session.project or ""
+            t = run_session_turn(
+                session, sid=session_id, message=delivery_msg,
+                user_content=delivery_msg, chat_mode="", thinking_level=None,
+                live=live, saved_paths=[], web_urls=[], web_locked=False,
+                project_name=None, preamble_text="", content_blocks=[],
+                disk_files=[], auto_route=None, want_auto=False,
+            )
+            t.join()
+        return True
+    except Exception as e:
+        print(f"[bg-group-delivery] failed for {session_id[:8]} grp {group_id}: {e}", flush=True)
         return False
     finally:
         with _bg_delivery_lock:
