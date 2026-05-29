@@ -976,9 +976,22 @@ def build_chat_event_callback(session, live, sid):
             else:
                 cap = 5000
             refs = ChatHandlerMixin._extract_references(tool_name, result_str)
+            # web_fetch carries its `fetch_method` (raw/markitdown/crawl4ai) at
+            # the END of the result JSON, after the large `content` field. The
+            # cap can slice it off, so the client's badge regex finds nothing on
+            # reload. Capture it before the cap and re-append after the cut so
+            # the badge survives truncation. (Live SSE has the full string; this
+            # only matters for the persisted copy.)
+            capped = result_str[:cap]
+            if (tool_name == "web_fetch" and len(result_str) > cap
+                    and '"fetch_method"' not in capped):
+                import re as _re
+                fm = _re.search(r'"fetch_method"\s*:\s*"(?:crawl4ai|markitdown|raw)"', result_str)
+                if fm:
+                    capped += " …" + fm.group(0)
             for t in reversed(_partial_tools):
                 if t["name"] == tool_name and "result" not in t:
-                    t["result"] = result_str[:cap]
+                    t["result"] = capped
                     if refs:
                         t["references"] = refs
                     break
