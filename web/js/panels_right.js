@@ -169,7 +169,10 @@ function switchRightTab(tabName) {
   if (tabName === 'references') renderReferencesPane();
   if (tabName === 'artifacts' && !state.activeArtifactId) showArtifactList();
   if (tabName === 'websuche' && typeof renderWebsuchePane === 'function') renderWebsuchePane();
-  if (tabName === 'bgtasks' && typeof renderBackgroundTasksPane === 'function') renderBackgroundTasksPane();
+  if (tabName === 'bgtasks' && typeof renderBackgroundTasksPane === 'function') {
+    if (typeof _bgLiveReconcile === 'function') _bgLiveReconcile();
+    renderBackgroundTasksPane();
+  }
   updateRightPanelBadges();
   // Re-apply the active-turn focus to the freshly rendered pane.
   if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);

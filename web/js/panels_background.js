@@ -16,6 +16,67 @@
 let _bgPollHandle = null;
 let _bgTranscriptCtrl = null;
 
+// Live tool-activity subscriptions for RUNNING tasks. The sidecar already emits
+// tool_dispatch_start/done + text deltas on its per-turn event log, and the
+// /transcript endpoint proxies them raw while a task runs — but the 2s metadata
+// poll only carries a final tool-COUNT. So for each running task we open the
+// transcript SSE once and accumulate a live timeline here, keyed by task id:
+//   _bgLive[taskId] = { ctrl, tools: [{id,name,args,status,elapsed_ms,is_error}],
+//                       text: '<streamed answer so far>' }
+// Torn down when the task leaves `running` (terminal metadata arrives) or the
+// session switches. This mirrors the interactive chat's live tool-call display.
+const _bgLive = {};
+
+function _bgLiveStop(taskId) {
+  const L = _bgLive[taskId];
+  if (!L) return;
+  try { if (L.ctrl) L.ctrl.abort(); } catch (_) {}
+  delete _bgLive[taskId];
+}
+
+function _bgLiveStopAll() {
+  for (const id of Object.keys(_bgLive)) _bgLiveStop(id);
+}
+
+// Open the live transcript stream for one running task (idempotent). Events
+// mutate _bgLive[taskId]; we re-render the pane so the card's timeline updates
+// as tool calls happen — not only when the whole task finishes.
+function _bgLiveStart(taskId) {
+  if (_bgLive[taskId]) return;                       // already subscribed
+  const L = { ctrl: null, tools: [], text: '' };
+  _bgLive[taskId] = L;
+  const _rerenderIfVisible = () => {
+    if (state.rightPanelOpen && state.rightPanelTab === 'bgtasks') _bgLiveRenderCard(taskId);
+  };
+  L.ctrl = API.streamBackgroundTranscript(
+    taskId,
+    (chunk) => { L.text += chunk; _rerenderIfVisible(); },     // onText
+    () => { /* onDone: terminal handled by the metadata poll */ },
+    null,                                                       // onRequest (unused live)
+    (ev) => {                                                   // onTool
+      if (ev.phase === 'start') {
+        L.tools.push({ id: ev.tool_use_id, name: ev.name, args: ev.args || {},
+                       status: 'running', elapsed_ms: null, is_error: false });
+      } else if (ev.phase === 'done') {
+        const t = L.tools.find(x => x.id === ev.tool_use_id)
+               || L.tools.slice().reverse().find(x => x.name === ev.name && x.status === 'running');
+        if (t) { t.status = 'done'; t.elapsed_ms = ev.elapsed_ms; t.is_error = !!ev.is_error; }
+      }
+      _rerenderIfVisible();
+    }
+  );
+}
+
+// Reconcile live subscriptions against the current running set: open streams for
+// newly-running tasks, drop streams for tasks that left `running`.
+function _bgLiveReconcile() {
+  const sid = state.activeChat?.sessionId;
+  const running = new Set(
+    (sid ? _bgTasksFor(sid) : []).filter(t => t.status === 'running' && t.turn_id).map(t => t.id));
+  for (const id of Object.keys(_bgLive)) if (!running.has(id)) _bgLiveStop(id);
+  for (const id of running) _bgLiveStart(id);
+}
+
 function _bgTasksFor(sessionId) {
   if (!state.backgroundTasks) state.backgroundTasks = {};
   return state.backgroundTasks[sessionId] || [];
@@ -77,6 +138,9 @@ async function loadBackgroundTasks() {
   const _justFinished = _bgTasksFor(sid).some(
     t => _prevRunning.has(t.id) && t.status !== 'running');
   if (_justFinished) _reattachForBackgroundDelivery(sid);
+
+  // Open/close live tool-activity streams to match the running set.
+  _bgLiveReconcile();
 
   // Self-regulate the poll: run while anything is still going, stop otherwise.
   if (_bgAnyRunning()) startBackgroundTasksPoll();
@@ -142,6 +206,9 @@ function startBackgroundTasksPoll() {
 
 function stopBackgroundTasksPoll() {
   if (_bgPollHandle) { clearInterval(_bgPollHandle); _bgPollHandle = null; }
+  // Leaving the chat view / no session in scope → drop live tool streams too
+  // (reopened by _bgLiveReconcile on the next loadBackgroundTasks).
+  _bgLiveStopAll();
 }
 
 // Top-bar pill: shown whenever the session has ANY activity entry — synchronous
@@ -242,6 +309,10 @@ function _bgCard(t, inGroup) {
   const errLine = (t.status === 'error' && t.error)
     ? `<div class="bgtask-error">${escapeHtml(t.error)}</div>` : '';
   const dotCls = _bgDotClass(t);
+  // Live activity (running tasks only): tool timeline + streamed answer so far,
+  // filled in-place by _bgLiveRenderCard as transcript events arrive.
+  const liveBlock = (t.status === 'running')
+    ? `<div class="bgtask-live" id="bgtask-live-${t.id}">${_bgLiveInner(t.id)}</div>` : '';
   return `
     <div class="bgtask-card" data-task="${t.id}" onclick="openBgTranscript('${t.id}')" title="Transkript anzeigen">
       <div class="bgtask-row1">
@@ -251,8 +322,44 @@ function _bgCard(t, inGroup) {
       </div>
       <div class="bgtask-row2 ${st.cls}">${escapeHtml(meta)}</div>
       ${errLine}
+      ${liveBlock}
       <div class="bgtask-transcript" id="bgtask-transcript-${t.id}" style="display:none" onclick="event.stopPropagation()"></div>
     </div>`;
+}
+
+// Inner HTML of a running task's live block: one line per tool call (name +
+// args summary + running/done + elapsed) plus the streamed answer-so-far. Built
+// from _bgLive[taskId]; empty string until the first event arrives.
+function _bgLiveInner(taskId) {
+  const L = _bgLive[taskId];
+  if (!L || (!L.tools.length && !L.text)) return '';
+  let html = '';
+  if (L.tools.length) {
+    const rows = L.tools.map(tool => {
+      const desc = (typeof toolDescribe === 'function')
+        ? toolDescribe(tool.name, tool.args) : escapeHtml(tool.name || 'tool');
+      const dotCls = tool.is_error ? 'bg-st-error' : (tool.status === 'done' ? 'bg-st-done' : 'bg-st-running');
+      const elapsed = (tool.elapsed_ms != null) ? ` · ${(tool.elapsed_ms / 1000).toFixed(1)}s` : '';
+      const stLabel = tool.is_error ? 'Fehler' : (tool.status === 'done' ? 'fertig' : 'läuft…');
+      return `<div class="bgtask-live-tool"><span class="bgtask-dot ${dotCls}"></span>`
+           + `<span class="bgtask-live-toolname">${desc}</span>`
+           + `<span class="bgtask-live-toolmeta">${stLabel}${elapsed}</span></div>`;
+    }).join('');
+    html += `<div class="bgtask-live-tools">${rows}</div>`;
+  }
+  if (L.text) {
+    html += `<div class="bgtask-live-text">${escapeHtml(L.text)}</div>`;
+  }
+  return html;
+}
+
+// Targeted in-place update of one running card's live block, so streaming events
+// don't trigger a full pane rebuild (which would fight the 2s poll + reset the
+// transcript toggle / scroll state of sibling cards).
+function _bgLiveRenderCard(taskId) {
+  const el = document.getElementById('bgtask-live-' + taskId);
+  if (!el) { return; }
+  el.innerHTML = _bgLiveInner(taskId);
 }
 
 /* ───────────────────────────────────────────────────────────
