@@ -349,6 +349,12 @@ function toggleActivitySummary(turnNum) {
   // user-* state is sticky: once the user toggles, _activityAutoUpdate stops
   // auto-collapsing this turn (it bails on user-open/user-closed).
   chat._activityStates.set(turnNum, isOpen ? 'user-closed' : 'user-open');
+  // Cancel any in-flight auto-close for this turn so a queued rAF can't fight
+  // the user's explicit choice (race: tools auto-close the block, the user
+  // expands it BEFORE the response arrives, then the deferred close fires).
+  // The rAF already bails on user-* state, but dropping the pending marker
+  // makes the intent explicit and lets a fresh schedule run later if needed.
+  if (chat._activityPendingClose) chat._activityPendingClose.delete(turnNum);
   // Animate by flipping the `.open` class on the live node instead of
   // re-rendering (a full renderMessages() would replace the node and the CSS
   // grid-rows transition would never run). Fall back to a re-render only if
