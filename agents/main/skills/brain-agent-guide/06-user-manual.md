@@ -498,17 +498,25 @@ Zahnrad, unten links. Je nach Rolle zwei Bereiche:
 - **Zeitplan** — der eigene memory_summary-Daemon des Agenten
 
 ### Allgemeine Einstellungen (Admin)
-- **Server** — Standardmodell, Chat-Zusammenfassungs-Modell, Ports,
-  Monitore für **Sidecar**, **Web Search (SearXNG)** und **crawl4ai**
+- **Server** — Standardmodell, Chat-Zusammenfassungs-Modell, **Auto-Routing**,
+  Ports, Monitore für **Sidecar**, **Web Search (SearXNG)** und **crawl4ai**
   (Status/PID/Uptime/Health/Breaker + Neustart; SearXNG zusätzlich mit
   Pro-Engine-Tabelle und „Jetzt testen"). Beim Standardmodell zeigt das
   Auswahlfeld „— nicht gesetzt —", wenn keins gesetzt ist (seit 9.21.4).
+  **Auto-Routing** legt fest, wie das „✨ Auto"-Modell im Verfasser (und
+  `Fan-out-Modell = Auto`) die Absicht einer Anfrage erkennt, um das passende
+  Modell zu wählen: **Schlüsselwörter** (Standard, ohne Kosten), **LLM**
+  (klassifiziert per günstigem/lokalem Modell) oder **Hybrid** (erst
+  Schlüsselwörter, LLM nur bei Bedarf). LLM/Hybrid fallen bei Fehler oder
+  Timeout still auf Schlüsselwörter zurück — eine Anfrage hängt nie daran.
 - **Provider** — OpenAI-kompatible Provider hinzufügen/bearbeiten/testen
 - **Nodes** — verteilte Compute-Peers
 - **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost). Pro
   Modell über das ⚙-Icon: u.a. **Fan-out-Modell** — teilt dieses Chat-Modell im
   Chat eine Hintergrundaufgabe per Fan-out auf, laufen die Leaf-Tasks auf dem
   hier gewählten (meist günstigeren) Modell; leer = bleiben auf diesem Modell.
+  **✨ Auto** klassifiziert stattdessen die Absicht jedes Leaf-Tasks und wählt
+  je Task das passende Modell (gesteuert über Server → Auto-Routing).
 - **Agents** — Liste + anlegen
 - **Teams** — Team-CRUD + ACLs
 - **Kosten** — globale Kostenansicht pro Nutzer/Modell/Tag

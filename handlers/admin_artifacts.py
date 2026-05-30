@@ -324,6 +324,7 @@ class AdminArtifactsHandlers:
                 "default_model": server_config.get("default_model", ""),
                 "attachment_image_model": server_config.get("attachment_image_model", ""),
                 "chat_summary_model": server_config.get("chat_summary_model", ""),
+                "auto_route_classifier_mode": (server_config.get("auto_route", {}) or {}).get("classifier_mode", "keywords"),
                 "gdpr_scanner": {
                     "enabled": bool(server_config.get("gdpr_scanner", {}).get("enabled", True)),
                     "server_log": bool(server_config.get("gdpr_scanner", {}).get("server_log", True)),

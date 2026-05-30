@@ -442,6 +442,31 @@ class AdminConfigHandlers:
                 return
             result["chat_summary_model"] = csm
 
+        # --- Auto-route classifier mode ---
+        # How the composer's "Auto" model picker (and fan-out's
+        # background_task_model="auto") classifies intent: keyword heuristics
+        # (default, zero cost), an LLM classify on the cheapest/local model, or
+        # hybrid (keywords first, LLM only on a miss).
+        if "auto_route_classifier_mode" in body:
+            mode = str(body["auto_route_classifier_mode"] or "keywords").strip()
+            if mode not in ("keywords", "llm", "hybrid"):
+                self._send_json({"error": "auto_route_classifier_mode must be one of: keywords, llm, hybrid"}, 400)
+                return
+            ar = server_config.setdefault("auto_route", {})
+            ar["classifier_mode"] = mode
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                config.setdefault("auto_route", {})["classifier_mode"] = mode
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            result["auto_route_classifier_mode"] = mode
+
         # --- GDPR/PII scanner settings ---
         if "gdpr_scanner" in body:
             gs_in = body["gdpr_scanner"]

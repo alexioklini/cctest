@@ -73,13 +73,15 @@ class BackgroundTaskRunner:
                 "thinking_level": getattr(session, "thinking_level", "") or "",
                 "group_id": group_id or None,
             }
+        title = (title or "Hintergrundaufgabe").strip()[:200]
+        prompt = (prompt or "").strip()
         # Per-model fan-out offload: a chat model may declare a cheaper model to
         # run its fanned-out leaf tasks (e.g. mistral-medium chats offload to
         # mistral-small). The decompose/orchestrate reasoning stays on the chat
         # model; only the leaf runs swap. Empty/unset → leaf stays on chat model.
-        snapshot["model"] = self._resolve_fanout_model(snapshot["model"], snapshot)
-        title = (title or "Hintergrundaufgabe").strip()[:200]
-        prompt = (prompt or "").strip()
+        # background_task_model == "auto" → classify THIS sub-task's prompt and
+        # pick the best-fitting leaf model (same dispatcher as composer Auto).
+        snapshot["model"] = self._resolve_fanout_model(snapshot["model"], snapshot, prompt)
         ChatDB.create_background_task(
             task_id, snapshot["session_id"], snapshot["agent_id"],
             snapshot["model"], title, prompt,
@@ -161,19 +163,36 @@ class BackgroundTaskRunner:
                 print(f"[bgtask-sweep] deliver failed grp {gid}: {e}", flush=True)
         return delivered
 
-    def _resolve_fanout_model(self, chat_model: str, snapshot: dict) -> str:
+    def _resolve_fanout_model(self, chat_model: str, snapshot: dict, prompt: str = "") -> str:
         """Resolve the model a fanned-out leaf task should run on.
 
         The chat model's registry entry may carry `background_task_model` — a
         cheaper model its leaf tasks offload to. Empty/unset, or pointing at a
         model that isn't enabled, falls back to the chat model unchanged. When
         we swap, the chat's thinking_level is smart-matched to the leaf model's
-        reasoning granularity (see `_match_thinking_level`)."""
+        reasoning granularity (see `_match_thinking_level`).
+
+        Special value `"auto"`: instead of a fixed offload model, classify this
+        sub-task's `prompt` (keyword / LLM / hybrid per auto_route.classifier_mode)
+        and pick the best-fitting enabled model — the same intent-routing the
+        composer's Auto uses, applied per fanned-out leaf."""
         import brain as _brain
         cfg = (_brain._models_config or {}).get(chat_model) or {}
         target = (cfg.get("background_task_model") or "").strip()
         if not target or target == chat_model:
             return chat_model
+        if target == "auto":
+            # Intent-route the leaf: classify the sub-task prompt, pick by tier.
+            # No attachments (leaf prompts are text) and no ACL scope (the parent
+            # turn already passed the user's gate). Always returns a concrete id.
+            purpose = _brain.resolve_task_purpose(prompt or "")
+            picked = _brain._resolve_auto_model_tiered(purpose)
+            if not picked or picked == chat_model:
+                return chat_model
+            tcfg = (_brain._models_config or {}).get(picked) or {}
+            snapshot["thinking_level"] = self._match_thinking_level(
+                snapshot.get("thinking_level"), picked, tcfg)
+            return picked
         tcfg = (_brain._models_config or {}).get(target)
         if not tcfg or not tcfg.get("enabled", True):
             # Configured but missing/disabled — don't silently route to a dead

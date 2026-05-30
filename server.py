@@ -3304,6 +3304,7 @@ def main():
     attachments_cfg = file_config.get("attachments", {})
     server_config["attachment_image_model"] = attachments_cfg.get("image_model", "")
     server_config["chat_summary_model"] = file_config.get("chat_summary_model", "") or ""
+    server_config["auto_route"] = file_config.get("auto_route", {}) or {}
     server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}
     server_config["classification"] = file_config.get("classification", {}) or {}
     server_config["classification_scanner"] = file_config.get("classification_scanner", {}) or {}

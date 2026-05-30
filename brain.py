@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.52.4"
+VERSION = "9.53.0"
 VERSION_DATE = "2026-05-30"
 CHANGELOG = [
+    ("9.53.0", "2026-05-30", "feat(auto-route): LLM-basierte Intent-Klassifikation fuer die Modellwahl, konfigurierbar pro Modus + auf Fan-out ausgeweitet. Bisher klassifizierte das '✨ Auto'-Modell im Verfasser (resolve_auto_model_for_task -> classify_task_purpose) die Absicht rein per Schlüsselwort-Heuristik (5 Purposes coding/analysis/creative/agentic/fast, >=2 Treffer noetig); kurze/umgangssprachliche Anfragen ('schau nochmal warum das failt') scoren <2 und fielen auf den Default-Tier. NEU: (1) classify_task_purpose_llm(message) (brain.py) — ein kleiner Einmal-Call via sidecar_proxy.background_call auf das günstigste/lokale Modell (_resolve_auto_model_tiered(None)), system-prompt-constrained auf exakt dieselben 5 Purposes, max_tokens=8, timeout 20s; fail-open auf None bei Fehler/Timeout/unbekannter Antwort. (2) resolve_task_purpose(message) Dispatcher liest config.json -> auto_route.classifier_mode in {keywords|llm|hybrid} (Default keywords): keywords = bisheriges Verhalten (null Kosten/Latenz); llm = LLM-Klassifikation, faellt bei None/Fehler auf Schlüsselwörter zurück; hybrid = erst Schlüsselwörter, LLM nur bei Miss (die Zwei-Schichten-Idee aus dem Artikel — LLM-Steuer nur auf den unklaren Turns). resolve_auto_model_for_task ruft jetzt den Dispatcher; ALLES downstream (Tier-Map, _resolve_auto_model_tiered, Attachment-MIME-Vorrang, ACL-Scope, auto_route-SSE-Reason) unveraendert, weil die Ausgabe weiter einer der 5 Purpose-Strings ist. (3) Fan-out: background_task_model akzeptiert jetzt den Spezialwert 'auto' (engine/background_tasks.py _resolve_fanout_model bekam den prompt durchgereicht) — statt eines fixen günstigeren Leaf-Modells wird die Absicht JEDES Leaf-Tasks per resolve_task_purpose klassifiziert und das passende Modell via _resolve_auto_model_tiered gewaehlt (kein ACL/keine Attachments — der Eltern-Turn hat den Gate schon passiert); thinking-level-Smart-Match + missing/disabled-Breadcrumb bleiben. (4) Konfig-Glue: server.py laedt server_config['auto_route']; POST /v1/services/server (handlers/admin_config.py) persistiert auto_route_classifier_mode (validiert keywords|llm|hybrid); Status-Endpoint (handlers/admin_artifacts.py) liefert auto_route_classifier_mode zurueck. (5) Settings -> Server -> 'Auto-Routing' Dropdown (Schlüsselwörter/LLM/Hybrid) + 'auto'-Option im per-Modell Fan-out-Modell-Dropdown. Default keywords => Verhalten byte-identisch bis der Operator umschaltet (ships dark); Rule-5-konform (Fuzzy-Sprache -> Kategorie ist ein Judgment-Call, Keyword-Pfad bleibt fuer Determinismus). KV-Prefix bewusst NICHT angetastet — Tool-Selektion bleibt statisch (resolve_active_tools unveraendert). js_gate gruen (net-globals 1064 unveraendert; smoke 5/5). Backend braucht Neustart."),
     ("9.52.4", "2026-05-30", "cleanup(code-review-Funde): zwei Punkte aus dem high-effort-Review der v9.52.0-9.52.3-Serie. (1) Tool-Dauer-Anzeige inkonsistent live vs. reload: der duration_ms-Zweig (web/js/chat_tools.js renderToolCall) zeigte fuer Tools unter ~50ms nach Reload '0.0s' an, waehrend der Live-_ts-Delta-Pfad solche Sub-50ms-Dauern bewusst ausblendet (null). Ein 30ms-Tool zeigte live KEINE Dauer, nach Reopen aber '0.0s' — verwirrend + irrefuehrend. FIX: dieselbe `d >= 0.05`-Schwelle jetzt auch im duration_ms-Zweig, sodass schnelle Tools in BEIDEN Pfaden keine Dauer zeigen (reload == live). (2) Tote Variablen entfernt: `stateVal`/`isOpen` in renderTurnBody (web/js/chat_render.js) wurden berechnet aber nie verwendet — der Auf/Zu-Zustand wird seit dem Refactor NICHT mehr ins HTML gebacken, sondern post-render von _applyChatCollapseStates gestempelt; die beiden Zeilen waren vestigial und suggerierten faelschlich eine Abhaengigkeit. Reine Client-Render-Logik, kein API-/Tool-/Schema-/UI-Control-Change. js_gate gruen (net-globals 1064 unveraendert — nur lokale Variablen entfernt; smoke 5/5). Die uebrigen Review-Funde (unbounded _toolFrac bei >1000 Tools/Turn = latente Fragilitaet, per-render _applyChatCollapseStates-Sweep = Effizienz, CSS-/JS-Duplikation) bewusst NICHT angefasst (niedrige Prioritaet / kein aktuelles Problem)."),
     ("9.52.3", "2026-05-30", "ux(activity-block): das mid-stream Auto-Zuklappen ab dem 4. Tool-Call entfernt — es sah fuer den Nutzer wie ein GUI-Bug aus (der gerade aufgeklappte Aktivitaets-Block schnappte mitten im Lauf zu). NEU: der Block bleibt waehrend des GANZEN Turns offen (auto-open beim ersten Aktivitaets-Element), sodass man die Tools live laufen sieht; er klappt NUR noch EINMAL zu, wenn die Antwort finalisiert ist (das bestehende 'response'-Auto-Close bleibt). In _activityAutoUpdate (web/js/chat_nav.js) den '>= 4 Tools'-Zweig (inkl. memberIdxs-Zaehlung) gestrichen; die jetzt tote Hilfsfunktion _activityCount entfernt (net-globals 1065->1064, Baseline aktualisiert). Verifiziert in echtem Chrome: 6 aufeinanderfolgende 'add'-Events planen 0 Auto-Closes und der Zustand bleibt auto-open; das 'response'-Event plant weiterhin korrekt das einmalige Zuklappen. js_gate gruen (smoke 5/5). Der manuelle Toggle + die v9.52.2-Race-Absicherung bleiben unveraendert."),
     ("9.52.2", "2026-05-30", "hardening(activity-toggle race): schliesst die theoretische Race-Luecke beim Auf-/Zuklappen des Aktivitaets-Blocks waehrend des Streams. Szenario (vom Nutzer gemeldet): bei >=4 Tools klappt der Block automatisch zu (_scheduleActivityAutoClose, doppelter requestAnimationFrame), der Nutzer klappt ihn wieder auf, BEVOR die Antwort da ist — danach feuert der verzoegerte Auto-Close. UNTERSUCHUNG via echtem Chrome (claude-in-chrome): die exakte Sequenz (Auto-Close-rAF committet -> User expandiert per echtem Klick -> text_delta -> optional thinking_done/renderMessages mitten im Stream -> done) wurde mehrfach durch die ECHTEN buildStreamCallbacks-Handler durchgespielt und rendert die finale Antwort KORREKT (domNodes>0, sichtbare Hoehe, kein throw) — auf der aktuellen v9.52.1-Codebasis ist der Fehler NICHT mehr reproduzierbar (sehr wahrscheinlich bereits vom v9.52.1 done-render-Guard behoben, der einen Render-Wurf abfaengt + neu rendert; genau das 'Antwort im State, nicht im DOM, erst nach Reload sichtbar'-Symptom). Der rAF-Callback bricht ohnehin schon ab, wenn der Zustand user-open/user-closed ist. ZUSAETZLICHE Absicherung (rein Client, web/js/chat_nav.js): toggleActivitySummary loescht jetzt EXPLIZIT den pending-close-Marker (chat._activityPendingClose.delete) der getoggleten Anfrage, sodass ein in der Warteschlange stehender rAF die explizite Nutzer-Entscheidung unter keiner Timing-Konstellation ueberschreiben kann. KEINE neuen Globals; js_gate gruen (net-globals 1065; smoke 5/5). Temporaere [DIAG]-Logs (toggleActivity/renderStreamingMessage/done-render), die zur Diagnose eingefuegt waren, wieder entfernt."),
@@ -10504,6 +10505,87 @@ def classify_task_purpose(message: str) -> str | None:
     return best_purpose
 
 
+# The 5 purposes the tiered router (`_PURPOSE_TIER`) actually understands. The
+# LLM classifier is constrained to this exact vocabulary so its output drops
+# straight into `_resolve_auto_model_tiered` with no remapping.
+_LLM_CLASSIFY_PURPOSES = ("coding", "analysis", "creative", "agentic", "fast")
+
+_LLM_CLASSIFY_SYSTEM = (
+    "You are an intent classifier. Read the user's message and reply with EXACTLY "
+    "ONE lowercase word from this set, nothing else:\n"
+    "  coding   — write/fix/debug/refactor code, scripts, configs\n"
+    "  analysis — analyse/explain/compare/reason about something in depth\n"
+    "  creative — write prose, stories, names, marketing, brainstorming\n"
+    "  agentic  — search/fetch/automate/multi-step tool use\n"
+    "  fast     — quick lookup, format, translate, one-line answer\n"
+    "Reply with the single best-fitting word. No punctuation, no explanation."
+)
+
+
+def classify_task_purpose_llm(message: str) -> str | None:
+    """LLM-based intent classifier — a small one-shot call routed to the
+    cheapest/local model. Returns one of `_LLM_CLASSIFY_PURPOSES` or None.
+
+    Fail-open: any error, timeout, or unrecognised reply returns None so the
+    caller (`resolve_task_purpose`) can fall back to the keyword classifier.
+    The turn never blocks on classification.
+    """
+    if not message:
+        return None
+    try:
+        import handlers.sidecar_proxy as sidecar_proxy
+        classifier_model = _resolve_auto_model_tiered(None)  # cheapest/local
+        if not classifier_model:
+            return None
+        _res = sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": message[:4000]}],
+            model=classifier_model,
+            system_prompt=_LLM_CLASSIFY_SYSTEM,
+            purpose="transform",
+            max_tokens=8,
+            max_rounds=1,
+            timeout_s=20.0,
+        )
+        if _res.get("error"):
+            return None
+        reply = (_res.get("reply") or "").strip().lower()
+        # Tolerant match: the model may add stray punctuation/quotes.
+        for p in _LLM_CLASSIFY_PURPOSES:
+            if p in reply:
+                return p
+        return None
+    except Exception:
+        return None
+
+
+def resolve_task_purpose(message: str) -> str | None:
+    """Dispatch intent classification per the configured `auto_route.classifier_mode`.
+
+    Modes (config.json → auto_route.classifier_mode, default "keywords"):
+      - keywords: keyword heuristics only (zero cost/latency; the prior behavior).
+      - llm:      LLM classify, falling back to keywords on None/failure.
+      - hybrid:   keywords first; LLM only when keywords find no strong signal
+                  (the article's two-layer design — pays the LLM tax rarely).
+
+    Both `llm` and `hybrid` fail-open to the keyword classifier, so a down
+    sidecar or slow local model never breaks auto-routing.
+    """
+    mode = "keywords"
+    try:
+        import server as _srv_mod
+        _sc = getattr(_srv_mod, "server_config", None) or {}
+        mode = ((_sc.get("auto_route") or {}).get("classifier_mode") or "keywords").strip()
+    except Exception:
+        pass
+
+    if mode == "llm":
+        return classify_task_purpose_llm(message) or classify_task_purpose(message)
+    if mode == "hybrid":
+        return classify_task_purpose(message) or classify_task_purpose_llm(message)
+    # "keywords" or any unknown value → safe default
+    return classify_task_purpose(message)
+
+
 # Map a classified task purpose to a routing tier. The tier is resolved
 # against fields every model actually has (thinking_format, is_local,
 # priority) — unlike the legacy `purpose in capabilities` filter, which
@@ -10592,8 +10674,8 @@ def resolve_auto_model_for_task(agent_config: dict, message: str,
         return _resolve_auto_model_tiered(fixed_purpose, attachment_mimes=attachment_mimes,
                                           allowed_models=allowed_models), fixed_purpose
 
-    # Classify task from message
-    detected = classify_task_purpose(message)
+    # Classify task from message (keyword / LLM / hybrid per config).
+    detected = resolve_task_purpose(message)
     resolved = _resolve_auto_model_tiered(detected, attachment_mimes=attachment_mimes,
                                           allowed_models=allowed_models)
     return resolved, detected

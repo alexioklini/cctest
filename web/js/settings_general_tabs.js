@@ -70,6 +70,20 @@ async function _genTab_server(C) {
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{chat_summary_model:document.getElementById('srv-chat-summary-model').value}).then(()=>showToast('Zusammenfassungsmodell aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
         </div>
         <div style="font-size:11px;color:var(--text-400);margin-top:2px">Hintergrundmodell, das die Synopse pro Chat (Hover-Tooltip + einklappbarer Block) und das automatisch gepflegte Benutzerprofil erzeugt. Belassen Sie es auf Auto, sofern Sie kein bestimmtes Modell wünschen.</div>
+        ${SEC('Auto-Routing')}
+        <div style="display:flex;gap:8px;align-items:center">
+          ${(() => {
+            const arm = srv.auto_route_classifier_mode || 'keywords';
+            const opt = (v, lbl) => `<option value="${v}" ${arm===v?'selected':''}>${lbl}</option>`;
+            return `<select class="form-select" id="srv-auto-route-mode" style="flex:1">
+              ${opt('keywords', 'Schlüsselwörter (Standard, ohne Kosten)')}
+              ${opt('llm', 'LLM (klassifiziert per günstigem/lokalem Modell)')}
+              ${opt('hybrid', 'Hybrid (erst Schlüsselwörter, LLM nur bei Bedarf)')}
+            </select>`;
+          })()}
+          <button class="btn-secondary" onclick="API.post('/v1/services/server',{auto_route_classifier_mode:document.getElementById('srv-auto-route-mode').value}).then(()=>showToast('Auto-Routing aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Wie das „✨ Auto"-Modell im Verfasser (und background_task_model=auto bei Fan-out) die Absicht erkennt und das passende Modell wählt. LLM/Hybrid fallen bei Fehler/Timeout still auf Schlüsselwörter zurück.</div>
         ${SEC('Sidecar')}
         ${_renderSupervisorStatus(sc, {
           restartFn: 'restartSidecar',
@@ -228,9 +242,10 @@ async function _genTab_models(C) {
                 <select class="mdl-thinking-level" data-mid="${esc(mid)}" data-current="${esc((inf||{}).thinking_level||'')}" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
                 </select>
               </div>
-              <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Wenn dieses Modell im Chat eine Hintergrundaufgabe per Fan-out aufteilt, laufen die Leaf-Tasks auf dem hier gewählten (i.d.R. günstigeren) Modell. Die Orchestrierung bleibt auf diesem Chat-Modell. Leer = Leaf-Tasks bleiben auf diesem Modell. Die Denkstufe wird beim Wechsel automatisch passend gesetzt.">Fan-out-Modell</label>
+              <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Wenn dieses Modell im Chat eine Hintergrundaufgabe per Fan-out aufteilt, laufen die Leaf-Tasks auf dem hier gewählten (i.d.R. günstigeren) Modell. Die Orchestrierung bleibt auf diesem Chat-Modell. Leer = Leaf-Tasks bleiben auf diesem Modell. Auto = die Absicht jedes Leaf-Tasks wird klassifiziert und das passende Modell gewählt (wie ✨ Auto im Verfasser). Die Denkstufe wird beim Wechsel automatisch passend gesetzt.">Fan-out-Modell</label>
                 <select class="mdl-bgtask-model" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
                   <option value="">— keins (auf diesem Modell) —</option>
+                  <option value="auto"${cfg.background_task_model==='auto'?' selected':''}>✨ Auto (per Absicht klassifizieren)</option>
                   ${_chatModelIds.filter(id => id !== mid).map(id => `<option value="${esc(id)}"${cfg.background_task_model===id?' selected':''}>${esc(modelShortName(id, false))}</option>`).join('')}
                 </select>
               </div>

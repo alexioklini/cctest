@@ -69,6 +69,29 @@ warmup, background. Providers are plain OpenAI-compatible entries in
 Provider-scoped ids exist when multiple providers serve the same model
 (`provider/model_id` with `base_model_id`).
 
+### Auto model routing
+
+When the composer model is `✨ Auto` (or an agent has `model: "auto"`), the
+turn's model is picked per-message by `resolve_auto_model_for_task` (brain.py):
+classify the message into one of 5 purposes (coding / analysis / creative /
+agentic / fast), then `_resolve_auto_model_tiered` maps the purpose to a tier
+(coding/analysis → first reasoning model, fast → cheapest/local, else
+highest-priority) within the caller's ACL + attachment-capability set.
+
+**Classifier mode** (`config.json → auto_route.classifier_mode`, default
+`keywords`; Settings → Server → Auto-Routing) selects how `resolve_task_purpose`
+classifies intent:
+- `keywords` — regex keyword heuristics (`classify_task_purpose`); zero cost/latency.
+- `llm` — a small one-shot classify on the cheapest/local model
+  (`classify_task_purpose_llm`, via `sidecar_proxy.background_call`,
+  `max_tokens=8`, 20s timeout); **falls back to keywords** on None/error/timeout.
+- `hybrid` — keywords first, LLM only when keywords find no strong signal.
+
+LLM and hybrid **fail open to keywords** — a down sidecar or slow local model
+never blocks a turn. The classifier is the ONLY thing the mode changes; the tier
+map, the picker, the `auto_route` SSE reason, and tool selection are untouched
+(tool selection stays static — the warm-pool KV prefix is not affected).
+
 ## Provider concurrency queue
 
 `LocalProviderQueue` (engine/provider.py):
@@ -178,7 +201,11 @@ run WITHOUT blocking the chat. Mechanics (`engine/background_tasks.py`,
   reasoning stays on the chat model; only the `run_background_task` leaf runs
   swap. Resolved in `_resolve_fanout_model` before the DB row is written (so the
   panel, GDPR pick, and sidecar call all see the leaf model). Empty/unset, or a
-  target that's missing/disabled, leaves the leaf on the chat model. On swap the
+  target that's missing/disabled, leaves the leaf on the chat model. The special
+  value `"auto"` intent-routes per leaf: the sub-task's prompt is classified via
+  `resolve_task_purpose` (see *Auto model routing* below) and the best-fitting
+  enabled model is picked with `_resolve_auto_model_tiered` — same intent
+  routing the composer's `✨ Auto` uses, applied to each fanned-out leaf. On swap the
   `thinking_level` is smart-matched to the leaf model's reasoning granularity
   (`_match_thinking_level`): on/off models (inline_tags/mistral_blocks) collapse
   low/medium/high → `high`; non-reasoning models drop to model default; full
