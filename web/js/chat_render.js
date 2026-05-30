@@ -581,10 +581,10 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   if (deanonReal > 0) parts.push(deanonReal === 1 ? '1 De-Anon' : `${deanonReal} De-Anon`);
   const label = parts.length ? `Aktivität · ${parts.join(' · ')}` : 'Aktivität';
 
-  // Determine open/closed state — single shared map for tools + privacy.
-  // Absent key = history load = closed (matches pre-merge tool-block UX).
-  const stateVal = chat?._activityStates?.get(turnNum);
-  const isOpen = stateVal === 'auto-open' || stateVal === 'user-open';
+  // Open/closed state is NOT decided here — renderTurnBody emits state-agnostic
+  // markup (stable hash) and _applyChatCollapseStates stamps the .open class
+  // post-render from chat._activityStates. (Previously computed an `isOpen`
+  // here; now dead.)
 
   // When the body is empty there's nothing to disclose — e.g. tool calls are
   // suppressed (state.showToolCalls=false) and there are no thinking/GDPR rows.

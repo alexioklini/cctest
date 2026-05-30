@@ -581,7 +581,12 @@ function renderToolCall(msg, idx) {
   // is the only correct source there.
   let duration = null;
   if (typeof msg.duration_ms === 'number' && msg.duration_ms >= 0) {
-    duration = (msg.duration_ms / 1000).toFixed(1);
+    const d = msg.duration_ms / 1000;
+    // Same sub-50ms suppression as the live path below: a tool that ran faster
+    // than that rounds to "0.0s", which reads as a glitch and (more importantly)
+    // would show a timing on reload that the live turn deliberately hid. Show
+    // nothing in both cases so reload matches live.
+    duration = d >= 0.05 ? d.toFixed(1) : null;
   } else if (hasResult && msg._ts && resultMsg._ts) {
     const d = (resultMsg._ts - msg._ts) / 1000;
     // Guard against the synthetic-_ts case (sub-millisecond deltas → "0.0").
