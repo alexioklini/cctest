@@ -262,23 +262,12 @@ function currentTurnNum(chat) {
 // Absent key = no activity yet seen OR history load (always closed).
 //
 // Rules:
-//   add (new activity element during streaming):
-//     first element → 'auto-open'
-//     4th element   → 'auto-closed'  (only if not user-controlled)
+//   add (first activity element during streaming):
+//     → 'auto-open'  (stays open the whole turn — no mid-stream auto-collapse)
 //   response (assistant response finalised):
 //     → 'auto-closed'  (only if not user-controlled)
 //   user toggle:
 //     → 'user-open' / 'user-closed'  (never overridden again)
-
-function _activityCount(messages, memberIdxs) {
-  let n = 0;
-  for (const idx of memberIdxs) {
-    const m = messages[idx];
-    if (m.role === 'thinking' || m.role === 'tool_call') n++;
-    // worker calls are tracked via tool_call with worker result — count the tool_call
-  }
-  return n;
-}
 // Schedule an ANIMATED auto-close for a turn that is currently rendered open.
 // During streaming each tool event re-renders the whole turn block, so the
 // .activity-summary node is fresh every time — we can't just toggle a class
@@ -310,30 +299,12 @@ function _activityAutoUpdate(chat, turnNum, event) {
   if (userControlled) return; // never touch user-controlled state
 
   if (event === 'add') {
+    // First activity item of the turn → open the block so the user sees tools
+    // running live. It stays open during the whole turn (no mid-stream
+    // auto-collapse — that read as a GUI glitch when it snapped shut at the 4th
+    // tool); it only collapses once on the 'response' event below.
     if (!cur) {
       chat._activityStates.set(turnNum, 'auto-open');
-    } else if (cur === 'auto-open') {
-      // Count current activity elements — if reaching 4, animate-close.
-      const t = state.activeChat;
-      if (t) {
-        // Find this turn's memberIdxs
-        let memberIdxs = null;
-        let n = 0;
-        for (let i = 0; i < t.messages.length; i++) {
-          const m = t.messages[i];
-          if (m.role === 'user' || m.role === 'human') {
-            n++;
-            if (n === turnNum) { memberIdxs = []; }
-            else if (memberIdxs !== null) break;
-          } else if (memberIdxs !== null) {
-            memberIdxs.push(i);
-          }
-        }
-        if (memberIdxs && _activityCount(t.messages, memberIdxs) >= 4) {
-          // Leave state auto-open; the deferred close animates it shut.
-          _scheduleActivityAutoClose(chat, turnNum);
-        }
-      }
     }
   } else if (event === 'response') {
     // Response finalised: animate the block shut (only if still auto-state).

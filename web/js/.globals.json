@@ -6,7 +6,6 @@
     "_activePanelTurn": "writable",
     "_activityAutoUpdate": "writable",
     "_activityCard": "writable",
-    "_activityCount": "writable",
     "_addToTeam": "writable",
     "_allProjectsCache": "writable",
     "_applyChatCollapseStates": "writable",

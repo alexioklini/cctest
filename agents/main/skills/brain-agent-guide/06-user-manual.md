@@ -110,9 +110,10 @@ zugeklappte gehalten → alle auf); danach wird die gehaltene Anfrage wieder
 in den Blick gescrollt. Alle Auf-/Zuklapp-Bereiche im Chat — Anfragen, die
 **Zusammenfassung**, die **Aktivität**-Box (Tool-Aufrufe/Denken),
 verdichteter Kontext, Webquellen — animieren weich. Die **Aktivität**-Box
-klappt nach der Antwort (oder ab 4 Tool-Aufrufen) automatisch zu, lässt sich
-aber jederzeit wieder öffnen; sobald man sie selbst umschaltet, klappt sie
-nicht mehr automatisch zu. Tool-Aufrufe zeigen ihre Ausführungsdauer.
+bleibt während der gesamten Anfrage offen (man sieht die Tools live laufen)
+und klappt erst zu, sobald die Antwort fertig ist; sie lässt sich jederzeit
+wieder öffnen, und sobald man sie selbst umschaltet, klappt sie nicht mehr
+automatisch zu. Tool-Aufrufe zeigen ihre Ausführungsdauer.
 
 ---
 
