@@ -28,14 +28,17 @@ function toggleHintExpand(turnNum) {
   else chat._expandedHints.add(turnNum);
   renderMessages();
 }
-// Chat-summary block toggle handler. Bound to the <details> ontoggle event so
-// we capture both clicks and keyboard activation. State lives on the chat
-// object so it survives re-renders without auto-expanding when the server
-// pushes summary updates.
-function toggleChatSummary(detailsEl) {
+// Chat-summary block toggle. Now a plain div (not <details>) so it shares the
+// animated grid-rows collapse. State lives on the chat object so it survives
+// re-renders without auto-expanding when the server pushes summary updates;
+// flip `.is-open` on the live node so the transition runs (a re-render would
+// replace the node and skip the animation).
+function toggleChatSummary() {
   const chat = state.activeChat;
   if (!chat) return;
-  chat._summaryOpen = !!detailsEl.open;
+  chat._summaryOpen = !chat._summaryOpen;
+  const node = document.querySelector('.chat-summary-block[data-summary]');
+  if (node) node.classList.toggle('is-open', chat._summaryOpen);
 }
 function listTurns() {
   const chat = state.activeChat;
@@ -67,7 +70,14 @@ function toggleTurnCollapse(turnNum) {
   if (!chat._collapsedTurns) chat._collapsedTurns = new Set();
   if (chat._collapsedTurns.has(turnNum)) chat._collapsedTurns.delete(turnNum);
   else chat._collapsedTurns.add(turnNum);
-  renderMessages();
+  // Animate by flipping `.is-open` on the live node (a full renderMessages()
+  // would replace the node and the grid-rows transition wouldn't run). Covers
+  // both regular turns (.turn-group) and compacted-context turns
+  // (.lcm-summary-block), which share _collapsedTurns.
+  const open = !chat._collapsedTurns.has(turnNum);
+  const nodes = document.querySelectorAll(`.turn-group[data-turn="${turnNum}"], .lcm-summary-block[data-turn="${turnNum}"]`);
+  if (nodes.length) nodes.forEach(n => n.classList.toggle('is-open', open));
+  else renderMessages();
 }
 function setAllTurnsCollapsed(collapsed) {
   const chat = state.activeChat;
@@ -78,7 +88,11 @@ function setAllTurnsCollapsed(collapsed) {
   } else {
     chat._collapsedTurns.clear();
   }
-  renderMessages();
+  // Animate every turn node in place rather than re-rendering.
+  document.querySelectorAll('.turn-group[data-turn], .lcm-summary-block[data-turn]').forEach(node => {
+    const tn = Number(node.getAttribute('data-turn'));
+    node.classList.toggle('is-open', !chat._collapsedTurns.has(tn));
+  });
 }
 function setTurnsCollapsedRelativeTo(anchorMsgIdx, direction, collapsed) {
   // direction: 'above' | 'below' | 'self'
@@ -95,7 +109,53 @@ function setTurnsCollapsedRelativeTo(anchorMsgIdx, direction, collapsed) {
     if (collapsed) chat._collapsedTurns.add(t.turnNum);
     else chat._collapsedTurns.delete(t.turnNum);
   }
-  renderMessages();
+  // Animate affected turn nodes in place.
+  document.querySelectorAll('.turn-group[data-turn], .lcm-summary-block[data-turn]').forEach(node => {
+    const tn = Number(node.getAttribute('data-turn'));
+    node.classList.toggle('is-open', !chat._collapsedTurns.has(tn));
+  });
+}
+// Turn-badge press handling: a short click toggles just this turn; a long
+// press (≥ _TURN_LP_MS) expands/collapses ALL turns, mirroring the held turn's
+// CURRENT state — hold an expanded turn → collapse all; hold a collapsed turn
+// → expand all. The long press fires on its own timer (so it triggers even
+// while the finger/button is still down); the subsequent mouseup/touchend is
+// then suppressed so it doesn't also run the single-turn toggle.
+const _TURN_LP_MS = 450;
+let _turnPress = null; // { turnNum, timer, fired }
+function turnBadgePressStart(event, turnNum) {
+  if (event && event.type === 'mousedown' && event.button !== 0) return;
+  turnBadgePressCancel();
+  const chat = state.activeChat;
+  if (!chat) return;
+  const wasExpanded = !(chat._collapsedTurns && chat._collapsedTurns.has(turnNum));
+  _turnPress = { turnNum, fired: false, timer: setTimeout(() => {
+    if (!_turnPress) return;
+    _turnPress.fired = true;
+    // Mirror the held turn's state onto all turns: expanded → collapse all.
+    setAllTurnsCollapsed(wasExpanded);
+    // Tactile cue that the long-press took effect.
+    const badge = document.querySelector(`.turn-group[data-turn="${turnNum}"] .turn-group-badge`);
+    if (badge) { badge.classList.add('lp-fired'); setTimeout(() => badge.classList.remove('lp-fired'), 300); }
+    // Keep the held turn in view — after collapsing/expanding all, its
+    // position shifts; scroll its header back into view so the user keeps
+    // their place. Wait one frame for the layout to settle.
+    requestAnimationFrame(() => {
+      const turnEl = document.querySelector(`.turn-group[data-turn="${turnNum}"]`);
+      if (turnEl) turnEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, _TURN_LP_MS) };
+}
+function turnBadgePressEnd(event, turnNum) {
+  if (!_turnPress || _turnPress.turnNum !== turnNum) { turnBadgePressCancel(); return; }
+  const fired = _turnPress.fired;
+  turnBadgePressCancel();
+  // touchend would also synthesise a mouse click → prevent the double-fire.
+  if (event && event.type === 'touchend' && event.cancelable) event.preventDefault();
+  if (!fired) toggleTurnCollapse(turnNum); // short click → single-turn toggle
+}
+function turnBadgePressCancel() {
+  if (_turnPress) { clearTimeout(_turnPress.timer); _turnPress = null; }
 }
 function jumpToTurn(turnNum) {
   const chat = state.activeChat;
@@ -219,6 +279,30 @@ function _activityCount(messages, memberIdxs) {
   }
   return n;
 }
+// Schedule an ANIMATED auto-close for a turn that is currently rendered open.
+// During streaming each tool event re-renders the whole turn block, so the
+// .activity-summary node is fresh every time — we can't just toggle a class
+// and expect a transition (the node had no prior `.open` state to animate
+// from). Instead we keep the state `auto-open` so the next render paints it
+// open, then on the following frame strip `.open` from the live node so the
+// CSS grid-rows transition runs open→closed, and only THEN commit the
+// `auto-closed` state (so subsequent renders keep it closed without a snap).
+function _scheduleActivityAutoClose(chat, turnNum) {
+  if (chat._activityPendingClose && chat._activityPendingClose.has(turnNum)) return;
+  if (!chat._activityPendingClose) chat._activityPendingClose = new Set();
+  chat._activityPendingClose.add(turnNum);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    chat._activityPendingClose.delete(turnNum);
+    // Bail if the user took control in the meantime, or the chat switched.
+    const cur = chat._activityStates && chat._activityStates.get(turnNum);
+    if (cur === 'user-open' || cur === 'user-closed') return;
+    const node = state.activeChat === chat
+      ? document.querySelector(`.activity-summary[data-activity-turn="${turnNum}"]`)
+      : null;
+    if (node) node.classList.remove('open');     // triggers the transition
+    chat._activityStates.set(turnNum, 'auto-closed');
+  }));
+}
 function _activityAutoUpdate(chat, turnNum, event) {
   if (!chat._activityStates) chat._activityStates = new Map();
   const cur = chat._activityStates.get(turnNum);
@@ -229,7 +313,7 @@ function _activityAutoUpdate(chat, turnNum, event) {
     if (!cur) {
       chat._activityStates.set(turnNum, 'auto-open');
     } else if (cur === 'auto-open') {
-      // Count current activity elements — if reaching 4, close
+      // Count current activity elements — if reaching 4, animate-close.
       const t = state.activeChat;
       if (t) {
         // Find this turn's memberIdxs
@@ -246,12 +330,14 @@ function _activityAutoUpdate(chat, turnNum, event) {
           }
         }
         if (memberIdxs && _activityCount(t.messages, memberIdxs) >= 4) {
-          chat._activityStates.set(turnNum, 'auto-closed');
+          // Leave state auto-open; the deferred close animates it shut.
+          _scheduleActivityAutoClose(chat, turnNum);
         }
       }
     }
   } else if (event === 'response') {
-    chat._activityStates.set(turnNum, 'auto-closed');
+    // Response finalised: animate the block shut (only if still auto-state).
+    _scheduleActivityAutoClose(chat, turnNum);
   }
 }
 function toggleActivitySummary(turnNum) {
@@ -260,7 +346,14 @@ function toggleActivitySummary(turnNum) {
   if (!chat._activityStates) chat._activityStates = new Map();
   const cur = chat._activityStates.get(turnNum);
   const isOpen = cur === 'auto-open' || cur === 'user-open';
+  // user-* state is sticky: once the user toggles, _activityAutoUpdate stops
+  // auto-collapsing this turn (it bails on user-open/user-closed).
   chat._activityStates.set(turnNum, isOpen ? 'user-closed' : 'user-open');
-  // Re-render to apply the new state
-  renderMessages();
+  // Animate by flipping the `.open` class on the live node instead of
+  // re-rendering (a full renderMessages() would replace the node and the CSS
+  // grid-rows transition would never run). Fall back to a re-render only if
+  // the node isn't found (shouldn't happen — the click came from it).
+  const node = document.querySelector(`.activity-summary[data-activity-turn="${turnNum}"]`);
+  if (node) node.classList.toggle('open', !isOpen);
+  else renderMessages();
 }

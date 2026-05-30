@@ -102,6 +102,18 @@ konfigurierten Provider.
 Schließt man den Browser-Tab mitten im Turn, einfach den Chat wieder
 öffnen — der Worker läuft weiter und der Verlauf holt auf.
 
+**Anfragen auf-/zuklappen**: Jede Anfrage hat oben ein **Anfrage N**-Badge.
+Ein Klick klappt diese eine Anfrage auf oder zu. **Lange gedrückt halten**
+(≈ ½ Sekunde) klappt **alle** Anfragen auf oder zu — die Richtung richtet
+sich nach der gehaltenen Anfrage (eine offene gehalten → alle zu; eine
+zugeklappte gehalten → alle auf); danach wird die gehaltene Anfrage wieder
+in den Blick gescrollt. Alle Auf-/Zuklapp-Bereiche im Chat — Anfragen, die
+**Zusammenfassung**, die **Aktivität**-Box (Tool-Aufrufe/Denken),
+verdichteter Kontext, Webquellen — animieren weich. Die **Aktivität**-Box
+klappt nach der Antwort (oder ab 4 Tool-Aufrufen) automatisch zu, lässt sich
+aber jederzeit wieder öffnen; sobald man sie selbst umschaltet, klappt sie
+nicht mehr automatisch zu. Tool-Aufrufe zeigen ihre Ausführungsdauer.
+
 ---
 
 ## Chats

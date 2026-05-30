@@ -454,11 +454,17 @@ function buildStreamCallbacks(chat, isActive) {
         } else {
           last.args = d.args;
         }
-        if (!state.showToolCalls) return;
+        // Re-render on every new tool call REGARDLESS of state.showToolCalls.
+        // With the toggle OFF, renderTurnBody emits no tool cards but still
+        // renders the static `Aktivität · N Tools` header (count updates live)
+        // — the user expects to see *that a tool ran* even when the details are
+        // hidden. With it ON, the expandable activity block + cards appear and
+        // auto-update as each call streams in. (An args-only update of an
+        // existing call doesn't change the count or cards, so skip it.)
         // renderMessages() wipes the container including the in-flight .msg-streaming div,
         // so re-render the streaming bubble right after. Without this, any partial assistant
         // text/thinking captured so far vanishes until the next text_delta arrives.
-        if (isActive()) { renderMessages(); renderStreamingMessage(chat); scrollToBottom(); }
+        if (isNewToolCall && isActive()) { renderMessages(); renderStreamingMessage(chat); scrollToBottom(); }
       },
       references: (d) => {
         // Server-pushed normalized refs for the just-completed tool call.

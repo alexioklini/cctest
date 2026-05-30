@@ -81,8 +81,12 @@ function renderMessages() {
   const blocks = []; // { key, html, hash }
   if (lcmDividerHtml) blocks.push({ key: 'lcm-divider', html: lcmDividerHtml, hash: lcmDividerHtml });
   for (const t of turns) {
-    const isCollapsed = chat._collapsedTurns.has(t.turnNum);
-    const cls = isCollapsed ? 'turn-group collapsed' : 'turn-group';
+    // Collapsed state is applied post-render (_applyChatCollapseStates) so it
+    // stays OUT of the block hash — otherwise toggling would change the HTML,
+    // the reconciler would replace the node, and the CSS collapse animation
+    // (grid-rows) would never run. The root class + badge title are therefore
+    // collapse-agnostic here.
+    const cls = 'turn-group';
     const fullQ = turnQuestionFull(t.userMsg);
     const isHintExpanded = chat._expandedHints && chat._expandedHints.has(t.turnNum);
     const hasQ = fullQ.length > 0;
@@ -107,7 +111,7 @@ function renderMessages() {
     // not the group header.
     const badge = t.turnNum > 0
       ? `<div class="turn-group-header">
-           <span class="turn-group-badge" onclick="toggleTurnCollapse(${t.turnNum})" title="Klick zum ${isCollapsed ? 'Aufklappen' : 'Zuklappen'} dieser Anfrage">
+           <span class="turn-group-badge" onmousedown="turnBadgePressStart(event,${t.turnNum})" onmouseup="turnBadgePressEnd(event,${t.turnNum})" onmouseleave="turnBadgePressCancel(event)" ontouchstart="turnBadgePressStart(event,${t.turnNum})" ontouchend="turnBadgePressEnd(event,${t.turnNum})" title="Klick: Anfrage auf-/zuklappen · Halten: alle">
              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
              Anfrage ${t.turnNum}
            </span>
@@ -125,16 +129,18 @@ function renderMessages() {
         .replace(/The following summaries cover[^\n]*\n?/g, '')
         .replace(/Use context_search[^\n]*\n?/g, '')
         .trim();
-      const isOpen = !chat._collapsedTurns.has(t.turnNum);
+      // Body ALWAYS rendered (was conditional) so it can animate; open state
+      // applied post-render via _applyChatCollapseStates (shares _collapsedTurns
+      // with turn groups). Open class + chevron kept out of the hash → stable.
       const toggleFn = `toggleTurnCollapse(${t.turnNum})`;
       const sessionId = chat.sessionId || '';
       const lcmHtml = `<div class="lcm-summary-block" data-turn="${t.turnNum}">
         <div class="lcm-summary-header" onclick="${toggleFn}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;transition:transform .2s;transform:rotate(${isOpen?'0':'-90'}deg)"><polyline points="6 9 12 15 18 9"/></svg>
+          <svg class="lcm-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;transition:transform .2s"><polyline points="6 9 12 15 18 9"/></svg>
           <span style="flex:1">Kontext verdichtet</span>
           <button class="lcm-restore-btn" onclick="event.stopPropagation();restoreLCM('${sessionId}')" title="Ursprüngliche Nachrichten wiederherstellen">Wiederherstellen</button>
         </div>
-        ${isOpen ? `<div class="lcm-summary-body">${marked.parse(summaryRaw)}</div>` : ''}
+        <div class="lcm-summary-body collapsible-body"><div class="collapsible-inner"><div class="lcm-summary-body-text">${marked.parse(summaryRaw)}</div></div></div>
       </div>`;
       blocks.push({ key: 'lcm-' + t.turnNum, html: lcmHtml, hash: lcmHtml });
     } else {
@@ -146,21 +152,24 @@ function renderMessages() {
       // new summary, the content updates in place.
       let summaryBlock = '';
       if (t.turnNum === 1 && chat.chatSummary) {
-        const sOpen = chat._summaryOpen === true;
-        summaryBlock = `<div class="chat-summary-block">
-          <details${sOpen ? ' open' : ''} ontoggle="toggleChatSummary(this)">
-            <summary class="chat-summary-header">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>
-              <span>Zusammenfassung</span>
-            </summary>
-            <div class="chat-summary-body">${esc(chat.chatSummary)}</div>
-          </details>
+        // Animated div (not <details>) so it shares the grid-rows collapse.
+        // Open state lives on chat._summaryOpen + is applied post-render
+        // (_applyChatCollapseStates) so it stays out of the block hash.
+        // data-summary marks it for that pass; open class is NOT in this HTML.
+        summaryBlock = `<div class="chat-summary-block" data-summary="1">
+          <div class="chat-summary-header" onclick="toggleChatSummary()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>
+            <span>Zusammenfassung</span>
+          </div>
+          <div class="chat-summary-body collapsible-body"><div class="collapsible-inner"><div class="chat-summary-body-text">${esc(chat.chatSummary)}</div></div></div>
         </div>`;
       }
       // The round-0 preamble (artifact-folder note) is intentionally NOT shown
       // in chat view — it's plumbing, surfaced in the session inspector as its
       // own card. turnQuestionFull already strips it from the header hint.
-      const turnHtml = `<div class="${cls}" data-turn="${t.turnNum}">${badge}${summaryBlock}<div class="turn-body">${body}</div></div>`;
+      // .turn-body is the animated collapsible container; .turn-body-inner
+      // holds the content (and is the streaming-bubble injection target).
+      const turnHtml = `<div class="${cls}" data-turn="${t.turnNum}">${badge}${summaryBlock}<div class="turn-body collapsible-body"><div class="turn-body-inner collapsible-inner">${body}</div></div></div>`;
       blocks.push({ key: 'turn-' + t.turnNum, html: turnHtml, hash: turnHtml });
     }
   }
@@ -206,6 +215,65 @@ function renderMessages() {
   if (changedRoots.length && typeof initTurnScrollSync === 'function') initTurnScrollSync();
   // Restore this user's 👍/👎 selections for the chat's responses (by data-attr).
   if (typeof feedbackHydrateState === 'function' && chat.sessionId) feedbackHydrateState('chat', chat.sessionId);
+  // Apply collapse/open state for every animated chat-view disclosure from
+  // chat state. Kept OUT of the block hash so flips don't trigger node
+  // replacement (which would kill the collapse animation). `changedRoots` are
+  // freshly (re)inserted nodes — set their state WITHOUT a transition (no prior
+  // baseline to animate from); persistent nodes get the class toggled, which
+  // animates via CSS.
+  _applyChatCollapseStates(chat, container, changedRoots);
+}
+// Set/clear `cls` on `node` to match `wantOn`. If the node is freshly inserted
+// (in `freshSet`), suppress the transition for one frame so it paints directly
+// in its target state (no open→close flash on insert). `bodySel` is the
+// :scope child whose transition is suppressed. Returns true if it changed.
+function _setCollapseClass(node, cls, wantOn, freshSet, bodySel) {
+  if (node.classList.contains(cls) === wantOn) return false; // already correct
+  if (freshSet && freshSet.has(node)) {
+    const body = bodySel ? node.querySelector(bodySel) : null;
+    const prev = body ? body.style.transition : null;
+    if (body) body.style.transition = 'none';
+    node.classList.toggle(cls, wantOn);
+    if (body) { void body.offsetHeight; body.style.transition = prev || ''; }
+  } else {
+    node.classList.toggle(cls, wantOn); // animates
+  }
+  return true;
+}
+// Unified post-render pass: turn groups, activity blocks, chat summary. Each
+// disclosure renders state-agnostic HTML (stable hash) and gets its open class
+// stamped here so toggles + auto-collapse animate on persistent nodes.
+function _applyChatCollapseStates(chat, container, freshRoots) {
+  if (!chat) return;
+  const freshSet = new Set();
+  for (const r of (freshRoots || [])) {
+    if (r && r.classList) freshSet.add(r);
+    if (r && r.querySelectorAll) r.querySelectorAll('.turn-group,.lcm-summary-block,.activity-summary,.chat-summary-block').forEach(n => freshSet.add(n));
+  }
+  // 1) Turn groups + compacted-context (LCM) blocks: open = NOT in
+  //    _collapsedTurns. Default (no set) = open. Both share the same state.
+  const collapsed = chat._collapsedTurns;
+  container.querySelectorAll('.turn-group[data-turn]').forEach(node => {
+    const tn = Number(node.getAttribute('data-turn'));
+    const wantOpen = !(collapsed && collapsed.has(tn));
+    _setCollapseClass(node, 'is-open', wantOpen, freshSet, ':scope > .turn-body');
+  });
+  container.querySelectorAll('.lcm-summary-block[data-turn]').forEach(node => {
+    const tn = Number(node.getAttribute('data-turn'));
+    const wantOpen = !(collapsed && collapsed.has(tn));
+    _setCollapseClass(node, 'is-open', wantOpen, freshSet, ':scope > .lcm-summary-body');
+  });
+  // 2) Activity blocks: open = auto-open|user-open in _activityStates.
+  container.querySelectorAll('.activity-summary[data-activity-turn]').forEach(node => {
+    const tn = Number(node.getAttribute('data-activity-turn'));
+    const st = chat._activityStates && chat._activityStates.get(tn);
+    const wantOpen = st === 'auto-open' || st === 'user-open';
+    _setCollapseClass(node, 'open', wantOpen, freshSet, ':scope > .activity-summary-body');
+  });
+  // 3) Chat summary: open = chat._summaryOpen (default closed).
+  container.querySelectorAll('.chat-summary-block[data-summary]').forEach(node => {
+    _setCollapseClass(node, 'is-open', !!chat._summaryOpen, freshSet, ':scope > .collapsible-body');
+  });
 }
 // Reconcile an ordered list of {key, html, hash} blocks against `container`'s
 // direct children. Returns the array of element roots that were newly inserted
@@ -529,15 +597,29 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
       : `${staticHeader}${responseHtml}`;
   }
 
-  const summaryEl = `<summary class="activity-summary-header" onclick="event.preventDefault();toggleActivitySummary(${turnNum})">
+  // NOTE: deliberately NOT a native <details> — its body is removed from
+  // layout when closed, which can't be height-animated. Instead the body
+  // stays in the DOM always and open/closed is a class on the wrapper; the
+  // CSS grid-template-rows 0fr↔1fr trick animates the collapse smoothly
+  // (see .activity-summary in main.css). toggleActivitySummary flips the
+  // class on this live node instead of forcing a full re-render, so the
+  // transition actually runs.
+  const headerEl = `<div class="activity-summary-header" onclick="toggleActivitySummary(${turnNum})">
         <svg class="activity-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         ${esc(label)}
-      </summary>`;
+      </div>`;
 
-  const detailsHtml = `<details class="activity-summary"${isOpen ? ' open' : ''}>
-      ${summaryEl}
-      <div class="activity-summary-body">${bodyHtml}</div>
-    </details>`;
+  // NOTE: the `open` class is intentionally NOT baked into this HTML, and the
+  // open/closed signal is NOT in the hashed markup at all. If it were, every
+  // open↔close flip would change the block hash and the reconciler would
+  // replace the node — killing the CSS transition. Instead the HTML is
+  // open-state-agnostic (stable hash); `_applyActivityOpenStates()` runs after
+  // each render and stamps `.open` from chat._activityStates onto the
+  // persistent node, so toggles + auto-close animate instead of snapping.
+  const detailsHtml = `<div class="activity-summary" data-activity-turn="${turnNum}">
+      ${headerEl}
+      <div class="activity-summary-body"><div class="activity-summary-body-inner">${bodyHtml}</div></div>
+    </div>`;
 
   return lastResponseMemberPos === -1
     ? detailsHtml
@@ -578,7 +660,7 @@ function renderThinkingMessage(msg, idx) {
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
           Denke nach...
         </div>
-        <div class="thinking-block-body msg-content">${renderMarkdown(text)}</div>
+        <div class="thinking-block-body collapsible-body"><div class="collapsible-inner msg-content">${renderMarkdown(text)}</div></div>
       </div>
     </div>
   `;
@@ -703,7 +785,7 @@ function renderAssistantMessage(msg, idx) {
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
           Denken${summaryNote}
         </div>
-        <div class="thinking-block-body msg-content">${renderMarkdown(msg._thinking)}</div>
+        <div class="thinking-block-body collapsible-body"><div class="collapsible-inner msg-content">${renderMarkdown(msg._thinking)}</div></div>
       </div>
     `;
   } else if (msg._thinkingSummary?.reasoning_tokens) {
@@ -765,25 +847,30 @@ function renderAssistantMessage(msg, idx) {
         ? `<div class="msg-web-source-error">⚠ Abruf fehlgeschlagen: ${esc(s.error)}</div>`
         : `<pre class="msg-web-source-content">${esc(s.content || '')}</pre>`;
       const chars = s.content ? ` · ${(s.content.length).toLocaleString()} Zeichen` : '';
+      // Animated div (was <details>); self-contained class toggle — per-message
+      // open state needn't persist (native details state was lost on re-render
+      // too). event.stopPropagation on the host link so it doesn't toggle.
       return `
-        <details class="msg-web-source">
-          <summary class="msg-web-source-summary">
+        <div class="msg-web-source" onclick="this.classList.toggle('is-open')">
+          <div class="msg-web-source-summary">
             <span class="msg-web-source-title">${esc(s.title || s.url)}</span>
             <a class="msg-web-source-host" href="${esc(s.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(host)}↗</a>
-          </summary>
-          <div class="msg-web-source-meta">${esc(s.url)}${chars}</div>
-          ${inner}
-        </details>`;
+          </div>
+          <div class="msg-web-source-detail collapsible-body"><div class="collapsible-inner">
+            <div class="msg-web-source-meta">${esc(s.url)}${chars}</div>
+            ${inner}
+          </div></div>
+        </div>`;
     }).join('');
     webSourcesHtml = `
-      <details class="msg-web-sources">
-        <summary class="msg-web-sources-summary">
+      <div class="msg-web-sources" onclick="this.classList.toggle('is-open')">
+        <div class="msg-web-sources-summary">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
           <span>Webquellen dieser Anfrage</span>
           <span class="msg-web-sources-count">${webSrc.length}</span>
-        </summary>
-        <div class="msg-web-sources-body">${items}</div>
-      </details>`;
+        </div>
+        <div class="msg-web-sources-body collapsible-body"><div class="collapsible-inner" onclick="event.stopPropagation()">${items}</div></div>
+      </div>`;
   }
 
   // Reference badges — split into Zitiert (always visible) and Durchsucht
@@ -820,17 +907,18 @@ function renderAssistantMessage(msg, idx) {
         </div>`;
     }
     if (searchedMsgRefs.length > 0) {
-      // Collapsed by default unless there are no cited refs.
-      const open = citedMsgRefs.length === 0 ? 'open' : '';
+      // Animated div (was <details>); open by default only when no cited refs.
+      // Self-contained class toggle (per-message, no persistence needed).
+      const openCls = citedMsgRefs.length === 0 ? ' is-open' : '';
       refsHtml += `
-        <details class="msg-references-row msg-references-searched" ${open}>
-          <summary class="msg-references-summary">
+        <div class="msg-references-row msg-references-searched${openCls}" onclick="this.classList.toggle('is-open')">
+          <div class="msg-references-summary">
             <span class="msg-references-disclosure">▸</span>
             <span class="msg-references-label">Durchsucht</span>
             <span class="msg-references-count">${searchedMsgRefs.length}</span>
-          </summary>
-          <div class="msg-references">${searchedMsgRefs.map(renderBadge).join('')}</div>
-        </details>`;
+          </div>
+          <div class="msg-references-detail collapsible-body"><div class="collapsible-inner"><div class="msg-references" onclick="event.stopPropagation()">${searchedMsgRefs.map(renderBadge).join('')}</div></div></div>
+        </div>`;
     }
     refsHtml += '</div>';
   }
@@ -960,9 +1048,11 @@ function renderStreamingMessage(chat) {
   const existing = container.querySelector('.msg-streaming');
   if (existing) existing.remove();
 
-  // Inject inside the last turn-body if present so the streaming bubble belongs
-  // to the active turn (same collapse behaviour as the rest of the turn).
-  const turnBodies = container.querySelectorAll('.turn-group .turn-body');
+  // Inject inside the last turn-body-inner if present so the streaming bubble
+  // belongs to the active turn (same collapse behaviour as the rest of the
+  // turn). .turn-body is now the grid collapsible container; content lives in
+  // .turn-body-inner, which is the injection target.
+  const turnBodies = container.querySelectorAll('.turn-group .turn-body-inner');
   const injectTarget = turnBodies.length ? turnBodies[turnBodies.length - 1] : container;
 
   // Queue-wait banner: show before any tokens arrive if the provider queued us.
@@ -1000,7 +1090,7 @@ function renderStreamingMessage(chat) {
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
           Denke nach...
         </div>
-        <div class="thinking-block-body msg-content">${renderMarkdown(chat.thinkingText)}</div>
+        <div class="thinking-block-body collapsible-body"><div class="collapsible-inner msg-content">${renderMarkdown(chat.thinkingText)}</div></div>
       </div>
     `;
   }

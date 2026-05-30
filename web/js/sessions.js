@@ -196,11 +196,33 @@ async function openSession(sessionId, agentId) {
           toolsByRound.get(r).push(t);
         }
         const emittedRounds = new Set();
+        // Sort key for reconstructed tool rows. The live path stamps _seq
+        // (chat_send.js _nextSeq) + _ts (Date.now) on every tool_call/result;
+        // both the right-panel sort (_bgSortNewestFirst, reads `_ts || 0`) and
+        // the chat-view activity sort (renderTurnBody sortKey = `_seq || id`)
+        // rely on them. On reload these rows are rebuilt from metadata.tools[]
+        // and previously carried NEITHER — so the panel collapsed every entry
+        // to ts=0 (sort became a no-op → newest-on-top order lost). We base the
+        // key on the OWNING assistant row's DB id so it stays on the same
+        // monotonic scale as the turn's thinking/user rows (which sortKey reads
+        // via `id`): tools land just before their assistant response and after
+        // the prior turn, preserving round interleave. A per-assistant 0.001
+        // step keeps within-turn emit order; +0.0005 puts each result right
+        // after its call. Assistant ids are monotonic across turns, so the
+        // panel's cross-turn newest-first sort is correct too.
+        const _toolKeyBase = (Number(msg.id) || 0) - 1;
+        let _toolFrac = 0;
         const emitTools = (tools) => {
           for (const t of tools) {
-            expanded.push({ role: 'tool_call', name: t.name, args: t.args || {}, tool_round: t.tool_round });
+            _toolFrac += 0.001;
+            const _seq = _toolKeyBase + _toolFrac;
+            // duration_ms is the real server-measured execution time (the _ts
+            // values here are synthetic sort keys, NOT wall-clock, so the
+            // renderer must use duration_ms on reload — see renderToolCall).
+            expanded.push({ role: 'tool_call', name: t.name, args: t.args || {}, tool_round: t.tool_round, tool_use_id: t.tool_use_id || null, duration_ms: t.duration_ms, _seq, _ts: _seq });
             if (t.result !== undefined) {
-              expanded.push({ role: 'tool_result', name: t.name, result: t.result, tool_round: t.tool_round });
+              const _rSeq = _toolKeyBase + _toolFrac + 0.0005;
+              expanded.push({ role: 'tool_result', name: t.name, result: t.result, tool_round: t.tool_round, tool_use_id: t.tool_use_id || null, _seq: _rSeq, _ts: _rSeq });
               try {
                 const rj = JSON.parse(typeof t.result === 'string' ? t.result : JSON.stringify(t.result));
                 if (rj && rj.worker && rj.worker_id) {

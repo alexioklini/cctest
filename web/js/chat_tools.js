@@ -574,7 +574,19 @@ function renderToolCall(msg, idx) {
   const desc = toolDescribe(msg.name, msg.args);
   const args = typeof msg.args === 'string' ? {} : (msg.args || {});
   const hasResult = resultMsg !== null;
-  const duration = (hasResult && msg._ts && resultMsg._ts) ? ((resultMsg._ts - msg._ts) / 1000).toFixed(1) : null;
+  // Prefer the server-measured duration_ms (persisted per tool, survives
+  // reload). Fall back to the live _ts delta for in-flight turns where the
+  // reconstructed metadata isn't present yet. NOTE: on reload _ts values are
+  // synthetic sort keys (not wall-clock), so the delta would be ~0 — duration_ms
+  // is the only correct source there.
+  let duration = null;
+  if (typeof msg.duration_ms === 'number' && msg.duration_ms >= 0) {
+    duration = (msg.duration_ms / 1000).toFixed(1);
+  } else if (hasResult && msg._ts && resultMsg._ts) {
+    const d = (resultMsg._ts - msg._ts) / 1000;
+    // Guard against the synthetic-_ts case (sub-millisecond deltas → "0.0").
+    duration = d >= 0.05 ? d.toFixed(1) : null;
+  }
   // Check if this tool is running through a worker (live or completed)
   const isRunningWorker = !hasResult && msg._ts && Object.values(state.activeWorkers).some(
     w => w.tool_name === msg.name && w.state === 'RUNNING'
@@ -753,7 +765,7 @@ function renderSyntheticGdprCall(msg, idx) {
         ${timing}
         <span class="tool-chevron">&#9656;</span>
       </div>
-      <div class="tool-block-body">${bodyHtml}</div>
+      <div class="tool-block-body collapsible-body"><div class="collapsible-inner">${bodyHtml}</div></div>
     </div>
   `;
 }
@@ -782,7 +794,7 @@ function renderToolResult(msg, idx) {
         <span class="tool-name">${desc}</span>
         <span class="tool-chevron">&#9656;</span>
       </div>
-      <div class="tool-block-body">${block}</div>
+      <div class="tool-block-body collapsible-body"><div class="collapsible-inner">${block}</div></div>
     </div>
   `;
 }

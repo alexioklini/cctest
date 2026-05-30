@@ -1047,6 +1047,16 @@ def _attach_usage_meta(meta: dict, usage_totals: dict, sid: str):
             pass
 
 
+def _sanitize_partial_tools(tools):
+    """Drop transient per-tool keys (e.g. `_started_at`, the wall-clock anchor
+    used to compute duration_ms) before persisting tools to message metadata.
+    A tool whose result never arrived would otherwise carry the raw timestamp
+    into the DB. Returns the same list (mutated in place) for call-site brevity."""
+    for t in tools or []:
+        t.pop("_started_at", None)
+    return tools
+
+
 def build_chat_event_callback(session, live, sid):
     """Build the per-turn SSE event callback + its accumulator state.
 
@@ -1176,6 +1186,10 @@ def build_chat_event_callback(session, live, sid):
                     entry["tool_round"] = tr
                 if tuid:
                     entry["tool_use_id"] = tuid
+                # Wall-clock start, used to compute duration_ms when the result
+                # arrives (persisted per-tool so the chat view can show timing
+                # on reload — _ts deltas only exist for the live session).
+                entry["_started_at"] = time.time()
                 _partial_tools.append(entry)
         elif event_type == "tool_result":
             # Attach result to the last matching tool entry and extract
@@ -1209,21 +1223,27 @@ def build_chat_event_callback(session, live, sid):
             # same-named calls in one round whose results arrive out of order).
             # Fall back to last-unfilled-by-name only when no id is available
             # (legacy / id-less events) — preserves the prior behavior there.
+            def _finish_tool(t):
+                t["result"] = capped
+                if refs:
+                    t["references"] = refs
+                # Real execution duration: wall-time from the tool_call event to
+                # now. Persisted (ms) so the chat view shows timing on reload —
+                # client _ts deltas only exist for the live, in-memory session.
+                started = t.pop("_started_at", None)
+                if started is not None:
+                    t["duration_ms"] = int(max(0.0, time.time() - started) * 1000)
             matched = False
             if result_tuid:
                 for t in _partial_tools:
                     if t.get("tool_use_id") == result_tuid and "result" not in t:
-                        t["result"] = capped
-                        if refs:
-                            t["references"] = refs
+                        _finish_tool(t)
                         matched = True
                         break
             if not matched:
                 for t in reversed(_partial_tools):
                     if t["name"] == tool_name and "result" not in t:
-                        t["result"] = capped
-                        if refs:
-                            t["references"] = refs
+                        _finish_tool(t)
                         break
             if refs:
                 live.emit("references", {
@@ -1505,7 +1525,7 @@ def _recover_one_turn(sid, turn_id, model, started_at):
                 if created_files:
                     msg_metadata["files"] = created_files
                 if _partial_tools:
-                    msg_metadata["tools"] = _partial_tools
+                    msg_metadata["tools"] = _sanitize_partial_tools(_partial_tools)
                 if cancelled:
                     msg_metadata["partial"] = True
                     reply = reply + "\n\n*(Cancelled)*"
@@ -2274,7 +2294,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     if _web_sources_used:
                         msg_metadata["web_sources"] = _web_sources_used
                     if _partial_tools:
-                        msg_metadata["tools"] = _partial_tools
+                        msg_metadata["tools"] = _sanitize_partial_tools(_partial_tools)
                     # Leftover thinking deltas that never got a thinking_done (truncated
                     # stream / error before flush). Persist as a fallback thinking row
                     # rather than losing the content.
@@ -2574,7 +2594,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     partial += "\n\n*(Cancelled)*"
                     meta = {"model": session.model, "partial": True}
                     if _partial_tools:
-                        meta["tools"] = _partial_tools
+                        meta["tools"] = _sanitize_partial_tools(_partial_tools)
                     _attach_usage_meta(meta, _usage_totals, sid)
                     session.add_message("assistant", partial, metadata=meta)
                 else:
@@ -2587,7 +2607,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     partial += f"\n\n*(Engine error: exit code {e.code})*"
                     meta = {"model": session.model, "partial": True}
                     if _partial_tools:
-                        meta["tools"] = _partial_tools
+                        meta["tools"] = _sanitize_partial_tools(_partial_tools)
                     _attach_usage_meta(meta, _usage_totals, sid)
                     session.add_message("assistant", partial, metadata=meta)
                 else:
@@ -2602,7 +2622,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     partial += f"\n\n*(Error: {str(e)[:200]})*"
                     meta = {"model": session.model, "partial": True}
                     if _partial_tools:
-                        meta["tools"] = _partial_tools
+                        meta["tools"] = _sanitize_partial_tools(_partial_tools)
                     _attach_usage_meta(meta, _usage_totals, sid)
                     session.add_message("assistant", partial, metadata=meta)
                 else:
