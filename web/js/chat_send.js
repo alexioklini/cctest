@@ -308,6 +308,10 @@ async function sendMessage() {
   chat.thinkingText = '';
   chat.thinkingSummary = null;
   chat.queueStatus = null;
+  // Reset this turn's live token counters (added on top of the session total in
+  // the status bar while streaming; cleared again on done).
+  chat._liveTurnTokensIn = 0;
+  chat._liveTurnTokensOut = 0;
   chat.files = [];
   chat._msgSeq = chat._msgSeq || 0;
   const streamGen = (chat._streamGen = (chat._streamGen || 0) + 1);
@@ -379,6 +383,23 @@ function buildStreamCallbacks(chat, isActive) {
       },
       thinking_summary: (d) => {
         chat.thinkingSummary = { format: d.format, reasoning_tokens: d.reasoning_tokens || 0 };
+      },
+      // Live per-round usage: THIS turn's cumulative tokens + session cost so far,
+      // emitted by the server as each round completes (not only at `done`). Held
+      // in dedicated live-turn fields (NOT chat._tokensIn — that's the cross-turn
+      // session total the `done` handler accumulates; clobbering it would make the
+      // bar drop to just-this-turn while streaming). updateStatusBar adds these to
+      // the session total while chat.streaming is true; they're cleared at turn
+      // start + on done. Session cost from the server already includes this turn.
+      usage: (d) => {
+        if (typeof d.tokens_in === 'number') chat._liveTurnTokensIn = d.tokens_in;
+        if (typeof d.tokens_out === 'number') chat._liveTurnTokensOut = d.tokens_out;
+        if (d.cost !== undefined && d.cost !== null) chat._sessionCost = d.cost;
+        // last_tokens_in = the most recent round's prompt size → drives the live
+        // context-fill bar (updateStatusBar reads chat._lastApiIn).
+        if (typeof d.last_tokens_in === 'number') chat._lastApiIn = d.last_tokens_in;
+        if (isActive() && typeof updateStatusBar === 'function') updateStatusBar();
+        if (isActive() && typeof renderStreamingMessage === 'function') renderStreamingMessage(chat);
       },
       queue_wait: (d) => {
         // Provider queue serialised this turn — show "waiting in line" hint.
@@ -893,6 +914,10 @@ function buildStreamCallbacks(chat, isActive) {
         const estOut = tokOut || Math.ceil((d.text || chat.streamingText || '').length / 4);
         chat._tokensIn = (chat._tokensIn || 0) + tokIn;
         chat._tokensOut = (chat._tokensOut || 0) + (tokOut || estOut);
+        // This turn is committed into the session totals now — drop the live-turn
+        // counters so the status bar doesn't add them again on top.
+        chat._liveTurnTokensIn = 0;
+        chat._liveTurnTokensOut = 0;
         assistantMsg.metadata = {
           ...(assistantMsg.metadata || {}),
           model: d.model || chat.model,
@@ -976,9 +1001,17 @@ function buildStreamCallbacks(chat, isActive) {
         chat.streamingText = '';
         chat.thinkingText = '';
         chat.files = [];
+        // Clear live-turn token counters: on cancel/error the server persisted a
+        // partial assistant message WITH tokens+cost (so a mid-stream cancel keeps
+        // them), and openSession reloads that metadata — keeping the live fields
+        // would double-count in the status bar. Refresh the bar so In/Out reflect
+        // what was consumed before the interruption (from message metadata).
+        chat._liveTurnTokensIn = 0;
+        chat._liveTurnTokensOut = 0;
         clearInterval(chat._streamTimerInterval);
         if (isActive()) {
           updateStreamingUI(false);
+          if (typeof updateStatusBar === 'function') updateStatusBar();
           const msg = d.message || 'Unbekannter Fehler';
           if (!/Load failed|Failed to fetch|NetworkError|AbortError|network/i.test(msg)) {
             showToast('Fehler: ' + msg, true);

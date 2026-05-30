@@ -59,7 +59,11 @@ bleibt es bis zum Neuladen geschlossen.
 
 **Statusleiste** (unten) — Verbindungspunkt, Agent, Modell, In/Out-Tokens,
 Geschwindigkeit, Kontextfenster-Füllstand, Sitzungskosten, Plan-Nutzung,
-Warmup-Status, Provider-Queue. Auf jedes Element klicken für Details.
+Warmup-Status, Provider-Queue. Auf jedes Element klicken für Details. In/Out,
+Kosten und Kontext-Füllstand **aktualisieren live während der Antwort** (pro
+Runde, nicht erst am Ende). Wird eine Antwort **mitten im Stream abgebrochen**,
+bleiben die bis dahin verbrauchten Tokens **und Kosten** erhalten (sie werden
+pro Runde sofort verbucht, gehen also nicht verloren).
 
 **Eingabe-Werkzeugleiste** (über dem Textfeld, links):
 - 📎 Dateien anhängen

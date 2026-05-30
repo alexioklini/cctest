@@ -161,6 +161,14 @@ function updateStatusBar() {
   if (chat._tokensIn) totalIn = chat._tokensIn;
   if (chat._tokensOut) totalOut = chat._tokensOut;
   if (chat._lastSpeed) lastSpeed = chat._lastSpeed;
+  // While a turn is streaming, add THIS turn's live tokens on top of the
+  // committed session total (the in-flight assistant message has no metadata
+  // yet). Cleared at turn start + on done, so we never double-count once the
+  // final metadata lands.
+  if (chat.streaming) {
+    if (chat._liveTurnTokensIn) totalIn += chat._liveTurnTokensIn;
+    if (chat._liveTurnTokensOut) totalOut += chat._liveTurnTokensOut;
+  }
 
   document.getElementById('status-tokens-in').textContent = totalIn ? totalIn.toLocaleString() : '0';
   document.getElementById('status-tokens-out').textContent = totalOut ? totalOut.toLocaleString() : '0';

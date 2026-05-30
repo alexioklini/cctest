@@ -1031,6 +1031,22 @@ def _generate_chat_summary(session):
             pass
 
 
+def _attach_usage_meta(meta: dict, usage_totals: dict, sid: str):
+    """Write token counts + the live session cost into a partial-message's
+    metadata. Used by the cancel/error paths so an interrupted turn persists what
+    it consumed (the per-round ledger rows were already written in the `usage`
+    handler — this makes the message + status bar reflect them after reload, so a
+    mid-stream cancel no longer loses tokens/cost)."""
+    meta["tokens_in"] = usage_totals.get("tokens_in", 0)
+    meta["tokens_out"] = usage_totals.get("tokens_out", 0)
+    meta["last_tokens_in"] = usage_totals.get("last_tokens_in", 0)
+    if engine._cost_tracker:
+        try:
+            meta["cost"] = round(engine._cost_tracker.get_session_cost(sid).get("cost", 0.0), 4)
+        except Exception:
+            pass
+
+
 def build_chat_event_callback(session, live, sid):
     """Build the per-turn SSE event callback + its accumulator state.
 
@@ -1051,6 +1067,11 @@ def build_chat_event_callback(session, live, sid):
         "partial_thinking": [],
         "thinking_summary": {},
         "usage_totals": {"tokens_in": 0, "tokens_out": 0, "last_tokens_in": 0},
+        # True once any round's cost has been logged to the ledger (per-round, in
+        # the `usage` handler). The success path checks this so it doesn't re-log
+        # the aggregate (which would double-count). Cancel/error are covered too:
+        # whatever rounds completed are already logged.
+        "cost_logged": False,
         "request_payloads": [],
         # Counts sidecar `empty_round_nudge` events per turn — sidecar nudges
         # the model up to 3× when a round ends without usable text. We
@@ -1211,18 +1232,54 @@ def build_chat_event_callback(session, live, sid):
                     "tool_round": data.get("tool_round", 0),
                 })
         elif event_type == "usage":
-            _usage_totals["tokens_in"] += data.get("tokens_in", 0)
-            _usage_totals["tokens_out"] += data.get("tokens_out", 0)
-            _usage_totals["last_tokens_in"] = data.get("tokens_in", 0)
+            _r_in = data.get("tokens_in", 0)
+            _r_out = data.get("tokens_out", 0)
+            _usage_totals["tokens_in"] += _r_in
+            _usage_totals["tokens_out"] += _r_out
+            _usage_totals["last_tokens_in"] = _r_in
             # Attach per-round actual tokens to the matching request_payload
             _ur = data.get("tool_round")
             if _ur is not None:
                 for _p in _request_payloads:
                     if _p.get("tool_round") == _ur:
-                        _p["tokens_in"] = data.get("tokens_in", 0)
-                        _p["tokens_out"] = data.get("tokens_out", 0)
+                        _p["tokens_in"] = _r_in
+                        _p["tokens_out"] = _r_out
                         break
-            return  # internal only, don't send to client
+            # PER-ROUND cost logging: write THIS round's delta to the ledger the
+            # moment it arrives, tagged with its tool_round (one cost_log row per
+            # round). A mid-stream cancel then loses neither tokens nor cost —
+            # every completed round is already persisted. The end-of-turn aggregate
+            # log is gone (it would double-count these rows). Keyed by the model
+            # that actually answered (fallback wins). Marks the turn logged so the
+            # success path doesn't re-log.
+            _cost_model = (engine.get_request_context()._fallback_model_used
+                           or session.model)
+            try:
+                engine._log_call_cost(
+                    _cost_model, _r_in, _r_out,
+                    session_id=sid, tool_round=(_ur or 0),
+                    api_key=session.api_key,
+                )
+                state["cost_logged"] = True
+            except Exception as _ce:
+                print(f"[chat] per-round cost log failed: {_ce}")
+            # Forward a LIVE usage event to the client so the running-turn display
+            # AND the status bar update mid-stream (cumulative tokens + the
+            # session cost so far). Cheap; no DB write here (the log above owns it).
+            _live_cost = None
+            if engine._cost_tracker:
+                try:
+                    _live_cost = round(engine._cost_tracker.get_session_cost(sid).get("cost", 0.0), 4)
+                except Exception:
+                    _live_cost = None
+            live.emit("usage", {
+                "tokens_in": _usage_totals["tokens_in"],
+                "tokens_out": _usage_totals["tokens_out"],
+                "last_tokens_in": _usage_totals["last_tokens_in"],
+                "cost": _live_cost,
+                "tool_round": _ur,
+            })
+            return
         elif event_type == "worker_usage":
             # Worker-side LLM call (e.g. summariser) tokens. Add to turn totals
             # so the status bar reflects the real cost. Forward to client for
@@ -2166,16 +2223,22 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     # actually answered (fallback model wins when one was used).
                     _cost_model = (engine.get_request_context()._fallback_model_used
                                    or session.model)
-                    try:
-                        engine._log_call_cost(
-                            _cost_model,
-                            _usage_totals["tokens_in"],
-                            _usage_totals["tokens_out"],
-                            session_id=sid,
-                            api_key=session.api_key,
-                        )
-                    except Exception as _ce:
-                        print(f"[chat] cost log failed: {_ce}")
+                    # Per-round logging (in the `usage` handler) already wrote each
+                    # round's cost row. Only log the aggregate here if NO round
+                    # ever did (e.g. a provider that returns usage only in the
+                    # final message, so no per-round `usage` event fired) — guarded
+                    # so we never double-count.
+                    if not _cb_state.get("cost_logged"):
+                        try:
+                            engine._log_call_cost(
+                                _cost_model,
+                                _usage_totals["tokens_in"],
+                                _usage_totals["tokens_out"],
+                                session_id=sid,
+                                api_key=session.api_key,
+                            )
+                        except Exception as _ce:
+                            print(f"[chat] cost log failed: {_ce}")
                     # Compute cost before saving
                     session_cost = None
                     if engine._cost_tracker:
@@ -2512,6 +2575,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     meta = {"model": session.model, "partial": True}
                     if _partial_tools:
                         meta["tools"] = _partial_tools
+                    _attach_usage_meta(meta, _usage_totals, sid)
                     session.add_message("assistant", partial, metadata=meta)
                 else:
                     _rollback_messages(session, sid, _msg_count_before)
@@ -2524,6 +2588,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     meta = {"model": session.model, "partial": True}
                     if _partial_tools:
                         meta["tools"] = _partial_tools
+                    _attach_usage_meta(meta, _usage_totals, sid)
                     session.add_message("assistant", partial, metadata=meta)
                 else:
                     _rollback_messages(session, sid, _msg_count_before)
@@ -2538,6 +2603,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     meta = {"model": session.model, "partial": True}
                     if _partial_tools:
                         meta["tools"] = _partial_tools
+                    _attach_usage_meta(meta, _usage_totals, sid)
                     session.add_message("assistant", partial, metadata=meta)
                 else:
                     _rollback_messages(session, sid, _msg_count_before)
