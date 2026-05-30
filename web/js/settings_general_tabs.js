@@ -83,7 +83,7 @@ async function _genTab_server(C) {
           })()}
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{auto_route_classifier_mode:document.getElementById('srv-auto-route-mode').value}).then(()=>showToast('Auto-Routing aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
         </div>
-        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Wie das „✨ Auto"-Modell im Verfasser (und background_task_model=auto bei Fan-out) die Absicht erkennt und das passende Modell wählt. LLM/Hybrid fallen bei Fehler/Timeout still auf Schlüsselwörter zurück.</div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Wie das „✨ Auto"-Modell im Verfasser (und background_task_model=auto bei Fan-out) die Absicht erkennt und das passende Modell wählt. LLM/Hybrid nutzen das oben gesetzte <b>Zusammenfassungsmodell</b> (sonst das günstigste/lokale Modell) und fallen bei Fehler/Timeout still auf Schlüsselwörter zurück.</div>
         ${SEC('Sidecar')}
         ${_renderSupervisorStatus(sc, {
           restartFn: 'restartSidecar',

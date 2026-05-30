@@ -82,9 +82,10 @@ highest-priority) within the caller's ACL + attachment-capability set.
 `keywords`; Settings → Server → Auto-Routing) selects how `resolve_task_purpose`
 classifies intent:
 - `keywords` — regex keyword heuristics (`classify_task_purpose`); zero cost/latency.
-- `llm` — a small one-shot classify on the cheapest/local model
-  (`classify_task_purpose_llm`, via `sidecar_proxy.background_call`,
-  `max_tokens=8`, 20s timeout); **falls back to keywords** on None/error/timeout.
+- `llm` — a small one-shot classify (`classify_task_purpose_llm`, via
+  `sidecar_proxy.background_call`, `max_tokens=8`, 20s timeout) on the
+  `chat_summary_model` if set (Settings → Server → Zusammenfassungen), else the
+  cheapest/local model; **falls back to keywords** on None/error/timeout.
 - `hybrid` — keywords first, LLM only when keywords find no strong signal.
 
 LLM and hybrid **fail open to keywords** — a down sidecar or slow local model
