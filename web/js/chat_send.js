@@ -969,21 +969,37 @@ function buildStreamCallbacks(chat, isActive) {
         // next read.
         invalidateChatReferences(chat.sessionId);
 
-        // Only update DOM if this chat is still visible
+        // Only update DOM if this chat is still visible.
+        // CRITICAL: the assistant message is already in chat.messages (pushed
+        // above). renderMessages() builds the DOM from it. If renderMessages()
+        // (or any post-render helper) throws, the per-event try/catch in
+        // API.streamChat swallows it — leaving the response in state but NOT in
+        // the DOM, so it only appears after a reload (observed in 7129d8fb).
+        // Guard the render so a single helper failure can't strand the reply:
+        // renderMessages() runs first and on its own; if it throws we still
+        // clear the streaming bubble + retry once, and the trailing cosmetics
+        // (scroll/statusbar/panel) are isolated so they can't suppress it.
         if (isActive()) {
-          // Use chat.model, not d.model: on Auto chat.model stays "auto" (the
-          // block above kept it), so the composer label stays "✨ Auto" while
-          // d.model (the concrete pick) would wrongly overwrite it.
           updateModelSelectorDisplay(chat.model);
-          renderMessages();
-          scrollToBottom();
-          updateStreamingUI(false);
-          updateStatusBar();
-          schedulePIIBadgeUpdate();
+          try {
+            renderMessages();
+          } catch (e) {
+            console.error('[done] renderMessages threw — recovering', e);
+            // Drop any leftover streaming bubble so partial text doesn't linger,
+            // then retry a clean render so the persisted reply still shows.
+            const _b = document.querySelector('.msg-streaming');
+            if (_b) _b.remove();
+            try { renderMessages(); } catch (e2) { console.error('[done] render retry failed', e2); }
+          }
+          // Cosmetics — isolated so a failure here never hides the reply.
+          try { scrollToBottom(); } catch (e) {}
+          try { updateStreamingUI(false); } catch (e) {}
+          try { updateStatusBar(); } catch (e) {}
+          try { schedulePIIBadgeUpdate(); } catch (e) {}
           // Turn done — refresh the open panel so refs/attachments/artifacts
           // gathered this turn appear (streaming events only refreshed it
           // opportunistically; references no longer auto-open the pane).
-          if (typeof refreshRightPanelContent === 'function') refreshRightPanelContent();
+          try { if (typeof refreshRightPanelContent === 'function') refreshRightPanelContent(); } catch (e) {}
         }
 
         // Desktop notification when window not focused
@@ -1034,6 +1050,25 @@ function _streamSafetyNet(chat, isActive, streamGen) {
   const text = chat.streamingText || '';
   if (text) {
     chat.messages.push({ role: 'assistant', content: text });
+  } else if (chat.sessionId) {
+    // The stream ended without a `done` AND no partial text was buffered —
+    // e.g. the SSE connection dropped after the last tool but before the
+    // final reply streamed, while the server worker kept running and
+    // persisted the full reply. Relying on streamingText would leave the
+    // turn blank until a manual reload (observed in 7129d8fb). Re-open the
+    // session so the persisted reply is fetched + rendered. openSession does
+    // its own full render, so return early to avoid a double render.
+    chat.streaming = false;
+    chat.streamingText = '';
+    chat.thinkingText = '';
+    chat.files = [];
+    clearInterval(chat._streamTimerInterval);
+    if (isActive() && typeof openSession === 'function') {
+      console.warn('[SSE] safety net — re-opening session to recover persisted reply');
+      openSession(chat.sessionId, chat.agent);
+    }
+    loadAgentSessions(chat.agent);
+    return;
   }
   chat.streaming = false;
   chat.streamingText = '';
