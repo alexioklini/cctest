@@ -98,7 +98,8 @@ streaming call, per-USER history, fixed read-only tool set. See
     "research_mode_override": 0|1|null,
     "caveman_mode": 0..3,
     "thinking_level": "off|low|medium|high",
-    "web_urls_to_fetch": [{"url": "...", "title": "..."}]  # Websuche basket
+    "web_urls_to_fetch": [{"url": "...", "title": "..."}],  # Websuche basket
+    "web_abstract_first": false  # fetch each curated source as a ~1500-char abstract instead of the full page
   }
   ```
   When `web_urls_to_fetch` is present, the worker pre-fetches each URL

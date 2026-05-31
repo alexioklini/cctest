@@ -334,6 +334,10 @@ class API {
       const _web = webBasketEnabled();
       if (_web.length) {
         body.web_urls_to_fetch = _web.map(e => ({ url: e.url, title: e.title }));
+        // Abstract-first triage: fetch each curated source as a ~1500-char
+        // survey instead of the full page (per-send checkbox; off by default).
+        body.web_abstract_first = (typeof webAbstractFirstEnabled === 'function')
+          ? webAbstractFirstEnabled() : false;
       }
     }
 

@@ -130,7 +130,7 @@ def _split_attachment_notice(text: str) -> tuple[str, str]:
     return text, ""
 
 
-def _build_web_sources(web_urls, web_locked):
+def _build_web_sources(web_urls, web_locked, abstract=False):
     """Fetch the user-curated web sources NOW (fresh, per turn).
 
     Called at TURN time (worker, just before the wire build) so each send
@@ -142,6 +142,10 @@ def _build_web_sources(web_urls, web_locked):
         metadata so the chat view + inspector can show each source's FULL
         fetched content individually, like a web_fetch tool-call result.
     Both empty when nothing was fetchable.
+
+    `abstract`: when True each source is fetched in web_fetch's abstract mode
+    (~1500-char survey instead of the whole page) — far fewer tokens for a
+    large basket, at the cost of detail. The user opts in per send.
     """
     import brain as _engine
     sources = []
@@ -152,7 +156,10 @@ def _build_web_sources(web_urls, web_locked):
             continue
         title = (u.get("title") or "").strip() if isinstance(u, dict) else ""
         try:
-            parsed = json.loads(_engine.tool_web_fetch({"url": url, "force_fresh": True}))
+            _wf_args = {"url": url, "force_fresh": True}
+            if abstract:
+                _wf_args["mode"] = "abstract"
+            parsed = json.loads(_engine.tool_web_fetch(_wf_args))
         except (ValueError, TypeError):
             parsed = {}
         if parsed.get("error") or "content" not in parsed:
@@ -1589,7 +1596,7 @@ def _finalize_recovery(session, live, sid, turn_id):
 
 
 
-def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto):
+def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, web_abstract=False, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto):
     """Run one chat turn for `session`, end to end.
 
     Extracted verbatim from the former `_handle_chat.worker()` closure (it
@@ -2193,7 +2200,8 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 # (metadata is stripped before the wire by _ALLOWED_MSG_KEYS).
                 _web_sources_used = []
                 if web_urls:
-                    _web_pre, _web_sources_used = _build_web_sources(web_urls, web_locked)
+                    _web_pre, _web_sources_used = _build_web_sources(
+                        web_urls, web_locked, abstract=web_abstract)
                     if _web_pre:
                         _wire_messages = _inject_web_preamble_into_wire(
                             _wire_messages, _web_pre)
@@ -3374,6 +3382,10 @@ class ChatHandlerMixin:
         # project knowledge, NOT injected per-turn here.)
         web_urls = body.get("web_urls_to_fetch") or []
         web_locked = bool(web_urls) and not bool(getattr(session, "allow_further_web", False))
+        # Abstract-first triage: fetch each curated source as a ~1500-char survey
+        # instead of the full page (big token saving on large baskets). Per-send
+        # checkbox in the Websuche header; off by default.
+        web_abstract = bool(body.get("web_abstract_first"))
 
         # First-turn preamble: the per-session artifact-folder pointer. It used
         # to live in the system prompt, but that made the prompt session-
@@ -3603,6 +3615,7 @@ class ChatHandlerMixin:
             session, sid=sid, message=message, user_content=user_content,
             chat_mode=chat_mode, thinking_level=thinking_level, live=live,
             saved_paths=saved_paths, web_urls=web_urls, web_locked=web_locked,
+            web_abstract=web_abstract,
             project_name=project_name, preamble_text=preamble_text,
             content_blocks=content_blocks, disk_files=disk_files,
             auto_route=auto_route, want_auto=want_auto,

@@ -983,6 +983,7 @@
     "userProfileSave": "writable",
     "userProfileUpdateNow": "writable",
     "WarmupMonitor": "writable",
+    "webAbstractFirstEnabled": "writable",
     "webBasketBulk": "writable",
     "webBasketCount": "writable",
     "webBasketEnabled": "writable",

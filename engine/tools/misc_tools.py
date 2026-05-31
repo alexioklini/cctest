@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import tempfile
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -322,6 +324,149 @@ def _trim_to_brain_code_regions(text: str, chunks: list, ctx_lines: int = 8):
     return trimmed
 
 
+# ─── Abstract-first triage ───────────────────────────────────────────────────
+#
+# mode="abstract" returns a short survey (~1500 chars) instead of the whole
+# page so the model (or the Websuche prefetch) can triage relevance cheaply and
+# only pay full-page token cost for the pages it actually needs. Derived from
+# the already-fetched+converted text — no extra request. For HTML the page's own
+# meta description (the author's summary) is preferred when present; otherwise
+# the lead of the converted markdown. For PDF/academic text it's the lead, which
+# for a paper is the title + abstract.
+_ABSTRACT_CHARS = 1500
+
+
+def _meta_description(html: str) -> str:
+    """Pull <meta name=description> / og:description from raw HTML. Returns ""
+    when absent. Runs on the RAW html (the markdown conversion drops <meta>)."""
+    for pat in (
+        r'<meta[^>]+(?:name|property)=["\'](?:description|og:description)["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:name|property)=["\'](?:description|og:description)["\']',
+    ):
+        m = re.search(pat, html, re.IGNORECASE)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+    return ""
+
+
+def _to_abstract(text: str, meta_desc: str = "") -> str:
+    """Reduce converted page text to a ~_ABSTRACT_CHARS survey. Prefers the
+    page's meta description (HTML), else the lead of the body, truncated on a
+    word boundary."""
+    base = meta_desc.strip() or (text or "").strip()
+    if len(base) <= _ABSTRACT_CHARS:
+        return base
+    cut = base[:_ABSTRACT_CHARS]
+    sp = cut.rfind(" ")
+    if sp > _ABSTRACT_CHARS * 0.6:
+        cut = cut[:sp]
+    return cut + " …"
+
+
+# ─── Academic-source inlining ────────────────────────────────────────────────
+#
+# Academic sites hide the real paper behind a landing/abstract page at a
+# DIFFERENT URL than the full-text PDF (arxiv /abs vs /pdf; PubMed abstract vs
+# the free PMC full text; a publisher HTML wrapper vs its `.full.pdf`). A naive
+# fetch of the URL the user pastes returns the wrapper — cookie banners, a
+# paywall teaser, "Download" buttons — not the science. `_academic_pdf_url`
+# rewrites a known-academic landing URL to its full-text PDF location so
+# web_fetch returns the actual paper. Pure URL routing: the rewritten PDF then
+# flows through the SAME doc_convert pipeline every other PDF read uses (fitz +
+# pdfplumber, OCR fallback) — strictly better than a bare text decode, which on
+# PDF bytes returns garbage. Returns None when the URL isn't a recognised
+# academic landing page (web_fetch then proceeds exactly as before).
+
+# (host-suffix regex, rewrite fn url->url-or-None). First match wins. Each fn
+# returns the full-text PDF URL, or None when the specific URL shape doesn't
+# match (e.g. an arxiv listing page, not an /abs/ page) so we fall through.
+def _arxiv_pdf(u: str):
+    m = re.search(r"arxiv\.org/(?:abs|pdf)/([^?#/]+?)(?:\.pdf)?(?:[?#].*)?$", u)
+    return f"https://arxiv.org/pdf/{m.group(1)}" if m else None
+
+def _biorxiv_pdf(u: str):
+    # biorxiv/medrxiv content URL → append .full.pdf (idempotent)
+    m = re.search(r"((?:bio|med)rxiv\.org/content/[^?#]+?)(?:\.full(?:\.pdf)?)?(?:[?#].*)?$", u)
+    return f"https://www.{m.group(1)}.full.pdf" if m and "/content/" in u else None
+
+def _pmc_pdf(u: str):
+    m = re.search(r"(?:ncbi\.nlm\.nih\.gov/pmc|pmc\.ncbi\.nlm\.nih\.gov)/articles/(PMC\d+)", u)
+    return f"https://pmc.ncbi.nlm.nih.gov/articles/{m.group(1)}/pdf/" if m else None
+
+_ACADEMIC_REWRITES = [
+    (r"(^|\.)arxiv\.org$", _arxiv_pdf),
+    (r"(^|\.)(bio|med)rxiv\.org$", _biorxiv_pdf),
+    (r"(^|\.)(ncbi\.nlm\.nih\.gov|pmc\.ncbi\.nlm\.nih\.gov)$", _pmc_pdf),
+]
+
+
+def _academic_pdf_url(url: str):
+    """If `url` is a known academic landing/abstract page, return the URL of its
+    full-text PDF; else None. Host-matched so a random page that merely contains
+    'arxiv.org' in a query string isn't rewritten."""
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+    except ValueError:
+        return None
+    if not host:
+        return None
+    for host_re, fn in _ACADEMIC_REWRITES:
+        if re.search(host_re, host):
+            try:
+                return fn(url)
+            except Exception:
+                return None
+    return None
+
+
+def _fetch_academic_pdf(pdf_url: str, max_length: int, timeout: int, max_size_mb: int,
+                        abstract: bool = False) -> dict | None:
+    """Download an academic PDF and extract its text via the shared doc_convert
+    pipeline (same path as every other PDF read — fitz/pdfplumber + OCR). Spills
+    to a uniquely-named tempfile (doc_convert reads a path, not bytes), extracts,
+    deletes. Returns a web_fetch-shaped result dict, or None on any failure so
+    the caller falls back to the normal HTTP fetch (graceful degradation)."""
+    from engine import doc_convert
+    req_headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "application/pdf,*/*",
+    }
+    tmp_path = None
+    try:
+        req = urllib.request.Request(pdf_url, headers=req_headers, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            ctype = (resp.headers.get_content_type() or "").lower()
+            raw = resp.read(max_size_mb * 1024 * 1024)
+            final_url = resp.url if hasattr(resp, "url") else pdf_url
+        # Only treat as academic-PDF when the server actually served a PDF —
+        # a paywall/HTML redirect means our rewrite missed; fall back.
+        if "pdf" not in ctype and not raw[:5].startswith(b"%PDF"):
+            return None
+        fd, tmp_path = tempfile.mkstemp(suffix=".pdf", prefix="brain-academic-")
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(raw)
+        # _do_extract returns a 3-tuple (text, backend, error) — NOT a string.
+        text, _backend, _err = doc_convert._do_extract(tmp_path, caps=False)
+        if _err or not text or not text.strip():
+            return None
+        fetch_method = "academic"
+        if abstract:
+            text = _to_abstract(text)
+            fetch_method = "academic+abstract"
+        if len(text) > max_length:
+            text = text[:max_length] + "\n... (truncated)"
+        return {"url": final_url, "status": 200, "length": len(text),
+                "content": text, "fetch_method": fetch_method}
+    except Exception:
+        return None
+    finally:
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
 def tool_web_fetch(args: dict) -> str:
     import brain as _brain
     url = args.get("url", "")
@@ -330,13 +475,23 @@ def tool_web_fetch(args: dict) -> str:
     body = args.get("body")
     max_length = args.get("max_length", 50000)
     force_fresh = args.get("force_fresh", False)
+    # Abstract-first triage: mode="abstract" returns a short (~1500-char) survey
+    # of the page instead of the whole body — cheap relevance triage before
+    # paying full-page token cost. mode="full" (default) is the original
+    # behavior. The abstract is derived AFTER conversion (from the same
+    # markdown/PDF text full mode would return), so it costs no extra fetch.
+    mode = (args.get("mode") or "full").lower()
     # Read timeout and max_size from tools_config
     _wf_cfg = _brain.get_tool_config().get("web_fetch", {})
     _wf_timeout = _wf_cfg.get("timeout", 30)
     _wf_max_size_mb = _wf_cfg.get("max_size_mb", 10)
 
-    # Check cache for GET requests without body
-    cache_key = url if method == "GET" and not body else None
+    # Check cache for GET requests without body. Scope the key by mode so a
+    # `full` and an `abstract` fetch of the SAME url never collide — an abstract
+    # caches a ~1500-char survey, and a later full read (or vice versa) must not
+    # be served the wrong variant.
+    cache_key = (f"{url}#abstract" if mode == "abstract" else url) \
+        if method == "GET" and not body else None
     if cache_key and not force_fresh:
         cached = _brain._web_cache.get(cache_key)
         if cached is not None:
@@ -353,6 +508,22 @@ def tool_web_fetch(args: dict) -> str:
                         cached = dict(cached, content=_tr, length=len(_tr),
                                       fetch_method=f"{cached.get('fetch_method','raw')}+brain_code_regions")
             return _ok(cached)
+
+    # Academic inlining: if this is a known academic landing/abstract page,
+    # rewrite to its full-text PDF and extract via doc_convert instead of the
+    # raw HTTP text decode (which returns garbage on PDF bytes). GET-only, no
+    # custom body. Falls back to the normal fetch when the rewrite misses or the
+    # server doesn't actually serve a PDF (paywall/redirect). Cached like any
+    # other GET so a re-fetch is free.
+    if method == "GET" and not body:
+        _pdf_url = _academic_pdf_url(url)
+        if _pdf_url:
+            _ac = _fetch_academic_pdf(_pdf_url, max_length, _wf_timeout,
+                                      _wf_max_size_mb, abstract=(mode == "abstract"))
+            if _ac is not None:
+                if cache_key:
+                    _brain._web_cache.put(cache_key, dict(_ac))
+                return _ok(_ac)
 
     try:
         req_headers = {
@@ -384,6 +555,9 @@ def tool_web_fetch(args: dict) -> str:
         # what we fall back to only when nothing better exists). This is what
         # the JS-shell gate measures — NOT the raw byte length.
         usable = text
+        # Capture the page's own summary from the RAW html before conversion
+        # discards <meta>; used only by abstract mode (no-op otherwise).
+        meta_desc = _meta_description(text) if (is_html and mode == "abstract") else ""
         if is_html:
             md = _brain._html_to_markdown(text)
             if md:
@@ -406,6 +580,9 @@ def tool_web_fetch(args: dict) -> str:
                 text = rendered["markdown"]
                 fetch_method = "crawl4ai"
 
+        if mode == "abstract":
+            text = _to_abstract(text, meta_desc)
+            fetch_method = f"{fetch_method}+abstract"
         if len(text) > max_length:
             text = text[:max_length] + "\n... (truncated)"
         # brain_code fetch-trim: if this is a GitHub-raw URL for a file the

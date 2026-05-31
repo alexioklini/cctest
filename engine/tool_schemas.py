@@ -296,7 +296,10 @@ TOOL_DEFINITIONS = [
         "name": "web_fetch",
         "description": (
             "Fetch content from a URL. Returns the response body as text. "
-            "Works with web pages, APIs, raw files, etc."
+            "Works with web pages, APIs, raw files, etc. Academic landing "
+            "pages (arxiv, bioRxiv/medRxiv, PubMed Central) are automatically "
+            "resolved to their full-text PDF and returned as extracted text — "
+            "just pass the abstract/article URL."
         ),
         "input_schema": {
             "type": "object",
@@ -306,6 +309,7 @@ TOOL_DEFINITIONS = [
                 "headers": {"type": "object", "description": "Additional HTTP headers as key-value pairs"},
                 "body": {"type": "string", "description": "Request body (for POST/PUT/PATCH)"},
                 "max_length": {"type": "integer", "description": "Max response length in characters (default: 50000)"},
+                "mode": {"type": "string", "enum": ["full", "abstract"], "description": "'full' (default) returns the whole page. 'abstract' returns only a ~1500-char survey (the page's own summary, or its lead) — use it to triage which results are worth fetching in full before paying the token cost."},
             },
             "required": ["url"],
         },

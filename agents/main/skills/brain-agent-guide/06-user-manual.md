@@ -44,7 +44,9 @@ Panel wird beim Verlassen geschlossen. Tabs mit Inhalt:
 - **Referenzen** — Quellen, die das Modell in diesem Turn gelesen hat
   (Web-Abrufe, Dokument-Lesungen)
 - **Dateien** — Artifacts, die das Modell in diesem Turn erzeugt hat
-- **Websuche** — kuratierte Web-Quellen für den nächsten Turn (siehe unten)
+- **Websuche** — kuratierte Web-Quellen für den nächsten Turn (siehe unten).
+  Checkbox „Nur Kurzfassung je Quelle (Abstract, spart Tokens)" lädt je
+  markierte Quelle nur eine ~1500-Zeichen-Kurzfassung statt der ganzen Seite
 - **Aktivität** — alle Tool-Aufrufe dieses Chats (synchrone + Hintergrund­aufgaben),
   chronologisch (neueste oben) in „Laufend" / „Abgeschlossen" (siehe unten)
 

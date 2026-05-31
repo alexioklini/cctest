@@ -99,10 +99,17 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
 
 - `web_fetch(url)` — GET one URL, returns its content tagged with a
   `fetch_method`: `raw` (non-HTML, or HTML nothing converted) /
-  `markitdown` (our HTML→markdown) / `crawl4ai` (headless-browser render).
+  `markitdown` (our HTML→markdown) / `crawl4ai` (headless-browser render) /
+  `academic` (academic landing page resolved to its full-text PDF), plus a
+  `+abstract` suffix in abstract mode.
   markitdown is tried first; the crawl4ai headless render fires **only**
   when the converted text is near-empty (<30 chars) on an HTML GET — so
   JS-rendered pages get rendered, static pages never pay the browser cost.
+  Academic landing pages (arxiv, bioRxiv/medRxiv, PubMed Central) are
+  auto-resolved to their full-text PDF and extracted via doc_convert — just
+  pass the abstract URL. `mode` arg: `full` (default, whole page) or `abstract`
+  (~1500-char survey — the page's own meta-description or its lead — for cheap
+  relevance triage before fetching the chosen ones in full).
   The chat view shows the method as a colored badge.
 - `exa_search(query, num_results?)` — semantic web search (Exa cloud, API
   key). **Search-only**: returns title + link, no page content.
