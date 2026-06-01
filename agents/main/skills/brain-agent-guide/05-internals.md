@@ -107,9 +107,10 @@ reasoning}` over two closed vocabularies that map onto existing machinery:
    explicit enabled model is used directly, overriding everything below. Empty = off.
 4. **Benchmark ranking** (the measured path) — if any candidate has a benchmark
    for the turn's first task_type, rank **capable → fast → cheap**: capability ≥
-   a complexity-adjusted floor (base 50, `high` +20, `low` −20), then lower
-   latency, then lower `cost_input+cost_output`. `high` complexity makes
-   capability lead over speed. `bench_cell_value` reads `override ?? measured`.
+   a complexity-adjusted floor (base 50, `high` +20, `low` −20), then HIGHER
+   throughput (`tps`, tokens/sec), then lower `cost_input+cost_output`. `high`
+   complexity makes capability lead over speed. `bench_cell_value` reads
+   `override ?? measured`.
    See **Model benchmark** below.
 5. **Tier heuristic** (no benchmark for the task) — the purpose's baseline tier
    (`_PURPOSE_TIER`) **shifted by complexity** along `_TIER_LADDER` [fast,
@@ -130,9 +131,10 @@ evidence, not config priority. Admin triggers it from **Settings → Models** �
 per-model "Dieses Modell benchmarken" button and a top-level "Benchmark: alle
 aktivierten". Each (model × task_type): run a fixed 2-prompt set (`BENCH_PROMPTS`),
 judge each answer 0-100 with the **server `default_model`** as judge, store mean
-capability% + mean latency. Persists to `config.json → models.<id>.benchmark.
-<task> = {measured, override?}`. An admin **override** (editable cap%/latency in
-the same table) wins over `measured` at routing time and survives the next
+capability% + mean throughput (`tps`, tokens/sec — length-independent speed).
+Persists to `config.json → models.<id>.benchmark.<task> = {measured, override?}`
+with `measured = {capability, tps, n, ts}`. An admin **override** (editable
+cap%/tps in the same table) wins over `measured` at routing time and survives the next
 benchmark run (which only rewrites `measured`). Endpoints: `POST
 /v1/models/config {action:"benchmark", model_id?, task_type?}` (background, admin)
 + `GET /v1/models/benchmark/status` (live progress). No benchmark for a task →

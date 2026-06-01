@@ -11,12 +11,13 @@ capability -> speed -> cost instead of guessing from priority.
 Storage shape (per model config entry):
     "benchmark": {
         "<task_type>": {
-            "measured": {"capability": 0-100, "latency_ms": int, "n": int,
+            "measured": {"capability": 0-100, "tps": float, "n": int,
                          "ts": "<iso>"},
-            "override": {"capability": 0-100, "latency_ms": int}   # optional
+            "override": {"capability": 0-100, "tps": float}   # optional
         },
         ...
     }
+`tps` = mean output-token throughput (tokens/sec) — length-independent speed.
 The router reads `override or measured` per cell — an admin edit is sticky and a
 later benchmark run only rewrites `measured` (see brain.bench_cell_value).
 
@@ -133,13 +134,14 @@ def benchmark_cell(model: str, task_type: str, judge_model: str,
                 "error": f"no prompts for task type '{task_type}'"}
 
     scores: list[int] = []
-    latencies: list[int] = []
+    throughputs: list[float] = []  # tokens/sec per prompt
     errors: list[str] = []
 
     for prompt in prompts:
-        # Time the answer call ourselves — run_turn_blocking doesn't surface a
-        # latency field, and wall-clock here is exactly the user-perceived
-        # first-answer time we want to rank speed on.
+        # Time the answer call ourselves — run_turn_blocking surfaces no timing.
+        # Speed is ranked on THROUGHPUT (output tokens / sec), which is
+        # length-independent and comparable across tasks (unlike raw latency,
+        # which just tracks how long the answer happened to be).
         _t0 = time.monotonic()
         ans = background_call(
             messages=[{"role": "user", "content": prompt}],
@@ -149,12 +151,14 @@ def benchmark_cell(model: str, task_type: str, judge_model: str,
             max_rounds=1,
             timeout_s=timeout_s,
         )
-        _ms = int((time.monotonic() - _t0) * 1000)
+        _secs = max(1e-6, time.monotonic() - _t0)
         if ans.get("error"):
             errors.append(str(ans["error"])[:120])
             continue
         reply = (ans.get("reply") or "").strip()
-        latencies.append(_ms)
+        _out_tok = int((ans.get("usage_total") or {}).get("output_tokens") or 0)
+        if _out_tok > 0:
+            throughputs.append(_out_tok / _secs)
         if not reply:
             scores.append(0)
             continue
@@ -175,12 +179,12 @@ def benchmark_cell(model: str, task_type: str, judge_model: str,
         scores.append(sc if sc is not None else 0)
 
     if not scores:
-        return {"capability": 0, "latency_ms": 0, "n": 0, "ts": _now_iso(),
+        return {"capability": 0, "tps": 0, "n": 0, "ts": _now_iso(),
                 "error": "; ".join(errors[:3]) or "no scored prompts"}
 
     cap = round(sum(scores) / len(scores))
-    lat = round(sum(latencies) / len(latencies)) if latencies else 0
-    out = {"capability": cap, "latency_ms": lat, "n": len(scores), "ts": _now_iso()}
+    tps = round(sum(throughputs) / len(throughputs), 1) if throughputs else 0
+    out = {"capability": cap, "tps": tps, "n": len(scores), "ts": _now_iso()}
     if errors:
         out["error"] = "; ".join(errors[:3])
     return out

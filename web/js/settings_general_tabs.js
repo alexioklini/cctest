@@ -326,14 +326,14 @@ function _mdlBenchmarkSection(mid, cfg) {
     const m = cell.measured || {};
     const ov = cell.override || {};
     const measTxt = (m.capability != null)
-      ? `${m.capability}% · ${m.latency_ms||0}ms${m.n?` · n=${m.n}`:''}${m.error?` ⚠`:''}`
+      ? `${m.capability}% · ${m.tps||0} tok/s${m.n?` · n=${m.n}`:''}${m.error?` ⚠`:''}`
       : '<span style="color:var(--text-500)">—</span>';
     const inS = `width:60px;padding:1px 4px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)`;
     return `<tr data-bench-task="${t}">
       <td style="padding:2px 6px;font-size:11px;color:var(--text-200)">${t}</td>
       <td style="padding:2px 6px;font-size:11px;color:var(--text-300)" title="${esc(m.error||'')}">${measTxt}</td>
       <td style="padding:2px 6px"><input class="mdl-bench-ov-cap" type="number" min="0" max="100" value="${ov.capability??''}" placeholder="auto" style="${inS}" title="Override Fähigkeit %"></td>
-      <td style="padding:2px 6px"><input class="mdl-bench-ov-lat" type="number" min="0" value="${ov.latency_ms??''}" placeholder="auto" style="${inS}" title="Override Latenz ms"></td>
+      <td style="padding:2px 6px"><input class="mdl-bench-ov-tps" type="number" min="0" step="0.1" value="${ov.tps??''}" placeholder="auto" style="${inS}" title="Override Durchsatz tok/s"></td>
     </tr>`;
   }).join('');
   return `<div style="grid-column:1/-1;margin-top:6px;border-top:1px solid var(--border-100);padding-top:8px">
@@ -345,7 +345,7 @@ function _mdlBenchmarkSection(mid, cfg) {
     <table data-bench-model="${esc(mid)}" style="width:100%;border-collapse:collapse">
       <thead><tr style="font-size:10px;color:var(--text-400);text-align:left">
         <th style="padding:2px 6px">Aufgabe</th><th style="padding:2px 6px">Gemessen</th>
-        <th style="padding:2px 6px">Override %</th><th style="padding:2px 6px">Override ms</th>
+        <th style="padding:2px 6px">Override %</th><th style="padding:2px 6px">Override tok/s</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
@@ -396,13 +396,13 @@ async function saveBenchmarkOverrides(mid, btn) {
     table.querySelectorAll('tr[data-bench-task]').forEach(tr => {
       const task = tr.dataset.benchTask;
       const cap = tr.querySelector('.mdl-bench-ov-cap')?.value?.trim();
-      const lat = tr.querySelector('.mdl-bench-ov-lat')?.value?.trim();
+      const tps = tr.querySelector('.mdl-bench-ov-tps')?.value?.trim();
       const cell = { ...(bench[task] || {}) };
-      if (cap === '' && lat === '') { delete cell.override; }
+      if (cap === '' && tps === '') { delete cell.override; }
       else {
         cell.override = {};
         if (cap !== '') cell.override.capability = Math.max(0, Math.min(100, Number(cap)));
-        if (lat !== '') cell.override.latency_ms = Math.max(0, Number(lat));
+        if (tps !== '') cell.override.tps = Math.max(0, Number(tps));
       }
       if (Object.keys(cell).length) bench[task] = cell; else delete bench[task];
     });
