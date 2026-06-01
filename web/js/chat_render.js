@@ -997,6 +997,9 @@ function renderAssistantMessage(msg, idx) {
       ${refsHtml}
       <div class="msg-actions-bar">
         ${turnStatsHtml}
+        ${meta && meta.auto_route ? `<button class="msg-action-btn" onclick="openClassificationModal(${idx})" title="Promptklassifikation & Routing-Entscheidung anzeigen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><polygon points="12 7 14.5 13 12 11.5 9.5 13"/></svg>
+        </button>` : ''}
         ${msg.id != null ? renderFeedbackControl('chat', msg.id, state.activeChat?.sessionId || '', content) : ''}
         <button class="msg-action-btn" onclick="copyMessage(${idx})" title="Kopieren">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
@@ -1552,4 +1555,73 @@ function renderCitationBadge({ file, locator, quote }) {
   const locSpan = locator ? `<span class="citation-badge-locator">${esc(locator)}</span>` : '';
   const quoteSpan = quote ? `<span class="citation-badge-quote">${esc(quote)}</span>` : '';
   return `<span class="citation-badge" title="${esc(file)}${locator ? ' · ' + esc(locator) : ''}">${icon}<span class="citation-badge-body">${fileSpan}${locSpan}${quoteSpan}</span></span>`;
+}
+
+// ── Prompt-classification & routing modal ──────────────────────────────────
+// Opened from the per-turn actions bar (the compass chip) when a turn was
+// routed via ✨ Auto. Reads the persisted metadata.auto_route on the turn so it
+// works on reloaded turns, not just the live one. Shows: detected task types,
+// needed tool families, complexity, the model decision + reason, and the
+// tool-gating decision (kept vs excluded groups, or why gating was skipped).
+function openClassificationModal(idx) {
+  const msg = (state.activeChat?.messages || [])[idx];
+  const ar = msg?.metadata?.auto_route;
+  if (!ar) { showToast('Keine Klassifikationsdaten für diese Anfrage', true); return; }
+  const an = ar.analysis || {};
+  const tg = ar.tool_gating || null;
+
+  const chips = (arr, cls) => (arr && arr.length)
+    ? arr.map(x => `<span class="${cls}" style="display:inline-block;padding:2px 9px;margin:2px;border-radius:12px;font-size:12px;background:var(--bg-200);color:var(--text-100);border:1px solid var(--border-100)">${esc(x)}</span>`).join('')
+    : '<span style="color:var(--text-400);font-size:12px">—</span>';
+
+  const cxLabel = { low: 'gering', medium: 'mittel', high: 'hoch' }[an.complexity] || (an.complexity || '—');
+  const modelName = modelShortName(ar.model || '', false) || ar.model || '—';
+
+  // Section: classification result
+  let body = `<div style="margin-bottom:18px">
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-400);margin-bottom:6px">Klassifikation</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:start;font-size:13px">
+      <div style="color:var(--text-400)">Aufgabentypen</div><div>${chips(an.task_types, 'cls-task')}</div>
+      <div style="color:var(--text-400)">Benötigte Tools</div><div>${chips(an.tools, 'cls-tool')}</div>
+      <div style="color:var(--text-400)">Komplexität</div><div style="color:var(--text-100)">${esc(cxLabel)}</div>
+      ${an.reasoning ? `<div style="color:var(--text-400)">Begründung</div><div style="color:var(--text-200);font-style:italic">${esc(an.reasoning)}</div>` : ''}
+    </div>
+  </div>`;
+
+  // Section: model decision
+  body += `<div style="margin-bottom:18px">
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-400);margin-bottom:6px">Modellentscheidung</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:start;font-size:13px">
+      <div style="color:var(--text-400)">Gewähltes Modell</div><div style="color:var(--text-000);font-weight:600">${esc(modelName)}</div>
+      <div style="color:var(--text-400)">Warum</div><div style="color:var(--text-200)">${esc(ar.reason || '—')}</div>
+    </div>
+  </div>`;
+
+  // Section: tool-gating decision
+  if (tg) {
+    const gateBadge = tg.applied
+      ? '<span style="color:var(--accent-000, #8b5cf6);font-weight:600">aktiv — Toolset eingeschränkt</span>'
+      : '<span style="color:var(--text-300);font-weight:600">nicht angewendet — volles Toolset</span>';
+    body += `<div>
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-400);margin-bottom:6px">Tool-Auswahl</div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:start;font-size:13px">
+        <div style="color:var(--text-400)">Status</div><div>${gateBadge}</div>
+        <div style="color:var(--text-400)">Grund</div><div style="color:var(--text-200)">${esc(tg.reason || '—')}</div>
+        ${tg.applied ? `<div style="color:var(--text-400)">Aktive Gruppen</div><div>${chips(tg.kept_groups, 'cls-keep')}</div>
+        <div style="color:var(--text-400)">Entfernte Gruppen</div><div>${chips(tg.excluded_groups, 'cls-drop')}</div>` : ''}
+      </div>
+    </div>`;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="modal-content" style="max-width:560px;max-height:88vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;padding:20px 24px 12px;gap:12px;border-bottom:1px solid var(--border-100)">
+      <h2 style="margin:0;font-size:17px;font-weight:600;color:var(--text-000)">Promptklassifikation & Routing</h2>
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()" style="margin-left:auto">&times;</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:18px 24px 24px">${body}</div>
+  </div>`;
+  document.body.appendChild(overlay);
 }

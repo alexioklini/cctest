@@ -83,7 +83,15 @@ async function _genTab_server(C) {
           })()}
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{auto_route_classifier_mode:document.getElementById('srv-auto-route-mode').value}).then(()=>showToast('Auto-Routing aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
         </div>
-        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Wie das „✨ Auto"-Modell im Verfasser (und background_task_model=auto bei Fan-out) die Absicht erkennt und das passende Modell wählt. LLM/Hybrid nutzen das oben gesetzte <b>Zusammenfassungsmodell</b> (sonst das günstigste/lokale Modell) und fallen bei Fehler/Timeout still auf Schlüsselwörter zurück.</div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Wie das „✨ Auto"-Modell im Verfasser (und background_task_model=auto bei Fan-out) die Absicht erkennt und das passende Modell wählt. LLM/Hybrid nutzen das oben gesetzte <b>Zusammenfassungsmodell</b> (sonst das günstigste/lokale Modell) und fallen bei Fehler/Timeout still auf Schlüsselwörter zurück. Im LLM-Modus liefert der Classifier zusätzlich <b>Komplexität</b> (gering/mittel/hoch): hoch hebt die Modellstufe an (Reasoning-Modell), gering senkt sie (günstigeres Cloud-Modell). Einfachere Aufgaben bleiben bevorzugt in der <b>Cloud</b> (günstigstes Cloud-Modell), lokal nur als letzte Option.</div>
+        <div style="margin-top:8px">
+          <label style="font-size:11px;color:var(--text-400)">Anwendungsfall-Zuordnung (optional) — pinnt pro Aufgabentyp ein Modell, das die Stufenlogik überschreibt. JSON-Objekt {Aufgabentyp: Modell-ID}. Aufgabentypen: coding, math, research, analysis, reporting, creative, orchestration, agentic, fast. Leer = nur Stufenlogik.</label>
+          <textarea class="form-input" id="srv-auto-route-task-models" rows="3" style="width:100%;font-family:monospace;font-size:11px" placeholder='{"coding": "CLIProxyAPI/devstral-small-latest", "research": "CLIProxyAPI/mistral-medium-3.5"}'>${(() => {
+            const tm = srv.auto_route_task_models || {};
+            return Object.keys(tm).length ? JSON.stringify(tm, null, 2) : '';
+          })()}</textarea>
+          <button class="btn-secondary" style="margin-top:4px" onclick="(()=>{let v=document.getElementById('srv-auto-route-task-models').value.trim();let obj;try{obj=v?JSON.parse(v):{};}catch(e){showToast('Ungültiges JSON',true);return;}API.post('/v1/services/server',{auto_route_task_models:obj}).then(()=>showToast('Anwendungsfall-Zuordnung gespeichert')).catch(e=>showToast(e.message||'Fehlgeschlagen',true));})()">Zuordnung setzen</button>
+        </div>
         ${SEC('Sidecar')}
         ${_renderSupervisorStatus(sc, {
           restartFn: 'restartSidecar',
@@ -166,8 +174,10 @@ async function _genTab_models(C) {
     };
 
     let html = `<div style="${G('6px')}">
-      <div style="display:flex;gap:8px;margin-bottom:12px">
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
         <button class="btn-secondary" onclick="this.disabled=true;this.textContent='Synchronisiere…';API.post('/v1/models/config',{action:'sync'}).then(()=>{showToast('Synchronisiere…');setTimeout(()=>API.getModelsConfig().then(d=>{state.modelsConfig=d;switchGeneralTab('models');showToast('Synchronisiert')}),3000)}).catch(e=>{showToast('Fehlgeschlagen',true);this.disabled=false;this.textContent='Von Providern synchronisieren'})">Von Providern synchronisieren</button>
+        <button class="btn-secondary" onclick="runBenchmark()" title="Misst Fähigkeit (0-100 %, bewertet vom Server-Standardmodell) und Geschwindigkeit jedes aktivierten Modells pro Aufgabentyp. Das Ranking (fähig → schnell → günstig) steuert die ✨ Auto-Modellwahl.">Benchmark: alle aktivierten</button>
+        <span id="bench-progress" style="font-size:11px;color:var(--text-400)"></span>
       </div>`;
     for (const prov of provKeys) {
       const models = byProvider[prov];
@@ -274,6 +284,7 @@ async function _genTab_models(C) {
                   })()}
                 </div>
               </div>
+              ${_mdlBenchmarkSection(mid, cfg)}
             </div>
           </div>
         </div>`;
@@ -302,6 +313,104 @@ async function _genTab_models(C) {
       const fmtSel = sel.closest('div').parentElement.querySelector('.mdl-thinking-format');
       if (fmtSel) _mdlPopulateThinkingLevel(fmtSel.value || 'none', sel, sel.dataset.current || '');
     });
+}
+
+// Per-model benchmark table inside the detail panel: one row per task type
+// with measured capability%/latency and editable admin overrides (override
+// wins over measured at routing time + survives the next benchmark run).
+function _mdlBenchmarkSection(mid, cfg) {
+  const TASK_TYPES = ['coding','math','research','analysis','reporting','creative','orchestration','agentic','fast'];
+  const bench = cfg.benchmark || {};
+  const rows = TASK_TYPES.map(t => {
+    const cell = bench[t] || {};
+    const m = cell.measured || {};
+    const ov = cell.override || {};
+    const measTxt = (m.capability != null)
+      ? `${m.capability}% · ${m.latency_ms||0}ms${m.n?` · n=${m.n}`:''}${m.error?` ⚠`:''}`
+      : '<span style="color:var(--text-500)">—</span>';
+    const inS = `width:60px;padding:1px 4px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)`;
+    return `<tr data-bench-task="${t}">
+      <td style="padding:2px 6px;font-size:11px;color:var(--text-200)">${t}</td>
+      <td style="padding:2px 6px;font-size:11px;color:var(--text-300)" title="${esc(m.error||'')}">${measTxt}</td>
+      <td style="padding:2px 6px"><input class="mdl-bench-ov-cap" type="number" min="0" max="100" value="${ov.capability??''}" placeholder="auto" style="${inS}" title="Override Fähigkeit %"></td>
+      <td style="padding:2px 6px"><input class="mdl-bench-ov-lat" type="number" min="0" value="${ov.latency_ms??''}" placeholder="auto" style="${inS}" title="Override Latenz ms"></td>
+    </tr>`;
+  }).join('');
+  return `<div style="grid-column:1/-1;margin-top:6px;border-top:1px solid var(--border-100);padding-top:8px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+      <label class="form-label" style="font-size:11px;margin:0">Benchmark <span style="color:var(--text-400);font-weight:400">(Fähigkeit % bewertet vom Server-Standardmodell · Geschwindigkeit · Override schlägt Messung)</span></label>
+      <button class="btn-secondary" style="padding:1px 8px;font-size:10px;margin-left:auto" onclick="runBenchmark('${esc(mid)}')" title="Nur dieses Modell über alle Aufgabentypen benchmarken">Dieses Modell benchmarken</button>
+      <button class="btn-secondary" style="padding:1px 8px;font-size:10px" onclick="saveBenchmarkOverrides('${esc(mid)}',this)" title="Overrides dieses Modells speichern">Overrides speichern</button>
+    </div>
+    <table data-bench-model="${esc(mid)}" style="width:100%;border-collapse:collapse">
+      <thead><tr style="font-size:10px;color:var(--text-400);text-align:left">
+        <th style="padding:2px 6px">Aufgabe</th><th style="padding:2px 6px">Gemessen</th>
+        <th style="padding:2px 6px">Override %</th><th style="padding:2px 6px">Override ms</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+// Trigger a benchmark (one model when mid given, else all enabled) and poll
+// progress until done, then reload the models tab to show fresh scores.
+async function runBenchmark(mid) {
+  try {
+    const body = { action: 'benchmark' };
+    if (mid) body.model_id = mid;
+    await API.post('/v1/models/config', body);
+    showToast(mid ? 'Benchmark gestartet (1 Modell)…' : 'Benchmark gestartet (alle aktivierten)…');
+    _pollBenchmark();
+  } catch (e) { showToast('Benchmark-Start fehlgeschlagen: ' + (e.message||e), true); }
+}
+
+function _pollBenchmark() {
+  const el = document.getElementById('bench-progress');
+  const tick = async () => {
+    let s;
+    try { s = await API.get('/v1/models/benchmark/status'); }
+    catch (e) { if (el) el.textContent = ''; return; }
+    if (s.running) {
+      if (el) el.textContent = `Benchmark: ${s.done}/${s.total} · ${modelShortName(s.current_model||'', false)}`;
+      setTimeout(tick, 2000);
+    } else {
+      if (el) el.textContent = s.errors && s.errors.length ? `Fertig (${s.errors.length} Fehler)` : 'Fertig';
+      // Reload fresh config so the benchmark tables repopulate.
+      API.getModelsConfig().then(d => { state.modelsConfig = d; switchGeneralTab('models'); });
+      showToast('Benchmark abgeschlossen');
+    }
+  };
+  tick();
+}
+
+// Persist this model's override cells. Empty inputs clear the override (router
+// falls back to measured). Reads the live config, merges, saves the whole map.
+async function saveBenchmarkOverrides(mid, btn) {
+  try {
+    const mc = { ...(state.modelsConfig?.models || {}) };
+    if (!mc[mid]) return;
+    const table = Array.from(document.querySelectorAll('table[data-bench-model]'))
+      .find(t => t.dataset.benchModel === mid);
+    if (!table) return;
+    const bench = { ...(mc[mid].benchmark || {}) };
+    table.querySelectorAll('tr[data-bench-task]').forEach(tr => {
+      const task = tr.dataset.benchTask;
+      const cap = tr.querySelector('.mdl-bench-ov-cap')?.value?.trim();
+      const lat = tr.querySelector('.mdl-bench-ov-lat')?.value?.trim();
+      const cell = { ...(bench[task] || {}) };
+      if (cap === '' && lat === '') { delete cell.override; }
+      else {
+        cell.override = {};
+        if (cap !== '') cell.override.capability = Math.max(0, Math.min(100, Number(cap)));
+        if (lat !== '') cell.override.latency_ms = Math.max(0, Number(lat));
+      }
+      if (Object.keys(cell).length) bench[task] = cell; else delete bench[task];
+    });
+    mc[mid] = { ...mc[mid], benchmark: bench };
+    await API.post('/v1/models/config', { action: 'save', models: mc });
+    state.modelsConfig.models = mc;
+    showToast('Overrides gespeichert');
+  } catch (e) { showToast('Speichern fehlgeschlagen: ' + (e.message||e), true); }
 }
 
 async function _genTab_providers(C) {

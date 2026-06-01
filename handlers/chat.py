@@ -26,12 +26,13 @@ _AUTO_PURPOSE_LABEL = {
 }
 
 
-def _auto_route_reason(purpose, attachment_mimes, model: str) -> str:
+def _auto_route_reason(purpose, attachment_mimes, model: str, analysis=None) -> str:
     """Build a short 'why this model' explanation for the Auto picker tooltip.
 
     Mirrors the tier logic in brain._resolve_auto_model_tiered so the reason
     matches the actual decision: attachments win, then purpose tier, then the
-    picked model's own traits (local / reasoning).
+    picked model's own traits (local / reasoning). When the LLM classifier ran,
+    `analysis` carries the richer task_types and we lead with those.
     """
     name = engine.get_model_info(model).get("display_name") \
         or engine.get_model_info(model).get("shortname") or model
@@ -40,6 +41,14 @@ def _auto_route_reason(purpose, attachment_mimes, model: str) -> str:
         vision = any(engine._mime_matches(m, engine.get_model_raw_formats(model)) for m in mimes)
         if vision:
             return f"Attachment can be read natively → {name}"
+    # Prefer the structured analysis when present — it names the actual task
+    # mix (e.g. "research + reporting") instead of the collapsed legacy label,
+    # and the complexity that shifted the tier.
+    tt = (analysis or {}).get("task_types") if analysis else None
+    if tt:
+        cx = (analysis or {}).get("complexity")
+        cx_note = f", {cx} complexity" if cx in ("low", "high") else ""
+        return f"Detected {' + '.join(tt[:3])}{cx_note} → {name}"
     label = _AUTO_PURPOSE_LABEL.get(purpose or "")
     if purpose in ("coding", "analysis"):
         return f"Detected {label} → reasoning model {name}"
@@ -1616,6 +1625,9 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
     _thinking_summary = _cb_state["thinking_summary"]
     _usage_totals = _cb_state["usage_totals"]
     _request_payloads = _cb_state["request_payloads"]
+    # Classifier tool-gating decision for this turn (set in the domain-context
+    # block below); persisted on the turn metadata for the classification modal.
+    _gating_decision = None
     _nudge_count = _cb_state["nudge_count"]
 
     def _rollback_messages(session, sid, target_count):
@@ -1678,6 +1690,25 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 research_mode_override=getattr(session, "research_mode_override", None),
                 base_exclude_tools=_base_excl,
             )
+
+            # Classifier-driven tool gating (auto-route + LLM classifier only):
+            # restrict this turn to the tool groups the analyzer flagged as
+            # needed — but ONLY for models that don't keep a warm KV prefix
+            # (brain.classifier_tool_exclusions gates that internally). Merge
+            # with whatever apply_domain_context already excluded (Websuche /
+            # disable_web_search lockouts) so neither clobbers the other.
+            _auto_groups = getattr(session, "_auto_tool_groups", None)
+            _auto_rm = getattr(session, "_auto_route_model", "") or session.model
+            # Capture the gating decision (applied or not) so the per-turn
+            # classification modal can show what the router did with tools.
+            _gating_decision = (engine.classifier_gating_decision(_auto_rm, _auto_groups)
+                                if _auto_groups else None)
+            if _auto_groups:
+                _gate_excl = engine.classifier_tool_exclusions(_auto_rm, _auto_groups)
+                if _gate_excl:
+                    _ctx = engine.get_request_context()
+                    _merged = set(_ctx.exclude_tools or []) | set(_gate_excl)
+                    _ctx.exclude_tools = list(_merged)
 
             # Set note context for AI-assisted note editing
             if session.note_context:
@@ -2301,6 +2332,15 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     # was used; stripped before the wire so it never replays.
                     if _web_sources_used:
                         msg_metadata["web_sources"] = _web_sources_used
+                    # Persist the auto-route classification + routing decision on
+                    # the turn (like web_sources) so the per-turn classification
+                    # modal works after reload, not just on the live turn. Only
+                    # present when the composer routed via ✨ Auto this turn.
+                    if auto_route:
+                        _ar_meta = dict(auto_route)
+                        if _gating_decision is not None:
+                            _ar_meta["tool_gating"] = _gating_decision
+                        msg_metadata["auto_route"] = _ar_meta
                     if _partial_tools:
                         msg_metadata["tools"] = _sanitize_partial_tools(_partial_tools)
                     # Leftover thinking deltas that never got a thinking_done (truncated
@@ -2532,7 +2572,13 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     # why, so the composer can show "Auto (Model)" + tooltip
                     # without dropping the user's "auto" selection.
                     if auto_route:
-                        done_data["auto_route"] = auto_route
+                        # Match the persisted shape (incl. the tool-gating
+                        # decision) so the live turn's classification modal is
+                        # identical to a reloaded turn's.
+                        _ar_done = dict(auto_route)
+                        if _gating_decision is not None:
+                            _ar_done["tool_gating"] = _gating_decision
+                        done_data["auto_route"] = _ar_done
                     # Include file attachments
                     if created_files:
                         done_data["files"] = created_files
@@ -3301,6 +3347,12 @@ class ChatHandlerMixin:
         # + reason. `auto_route` is captured by the worker for the done event.
         auto_route = None
         agent_cfg = session.agent.config
+        # Clear any prior turn's classifier tool-gating up front, so a turn that
+        # does NOT auto-route (e.g. a concrete model pick) never inherits a
+        # stale gate from an earlier auto turn on this reused session.
+        with session.lock:
+            session._auto_tool_groups = None
+            session._auto_route_model = ""
         auto_by_agent = (agent_cfg.get("model") == "auto" and len(session.messages) == 0)
         if not model_override and (want_auto or auto_by_agent):
             attach_mimes = [a["media_type"] for a in all_attachments]
@@ -3312,14 +3364,23 @@ class ChatHandlerMixin:
             # Force the agent_config branch of the resolver regardless of the
             # session agent's own model field, so a user-picked "Auto" routes
             # even when the agent is pinned to a concrete model.
-            auto_model, auto_purpose = engine.resolve_auto_model_for_task(
+            auto_model, auto_purpose, auto_analysis = engine.resolve_auto_model_for_task(
                 {"model": "auto"}, message,
                 attachment_mimes=attach_mimes, allowed_models=allowed)
             if auto_model:
                 auto_route = {
                     "model": auto_model,
-                    "reason": _auto_route_reason(auto_purpose, attach_mimes, auto_model),
+                    "reason": _auto_route_reason(auto_purpose, attach_mimes, auto_model, auto_analysis),
                 }
+                # Surface the structured analysis (task_types/tools/complexity)
+                # when the LLM classifier ran, for the chat-view badge + audit.
+                if auto_analysis:
+                    auto_route["analysis"] = {
+                        "task_types": auto_analysis.get("task_types", []),
+                        "tools": auto_analysis.get("tools", []),
+                        "complexity": auto_analysis.get("complexity", ""),
+                        "reasoning": auto_analysis.get("reasoning", ""),
+                    }
             if auto_model and auto_model != session.model:
                 provider = self._resolve_provider(auto_model)
                 with session.lock:
@@ -3327,6 +3388,14 @@ class ChatHandlerMixin:
                     session.api_key = provider["api_key"]
                     session.base_url = provider["base_url"]
                     session.max_context = engine.get_model_max_context(auto_model)
+            # Stash the classifier's needed tool groups on the session so the
+            # worker can gate the per-turn tool set (non-warmup models only —
+            # see brain.classifier_tool_exclusions). Cleared each turn (set to
+            # None when no LLM analysis ran) so a stale gate never carries over.
+            with session.lock:
+                session._auto_tool_groups = (
+                    auto_analysis.get("tool_groups") if auto_analysis else None)
+                session._auto_route_model = auto_model or ""
             # Emit the pick at turn start so the spinner shows the model that's
             # actually doing the work (the composer label stays "Auto").
             if auto_route:

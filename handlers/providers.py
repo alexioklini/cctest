@@ -6,6 +6,69 @@ import threading
 import time
 
 import brain as engine
+from engine import model_bench
+
+# Live benchmark progress (single-run gate). Polled by GET
+# /v1/models/benchmark/status. Reset on each new run.
+_BENCH_PROGRESS = {
+    "running": False, "done": 0, "total": 0,
+    "current_model": "", "started": 0.0, "judge": "", "errors": [],
+}
+_BENCH_LOCK = threading.Lock()
+
+
+def _run_benchmark_bg(targets, judge_model, task_types, config_path):
+    """Background worker: benchmark each target model, persist results into
+    config.json as they complete. Override blocks are preserved per cell."""
+    import handlers.sidecar_proxy as sidecar_proxy
+    with _BENCH_LOCK:
+        _BENCH_PROGRESS.update({
+            "running": True, "done": 0, "total": len(targets),
+            "current_model": "", "started": time.time(),
+            "judge": judge_model, "errors": [],
+        })
+    try:
+        for mid in targets:
+            with _BENCH_LOCK:
+                _BENCH_PROGRESS["current_model"] = mid
+            try:
+                measured = model_bench.benchmark_model(
+                    mid, judge_model,
+                    background_call=sidecar_proxy.background_call,
+                    task_types=task_types)
+            except Exception as e:
+                with _BENCH_LOCK:
+                    _BENCH_PROGRESS["errors"].append(f"{mid}: {e}")
+                measured = {}
+            # Merge into config + live config, preserving per-cell overrides.
+            try:
+                cfg = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        cfg = json.load(f)
+                mcfg = cfg.setdefault("models", {}).setdefault(mid, {})
+                bench = mcfg.setdefault("benchmark", {})
+                for task, cell in measured.items():
+                    slot = bench.setdefault(task, {})
+                    slot["measured"] = cell  # override (if any) untouched
+                with open(config_path, "w") as f:
+                    json.dump(cfg, f, indent=2)
+                # Mirror into the live registry so the router sees it without a
+                # restart (engine._models_config is the runtime source).
+                live = (engine._models_config or {}).get(mid)
+                if live is not None:
+                    lbench = live.setdefault("benchmark", {})
+                    for task, cell in measured.items():
+                        lbench.setdefault(task, {})["measured"] = cell
+            except Exception as e:
+                with _BENCH_LOCK:
+                    _BENCH_PROGRESS["errors"].append(f"{mid} persist: {e}")
+            with _BENCH_LOCK:
+                _BENCH_PROGRESS["done"] += 1
+    finally:
+        with _BENCH_LOCK:
+            _BENCH_PROGRESS["running"] = False
+            _BENCH_PROGRESS["current_model"] = ""
 
 
 class ProvidersHandlerMixin:
@@ -540,6 +603,36 @@ class ProvidersHandlerMixin:
                 self._send_json({"status": "syncing"})
                 return
 
+            elif action == "benchmark":
+                # Run the capability+speed benchmark for one model or all enabled
+                # models, in a background thread; results persist into
+                # config.json → models.<id>.benchmark.<task>.measured (an admin
+                # `override` block on a cell is preserved). UI polls
+                # GET /v1/models/benchmark/status for progress.
+                only = body.get("model_id")  # optional: single model
+                task_only = body.get("task_type")  # optional: single task type
+                judge = (server_config.get("default_model") or "").strip()
+                if not judge:
+                    self._send_json({"error": "no server default_model set — it is the benchmark judge (Settings → Server → Standardmodell)"}, 400)
+                    return
+                targets = ([only] if only else
+                           [m for m, c in (engine._models_config or {}).items()
+                            if c.get("enabled", True)])
+                if not targets:
+                    self._send_json({"error": "no enabled models to benchmark"}, 400)
+                    return
+                if _BENCH_PROGRESS.get("running"):
+                    self._send_json({"error": "a benchmark is already running"}, 409)
+                    return
+                tasks = [task_only] if task_only else None
+                threading.Thread(
+                    target=_run_benchmark_bg,
+                    args=(targets, judge, tasks, config_path),
+                    daemon=True).start()
+                self._send_json({"status": "benchmarking",
+                                 "models": targets, "judge": judge})
+                return
+
             else:
                 self._send_json({"error": f"Unknown action: {action}"}, 400)
                 return
@@ -580,6 +673,12 @@ class ProvidersHandlerMixin:
             self._send_json({"status": "saved", "models": dict(engine._models_config)})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
+
+    def _handle_benchmark_status(self):
+        """GET /v1/models/benchmark/status — live progress of a benchmark run."""
+        with _BENCH_LOCK:
+            snap = dict(_BENCH_PROGRESS)
+        self._send_json(snap)
 
     def _handle_warmup_status(self):
         """GET /v1/warmup/status — per-model warmup state snapshot for UI indicators.

@@ -185,8 +185,13 @@ class BackgroundTaskRunner:
             # Intent-route the leaf: classify the sub-task prompt, pick by tier.
             # No attachments (leaf prompts are text) and no ACL scope (the parent
             # turn already passed the user's gate). Always returns a concrete id.
-            purpose = _brain.resolve_task_purpose(prompt or "")
-            picked = _brain._resolve_auto_model_tiered(purpose)
+            # Use the full analysis so complexity + the use-case map apply here
+            # too (resolve_task_analysis falls open to the keyword purpose).
+            _an = _brain.resolve_task_analysis(prompt or "") or {}
+            picked = _brain._resolve_auto_model_tiered(
+                _an.get("purpose"),
+                complexity=_an.get("complexity"),
+                task_types=_an.get("task_types"))
             if not picked or picked == chat_model:
                 return chat_model
             tcfg = (_brain._models_config or {}).get(picked) or {}

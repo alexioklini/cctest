@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.54.2"
-VERSION_DATE = "2026-05-31"
+VERSION = "9.57.0"
+VERSION_DATE = "2026-06-01"
 CHANGELOG = [
+    ("9.57.0", "2026-06-01", "feat(auto-route): per-turn PROMPT-CLASSIFICATION & ROUTING modal in the chat view — observability for the ✨ Auto decision, persisted so it survives reload. The auto_route data (task_types/tools/complexity/reasoning + chosen model + reason) was previously only sent transiently in the done SSE event and held on the live `chat` object; a reloaded turn lost it. NOW it is persisted on the assistant turn's metadata (handlers/chat.py: msg_metadata['auto_route'], exactly like metadata.web_sources — wire-stripped by _ALLOWED_MSG_KEYS, reaches the client via load_messages which doesn't filter metadata). NEW brain.classifier_gating_decision(model, tool_groups) returns a human-readable summary of the tool-gating decision {applied, reason, kept_groups, excluded_groups, needed_groups} mirroring classifier_tool_exclusions (applied=False for warm/local models with the why; applied=True lists kept vs excluded TOOL_GROUPS + the never-strip floor). The worker captures it (run_session_turn _gating_decision, init None at top so it is always defined) and attaches it under msg_metadata['auto_route']['tool_gating']; the done event carries the identical enriched shape so the live turn's modal matches a reloaded one. FRONTEND: a compass chip in the per-turn actions bar (chat_render.js renderAssistantMessage, shown only when meta.auto_route exists) opens openClassificationModal(idx) — a modal with three sections: Klassifikation (task types, needed tools, complexity, reasoning), Modellentscheidung (chosen model + why), Tool-Auswahl (gating status + kept/excluded groups, or why gating was skipped). chat_send.js done handler persists d.auto_route onto assistantMsg.metadata so the live turn shows the chip immediately. Only appears on Auto-routed turns (keyword/fixed-model turns have no auto_route metadata). js_gate green (net-globals 1069→1070: openClassificationModal, baseline bumped; smoke 5/5). Skill 01-api/05-internals already cover auto_route; 05-internals classification-modal note added. Backend restart to load."),
+    ("9.56.0", "2026-06-01", "feat(auto-route): EMPIRICAL model ranking — a capability+speed benchmark replaces the priority/cost guess when picking the best model for a task. NEW engine/model_bench.py: per (model × task_type) it runs a small fixed prompt set (BENCH_PROMPTS, 2 prompts × 9 task types), judges each answer 0-100 with the SERVER default_model as judge (user directive: 'the default model of the server is the judge'), and records mean capability% + mean wall-clock latency (timed in-harness since run_turn_blocking has no latency field). Persists to config.json → models.<id>.benchmark.<task> = {measured:{capability,latency_ms,n,ts}, override?:{capability,latency_ms}}. ADMIN TRIGGER (handlers/providers.py): POST /v1/models/config {action:'benchmark', model_id?, task_type?} runs in a background thread (single-run gate _BENCH_PROGRESS), persisting per model as it completes + mirroring into the live registry (no restart needed); GET /v1/models/benchmark/status returns live progress. UI (settings_general_tabs.js Models tab): 'Benchmark: alle aktivierten' top button + per-model 'Dieses Modell benchmarken', a per-model table (measured cap%/ms + editable Override % / Override ms), progress polling. ROUTER (brain._resolve_auto_model_tiered): when any candidate has a benchmark for the turn's first task_type, rank by the user's order — CAPABLE (>= complexity-adjusted floor; high +20, low -20) → FAST (lower latency) → CHEAP (cost_input+cost_output); high complexity makes capability lead over speed. bench_cell_value reads override ?? measured (admin edit is sticky, survives re-runs). FALLBACK WALK (_fallback_walk, when the ranked pick leaves the allowed pool): prefer SAME family (model_family: mistral/gemma/qwen/claude/… nearest capability), then SAME locality (cloud→cloud / local→local), NEVER cloud→local, else server default_model, else first candidate — exactly the user's rule. No benchmark for a task → the v9.55.1 tier+complexity heuristic still applies (graceful, ships dark until the admin runs a benchmark). Keyword classifier mode has no task_types so it never hits the benchmark path. js_gate green (net-globals 1065→1069: 4 new benchmark UI fns, baseline bumped; smoke 5/5). Live-verified: mistral-small fast=100%/2364ms judged by mistral-medium; ranking + fallback walk unit-checked. Backend restart to load."),
+    ("9.55.1", "2026-06-01", "feat(auto-route): the structured classifier's `complexity` now shifts the model tier, the 'simpler' pick stays in the cloud, and an optional use-case map pins models per task type. THREE changes to _resolve_auto_model_tiered (brain.py), all gated to the LLM/structured path (keyword mode passes None/[] → byte-identical to before). (1) COMPLEXITY → TIER SHIFT: the task-type's baseline tier (_PURPOSE_TIER) is shifted along a _TIER_LADDER [fast, default, reasoning] by the classifier's complexity — high bumps UP one rung (force a reasoning model even on a 'default' task), low bumps DOWN one (drop to a simpler/cheaper model), medium/unknown unchanged. Per the user's policy. (2) 'SIMPLER' = CHEAPEST CLOUD, LOCAL LAST: the fast tier no longer prefers local — _pick_cheapest_cloud picks the cheapest enabled CLOUD model by cost_input+cost_output (tie-break priority desc), falling to local only when no cloud model is enabled (honors 'stick to cloud'). The default tier still picks the highest-priority model (which is the configured cloud default_model), and reasoning still picks the first thinking_format!=none model. (3) USE-CASE MAP: new optional config auto_route.task_models {task_type: model_id} — the first of the turn's task_types with an explicit, enabled, in-candidates model is used DIRECTLY, overriding the tier pick (precedence: attachments > ACL > use-case map > tier). Empty/unset → tier logic only (default). Validated in handlers/admin_config.py (known task types + known models; bad key/value → 400) and persisted under config.json → auto_route.task_models (server.py already loads the whole auto_route dict); echoed on the status endpoint (admin_artifacts.py). resolve_auto_model_for_task threads complexity + task_types into the picker; the fan-out leaf router (engine/background_tasks.py) now uses resolve_task_analysis too so leaves get the same policy. _auto_route_reason surfaces the complexity ('Detected research + reporting, high complexity → Model'). Settings → Server → Auto-Routing: prose updated + a JSON textarea editor for the use-case map. NOTE on the current config: mistral-medium-3.5 is BOTH the top-priority default AND the only cloud reasoning model, so analysis/low still lands on it (downgrade has nowhere cheaper-but-reasoning to go) — the shift logic is correct, the pool just has one strong cloud model; add a cheaper mid-tier cloud model to see low-complexity downgrades diverge. js_gate green (net-globals unchanged; smoke 5/5). Backend restart to load."),
+    ("9.55.0", "2026-06-01", "feat(auto-route): the LLM classifier now returns a STRUCTURED task analysis (task_types + needed tools + complexity), used to pick the best model AND optionally tailor the per-turn tool set. Before, the `llm`/`hybrid` modes emitted a single purpose word (coding/analysis/creative/agentic/fast) via an 8-token call; useful for the model tier, useless for anything else. NEW: classify_task_structured(message) (brain.py) makes one small background_call (chat_summary_model or cheapest/local, max_tokens=200, timeout 25s) returning JSON {task_types[], tools[], complexity, reasoning}. Two CLOSED vocabularies that map onto things that already exist downstream: (a) task_types {coding, math, research, analysis, reporting, creative, orchestration, agentic, fast} -> a routing tier via _TASK_TYPE_TIER (reasoning/default/fast); the dominant (strongest-tier) type is collapsed back to one of the 5 legacy purposes by _purpose_from_task_types so the existing tiered router + auto_route reason keep working byte-for-byte. (b) tools {python, bash, files, web, memory, email, git, code_graph, delegation, scheduler, translation, image_gen, audio, skills} -> real TOOL_GROUPS names via _TASK_TOOL_GROUPS (validated against TOOL_GROUPS at call time). Off-vocabulary labels are dropped during parse (fail-safe). classify_task_purpose_llm() is now a thin shim over the structured analyzer (legacy single-string contract preserved); resolve_task_analysis(message) is the new dispatcher returning the full dict, resolve_task_purpose(message) a back-compat shim returning only the purpose (fan-out still uses it). resolve_auto_model_for_task now returns a 3-tuple (model, purpose, analysis) — the sole caller (handlers/chat.py) updated. TOOL GATING (user constraint: only for models that do NOT warm up): brain.classifier_tool_exclusions(model, tool_groups) builds an exclude_tools list dropping every built-in tool whose group is neither in the analysis's needed groups nor in the never-strip floor (_TOOL_GATING_NEVER_STRIP = {core, workflows} — read/write/run + tool_search + ask tools always survive), BUT returns [] for any model that maintains a warm KV prefix (model_maintains_warm_prefix = is_local OR warmup-enabled) so local/warmed models keep a stable prefix. The chat worker stashes the analysis's tool_groups on the session (cleared each turn so no stale gate carries over) and, after apply_domain_context, MERGES classifier exclusions into the existing exclude_tools (Websuche/disable_web_search lockouts) via the SAME generic exclude_tools seam resolve_active_tools already subtracts — resolver signature untouched. SURFACING: auto_route SSE/done event carries analysis {task_types, tools, complexity, reasoning}; _auto_route_reason leads with the task mix ('Detected research + reporting -> Model') when present; frontend stashes chat.autoAnalysis (chat_send.js) for a future richer badge. Config glue unchanged — still the 3 modes keywords|llm|hybrid (default keywords, ships dark); the llm/hybrid INTERNALS got richer, no new mode. js_gate green (net-globals 1065 unchanged; smoke 5/5). Backend restart to load."),
     ("9.54.2", "2026-05-31", "fix(academic inlining never fired): _fetch_academic_pdf (v9.54.0) treated doc_convert._do_extract's return value as a string, but it returns a 3-tuple (text, backend, error). So `text` was the whole tuple, `text.strip()` raised AttributeError, the bare `except Exception: return None` swallowed it, and EVERY academic URL silently fell back to markitdown of the HTML landing page -- the feature never actually worked end-to-end. CAUGHT BY LIVE TEST on the deployed 9.54.1: arxiv.org/abs/1706.03762 -> rewrite to /pdf produced a real 2.2MB %PDF, _do_extract pulled 39663 chars of text, but tool_web_fetch returned fetch_method=markitdown len=3857 (the abs page). Direct trace showed the AttributeError swallow. FIX: unpack `text, _backend, _err = doc_convert._do_extract(...)` and bail on `_err`. (Same wrong-arity-unpack class as the historical _summarise_tool_result bug.) Re-verified live: arxiv abstract URL now returns fetch_method='academic' with the full paper text. Backend restart to load."),
     ("9.54.1", "2026-05-31", "fix(web_fetch cache collision): v9.54.0's abstract mode shared a cache key with full mode -- cache_key was the bare url, so an abstract fetch (~1500-char survey) and a later full fetch of the SAME url collided. CONFIRMED LIVE on the deployed 9.54.0: abstract-fetch a Wikipedia page (caches 1501 chars), then a full read WITHOUT force_fresh returned cached=True len=1501 -- the truncated abstract served for a full request (and the reverse). FIX (engine/tools/misc_tools.py): scope cache_key by mode (`<url>#abstract` for abstract, bare url for full) so the two variants never share an entry; the academic-PDF cache write uses the same variable so it is covered too. Re-verified live after the fix. Short pages (<1500 chars, abstract==full) were never affected. Backend restart to load."),
     ("9.54.0", "2026-05-30", "feat(web): two ideas adopted from the google-surf-mcp analysis as patterns on the EXISTING stack (NOT the MCP itself -- its single-Google-client CAPTCHA model is incompatible with our multi-user SearXNG/crawl4ai server deployment). (1) Academic inlining in tool_web_fetch: a small host->URL rewrite map (_academic_pdf_url + _ACADEMIC_REWRITES) resolves arxiv /abs->/pdf, bioRxiv/medRxiv /content/...->.full.pdf, PubMed/PMC /articles/PMCxxxx->/pdf/ BEFORE the fetch. Academic landing pages hide the real paper behind a different URL than the full-text PDF; a naive fetch returns the HTML wrapper, and a raw text decode of PDF bytes returns garbage. The rewritten PDF is downloaded to a tempfile and extracted via the SAME doc_convert._do_extract pipeline every other PDF read uses (fitz/pdfplumber + OCR) -> fetch_method='academic'. Host-gated ('arxiv.org' only in a query string is NOT rewritten) and graceful: if the rewrite misses or the server does not serve a PDF (content-type + %PDF magic check), it falls through to the normal HTTP fetch. (2) Abstract-first triage: new 'mode' param on web_fetch -- 'full' (default, unchanged) or 'abstract' (~1500-char survey). For HTML the page's own meta/og description is preferred (_meta_description, read from raw HTML before markdown conversion drops the meta tag), else the lead of the converted body (_to_abstract, word-boundary truncation); for PDF/academic it is the lead (title+abstract of a paper). Derived from the already-fetched+converted text -- no extra request. fetch_method gets a '+abstract' suffix. Lets the model (or the curated-source prefetch) triage relevance cheaply before paying full-page token cost. Websuche integration: new web_abstract_first body field on POST /v1/chat -> threaded through run_session_turn(web_abstract=) -> _build_web_sources(..., abstract=) fetches each curated source in abstract mode (big token saving on large baskets); per-send checkbox in the Websuche header (websuche-abstract-first + webAbstractFirstEnabled() in panels_websuche.js), off by default. ESLint clean; net globals +1 (webAbstractFirstEnabled, a real new helper -- baseline updated). Skill docs 01/02/06 + SKILL.md version updated. Backend changes need a server restart."),
@@ -10514,81 +10518,318 @@ def classify_task_purpose(message: str) -> str | None:
 # straight into `_resolve_auto_model_tiered` with no remapping.
 _LLM_CLASSIFY_PURPOSES = ("coding", "analysis", "creative", "agentic", "fast")
 
-_LLM_CLASSIFY_SYSTEM = (
-    "You are an intent classifier. Read the user's message and reply with EXACTLY "
-    "ONE lowercase word from this set, nothing else:\n"
-    "  coding   — write/fix/debug/refactor code, scripts, configs\n"
-    "  analysis — analyse/explain/compare/reason about something in depth\n"
-    "  creative — write prose, stories, names, marketing, brainstorming\n"
-    "  agentic  — search/fetch/automate/multi-step tool use\n"
-    "  fast     — quick lookup, format, translate, one-line answer\n"
-    "Reply with the single best-fitting word. No punctuation, no explanation."
+# --- Structured task analysis (the `llm`/`hybrid` classifier internals) ---
+#
+# The LLM returns a JSON object describing WHAT the task involves (task_types)
+# and WHICH tool families it needs (tools), so we can pick the best model AND
+# tailor the tool set. Both vocabularies are CLOSED and map onto things that
+# already exist downstream:
+#   - task_types  -> a routing tier (via `_TASK_TYPE_TIER`)
+#   - tools       -> real `TOOL_GROUPS` names (via `_TASK_TOOL_GROUPS`)
+# so the model never invents a label we can't act on. Anything off-vocabulary
+# is dropped during parsing (fail-safe, not fail-loud — a stray label must not
+# break routing).
+
+# task_type -> routing tier. Tiers are the same three `_resolve_auto_model_tiered`
+# understands (reasoning / fast / default). The winning task_type's tier picks
+# the model; we bias toward the strongest tier present (reasoning > default >
+# fast) so a mixed "research + format" task still gets a capable model.
+_TASK_TYPE_TIER: dict[str, str] = {
+    "coding": "reasoning",
+    "math": "reasoning",
+    "research": "reasoning",
+    "analysis": "reasoning",
+    "reporting": "default",
+    "creative": "default",
+    "orchestration": "default",
+    "agentic": "default",
+    "fast": "fast",
+}
+_TASK_TYPES = tuple(_TASK_TYPE_TIER.keys())
+# Tier strength order for picking the dominant tier across multiple task_types.
+_TIER_RANK = {"reasoning": 2, "default": 1, "fast": 0}
+
+# Classifier tool label -> set of real `TOOL_GROUPS` names to enable. Labels are
+# user-facing/intuitive ("bash", "python") and fan out to the groups that carry
+# the matching tool impls. Validated lazily against TOOL_GROUPS at call time so
+# this stays correct if a group is renamed.
+_TASK_TOOL_GROUPS: dict[str, tuple[str, ...]] = {
+    "python":      ("code_exec",),
+    "bash":        ("core",),          # execute_command lives in core
+    "files":       ("core", "documents"),
+    "web":         ("web",),
+    "memory":      ("memory", "context"),
+    "email":       ("email",),
+    "git":         ("git", "code_graph"),
+    "code_graph":  ("code_graph",),
+    "delegation":  ("delegation", "background"),
+    "scheduler":   ("scheduler",),
+    "translation": ("translation",),
+    "image_gen":   ("image_gen",),
+    "audio":       ("audio",),
+    "skills":      ("skills",),
+}
+_TASK_TOOLS = tuple(_TASK_TOOL_GROUPS.keys())
+
+_STRUCTURED_CLASSIFY_SYSTEM = (
+    "You are a task analyzer for an AI agent router. Read the user's message and "
+    "return a SINGLE JSON object (no prose, no markdown fence) describing the task "
+    "so a controller can pick the best model and tools.\n\n"
+    "Schema (all fields required):\n"
+    '{\n'
+    '  "task_types": [string, ...],   // 1-3 from the TASK TYPES list, most important first\n'
+    '  "tools": [string, ...],         // 0-6 from the TOOLS list — only what the task plausibly needs\n'
+    '  "complexity": "low"|"medium"|"high",\n'
+    '  "reasoning": string             // <=12 words, why\n'
+    '}\n\n'
+    "TASK TYPES (use these exact words):\n"
+    "  coding        — write/fix/debug/refactor code, scripts, configs\n"
+    "  math          — calculation, numeric/statistical reasoning, proofs\n"
+    "  research      — gather/compare information from many sources, investigate\n"
+    "  analysis      — reason about / explain / evaluate something in depth\n"
+    "  reporting     — produce a document, summary, report, slides\n"
+    "  creative      — prose, stories, names, marketing, brainstorming\n"
+    "  orchestration — multi-step plan, coordinate sub-tasks, delegate\n"
+    "  agentic       — search/fetch/automate via tools, multi-step tool use\n"
+    "  fast          — quick lookup, format, translate, one-line answer\n\n"
+    "TOOLS (use these exact words; pick ONLY what the task needs):\n"
+    "  python      — run Python code / compute\n"
+    "  bash        — run shell commands\n"
+    "  files       — read/write files & documents\n"
+    "  web         — web search / fetch pages\n"
+    "  memory      — recall stored knowledge / project memory\n"
+    "  email       — read/send email\n"
+    "  git         — git / github / code structure\n"
+    "  code_graph  — query codebase structure\n"
+    "  delegation  — delegate / spawn background tasks\n"
+    "  scheduler   — schedule tasks\n"
+    "  translation — translate text/documents\n"
+    "  image_gen   — generate images\n"
+    "  audio       — transcribe audio\n"
+    "  skills      — invoke a skill\n\n"
+    "Return ONLY the JSON object."
 )
 
 
-def classify_task_purpose_llm(message: str) -> str | None:
-    """LLM-based intent classifier — a small one-shot call routed to the
-    cheapest/local model. Returns one of `_LLM_CLASSIFY_PURPOSES` or None.
+def _resolve_classifier_model() -> str:
+    """Pick the model used for background classification calls.
 
-    Fail-open: any error, timeout, or unrecognised reply returns None so the
+    Reuse the chat-summary model when set (the "small background model" knob,
+    Settings -> Server -> Zusammenfassungen) — one setting for all tiny
+    background calls. Unset/disabled -> cheapest/local (the prior default).
+    """
+    try:
+        import server as _srv_mod
+        _sc = getattr(_srv_mod, "server_config", None) or {}
+        _csm = (_sc.get("chat_summary_model") or "").strip()
+        # Must be a KNOWN model (missing -> {} -> reject) AND enabled.
+        _mcfg = (_models_config or {}).get(_csm)
+        if _csm and _mcfg and _mcfg.get("enabled", True):
+            return _csm
+    except Exception:
+        pass
+    return _resolve_auto_model_tiered(None)  # cheapest/local
+
+
+def _purpose_from_task_types(task_types: list[str]) -> str | None:
+    """Derive a legacy `_PURPOSE_TIER` purpose from the structured task_types.
+
+    Maps the dominant (strongest-tier) task_type back onto one of the 5 legacy
+    purposes so the existing tiered router + auto_route reason keep working
+    unchanged. Returns None if nothing usable, so the caller can fail open.
+    """
+    valid = [t for t in (task_types or []) if t in _TASK_TYPE_TIER]
+    if not valid:
+        return None
+    # Pick the task_type whose tier is strongest (reasoning beats default beats
+    # fast); ties keep the model's ordering (most-important-first).
+    dominant = max(valid, key=lambda t: _TIER_RANK[_TASK_TYPE_TIER[t]])
+    # Collapse the richer task_types onto the 5 purposes the tier map keys on.
+    # New types fold into the closest legacy purpose by their tier.
+    if dominant in _LLM_CLASSIFY_PURPOSES:
+        return dominant
+    tier = _TASK_TYPE_TIER[dominant]
+    return {"reasoning": "analysis", "fast": "fast"}.get(tier, "agentic")
+
+
+def _tool_groups_from_tools(tools: list[str]) -> set[str]:
+    """Map classifier tool labels -> real TOOL_GROUPS names (validated)."""
+    groups: set[str] = set()
+    for t in (tools or []):
+        for g in _TASK_TOOL_GROUPS.get(t, ()):
+            if g in TOOL_GROUPS:  # ignore a renamed/removed group
+                groups.add(g)
+    return groups
+
+
+def classify_task_structured(message: str) -> dict | None:
+    """Structured LLM task analysis — the engine behind `llm`/`hybrid` modes.
+
+    Returns a dict {purpose, task_types[], tools[], tool_groups[], complexity,
+    reasoning} or None on any failure. `purpose` is derived from task_types so
+    it drops straight into the existing tiered router; `tool_groups` are real
+    TOOL_GROUPS names for optional per-turn tool gating.
+
+    Fail-open: any error, timeout, or unparseable reply returns None so the
     caller (`resolve_task_purpose`) can fall back to the keyword classifier.
     The turn never blocks on classification.
     """
     if not message:
         return None
     try:
+        import json as _json
         import handlers.sidecar_proxy as sidecar_proxy
-        # Reuse the chat-summary model when set (the "small background model"
-        # knob, Settings -> Server -> Zusammenfassungen) — one setting for all
-        # tiny background calls. Unset/disabled -> cheapest/local (the prior
-        # default, right-sized for a 5-word classify).
-        classifier_model = ""
-        try:
-            import server as _srv_mod
-            _sc = getattr(_srv_mod, "server_config", None) or {}
-            _csm = (_sc.get("chat_summary_model") or "").strip()
-            # Must be a KNOWN model (missing -> {} -> reject) AND enabled.
-            _mcfg = (_models_config or {}).get(_csm)
-            if _csm and _mcfg and _mcfg.get("enabled", True):
-                classifier_model = _csm
-        except Exception:
-            pass
-        if not classifier_model:
-            classifier_model = _resolve_auto_model_tiered(None)  # cheapest/local
+        classifier_model = _resolve_classifier_model()
         if not classifier_model:
             return None
         _res = sidecar_proxy.background_call(
             messages=[{"role": "user", "content": message[:4000]}],
             model=classifier_model,
-            system_prompt=_LLM_CLASSIFY_SYSTEM,
+            system_prompt=_STRUCTURED_CLASSIFY_SYSTEM,
             purpose="transform",
-            max_tokens=8,
+            max_tokens=200,
             max_rounds=1,
-            timeout_s=20.0,
+            timeout_s=25.0,
         )
         if _res.get("error"):
             return None
-        reply = (_res.get("reply") or "").strip().lower()
-        # Tolerant match: the model may add stray punctuation/quotes.
-        for p in _LLM_CLASSIFY_PURPOSES:
-            if p in reply:
-                return p
-        return None
+        raw = (_res.get("reply") or "").strip()
+        if not raw:
+            return None
+        # Tolerant extraction: strip a ```json fence / surrounding prose by
+        # taking the first {...} span.
+        start, end = raw.find("{"), raw.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            obj = _json.loads(raw[start:end + 1])
+        except Exception:
+            return None
+        if not isinstance(obj, dict):
+            return None
+        task_types = [t for t in obj.get("task_types", []) if t in _TASK_TYPE_TIER]
+        tools = [t for t in obj.get("tools", []) if t in _TASK_TOOL_GROUPS]
+        purpose = _purpose_from_task_types(task_types)
+        if not purpose:
+            return None  # nothing actionable -> fail open to keywords
+        complexity = obj.get("complexity")
+        if complexity not in ("low", "medium", "high"):
+            complexity = "medium"
+        return {
+            "purpose": purpose,
+            "task_types": task_types,
+            "tools": tools,
+            "tool_groups": sorted(_tool_groups_from_tools(tools)),
+            "complexity": complexity,
+            "reasoning": str(obj.get("reasoning") or "")[:200],
+        }
     except Exception:
         return None
 
 
-def resolve_task_purpose(message: str) -> str | None:
-    """Dispatch intent classification per the configured `auto_route.classifier_mode`.
+def classify_task_purpose_llm(message: str) -> str | None:
+    """LLM-based intent classifier — returns one of `_LLM_CLASSIFY_PURPOSES`
+    or None. Now backed by the structured analyzer (`classify_task_structured`),
+    keeping the legacy single-string contract for callers that only route a
+    model and don't consume the richer fields.
+
+    Fail-open: any error / timeout / unparseable reply returns None so the
+    caller (`resolve_task_purpose`) can fall back to the keyword classifier.
+    """
+    res = classify_task_structured(message)
+    return res.get("purpose") if res else None
+
+
+# Tool groups never stripped by classifier-driven gating — the agent always
+# needs to read/write/run and to talk back (core), introspect deferred tools
+# (tool_search lives in core), and the workflow ask tools. Stripping these
+# could dead-end an otherwise-routable turn.
+_TOOL_GATING_NEVER_STRIP = {"core", "workflows"}
+
+
+def model_maintains_warm_prefix(model: str) -> bool:
+    """True iff the model keeps a warm KV prefix we must not disturb.
+
+    Classifier-driven tool gating varies the per-turn tool list, which changes
+    the KV prefix. That's free for cloud models that never warm up, but it
+    invalidates the prefix for local / warmup-enabled models (the user's
+    explicit constraint: gate tools only for models that do not warm up). A
+    model maintains a prefix when it's local OR has warmup explicitly enabled.
+    """
+    if not model or model == "auto":
+        return True  # unknown -> conservative: don't gate
+    try:
+        if is_model_local(model):
+            return True
+        cfg = (_models_config or {}).get(model) or {}
+        return bool(cfg.get("warmup"))
+    except Exception:
+        return True
+
+
+def classifier_tool_exclusions(model: str, tool_groups: list[str] | None) -> list[str]:
+    """Build the `exclude_tools` list that restricts a turn to the classifier's
+    needed tool groups — but ONLY for non-warmup models.
+
+    Returns the names of every built-in tool whose group is neither in the
+    analysis's `tool_groups` nor in the never-strip floor. Empty list = no
+    gating (warmup model, no/empty analysis, or nothing left to strip) so the
+    caller leaves `exclude_tools` untouched and the full set stands.
+    """
+    if not tool_groups:
+        return []
+    if model_maintains_warm_prefix(model):
+        return []  # preserve KV prefix — never gate a warming model
+    keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP
+    excluded: list[str] = []
+    for gname, gtools in TOOL_GROUPS.items():
+        if gname in keep:
+            continue
+        excluded.extend(gtools)
+    return excluded
+
+
+def classifier_gating_decision(model: str, tool_groups: list[str] | None) -> dict:
+    """Human-readable summary of the classifier tool-gating decision for the
+    per-turn classification modal. Mirrors `classifier_tool_exclusions` so the
+    reported decision always matches what was actually applied.
+
+    Returns {applied, reason, kept_groups, excluded_groups, needed_groups}.
+    `applied=False` means the full tool set stood (warm model, or no analysis).
+    """
+    needed = sorted(set(tool_groups or []))
+    if not tool_groups:
+        return {"applied": False, "reason": "no LLM classification (keyword mode or no signal)",
+                "kept_groups": [], "excluded_groups": [], "needed_groups": needed}
+    if model_maintains_warm_prefix(model):
+        why = ("local model" if is_model_local(model) else "warmup enabled")
+        return {"applied": False,
+                "reason": f"model keeps a warm KV prefix ({why}) — tools not gated to preserve it",
+                "kept_groups": sorted(TOOL_GROUPS.keys()),
+                "excluded_groups": [], "needed_groups": needed}
+    keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP
+    kept = sorted(g for g in TOOL_GROUPS if g in keep)
+    excluded = sorted(g for g in TOOL_GROUPS if g not in keep)
+    floor = sorted(_TOOL_GATING_NEVER_STRIP)
+    return {"applied": True,
+            "reason": f"non-warmup model — restricted to needed groups + always-kept floor ({', '.join(floor)})",
+            "kept_groups": kept, "excluded_groups": excluded, "needed_groups": needed}
+
+
+def resolve_task_analysis(message: str) -> dict | None:
+    """Dispatch task classification per `auto_route.classifier_mode`, returning
+    the FULL structured analysis when the LLM path runs.
 
     Modes (config.json → auto_route.classifier_mode, default "keywords"):
       - keywords: keyword heuristics only (zero cost/latency; the prior behavior).
-      - llm:      LLM classify, falling back to keywords on None/failure.
-      - hybrid:   keywords first; LLM only when keywords find no strong signal
-                  (the article's two-layer design — pays the LLM tax rarely).
+                  Returns {purpose, source:"keywords"} (no task_types/tools).
+      - llm:      structured LLM analysis, falling back to keywords on failure.
+      - hybrid:   keywords first; structured LLM only when keywords find no
+                  strong signal (pays the LLM tax rarely).
 
     Both `llm` and `hybrid` fail-open to the keyword classifier, so a down
-    sidecar or slow local model never breaks auto-routing.
+    sidecar or slow local model never breaks auto-routing. Always returns a
+    dict with at least `purpose` (possibly None), or None if no signal at all.
     """
     mode = "keywords"
     try:
@@ -10598,12 +10839,34 @@ def resolve_task_purpose(message: str) -> str | None:
     except Exception:
         pass
 
+    def _kw():
+        p = classify_task_purpose(message)
+        return {"purpose": p, "source": "keywords"} if p else None
+
     if mode == "llm":
-        return classify_task_purpose_llm(message) or classify_task_purpose(message)
+        rich = classify_task_structured(message)
+        if rich:
+            rich["source"] = "llm"
+            return rich
+        return _kw()
     if mode == "hybrid":
-        return classify_task_purpose(message) or classify_task_purpose_llm(message)
+        kw = _kw()
+        if kw:
+            return kw
+        rich = classify_task_structured(message)
+        if rich:
+            rich["source"] = "llm"
+            return rich
+        return None
     # "keywords" or any unknown value → safe default
-    return classify_task_purpose(message)
+    return _kw()
+
+
+def resolve_task_purpose(message: str) -> str | None:
+    """Back-compat shim: dispatch classification and return only the purpose
+    string (the legacy single-value contract — fan-out, etc.)."""
+    res = resolve_task_analysis(message)
+    return res.get("purpose") if res else None
 
 
 # Map a classified task purpose to a routing tier. The tier is resolved
@@ -10620,21 +10883,207 @@ _PURPOSE_TIER: dict[str, str] = {
 }
 
 
+# Tier escalation order — `complexity` shifts the task-type's baseline tier
+# up (high) or down (low) along this ladder. medium leaves it unchanged.
+_TIER_LADDER = ["fast", "default", "reasoning"]
+
+# Minimum measured capability% a model must clear for a task type to be a
+# benchmark-eligible candidate. Below this it's treated as "not capable" and
+# only used as a last-resort fallback. Capability is the hard floor; speed then
+# cost rank the survivors (the user's stated order).
+_BENCH_CAPABILITY_FLOOR = 50
+
+
+def bench_cell_value(model: str, task_type: str) -> dict | None:
+    """Return the effective benchmark cell for (model, task_type): the admin
+    `override` if present, else the `measured` block, else None (never run).
+
+    Shape: {capability: 0-100, latency_ms: int, ...}. Override is sticky — a
+    later benchmark run only rewrites `measured`, so an admin edit survives.
+    """
+    cell = (((_models_config.get(model) or {}).get("benchmark") or {}).get(task_type) or {})
+    if not cell:
+        return None
+    ov = cell.get("override")
+    if isinstance(ov, dict) and ov.get("capability") is not None:
+        return ov
+    meas = cell.get("measured")
+    if isinstance(meas, dict) and meas.get("capability") is not None:
+        return meas
+    return None
+
+
+def model_family(model: str) -> str:
+    """Coarse family key for fallback-walk grouping (e.g. 'mistral', 'gemma',
+    'qwen', 'claude'). Derived from the base/shortname/id token blob — a
+    best-effort prefix, NOT a hard taxonomy. Empty string when unguessable."""
+    cfg = _models_config.get(model) or {}
+    blob = " ".join(((cfg.get("base_model_id") or ""),
+                     (cfg.get("shortname") or ""), (model or ""))).lower()
+    for fam in ("mistral", "magistral", "devstral", "voxtral", "gemma", "qwen",
+                "llama", "claude", "gpt", "deepseek", "gemini", "phi", "command"):
+        if fam in blob:
+            # Collapse the mistral sub-brands so they count as one family.
+            return "mistral" if fam in ("magistral", "devstral", "voxtral") else fam
+    return ""
+
+
+def _complexity_floor(complexity: str | None) -> int:
+    """Capability floor adjusted for task complexity: 'high' demands a stronger
+    model (raise the bar), 'low' tolerates a weaker/cheaper one (lower it),
+    medium/unknown = the base floor. Clamped to [0, 100]."""
+    base = _BENCH_CAPABILITY_FLOOR
+    if complexity == "high":
+        base += 20
+    elif complexity == "low":
+        base -= 20
+    return max(0, min(100, base))
+
+
+def _bench_rank_key(model: str, task_type: str, floor: int,
+                    complexity: str | None) -> tuple:
+    """Sort key for the capable→fast→cheap ordering, best first.
+    Capable models (>= floor) sort ahead of incapable ones. Within the capable
+    set the order is the user's stated priority: speed, then cost. For a
+    'high'-complexity task capability leads over speed (we want the strongest
+    model); otherwise speed leads."""
+    cell = bench_cell_value(model, task_type) or {}
+    cap = cell.get("capability")
+    cap = cap if isinstance(cap, (int, float)) else 0
+    has_cap = cap >= floor
+    lat = cell.get("latency_ms")
+    lat = lat if isinstance(lat, (int, float)) and lat > 0 else float("inf")
+    cost = _model_total_cost(model)
+    prio = -(_models_config.get(model, {}).get("priority") or 0)
+    # not-capable (1) sorts AFTER capable (0).
+    if complexity == "high":
+        # Capability first (strongest model), then speed, then cost.
+        return (0 if has_cap else 1, -cap, lat, cost, prio)
+    # Default / low: capable floor, then speed, then cost (capable→fast→cheap).
+    return (0 if has_cap else 1, lat, cost, prio)
+
+
+def _pick_by_benchmark(candidates: list[str], task_type: str | None,
+                       complexity: str | None = None) -> str | None:
+    """Among candidates with a benchmark for this task type, return the best by
+    capable→fast→cheap (complexity-adjusted floor). None when no candidate has
+    been benchmarked for the task (caller then falls back to the tier heuristic)."""
+    if not task_type:
+        return None
+    scored = [m for m in candidates if bench_cell_value(m, task_type) is not None]
+    if not scored:
+        return None
+    floor = _complexity_floor(complexity)
+    scored.sort(key=lambda m: _bench_rank_key(m, task_type, floor, complexity))
+    return scored[0]
+
+
+def _fallback_walk(picked: str, candidates: list[str], task_type: str | None) -> str:
+    """When `picked` is not in the allowed candidate pool, walk to the nearest
+    replacement per the user's rule: prefer SAME FAMILY (closest capability),
+    then SAME LOCALITY (cloud→cloud / local→local), and NEVER cross cloud→local.
+    Falls back to the configured default_model, then the first candidate."""
+    if picked in candidates:
+        return picked
+    want_local = is_model_local(picked)
+    want_fam = model_family(picked)
+    picked_cap = (bench_cell_value(picked, task_type) or {}).get("capability") if task_type else None
+
+    def _cap(m):
+        return (bench_cell_value(m, task_type) or {}).get("capability") if task_type else None
+
+    # Locality-safe pool: never go cloud→local. If the lost pick was cloud,
+    # only cloud replacements qualify; if it was local, only local.
+    locality_ok = [m for m in candidates if is_model_local(m) == want_local]
+    pool = locality_ok or candidates  # if locality empties the pool, relax (still no cloud->local below)
+    # Never cloud→local: if picked was cloud, drop any local from the pool.
+    if not want_local:
+        pool = [m for m in pool if not is_model_local(m)] or pool
+
+    # 1) Same family, nearest capability to the lost pick.
+    fam_pool = [m for m in pool if want_fam and model_family(m) == want_fam]
+    target_cap = picked_cap if picked_cap is not None else 100
+
+    def _nearest(ms):
+        return min(ms, key=lambda m: (abs((_cap(m) if _cap(m) is not None else 0) - target_cap),
+                                      _model_total_cost(m)))
+    if fam_pool:
+        return _nearest(fam_pool)
+    # 2) Same locality (already enforced in `pool`), nearest capability.
+    if pool:
+        return _nearest(pool)
+    # 3) Configured default, else first candidate.
+    try:
+        import server as _srv_mod
+        dm = ((getattr(_srv_mod, "server_config", None) or {}).get("default_model") or "")
+        if dm in candidates:
+            return dm
+    except Exception:
+        pass
+    return candidates[0] if candidates else picked
+
+
+def _model_total_cost(mid: str) -> float:
+    """Per-1M input+output cost for ranking 'cheapest' (unpriced -> +inf so a
+    model with no rates never wins a cheapest-pick by accident)."""
+    cfg = _models_config.get(mid, {}) or {}
+    ci, co = cfg.get("cost_input"), cfg.get("cost_output")
+    if ci is None and co is None:
+        return float("inf")
+    return float(ci or 0) + float(co or 0)
+
+
+def _pick_cheapest_cloud(candidates: list[str]) -> str:
+    """The 'simpler' pick: cheapest enabled CLOUD model, local only as last
+    resort (honors the 'stick to cloud' policy). Falls back to the first
+    candidate if neither cloud nor local resolves cleanly."""
+    cloud = [m for m in candidates if not is_model_local(m)]
+    if cloud:
+        return min(cloud, key=lambda m: (_model_total_cost(m),
+                                         -(_models_config.get(m, {}).get("priority") or 0)))
+    local = [m for m in candidates if is_model_local(m)]
+    if local:
+        return min(local, key=lambda m: (_model_total_cost(m),
+                                         -(_models_config.get(m, {}).get("priority") or 0)))
+    return candidates[0]
+
+
+def _shift_tier(tier: str, complexity: str | None) -> str:
+    """Bump the baseline tier up (high) or down (low) the ladder per complexity.
+    medium / unknown leaves it unchanged."""
+    if complexity not in ("low", "high"):
+        return tier
+    try:
+        i = _TIER_LADDER.index(tier)
+    except ValueError:
+        return tier
+    if complexity == "high":
+        i = min(i + 1, len(_TIER_LADDER) - 1)
+    else:  # low
+        i = max(i - 1, 0)
+    return _TIER_LADDER[i]
+
+
 def _resolve_auto_model_tiered(purpose: str | None,
                                *, attachment_mimes: list[str] | None = None,
-                               allowed_models: set[str] | None = None) -> str:
-    """Pick the best enabled model for a task, by tier + attachment capability.
+                               allowed_models: set[str] | None = None,
+                               complexity: str | None = None,
+                               task_types: list[str] | None = None) -> str:
+    """Pick the best enabled model for a task.
 
-    Selection order:
-      1. If the turn carries attachments, restrict to vision/raw-format-capable
-         models whose `raw_formats` match the attachment MIMEs. Falls back to
-         the full enabled set when none match (the per-file describe pipeline
-         then handles the mismatch — no regression).
-      2. Apply the purpose tier within the candidate set:
-         - "reasoning" → first model with thinking_format != "none"
-         - "fast"      → first local model, else cheapest by priority
-         - "default"   → highest-priority model
-      3. Always returns a concrete model id (top-priority fallback) — never "".
+    Precedence (highest first):
+      1. Attachments — restrict to models whose `raw_formats` match the
+         attachment MIMEs (capability wins). Falls back to the full set when
+         none match (the per-file describe pipeline handles the mismatch).
+      2. Use-case map — `config.json → auto_route.task_models {task_type: id}`.
+         The first `task_types` entry with an explicit, enabled, in-candidates
+         model is used directly. Empty map → no effect (legacy behavior).
+      3. Tier — the purpose's baseline tier (`_PURPOSE_TIER`), then SHIFTED by
+         `complexity` along `_TIER_LADDER` (high→up, low→down, medium→same):
+           - "reasoning" → first model with thinking_format != "none"
+           - "default"   → highest-priority model (the cloud `default_model`)
+           - "fast"      → cheapest CLOUD model, local last (`_pick_cheapest_cloud`)
+      4. Always returns a concrete model id (top-priority fallback) — never "".
 
     `allowed_models`, when set, restricts the candidate pool to models the
     caller may use (ACL). Empty intersection falls back to the full enabled
@@ -10656,18 +11105,52 @@ def _resolve_auto_model_tiered(purpose: str | None,
         if vision:
             candidates = vision  # attachment capability wins
 
-    tier = _PURPOSE_TIER.get(purpose or "", "default")
+    # Use-case map: an operator-pinned model for a task type wins over the tier
+    # logic (but never over attachment capability — files still constrain the
+    # pool above). First matching task_type in priority order.
+    cand_set = set(candidates)
+    task_models = {}
+    try:
+        import server as _srv_mod
+        _sc = getattr(_srv_mod, "server_config", None) or {}
+        task_models = (_sc.get("auto_route") or {}).get("task_models") or {}
+    except Exception:
+        pass
+    if task_models and task_types:
+        for tt in task_types:
+            pinned = task_models.get(tt)
+            if pinned and pinned in cand_set and _models_config.get(pinned, {}).get("enabled", True):
+                return pinned
+
+    # Benchmark ranking (the measured path): if any candidate has been
+    # benchmarked for the task, rank capable→fast→cheap and take the best. The
+    # capability floor folds in the tier intent (a reasoning task simply scores
+    # higher on capable models), so we rank over the WHOLE candidate pool, not
+    # a tier-filtered slice. Complexity nudges the floor: a 'high'-complexity
+    # task demands a stronger model, 'low' tolerates a weaker/cheaper one.
+    bench_task = (task_types or [None])[0] if task_types else None
+    if bench_task is None and purpose:
+        # keyword mode has no task_types — fall back to the legacy heuristic
+        # below (no benchmark lookup without a concrete task type).
+        bench_task = None
+    if bench_task:
+        picked = _pick_by_benchmark(candidates, bench_task, complexity)
+        if picked:
+            # `picked` is already in `candidates`; the fallback walk is a no-op
+            # here but documents the locality/family rule for when the pool
+            # later excludes it (ACL/disable between benchmark and use).
+            return _fallback_walk(picked, candidates, bench_task)
+
+    # No benchmark data for this task → tier heuristic (the pre-benchmark
+    # behavior): purpose's baseline tier, shifted by complexity.
+    tier = _shift_tier(_PURPOSE_TIER.get(purpose or "", "default"), complexity)
 
     if tier == "reasoning":
         for mid in candidates:
             if _models_config.get(mid, {}).get("thinking_format", "none") != "none":
                 return mid
     elif tier == "fast":
-        for mid in candidates:
-            if is_model_local(mid):
-                return mid
-        # No local model available — cheapest enabled (lowest priority value)
-        return min(candidates, key=lambda mid: _models_config.get(mid, {}).get("priority", 0))
+        return _pick_cheapest_cloud(candidates)
 
     # default tier, or no tier-specific match found
     return candidates[0]
@@ -10676,10 +11159,13 @@ def _resolve_auto_model_tiered(purpose: str | None,
 def resolve_auto_model_for_task(agent_config: dict, message: str,
                                 attachment_mimes: list[str] | None = None,
                                 allowed_models: set[str] | None = None
-                                ) -> tuple[str, str | None]:
+                                ) -> tuple[str, str | None, dict | None]:
     """For agents with model="auto", analyze the task and pick the best model.
 
-    Returns (resolved_model_id, detected_purpose).
+    Returns (resolved_model_id, detected_purpose, analysis). `analysis` is the
+    full structured dict (task_types/tools/tool_groups/complexity/reasoning)
+    when the LLM classifier ran, else None — callers that want richer routing
+    (e.g. per-turn tool gating) read it; legacy callers ignore it.
     If agent has a fixed model_purpose, uses that instead of classifying.
     `attachment_mimes` (when the turn carries files) constrains the pick to a
     model that can natively handle those MIME types.
@@ -10687,18 +11173,25 @@ def resolve_auto_model_for_task(agent_config: dict, message: str,
     """
     raw_model = agent_config.get("model", "")
     if raw_model != "auto":
-        return resolve_model(raw_model, agent_config.get("model_purpose")), agent_config.get("model_purpose")
+        return resolve_model(raw_model, agent_config.get("model_purpose")), agent_config.get("model_purpose"), None
 
     fixed_purpose = agent_config.get("model_purpose")
     if fixed_purpose:
-        return _resolve_auto_model_tiered(fixed_purpose, attachment_mimes=attachment_mimes,
-                                          allowed_models=allowed_models), fixed_purpose
+        return (_resolve_auto_model_tiered(fixed_purpose, attachment_mimes=attachment_mimes,
+                                           allowed_models=allowed_models), fixed_purpose, None)
 
     # Classify task from message (keyword / LLM / hybrid per config).
-    detected = resolve_task_purpose(message)
-    resolved = _resolve_auto_model_tiered(detected, attachment_mimes=attachment_mimes,
-                                          allowed_models=allowed_models)
-    return resolved, detected
+    analysis = resolve_task_analysis(message)
+    detected = analysis.get("purpose") if analysis else None
+    # complexity + task_types only exist on the structured (LLM) path; keyword
+    # mode passes None/[] → tier logic is unchanged there.
+    resolved = _resolve_auto_model_tiered(
+        detected, attachment_mimes=attachment_mimes, allowed_models=allowed_models,
+        complexity=(analysis or {}).get("complexity"),
+        task_types=(analysis or {}).get("task_types"))
+    # Only hand back analysis with actionable richer fields (LLM source).
+    rich = analysis if (analysis and analysis.get("source") == "llm") else None
+    return resolved, detected, rich
 
 
 def get_model_info(model: str) -> dict:

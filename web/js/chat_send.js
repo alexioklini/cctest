@@ -823,6 +823,9 @@ function buildStreamCallbacks(chat, isActive) {
         if (!d || !d.model) return;
         chat.autoPicked = d.model;
         chat.autoReason = d.reason || '';
+        // Structured task analysis (task_types/tools/complexity) when the LLM
+        // classifier ran — kept for an optional richer Auto badge.
+        chat.autoAnalysis = d.analysis || null;
         if (isActive()) {
           const sm = document.getElementById('spinner-model');
           if (sm) sm.textContent = modelShortName(d.model);
@@ -937,6 +940,12 @@ function buildStreamCallbacks(chat, isActive) {
         // tooltip. Persisted into metadata so reload reads it back identically.
         if (Array.isArray(d.gdpr_restored_spans) && d.gdpr_restored_spans.length) {
           assistantMsg.metadata.gdpr_restored_spans = d.gdpr_restored_spans;
+        }
+        // Persist the auto-route classification + routing/tool-gating decision
+        // onto the turn metadata so the per-turn classification chip + modal
+        // work on the live turn identically to a reloaded one.
+        if (d.auto_route) {
+          assistantMsg.metadata.auto_route = d.auto_route;
         }
         if (dur > 0 && estOut > 0) {
           chat._lastSpeed = Math.round(estOut / dur);

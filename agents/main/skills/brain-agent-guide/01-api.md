@@ -201,7 +201,10 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 - `GET /v1/models/config` — full per-model config (admin)
 - `POST /v1/models/config` — save model config; supports `action: "sync"`
   to pull from provider's `/models`, `action: "full_resync"` to clear
-  deletion tombstones first
+  deletion tombstones first, `action: "benchmark"` (optional `model_id` /
+  `task_type`) to run the capability+speed benchmark in the background
+- `GET /v1/models/benchmark/status` — live benchmark progress
+  (`{running, done, total, current_model, errors}`)
 - `GET /v1/providers` — provider list with status
 - `POST /v1/providers` — `{action: "save"|"delete"|"test", ...}`
 - `POST /v1/providers/test` — `{base_url, api_key, ...}` probe

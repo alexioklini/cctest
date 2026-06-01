@@ -79,19 +79,90 @@ agentic / fast), then `_resolve_auto_model_tiered` maps the purpose to a tier
 highest-priority) within the caller's ACL + attachment-capability set.
 
 **Classifier mode** (`config.json → auto_route.classifier_mode`, default
-`keywords`; Settings → Server → Auto-Routing) selects how `resolve_task_purpose`
-classifies intent:
+`keywords`; Settings → Server → Auto-Routing) selects how intent is classified
+(dispatcher `resolve_task_analysis`, with `resolve_task_purpose` a back-compat
+shim returning only the purpose string):
 - `keywords` — regex keyword heuristics (`classify_task_purpose`); zero cost/latency.
-- `llm` — a small one-shot classify (`classify_task_purpose_llm`, via
-  `sidecar_proxy.background_call`, `max_tokens=8`, 20s timeout) on the
+- `llm` — a **structured** LLM analysis (`classify_task_structured`, via
+  `sidecar_proxy.background_call`, `max_tokens=200`, 25s timeout) on the
   `chat_summary_model` if set (Settings → Server → Zusammenfassungen), else the
   cheapest/local model; **falls back to keywords** on None/error/timeout.
-- `hybrid` — keywords first, LLM only when keywords find no strong signal.
+- `hybrid` — keywords first, structured LLM only when keywords find no strong signal.
+
+The structured analysis returns JSON `{task_types[], tools[], complexity,
+reasoning}` over two closed vocabularies that map onto existing machinery:
+- **task_types** {coding, math, research, analysis, reporting, creative,
+  orchestration, agentic, fast} → a tier via `_TASK_TYPE_TIER`; the dominant
+  (strongest-tier) type is collapsed to one of the 5 legacy purposes
+  (`_purpose_from_task_types`) so the tier map + picker work unchanged.
+- **tools** {python, bash, files, web, memory, email, git, code_graph,
+  delegation, scheduler, translation, image_gen, audio, skills} → real
+  `TOOL_GROUPS` names (`_TASK_TOOL_GROUPS`).
+
+**Model pick precedence** (`_resolve_auto_model_tiered`, highest first):
+1. **Attachments** — restrict to models whose `raw_formats` match the MIMEs.
+2. **ACL** — narrow to the caller's allowed models.
+3. **Use-case map** — `config.json → auto_route.task_models {task_type: id}`
+   (Settings → Server → Auto-Routing JSON editor). The first task_type with an
+   explicit enabled model is used directly, overriding everything below. Empty = off.
+4. **Benchmark ranking** (the measured path) — if any candidate has a benchmark
+   for the turn's first task_type, rank **capable → fast → cheap**: capability ≥
+   a complexity-adjusted floor (base 50, `high` +20, `low` −20), then lower
+   latency, then lower `cost_input+cost_output`. `high` complexity makes
+   capability lead over speed. `bench_cell_value` reads `override ?? measured`.
+   See **Model benchmark** below.
+5. **Tier heuristic** (no benchmark for the task) — the purpose's baseline tier
+   (`_PURPOSE_TIER`) **shifted by complexity** along `_TIER_LADDER` [fast,
+   default, reasoning]: `high` up, `low` down, `medium` same. Then `reasoning` →
+   first `thinking_format != none`; `default` → highest-priority (cloud
+   `default_model`); `fast` → cheapest CLOUD (`_pick_cheapest_cloud`), local last.
+
+**Fallback walk** (`_fallback_walk`) when the ranked pick leaves the allowed
+pool (disabled / not in ACL between benchmark and use): prefer the SAME model
+family (`model_family` — mistral/gemma/qwen/claude/…, nearest capability), then
+SAME locality (cloud→cloud / local→local), **NEVER cloud→local**, else the
+configured `default_model`, else the first candidate.
+
+### Model benchmark (capability + speed ranking)
+
+`engine/model_bench.py` measures each model per task type so the router ranks on
+evidence, not config priority. Admin triggers it from **Settings → Models** — a
+per-model "Dieses Modell benchmarken" button and a top-level "Benchmark: alle
+aktivierten". Each (model × task_type): run a fixed 2-prompt set (`BENCH_PROMPTS`),
+judge each answer 0-100 with the **server `default_model`** as judge, store mean
+capability% + mean latency. Persists to `config.json → models.<id>.benchmark.
+<task> = {measured, override?}`. An admin **override** (editable cap%/latency in
+the same table) wins over `measured` at routing time and survives the next
+benchmark run (which only rewrites `measured`). Endpoints: `POST
+/v1/models/config {action:"benchmark", model_id?, task_type?}` (background, admin)
++ `GET /v1/models/benchmark/status` (live progress). No benchmark for a task →
+the tier heuristic (step 5) applies, so the feature ships dark.
+
+**Classifier-driven tool gating** (only when the LLM ran): for models that do
+**not** keep a warm KV prefix (`model_maintains_warm_prefix` = local OR
+warmup-enabled), the worker restricts the turn to the analysis's needed tool
+groups by merging `classifier_tool_exclusions(model, tool_groups)` into the
+existing per-turn `exclude_tools` (the same seam Websuche/`disable_web_search`
+use; `resolve_active_tools` subtracts it). A never-strip floor
+(`_TOOL_GATING_NEVER_STRIP` = core + workflows) keeps read/write/run +
+`tool_search` + ask tools alive. For warm/local models gating is a no-op so the
+KV prefix stays stable. The `auto_route` SSE/`done` event carries the analysis
+(`task_types`/`tools`/`complexity`/`reasoning`) for the chat-view reason +
+`chat.autoAnalysis`.
+
+**Per-turn classification modal**: an Auto-routed turn persists its full
+decision on the assistant turn's `metadata.auto_route` (= the analysis + chosen
+model + reason + `tool_gating` from `brain.classifier_gating_decision`), so it
+survives reload like `metadata.web_sources`. A compass chip in the turn's
+actions bar opens `openClassificationModal(idx)` (chat_render.js) showing the
+detected task types, needed tool families, complexity, the model decision +
+why, and the tool-gating decision (kept vs excluded groups, or why gating was
+skipped). Only present on Auto turns.
 
 LLM and hybrid **fail open to keywords** — a down sidecar or slow local model
-never blocks a turn. The classifier is the ONLY thing the mode changes; the tier
-map, the picker, the `auto_route` SSE reason, and tool selection are untouched
-(tool selection stays static — the warm-pool KV prefix is not affected).
+never blocks a turn. Config-wise the mode set is unchanged (still
+`keywords|llm|hybrid`, default `keywords`, ships dark); only the `llm`/`hybrid`
+internals got richer.
 
 ## Provider concurrency queue
 

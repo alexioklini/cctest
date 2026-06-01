@@ -1614,6 +1614,8 @@ class BrainAgentHandler(
             self._send_json(engine._web_cache.stats())
         elif path == "/v1/warmup/status":
             self._handle_warmup_status()
+        elif path == "/v1/models/benchmark/status":
+            self._handle_benchmark_status()
         elif path == "/v1/sidecar/status":
             self._handle_sidecar_status()
         elif path == "/v1/searxng/status":
