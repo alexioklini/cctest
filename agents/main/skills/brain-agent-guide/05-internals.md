@@ -105,11 +105,17 @@ reasoning}` over two closed vocabularies that map onto existing machinery:
    markdown and readable by any text model, so they don't narrow the pool).
 2. **ACL** — narrow to the caller's allowed models.
 3. **Benchmark ranking** (the measured path) — if any candidate has a benchmark
-   for the turn's first task_type, rank **capable → fast → cheap**: capability ≥
-   a complexity-adjusted floor (base 50, `high` +20, `low` −20), then HIGHER
-   throughput (`tps`, tokens/sec), then lower `cost_input+cost_output`. `high`
-   complexity makes capability lead over speed. `bench_cell_value` reads
-   `override ?? measured`.
+   for the turn's first task_type, rank **capable-enough → cloud → fast → cheap**
+   (`_bench_rank_key`): capability is a FLOOR, not a maximand — a model either
+   clears a complexity-adjusted floor (base 50, `high` +20, `low` −20) or not; we
+   do NOT rank by raw capability (that would always crown the single top-scoring
+   model and never let a cheaper/faster still-capable model win). Among the
+   capable set, **CLOUD sorts ahead of LOCAL** (the same `never cloud→local` rule
+   the fallback walk enforces, applied at the primary pick — a free/fast local
+   model must not outrank a capable cloud model on a near-tied, least-trustworthy
+   benchmark), then HIGHER throughput (`tps`, tokens/sec), then lower
+   `cost_input+cost_output`, then static priority. Complexity only MOVES the
+   floor. `bench_cell_value` reads `override ?? measured`.
    See **Model benchmark** below.
 4. **Tier heuristic** (no benchmark for the task) — the purpose's baseline tier
    (`_PURPOSE_TIER`) **shifted by complexity** along `_TIER_LADDER` [fast,

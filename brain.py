@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.60.0"
+VERSION = "9.60.1"
 VERSION_DATE = "2026-06-02"
 CHANGELOG = [
+    ("9.60.1", "2026-06-02", "fix(auto-route): the LLM classifier now actually RUNS, never prefers cloud→local on the primary pick, and steers tool selection explicitly. THREE fixes, found verifying the v9.59.0 classifier path end-to-end. (1) DUAL-MODULE CONFIG BUG (the classifier never ran): resolve_task_analysis / _resolve_classifier_model / the default-model fallback read server_config via `import server as _srv_mod` — but under launchd the live server is sys.modules['__main__'] and a bare `import server` yields a SECOND module instance whose server_config is the bare default with NO auto_route key, so classifier_mode always resolved to 'keywords' and the structured classifier (task_types/tools) was dead. Same footgun as v9.45.1's run_background_task bug. Fixed with a shared brain._server_config() helper that resolves the singleton (__main__ then server), replacing all three buggy readers; the two GDPR readers already used the correct pattern. Verified: classifier now populates auto_route.analysis on every turn. (2) PRIMARY PICK NEVER cloud→local: the 'never cloud→local' rule lived ONLY in _fallback_walk (fires when the pick leaves the ACL pool), NOT in _pick_by_benchmark's primary ranking — so a free/fast LOCAL model with a near-tied (and least-trustworthy) benchmark number outranked a capable CLOUD model. With the classifier live this routed EVERY policy question to gemma-4-e2b (bogus cap=98) instead of mistral-medium, dropping the policy eval 0.75→0.48. _bench_rank_key now: (a) treats capability as a pure FLOOR (capable-enough, not most-capable) for ALL complexity levels — the prior 'high' branch sorted by -cap which always crowned the single top-scoring model (mistral-medium) and never let a cheaper/faster still-capable model win; complexity now only MOVES the floor via _complexity_floor; (b) adds locality as the top tiebreaker among capable models: cloud (0) before local (1), then speed (tps) then cost — the same cloud→local rule the fallback walk enforces, applied at the primary pick. Net: among capable cloud models the faster/cheaper one wins (so mistral-small can beat mistral-medium on speed), but no local model outranks a capable cloud model. (3) CLASSIFIER TOOL STEERING: _STRUCTURED_CLASSIFY_SYSTEM's TOOLS list rewritten from one-line glosses to explicit WHEN-rules + 'list EVERY tool the task needs / when unsure include it' + 4 examples. Key steer: memory is the DEFAULT retrieval tool for ANY internal/document/policy/standard/prior-context question (not web); web is ONLY for current/external public info; files for a named/attached file. Generalizes beyond projects — attached-file chats with memory search get the right set too. VERIFIED end-to-end on the policy eval (KG-Real-Policies, 15Q, mistral-judged): routing 15/15 → mistral-small (cloud, faster/cheaper than medium), tool selection 15/15 include memory (was 8/15), brain mean 0.86 (best on record — beats the prior 0.75 keyword baseline AND the broken-classifier 0.48 local-routed run, Δ−0.08 vs gold within ±0.09 variance). py compile OK. Backend restart to load. NOTE: gemma's v9.56.0 local benchmark cells still read cap~95-100 (the micro-benchmark over-scored a 2B model); fix #2 makes them harmless for cloud-vs-local but a re-benchmark with a better prompt set is still advisable."),
     ("9.60.0", "2026-06-02", "fix(mempalace): AUTO-RECOVER from HNSW corruption + REMOVE the memdash dashboard. (1) AUTO-RECOVERY (engine/mempalace_glue.py): chromadb 0.6.3's HNSW index wedges (`mempalace_query: InternalError: Error finding id`) when a write is interrupted between mutation and its periodic flush (unclean shutdown) or a bulk delete races an upsert — sqlite survives, the vector segment doesn't, retrieval silently dead-ends and the model refuses on an empty corpus. NEW: on a query raising an HNSW-corruption marker (_is_hnsw_corruption: 'error finding id'/'internal error'/'hnsw'), _try_rebuild_palace calls mempalace.repair.rebuild_index (rebuilds the index from the durable sqlite) then retries the query ONCE. Serialized by _mempalace_rebuild_lock + a 120s per-palace cooldown so a burst of concurrent failing queries triggers exactly ONE rebuild; fail-safe (never raises — returns the original error if rebuild/retry fails). Verified live: a corrupted KG-Real-Policies wing self-healed mid-turn (server log 'Staged N/12955 drawers'). NOTE: rebuild blocks the triggering turn (~minutes for ~13k drawers) — correctness over latency; a future refinement could rebuild async. (2) MEMDASH REMOVED: the vendored MemPalace dashboard (v9.44.0) is deleted — handlers/memdash.py, web/memdash/, agents/main/memdash/, server.py wiring (import + mixin base + _memdash_admin_gate + GET/POST /memdash route blocks), handlers/admin.py static entry, and the Settings→MemPalace 'Dashboard' button. It added an INTERACTIVE writer (tool_delete/update_drawer) to the live palace the daemons mine — the likely historical corruption trigger (first .drift snapshot 2026-05-29, day after memdash landed) — for little value. Retrieval/curation already covered by mempalace_query + the Palace-Explorer tree in Settings. js_gate green (smoke 5/5); py compile OK. Backend restart to load."),
     ("9.59.0", "2026-06-02", "change(auto-route): classifier tool gating switches from EXCLUDE to DEFER + UN-DEFER, and classification now runs EVERY turn (tool-only, never the model). THREE changes. (1) DEFER NOT EXCLUDE: classifier_tool_exclusions (returned an exclude_tools list — tools removed entirely, unrecoverable) is REPLACED by classifier_tool_deferral(model, tool_groups) → (defer_extra, undefer): un-needed groups are pushed OUT of the initial prompt but stay tool_search-DISCOVERABLE (a misclassification is now recoverable mid-turn, not a dead end), and the classifier's NEEDED groups are UN-DEFERRED — pulled in-prompt even if statically deferred (positive use of the signal; previously it only ever subtracted). New RequestContext fields defer_extra_tools/undefer_tools; resolve_active_tools folds them into its defer set (undefer wins over defer_extra; floor core/workflows always in-prompt). (2) EVERY TURN, TOOL-ONLY: concrete-model turns (not ✨ Auto) now also classify the prompt — handlers/chat.py runs resolve_task_analysis purely to populate _auto_tool_groups for deferral; session.model/provider are NOT touched (model selection stays gated to Auto/first-turn). (3) WARM/LOCAL NEVER OPTIMIZED: classifier_tool_deferral returns ([],[]) for any model that maintains a warm KV prefix (is_local OR warmup), AND the every-turn classification is skipped entirely for those models (model_maintains_warm_prefix guard before the call) so no classifier cost is paid and the static deferral + KV prefix are byte-stable across ALL turns — tool optimization is never performed for warm/local models, including follow-ups. classifier_gating_decision + the per-turn modal updated to deferral language ('Im Prompt' / 'Zurückgestellt (per tool_search abrufbar)'); applied=False for warm models. Mode still keywords|llm|hybrid (default keywords → free, no per-turn LLM tax; llm/hybrid pay the classifier call on cloud turns now). No-signal → static deferral stands (fail-open). js_gate green (smoke 5/5); py compile OK. Backend restart to load."),
     ("9.58.0", "2026-06-02", "change(auto-route): REMOVE the use-case map (auto_route.task_models) and NARROW the attachment routing gate to raw images only. Two changes to _resolve_auto_model_tiered (brain.py). (1) USE-CASE MAP REMOVED: the operator pin {task_type: model_id} that overrode the empirical pick is gone — routing is now purely auto (attachment capability → benchmark ranking → tier+complexity heuristic); per-feature model needs (e.g. translation models) are configured at their own settings, not via a third pinning path. Deleted: the resolver branch (brain.py), the write/validate handler (handlers/admin_config.py auto_route_task_models), the status echo (handlers/admin_artifacts.py), and the Settings → Server → Auto-Routing JSON editor + Anwendungsfall-Zuordnung prose (web/js/settings_general_tabs.js). The classifier_mode selector stays. config.json → auto_route.task_models is simply ignored if present (no migration needed; current config has none). (2) ATTACHMENT GATE NARROWED: the gate restricted candidates to models whose raw_formats match the upload MIME, but it fired on the ORIGINAL upload MIME before Brain's markdown conversion — so a PDF/docx (which the chat router sends to disk → read_document, readable by ANY text model) could wrongly narrow the pool, while doing nothing useful since few models list those MIMEs anyway. NOW the gate filters the MIME list to image/* only (m.startswith('image/')) before the raw_formats match — mirroring the chat attachment router's actual api_blocked predicate (handlers/chat.py sends a multimodal block ONLY for image/*; everything else is converted). Audio/video go through the separate translation/transcription path, not this MIME router. Net: convertible documents no longer constrain model choice; only genuinely raw image uploads (which truly need a vision model) do. js_gate green; py compile OK. Backend restart to load."),
@@ -2652,6 +2653,26 @@ def _crawl4ai_base_url() -> str:
     except Exception:
         pass
     return ""
+
+
+def _server_config() -> dict:
+    """The live `server_config` dict, resolved off the SINGLETON server module.
+
+    Under launchd the running server is `sys.modules['__main__']`; a bare
+    `import server` yields a SECOND module instance whose `server_config` is the
+    bare module-level default (no `auto_route`/`chat_summary_model`/etc.). This
+    is the v9.45.1 footgun. Resolve `__main__` first (then plain `server`) so
+    readers see the config `main()` actually populated. Returns {} if neither is
+    available (e.g. unit tests importing brain alone)."""
+    try:
+        for _name in ("__main__", "server"):
+            _srv_mod = sys.modules.get(_name)
+            _sc = getattr(_srv_mod, "server_config", None) if _srv_mod else None
+            if _sc:
+                return _sc
+    except Exception:
+        pass
+    return {}
 
 
 def _crawl4ai_render(url: str, timeout_s: float = 45.0) -> dict:
@@ -10595,7 +10616,7 @@ _STRUCTURED_CLASSIFY_SYSTEM = (
     "Schema (all fields required):\n"
     '{\n'
     '  "task_types": [string, ...],   // 1-3 from the TASK TYPES list, most important first\n'
-    '  "tools": [string, ...],         // 0-6 from the TOOLS list — only what the task plausibly needs\n'
+    '  "tools": [string, ...],         // from the TOOLS list — EVERY tool the task plausibly needs (see WHEN rules)\n'
     '  "complexity": "low"|"medium"|"high",\n'
     '  "reasoning": string             // <=12 words, why\n'
     '}\n\n'
@@ -10609,21 +10630,37 @@ _STRUCTURED_CLASSIFY_SYSTEM = (
     "  orchestration — multi-step plan, coordinate sub-tasks, delegate\n"
     "  agentic       — search/fetch/automate via tools, multi-step tool use\n"
     "  fast          — quick lookup, format, translate, one-line answer\n\n"
-    "TOOLS (use these exact words; pick ONLY what the task needs):\n"
-    "  python      — run Python code / compute\n"
-    "  bash        — run shell commands\n"
-    "  files       — read/write files & documents\n"
-    "  web         — web search / fetch pages\n"
-    "  memory      — recall stored knowledge / project memory\n"
-    "  email       — read/send email\n"
-    "  git         — git / github / code structure\n"
-    "  code_graph  — query codebase structure\n"
-    "  delegation  — delegate / spawn background tasks\n"
-    "  scheduler   — schedule tasks\n"
-    "  translation — translate text/documents\n"
-    "  image_gen   — generate images\n"
-    "  audio       — transcribe audio\n"
-    "  skills      — invoke a skill\n\n"
+    "TOOLS — list EVERY tool the task plausibly needs (not just one). Decide per\n"
+    "tool by the WHEN rule; when unsure whether a tool helps, INCLUDE it (a tool\n"
+    "left out is unavailable, a spare tool is harmless). Use these exact words:\n"
+    "  memory      — WHEN the answer depends on knowledge the assistant already\n"
+    "                holds: stored notes, project documents, ingested/attached\n"
+    "                files, policies, standards, guidelines, internal rules, or\n"
+    "                anything discussed earlier. ANY 'what does X say / what is our\n"
+    "                policy on Y / look it up in the docs' question needs memory.\n"
+    "                This is the DEFAULT retrieval tool — prefer it over web for\n"
+    "                internal/document/policy questions.\n"
+    "  files       — WHEN the task names or attaches a specific file to read,\n"
+    "                write, edit, or convert (a document, spreadsheet, PDF, etc.).\n"
+    "  web         — ONLY WHEN the task needs CURRENT or EXTERNAL public info not\n"
+    "                in the assistant's own documents (news, live data, a public\n"
+    "                website). Do NOT pick web for internal-policy/document lookups.\n"
+    "  python      — WHEN the task needs computation, data crunching, or code execution.\n"
+    "  bash        — WHEN the task needs shell commands / system operations.\n"
+    "  git         — WHEN the task involves git / GitHub / version history.\n"
+    "  code_graph  — WHEN the task asks about a codebase's structure / symbols.\n"
+    "  email       — WHEN the task reads or sends email.\n"
+    "  delegation  — WHEN the task should spawn / coordinate background sub-tasks.\n"
+    "  scheduler   — WHEN the task schedules something to run later.\n"
+    "  translation — WHEN the task translates text or documents.\n"
+    "  image_gen   — WHEN the task generates images.\n"
+    "  audio       — WHEN the task transcribes audio.\n"
+    "  skills      — WHEN the task asks to invoke a named skill.\n\n"
+    "Examples:\n"
+    '  "What minimum password length does our policy require?" → tools:["memory"]\n'
+    '  "Summarize the attached contract.docx" → tools:["files","memory"]\n'
+    '  "What is the latest EU AI Act news?" → tools:["web"]\n'
+    '  "Refactor this function to be async" → tools:["files","code_graph"]\n\n'
     "Return ONLY the JSON object."
 )
 
@@ -10636,8 +10673,7 @@ def _resolve_classifier_model() -> str:
     background calls. Unset/disabled -> cheapest/local (the prior default).
     """
     try:
-        import server as _srv_mod
-        _sc = getattr(_srv_mod, "server_config", None) or {}
+        _sc = _server_config()
         _csm = (_sc.get("chat_summary_model") or "").strip()
         # Must be a KNOWN model (missing -> {} -> reject) AND enabled.
         _mcfg = (_models_config or {}).get(_csm)
@@ -10865,8 +10901,7 @@ def resolve_task_analysis(message: str) -> dict | None:
     """
     mode = "keywords"
     try:
-        import server as _srv_mod
-        _sc = getattr(_srv_mod, "server_config", None) or {}
+        _sc = _server_config()
         mode = ((_sc.get("auto_route") or {}).get("classifier_mode") or "keywords").strip()
     except Exception:
         pass
@@ -10974,27 +11009,33 @@ def _complexity_floor(complexity: str | None) -> int:
 
 def _bench_rank_key(model: str, task_type: str, floor: int,
                     complexity: str | None) -> tuple:
-    """Sort key for the capable→fast→cheap ordering, best first.
-    Capable models (>= floor) sort ahead of incapable ones. Within the capable
-    set the order is the user's stated priority: speed, then cost. Speed is
-    measured as THROUGHPUT (tokens/sec) — higher is faster — so it's negated in
-    the key (ascending sort → highest tps first). For a 'high'-complexity task
-    capability leads over speed (we want the strongest model); otherwise speed
-    leads."""
+    """Sort key for the CAPABLE-ENOUGH → cloud → fast → cheap ordering, best first.
+
+    Capability is a FLOOR, not a maximand: a model is either capable enough
+    (>= floor) or not. We deliberately do NOT rank by raw capability — that
+    would always crown the single highest-scoring model (e.g. mistral-medium)
+    and never let a cheaper/faster but still-capable model win. `complexity`
+    only MOVES the floor (high raises it so fewer models qualify, low lowers
+    it), via `_complexity_floor`.
+
+    Among the capable set CLOUD sorts ahead of LOCAL — the same "never prefer
+    cloud→local" rule `_fallback_walk` enforces, applied here at the PRIMARY
+    pick (a free/fast local model must not outrank a capable cloud model on a
+    near-tied, and least-trustworthy, benchmark). Within one locality class the
+    order is the user's stated priority: speed (THROUGHPUT tok/s, negated so
+    highest tps wins), then cost, then static priority."""
     cell = bench_cell_value(model, task_type) or {}
     cap = cell.get("capability")
     cap = cap if isinstance(cap, (int, float)) else 0
     has_cap = cap >= floor
+    local = 1 if is_model_local(model) else 0  # cloud (0) before local (1)
     tps = cell.get("tps")
     tps = tps if isinstance(tps, (int, float)) and tps > 0 else 0.0
     cost = _model_total_cost(model)
     prio = -(_models_config.get(model, {}).get("priority") or 0)
-    # not-capable (1) sorts AFTER capable (0). Higher tps is faster → negate.
-    if complexity == "high":
-        # Capability first (strongest model), then speed, then cost.
-        return (0 if has_cap else 1, -cap, -tps, cost, prio)
-    # Default / low: capable floor, then speed, then cost (capable→fast→cheap).
-    return (0 if has_cap else 1, -tps, cost, prio)
+    # capable-enough (0) before not (1); cloud (0) before local (1); higher tps
+    # is faster → negate; then cheaper; then higher static priority.
+    return (0 if has_cap else 1, local, -tps, cost, prio)
 
 
 def _pick_by_benchmark(candidates: list[str], task_type: str | None,
@@ -11048,8 +11089,7 @@ def _fallback_walk(picked: str, candidates: list[str], task_type: str | None) ->
         return _nearest(pool)
     # 3) Configured default, else first candidate.
     try:
-        import server as _srv_mod
-        dm = ((getattr(_srv_mod, "server_config", None) or {}).get("default_model") or "")
+        dm = (_server_config().get("default_model") or "")
         if dm in candidates:
             return dm
     except Exception:
