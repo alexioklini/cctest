@@ -1,49 +1,71 @@
 # web_fetch optimization eval — judge rubric
 
-You are scoring whether a content-reducing **optimization** in `web_fetch` lost
-answer-critical information.
-
-Two answers to the SAME question are given:
+You are scoring whether a `web_fetch` **optimization** behaved well, given two
+answers to the SAME question:
 
 - **GOLD answer** — written from the COMPLETE page content (optimizations off,
-  full body fetched). This is the reference: treat its facts as ground truth.
-- **OPT answer** — written from the OPTIMIZED fetch (the new code path:
-  abstract-first survey, academic-PDF rewrite, matched-region trim, or the
-  tool's conversion-method choice).
+  full body fetched). Treat its facts as ground truth.
+- **OPT answer** — written from the OPTIMIZED fetch.
 
-The question is whether the optimization preserved enough content for the OPT
-answer to match the GOLD answer. You are NOT judging writing quality.
+You are NOT judging writing quality. **Read the `mode` field below and apply the
+matching rubric — abstract mode is scored differently from the rest.**
 
-## Score each answer on two axes (0.0–1.0)
+---
 
-**completeness** — Does the answer contain the specific facts the question asks
-for? Full marks only if every requested item is present and correct.
-- 1.0 — all requested facts present and correct
-- 0.5 — some present, some missing or vague
-- 0.0 — the key facts are absent
+## Mode = `abstract` → score TRIAGE SUFFICIENCY (NOT completeness)
 
-**faithfulness** — Are the stated facts actually true (not fabricated)? An
-answer that hedges "the provided content does not include X" is FAITHFUL (1.0)
-even if incomplete — honest omission is not a fabrication. An answer that
-invents a plausible-but-wrong value is unfaithful (0.0).
-- 1.0 — every stated fact is correct, or correctly flagged as unavailable
-- 0.5 — mostly correct with one wrong/invented claim
-- 0.0 — central claims fabricated
+The optimization's PURPOSE is to summarize a page into a ~1500-char survey so the
+caller can judge relevance and answer gist-level questions WITHOUT paying for the
+full page. The question here is gist/relevance-level. The right outcome is that
+the survey is SUFFICIENT — i.e. the full fetch was unnecessary.
 
-`total` for each answer = round(0.5 * completeness + 0.5 * faithfulness, 2).
+- **sufficiency** (the OPT/survey answer): does it answer the gist-level question
+  correctly, matching the GOLD (full-page) answer at the level asked?
+  - 1.0 — the survey answer conveys the same gist as the full-page answer; the
+    full fetch would have added nothing for this question. Matching the TOPIC and
+    PURPOSE is sufficient — do NOT require exact titles, document names, labels,
+    or numbers the question didn't explicitly ask for (e.g. if the survey says
+    "coding conventions for Python" that is sufficient even if it doesn't say the
+    literal string "PEP 8").
+  - 0.5 — partially captures the gist; a reader might still want the full page.
+  - 0.0 — too thin to support even a relevance decision (e.g. the survey is page
+    navigation / menus / a table of contents with no actual prose), OR it
+    fabricates a gist not supported by the page.
+- For the GOLD answer in abstract mode, score `completeness` = 1.0 if it answers
+  the gist correctly (it has the whole page, so it should).
 
-## Comparison
+Map to the output object: set `opt.completeness` = sufficiency,
+`opt.faithfulness` = 1.0 unless the survey fabricated (then 0.0). `gold.*` as
+usual. `opt.total = round(0.5*completeness + 0.5*faithfulness, 2)`.
 
-- `winner` — "gold", "opt", or "tie". Pick "tie" when the OPT answer is as
-  complete and faithful as the GOLD answer (the optimization lost nothing).
-  Pick "gold" when the OPT answer is missing facts the GOLD answer has (the
-  optimization dropped answer-critical content). "opt" only if the optimized
-  answer is genuinely better.
-- `content_loss` — boolean. True iff the optimization caused the OPT answer to
-  miss facts the GOLD answer correctly provided. This is the headline signal.
-- `summary` — one sentence on what (if anything) the optimization dropped.
+**Winner / content_loss for abstract:** `winner="tie"` when the survey is
+sufficient (full fetch not needed) — THIS IS THE GOOD OUTCOME, the optimization
+paid off. `winner="gold"` ONLY when the survey was too thin or wrong for even the
+gist-level question. `content_loss=true` ONLY in that gold-wins case — for
+abstract, dropping deep detail while still answering the gist is NOT content_loss.
 
-## Output format
+---
+
+## Mode = `academic` | `brain_code` | `conversion` → score COMPLETENESS + FIDELITY
+
+These optimizations must NOT lose answer-critical content vs the complete page.
+
+- **completeness** — does the answer contain the specific facts the question asks
+  for? 1.0 all present+correct · 0.5 some missing/vague · 0.0 key facts absent.
+- **faithfulness** — are stated facts true (not fabricated)? An answer that
+  honestly says "the content does not include X" is FAITHFUL (1.0) even if
+  incomplete. Inventing a plausible-but-wrong value is 0.0.
+
+`total = round(0.5*completeness + 0.5*faithfulness, 2)` for each answer.
+
+**Winner / content_loss:** `winner="tie"` when OPT is as complete+faithful as GOLD
+(optimization lost nothing). `winner="gold"` when OPT misses facts GOLD has.
+`content_loss=true` iff the optimization caused OPT to miss facts GOLD correctly
+provided.
+
+---
+
+## Output format (both modes)
 
 Output ONLY this JSON object — no prose, no markdown fences:
 

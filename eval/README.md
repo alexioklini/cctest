@@ -96,12 +96,22 @@ A full 15-question run = 15 × ~3min gold + 15 × ~10s Brain + 15 × ~30s judge 
 # web_fetch optimization eval (`web_fetch_eval.py`)
 
 A SEPARATE, self-contained suite (no Brain server, no Claude Code) that measures
-whether the content-**reducing** optimizations in `web_fetch` lose answer-critical
-content. **Gold = optimizations OFF, web_fetch returns the COMPLETE page.** For each
-case the same URL is fetched twice — the optimized path and the optimization-off
-(gold) path — a model answers the case question from each fetch, and Mistral judges
-whether the optimized-content answer matches the gold-content answer. A `gold`
-winner / `content_loss=true` means the optimization dropped content the answer needed.
+whether the `web_fetch` optimizations behave well. **Gold = optimizations OFF,
+web_fetch returns the COMPLETE page.** For each case the same URL is fetched twice
+— the optimized path and the optimization-off (gold) path — a model answers the case
+question from each fetch, and Mistral judges (per-mode rubric) whether the optimized
+answer is good enough vs the gold answer.
+
+**Two kinds of optimization, scored differently:**
+- **Lossless-completeness** (`academic`, `brain_code`, `conversion`) — must NOT lose
+  answer-critical content. `content_loss=true` / `winner="gold"` = it dropped
+  something the answer needed (a defect).
+- **Triage-sufficiency** (`abstract`) — abstract's JOB is to summarize so the full
+  fetch is OFTEN UNNEEDED. So it's scored on whether the ~1500-char survey is
+  SUFFICIENT for a gist/relevance-level question (gold = the full-page answer as
+  truth). The success signal is **`paid_off`** — survey sufficient AND ≥50% smaller
+  ⇒ the full fetch was avoided. `content_loss` fires for abstract ONLY when the
+  survey is too thin/wrong for even the gist (e.g. it returned page nav, not prose).
 
 It calls `engine.tools.misc_tools.tool_web_fetch` **in-process** (it only needs
 `import brain` lazily), so the two fetches run the real production code. Each mode's
@@ -112,16 +122,16 @@ only difference between the two answers is that optimization.
 
 | mode | optimized path | gold (optimization off) |
 |------|----------------|-------------------------|
-| `abstract` | `mode="abstract"` (~1500-char survey) | `mode="full"` (whole page) |
+| `abstract` | `mode="abstract"` (~1500-char survey) | `mode="full"` (whole page) — full-page answer is truth; survey scored on triage sufficiency |
 | `academic` | landing URL auto-rewritten to full-text PDF | rewrite bypassed → raw HTML wrapper |
 | `brain_code` | matched-region trim of a large GitHub-raw file (seeds a recorded brain_code region so the trim fires) | no recorded region → full file |
 | `conversion` | the tool's auto `fetch_method` (raw/markitdown/crawl4ai) | same auto path (static pages: opt==gold ⇒ confirms conversion lost nothing) |
 
-`abstract` and `brain_code` are EXPECTED to show `content_loss` — they trade
-completeness for cheap triage / token savings; the eval quantifies HOW MUCH they
-drop on a question that needs the dropped detail. `academic` should show NO loss (it
-*adds* completeness: full PDF ≫ wrapper). `conversion` should show no loss on the
-content it converts.
+`abstract` should mostly **pay off** (sufficient survey, full fetch avoided) — that's
+the whole point of the optimization; it only flags loss when the survey genuinely
+fails the gist. `academic` should show NO loss (it *adds* completeness: full PDF ≫
+wrapper). `conversion` should show no loss on the content it converts. `brain_code`
+trades context for token savings — watch for it clipping the matched region.
 
 ## Usage
 
@@ -144,13 +154,23 @@ lengths + fetch_method), `result.json` (both answers + judge), plus `summary.{cs
 `eval/web_fetch_cases.json` — each case: `id`, `mode`, `url`, `question`,
 `rationale`, and (brain_code only) `brain_code_anchor` (a line that exists VERBATIM
 in the fetched file — it simulates the chunk a brain_code query matched; the trim
-relocates it by fingerprint, so it must match exactly). Pick a `url` whose answer
-lives PAST the optimization's reduction point, or the case can't detect loss.
+relocates it by fingerprint, so it must match exactly). For **abstract** cases use a
+GIST/relevance-level question and a NON-academic URL (arxiv `/abs` would also fire
+the academic rewrite). For the **lossless** modes pick a `url` whose answer lives
+PAST the optimization's reduction point, and one small enough that the gold
+reference fits under the 60k answer-model cap (RFC-sized pages get truncated and mask
+loss — web_fetch's own `max_length` cap is 50k).
 
 ## Baseline (2026-06-02, mistral-medium-3.5 answer+judge)
 
-`abstract` (ABS1/ABS2) → `content_loss` (by design — survey drops the detail).
-`academic` (ACA1) → tie (full PDF 50k vs 4.5k wrapper, no loss). `conversion`
-(CONV1) → tie. `brain_code` (BC1) → `content_loss` at 0.75: the trim's **±8-line
-context window clips the tail of a longer matched method** (`raise_for_status` body
-naming `HTTPError` fell outside the window) — a real fidelity finding to watch.
+- **abstract**: ABS1 (MDN) + ABS3 (PEP 8) → **paid_off** (survey sufficient, ~100%
+  smaller, full fetch avoided — the optimization working). ABS2 (Wikipedia) →
+  `content_loss`: a REAL weakness — `_to_abstract` takes the lead of the converted
+  markdown, which on Wikipedia is **nav chrome** (Main menu / Contents / ToC), not
+  the intro paragraph, so the survey can't answer the gist. Fix lives in
+  `_to_abstract` (skip nav / prefer first real prose paragraph).
+- **academic** (ACA1) → tie, full PDF 50k ≫ 4.5k wrapper.
+- **brain_code** (BC1) → `content_loss` at 0.75: the trim's **±8-line context window
+  clips the tail of a longer matched method** (`raise_for_status` body naming
+  `HTTPError` fell outside the window).
+- **conversion** (CONV1) → tie, markitdown preserved the body.

@@ -1,7 +1,7 @@
 {
   "_comment": "Eval cases for web_fetch content-reducing optimizations. Each case fetches the same URL twice — once on the OPTIMIZED path (the new code) and once on the GOLD path (optimizations off, web_fetch returns COMPLETE content) — then a model answers the question from each fetch and Mistral judges whether the optimized-content answer matches the gold-content answer. A LOW score means the optimization dropped answer-critical content.",
   "_modes": {
-    "abstract": "opt = mode='abstract' (~1500-char survey); gold = mode='full' (whole page). Tests the survey doesn't lose the answer.",
+    "abstract": "TRIAGE-SUFFICIENCY (not completeness — abstract's job is to summarize so the full fetch is often unneeded). opt = mode='abstract' (~1500c survey); gold = mode='full' (whole page) = the answer-as-truth. Question is gist/relevance-level. The survey WINS (tie) when its answer matches the full-page answer despite being ~30x smaller — proving the full fetch was unnecessary. Failure = survey too thin to support the triage decision, or it fabricates.",
     "academic": "opt = fetch landing URL (auto-rewrites to full-text PDF); gold = fetch the SAME landing URL with the academic rewrite bypassed (raw HTML wrapper). Here the optimization should IMPROVE completeness — a low opt-vs-gold delta is fine; we additionally assert opt content is richer than the wrapper.",
     "brain_code": "opt = matched-region trim of a large GitHub-raw source file; gold = the full file. Tests the trim keeps the region the question needs.",
     "conversion": "opt = whatever fetch_method the tool chooses (raw/markitdown/crawl4ai); gold = full extraction. Tests no content is lost in conversion choice."
@@ -10,16 +10,26 @@
     {
       "id": "ABS1_mdn_http_caching",
       "mode": "abstract",
+      "question_kind": "triage",
       "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Caching",
-      "question": "What is the difference between the `no-cache` and `no-store` values of the Cache-Control header, and which directive forces revalidation before reuse?",
-      "rationale": "A specific distinction deep in a long reference page; the ~1500-char survey covers only the lead, so it should drop this detail. Non-academic URL so this tests ONLY abstract triage (no academic rewrite overlap)."
+      "question": "At a high level, what is this page about, and which HTTP mechanism is its main subject? Answer in one or two sentences.",
+      "rationale": "Triage-sufficiency: a good ~1500c survey should let you decide relevance and state the gist WITHOUT the full fetch. The survey WINS (tie with full) when it answers this correctly despite being ~30x smaller — that means the full fetch was unnecessary."
     },
     {
       "id": "ABS2_wikipedia_transformer",
       "mode": "abstract",
+      "question_kind": "triage",
       "url": "https://en.wikipedia.org/wiki/Transformer_(deep_learning_architecture)",
-      "question": "What is the computational complexity of self-attention with respect to sequence length, and what specific technique does the article describe to reduce it?",
-      "rationale": "A specific detail deep in a long article; the abstract survey covers only the lead."
+      "question": "What is the main topic of this article and the core idea of the architecture it describes? Two sentences max.",
+      "rationale": "Triage-sufficiency NEGATIVE control / known finding: Wikipedia's lead in converted markdown is NAV CHROME (Main menu / Contents / ToC), so `_to_abstract` (which takes the lead of the body) surfaces menus, not the intro paragraph. The survey can name the topic from the title but NOT the core idea → content_loss=true. This is a REAL abstract-mode weakness the eval should keep reporting: abstract triage degrades on chrome-heavy pages. Fix would be in _to_abstract (skip nav / prefer first prose paragraph)."
+    },
+    {
+      "id": "ABS3_python_pep8",
+      "mode": "abstract",
+      "question_kind": "triage",
+      "url": "https://peps.python.org/pep-0008/",
+      "question": "What is the overall purpose of this document — what does it provide guidance on? One sentence, topic-level.",
+      "rationale": "Triage-sufficiency POSITIVE control: the purpose (coding conventions / style for Python) is stated in the first line, so the survey IS sufficient and should pay off (full fetch avoided). If this case shows content_loss, the rubric is being too strict on gist matching."
     },
     {
       "id": "ACA1_arxiv_full_vs_wrapper",
@@ -37,11 +47,11 @@
       "rationale": "Large source file. The anchor simulates a brain_code query that matched the raise_for_status method; a CORRECT region trim keeps that method, so the OPT answer should match the GOLD answer. If the trim drops it, content_loss fires. This tests trim FIDELITY to what the query matched, not arbitrary loss."
     },
     {
-      "id": "CONV1_js_or_html",
+      "id": "CONV1_httpbin_html",
       "mode": "conversion",
-      "url": "https://example.com/",
-      "question": "What is the single purpose of this domain as stated on the page, and what is the exact text of the link at the bottom?",
-      "rationale": "Static page; markitdown should preserve the link text. Tests conversion doesn't drop the IANA link."
+      "url": "https://httpbin.org/html",
+      "question": "Who is named as the author at the top of this page, and what literary work is the passage taken from? Name one specific thing the narrator does in the passage.",
+      "rationale": "Small structured HTML page (a Moby-Dick excerpt). markitdown must convert HTML→markdown preserving the heading + body prose. Static page so opt==gold; a low score means the conversion method itself dropped the body. Fits well under the length cap so the reference is complete."
     }
   ]
 }

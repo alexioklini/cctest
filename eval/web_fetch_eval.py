@@ -204,9 +204,10 @@ def parse_json(text: str) -> dict:
     return json.loads(m.group(0))
 
 
-def judge(api_key, base_url, model, rubric, question, gold_answer, opt_answer) -> dict:
+def judge(api_key, base_url, model, rubric, mode, question, gold_answer, opt_answer) -> dict:
     user = (
         f"# Rubric\n\n{rubric}\n\n---\n\n"
+        f"# Mode\n\n`{mode}` — apply the matching branch of the rubric.\n\n---\n\n"
         f"# Question\n\n{question}\n\n---\n\n"
         f"# GOLD answer (from COMPLETE content)\n\n{gold_answer}\n\n---\n\n"
         f"# OPT answer (from OPTIMIZED fetch)\n\n{opt_answer}\n\n---\n\n"
@@ -298,7 +299,7 @@ def main() -> int:
             continue
 
         try:
-            jr = judge(j_key, j_base, j_model, rubric, case["question"], gold_ans, opt_ans)
+            jr = judge(j_key, j_base, j_model, rubric, case["mode"], case["question"], gold_ans, opt_ans)
         except Exception as e:
             print(f"      JUDGE FAILED: {e}")
             jr = {"error": str(e)}
@@ -307,18 +308,28 @@ def main() -> int:
             json.dump({"case": case, "meta": meta, "gold_answer": gold_ans,
                        "opt_answer": opt_ans, "judge": jr}, f, indent=2, ensure_ascii=False)
 
+        content_loss = _g(jr, "comparison.content_loss")
+        # Saved fraction = how much smaller the optimized fetch was. For abstract
+        # mode the headline is "full fetch avoided": the survey was SUFFICIENT
+        # (no content_loss) AND much smaller, so the caller could have skipped the
+        # full fetch — the optimization paid off. For the lossless modes a saving
+        # only counts if it ALSO didn't drop content.
+        saved = round(1 - (meta["opt_len"] / meta["gold_len"]), 2) if meta["gold_len"] else 0.0
+        paid_off = (content_loss is not True) and saved >= 0.5
         row = {
             "id": cid, "mode": case["mode"],
             "opt_len": meta["opt_len"], "gold_len": meta["gold_len"],
+            "saved_frac": saved, "paid_off": paid_off,
             "opt_method": meta["opt_fetch_method"],
             "gold_total": _g(jr, "gold.total"), "opt_total": _g(jr, "opt.total"),
             "winner": _g(jr, "comparison.winner"),
-            "content_loss": _g(jr, "comparison.content_loss"),
+            "content_loss": content_loss,
             "summary": _g(jr, "comparison.summary") or jr.get("error", ""),
         }
         rows.append(row)
         print(f"      gold={row['gold_total']} opt={row['opt_total']} "
-              f"winner={row['winner']} content_loss={row['content_loss']} "
+              f"winner={row['winner']} content_loss={content_loss} "
+              f"saved={int(saved*100)}% paid_off={paid_off} "
               f"[{meta['opt_fetch_method']} {meta['opt_len']}c vs {meta['gold_len']}c]")
 
     # summaries
@@ -330,28 +341,37 @@ def main() -> int:
             w.writeheader()
             w.writerows(rows)
 
-    losses = [r for r in rows if r.get("content_loss") is True]
+    scored = [r for r in rows if "winner" in r]
+    losses = [r for r in scored if r.get("content_loss") is True]
+    # abstract: paid off = survey sufficient AND much smaller (full fetch avoided).
+    paid = [r for r in scored if r.get("paid_off") is True]
     md = ["# web_fetch optimization eval\n",
           f"answer={args.answer_model} · judge={args.judge_model}\n",
-          "| id | mode | opt_len | gold_len | method | gold | opt | winner | loss? | summary |",
-          "|----|------|--------:|---------:|--------|-----:|----:|--------|-------|---------|"]
+          "abstract = triage-sufficiency (`paid_off` = survey sufficient AND ≥50% smaller "
+          "⇒ full fetch avoided). academic/brain_code/conversion = completeness (`loss` = dropped content).\n",
+          "| id | mode | opt_len | gold_len | saved | method | gold | opt | winner | loss? | paid? | summary |",
+          "|----|------|--------:|---------:|------:|--------|-----:|----:|--------|-------|-------|---------|"]
     for r in rows:
         if "error" in r and "winner" not in r:
-            md.append(f"| {r['id']} | {r['mode']} | | | | | | | | ERROR: {r['error']} |")
+            md.append(f"| {r['id']} | {r['mode']} | | | | | | | | | | ERROR: {r['error']} |")
             continue
         md.append(f"| {r['id']} | {r['mode']} | {r.get('opt_len','')} | {r.get('gold_len','')} | "
-                  f"{r.get('opt_method','')} | {r.get('gold_total','')} | {r.get('opt_total','')} | "
-                  f"{r.get('winner','')} | {'**YES**' if r.get('content_loss') else 'no'} | "
+                  f"{int(r.get('saved_frac',0)*100)}% | {r.get('opt_method','')} | "
+                  f"{r.get('gold_total','')} | {r.get('opt_total','')} | {r.get('winner','')} | "
+                  f"{'**YES**' if r.get('content_loss') else 'no'} | "
+                  f"{'**yes**' if r.get('paid_off') else '·'} | "
                   f"{(str(r.get('summary',''))[:80])} |")
     md.append("")
-    md.append(f"**Content-loss cases: {len(losses)}/{len(rows)}** "
+    md.append(f"**Content-loss cases: {len(losses)}/{len(scored)}** "
               f"— {', '.join(r['id'] for r in losses) or 'none'}")
+    md.append(f"**Paid-off (full fetch avoided): {len(paid)}/{len(scored)}** "
+              f"— {', '.join(r['id'] for r in paid) or 'none'}")
     md_path = os.path.join(out_dir, "summary.md")
     with open(md_path, "w") as f:
         f.write("\n".join(md) + "\n")
 
     print(f"\n[web_fetch_eval] done → {md_path}")
-    print("\n".join(md[-3:]))
+    print("\n".join(md[-2:]))
     return 0
 
 
