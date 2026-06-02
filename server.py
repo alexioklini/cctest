@@ -4087,6 +4087,19 @@ def main():
 
     print()
 
+    # Graceful shutdown on SIGTERM (launchd's normal stop signal). Without this,
+    # launchd SIGKILLs the process and chromadb never runs its atexit HNSW flush
+    # → the in-memory HNSW index is lost, sqlite is left far ahead, and the next
+    # startup quarantines + rebuilds the index (the recurring MemPalace corruption
+    # loop). Re-raising as KeyboardInterrupt routes SIGTERM through the SAME clean
+    # finally below, then a normal interpreter exit lets chromadb flush to disk.
+    def _on_sigterm(signum, frame):
+        raise KeyboardInterrupt()
+    try:
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError):
+        pass  # not on the main thread (shouldn't happen here) — best-effort
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
