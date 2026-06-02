@@ -234,39 +234,6 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 - `GET /v1/mempalace/kg/config` / `POST` — extraction config
 - `POST /v1/mempalace/kg/reextract` — `{wing, source_file?}` re-run
 
-## MemPalace Dashboard (`/memdash/*`, admin)
-
-The vendored MemPalace Dashboard UI (visual drawer/wing/KG browser + curator)
-served by Brain. Static assets under `/memdash/` load without auth (no
-secrets); the API under `/memdash/api/*` is **admin-gated** and reimplements
-the dashboard's own endpoints over Brain's in-process MemPalace (the `brain`
-palace). Reached from Settings → MemPalace → Dashboard. Handler:
-`handlers/memdash.py`.
-
-- `GET /memdash/` (and assets) — the dashboard SPA (served via `_serve_static`
-  from `web/memdash/`)
-- `GET /memdash/api/session` — synthetic-authed (Brain's admin gate already
-  passed; the dashboard's own login is dropped)
-- `GET /memdash/api/palace` — overview `{stats, wings, drawers, triples,
-  heavy_wings, loaded_wings}` (counts MATCH `/v1/mempalace/stats` — same brain
-  palace). **Scaling**: `stats`/`wings` are always full (cheap GROUP-BY count),
-  but drawer BODIES are omitted for `heavy_wings` (default `brain_code`, ~11.9k
-  drawers) to keep the payload renderable — without it the 18 MB/13k-card
-  response froze the browser. `GET /memdash/api/palace?wing=<name>` loads that
-  one wing's bodies on demand (the frontend merges + re-renders). The frontend
-  also caps rendered cards at 500.
-- `GET /memdash/api/search?q=` · `/system` · `/export` — reads
-- `GET /memdash/api/{kg/query,kg/stats,kg/timeline,graph/stats,taxonomy,checkpoint,aaak-spec,diary,tunnels,tunnels/find,tunnels/follow,traverse,hooks}`
-  — Lab reads (in-process `mempalace.mcp_server.tool_*`)
-- `POST /memdash/api/{memories,memories/update,delete,rename,import,facts,facts/invalidate}`
-  — writes (risk: hit the live palace the daemons mine)
-- `POST /memdash/api/{versions/restore,versions/delete,versions/clear}` —
-  version-undo log (file-backed under `agents/main/memdash/versions.jsonl`)
-- `POST /memdash/api/{diary,tunnels,tunnels/delete,check-duplicate,hooks,sync,reconnect}`
-  — Lab writes
-- **Stubbed in Phase 1**: `/memdash/api/drafts*` (disabled), `/login`,
-  `/logout`, `/settings/credentials` (replaced by Brain auth → `{success:true}`)
-
 ## Tools (admin)
 
 - `GET /v1/tools/list` — active tool set for caller

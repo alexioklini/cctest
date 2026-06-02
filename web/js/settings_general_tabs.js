@@ -988,13 +988,6 @@ async function _genTab_mempalace(C) {
         ${SEC('Übersicht')}
         ${statsRow}
 
-        ${SEC('Dashboard')}
-        <div style="${G('8px')}">
-          <div style="font-size:12px;color:var(--text-400)">Visueller MemPalace-Browser zum Durchsuchen, Kuratieren und Bearbeiten von Drawers, Wings, Tunneln und Knowledge-Graph-Fakten — direkt auf dieser Palace. Öffnet in einem neuen Tab (nur Admin).</div>
-          <button class="btn-secondary" onclick="window.open('/memdash/','_blank')">🗄️ MemPalace Dashboard öffnen</button>
-          <div style="font-size:11px;color:var(--error)">Achtung: Schreibzugriffe (Drawer anlegen/löschen/umbenennen) gehen direkt auf die Live-Palace, die parallel von den Mining-Daemons beschrieben wird.</div>
-        </div>
-
         ${SEC('Palace-Explorer')}
         <div id="mp-tree-tabs" style="display:flex;gap:0;margin-bottom:8px">
           <button class="modal-tab active" onclick="mpTreeSwitch('wings',this)" style="padding:6px 14px;font-size:12px">Wings</button>

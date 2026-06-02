@@ -98,6 +98,59 @@ _mempalace_imported = False
 _mempalace_config_cache = None
 _mempalace_config_cache_time = 0.0
 
+# Auto-recovery for chromadb 0.6.3 HNSW corruption. A bulk delete() racing a
+# concurrent upsert (re-mine / stale purge) can wedge the HNSW segment, after
+# which every col.query raises "Error finding id" / "Internal error" and the
+# wing's retrieval silently dead-ends (the model gets an error, refuses, and
+# the corpus looks empty). The surviving sqlite data is intact, so
+# repair.rebuild_index rebuilds the HNSW from scratch. We trigger it on the
+# query seam, serialized + cooldown-gated so a burst of concurrent failing
+# queries triggers exactly ONE rebuild, not one per query.
+_mempalace_rebuild_lock = threading.Lock()
+_mempalace_last_rebuild: dict = {}  # palace_path -> monotonic ts of last rebuild
+_MEMPALACE_REBUILD_COOLDOWN_S = 120.0
+# Substrings that mark a wedged HNSW segment (vs. an ordinary query error).
+_MEMPALACE_HNSW_CORRUPTION_MARKERS = (
+    "error finding id",
+    "internal error",
+    "hnsw",
+    "nothing found for",
+)
+
+
+def _is_hnsw_corruption(err_text: str) -> bool:
+    """True iff the query error looks like a wedged HNSW segment (recoverable
+    by a rebuild) rather than a normal miss / bad-arg error."""
+    t = (err_text or "").lower()
+    return any(m in t for m in _MEMPALACE_HNSW_CORRUPTION_MARKERS)
+
+
+def _try_rebuild_palace(palace_path: str) -> bool:
+    """Rebuild the palace's HNSW index from the surviving sqlite data, at most
+    once per cooldown window across all threads. Returns True if a rebuild ran
+    (so the caller may retry the query), False if skipped (cooldown / failure).
+    Never raises — recovery must not turn a retrieval error into a crash."""
+    import time as _time
+    now = _time.monotonic()
+    with _mempalace_rebuild_lock:
+        last = _mempalace_last_rebuild.get(palace_path, 0.0)
+        if now - last < _MEMPALACE_REBUILD_COOLDOWN_S:
+            return False  # another thread just rebuilt (or we're cooling down)
+        # Stamp BEFORE the work so concurrent callers don't pile up; a failed
+        # rebuild still holds the cooldown so we don't hammer a broken palace.
+        _mempalace_last_rebuild[palace_path] = now
+        try:
+            from mempalace import repair as _mp_repair
+            _log = __import__("logging")
+            _log.warning("[mempalace] HNSW corruption detected at %s — rebuilding index from sqlite", palace_path)
+            _mp_repair.rebuild_index(palace_path=palace_path, confirm_truncation_ok=False)
+            _log.warning("[mempalace] index rebuild complete for %s", palace_path)
+            return True
+        except Exception as _re:
+            __import__("logging").error("[mempalace] index rebuild FAILED for %s: %s: %s",
+                                        palace_path, type(_re).__name__, _re)
+            return False
+
 
 def _load_mempalace_config() -> dict:
     """Read the 'mempalace' block from config.json. 10s cache."""
@@ -319,7 +372,38 @@ def tool_mempalace_query(args: dict) -> str:
                 })
             results = {"results": raw, "total_before_filter": len(raw)}
         except Exception as e:
-            return _err(f"mempalace_query: {type(e).__name__}: {e}")
+            _emsg = f"{type(e).__name__}: {e}"
+            # Self-heal a wedged HNSW segment: rebuild the index from the
+            # surviving sqlite data, then retry the query once. Cooldown-gated
+            # so a burst of concurrent failing queries triggers one rebuild.
+            if _is_hnsw_corruption(_emsg) and _try_rebuild_palace(palace_path):
+                try:
+                    col = _gc_query(palace_path, create=False)
+                    if col is not None:
+                        chroma_res = col.query(**kwargs)
+                        docs = (chroma_res.get("documents") or [[]])[0]
+                        metas = (chroma_res.get("metadatas") or [[]])[0]
+                        dists = (chroma_res.get("distances") or [[]])[0]
+                        raw = []
+                        for doc, meta, dist in zip(docs, metas, dists):
+                            meta = meta or {}
+                            similarity = max(0.0, 1.0 - float(dist or 0.0))
+                            raw.append({
+                                "wing": meta.get("wing", ""),
+                                "room": meta.get("room", ""),
+                                "source_file": meta.get("source_file", ""),
+                                "similarity": round(similarity, 3),
+                                "matched_via": "chroma-vector",
+                                "text": doc or "",
+                                "chunk_index": meta.get("chunk_index"),
+                            })
+                        results = {"results": raw, "total_before_filter": len(raw)}
+                    else:
+                        return _err(f"mempalace_query: {_emsg} (rebuilt, but collection reopen failed)")
+                except Exception as e2:
+                    return _err(f"mempalace_query: {_emsg} (auto-rebuild ran, retry failed: {type(e2).__name__}: {e2})")
+            else:
+                return _err(f"mempalace_query: {_emsg}")
     finally:
         mempalace_activity.retrieve_end()
 

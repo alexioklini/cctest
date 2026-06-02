@@ -41,9 +41,6 @@ class AdminHandlerMixin(
         """Serve static files from web/ directory."""
         if path == "/":
             path = "/web/index.html"
-        elif path in ("/memdash", "/memdash/"):
-            # MemPalace Dashboard SPA entry (vendored under web/memdash/).
-            path = "/web/memdash/index.html"
         elif not path.startswith("/web/"):
             path = "/web" + path
 

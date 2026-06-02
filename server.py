@@ -962,7 +962,6 @@ from handlers.share import ShareHandlerMixin
 from handlers.classification import ClassificationHandlerMixin
 from handlers.helpdesk import HelpdeskHandlerMixin
 from handlers.feedback import FeedbackHandlerMixin
-from handlers.memdash import MemDashHandlerMixin
 from handlers.background import BackgroundTasksHandlerMixin
 
 
@@ -1004,7 +1003,6 @@ def _inject_server_globals():
         ShareHandlerMixin.__module__,
         ClassificationHandlerMixin.__module__,
         FeedbackHandlerMixin.__module__,
-        MemDashHandlerMixin.__module__,
         BackgroundTasksHandlerMixin.__module__,
     ]
     # All names from server module that handlers reference as bare globals.
@@ -1035,7 +1033,6 @@ class BrainAgentHandler(
     ClassificationHandlerMixin,
     HelpdeskHandlerMixin,
     FeedbackHandlerMixin,
-    MemDashHandlerMixin,
     BackgroundTasksHandlerMixin,
     BaseHTTPRequestHandler,
 ):
@@ -1320,25 +1317,6 @@ class BrainAgentHandler(
             return None
         return user
 
-    def _memdash_admin_gate(self) -> bool:
-        """Admin RBAC gate for /memdash/api/*. True = allowed (and sets
-        _auth_user); False = rejected (401/403 already sent). Mirrors the
-        admin requirement on /v1/... admin routes: when auth is disabled the
-        synthetic admin passes; otherwise a valid token with role 'admin'
-        (or the __system__ user) is required."""
-        if not _auth_mod.auth_enabled():
-            self._auth_user = _auth_mod.SYNTHETIC_ADMIN
-            return True
-        user = self._get_auth_user()
-        if not user:
-            self._send_json({"error": "Authentication required"}, 401)
-            return False
-        if user["role"] != "admin" and user["id"] != "__system__":
-            self._send_json({"error": "Admin access required"}, 403)
-            return False
-        self._auth_user = user
-        return True
-
     # --- Shared helpers used across multiple mixins ---
 
     def _parse_agent_from_path(self, path: str) -> str:
@@ -1449,21 +1427,6 @@ class BrainAgentHandler(
             if not user:
                 return
             self._auth_user = user
-
-        # MemPalace Dashboard. Static assets (HTML/JS/CSS/images) load WITHOUT
-        # auth — same as Brain's own SPA at "/", which carries no secrets and
-        # fetches data via the token afterward. The DATA is protected at the
-        # API layer: /memdash/api/* is admin-gated (mirrors /v1/... admin
-        # routes). A browser navigation can't send the Bearer header, so gating
-        # the HTML would lock the admin out of their own dashboard.
-        if path == "/memdash" or path.startswith("/memdash/"):
-            if path.startswith("/memdash/api/"):
-                if not self._memdash_admin_gate():
-                    return
-                self._handle_memdash_get()
-            else:
-                self._serve_static(path)
-            return
 
         if path == "/v1/tools/list":
             self._handle_tools_list()
@@ -1795,13 +1758,6 @@ class BrainAgentHandler(
             if not user:
                 return
             self._auth_user = user
-
-        # MemPalace Dashboard API writes — admin-gated (see do_GET note).
-        if path.startswith("/memdash/api/"):
-            if not self._memdash_admin_gate():
-                return
-            self._handle_memdash_post()
-            return
 
         if path == "/mcp":
             self._handle_mcp_jsonrpc()
