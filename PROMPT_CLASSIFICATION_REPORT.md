@@ -34,7 +34,7 @@ then drives two decisions:
 |---|------|--------------|--------|
 | 1 | **Trigger** | User sends a prompt under `model="auto"` (or an auto-agent's first turn, or an auto background task). | `handlers/chat.py:3356` |
 | 2 | **Classify** | `resolve_task_analysis(message)` picks a path: keywords (regex), LLM, or hybrid. Produces `task_types`, `complexity`, `tool_groups`. | `brain.py:10820` |
-| 3 | **Route model** | use-case map → benchmark ranking → tier+complexity heuristic. | `brain.py:11070` |
+| 3 | **Route model** | benchmark ranking → tier+complexity heuristic (raw `image/*` uploads narrow the pool first to vision models; convertible docs don't). | `brain.py:11070` |
 | 4 | **Gate tools** | For non-warmup models only, exclude every tool group the classifier didn't ask for (keeping a `core`/`workflows` floor). | `brain.py:10771` |
 | 5 | **Run & report** | The turn streams under the chosen model; a per-turn modal exposes the whole decision to the user. | — |
 
@@ -113,14 +113,13 @@ The call is bounded: `max_tokens=200`, `timeout_s=25`, `max_rounds=1`, input cap
 
 ## 5. How the model is routed
 
-A four-level precedence ladder — the first level that produces a model wins.
+A three-level precedence ladder — the first level that produces a model wins.
 
 | Level | Rule | Source |
 |-------|------|--------|
-| **A. Attachment MIME match** | If files are attached, restrict candidates to models whose `raw_formats` match; full set if none do. | `brain.py:11104` |
-| **B. Explicit use-case map** | `auto_route.task_models {task_type: model_id}`. First matching enabled task type pins the model outright, overriding everything below. | `brain.py:11111` |
-| **C. Benchmark ranking** | If any candidate has *measured* data for the task type, rank **capable → fast → cheap** (capability floor 50%, ±20 by complexity). | `brain.py:10969,11128` |
-| **D. Tier + complexity heuristic** | The fallback when no benchmark data exists (see §7). Always returns a concrete model. | `brain.py:11147` |
+| **A. Attachment MIME match** | Only for raw `image/*` uploads (the sole MIME the chat router sends raw): restrict candidates to vision models whose `raw_formats` match. Convertible documents (PDF/docx/…) are turned into markdown downstream and read by any text model, so they don't narrow the pool. Audio/video use a separate transcription path, not this router. | `brain.py:11104` |
+| **B. Benchmark ranking** | If any candidate has *measured* data for the task type, rank **capable → fast → cheap** (capability floor 50%, ±20 by complexity). | `brain.py:10969,11128` |
+| **C. Tier + complexity heuristic** | The fallback when no benchmark data exists (see §7). Always returns a concrete model. | `brain.py:11147` |
 
 **What benchmarks measure:** per model × task type, a judge model (the server default)
 scores answers 0–100 (`capability`), and throughput is recorded as tokens/sec (`tps`,
@@ -266,7 +265,7 @@ decision modal — `openClassificationModal(idx)`:
 
 Three admin surfaces govern the classifier. All under Settings.
 
-### 9.1 — Auto-Routing mode & use-case map
+### 9.1 — Auto-Routing mode
 
 Settings → General → Server → **Auto-Routing** section.
 — `settings_general_tabs.js:73–94`
@@ -276,12 +275,6 @@ Settings → General → Server → **Auto-Routing** section.
   - `LLM (klassifiziert per günstigem/lokalem Modell)` — *LLM (via cheap/local model)*
   - `Hybrid (erst Schlüsselwörter, LLM nur bei Bedarf)` — *Hybrid (keywords first, LLM only if needed)*
   - Apply button: `Setzen` (*Set*)
-- **Use-case map:** JSON `{Aufgabentyp: Modell-ID}` that pins a model per task type,
-  overriding the tier logic (level B in §5). Empty = tier logic only. Apply:
-  `Zuordnung setzen` (*Set mapping*). Example placeholder:
-  ```json
-  {"coding": "CLIProxyAPI/devstral-small-latest", "research": "CLIProxyAPI/mistral-medium-3.5"}
-  ```
 
 ### 9.2 — Summary model (the LLM classifier's engine)
 
@@ -341,11 +334,12 @@ Three concrete prompts, each through the whole pipeline.
 
 - **Classify** (LLM): `task_types=[coding]`, `tools=[python, files, git]`,
   `complexity=medium`.
-- **Route**: use-case map has `{"coding": "devstral-small-latest"}` → pinned (level B,
-  beats benchmark/tier).
+- **Route**: no attachment to narrow the pool → benchmark ranking for `coding`
+  (capable → fast → cheap), or the tier heuristic if `coding` isn't benchmarked yet.
 - **Tools**: kept = `core`, `workflows`, `code_exec`, `documents`, `git`; removed =
   `email`, `web`, `translation`, …
-- **Modal**: Gewähltes Modell **devstral-small-latest** · Warum *"use-case map: coding"*.
+- **Modal**: Gewähltes Modell **(benchmark/tier winner)** · Warum *"Detected coding,
+  complexity medium"*.
 
 ### Example C — same prompt, but the model is local
 
@@ -380,6 +374,6 @@ Suppose the resolved/selected model is a **local** model (or a cloud model with
 | Final tool resolution | `resolve_active_tools` | `brain.py:1307,1329,1361` |
 | Composer Auto option | model dropdown | `settings_agent.js:218` · `utils.js:146` |
 | Per-turn modal | `openClassificationModal` | `chat_render.js:1000,1566–1627` |
-| Mode / use-case settings | Auto-Routing section | `settings_general_tabs.js:73–94` |
+| Auto-Routing mode setting | Auto-Routing section | `settings_general_tabs.js:73–84` |
 | Benchmark settings | benchmark grid | `settings_general_tabs.js:179,321–353` |
 | Status spinner / reason | `spinner-model` / `autoReason` | `index.html:229` · `chat_send.js:831,915` · `nav.js:320` |

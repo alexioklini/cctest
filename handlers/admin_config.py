@@ -467,46 +467,6 @@ class AdminConfigHandlers:
                 return
             result["auto_route_classifier_mode"] = mode
 
-        # auto_route.task_models — optional {task_type: model_id} use-case map.
-        # An explicit, enabled model for a task type overrides the tier pick.
-        # Empty/unset → tier logic only. Validated: known task types, known
-        # enabled models; unknown keys/values rejected so a typo can't silently
-        # disable routing.
-        if "auto_route_task_models" in body:
-            tm_in = body["auto_route_task_models"]
-            if tm_in in (None, ""):
-                tm_in = {}
-            if not isinstance(tm_in, dict):
-                self._send_json({"error": "auto_route_task_models must be an object {task_type: model_id}"}, 400)
-                return
-            import brain as _brain
-            valid_types = set(_brain._TASK_TYPE_TIER.keys())
-            clean = {}
-            for tt, mid in tm_in.items():
-                if tt not in valid_types:
-                    self._send_json({"error": f"unknown task type '{tt}' (valid: {sorted(valid_types)})"}, 400)
-                    return
-                if not mid:
-                    continue  # blank entry = unset this type
-                if mid not in (_brain._models_config or {}):
-                    self._send_json({"error": f"unknown model '{mid}' for task type '{tt}'"}, 400)
-                    return
-                clean[tt] = mid
-            ar = server_config.setdefault("auto_route", {})
-            ar["task_models"] = clean
-            try:
-                config = {}
-                if os.path.exists(config_path):
-                    with open(config_path) as f:
-                        config = json.load(f)
-                config.setdefault("auto_route", {})["task_models"] = clean
-                with open(config_path, "w") as f:
-                    json.dump(config, f, indent=2)
-            except Exception as e:
-                self._send_json({"error": str(e)}, 500)
-                return
-            result["auto_route_task_models"] = clean
-
         # --- GDPR/PII scanner settings ---
         if "gdpr_scanner" in body:
             gs_in = body["gdpr_scanner"]

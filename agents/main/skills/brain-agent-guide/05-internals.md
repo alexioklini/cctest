@@ -100,19 +100,18 @@ reasoning}` over two closed vocabularies that map onto existing machinery:
   `TOOL_GROUPS` names (`_TASK_TOOL_GROUPS`).
 
 **Model pick precedence** (`_resolve_auto_model_tiered`, highest first):
-1. **Attachments** — restrict to models whose `raw_formats` match the MIMEs.
+1. **Attachments** — restrict to models whose `raw_formats` match, but ONLY for
+   raw `image/*` uploads (the only MIME sent raw; PDF/docx/… are converted to
+   markdown and readable by any text model, so they don't narrow the pool).
 2. **ACL** — narrow to the caller's allowed models.
-3. **Use-case map** — `config.json → auto_route.task_models {task_type: id}`
-   (Settings → Server → Auto-Routing JSON editor). The first task_type with an
-   explicit enabled model is used directly, overriding everything below. Empty = off.
-4. **Benchmark ranking** (the measured path) — if any candidate has a benchmark
+3. **Benchmark ranking** (the measured path) — if any candidate has a benchmark
    for the turn's first task_type, rank **capable → fast → cheap**: capability ≥
    a complexity-adjusted floor (base 50, `high` +20, `low` −20), then HIGHER
    throughput (`tps`, tokens/sec), then lower `cost_input+cost_output`. `high`
    complexity makes capability lead over speed. `bench_cell_value` reads
    `override ?? measured`.
    See **Model benchmark** below.
-5. **Tier heuristic** (no benchmark for the task) — the purpose's baseline tier
+4. **Tier heuristic** (no benchmark for the task) — the purpose's baseline tier
    (`_PURPOSE_TIER`) **shifted by complexity** along `_TIER_LADDER` [fast,
    default, reasoning]: `high` up, `low` down, `medium` same. Then `reasoning` →
    first `thinking_format != none`; `default` → highest-priority (cloud

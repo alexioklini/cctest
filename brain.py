@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.57.1"
-VERSION_DATE = "2026-06-01"
+VERSION = "9.58.0"
+VERSION_DATE = "2026-06-02"
 CHANGELOG = [
+    ("9.58.0", "2026-06-02", "change(auto-route): REMOVE the use-case map (auto_route.task_models) and NARROW the attachment routing gate to raw images only. Two changes to _resolve_auto_model_tiered (brain.py). (1) USE-CASE MAP REMOVED: the operator pin {task_type: model_id} that overrode the empirical pick is gone — routing is now purely auto (attachment capability → benchmark ranking → tier+complexity heuristic); per-feature model needs (e.g. translation models) are configured at their own settings, not via a third pinning path. Deleted: the resolver branch (brain.py), the write/validate handler (handlers/admin_config.py auto_route_task_models), the status echo (handlers/admin_artifacts.py), and the Settings → Server → Auto-Routing JSON editor + Anwendungsfall-Zuordnung prose (web/js/settings_general_tabs.js). The classifier_mode selector stays. config.json → auto_route.task_models is simply ignored if present (no migration needed; current config has none). (2) ATTACHMENT GATE NARROWED: the gate restricted candidates to models whose raw_formats match the upload MIME, but it fired on the ORIGINAL upload MIME before Brain's markdown conversion — so a PDF/docx (which the chat router sends to disk → read_document, readable by ANY text model) could wrongly narrow the pool, while doing nothing useful since few models list those MIMEs anyway. NOW the gate filters the MIME list to image/* only (m.startswith('image/')) before the raw_formats match — mirroring the chat attachment router's actual api_blocked predicate (handlers/chat.py sends a multimodal block ONLY for image/*; everything else is converted). Audio/video go through the separate translation/transcription path, not this MIME router. Net: convertible documents no longer constrain model choice; only genuinely raw image uploads (which truly need a vision model) do. js_gate green; py compile OK. Backend restart to load."),
     ("9.57.1", "2026-06-01", "change(benchmark): speed is now measured + ranked as THROUGHPUT (tokens/sec), not latency (ms). Raw latency tracks how long the answer happened to be, so it's not comparable across tasks; tps (output_tokens / wall-clock seconds, from background_call's usage_total) is length-independent. engine/model_bench.benchmark_cell records `tps` instead of `latency_ms`; the measured/override cell shape is now {capability, tps, n, ts}. Router _bench_rank_key sorts capable→fast→cheap with FAST = higher tps (negated in the sort key); high-complexity still leads with capability then tps. UI (settings_general_tabs.js): the per-model benchmark table shows '<cap>% · <tps> tok/s' and the override column is 'Override tok/s' (class mdl-bench-ov-tps → override.tps). NOTE: cells benchmarked before this change still hold latency_ms and render as '0 tok/s' until re-benchmarked — a re-run overwrites measured cleanly (override preserved). All 5 enabled models re-benchmarked on tps after the change. js_gate green (net-globals unchanged — rename only; smoke 5/5). Backend restart to load."),
     ("9.57.0", "2026-06-01", "feat(auto-route): per-turn PROMPT-CLASSIFICATION & ROUTING modal in the chat view — observability for the ✨ Auto decision, persisted so it survives reload. The auto_route data (task_types/tools/complexity/reasoning + chosen model + reason) was previously only sent transiently in the done SSE event and held on the live `chat` object; a reloaded turn lost it. NOW it is persisted on the assistant turn's metadata (handlers/chat.py: msg_metadata['auto_route'], exactly like metadata.web_sources — wire-stripped by _ALLOWED_MSG_KEYS, reaches the client via load_messages which doesn't filter metadata). NEW brain.classifier_gating_decision(model, tool_groups) returns a human-readable summary of the tool-gating decision {applied, reason, kept_groups, excluded_groups, needed_groups} mirroring classifier_tool_exclusions (applied=False for warm/local models with the why; applied=True lists kept vs excluded TOOL_GROUPS + the never-strip floor). The worker captures it (run_session_turn _gating_decision, init None at top so it is always defined) and attaches it under msg_metadata['auto_route']['tool_gating']; the done event carries the identical enriched shape so the live turn's modal matches a reloaded one. FRONTEND: a compass chip in the per-turn actions bar (chat_render.js renderAssistantMessage, shown only when meta.auto_route exists) opens openClassificationModal(idx) — a modal with three sections: Klassifikation (task types, needed tools, complexity, reasoning), Modellentscheidung (chosen model + why), Tool-Auswahl (gating status + kept/excluded groups, or why gating was skipped). chat_send.js done handler persists d.auto_route onto assistantMsg.metadata so the live turn shows the chip immediately. Only appears on Auto-routed turns (keyword/fixed-model turns have no auto_route metadata). js_gate green (net-globals 1069→1070: openClassificationModal, baseline bumped; smoke 5/5). Skill 01-api/05-internals already cover auto_route; 05-internals classification-modal note added. Backend restart to load."),
     ("9.56.0", "2026-06-01", "feat(auto-route): EMPIRICAL model ranking — a capability+speed benchmark replaces the priority/cost guess when picking the best model for a task. NEW engine/model_bench.py: per (model × task_type) it runs a small fixed prompt set (BENCH_PROMPTS, 2 prompts × 9 task types), judges each answer 0-100 with the SERVER default_model as judge (user directive: 'the default model of the server is the judge'), and records mean capability% + mean wall-clock latency (timed in-harness since run_turn_blocking has no latency field). Persists to config.json → models.<id>.benchmark.<task> = {measured:{capability,latency_ms,n,ts}, override?:{capability,latency_ms}}. ADMIN TRIGGER (handlers/providers.py): POST /v1/models/config {action:'benchmark', model_id?, task_type?} runs in a background thread (single-run gate _BENCH_PROGRESS), persisting per model as it completes + mirroring into the live registry (no restart needed); GET /v1/models/benchmark/status returns live progress. UI (settings_general_tabs.js Models tab): 'Benchmark: alle aktivierten' top button + per-model 'Dieses Modell benchmarken', a per-model table (measured cap%/ms + editable Override % / Override ms), progress polling. ROUTER (brain._resolve_auto_model_tiered): when any candidate has a benchmark for the turn's first task_type, rank by the user's order — CAPABLE (>= complexity-adjusted floor; high +20, low -20) → FAST (lower latency) → CHEAP (cost_input+cost_output); high complexity makes capability lead over speed. bench_cell_value reads override ?? measured (admin edit is sticky, survives re-runs). FALLBACK WALK (_fallback_walk, when the ranked pick leaves the allowed pool): prefer SAME family (model_family: mistral/gemma/qwen/claude/… nearest capability), then SAME locality (cloud→cloud / local→local), NEVER cloud→local, else server default_model, else first candidate — exactly the user's rule. No benchmark for a task → the v9.55.1 tier+complexity heuristic still applies (graceful, ships dark until the admin runs a benchmark). Keyword classifier mode has no task_types so it never hits the benchmark path. js_gate green (net-globals 1065→1069: 4 new benchmark UI fns, baseline bumped; smoke 5/5). Live-verified: mistral-small fast=100%/2364ms judged by mistral-medium; ranking + fallback walk unit-checked. Backend restart to load."),
@@ -11075,12 +11076,13 @@ def _resolve_auto_model_tiered(purpose: str | None,
     """Pick the best enabled model for a task.
 
     Precedence (highest first):
-      1. Attachments — restrict to models whose `raw_formats` match the
-         attachment MIMEs (capability wins). Falls back to the full set when
-         none match (the per-file describe pipeline handles the mismatch).
-      2. Use-case map — `config.json → auto_route.task_models {task_type: id}`.
-         The first `task_types` entry with an explicit, enabled, in-candidates
-         model is used directly. Empty map → no effect (legacy behavior).
+      1. Attachments — restrict to models whose `raw_formats` match, but ONLY
+         for raw image/* uploads (the sole MIME the chat router sends raw;
+         everything else is converted to markdown and readable by any text
+         model, so it doesn't constrain the pool). Falls back to the full set
+         when no enabled model matches.
+      2. Benchmark ranking — when a candidate has measured data for the task
+         type, rank capable→fast→cheap (capability floor nudged by complexity).
       3. Tier — the purpose's baseline tier (`_PURPOSE_TIER`), then SHIFTED by
          `complexity` along `_TIER_LADDER` (high→up, low→down, medium→same):
            - "reasoning" → first model with thinking_format != "none"
@@ -11101,29 +11103,22 @@ def _resolve_auto_model_tiered(purpose: str | None,
         return ""
 
     candidates = enabled
-    mimes = [m for m in (attachment_mimes or []) if m]
+    # Only attachments that are sent to the model RAW constrain the pool by
+    # capability. Everything Brain converts to markdown first (PDF/docx/xlsx/…
+    # → read_document) is readable by any text model, so it must NOT narrow the
+    # candidates. The raw path is image/* only: the chat attachment router
+    # (handlers/chat.py) sends a multimodal block solely when
+    # `mime.startswith("image/")` (its `api_blocked` predicate) — every other
+    # MIME, even one a model lists in `raw_formats`, is routed to disk and
+    # converted. Mirror that predicate here so router and dispatcher agree.
+    # (Audio/video go through the separate translation/transcription path, not
+    # this MIME router, so they don't appear here either.)
+    mimes = [m for m in (attachment_mimes or []) if m and m.startswith("image/")]
     if mimes:
         vision = [mid for mid in enabled
                   if any(_mime_matches(m, get_model_raw_formats(mid)) for m in mimes)]
         if vision:
-            candidates = vision  # attachment capability wins
-
-    # Use-case map: an operator-pinned model for a task type wins over the tier
-    # logic (but never over attachment capability — files still constrain the
-    # pool above). First matching task_type in priority order.
-    cand_set = set(candidates)
-    task_models = {}
-    try:
-        import server as _srv_mod
-        _sc = getattr(_srv_mod, "server_config", None) or {}
-        task_models = (_sc.get("auto_route") or {}).get("task_models") or {}
-    except Exception:
-        pass
-    if task_models and task_types:
-        for tt in task_types:
-            pinned = task_models.get(tt)
-            if pinned and pinned in cand_set and _models_config.get(pinned, {}).get("enabled", True):
-                return pinned
+            candidates = vision  # raw-image capability wins
 
     # Benchmark ranking (the measured path): if any candidate has been
     # benchmarked for the task, rank capable→fast→cheap and take the best. The

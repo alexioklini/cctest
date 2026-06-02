@@ -84,14 +84,6 @@ async function _genTab_server(C) {
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{auto_route_classifier_mode:document.getElementById('srv-auto-route-mode').value}).then(()=>showToast('Auto-Routing aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
         </div>
         <div style="font-size:11px;color:var(--text-400);margin-top:2px">Wie das „✨ Auto"-Modell im Verfasser (und background_task_model=auto bei Fan-out) die Absicht erkennt und das passende Modell wählt. LLM/Hybrid nutzen das oben gesetzte <b>Zusammenfassungsmodell</b> (sonst das günstigste/lokale Modell) und fallen bei Fehler/Timeout still auf Schlüsselwörter zurück. Im LLM-Modus liefert der Classifier zusätzlich <b>Komplexität</b> (gering/mittel/hoch): hoch hebt die Modellstufe an (Reasoning-Modell), gering senkt sie (günstigeres Cloud-Modell). Einfachere Aufgaben bleiben bevorzugt in der <b>Cloud</b> (günstigstes Cloud-Modell), lokal nur als letzte Option.</div>
-        <div style="margin-top:8px">
-          <label style="font-size:11px;color:var(--text-400)">Anwendungsfall-Zuordnung (optional) — pinnt pro Aufgabentyp ein Modell, das die Stufenlogik überschreibt. JSON-Objekt {Aufgabentyp: Modell-ID}. Aufgabentypen: coding, math, research, analysis, reporting, creative, orchestration, agentic, fast. Leer = nur Stufenlogik.</label>
-          <textarea class="form-input" id="srv-auto-route-task-models" rows="3" style="width:100%;font-family:monospace;font-size:11px" placeholder='{"coding": "CLIProxyAPI/devstral-small-latest", "research": "CLIProxyAPI/mistral-medium-3.5"}'>${(() => {
-            const tm = srv.auto_route_task_models || {};
-            return Object.keys(tm).length ? JSON.stringify(tm, null, 2) : '';
-          })()}</textarea>
-          <button class="btn-secondary" style="margin-top:4px" onclick="(()=>{let v=document.getElementById('srv-auto-route-task-models').value.trim();let obj;try{obj=v?JSON.parse(v):{};}catch(e){showToast('Ungültiges JSON',true);return;}API.post('/v1/services/server',{auto_route_task_models:obj}).then(()=>showToast('Anwendungsfall-Zuordnung gespeichert')).catch(e=>showToast(e.message||'Fehlgeschlagen',true));})()">Zuordnung setzen</button>
-        </div>
         ${SEC('Sidecar')}
         ${_renderSupervisorStatus(sc, {
           restartFn: 'restartSidecar',
