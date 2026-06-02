@@ -1,0 +1,47 @@
+{
+  "_comment": "Eval cases for web_fetch content-reducing optimizations. Each case fetches the same URL twice — once on the OPTIMIZED path (the new code) and once on the GOLD path (optimizations off, web_fetch returns COMPLETE content) — then a model answers the question from each fetch and Mistral judges whether the optimized-content answer matches the gold-content answer. A LOW score means the optimization dropped answer-critical content.",
+  "_modes": {
+    "abstract": "opt = mode='abstract' (~1500-char survey); gold = mode='full' (whole page). Tests the survey doesn't lose the answer.",
+    "academic": "opt = fetch landing URL (auto-rewrites to full-text PDF); gold = fetch the SAME landing URL with the academic rewrite bypassed (raw HTML wrapper). Here the optimization should IMPROVE completeness — a low opt-vs-gold delta is fine; we additionally assert opt content is richer than the wrapper.",
+    "brain_code": "opt = matched-region trim of a large GitHub-raw source file; gold = the full file. Tests the trim keeps the region the question needs.",
+    "conversion": "opt = whatever fetch_method the tool chooses (raw/markitdown/crawl4ai); gold = full extraction. Tests no content is lost in conversion choice."
+  },
+  "cases": [
+    {
+      "id": "ABS1_mdn_http_caching",
+      "mode": "abstract",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Caching",
+      "question": "What is the difference between the `no-cache` and `no-store` values of the Cache-Control header, and which directive forces revalidation before reuse?",
+      "rationale": "A specific distinction deep in a long reference page; the ~1500-char survey covers only the lead, so it should drop this detail. Non-academic URL so this tests ONLY abstract triage (no academic rewrite overlap)."
+    },
+    {
+      "id": "ABS2_wikipedia_transformer",
+      "mode": "abstract",
+      "url": "https://en.wikipedia.org/wiki/Transformer_(deep_learning_architecture)",
+      "question": "What is the computational complexity of self-attention with respect to sequence length, and what specific technique does the article describe to reduce it?",
+      "rationale": "A specific detail deep in a long article; the abstract survey covers only the lead."
+    },
+    {
+      "id": "ACA1_arxiv_full_vs_wrapper",
+      "mode": "academic",
+      "url": "https://arxiv.org/abs/1810.04805",
+      "question": "What were the GLUE benchmark score and the SQuAD v1.1 F1 score reported for the best model in this paper?",
+      "rationale": "Results tables live only in the full-text PDF; the /abs landing wrapper has the abstract but not the tables. The academic rewrite (→ /pdf) should surface them; the gold-bypass (raw /abs HTML) should NOT."
+    },
+    {
+      "id": "BC1_region_trim",
+      "mode": "brain_code",
+      "url": "https://raw.githubusercontent.com/psf/requests/main/src/requests/models.py",
+      "brain_code_anchor": "def raise_for_status(self) -> None:",
+      "question": "In this source file, what does the `Response.raise_for_status` method do, and what exception type does it raise on a 4xx/5xx status?",
+      "rationale": "Large source file. The anchor simulates a brain_code query that matched the raise_for_status method; a CORRECT region trim keeps that method, so the OPT answer should match the GOLD answer. If the trim drops it, content_loss fires. This tests trim FIDELITY to what the query matched, not arbitrary loss."
+    },
+    {
+      "id": "CONV1_js_or_html",
+      "mode": "conversion",
+      "url": "https://example.com/",
+      "question": "What is the single purpose of this domain as stated on the page, and what is the exact text of the link at the bottom?",
+      "rationale": "Static page; markitdown should preserve the link text. Tests conversion doesn't drop the IANA link."
+    }
+  ]
+}

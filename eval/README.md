@@ -90,3 +90,67 @@ Watch out for CLIProxyAPI tunneling: per `feedback_cliproxy_quota.md`, runaway t
 That's the honest number with `max_turns: 25` against vanilla mempalace MCP. The smoke test with `max_turns: 10` ran in 27s but ended in `error_max_turns` and produced no usable answer. Don't lower `max_turns` to save time — Opus needs that headroom or you get garbage gold answers and an unfair comparison.
 
 A full 15-question run = 15 × ~3min gold + 15 × ~10s Brain + 15 × ~30s judge ≈ 50–60 min wall clock.
+
+---
+
+# web_fetch optimization eval (`web_fetch_eval.py`)
+
+A SEPARATE, self-contained suite (no Brain server, no Claude Code) that measures
+whether the content-**reducing** optimizations in `web_fetch` lose answer-critical
+content. **Gold = optimizations OFF, web_fetch returns the COMPLETE page.** For each
+case the same URL is fetched twice — the optimized path and the optimization-off
+(gold) path — a model answers the case question from each fetch, and Mistral judges
+whether the optimized-content answer matches the gold-content answer. A `gold`
+winner / `content_loss=true` means the optimization dropped content the answer needed.
+
+It calls `engine.tools.misc_tools.tool_web_fetch` **in-process** (it only needs
+`import brain` lazily), so the two fetches run the real production code. Each mode's
+gold is produced by narrowly disabling exactly ONE optimization (monkeypatch), so the
+only difference between the two answers is that optimization.
+
+## Modes (one per optimization)
+
+| mode | optimized path | gold (optimization off) |
+|------|----------------|-------------------------|
+| `abstract` | `mode="abstract"` (~1500-char survey) | `mode="full"` (whole page) |
+| `academic` | landing URL auto-rewritten to full-text PDF | rewrite bypassed → raw HTML wrapper |
+| `brain_code` | matched-region trim of a large GitHub-raw file (seeds a recorded brain_code region so the trim fires) | no recorded region → full file |
+| `conversion` | the tool's auto `fetch_method` (raw/markitdown/crawl4ai) | same auto path (static pages: opt==gold ⇒ confirms conversion lost nothing) |
+
+`abstract` and `brain_code` are EXPECTED to show `content_loss` — they trade
+completeness for cheap triage / token savings; the eval quantifies HOW MUCH they
+drop on a question that needs the dropped detail. `academic` should show NO loss (it
+*adds* completeness: full PDF ≫ wrapper). `conversion` should show no loss on the
+content it converts.
+
+## Usage
+
+```bash
+# Full run (5 cases × 2 fetches + 2 answers + 1 judge each). Needs internet; no server.
+python3 eval/web_fetch_eval.py
+
+# Subset
+python3 eval/web_fetch_eval.py --only ABS1_mdn_http_caching,BC1_region_trim
+
+# Swap answer / judge model (provider-scoped id from config.json[models])
+python3 eval/web_fetch_eval.py --answer-model mistral-medium-3.5 --judge-model mistral-medium-3.5
+```
+
+Output → `eval/results/webfetch_<ts>/`: per-case `fetch.json` (both raw fetches +
+lengths + fetch_method), `result.json` (both answers + judge), plus `summary.{csv,md}`.
+
+## Editing cases
+
+`eval/web_fetch_cases.json` — each case: `id`, `mode`, `url`, `question`,
+`rationale`, and (brain_code only) `brain_code_anchor` (a line that exists VERBATIM
+in the fetched file — it simulates the chunk a brain_code query matched; the trim
+relocates it by fingerprint, so it must match exactly). Pick a `url` whose answer
+lives PAST the optimization's reduction point, or the case can't detect loss.
+
+## Baseline (2026-06-02, mistral-medium-3.5 answer+judge)
+
+`abstract` (ABS1/ABS2) → `content_loss` (by design — survey drops the detail).
+`academic` (ACA1) → tie (full PDF 50k vs 4.5k wrapper, no loss). `conversion`
+(CONV1) → tie. `brain_code` (BC1) → `content_loss` at 0.75: the trim's **±8-line
+context window clips the tail of a longer matched method** (`raise_for_status` body
+naming `HTTPError` fell outside the window) — a real fidelity finding to watch.
