@@ -78,3 +78,6 @@ reports/
 
 # crawl4ai render service venv (heavy: browser + deps)
 .venv_crawl4ai/
+
+# embedded decompiled source (not a registered submodule)
+docs/research/claude-code-source/
