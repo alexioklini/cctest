@@ -108,6 +108,56 @@ class TestRefuseOnMissingProjectId(_MPFixture):
         self.assertIn("error", parsed, "project-pinned query with no id must refuse, not fall back")
 
 
+class TestExplicitWingRefused(_MPFixture):
+    """REGRESSION (v9.60.4): an explicit caller-supplied `wing` naming another
+    user's/team's/project's private wing MUST be refused, NOT searched. The leak
+    was: the visibility filter only ran when `not wing`, so an explicit foreign
+    `wing` (e.g. wing='user__bob') bypassed the C3 gate entirely. The pre-check
+    refuses before any Chroma call, so this is reachable with side-effects stubbed."""
+
+    def _run_query(self, args, importable=(True, "")):
+        with mock.patch.object(brain, "_load_mempalace_config",
+                               return_value={"enabled": True, "palace_path": "/tmp"}), \
+             mock.patch.object(brain, "_ensure_mempalace_importable",
+                               return_value=importable), \
+             mock.patch("os.path.isdir", return_value=True):
+            return brain.tool_mempalace_query(args)
+
+    def test_foreign_user_wing_refused(self):
+        self._ctx(project=None, user_id="alice", team_ids=[], agent_id="main")
+        out = json.loads(self._run_query({"query": "x", "wing": "user__bob"}))
+        self.assertIn("error", out, "explicit foreign user wing must be refused, not searched")
+        self.assertIn("not visible", out["error"])
+
+    def test_foreign_project_wing_refused(self):
+        self._ctx(project=None, user_id="alice", team_ids=[], agent_id="main")
+        out = json.loads(self._run_query({"query": "x", "wing": "project__other"}))
+        self.assertIn("error", out, "explicit project wing must be refused from a non-project chat")
+
+    def test_foreign_team_wing_refused(self):
+        self._ctx(project=None, user_id="alice", team_ids=["t1"], agent_id="main")
+        out = json.loads(self._run_query({"query": "x", "wing": "team__t2"}))
+        self.assertIn("error", out, "explicit non-member team wing must be refused")
+
+    def test_own_user_wing_allowed_past_precheck(self):
+        # The caller's OWN wing must NOT be refused by the pre-check. Stub the
+        # importability to a failure so the query stops right AFTER the pre-check
+        # (no live Chroma): a "not visible" error => the pre-check wrongly refused;
+        # the importability error => the pre-check passed (correct).
+        self._ctx(project=None, user_id="alice", team_ids=[], agent_id="main")
+        out = json.loads(self._run_query({"query": "x", "wing": "user__alice"},
+                                          importable=(False, "stub: stop after pre-check")))
+        self.assertNotIn("not visible", out.get("error", ""),
+                         "own wing must pass the visibility pre-check")
+
+    def test_shared_brain_code_wing_allowed_past_precheck(self):
+        self._ctx(project=None, user_id="alice", team_ids=[], agent_id="main")
+        out = json.loads(self._run_query({"query": "x", "wing": "brain_code"},
+                                          importable=(False, "stub: stop after pre-check")))
+        self.assertNotIn("not visible", out.get("error", ""),
+                         "shared brain_code wing must pass the visibility pre-check")
+
+
 class TestCrossWingVisibility(_MPFixture):
     """The unspecified-wing visibility filter. INVARIANT: project wings always
     private; only the caller's own user__ wing + their team__ wings + bare

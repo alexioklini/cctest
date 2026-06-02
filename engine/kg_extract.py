@@ -250,6 +250,20 @@ def _is_code_path(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in CODE_EXTS
 
 
+def _anchored_prefix_sql(column: str, prefix: str) -> tuple[str, list]:
+    """Build a path-boundary-ANCHORED prefix match for `column` so a directory
+    prefix `/data/proj1` matches `/data/proj1` itself and `/data/proj1/<...>`
+    but NOT the sibling `/data/proj1extra/...`. A bare `LIKE prefix || '%'`
+    leaks across sibling dirs sharing a name prefix — a real cross-scope DELETE
+    risk in kg_purge_for_scope. We match: exact `= prefix`, OR `LIKE prefix+sep`
+    + '%'. Filename-prefix patterns (e.g. `ingest-<h>-`, `weburl-`) that already
+    end in a separator-like boundary still work since `= prefix` covers exact
+    and the sep-join covers children. Returns (sql_fragment, params)."""
+    sep = os.sep
+    p = prefix.rstrip(sep)
+    return (f"({column} = ? OR {column} LIKE ? || '%')", [p, p + sep])
+
+
 # ── Cursor / log schema in chats.db ──────────────────────────────────────────
 
 _SCHEMA_LOCK = threading.Lock()
@@ -397,6 +411,26 @@ def _invalidate_source_in_kg(palace_path: str, chats_db_path: str,
     """
     if not source_file:
         return 0, 0
+    # ORDER MATTERS (crash-safety): delete the PROGRESS cursor BEFORE the triples.
+    # A crash between the two leaves progress-gone-but-triples-present, which is
+    # SELF-HEALING — the source-state cursor isn't committed until re-extraction
+    # finishes (see _commit_source_state), so the next run still sees the source
+    # as changed, re-invalidates (re-deletes both), and re-extracts cleanly. The
+    # reverse order (the old bug) could leave triples-gone-but-progress-present →
+    # next run skips re-extraction → the file is stuck with ZERO triples forever.
+    progress_deleted = 0
+    init_kg_progress_schema(chats_db_path)
+    conn = sqlite3.connect(chats_db_path, timeout=10, check_same_thread=False)
+    try:
+        cur = conn.execute(
+            "DELETE FROM kg_extraction_progress "
+            "WHERE palace_wing = ? AND source_file = ?",
+            (palace_wing, source_file))
+        progress_deleted = cur.rowcount or 0
+        conn.commit()
+    finally:
+        conn.close()
+
     triples_deleted = 0
     kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
     if os.path.isfile(kg_path):
@@ -418,19 +452,6 @@ def _invalidate_source_in_kg(palace_path: str, chats_db_path: str,
             conn.commit()
         finally:
             conn.close()
-
-    progress_deleted = 0
-    init_kg_progress_schema(chats_db_path)
-    conn = sqlite3.connect(chats_db_path, timeout=10, check_same_thread=False)
-    try:
-        cur = conn.execute(
-            "DELETE FROM kg_extraction_progress "
-            "WHERE palace_wing = ? AND source_file = ?",
-            (palace_wing, source_file))
-        progress_deleted = cur.rowcount or 0
-        conn.commit()
-    finally:
-        conn.close()
     return triples_deleted, progress_deleted
 
 
@@ -899,6 +920,13 @@ def run_kg_post_pass(
 
         with _write_lock:
             prev = source_state_cursor.get(sf)
+        # Pending source-state to commit AFTER re-extraction of this source
+        # completes — recording it BEFORE (the old bug) meant a crash between the
+        # invalidation (triples deleted) and re-extraction left the file at the
+        # new mtime/size with ZERO triples permanently (next run sees prev==cur →
+        # skips). Defer to `_commit_source_state()` at the end of each completion
+        # path so the cursor only advances once new triples are durably written.
+        _pending_state = None
         if cur_mt and (prev is None or prev != (cur_mt, cur_sz)):
             if prev is not None:
                 try:
@@ -915,10 +943,16 @@ def run_kg_post_pass(
                 except Exception as e:
                     print(f"{log_prefix} invalidate {sf} failed: "
                           f"{type(e).__name__}: {e}", flush=True)
+            _pending_state = (cur_mt, cur_sz)
+
+        def _commit_source_state():
+            if _pending_state is None:
+                return
             try:
-                _source_state_record(chats_db_path, wing, sf, cur_mt, cur_sz)
+                _source_state_record(chats_db_path, wing, sf,
+                                     _pending_state[0], _pending_state[1])
                 with _write_lock:
-                    source_state_cursor[sf] = (cur_mt, cur_sz)
+                    source_state_cursor[sf] = _pending_state
             except Exception:
                 pass
 
@@ -979,6 +1013,7 @@ def run_kg_post_pass(
                     _already.add(did)
                     result.drawers_processed += 1
                     result.triples_extracted += written
+            _commit_source_state()  # per-drawer re-extract finished
             return
 
         file_text = _strip_brain_frontmatter(file_text)
@@ -991,6 +1026,7 @@ def run_kg_post_pass(
             with _write_lock:
                 _already.add(cursor_key)
                 result.drawers_skipped += len(src["drawer_ids"])
+            _commit_source_state()  # nothing to extract → state is current
             return
 
         with _write_lock:
@@ -1056,6 +1092,15 @@ def run_kg_post_pass(
                                 running_total=result.triples_extracted)
                 except Exception:
                     pass
+
+        # All chunks of this source extracted (or skipped-as-done). Commit the
+        # source-state cursor ONLY now — and not if cancelled mid-loop, so a
+        # cancelled partial extraction is re-run next time rather than frozen at
+        # the new mtime with missing triples.
+        _cancelled = (cancel_token is not None
+                      and getattr(cancel_token, "is_set", lambda: False)())
+        if not _cancelled:
+            _commit_source_state()
 
     try:
         if chunking_mode == "source_file":
@@ -1194,8 +1239,11 @@ def kg_stats_for_wing(palace_path: str, source_prefix: str | None = None,
         where = []
         params: list = []
         if source_prefix:
-            where.append("source_file LIKE ? || '%'")
-            params.append(source_prefix)
+            # ANCHORED at a path boundary (sibling-dir-safe; display stats but
+            # mirror the purge predicate so counts match what a purge deletes).
+            _frag, _p = _anchored_prefix_sql("source_file", source_prefix)
+            where.append(_frag)
+            params.extend(_p)
         if adapter_name:
             # adapter_name column added in 3.3.3; tolerate older schemas by
             # checking column existence.
@@ -1283,8 +1331,11 @@ def kg_purge_for_scope(palace_path: str, *, source_prefix: str = "",
             where = []
             params: list = []
             if source_prefix:
-                where.append("source_file LIKE ? || '%'")
-                params.append(source_prefix)
+                # ANCHORED at a path boundary so purging scope `/data/proj1`
+                # can't also DELETE triples for the sibling `/data/proj1extra`.
+                _frag, _p = _anchored_prefix_sql("source_file", source_prefix)
+                where.append(_frag)
+                params.extend(_p)
             if adapter_name and "adapter_name" in cols:
                 where.append("adapter_name = ?")
                 params.append(adapter_name)

@@ -472,10 +472,11 @@ TOOL_DEFINITIONS = [
                 "wing": {
                     "type": "string",
                     "description": (
-                        "Optional wing filter. Pass an agent id (e.g. 'main') to "
-                        "search that agent's chat memories — auto-scoped to the "
-                        "current user. Pass 'brain_code' for source/artifacts. "
-                        "Omit to search all accessible wings."
+                        "Optional wing filter. Pass 'brain_code' for "
+                        "source/artifacts, or a shared wing name. You may ONLY "
+                        "name a wing you have access to — wings private to "
+                        "another user, team, or project are refused. Omit to "
+                        "search your own accessible wings (the usual case)."
                     ),
                 },
                 "room": {

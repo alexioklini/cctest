@@ -28,6 +28,7 @@ import os
 import re  # noqa: F401  (git-source wing → clone-dir sanitisation)
 import sqlite3
 import subprocess  # noqa: F401  (git clone/pull for source mining)
+import threading
 import time
 
 import brain as engine
@@ -46,6 +47,19 @@ _file_mtimes: dict[str, float] = {}
 
 # Lifted from main()-local constant (was _MEMPALACE_YAML_MARKER in main()).
 _MEMPALACE_YAML_MARKER = "# managed by brain-agent server.py — do not edit\n"
+
+# Single in-process serializer for ALL palace-mutating operations across the
+# three write daemons (miner, chat-sync, project-sync). The mempalace package's
+# own `mine_palace_lock` is per-palace but NON-BLOCKING — a concurrent writer
+# gets MineAlreadyRunning (a refused write), not a wait. Brain's daemons run on
+# independent cycles and write the SAME palace, so without this lock a bulk
+# delete (stale-purge) can race a concurrent upsert (the documented HNSW
+# corruption trigger, project_chroma_bulk_delete_corruption) AND chat-sync
+# writes get silently refused. Holding this lock around each mine()/add_drawer
+# batch/stale-purge delete makes the daemons QUEUE instead of colliding. Coarse
+# by design: a multi-second mine blocking a chat-sync cycle is the correct
+# trade — serialized-but-late beats raced-and-lost/corrupt.
+_palace_write_lock = threading.RLock()
 
 
 def _file_change_watcher(srv):
@@ -374,7 +388,7 @@ def _mempalace_miner_loop(srv):
                     continue
                 buf = io.StringIO()
                 try:
-                    with contextlib.redirect_stdout(buf):
+                    with contextlib.redirect_stdout(buf), _palace_write_lock:
                         mp_miner.mine(
                             project_dir=clone_dir,
                             palace_path=palace_path,
@@ -472,7 +486,7 @@ def _mempalace_miner_loop(srv):
                     continue
                 buf = io.StringIO()
                 try:
-                    with contextlib.redirect_stdout(buf):
+                    with contextlib.redirect_stdout(buf), _palace_write_lock:
                         mp_miner.mine(
                             project_dir=folder_path,
                             palace_path=palace_path,
@@ -672,29 +686,60 @@ def _mempalace_chat_sync_loop(srv):
                 # Per (wing, room, source_file) → list[(drawer_id, text)] for closet rebuild.
                 dirty_groups: dict[tuple, list] = {}
 
-                def _file_drawer(w, r, content, source_file):
+                # Genuine write-failure tracker (data-loss guard). A drawer write
+                # can fail for two very different reasons:
+                #   * dedup (`already_exists`) — the content is ALREADY in the
+                #     palace; advancing the cursor past it is correct.
+                #   * a real failure — an add_drawer exception, or success:False
+                #     (e.g. the package's NON-BLOCKING mine_palace_lock refusing
+                #     the write with MineAlreadyRunning while the miner/project-
+                #     sync daemon holds it). The content is NOT in the palace; if
+                #     the cursor advances past it the turn is PERMANENTLY lost.
+                # `_wf["min_id"]` records the LOWEST message id that hit a real
+                # failure this cycle so the cursor can be clamped below it and the
+                # message retried next cycle. None = no genuine failure.
+                # `_wf["summary"]` flags a genuine failure on the summary write
+                # (which carries no message id) so its hash isn't advanced.
+                _wf = {"min_id": None, "summary": False}
+
+                def _note_write_failure(mid_):
+                    if mid_ is None:
+                        _wf["summary"] = True
+                    elif mid_ and (_wf["min_id"] is None or mid_ < _wf["min_id"]):
+                        _wf["min_id"] = int(mid_)
+
+                def _file_drawer(w, r, content, source_file, mid=0):
                     if not content:
                         return False
                     content = content[:max_chars]
                     engine.mempalace_activity.store_begin()
                     try:
                         try:
-                            res = tool_add_drawer(
-                                wing=w,
-                                room=r,
-                                content=content,
-                                source_file=source_file,
-                                added_by="brain-chat-sync",
-                            )
+                            # Serialize against the miner/project-sync write phases
+                            # so this upsert isn't refused by the package's
+                            # non-blocking mine_palace_lock (which would silently
+                            # drop the drawer) and can't race a bulk delete.
+                            with _palace_write_lock:
+                                res = tool_add_drawer(
+                                    wing=w,
+                                    room=r,
+                                    content=content,
+                                    source_file=source_file,
+                                    added_by="brain-chat-sync",
+                                )
                         except Exception as ex:
                             print(f"[mempalace-chat-sync] add_drawer failed: {ex}")
+                            _note_write_failure(mid)  # real failure → don't advance past it
                             return False
                     finally:
                         engine.mempalace_activity.store_end()
                     if not isinstance(res, dict) or not res.get("success"):
+                        # success:False is a genuine non-write (lock-refused etc.) —
+                        # NOT a dedup. Guard the cursor so the message is retried.
+                        _note_write_failure(mid)
                         return False
                     if res.get("reason") == "already_exists":
-                        return False  # don't count dedup hits toward closet rebuild
+                        return False  # dedup hit — already filed; safe to advance
                     # Stamp hall metadata (tool_add_drawer doesn't support it natively)
                     drawer_id = res.get("drawer_id", "")
                     if drawer_id:
@@ -793,7 +838,7 @@ def _mempalace_chat_sync_loop(srv):
                         body = f"[{role}] {text}".strip()
                         if body:
                             source_file = f"session/{sid}{turn_suffix}"
-                            if _file_drawer(wing, default_room, body, source_file):
+                            if _file_drawer(wing, default_room, body, source_file, mid=mid):
                                 total_new += 1
 
                     # Attachment metadata.
@@ -814,7 +859,7 @@ def _mempalace_chat_sync_loop(srv):
                                     f"size: {fsize} bytes"
                                 )
                                 source_file = f"session/{sid}{turn_suffix}#attach/{mid}/{fname}"
-                                if _file_drawer(wing, "chat_attachment", body, source_file):
+                                if _file_drawer(wing, "chat_attachment", body, source_file, mid=mid):
                                     total_new += 1
 
                     # Tool-result references (allowlisted tools only).
@@ -848,20 +893,34 @@ def _mempalace_chat_sync_loop(srv):
                                     f"{ref.get('snippet','')}"
                                 )
                                 source_file = f"session/{sid}{turn_suffix}#tool/{tname}/{mid}/{idx}"
-                                if _file_drawer(wing, "reference", ref_body, source_file):
+                                if _file_drawer(wing, "reference", ref_body, source_file, mid=mid):
                                     total_new += 1
 
                 # Session summary — low-frequency text worth indexing separately.
+                # `summary_hash` becomes the cursor's last_summary_hash. Only set
+                # it to the NEW hash when the summary drawer was actually filed (or
+                # deduped) — a genuine write failure must keep the OLD hash so the
+                # summary is retried next cycle (else it's permanently skipped).
                 summary_hash = ""
                 if include_summary:
                     summary = (session_row.get("summary") or "").strip()
                     if summary:
-                        summary_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()[:16]
-                        if summary_hash != (session_row.get("last_summary_hash") or ""):
+                        _new_summary_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()[:16]
+                        if _new_summary_hash != (session_row.get("last_summary_hash") or ""):
                             body = f"[session summary for {sid}]\n{summary}"
                             source_file = f"session/{sid}#summary"
-                            if _file_drawer(wing, "chat_summary", body, source_file):
+                            # mid=None routes a genuine failure to _wf["summary"].
+                            filed = _file_drawer(wing, "chat_summary", body, source_file,
+                                                 mid=None)
+                            if filed:
                                 total_new += 1
+                                summary_hash = _new_summary_hash
+                            elif _wf["summary"]:
+                                summary_hash = ""  # real failure → keep old hash, retry
+                            else:
+                                summary_hash = _new_summary_hash  # dedup → advance
+                        else:
+                            summary_hash = _new_summary_hash  # unchanged → keep
 
                 # Rebuild closets per dirty group.
                 if closets_col is not None and dirty_groups:
@@ -894,10 +953,20 @@ def _mempalace_chat_sync_loop(srv):
                             print(f"[mempalace-chat-sync] closet rebuild failed for {source_file}: {ce}")
 
                 # Advance cursor even if nothing new was filed (all dedup'd) —
-                # otherwise we keep re-scanning the same tail forever.
+                # otherwise we keep re-scanning the same tail forever. BUT never
+                # advance PAST a message whose drawer write genuinely failed
+                # (lock-refused / exception): clamp the cursor to just below the
+                # lowest failed id so that message (and everything after it) is
+                # retried next cycle. Without this clamp a transient write failure
+                # silently drops the turn from memory forever (the v9.60.4 bug).
+                _target = max(new_last_id, max_msg_id)
+                if _wf["min_id"] is not None:
+                    _target = min(_target, _wf["min_id"] - 1)
+                    # Never move the cursor backwards below where we started.
+                    _target = max(_target, after_id)
                 ChatDB.mempalace_update_cursor(
                     sid,
-                    max(new_last_id, max_msg_id),
+                    _target,
                     last_summary_hash=summary_hash or session_row.get("last_summary_hash") or "",
                 )
 
@@ -1284,10 +1353,16 @@ def _project_sync_loop(srv):
             # in-Python — wings are typically small.
             got = col.get(where={"wing": wing}, include=["metadatas"])
             metas = got.get("metadatas") or []
+            # ANCHOR the directory prefix at a path boundary so folder `/p/proj1`
+            # doesn't also count drawers from the sibling `/p/proj1extra` (the
+            # bug inflated per-item counts when two input folders shared a name
+            # prefix). Match the exact path or anything strictly under it.
+            _pfx = source_prefix.rstrip(os.sep)
+            _pfx_child = _pfx + os.sep
             hits = 0
             for m in metas:
                 sf = (m or {}).get("source_file") or ""
-                if sf.startswith(source_prefix):
+                if sf == _pfx or sf.startswith(_pfx_child):
                     hits += 1
             return hits
         except Exception:
@@ -1387,333 +1462,589 @@ def _project_sync_loop(srv):
 
             cycle_filed = 0
             for agent_id, proj_name in ordered:
-                # Manual "Sync now" overrides per-folder auto_sync gating —
-                # the user is explicitly asking, so skipping their non-auto
-                # folders would be confusing.
-                is_manual = (agent_id, proj_name) in requested
-                _trigger = req_triggers.get(
-                    (agent_id, proj_name),
-                    "manual" if is_manual else "scheduled")
-                project = engine.ProjectManager.get_project(agent_id, proj_name)
-                if not project:
-                    continue
-                if project.get("status") == "archived":
-                    continue
-                pdir = project.get("dir") or os.path.join(
-                    engine.AGENTS_DIR, agent_id, "projects", proj_name)
-                project_id = project.get("id") or ""
-                if not project_id:
-                    # Backfill safety net: get_project() should have set
-                    # this on first read, but if persisting failed (RO
-                    # filesystem etc.) skip this project for the cycle.
-                    print(f"[project-sync] skip {agent_id}/{proj_name}: "
-                          f"no project id", flush=True)
-                    continue
-                wing = _project_wing(project_id)
-
-                # Project-level web URLs → fetch fresh into pdir/web-urls/ as
-                # hash-gated .md files BEFORE mining, so they ride the same
-                # convert→mine→KG pass as uploaded files. (web_fetch handles
-                # JS-rendered pages via the crawl4ai fallback.) Removed URLs'
-                # files are pruned here; their drawers get purged by the
-                # stale-path sweep below (web-urls/ files that no longer exist).
-                _weburl_folder = ""
                 try:
-                    _weburl_folder = _sync_project_web_urls(
-                        pdir, project.get("web_urls") or [])
-                except Exception as _e_wu:
-                    print(f"[project-sync.weburl] {agent_id}/{proj_name}: "
-                          f"{type(_e_wu).__name__}: {_e_wu}", flush=True)
-
-                _run_id = _sync_log.start_run(
-                    chats_db_path, project_id, triggered_by=_trigger)
-                started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                srv._project_sync_set_live(agent_id, proj_name,
-                    state="syncing", started_at=started_at,
-                    files_filed=0, error="", run_id=_run_id)
-                files_filed = 0
-                folders_seen = 0
-                last_error = ""
-                # Per-item state map: keyed by ("attachment", source_hash) for
-                # uploaded docs and ("folder", absolute_path) for input folders.
-                # The web UI joins this onto its rendered lists so each row
-                # carries its own indexed/syncing/error pill.
-                # Seed from the prior persisted run so cumulative counters
-                # (drawers_filed_total) survive — every cycle after the
-                # first is dedup-mostly and would otherwise overwrite a
-                # real "180 drawers indexed" snapshot with 0.
-                prior_items = ((project.get("sync_status") or {}).get("items") or {})
-                item_states: dict[str, dict] = {}
-                for k, v in prior_items.items():
-                    if isinstance(v, dict):
-                        item_states[k] = dict(v)
-                # Project-level cumulative count (across all cycles).
-                prior_total_indexed = int(
-                    (project.get("sync_status") or {}).get("total_indexed") or 0)
-
-                # Stale-path purge: compare current input_folders against
-                # what's in MemPalace. Any drawer whose source_file starts
-                # with a path that is no longer an input folder gets purged.
-                # This catches manual project.json edits, renames, and
-                # moves that bypass the API handler's built-in purge.
-                _stale_drawers_purged = 0
-                _stale_closets_purged = 0
-                try:
-                    _current_folder_prefixes = set()
-                    for _fe in (project.get("input_folders") or []):
-                        _fp = (_fe.get("path") or "").strip()
-                        if _fp:
-                            _r = os.path.realpath(os.path.expanduser(_fp))
-                            _current_folder_prefixes.add(
-                                _r if _r.endswith(os.sep) else _r + os.sep)
-                    # Also allow pdir itself (ingested attachments + the
-                    # web-urls/ subfolder, both under pdir).
-                    _pdir_real = os.path.realpath(pdir)
-                    _current_folder_prefixes.add(
-                        _pdir_real if _pdir_real.endswith(os.sep)
-                        else _pdir_real + os.sep)
-
-                    _mcfg_sp = engine._load_mempalace_config()
-                    _palace_sp = _mcfg_sp.get("palace_path", "")
-                    if _palace_sp and os.path.isdir(_palace_sp):
-                        _ok_sp, _ = engine._ensure_mempalace_importable()
-                        if _ok_sp:
-                            from mempalace.palace import (
-                                get_collection as _get_col_sp,
-                                get_closets_collection as _get_ccol_sp,
-                            )
-                            _wing_sp = wing
-                            # A drawer is stale if its source_file is outside
-                            # every current input folder/pdir prefix, OR it's an
-                            # absolute-path source whose file no longer exists
-                            # (single deleted file — web-url companion or
-                            # ordinary input-folder doc — while its folder stays
-                            # configured; prefix alone can't catch that since
-                            # the folder is a kept prefix).
-                            def _is_stale_src(_src):
-                                _src = _src or ""
-                                # (a) Outside every current input folder / pdir
-                                # prefix → the folder was removed.
-                                if not any(_src.startswith(_p) for _p in _current_folder_prefixes):
-                                    return True
-                                # (b) A drawer whose source_file is an absolute
-                                # path (a real file was expected) but the file
-                                # no longer exists → the single file was deleted
-                                # while its folder stayed configured. Covers
-                                # web-urls AND ordinary input-folder files, so a
-                                # deleted file leaves no orphan drawers. Guarded
-                                # on a leading '/' so synthetic markers
-                                # (session/...#..., user/...#profile) — which are
-                                # never files — are NEVER treated as stale.
-                                if _src.startswith("/") and not os.path.exists(_src):
-                                    return True
-                                return False
-                            _col_sp = _get_col_sp(_palace_sp, create=False)
-                            if _col_sp:
-                                _res_sp = _col_sp.get(
-                                    where={"wing": _wing_sp},
-                                    include=["metadatas"])
-                                _stale_ids = [
-                                    _did for _did, _m in zip(
-                                        _res_sp["ids"], _res_sp["metadatas"])
-                                    if _is_stale_src(_m.get("source_file"))
-                                ]
-                                if _stale_ids:
-                                    _col_sp.delete(ids=_stale_ids)
-                                    _stale_drawers_purged = len(_stale_ids)
-                                    print(f"[project-sync] stale-path purge "
-                                          f"{agent_id}/{proj_name}: "
-                                          f"deleted {_stale_drawers_purged} drawer(s)",
-                                          flush=True)
-                            _ccol_sp = _get_ccol_sp(_palace_sp, create=False)
-                            if _ccol_sp:
-                                _res_sp = _ccol_sp.get(
-                                    where={"wing": _wing_sp},
-                                    include=["metadatas"])
-                                _stale_cids = [
-                                    _cid for _cid, _m in zip(
-                                        _res_sp["ids"], _res_sp["metadatas"])
-                                    if _is_stale_src(_m.get("source_file"))
-                                ]
-                                if _stale_cids:
-                                    _ccol_sp.delete(ids=_stale_cids)
-                                    _stale_closets_purged = len(_stale_cids)
-                                    print(f"[project-sync] stale-path purge "
-                                          f"{agent_id}/{proj_name}: "
-                                          f"deleted {_stale_closets_purged} closet(s)",
-                                          flush=True)
-                except Exception as _e_sp:
-                    print(f"[project-sync] stale-path purge error "
-                          f"{agent_id}/{proj_name}: "
-                          f"{type(_e_sp).__name__}: {_e_sp}", flush=True)
-                if _run_id and (_stale_drawers_purged or _stale_closets_purged):
-                    _sync_log.step_update(
-                        chats_db_path, _run_id, "stale_path_purge",
-                        drawers_deleted=_stale_drawers_purged,
-                        closets_deleted=_stale_closets_purged,
-                        at=time.time())
-
-                # Pre-scan to estimate cycle work for live progress / ETA.
-                # Cheap: just os.walk the ingested + input folders and count
-                # files (no hashing, no parsing). Counts every regular file;
-                # the miner's gitignore + ext filter will narrow this down,
-                # so the displayed P/T overshoots T slightly — that's fine,
-                # the ETA is approximate by design and overshoot beats
-                # undershoot (progress bar never appears stuck at 100%).
-                cycle_total_files = 0
-                cycle_processed_files = 0
-                cycle_folder_file_counts: dict[str, int] = {}
-                cycle_ingested_file_count = 0
-                ingested_dir_pre = os.path.join(pdir, "ingested")
-                if os.path.isdir(ingested_dir_pre):
-                    try:
-                        # Count distinct source uploads (hash count), not
-                        # chunk count, so the progress P/T reflects "files
-                        # the user uploaded" rather than internal chunks.
-                        seen_hashes: set = set()
-                        for fn in os.listdir(ingested_dir_pre):
-                            if fn.startswith("ingest-") and fn.endswith(".md"):
-                                parts_fn = fn.split("-", 2)
-                                if len(parts_fn) >= 2:
-                                    seen_hashes.add(parts_fn[1])
-                        cycle_ingested_file_count = len(seen_hashes)
-                        cycle_total_files += cycle_ingested_file_count
-                    except OSError:
-                        pass
-                for entry_pre in (project.get("input_folders") or []):
-                    fp_pre = entry_pre.get("path") or ""
-                    if not fp_pre or not os.path.isdir(fp_pre):
+                    # Manual "Sync now" overrides per-folder auto_sync gating —
+                    # the user is explicitly asking, so skipping their non-auto
+                    # folders would be confusing.
+                    is_manual = (agent_id, proj_name) in requested
+                    _trigger = req_triggers.get(
+                        (agent_id, proj_name),
+                        "manual" if is_manual else "scheduled")
+                    project = engine.ProjectManager.get_project(agent_id, proj_name)
+                    if not project:
                         continue
-                    # Skip auto_sync=false folders unless the project is in
-                    # the manual-trigger set. They still get a 0-count entry
-                    # so the folder-loop later can render the "paused" state.
-                    if not is_manual and entry_pre.get("auto_sync", True) is False:
-                        cycle_folder_file_counts[fp_pre] = 0
+                    if project.get("status") == "archived":
                         continue
-                    rec = bool(entry_pre.get("recursive", True))
-                    cnt = 0
+                    pdir = project.get("dir") or os.path.join(
+                        engine.AGENTS_DIR, agent_id, "projects", proj_name)
+                    project_id = project.get("id") or ""
+                    if not project_id:
+                        # Backfill safety net: get_project() should have set
+                        # this on first read, but if persisting failed (RO
+                        # filesystem etc.) skip this project for the cycle.
+                        print(f"[project-sync] skip {agent_id}/{proj_name}: "
+                              f"no project id", flush=True)
+                        continue
+                    wing = _project_wing(project_id)
+
+                    # Project-level web URLs → fetch fresh into pdir/web-urls/ as
+                    # hash-gated .md files BEFORE mining, so they ride the same
+                    # convert→mine→KG pass as uploaded files. (web_fetch handles
+                    # JS-rendered pages via the crawl4ai fallback.) Removed URLs'
+                    # files are pruned here; their drawers get purged by the
+                    # stale-path sweep below (web-urls/ files that no longer exist).
+                    _weburl_folder = ""
                     try:
-                        if rec:
-                            for _root, _dirs, _files in os.walk(fp_pre):
-                                cnt += len(_files)
-                        else:
-                            cnt = sum(
-                                1 for e in os.scandir(fp_pre) if e.is_file())
-                    except OSError:
+                        _weburl_folder = _sync_project_web_urls(
+                            pdir, project.get("web_urls") or [])
+                    except Exception as _e_wu:
+                        print(f"[project-sync.weburl] {agent_id}/{proj_name}: "
+                              f"{type(_e_wu).__name__}: {_e_wu}", flush=True)
+
+                    _run_id = _sync_log.start_run(
+                        chats_db_path, project_id, triggered_by=_trigger)
+                    started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    srv._project_sync_set_live(agent_id, proj_name,
+                        state="syncing", started_at=started_at,
+                        files_filed=0, error="", run_id=_run_id)
+                    files_filed = 0
+                    folders_seen = 0
+                    last_error = ""
+                    # Per-item state map: keyed by ("attachment", source_hash) for
+                    # uploaded docs and ("folder", absolute_path) for input folders.
+                    # The web UI joins this onto its rendered lists so each row
+                    # carries its own indexed/syncing/error pill.
+                    # Seed from the prior persisted run so cumulative counters
+                    # (drawers_filed_total) survive — every cycle after the
+                    # first is dedup-mostly and would otherwise overwrite a
+                    # real "180 drawers indexed" snapshot with 0.
+                    prior_items = ((project.get("sync_status") or {}).get("items") or {})
+                    item_states: dict[str, dict] = {}
+                    for k, v in prior_items.items():
+                        if isinstance(v, dict):
+                            item_states[k] = dict(v)
+                    # Project-level cumulative count (across all cycles).
+                    prior_total_indexed = int(
+                        (project.get("sync_status") or {}).get("total_indexed") or 0)
+
+                    # Stale-path purge: compare current input_folders against
+                    # what's in MemPalace. Any drawer whose source_file starts
+                    # with a path that is no longer an input folder gets purged.
+                    # This catches manual project.json edits, renames, and
+                    # moves that bypass the API handler's built-in purge.
+                    _stale_drawers_purged = 0
+                    _stale_closets_purged = 0
+                    try:
+                        _current_folder_prefixes = set()
+                        for _fe in (project.get("input_folders") or []):
+                            _fp = (_fe.get("path") or "").strip()
+                            if _fp:
+                                _r = os.path.realpath(os.path.expanduser(_fp))
+                                _current_folder_prefixes.add(
+                                    _r if _r.endswith(os.sep) else _r + os.sep)
+                        # Also allow pdir itself (ingested attachments + the
+                        # web-urls/ subfolder, both under pdir).
+                        _pdir_real = os.path.realpath(pdir)
+                        _current_folder_prefixes.add(
+                            _pdir_real if _pdir_real.endswith(os.sep)
+                            else _pdir_real + os.sep)
+
+                        _mcfg_sp = engine._load_mempalace_config()
+                        _palace_sp = _mcfg_sp.get("palace_path", "")
+                        if _palace_sp and os.path.isdir(_palace_sp):
+                            _ok_sp, _ = engine._ensure_mempalace_importable()
+                            if _ok_sp:
+                                from mempalace.palace import (
+                                    get_collection as _get_col_sp,
+                                    get_closets_collection as _get_ccol_sp,
+                                )
+                                _wing_sp = wing
+                                # A drawer is stale if its source_file is outside
+                                # every current input folder/pdir prefix, OR it's an
+                                # absolute-path source whose file no longer exists
+                                # (single deleted file — web-url companion or
+                                # ordinary input-folder doc — while its folder stays
+                                # configured; prefix alone can't catch that since
+                                # the folder is a kept prefix).
+                                def _is_stale_src(_src):
+                                    _src = _src or ""
+                                    # (a) Outside every current input folder / pdir
+                                    # prefix → the folder was removed.
+                                    if not any(_src.startswith(_p) for _p in _current_folder_prefixes):
+                                        return True
+                                    # (b) A drawer whose source_file is an absolute
+                                    # path (a real file was expected) but the file
+                                    # no longer exists → the single file was deleted
+                                    # while its folder stayed configured. Covers
+                                    # web-urls AND ordinary input-folder files, so a
+                                    # deleted file leaves no orphan drawers. Guarded
+                                    # on a leading '/' so synthetic markers
+                                    # (session/...#..., user/...#profile) — which are
+                                    # never files — are NEVER treated as stale.
+                                    if _src.startswith("/") and not os.path.exists(_src):
+                                        return True
+                                    return False
+                                _col_sp = _get_col_sp(_palace_sp, create=False)
+                                if _col_sp:
+                                    _res_sp = _col_sp.get(
+                                        where={"wing": _wing_sp},
+                                        include=["metadatas"])
+                                    _stale_ids = [
+                                        _did for _did, _m in zip(
+                                            _res_sp["ids"], _res_sp["metadatas"])
+                                        if _is_stale_src(_m.get("source_file"))
+                                    ]
+                                    if _stale_ids:
+                                        # Serialize the bulk delete against concurrent
+                                        # daemon upserts (the corruption trigger).
+                                        with _palace_write_lock:
+                                            _col_sp.delete(ids=_stale_ids)
+                                        _stale_drawers_purged = len(_stale_ids)
+                                        print(f"[project-sync] stale-path purge "
+                                              f"{agent_id}/{proj_name}: "
+                                              f"deleted {_stale_drawers_purged} drawer(s)",
+                                              flush=True)
+                                _ccol_sp = _get_ccol_sp(_palace_sp, create=False)
+                                if _ccol_sp:
+                                    _res_sp = _ccol_sp.get(
+                                        where={"wing": _wing_sp},
+                                        include=["metadatas"])
+                                    _stale_cids = [
+                                        _cid for _cid, _m in zip(
+                                            _res_sp["ids"], _res_sp["metadatas"])
+                                        if _is_stale_src(_m.get("source_file"))
+                                    ]
+                                    if _stale_cids:
+                                        with _palace_write_lock:
+                                            _ccol_sp.delete(ids=_stale_cids)
+                                        _stale_closets_purged = len(_stale_cids)
+                                        print(f"[project-sync] stale-path purge "
+                                              f"{agent_id}/{proj_name}: "
+                                              f"deleted {_stale_closets_purged} closet(s)",
+                                              flush=True)
+                    except Exception as _e_sp:
+                        print(f"[project-sync] stale-path purge error "
+                              f"{agent_id}/{proj_name}: "
+                              f"{type(_e_sp).__name__}: {_e_sp}", flush=True)
+                    if _run_id and (_stale_drawers_purged or _stale_closets_purged):
+                        _sync_log.step_update(
+                            chats_db_path, _run_id, "stale_path_purge",
+                            drawers_deleted=_stale_drawers_purged,
+                            closets_deleted=_stale_closets_purged,
+                            at=time.time())
+
+                    # Pre-scan to estimate cycle work for live progress / ETA.
+                    # Cheap: just os.walk the ingested + input folders and count
+                    # files (no hashing, no parsing). Counts every regular file;
+                    # the miner's gitignore + ext filter will narrow this down,
+                    # so the displayed P/T overshoots T slightly — that's fine,
+                    # the ETA is approximate by design and overshoot beats
+                    # undershoot (progress bar never appears stuck at 100%).
+                    cycle_total_files = 0
+                    cycle_processed_files = 0
+                    cycle_folder_file_counts: dict[str, int] = {}
+                    cycle_ingested_file_count = 0
+                    ingested_dir_pre = os.path.join(pdir, "ingested")
+                    if os.path.isdir(ingested_dir_pre):
+                        try:
+                            # Count distinct source uploads (hash count), not
+                            # chunk count, so the progress P/T reflects "files
+                            # the user uploaded" rather than internal chunks.
+                            seen_hashes: set = set()
+                            for fn in os.listdir(ingested_dir_pre):
+                                if fn.startswith("ingest-") and fn.endswith(".md"):
+                                    parts_fn = fn.split("-", 2)
+                                    if len(parts_fn) >= 2:
+                                        seen_hashes.add(parts_fn[1])
+                            cycle_ingested_file_count = len(seen_hashes)
+                            cycle_total_files += cycle_ingested_file_count
+                        except OSError:
+                            pass
+                    for entry_pre in (project.get("input_folders") or []):
+                        fp_pre = entry_pre.get("path") or ""
+                        if not fp_pre or not os.path.isdir(fp_pre):
+                            continue
+                        # Skip auto_sync=false folders unless the project is in
+                        # the manual-trigger set. They still get a 0-count entry
+                        # so the folder-loop later can render the "paused" state.
+                        if not is_manual and entry_pre.get("auto_sync", True) is False:
+                            cycle_folder_file_counts[fp_pre] = 0
+                            continue
+                        rec = bool(entry_pre.get("recursive", True))
                         cnt = 0
-                    cycle_folder_file_counts[fp_pre] = cnt
-                    cycle_total_files += cnt
-                srv._project_sync_set_live(agent_id, proj_name,
-                    cycle_total_files=cycle_total_files,
-                    cycle_processed_files=0)
-
-                def _item_key(kind: str, ident: str) -> str:
-                    return f"{kind}:{ident}"
-
-                def _bump_processed(n: int):
-                    nonlocal cycle_processed_files
-                    cycle_processed_files += int(n or 0)
+                        try:
+                            if rec:
+                                for _root, _dirs, _files in os.walk(fp_pre):
+                                    cnt += len(_files)
+                            else:
+                                cnt = sum(
+                                    1 for e in os.scandir(fp_pre) if e.is_file())
+                        except OSError:
+                            cnt = 0
+                        cycle_folder_file_counts[fp_pre] = cnt
+                        cycle_total_files += cnt
                     srv._project_sync_set_live(agent_id, proj_name,
-                        cycle_processed_files=cycle_processed_files)
-
-                def _set_item(kind: str, ident: str, **fields):
-                    k = _item_key(kind, ident)
-                    cur = item_states.setdefault(k, {"kind": kind, "id": ident})
-                    cur.update(fields)
-                    # Push live snapshot so the UI sees state changes during
-                    # the cycle, not just after the project.json write.
-                    live = dict(srv._project_sync_live_status(agent_id, proj_name))
-                    items_live = dict(live.get("items") or {})
-                    items_live[k] = dict(cur)
-                    srv._project_sync_set_live(agent_id, proj_name,
-                        state="syncing", items=items_live,
-                        files_filed=files_filed,
                         cycle_total_files=cycle_total_files,
-                        cycle_processed_files=cycle_processed_files)
+                        cycle_processed_files=0)
 
-                # 1. Manual attachments — `ingested/` mined into project wing.
-                #    Each chunk file is named ingest-<src_hash>-<idx>.md;
-                #    we group by src_hash so each upload appears as one item.
-                ingested_dir = os.path.join(pdir, "ingested")
-                if os.path.isdir(ingested_dir):
-                    folders_seen += 1
-                    # Discover all unique source hashes in the folder so we
-                    # can mark each as "syncing" before mining begins.
-                    hashes: set[str] = set()
-                    try:
-                        for fn in os.listdir(ingested_dir):
-                            if fn.startswith("ingest-") and fn.endswith(".md"):
-                                parts_fn = fn.split("-", 2)
-                                if len(parts_fn) >= 2:
-                                    hashes.add(parts_fn[1])
-                    except OSError:
-                        pass
-                    for h in hashes:
-                        _set_item("attachment", h,
+                    def _item_key(kind: str, ident: str) -> str:
+                        return f"{kind}:{ident}"
+
+                    def _bump_processed(n: int):
+                        nonlocal cycle_processed_files
+                        cycle_processed_files += int(n or 0)
+                        srv._project_sync_set_live(agent_id, proj_name,
+                            cycle_processed_files=cycle_processed_files)
+
+                    def _set_item(kind: str, ident: str, **fields):
+                        k = _item_key(kind, ident)
+                        cur = item_states.setdefault(k, {"kind": kind, "id": ident})
+                        cur.update(fields)
+                        # Push live snapshot so the UI sees state changes during
+                        # the cycle, not just after the project.json write.
+                        live = dict(srv._project_sync_live_status(agent_id, proj_name))
+                        items_live = dict(live.get("items") or {})
+                        items_live[k] = dict(cur)
+                        srv._project_sync_set_live(agent_id, proj_name,
+                            state="syncing", items=items_live,
+                            files_filed=files_filed,
+                            cycle_total_files=cycle_total_files,
+                            cycle_processed_files=cycle_processed_files)
+
+                    # 1. Manual attachments — `ingested/` mined into project wing.
+                    #    Each chunk file is named ingest-<src_hash>-<idx>.md;
+                    #    we group by src_hash so each upload appears as one item.
+                    ingested_dir = os.path.join(pdir, "ingested")
+                    if os.path.isdir(ingested_dir):
+                        folders_seen += 1
+                        # Discover all unique source hashes in the folder so we
+                        # can mark each as "syncing" before mining begins.
+                        hashes: set[str] = set()
+                        try:
+                            for fn in os.listdir(ingested_dir):
+                                if fn.startswith("ingest-") and fn.endswith(".md"):
+                                    parts_fn = fn.split("-", 2)
+                                    if len(parts_fn) >= 2:
+                                        hashes.add(parts_fn[1])
+                        except OSError:
+                            pass
+                        for h in hashes:
+                            _set_item("attachment", h,
+                                state="syncing",
+                                last_run_started=started_at)
+                        if _ensure_mempalace_yaml(ingested_dir, wing):
+                            # PDF/DOCX → .md pre-mine pass. The /ingested
+                            # upload flow normally pre-chunks PDFs already,
+                            # but covering this branch makes the daemon
+                            # robust to direct file drops here too.
+                            if doc_convert is not None:
+                                if _run_id:
+                                    _sync_log.step_start(
+                                        chats_db_path, _run_id, "doc_convert",
+                                        folder=ingested_dir)
+                                try:
+                                    _stale_cnt = doc_convert.sweep_stale(
+                                        ingested_dir,
+                                        log_prefix="[project-sync.conv]")
+                                    _conv_res = doc_convert.convert_folder(
+                                        ingested_dir,
+                                        log_prefix="[project-sync.conv]",
+                                        use_markitdown=_conv_use_markitdown())
+                                    if _run_id:
+                                        _sync_log.step_finish(
+                                            chats_db_path, _run_id,
+                                            "doc_convert",
+                                            folder=ingested_dir,
+                                            converted=_conv_res.converted,
+                                            unchanged=_conv_res.skipped_unchanged,
+                                            failed=_conv_res.failed,
+                                            stale_removed=_stale_cnt,
+                                            seen_total=_conv_res.seen_total,
+                                            elapsed_s=round(_conv_res.elapsed_s, 2))
+                                except Exception as e:
+                                    print(f"[project-sync.conv] "
+                                          f"{ingested_dir}: "
+                                          f"{type(e).__name__}: {e}",
+                                          flush=True)
+                                    if _run_id:
+                                        _sync_log.step_finish(
+                                            chats_db_path, _run_id,
+                                            "doc_convert",
+                                            folder=ingested_dir,
+                                            errors=[str(e)])
+                            ingest_filed = 0
+                            ingest_err = ""
+                            if _run_id:
+                                _sync_log.step_start(
+                                    chats_db_path, _run_id, "indexing",
+                                    folder=ingested_dir)
+                            _index_t0 = time.time()
+                            buf = io.StringIO()
+                            try:
+                                with contextlib.redirect_stdout(buf), _palace_write_lock:
+                                    mp_miner.mine(
+                                        project_dir=ingested_dir,
+                                        palace_path=palace_path,
+                                        wing_override=wing,
+                                        agent="brain-project-sync",
+                                        respect_gitignore=False,
+                                    )
+                                for line in buf.getvalue().splitlines():
+                                    s = line.strip()
+                                    if s.startswith("Drawers filed"):
+                                        try:
+                                            ingest_filed = int(
+                                                s.split(":")[-1].strip().split()[0])
+                                        except Exception:
+                                            pass
+                                        break
+                            except SystemExit:
+                                pass
+                            except Exception as e:
+                                ingest_err = f"{type(e).__name__}: {e}"
+                                last_error = ingest_err
+                                print(f"[project-sync] {agent_id}/{proj_name} "
+                                      f"ingested: {ingest_err}", flush=True)
+                            if _run_id:
+                                _sync_log.step_finish(
+                                    chats_db_path, _run_id, "indexing",
+                                    folder=ingested_dir,
+                                    drawers_created=ingest_filed,
+                                    elapsed_s=round(time.time() - _index_t0, 2),
+                                    errors=[ingest_err] if ingest_err else [])
+                            files_filed += ingest_filed
+                            finished_at_attach = datetime.datetime.now(
+                                datetime.timezone.utc).isoformat()
+                            # Authoritative count per source: pull all wing
+                            # drawers whose source_file references the chunk
+                            # files belonging to this hash. Miner mines from
+                            # the chunk file, so source_file ends with
+                            # ingest-<hash>-<idx>.md.
+                            for h in hashes:
+                                cnt = _count_wing_drawers_by_source(
+                                    wing, f"ingest-{h}-")
+                                _set_item("attachment", h,
+                                    state=("error" if ingest_err else "indexed"),
+                                    last_run_finished=finished_at_attach,
+                                    drawers_filed=cnt,
+                                    error=ingest_err)
+                            # Mark every uploaded source as processed in the
+                            # cycle progress. Done as a batch since the miner
+                            # call covers them all in one pass.
+                            _bump_processed(len(hashes))
+                            # KG extraction post-pass for each ingested
+                            # attachment hash. Drawers carry source_file
+                            # like .../ingested/ingest-<hash>-<idx>.md, so
+                            # we can scope precisely per attachment.
+                            for h in hashes:
+                                if ingest_err:
+                                    continue
+                                _run_kg_for(
+                                    wing=wing,
+                                    source_prefix=os.path.join(
+                                        ingested_dir, f"ingest-{h}-"),
+                                    item_set_fn=_set_item,
+                                    item_kind="attachment", item_id=h)
+                                if _run_id:
+                                    _it_a = item_states.get(
+                                        _item_key("attachment", h)) or {}
+                                    _sync_log.step_update(
+                                        chats_db_path, _run_id, "kg",
+                                        folder=ingested_dir,
+                                        attachment_hash=h,
+                                        triples_this_cycle=_it_a.get("triples_last_cycle", 0),
+                                        triples_total=_it_a.get("triples_extracted", 0),
+                                        drawers_processed=_it_a.get("kg_drawers_processed", 0),
+                                        parse_errors=_it_a.get("kg_parse_errors", 0),
+                                        elapsed_s=_it_a.get("kg_elapsed_s", 0),
+                                        error=_it_a.get("kg_last_error", ""))
+                        else:
+                            for h in hashes:
+                                _set_item("attachment", h,
+                                    state="error",
+                                    error="failed to write mempalace.yaml")
+                            _bump_processed(len(hashes))
+
+                    # 1b. Project web URLs — fetched into pdir/web-urls/ as .md
+                    #     above (_sync_project_web_urls). Already markdown, so no
+                    #     convert pass — just mine + KG, same as ingested. Each URL
+                    #     is a `<slug>_<timestamp>.md` file (legacy: weburl-<hash>.md);
+                    #     mine the folder in one pass, then run KG scoped to it.
+                    if _weburl_folder and os.path.isdir(_weburl_folder):
+                        _wu_files = [fn for fn in os.listdir(_weburl_folder)
+                                     if fn.endswith(".md")
+                                     and (fn.startswith("weburl-") or "_" in fn)]
+                        if _wu_files and _ensure_mempalace_yaml(_weburl_folder, wing):
+                            folders_seen += 1
+                            _wu_err = ""
+                            if _run_id:
+                                _sync_log.step_start(chats_db_path, _run_id,
+                                                     "indexing", folder=_weburl_folder)
+                            _wu_t0 = time.time()
+                            _wu_filed = 0
+                            _wu_buf = io.StringIO()
+                            try:
+                                with contextlib.redirect_stdout(_wu_buf), _palace_write_lock:
+                                    mp_miner.mine(
+                                        project_dir=_weburl_folder,
+                                        palace_path=palace_path,
+                                        wing_override=wing,
+                                        agent="brain-project-sync",
+                                        respect_gitignore=False,
+                                    )
+                                for line in _wu_buf.getvalue().splitlines():
+                                    s = line.strip()
+                                    if s.startswith("Drawers filed"):
+                                        try:
+                                            _wu_filed = int(s.split(":")[-1].strip().split()[0])
+                                        except Exception:
+                                            pass
+                                        break
+                            except SystemExit:
+                                pass
+                            except Exception as e:
+                                _wu_err = f"{type(e).__name__}: {e}"
+                                last_error = _wu_err
+                                print(f"[project-sync] {agent_id}/{proj_name} "
+                                      f"web-urls: {_wu_err}", flush=True)
+                            if _run_id:
+                                _sync_log.step_finish(
+                                    chats_db_path, _run_id, "indexing",
+                                    folder=_weburl_folder,
+                                    drawers_created=_wu_filed,
+                                    elapsed_s=round(time.time() - _wu_t0, 2),
+                                    errors=[_wu_err] if _wu_err else [])
+                            files_filed += _wu_filed
+                            _bump_processed(len(_wu_files))
+                            if not _wu_err:
+                                _run_kg_for(
+                                    wing=wing,
+                                    source_prefix=os.path.realpath(_weburl_folder) + os.sep,
+                                    item_set_fn=_set_item,
+                                    item_kind="weburls", item_id="web-urls")
+
+                    # 2. User-specified input folders — each entry has its own
+                    #    mempalace.yaml, scanned recursively or top-level only.
+                    for entry in (project.get("input_folders") or []):
+                        # Cancel check between folders.
+                        if srv._project_sync_cancel_check(project_id):
+                            if _run_id:
+                                _sync_log.cancel_run(chats_db_path, _run_id)
+                            last_error = "cancelled"
+                            break
+                        folders_seen += 1
+                        fpath = entry.get("path", "")
+                        if not fpath:
+                            continue
+                        # Honor the per-folder auto_sync gate on scheduled cycles.
+                        # Manual "Sync now" overrides — the user is asking
+                        # explicitly. Update the item row so the UI shows the
+                        # paused state instead of a stale "syncing".
+                        if not is_manual and entry.get("auto_sync", True) is False:
+                            existing_drawers = (item_states.get(
+                                _item_key("folder", fpath)) or {}).get("drawers_filed", 0)
+                            _set_item("folder", fpath,
+                                state="paused",
+                                drawers_filed=existing_drawers,
+                                error="")
+                            continue
+                        if not os.path.isdir(fpath):
+                            _set_item("folder", fpath,
+                                state="error",
+                                error="folder not found",
+                                last_run_started=started_at)
+                            _bump_processed(cycle_folder_file_counts.get(fpath, 0))
+                            continue
+                        _set_item("folder", fpath,
                             state="syncing",
-                            last_run_started=started_at)
-                    if _ensure_mempalace_yaml(ingested_dir, wing):
-                        # PDF/DOCX → .md pre-mine pass. The /ingested
-                        # upload flow normally pre-chunks PDFs already,
-                        # but covering this branch makes the daemon
-                        # robust to direct file drops here too.
+                            last_run_started=started_at,
+                            error="")
+                        # Tell live status which folder we're chewing on.
+                        srv._project_sync_set_live(agent_id, proj_name,
+                            state="syncing", current_folder=fpath,
+                            files_filed=files_filed)
+                        if not _ensure_mempalace_yaml(fpath, wing):
+                            _set_item("folder", fpath,
+                                state="error",
+                                error="failed to write mempalace.yaml")
+                            _bump_processed(cycle_folder_file_counts.get(fpath, 0))
+                            continue
+                        # Cap the number of top-level entries to avoid runaway
+                        # walks on accidentally-pointed-at home dirs etc.
+                        try:
+                            top_count = sum(1 for _ in os.scandir(fpath))
+                            if top_count > max_files_per_folder:
+                                msg = (f"folder has {top_count} entries "
+                                       f"(>{max_files_per_folder} cap) — skipped")
+                                last_error = msg
+                                _set_item("folder", fpath,
+                                    state="error", error=msg)
+                                print(f"[project-sync] {agent_id}/{proj_name} "
+                                      f"{fpath}: {msg}", flush=True)
+                                _bump_processed(cycle_folder_file_counts.get(fpath, 0))
+                                continue
+                        except OSError as e:
+                            _set_item("folder", fpath,
+                                state="error", error=str(e))
+                            _bump_processed(cycle_folder_file_counts.get(fpath, 0))
+                            continue
+                        folder_filed = 0
+                        folder_err = ""
+                        # PDF/DOCX → .md pre-mine pass. Without this the
+                        # MemPalace miner silently skips binary documents
+                        # (its READABLE_EXTENSIONS list is text-only).
+                        # Idempotent — only re-converts when source mtime+size
+                        # changes. Failures don't abort the cycle; per-file
+                        # errors are logged and the rest of the folder still
+                        # mines.
                         if doc_convert is not None:
                             if _run_id:
                                 _sync_log.step_start(
                                     chats_db_path, _run_id, "doc_convert",
-                                    folder=ingested_dir)
+                                    folder=fpath)
                             try:
-                                _stale_cnt = doc_convert.sweep_stale(
-                                    ingested_dir,
-                                    log_prefix="[project-sync.conv]")
-                                _conv_res = doc_convert.convert_folder(
-                                    ingested_dir,
-                                    log_prefix="[project-sync.conv]",
+                                _stale_cnt_f = doc_convert.sweep_stale(
+                                    fpath, log_prefix="[project-sync.conv]")
+                                _conv_res_f = doc_convert.convert_folder(
+                                    fpath, log_prefix="[project-sync.conv]",
                                     use_markitdown=_conv_use_markitdown())
                                 if _run_id:
                                     _sync_log.step_finish(
-                                        chats_db_path, _run_id,
-                                        "doc_convert",
-                                        folder=ingested_dir,
-                                        converted=_conv_res.converted,
-                                        unchanged=_conv_res.skipped_unchanged,
-                                        failed=_conv_res.failed,
-                                        stale_removed=_stale_cnt,
-                                        seen_total=_conv_res.seen_total,
-                                        elapsed_s=round(_conv_res.elapsed_s, 2))
+                                        chats_db_path, _run_id, "doc_convert",
+                                        folder=fpath,
+                                        converted=_conv_res_f.converted,
+                                        unchanged=_conv_res_f.skipped_unchanged,
+                                        failed=_conv_res_f.failed,
+                                        stale_removed=_stale_cnt_f,
+                                        seen_total=_conv_res_f.seen_total,
+                                        elapsed_s=round(_conv_res_f.elapsed_s, 2))
                             except Exception as e:
-                                print(f"[project-sync.conv] "
-                                      f"{ingested_dir}: "
-                                      f"{type(e).__name__}: {e}",
-                                      flush=True)
+                                print(f"[project-sync.conv] {fpath}: "
+                                      f"{type(e).__name__}: {e}", flush=True)
                                 if _run_id:
                                     _sync_log.step_finish(
-                                        chats_db_path, _run_id,
-                                        "doc_convert",
-                                        folder=ingested_dir,
-                                        errors=[str(e)])
-                        ingest_filed = 0
-                        ingest_err = ""
+                                        chats_db_path, _run_id, "doc_convert",
+                                        folder=fpath, errors=[str(e)])
                         if _run_id:
                             _sync_log.step_start(
                                 chats_db_path, _run_id, "indexing",
-                                folder=ingested_dir)
-                        _index_t0 = time.time()
+                                folder=fpath)
+                        _index_t0_f = time.time()
                         buf = io.StringIO()
                         try:
-                            with contextlib.redirect_stdout(buf):
+                            with contextlib.redirect_stdout(buf), _palace_write_lock:
                                 mp_miner.mine(
-                                    project_dir=ingested_dir,
+                                    project_dir=fpath,
                                     palace_path=palace_path,
                                     wing_override=wing,
                                     agent="brain-project-sync",
-                                    respect_gitignore=False,
+                                    respect_gitignore=True,
                                 )
                             for line in buf.getvalue().splitlines():
                                 s = line.strip()
                                 if s.startswith("Drawers filed"):
                                     try:
-                                        ingest_filed = int(
+                                        folder_filed = int(
                                             s.split(":")[-1].strip().split()[0])
                                     except Exception:
                                         pass
@@ -1721,406 +2052,167 @@ def _project_sync_loop(srv):
                         except SystemExit:
                             pass
                         except Exception as e:
-                            ingest_err = f"{type(e).__name__}: {e}"
-                            last_error = ingest_err
+                            folder_err = f"{type(e).__name__}: {e}"
+                            last_error = folder_err
                             print(f"[project-sync] {agent_id}/{proj_name} "
-                                  f"ingested: {ingest_err}", flush=True)
+                                  f"{fpath}: {folder_err}", flush=True)
                         if _run_id:
                             _sync_log.step_finish(
                                 chats_db_path, _run_id, "indexing",
-                                folder=ingested_dir,
-                                drawers_created=ingest_filed,
-                                elapsed_s=round(time.time() - _index_t0, 2),
-                                errors=[ingest_err] if ingest_err else [])
-                        files_filed += ingest_filed
-                        finished_at_attach = datetime.datetime.now(
-                            datetime.timezone.utc).isoformat()
-                        # Authoritative count per source: pull all wing
-                        # drawers whose source_file references the chunk
-                        # files belonging to this hash. Miner mines from
-                        # the chunk file, so source_file ends with
-                        # ingest-<hash>-<idx>.md.
-                        for h in hashes:
-                            cnt = _count_wing_drawers_by_source(
-                                wing, f"ingest-{h}-")
-                            _set_item("attachment", h,
-                                state=("error" if ingest_err else "indexed"),
-                                last_run_finished=finished_at_attach,
-                                drawers_filed=cnt,
-                                error=ingest_err)
-                        # Mark every uploaded source as processed in the
-                        # cycle progress. Done as a batch since the miner
-                        # call covers them all in one pass.
-                        _bump_processed(len(hashes))
-                        # KG extraction post-pass for each ingested
-                        # attachment hash. Drawers carry source_file
-                        # like .../ingested/ingest-<hash>-<idx>.md, so
-                        # we can scope precisely per attachment.
-                        for h in hashes:
-                            if ingest_err:
-                                continue
+                                folder=fpath,
+                                drawers_created=folder_filed,
+                                elapsed_s=round(time.time() - _index_t0_f, 2),
+                                errors=[folder_err] if folder_err else [])
+                        files_filed += folder_filed
+                        # Authoritative cumulative drawer count: source_file
+                        # in the wing always startswith the absolute folder
+                        # path for files mined from this folder.
+                        cum = _count_wing_drawers_by_source(wing, fpath)
+                        _set_item("folder", fpath,
+                            state=("error" if folder_err else "indexed"),
+                            last_run_finished=datetime.datetime.now(
+                                datetime.timezone.utc).isoformat(),
+                            drawers_filed=cum,
+                            error=folder_err)
+                        # Bump cycle progress by the file count we pre-scanned
+                        # for this folder. Slight overshoot is fine — see
+                        # pre-scan comment.
+                        _bump_processed(cycle_folder_file_counts.get(fpath, 0))
+                        # KG extraction post-pass for this input folder.
+                        # source_prefix is the absolute folder path; the
+                        # extractor's per-drawer cursor makes re-runs cheap
+                        # (already-processed drawers skipped in O(1)).
+                        if not folder_err:
                             _run_kg_for(
-                                wing=wing,
-                                source_prefix=os.path.join(
-                                    ingested_dir, f"ingest-{h}-"),
+                                wing=wing, source_prefix=fpath,
                                 item_set_fn=_set_item,
-                                item_kind="attachment", item_id=h)
+                                item_kind="folder", item_id=fpath)
                             if _run_id:
-                                _it_a = item_states.get(
-                                    _item_key("attachment", h)) or {}
+                                _it = item_states.get(_item_key("folder", fpath)) or {}
                                 _sync_log.step_update(
                                     chats_db_path, _run_id, "kg",
-                                    folder=ingested_dir,
-                                    attachment_hash=h,
-                                    triples_this_cycle=_it_a.get("triples_last_cycle", 0),
-                                    triples_total=_it_a.get("triples_extracted", 0),
-                                    drawers_processed=_it_a.get("kg_drawers_processed", 0),
-                                    parse_errors=_it_a.get("kg_parse_errors", 0),
-                                    elapsed_s=_it_a.get("kg_elapsed_s", 0),
-                                    error=_it_a.get("kg_last_error", ""))
-                    else:
-                        for h in hashes:
-                            _set_item("attachment", h,
-                                state="error",
-                                error="failed to write mempalace.yaml")
-                        _bump_processed(len(hashes))
+                                    folder=fpath,
+                                    triples_this_cycle=_it.get("triples_last_cycle", 0),
+                                    triples_total=_it.get("triples_extracted", 0),
+                                    drawers_processed=_it.get("kg_drawers_processed", 0),
+                                    parse_errors=_it.get("kg_parse_errors", 0),
+                                    elapsed_s=_it.get("kg_elapsed_s", 0),
+                                    error=_it.get("kg_last_error", ""))
 
-                # 1b. Project web URLs — fetched into pdir/web-urls/ as .md
-                #     above (_sync_project_web_urls). Already markdown, so no
-                #     convert pass — just mine + KG, same as ingested. Each URL
-                #     is a `<slug>_<timestamp>.md` file (legacy: weburl-<hash>.md);
-                #     mine the folder in one pass, then run KG scoped to it.
-                if _weburl_folder and os.path.isdir(_weburl_folder):
-                    _wu_files = [fn for fn in os.listdir(_weburl_folder)
-                                 if fn.endswith(".md")
-                                 and (fn.startswith("weburl-") or "_" in fn)]
-                    if _wu_files and _ensure_mempalace_yaml(_weburl_folder, wing):
-                        folders_seen += 1
-                        _wu_err = ""
-                        if _run_id:
-                            _sync_log.step_start(chats_db_path, _run_id,
-                                                 "indexing", folder=_weburl_folder)
-                        _wu_t0 = time.time()
-                        _wu_filed = 0
-                        _wu_buf = io.StringIO()
-                        try:
-                            with contextlib.redirect_stdout(_wu_buf):
-                                mp_miner.mine(
-                                    project_dir=_weburl_folder,
-                                    palace_path=palace_path,
-                                    wing_override=wing,
-                                    agent="brain-project-sync",
-                                    respect_gitignore=False,
-                                )
-                            for line in _wu_buf.getvalue().splitlines():
-                                s = line.strip()
-                                if s.startswith("Drawers filed"):
-                                    try:
-                                        _wu_filed = int(s.split(":")[-1].strip().split()[0])
-                                    except Exception:
-                                        pass
-                                    break
-                        except SystemExit:
-                            pass
-                        except Exception as e:
-                            _wu_err = f"{type(e).__name__}: {e}"
-                            last_error = _wu_err
-                            print(f"[project-sync] {agent_id}/{proj_name} "
-                                  f"web-urls: {_wu_err}", flush=True)
-                        if _run_id:
-                            _sync_log.step_finish(
-                                chats_db_path, _run_id, "indexing",
-                                folder=_weburl_folder,
-                                drawers_created=_wu_filed,
-                                elapsed_s=round(time.time() - _wu_t0, 2),
-                                errors=[_wu_err] if _wu_err else [])
-                        files_filed += _wu_filed
-                        _bump_processed(len(_wu_files))
-                        if not _wu_err:
-                            _run_kg_for(
-                                wing=wing,
-                                source_prefix=os.path.realpath(_weburl_folder) + os.sep,
-                                item_set_fn=_set_item,
-                                item_kind="weburls", item_id="web-urls")
-
-                # 2. User-specified input folders — each entry has its own
-                #    mempalace.yaml, scanned recursively or top-level only.
-                for entry in (project.get("input_folders") or []):
-                    # Cancel check between folders.
-                    if srv._project_sync_cancel_check(project_id):
-                        if _run_id:
-                            _sync_log.cancel_run(chats_db_path, _run_id)
-                        last_error = "cancelled"
-                        break
-                    folders_seen += 1
-                    fpath = entry.get("path", "")
-                    if not fpath:
-                        continue
-                    # Honor the per-folder auto_sync gate on scheduled cycles.
-                    # Manual "Sync now" overrides — the user is asking
-                    # explicitly. Update the item row so the UI shows the
-                    # paused state instead of a stale "syncing".
-                    if not is_manual and entry.get("auto_sync", True) is False:
-                        existing_drawers = (item_states.get(
-                            _item_key("folder", fpath)) or {}).get("drawers_filed", 0)
-                        _set_item("folder", fpath,
-                            state="paused",
-                            drawers_filed=existing_drawers,
-                            error="")
-                        continue
-                    if not os.path.isdir(fpath):
-                        _set_item("folder", fpath,
-                            state="error",
-                            error="folder not found",
-                            last_run_started=started_at)
-                        _bump_processed(cycle_folder_file_counts.get(fpath, 0))
-                        continue
-                    _set_item("folder", fpath,
-                        state="syncing",
-                        last_run_started=started_at,
-                        error="")
-                    # Tell live status which folder we're chewing on.
-                    srv._project_sync_set_live(agent_id, proj_name,
-                        state="syncing", current_folder=fpath,
-                        files_filed=files_filed)
-                    if not _ensure_mempalace_yaml(fpath, wing):
-                        _set_item("folder", fpath,
-                            state="error",
-                            error="failed to write mempalace.yaml")
-                        _bump_processed(cycle_folder_file_counts.get(fpath, 0))
-                        continue
-                    # Cap the number of top-level entries to avoid runaway
-                    # walks on accidentally-pointed-at home dirs etc.
-                    try:
-                        top_count = sum(1 for _ in os.scandir(fpath))
-                        if top_count > max_files_per_folder:
-                            msg = (f"folder has {top_count} entries "
-                                   f"(>{max_files_per_folder} cap) — skipped")
-                            last_error = msg
-                            _set_item("folder", fpath,
-                                state="error", error=msg)
-                            print(f"[project-sync] {agent_id}/{proj_name} "
-                                  f"{fpath}: {msg}", flush=True)
-                            _bump_processed(cycle_folder_file_counts.get(fpath, 0))
-                            continue
-                    except OSError as e:
-                        _set_item("folder", fpath,
-                            state="error", error=str(e))
-                        _bump_processed(cycle_folder_file_counts.get(fpath, 0))
-                        continue
-                    folder_filed = 0
-                    folder_err = ""
-                    # PDF/DOCX → .md pre-mine pass. Without this the
-                    # MemPalace miner silently skips binary documents
-                    # (its READABLE_EXTENSIONS list is text-only).
-                    # Idempotent — only re-converts when source mtime+size
-                    # changes. Failures don't abort the cycle; per-file
-                    # errors are logged and the rest of the folder still
-                    # mines.
-                    if doc_convert is not None:
+                    # Optional: regenerate closets via LLM for richer ranking.
+                    # Runs once per project cycle after all folders are mined
+                    # and KG-extracted. Opt-in via mempalace.kg.regenerate_closets;
+                    # reuses the KG model so a single GUI choice covers both.
+                    if last_error != "cancelled":
                         if _run_id:
                             _sync_log.step_start(
-                                chats_db_path, _run_id, "doc_convert",
-                                folder=fpath)
-                        try:
-                            _stale_cnt_f = doc_convert.sweep_stale(
-                                fpath, log_prefix="[project-sync.conv]")
-                            _conv_res_f = doc_convert.convert_folder(
-                                fpath, log_prefix="[project-sync.conv]",
-                                use_markitdown=_conv_use_markitdown())
-                            if _run_id:
-                                _sync_log.step_finish(
-                                    chats_db_path, _run_id, "doc_convert",
-                                    folder=fpath,
-                                    converted=_conv_res_f.converted,
-                                    unchanged=_conv_res_f.skipped_unchanged,
-                                    failed=_conv_res_f.failed,
-                                    stale_removed=_stale_cnt_f,
-                                    seen_total=_conv_res_f.seen_total,
-                                    elapsed_s=round(_conv_res_f.elapsed_s, 2))
-                        except Exception as e:
-                            print(f"[project-sync.conv] {fpath}: "
-                                  f"{type(e).__name__}: {e}", flush=True)
-                            if _run_id:
-                                _sync_log.step_finish(
-                                    chats_db_path, _run_id, "doc_convert",
-                                    folder=fpath, errors=[str(e)])
-                    if _run_id:
-                        _sync_log.step_start(
-                            chats_db_path, _run_id, "indexing",
-                            folder=fpath)
-                    _index_t0_f = time.time()
-                    buf = io.StringIO()
-                    try:
-                        with contextlib.redirect_stdout(buf):
-                            mp_miner.mine(
-                                project_dir=fpath,
-                                palace_path=palace_path,
-                                wing_override=wing,
-                                agent="brain-project-sync",
-                                respect_gitignore=True,
-                            )
-                        for line in buf.getvalue().splitlines():
-                            s = line.strip()
-                            if s.startswith("Drawers filed"):
-                                try:
-                                    folder_filed = int(
-                                        s.split(":")[-1].strip().split()[0])
-                                except Exception:
-                                    pass
-                                break
-                    except SystemExit:
-                        pass
-                    except Exception as e:
-                        folder_err = f"{type(e).__name__}: {e}"
-                        last_error = folder_err
-                        print(f"[project-sync] {agent_id}/{proj_name} "
-                              f"{fpath}: {folder_err}", flush=True)
-                    if _run_id:
-                        _sync_log.step_finish(
-                            chats_db_path, _run_id, "indexing",
-                            folder=fpath,
-                            drawers_created=folder_filed,
-                            elapsed_s=round(time.time() - _index_t0_f, 2),
-                            errors=[folder_err] if folder_err else [])
-                    files_filed += folder_filed
-                    # Authoritative cumulative drawer count: source_file
-                    # in the wing always startswith the absolute folder
-                    # path for files mined from this folder.
-                    cum = _count_wing_drawers_by_source(wing, fpath)
-                    _set_item("folder", fpath,
-                        state=("error" if folder_err else "indexed"),
-                        last_run_finished=datetime.datetime.now(
-                            datetime.timezone.utc).isoformat(),
-                        drawers_filed=cum,
-                        error=folder_err)
-                    # Bump cycle progress by the file count we pre-scanned
-                    # for this folder. Slight overshoot is fine — see
-                    # pre-scan comment.
-                    _bump_processed(cycle_folder_file_counts.get(fpath, 0))
-                    # KG extraction post-pass for this input folder.
-                    # source_prefix is the absolute folder path; the
-                    # extractor's per-drawer cursor makes re-runs cheap
-                    # (already-processed drawers skipped in O(1)).
-                    if not folder_err:
-                        _run_kg_for(
-                            wing=wing, source_prefix=fpath,
-                            item_set_fn=_set_item,
-                            item_kind="folder", item_id=fpath)
+                                chats_db_path, _run_id, "closet_rerank")
+                        _closet_out = _run_closet_regen_for(wing) or {}
                         if _run_id:
-                            _it = item_states.get(_item_key("folder", fpath)) or {}
-                            _sync_log.step_update(
-                                chats_db_path, _run_id, "kg",
-                                folder=fpath,
-                                triples_this_cycle=_it.get("triples_last_cycle", 0),
-                                triples_total=_it.get("triples_extracted", 0),
-                                drawers_processed=_it.get("kg_drawers_processed", 0),
-                                parse_errors=_it.get("kg_parse_errors", 0),
-                                elapsed_s=_it.get("kg_elapsed_s", 0),
-                                error=_it.get("kg_last_error", ""))
+                            _sync_log.step_finish(
+                                chats_db_path, _run_id, "closet_rerank",
+                                sources_seen=_closet_out.get("sources_seen", 0),
+                                sources_stale=_closet_out.get("sources_stale", 0),
+                                regen_triggered=_closet_out.get("regen_triggered", False),
+                                elapsed_s=round(_closet_out.get("elapsed_s", 0), 2),
+                                errors=[_closet_out["error"]]
+                                    if _closet_out.get("error") else [])
 
-                # Optional: regenerate closets via LLM for richer ranking.
-                # Runs once per project cycle after all folders are mined
-                # and KG-extracted. Opt-in via mempalace.kg.regenerate_closets;
-                # reuses the KG model so a single GUI choice covers both.
-                if last_error != "cancelled":
-                    if _run_id:
-                        _sync_log.step_start(
-                            chats_db_path, _run_id, "closet_rerank")
-                    _closet_out = _run_closet_regen_for(wing) or {}
-                    if _run_id:
-                        _sync_log.step_finish(
-                            chats_db_path, _run_id, "closet_rerank",
-                            sources_seen=_closet_out.get("sources_seen", 0),
-                            sources_stale=_closet_out.get("sources_stale", 0),
-                            regen_triggered=_closet_out.get("regen_triggered", False),
-                            elapsed_s=round(_closet_out.get("elapsed_s", 0), 2),
-                            errors=[_closet_out["error"]]
-                                if _closet_out.get("error") else [])
-
-                finished_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                final_state = ("cancelled" if last_error == "cancelled"
-                               else "error" if last_error and files_filed == 0
-                               else "idle")
-                # Authoritative total: query MemPalace for everything in
-                # the project's wing. Survives dedup-only cycles unchanged.
-                total_indexed = _count_wing_drawers_total(wing)
-                # Distinct source-file count — what the user reads as
-                # "how many files are indexed?" (a single PDF chunks into
-                # many drawers, so total_indexed alone is misleading).
-                total_files = _count_wing_files_total(wing)
-                # Authoritative total triples for this project (sum across
-                # all input folders in the wing). Cheap SQL — one COUNT
-                # over a prefix-scoped slice of the KG.
-                total_triples = 0
-                if kg_extract is not None:
-                    def _norm_p2(p):
+                    finished_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    final_state = ("cancelled" if last_error == "cancelled"
+                                   else "error" if last_error and files_filed == 0
+                                   else "idle")
+                    # Authoritative total: query MemPalace for everything in
+                    # the project's wing. Survives dedup-only cycles unchanged.
+                    total_indexed = _count_wing_drawers_total(wing)
+                    # Distinct source-file count — what the user reads as
+                    # "how many files are indexed?" (a single PDF chunks into
+                    # many drawers, so total_indexed alone is misleading).
+                    total_files = _count_wing_files_total(wing)
+                    # Authoritative total triples for this project (sum across
+                    # all input folders in the wing). Cheap SQL — one COUNT
+                    # over a prefix-scoped slice of the KG.
+                    total_triples = 0
+                    if kg_extract is not None:
+                        def _norm_p2(p):
+                            try:
+                                r = os.path.realpath(p)
+                            except OSError:
+                                r = p
+                            if r and not r.endswith(os.sep):
+                                r += os.sep
+                            return r
                         try:
-                            r = os.path.realpath(p)
-                        except OSError:
-                            r = p
-                        if r and not r.endswith(os.sep):
-                            r += os.sep
-                        return r
+                            stats = kg_extract.kg_stats_for_wing(
+                                palace_path=palace_path,
+                                source_prefix=_norm_p2(pdir),
+                                adapter_name="brain-project-kg")
+                            total_triples = int(stats.get("triples", 0))
+                            # Also accumulate triples reached via input-folder
+                            # source files outside pdir.
+                            pdir_real = _norm_p2(pdir)
+                            for entry in (project.get("input_folders") or []):
+                                fp = entry.get("path") or ""
+                                fp_real = _norm_p2(fp) if fp else ""
+                                if fp_real and not fp_real.startswith(pdir_real):
+                                    s2 = kg_extract.kg_stats_for_wing(
+                                        palace_path=palace_path,
+                                        source_prefix=fp_real,
+                                        adapter_name="brain-project-kg")
+                                    total_triples += int(s2.get("triples", 0))
+                        except Exception as e:
+                            print(f"[project-sync] kg stats failed "
+                                  f"{agent_id}/{proj_name}: "
+                                  f"{type(e).__name__}: {e}", flush=True)
+                    sync_row = {
+                        "state": final_state,
+                        "last_run_started": started_at,
+                        "last_run_finished": finished_at,
+                        "last_triggered_by": _trigger,
+                        "last_files_filed": files_filed,  # delta this cycle
+                        "total_indexed": total_indexed,    # cumulative drawers
+                        "total_files": total_files,        # cumulative files
+                        "total_triples": total_triples,    # KG triples in wing
+                        "last_folders_seen": folders_seen,
+                        "last_error": last_error,
+                        "items": item_states,
+                    }
                     try:
-                        stats = kg_extract.kg_stats_for_wing(
-                            palace_path=palace_path,
-                            source_prefix=_norm_p2(pdir),
-                            adapter_name="brain-project-kg")
-                        total_triples = int(stats.get("triples", 0))
-                        # Also accumulate triples reached via input-folder
-                        # source files outside pdir.
-                        pdir_real = _norm_p2(pdir)
-                        for entry in (project.get("input_folders") or []):
-                            fp = entry.get("path") or ""
-                            fp_real = _norm_p2(fp) if fp else ""
-                            if fp_real and not fp_real.startswith(pdir_real):
-                                s2 = kg_extract.kg_stats_for_wing(
-                                    palace_path=palace_path,
-                                    source_prefix=fp_real,
-                                    adapter_name="brain-project-kg")
-                                total_triples += int(s2.get("triples", 0))
+                        engine.ProjectManager.update_project(agent_id, proj_name, {
+                            "sync_status": sync_row,
+                            "input_folders_last_scan": finished_at,
+                        })
                     except Exception as e:
-                        print(f"[project-sync] kg stats failed "
-                              f"{agent_id}/{proj_name}: "
+                        print(f"[project-sync] persist failed {agent_id}/{proj_name}: "
                               f"{type(e).__name__}: {e}", flush=True)
-                sync_row = {
-                    "state": final_state,
-                    "last_run_started": started_at,
-                    "last_run_finished": finished_at,
-                    "last_triggered_by": _trigger,
-                    "last_files_filed": files_filed,  # delta this cycle
-                    "total_indexed": total_indexed,    # cumulative drawers
-                    "total_files": total_files,        # cumulative files
-                    "total_triples": total_triples,    # KG triples in wing
-                    "last_folders_seen": folders_seen,
-                    "last_error": last_error,
-                    "items": item_states,
-                }
-                try:
-                    engine.ProjectManager.update_project(agent_id, proj_name, {
-                        "sync_status": sync_row,
-                        "input_folders_last_scan": finished_at,
-                    })
-                except Exception as e:
-                    print(f"[project-sync] persist failed {agent_id}/{proj_name}: "
-                          f"{type(e).__name__}: {e}", flush=True)
-                if _run_id and final_state != "cancelled":
-                    _sync_log.finish_run(chats_db_path, _run_id, final_state, {
-                        "total_files": total_files,
-                        "total_indexed": total_indexed,
-                        "total_triples": total_triples,
-                        "files_filed_this_cycle": files_filed,
-                        "folders_seen": folders_seen,
-                        "final_state": final_state,
-                        "elapsed_s": round(
-                            time.time() - (
-                                _sync_log.get_run(chats_db_path, _run_id) or {}
-                            ).get("started_at", time.time()), 1),
-                        "errors": [last_error] if last_error else [],
-                    })
-                srv._project_sync_clear_live(agent_id, proj_name)
-                cycle_filed += files_filed
+                    if _run_id and final_state != "cancelled":
+                        _sync_log.finish_run(chats_db_path, _run_id, final_state, {
+                            "total_files": total_files,
+                            "total_indexed": total_indexed,
+                            "total_triples": total_triples,
+                            "files_filed_this_cycle": files_filed,
+                            "folders_seen": folders_seen,
+                            "final_state": final_state,
+                            "elapsed_s": round(
+                                time.time() - (
+                                    _sync_log.get_run(chats_db_path, _run_id) or {}
+                                ).get("started_at", time.time()), 1),
+                            "errors": [last_error] if last_error else [],
+                        })
+                    srv._project_sync_clear_live(agent_id, proj_name)
+                    cycle_filed += files_filed
+                except Exception as _pe:
+                    # Per-project isolation: one project's unhandled error must not
+                    # starve every project after it for the whole cycle interval.
+                    # Cheap sub-steps inside already guard themselves; this is the
+                    # backstop so the loop always advances to the next project.
+                    print(f"[project-sync] project error {agent_id}/{proj_name}: "
+                          f"{type(_pe).__name__}: {_pe}", flush=True)
+                    try:
+                        srv._project_sync_clear_live(agent_id, proj_name)
+                    except Exception:
+                        pass
+                    continue
 
             print(f"[project-sync] cycle: filed={cycle_filed} "
                   f"projects={len(pairs)} requested={len(requested)}", flush=True)

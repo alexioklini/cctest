@@ -109,12 +109,22 @@ _mempalace_config_cache_time = 0.0
 _mempalace_rebuild_lock = threading.Lock()
 _mempalace_last_rebuild: dict = {}  # palace_path -> monotonic ts of last rebuild
 _MEMPALACE_REBUILD_COOLDOWN_S = 120.0
+# Shorter cooldown after a FAILED rebuild so a corrected/different recovery
+# path (or a transient condition clearing) can re-attempt, rather than blacking
+# out retrieval for the full 2-minute success-cooldown.
+_MEMPALACE_REBUILD_FAIL_COOLDOWN_S = 15.0
 # Substrings that mark a wedged HNSW segment (vs. an ordinary query error).
+# Tightened (v9.60.4): the old set included `"hnsw"` (matches benign
+# hnsw:space / num_threads config-mismatch errors), bare `"internal error"`
+# (matches transient SQLITE_BUSY / disk errors), and a DEAD `"nothing found
+# for"` marker (nothing emits it; its name invited wiring empty-results →
+# rebuild, which would blast every legitimately-empty wing). Now only the two
+# verified segment-corruption signatures: the milder "error finding id" class
+# (recoverable in-process by rebuild_index) and the #1308 "failed to apply
+# logs to the hnsw segment" class (needs the sqlite-bypass rebuild).
 _MEMPALACE_HNSW_CORRUPTION_MARKERS = (
     "error finding id",
-    "internal error",
-    "hnsw",
-    "nothing found for",
+    "failed to apply logs to the hnsw segment",
 )
 
 
@@ -125,31 +135,114 @@ def _is_hnsw_corruption(err_text: str) -> bool:
     return any(m in t for m in _MEMPALACE_HNSW_CORRUPTION_MARKERS)
 
 
+def _rebuild_via_sqlite_swap(palace_path: str, _log) -> bool:
+    """Recover the #1308 corruption class (every chroma read raises, sqlite
+    intact) WITHOUT the in-place `clear_system_cache()` that would invalidate
+    every live PersistentClient the daemons hold (the package's own warning).
+
+    Strategy: rebuild_from_sqlite CROSS-PALACE into a sibling temp dir (no cache
+    clear — see repair.py warning, cross-palace use is safe), verify it has rows,
+    then atomically swap it in (rename old aside, rename new into place). The
+    next get_collection in any thread opens a fresh client against the swapped
+    dir. Returns True only on a verified non-empty rebuild."""
+    import os as _os
+    import shutil as _shutil
+    from mempalace import repair as _mp_repair
+    parent = _os.path.dirname(palace_path.rstrip("/")) or "."
+    base = _os.path.basename(palace_path.rstrip("/"))
+    tmp_dest = _os.path.join(parent, f".{base}.rebuild-tmp")
+    aside = _os.path.join(parent, f"{base}.pre-sqlite-rebuild")
+    # Clean any leftover temp from a prior interrupted attempt.
+    if _os.path.exists(tmp_dest):
+        _shutil.rmtree(tmp_dest, ignore_errors=True)
+    try:
+        counts = _mp_repair.rebuild_from_sqlite(palace_path, tmp_dest,
+                                                archive_existing_dest=False)
+    except Exception as _e:
+        _log.error("[mempalace] rebuild_from_sqlite failed for %s: %s: %s",
+                   palace_path, type(_e).__name__, _e)
+        _shutil.rmtree(tmp_dest, ignore_errors=True)
+        return False
+    # `{}` = a validation refusal; a real rebuild returns one key per collection.
+    if not counts:
+        _log.error("[mempalace] rebuild_from_sqlite refused (empty result) for %s", palace_path)
+        _shutil.rmtree(tmp_dest, ignore_errors=True)
+        return False
+    # Verify the rebuilt palace actually has the drawers (non-empty) — a
+    # silently-empty "success" would make the wing look empty, the exact symptom
+    # this recovery exists to prevent.
+    try:
+        drawer_rows = _mp_repair.sqlite_drawer_count(palace_path)
+    except Exception:
+        drawer_rows = None
+    if drawer_rows and max(counts.values(), default=0) <= 0:
+        _log.error("[mempalace] rebuilt palace is empty but sqlite had %s drawers — aborting swap",
+                   drawer_rows)
+        _shutil.rmtree(tmp_dest, ignore_errors=True)
+        return False
+    # Atomic-ish swap: move the (corrupt) live dir aside, move the rebuilt dir in.
+    if _os.path.exists(aside):
+        _shutil.rmtree(aside, ignore_errors=True)
+    try:
+        _os.rename(palace_path, aside)
+        _os.rename(tmp_dest, palace_path)
+    except OSError as _se:
+        _log.error("[mempalace] swap failed for %s: %s — attempting to restore", palace_path, _se)
+        # Best-effort restore the original so we don't leave the palace missing.
+        if not _os.path.exists(palace_path) and _os.path.exists(aside):
+            try:
+                _os.rename(aside, palace_path)
+            except OSError:
+                pass
+        _shutil.rmtree(tmp_dest, ignore_errors=True)
+        return False
+    _log.warning("[mempalace] sqlite-rebuild swap complete for %s (old kept at %s)", palace_path, aside)
+    return True
+
+
 def _try_rebuild_palace(palace_path: str) -> bool:
-    """Rebuild the palace's HNSW index from the surviving sqlite data, at most
-    once per cooldown window across all threads. Returns True if a rebuild ran
-    (so the caller may retry the query), False if skipped (cooldown / failure).
-    Never raises — recovery must not turn a retrieval error into a crash."""
+    """Recover a wedged HNSW segment, at most once per cooldown window across all
+    threads. Returns True if a rebuild ran AND verified (caller may retry the
+    query), False if skipped/failed. Never raises — recovery must not turn a
+    retrieval error into a crash.
+
+    Two-tier: (1) the legacy in-process `rebuild_index` recovers the milder
+    "error finding id" class (chroma reads still work). (2) On its failure —
+    which is the COMMON case for the #1308 "failed to apply logs" class, where
+    rebuild_index's own first `col.count()` raises — fall back to a cross-palace
+    `rebuild_from_sqlite` + atomic swap that bypasses the chroma read path.
+    A FAILED rebuild holds only a short cooldown so a corrected path can retry."""
     import time as _time
     now = _time.monotonic()
     with _mempalace_rebuild_lock:
         last = _mempalace_last_rebuild.get(palace_path, 0.0)
         if now - last < _MEMPALACE_REBUILD_COOLDOWN_S:
             return False  # another thread just rebuilt (or we're cooling down)
-        # Stamp BEFORE the work so concurrent callers don't pile up; a failed
-        # rebuild still holds the cooldown so we don't hammer a broken palace.
+        # Stamp BEFORE the work so concurrent callers don't pile up.
         _mempalace_last_rebuild[palace_path] = now
+        _log = __import__("logging")
+        _log.warning("[mempalace] HNSW corruption detected at %s — attempting recovery", palace_path)
+        ok = False
         try:
             from mempalace import repair as _mp_repair
-            _log = __import__("logging")
-            _log.warning("[mempalace] HNSW corruption detected at %s — rebuilding index from sqlite", palace_path)
-            _mp_repair.rebuild_index(palace_path=palace_path, confirm_truncation_ok=False)
-            _log.warning("[mempalace] index rebuild complete for %s", palace_path)
-            return True
-        except Exception as _re:
-            __import__("logging").error("[mempalace] index rebuild FAILED for %s: %s: %s",
-                                        palace_path, type(_re).__name__, _re)
-            return False
+            try:
+                _mp_repair.rebuild_index(palace_path=palace_path, confirm_truncation_ok=False)
+                _log.warning("[mempalace] in-process index rebuild complete for %s", palace_path)
+                ok = True
+            except Exception as _re:
+                _log.warning("[mempalace] rebuild_index failed (%s: %s) — trying sqlite-rebuild fallback",
+                             type(_re).__name__, _re)
+                ok = _rebuild_via_sqlite_swap(palace_path, _log)
+        except Exception as _outer:
+            _log.error("[mempalace] recovery FAILED for %s: %s: %s",
+                       palace_path, type(_outer).__name__, _outer)
+            ok = False
+        if not ok:
+            # Don't hold the full success-cooldown on failure — let a retry
+            # happen sooner (the failure may be transient or a corrected path).
+            _mempalace_last_rebuild[palace_path] = (
+                now - _MEMPALACE_REBUILD_COOLDOWN_S + _MEMPALACE_REBUILD_FAIL_COOLDOWN_S)
+        return ok
 
 
 def _load_mempalace_config() -> dict:
@@ -207,7 +300,18 @@ def _wing_visible(wing: str, own_user: str, own_teams: set[str]) -> bool:
         return w == own_user
     if w.startswith("team__"):
         return w in own_teams
-    # Anything without a typed prefix is treated as shared.
+    # Default-DENY for anything that LOOKS like a tenant namespace but didn't
+    # match a proper `<type>__` prefix above. The double underscore is
+    # load-bearing: a typo that drops it (`user_bob`, `project_x`, `team_1`)
+    # would otherwise fall through to the shared `return True` and leak private
+    # data globally. Treat a SINGLE-underscore tenant prefix as a malformed
+    # private wing → deny. Genuinely untyped shared names (`brain_code`,
+    # `main`, agent ids) don't carry a `user_`/`team_`/`project_` prefix and
+    # stay shared.
+    _wl = w.lower()
+    if _wl.startswith(("user_", "team_", "project_")):
+        return False
+    # Anything else without a typed prefix is treated as shared.
     return True
 
 
@@ -282,6 +386,23 @@ def tool_mempalace_query(args: dict) -> str:
     elif current_user_id and not wing:
         # Default to the user's own wing when nothing else is specified.
         wing = f"user__{current_user_id}"
+
+    # SECURITY (C3 gate, pre-check): when NOT project-pinned and NOT helpdesk,
+    # an explicit caller-supplied `wing` must be visible to the caller. Without
+    # this, a model (or a prompt-injected one) could pass wing="user__<other>" /
+    # "project__<other>" / "team__<foreign>" and read another tenant's private
+    # drawers — the explicit-wing path otherwise skipped the visibility filter
+    # entirely. Project-pinned queries already force-scoped `wing` to the caller's
+    # own project__ above (caller arg discarded), so they're exempt; helpdesk
+    # additively reads the shared brain_code wing by design. Refuse rather than
+    # silently widen. The unconditional post-filter below is the second layer.
+    if wing and not project_pinned and not get_request_context().helpdesk_mode:
+        _own_user_pc = f"user__{current_user_id}" if current_user_id else ""
+        _own_teams_pc = {f"team__{tid}" for tid in current_team_ids}
+        if not _wing_visible(wing, _own_user_pc, _own_teams_pc):
+            return _err(
+                f"mempalace_query: wing {wing!r} is not visible to the current "
+                "user (private to another user/team/project)")
     room = args.get("room") or None
     n_results = args.get("n_results") or 5
     try:
@@ -411,8 +532,19 @@ def tool_mempalace_query(args: dict) -> str:
         return _err(f"mempalace_query: {results.get('error')}")
 
     raw_results = (results or {}).get("results", [])
-    if _needs_user_filter:
-        own_user = f"user__{current_user_id}"
+    # SECURITY (C3 gate, post-filter): apply `_wing_visible` to EVERY returned
+    # drawer UNCONDITIONALLY on the non-project path — not only when
+    # `_needs_user_filter` (which required `not wing` and a truthy user, so an
+    # explicit foreign wing OR an empty user_id both skipped it = the leak +
+    # fail-open). With an empty `own_user`, `_wing_visible` keeps only shared
+    # (untyped) wings and drops every user__/team__/project* drawer, so the
+    # absence of an identity now fails CLOSED. Project-pinned results are all the
+    # caller's own project__ wing (which `_wing_visible` deliberately treats as
+    # private) — they are exempt; the force-scope above already guarantees
+    # isolation there. The helpdesk-added brain_code rows are a shared wing, so
+    # they pass the filter unchanged.
+    if not project_pinned:
+        own_user = f"user__{current_user_id}" if current_user_id else ""
         own_teams = {f"team__{tid}" for tid in current_team_ids}
         raw_results = [r for r in raw_results
                        if isinstance(r, dict)
