@@ -280,6 +280,30 @@ def _github_raw_repo_path(url: str) -> str:
     return ""
 
 
+def _block_end_line(lines: list, start: int, max_span: int = 200) -> int:
+    """If `lines[start]` opens an indentation-based code block (a def/class-style
+    header ending in ':' at indent N), return the index just past the last line
+    of its body (the run of lines indented deeper than N, blank lines tolerated).
+    Otherwise return `start` (no extension). Bounded by `max_span` so a header
+    with a huge body can't swallow the whole file. Indentation-based — covers
+    Python/YAML-like sources; brace languages fall through to the fixed window."""
+    header = lines[start] if 0 <= start < len(lines) else ""
+    stripped = header.strip()
+    if not stripped.endswith(":"):
+        return start
+    base_indent = len(header) - len(header.lstrip())
+    end = start
+    for j in range(start + 1, min(len(lines), start + 1 + max_span)):
+        ln = lines[j]
+        if not ln.strip():          # blank line — part of the block, keep scanning
+            continue
+        indent = len(ln) - len(ln.lstrip())
+        if indent <= base_indent:   # dedented back to/under the header — block done
+            break
+        end = j
+    return end
+
+
 def _trim_to_brain_code_regions(text: str, chunks: list, ctx_lines: int = 8):
     """Return only the regions of `text` that contain the matched brain_code
     chunks (each ± ctx_lines of surrounding context), joined with gap markers.
@@ -304,7 +328,14 @@ def _trim_to_brain_code_regions(text: str, chunks: list, ctx_lines: int = 8):
             if anchor in ln:
                 found += 1
                 lo = max(0, i - ctx_lines)
-                hi = min(len(lines), i + chunk_len + ctx_lines)
+                # Extend the window to the END of the code block the anchor opens
+                # so a longer method/class body isn't clipped mid-definition. When
+                # the anchor line is a def/class header, keep through the last line
+                # more-indented than the header (the body), then add context. This
+                # is the fix for the "trim cuts the tail of a longer matched
+                # method" failure — a fixed chunk_len window ended inside the body.
+                block_end = _block_end_line(lines, i)
+                hi = min(len(lines), max(i + chunk_len, block_end) + ctx_lines)
                 keep.update(range(lo, hi))
                 break
     if not found or not keep:
@@ -349,11 +380,74 @@ def _meta_description(html: str) -> str:
     return ""
 
 
+# A converted markdown line is "nav chrome" (skip it when hunting for the lead
+# prose) when it's a heading, a list/ToC item, a link-only line, a bare menu
+# label, or has too few real words to be a sentence. Chrome-heavy pages
+# (Wikipedia, docs portals) start with a wall of these before any prose.
+_NAV_LABELS = {
+    "main menu", "navigation", "contents", "search", "appearance",
+    "personal tools", "move to sidebar", "hide", "show", "jump to content",
+    "contribute", "tools", "toggle the table of contents", "menu", "skip to content",
+}
+
+
+def _is_prose_line(ln: str) -> bool:
+    """True when a converted-markdown line looks like real sentence prose, not
+    navigation/heading/list boilerplate. Heuristic, deliberately conservative —
+    a false negative just skips one line, a false positive only lets chrome
+    through (the old behavior)."""
+    s = ln.strip()
+    if len(s) < 40:                       # too short to be a lead sentence
+        return False
+    low = s.lower()
+    if low in _NAV_LABELS:
+        return False
+    if s[0] in "#*-+>|[":                  # heading / list / quote / table / link-line
+        return False
+    # ToC / link-fragment line. markitdown splits each Wikipedia ToC entry across
+    # two lines, leaving a dangling "<prose text>](#Anchor)" fragment that starts
+    # with a letter and reads like prose but is really a heading link. Reject any
+    # line that ends in a markdown-link close pointing at an anchor or url.
+    if re.search(r"\]\((?:#|https?://|/)[^)]*\)\s*$", s):
+        return False
+    # "Mostly link" line: if markdown links cover the bulk of the line, it's a
+    # nav/index row, not prose. Compare link-span length to total.
+    link_chars = sum(len(m.group(0)) for m in re.finditer(r"\[[^\]]*\]\([^)]*\)", s))
+    if link_chars > 0.5 * len(s):
+        return False
+    # Strip links and require enough real words to be a sentence.
+    delinked = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)
+    if len(delinked.split()) < 8:          # needs a clause's worth of real words
+        return False
+    return True
+
+
+def _lead_prose(text: str, want: int = _ABSTRACT_CHARS) -> str:
+    """Assemble a survey from the page's real prose, skipping nav/ToC chrome,
+    infobox tables, and link-list rows that markitdown emits for chrome-heavy
+    pages (Wikipedia etc.). Gathers prose lines (in order) until ~`want` chars are
+    collected — so the survey is actual sentences, not the menu/infobox the page
+    happens to lead with. Falls back to the raw lead when no prose line is found
+    (e.g. genuinely list-only content) so we never return empty."""
+    out, total = [], 0
+    for ln in text.splitlines():
+        if _is_prose_line(ln):
+            s = ln.strip()
+            out.append(s)
+            total += len(s) + 1
+            if total >= want:
+                break
+    if out:
+        return "\n".join(out).strip()
+    return text.strip()
+
+
 def _to_abstract(text: str, meta_desc: str = "") -> str:
     """Reduce converted page text to a ~_ABSTRACT_CHARS survey. Prefers the
-    page's meta description (HTML), else the lead of the body, truncated on a
-    word boundary."""
-    base = meta_desc.strip() or (text or "").strip()
+    page's meta description (HTML); else the lead of the body STARTING AT THE
+    FIRST REAL PROSE (nav/ToC chrome skipped — fixes Wikipedia-style pages whose
+    converted lead is menus, not the intro), truncated on a word boundary."""
+    base = meta_desc.strip() or _lead_prose(text or "")
     if len(base) <= _ABSTRACT_CHARS:
         return base
     cut = base[:_ABSTRACT_CHARS]

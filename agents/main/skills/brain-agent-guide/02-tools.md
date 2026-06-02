@@ -108,8 +108,9 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
   Academic landing pages (arxiv, bioRxiv/medRxiv, PubMed Central) are
   auto-resolved to their full-text PDF and extracted via doc_convert — just
   pass the abstract URL. `mode` arg: `full` (default, whole page) or `abstract`
-  (~1500-char survey — the page's own meta-description or its lead — for cheap
-  relevance triage before fetching the chosen ones in full).
+  (~1500-char survey — the page's own meta-description or its lead **prose**,
+  skipping nav/table-of-contents/infobox chrome — for cheap relevance triage
+  before fetching the chosen ones in full).
   The chat view shows the method as a colored badge.
 - `exa_search(query, num_results?)` — semantic web search (Exa cloud, API
   key). **Search-only**: returns title + link, no page content.

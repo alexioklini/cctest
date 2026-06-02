@@ -161,16 +161,18 @@ PAST the optimization's reduction point, and one small enough that the gold
 reference fits under the 60k answer-model cap (RFC-sized pages get truncated and mask
 loss — web_fetch's own `max_length` cap is 50k).
 
-## Baseline (2026-06-02, mistral-medium-3.5 answer+judge)
+## Baseline (2026-06-02, mistral-medium-3.5 answer+judge) — after the v9.60.2 fixes
 
-- **abstract**: ABS1 (MDN) + ABS3 (PEP 8) → **paid_off** (survey sufficient, ~100%
-  smaller, full fetch avoided — the optimization working). ABS2 (Wikipedia) →
-  `content_loss`: a REAL weakness — `_to_abstract` takes the lead of the converted
-  markdown, which on Wikipedia is **nav chrome** (Main menu / Contents / ToC), not
-  the intro paragraph, so the survey can't answer the gist. Fix lives in
-  `_to_abstract` (skip nav / prefer first real prose paragraph).
-- **academic** (ACA1) → tie, full PDF 50k ≫ 4.5k wrapper.
-- **brain_code** (BC1) → `content_loss` at 0.75: the trim's **±8-line context window
-  clips the tail of a longer matched method** (`raise_for_status` body naming
-  `HTTPError` fell outside the window).
-- **conversion** (CONV1) → tie, markitdown preserved the body.
+**0/6 content-loss; 4/6 paid_off.** All three abstract cases + brain_code now pay
+off (full fetch avoided); academic + conversion are ties with no loss.
+
+This baseline originally surfaced TWO real defects, both since FIXED in v9.60.2
+(`_trim_to_brain_code_regions` + `_to_abstract` in `engine/tools/misc_tools.py`):
+- **brain_code** (BC1) had `content_loss=0.75` — the trim's fixed window clipped the
+  tail of a longer matched method (`raise_for_status` losing the `HTTPError` tail).
+  `_block_end_line` now extends the window to the end of the matched code block.
+- **abstract** on Wikipedia (ABS2) had `content_loss` — `_to_abstract` returned the
+  converted lead, which on chrome-heavy pages is nav/ToC/infobox, not prose.
+  `_lead_prose`/`_is_prose_line` now assemble the survey from real prose lines only.
+
+Re-run after touching either function to confirm they stay at 0 content-loss.
