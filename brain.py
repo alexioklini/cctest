@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.58.0"
+VERSION = "9.59.0"
 VERSION_DATE = "2026-06-02"
 CHANGELOG = [
+    ("9.59.0", "2026-06-02", "change(auto-route): classifier tool gating switches from EXCLUDE to DEFER + UN-DEFER, and classification now runs EVERY turn (tool-only, never the model). THREE changes. (1) DEFER NOT EXCLUDE: classifier_tool_exclusions (returned an exclude_tools list — tools removed entirely, unrecoverable) is REPLACED by classifier_tool_deferral(model, tool_groups) → (defer_extra, undefer): un-needed groups are pushed OUT of the initial prompt but stay tool_search-DISCOVERABLE (a misclassification is now recoverable mid-turn, not a dead end), and the classifier's NEEDED groups are UN-DEFERRED — pulled in-prompt even if statically deferred (positive use of the signal; previously it only ever subtracted). New RequestContext fields defer_extra_tools/undefer_tools; resolve_active_tools folds them into its defer set (undefer wins over defer_extra; floor core/workflows always in-prompt). (2) EVERY TURN, TOOL-ONLY: concrete-model turns (not ✨ Auto) now also classify the prompt — handlers/chat.py runs resolve_task_analysis purely to populate _auto_tool_groups for deferral; session.model/provider are NOT touched (model selection stays gated to Auto/first-turn). (3) WARM/LOCAL NEVER OPTIMIZED: classifier_tool_deferral returns ([],[]) for any model that maintains a warm KV prefix (is_local OR warmup), AND the every-turn classification is skipped entirely for those models (model_maintains_warm_prefix guard before the call) so no classifier cost is paid and the static deferral + KV prefix are byte-stable across ALL turns — tool optimization is never performed for warm/local models, including follow-ups. classifier_gating_decision + the per-turn modal updated to deferral language ('Im Prompt' / 'Zurückgestellt (per tool_search abrufbar)'); applied=False for warm models. Mode still keywords|llm|hybrid (default keywords → free, no per-turn LLM tax; llm/hybrid pay the classifier call on cloud turns now). No-signal → static deferral stands (fail-open). js_gate green (smoke 5/5); py compile OK. Backend restart to load."),
     ("9.58.0", "2026-06-02", "change(auto-route): REMOVE the use-case map (auto_route.task_models) and NARROW the attachment routing gate to raw images only. Two changes to _resolve_auto_model_tiered (brain.py). (1) USE-CASE MAP REMOVED: the operator pin {task_type: model_id} that overrode the empirical pick is gone — routing is now purely auto (attachment capability → benchmark ranking → tier+complexity heuristic); per-feature model needs (e.g. translation models) are configured at their own settings, not via a third pinning path. Deleted: the resolver branch (brain.py), the write/validate handler (handlers/admin_config.py auto_route_task_models), the status echo (handlers/admin_artifacts.py), and the Settings → Server → Auto-Routing JSON editor + Anwendungsfall-Zuordnung prose (web/js/settings_general_tabs.js). The classifier_mode selector stays. config.json → auto_route.task_models is simply ignored if present (no migration needed; current config has none). (2) ATTACHMENT GATE NARROWED: the gate restricted candidates to models whose raw_formats match the upload MIME, but it fired on the ORIGINAL upload MIME before Brain's markdown conversion — so a PDF/docx (which the chat router sends to disk → read_document, readable by ANY text model) could wrongly narrow the pool, while doing nothing useful since few models list those MIMEs anyway. NOW the gate filters the MIME list to image/* only (m.startswith('image/')) before the raw_formats match — mirroring the chat attachment router's actual api_blocked predicate (handlers/chat.py sends a multimodal block ONLY for image/*; everything else is converted). Audio/video go through the separate translation/transcription path, not this MIME router. Net: convertible documents no longer constrain model choice; only genuinely raw image uploads (which truly need a vision model) do. js_gate green; py compile OK. Backend restart to load."),
     ("9.57.1", "2026-06-01", "change(benchmark): speed is now measured + ranked as THROUGHPUT (tokens/sec), not latency (ms). Raw latency tracks how long the answer happened to be, so it's not comparable across tasks; tps (output_tokens / wall-clock seconds, from background_call's usage_total) is length-independent. engine/model_bench.benchmark_cell records `tps` instead of `latency_ms`; the measured/override cell shape is now {capability, tps, n, ts}. Router _bench_rank_key sorts capable→fast→cheap with FAST = higher tps (negated in the sort key); high-complexity still leads with capability then tps. UI (settings_general_tabs.js): the per-model benchmark table shows '<cap>% · <tps> tok/s' and the override column is 'Override tok/s' (class mdl-bench-ov-tps → override.tps). NOTE: cells benchmarked before this change still hold latency_ms and render as '0 tok/s' until re-benchmarked — a re-run overwrites measured cleanly (override preserved). All 5 enabled models re-benchmarked on tps after the change. js_gate green (net-globals unchanged — rename only; smoke 5/5). Backend restart to load."),
     ("9.57.0", "2026-06-01", "feat(auto-route): per-turn PROMPT-CLASSIFICATION & ROUTING modal in the chat view — observability for the ✨ Auto decision, persisted so it survives reload. The auto_route data (task_types/tools/complexity/reasoning + chosen model + reason) was previously only sent transiently in the done SSE event and held on the live `chat` object; a reloaded turn lost it. NOW it is persisted on the assistant turn's metadata (handlers/chat.py: msg_metadata['auto_route'], exactly like metadata.web_sources — wire-stripped by _ALLOWED_MSG_KEYS, reaches the client via load_messages which doesn't filter metadata). NEW brain.classifier_gating_decision(model, tool_groups) returns a human-readable summary of the tool-gating decision {applied, reason, kept_groups, excluded_groups, needed_groups} mirroring classifier_tool_exclusions (applied=False for warm/local models with the why; applied=True lists kept vs excluded TOOL_GROUPS + the never-strip floor). The worker captures it (run_session_turn _gating_decision, init None at top so it is always defined) and attaches it under msg_metadata['auto_route']['tool_gating']; the done event carries the identical enriched shape so the live turn's modal matches a reloaded one. FRONTEND: a compass chip in the per-turn actions bar (chat_render.js renderAssistantMessage, shown only when meta.auto_route exists) opens openClassificationModal(idx) — a modal with three sections: Klassifikation (task types, needed tools, complexity, reasoning), Modellentscheidung (chosen model + why), Tool-Auswahl (gating status + kept/excluded groups, or why gating was skipped). chat_send.js done handler persists d.auto_route onto assistantMsg.metadata so the live turn shows the chip immediately. Only appears on Auto-routed turns (keyword/fixed-model turns have no auto_route metadata). js_gate green (net-globals 1069→1070: openClassificationModal, baseline bumped; smoke 5/5). Skill 01-api/05-internals already cover auto_route; 05-internals classification-modal note added. Backend restart to load."),
@@ -1315,6 +1316,19 @@ def resolve_active_tools(
                     deferred_names.add(_n)
                 else:
                     deferred_names.discard(_n)
+        # Per-turn classifier deferral adjustment (non-warmup models only; the
+        # worker leaves these unset for warm/local models so their KV prefix is
+        # untouched). `defer_extra_tools` pushes un-needed groups out (still
+        # tool_search-discoverable — NOT excluded); `undefer_tools` pulls the
+        # classifier's needed groups in even if statically deferred. undefer
+        # wins over defer_extra so a needed tool is never re-deferred.
+        _rc = get_request_context()
+        _defer_extra = _rc.defer_extra_tools
+        _undefer = _rc.undefer_tools
+        if _defer_extra:
+            deferred_names |= set(_defer_extra)
+        if _undefer:
+            deferred_names -= set(_undefer)
         if deferred_names:
             discovered = discovered_tools or set()
             tools = [t for t in tools
@@ -10769,53 +10783,68 @@ def model_maintains_warm_prefix(model: str) -> bool:
         return True
 
 
-def classifier_tool_exclusions(model: str, tool_groups: list[str] | None) -> list[str]:
-    """Build the `exclude_tools` list that restricts a turn to the classifier's
-    needed tool groups — but ONLY for non-warmup models.
+def classifier_tool_deferral(model: str, tool_groups: list[str] | None) -> tuple[list[str], list[str]]:
+    """Per-turn tool DEFERRAL adjustment from the classifier's needed groups.
 
-    Returns the names of every built-in tool whose group is neither in the
-    analysis's `tool_groups` nor in the never-strip floor. Empty list = no
-    gating (warmup model, no/empty analysis, or nothing left to strip) so the
-    caller leaves `exclude_tools` untouched and the full set stands.
+    Returns `(defer_extra, undefer)` — two lists of built-in tool NAMES the
+    resolver folds into its defer computation for this turn:
+      - `defer_extra`: tools whose group the classifier did NOT flag as needed
+        (and which aren't in the never-strip floor) → pushed OUT of the initial
+        prompt. Unlike the old exclude path these stay `tool_search`-discoverable,
+        so a misclassification is recoverable mid-turn.
+      - `undefer`: tools whose group the classifier DID flag as needed →
+        forced INTO the prompt even if they're normally deferred (the classifier
+        has positive evidence the task needs them, so don't make the model hunt).
+
+    ONLY for non-warmup models — a warm/local model keeps its static KV prefix
+    untouched (varying the tool list invalidates it). Empty/empty when there's
+    no signal or the model warms up, so the caller leaves deferral as-is.
     """
     if not tool_groups:
-        return []
+        return [], []
     if model_maintains_warm_prefix(model):
-        return []  # preserve KV prefix — never gate a warming model
+        return [], []  # preserve KV prefix — never reshape a warming model
     keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP
-    excluded: list[str] = []
+    defer_extra: list[str] = []
+    undefer: list[str] = []
     for gname, gtools in TOOL_GROUPS.items():
         if gname in keep:
-            continue
-        excluded.extend(gtools)
-    return excluded
+            # A needed group: pull its tools in even if normally deferred.
+            if gname not in _TOOL_GATING_NEVER_STRIP:
+                undefer.extend(gtools)
+        else:
+            defer_extra.extend(gtools)
+    return defer_extra, undefer
 
 
 def classifier_gating_decision(model: str, tool_groups: list[str] | None) -> dict:
-    """Human-readable summary of the classifier tool-gating decision for the
-    per-turn classification modal. Mirrors `classifier_tool_exclusions` so the
+    """Human-readable summary of the classifier tool-DEFERRAL decision for the
+    per-turn classification modal. Mirrors `classifier_tool_deferral` so the
     reported decision always matches what was actually applied.
 
     Returns {applied, reason, kept_groups, excluded_groups, needed_groups}.
-    `applied=False` means the full tool set stood (warm model, or no analysis).
+    The keys are kept stable for the existing modal: `kept_groups` = groups
+    pulled in-prompt (needed + floor), `excluded_groups` = groups DEFERRED out
+    (still tool_search-discoverable — not removed). `applied=False` means the
+    static deferral config stood (warm model, or no signal).
     """
     needed = sorted(set(tool_groups or []))
     if not tool_groups:
-        return {"applied": False, "reason": "no LLM classification (keyword mode or no signal)",
+        return {"applied": False, "reason": "no classification signal (keyword mode miss or fail-open)",
                 "kept_groups": [], "excluded_groups": [], "needed_groups": needed}
     if model_maintains_warm_prefix(model):
         why = ("local model" if is_model_local(model) else "warmup enabled")
         return {"applied": False,
-                "reason": f"model keeps a warm KV prefix ({why}) — tools not gated to preserve it",
+                "reason": f"model keeps a warm KV prefix ({why}) — deferral left static to preserve it",
                 "kept_groups": sorted(TOOL_GROUPS.keys()),
                 "excluded_groups": [], "needed_groups": needed}
     keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP
     kept = sorted(g for g in TOOL_GROUPS if g in keep)
-    excluded = sorted(g for g in TOOL_GROUPS if g not in keep)
+    deferred = sorted(g for g in TOOL_GROUPS if g not in keep)
     floor = sorted(_TOOL_GATING_NEVER_STRIP)
     return {"applied": True,
-            "reason": f"non-warmup model — restricted to needed groups + always-kept floor ({', '.join(floor)})",
-            "kept_groups": kept, "excluded_groups": excluded, "needed_groups": needed}
+            "reason": f"non-warmup model — needed groups un-deferred + floor ({', '.join(floor)}) in-prompt; rest deferred (still tool_search-discoverable)",
+            "kept_groups": kept, "excluded_groups": deferred, "needed_groups": needed}
 
 
 def resolve_task_analysis(message: str) -> dict | None:

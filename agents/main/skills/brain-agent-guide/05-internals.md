@@ -139,26 +139,32 @@ benchmark run (which only rewrites `measured`). Endpoints: `POST
 + `GET /v1/models/benchmark/status` (live progress). No benchmark for a task →
 the tier heuristic (step 5) applies, so the feature ships dark.
 
-**Classifier-driven tool gating** (only when the LLM ran): for models that do
-**not** keep a warm KV prefix (`model_maintains_warm_prefix` = local OR
-warmup-enabled), the worker restricts the turn to the analysis's needed tool
-groups by merging `classifier_tool_exclusions(model, tool_groups)` into the
-existing per-turn `exclude_tools` (the same seam Websuche/`disable_web_search`
-use; `resolve_active_tools` subtracts it). A never-strip floor
+**Classifier-driven tool DEFERRAL** (every turn — tool-only, never the model):
+classification runs on **every** turn, not just ✨ Auto. On concrete-model turns
+the worker calls `resolve_task_analysis` purely to populate the needed tool
+groups; `session.model`/provider are NOT touched (model routing stays gated to
+Auto/first-turn). For models that do **not** keep a warm KV prefix
+(`model_maintains_warm_prefix` = local OR warmup), `classifier_tool_deferral(model,
+tool_groups)` returns `(defer_extra, undefer)` which `resolve_active_tools` folds
+into its defer set: un-needed groups are **deferred OUT** of the initial prompt
+but stay **`tool_search`-discoverable** (a misclassification is recoverable
+mid-turn — NOT excluded), and the analysis's **needed** groups are **UN-DEFERRED**
+into the prompt even if statically deferred. A never-strip floor
 (`_TOOL_GATING_NEVER_STRIP` = core + workflows) keeps read/write/run +
-`tool_search` + ask tools alive. For warm/local models gating is a no-op so the
-KV prefix stays stable. The `auto_route` SSE/`done` event carries the analysis
-(`task_types`/`tools`/`complexity`/`reasoning`) for the chat-view reason +
-`chat.autoAnalysis`.
+`tool_search` + ask tools in-prompt. **Warm/local models are NEVER optimized** —
+`classifier_tool_deferral` returns `([],[])` AND the every-turn classification is
+skipped entirely for them (no classifier cost), so their static deferral + KV
+prefix are byte-stable across all turns including follow-ups. No-signal → static
+deferral stands (fail-open).
 
-**Per-turn classification modal**: an Auto-routed turn persists its full
-decision on the assistant turn's `metadata.auto_route` (= the analysis + chosen
-model + reason + `tool_gating` from `brain.classifier_gating_decision`), so it
-survives reload like `metadata.web_sources`. A compass chip in the turn's
-actions bar opens `openClassificationModal(idx)` (chat_render.js) showing the
-detected task types, needed tool families, complexity, the model decision +
-why, and the tool-gating decision (kept vs excluded groups, or why gating was
-skipped). Only present on Auto turns.
+**Per-turn classification modal**: a turn with a classification persists its
+decision on the assistant turn's `metadata.auto_route` (analysis + chosen model +
+reason + `tool_gating` from `brain.classifier_gating_decision`), surviving reload
+like `metadata.web_sources`. A compass chip opens `openClassificationModal(idx)`
+(chat_render.js) showing detected task types, needed tool families, complexity,
+the model decision + why, and the tool-deferral decision (`Im Prompt` vs
+`Zurückgestellt (per tool_search abrufbar)`, or why it was a no-op for a
+warm/local model).
 
 LLM and hybrid **fail open to keywords** — a down sidecar or slow local model
 never blocks a turn. Config-wise the mode set is unchanged (still

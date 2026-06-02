@@ -76,13 +76,20 @@ positives). — `brain.py:10487–10514`
 
 ## 3. When does it run?
 
-Not on every turn — only when a model actually has to be *chosen*.
+Classification has **two jobs with different triggers**:
 
-| Use case | Condition | Source |
-|----------|-----------|--------|
-| **Interactive chat — ✨ Auto** | User selected `✨ Auto` in the composer → `want_auto` → `model="auto"` in the POST body. | `handlers/chat.py:3239,3367` |
-| **Auto-agent first turn** | `agent.model == "auto"` **and** `len(session.messages) == 0`. Follow-up turns reuse the pick (warm-prefix stability). | `handlers/chat.py:3356` |
-| **Background fan-out leaf** | `background_task_model == "auto"` → each leaf task classified independently. | `engine/background_tasks.py:82–205` |
+- **Model routing** — only when a model has to be *chosen* (✨ Auto, auto-agent first
+  turn, auto background leaf). This is the gated path below.
+- **Tool deferral** — on **every** turn, including concrete-model turns. On a non-Auto
+  turn the classifier runs purely to reshape tool deferral; it does **not** change the
+  model. Skipped for warm/local models (no classifier cost, KV prefix stays stable).
+
+| Use case | Triggers… | Condition | Source |
+|----------|-----------|-----------|--------|
+| **Interactive chat — ✨ Auto** | model + tools | User selected `✨ Auto` → `want_auto` → `model="auto"`. | `handlers/chat.py:3239,3367` |
+| **Auto-agent first turn** | model + tools | `agent.model == "auto"` **and** `len(session.messages) == 0`. | `handlers/chat.py:3356` |
+| **Concrete-model turn (cloud)** | **tools only** | Any non-Auto turn on a non-warmup model → classify for deferral, model untouched. | `handlers/chat.py:3405` |
+| **Background fan-out leaf** | model + tools | `background_task_model == "auto"` → each leaf classified independently. | `engine/background_tasks.py:82–205` |
 
 > **Not cached.** The classification is recomputed on every qualifying send. The
 > result is transient SSE metadata, persisted only as `msg_metadata.auto_route` so
@@ -128,44 +135,51 @@ admin `override` is sticky across re-runs. — `engine/model_bench.py`
 
 ---
 
-## 6. How tools are determined (gating)
+## 6. How tools are determined (deferral)
 
-Classification never *adds* tools — it *subtracts* the ones the task won't need. The
-classifier's `tool_groups` are stashed on the session, then the worker computes an
-exclusion list and merges it into the per-turn `exclude_tools`:
+Classification reshapes which tools are **in the initial prompt** — it does **not**
+remove anything. The classifier's `tool_groups` drive a two-way deferral adjustment:
+un-needed groups are pushed *out* of the prompt (but stay `tool_search`-discoverable),
+and needed groups are pulled *in* even if they were statically deferred. **This runs on
+every turn** — not just ✨ Auto — and it **only touches tool deferral, never the model**.
 
 ```python
-def classifier_tool_exclusions(model, tool_groups):
+def classifier_tool_deferral(model, tool_groups):
     if not tool_groups:
-        return []                                # no signal → no gating
+        return [], []                            # no signal → static deferral stands
     if model_maintains_warm_prefix(model):
-        return []                                # NEVER gate a warming model (KV prefix)
+        return [], []                            # NEVER reshape a warming model (KV prefix)
     keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP   # {"core", "workflows"} floor
-    excluded = []
+    defer_extra, undefer = [], []
     for gname, gtools in TOOL_GROUPS.items():
-        if gname not in keep:
-            excluded.extend(gtools)
-    return excluded
+        if gname in keep:
+            if gname not in _TOOL_GATING_NEVER_STRIP:
+                undefer.extend(gtools)           # needed → pull INTO prompt (even if deferred)
+        else:
+            defer_extra.extend(gtools)           # un-needed → push OUT (still discoverable)
+    return defer_extra, undefer
 ```
-`brain.py:10771–10790` · merged at `handlers/chat.py:1706` · applied in
-`resolve_active_tools` `brain.py:1329`
+`brain.py:10785` · applied at `handlers/chat.py:1709` → request-context
+`defer_extra_tools`/`undefer_tools` → folded into `resolve_active_tools` `brain.py:1307`
 
-### Exclude vs. defer — not the same thing
+### Defer vs. exclude — the gate now defers, not excludes
 
-| | **Deferred** | **Excluded** |
+| | **Deferred** (incl. classifier reshape) | **Excluded** |
 |---|---|---|
-| Set by | per-agent `tool_overrides.<name>.deferred` or global `tool_settings` | classifier gating + web-search lockouts, via `exclude_tools` |
-| Effect | omitted from the *initial* prompt to save tokens, but stays **discoverable** — the model can pull its schema via `tool_search` and still use it the same turn | removed **entirely** — not in the prompt and **not discoverable** this turn |
+| Set by | per-agent/global config **+ per-turn classifier `defer_extra`/`undefer`** | web-search lockouts only, via `exclude_tools` |
+| Effect | omitted from the *initial* prompt, but stays **discoverable** — the model can pull its schema via `tool_search` and still use it the same turn | removed **entirely** — not in the prompt and **not discoverable** |
 | Source | `resolve_active_tools brain.py:1307` | `resolve_active_tools brain.py:1329,1361` |
 
-They **stack**. Resolution order: base allowed set → purpose filter → **subtract
-deferred** (still discoverable) → **subtract excluded** (gone). So a merely-deferred
-tool that falls outside the classifier's needed groups gets *promoted* to excluded —
-unless it's in the never-strip floor.
+The classifier adjustment folds into the **deferred** column: `undefer` wins over
+`defer_extra` (a needed tool is never re-deferred), and the never-strip floor
+(`core`/`workflows`) is always in-prompt. A misclassification is now **recoverable**
+mid-turn via `tool_search` — the earlier exclude-based gate made it a dead end.
 
-> **When the per-agent deferred list is the sole authority:** whenever the model is
-> not ✨ Auto (no `tool_groups`) *or* the model maintains a warm prefix (local /
-> warmup) — gating returns `[]`, so only deferral applies. The `MODEL_PROFILES`
+> **When classification doesn't reshape tools:** whenever there's no signal (keyword-mode
+> miss / fail-open) *or* the model maintains a warm prefix (local / warmup) —
+> `classifier_tool_deferral` returns `([],[])`, so only the static deferral config
+> applies. **Warm/local models are never optimized, on any turn** (the every-turn
+> classification is also skipped for them, so no classifier cost is paid). The `MODEL_PROFILES`
 > per-profile `deferred_tool_groups` (e.g. `speed` = `[]`) is advisory/display only;
 > the real per-turn filter uses the **per-tool** tristate flags.
 

@@ -1600,15 +1600,15 @@ function openClassificationModal(idx) {
   // Section: tool-gating decision
   if (tg) {
     const gateBadge = tg.applied
-      ? '<span style="color:var(--accent-000, #8b5cf6);font-weight:600">aktiv — Toolset eingeschränkt</span>'
-      : '<span style="color:var(--text-300);font-weight:600">nicht angewendet — volles Toolset</span>';
+      ? '<span style="color:var(--accent-000, #8b5cf6);font-weight:600">aktiv — Tools optimiert (Deferral)</span>'
+      : '<span style="color:var(--text-300);font-weight:600">nicht angewendet — statische Deferral-Konfiguration</span>';
     body += `<div>
       <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-400);margin-bottom:6px">Tool-Auswahl</div>
       <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:start;font-size:13px">
         <div style="color:var(--text-400)">Status</div><div>${gateBadge}</div>
         <div style="color:var(--text-400)">Grund</div><div style="color:var(--text-200)">${esc(tg.reason || '—')}</div>
-        ${tg.applied ? `<div style="color:var(--text-400)">Aktive Gruppen</div><div>${chips(tg.kept_groups, 'cls-keep')}</div>
-        <div style="color:var(--text-400)">Entfernte Gruppen</div><div>${chips(tg.excluded_groups, 'cls-drop')}</div>` : ''}
+        ${tg.applied ? `<div style="color:var(--text-400)">Im Prompt</div><div>${chips(tg.kept_groups, 'cls-keep')}</div>
+        <div style="color:var(--text-400)">Zurückgestellt (per tool_search abrufbar)</div><div>${chips(tg.excluded_groups, 'cls-drop')}</div>` : ''}
       </div>
     </div>`;
   }

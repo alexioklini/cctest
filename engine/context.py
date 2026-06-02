@@ -91,6 +91,15 @@ class RequestContext:
     # resolver. Generic — used by the manual-web-search flow to hard-disable
     # web_search/web_fetch when the user supplies a curated source set.
     exclude_tools: object = None
+    # Per-turn classifier-driven tool DEFERRAL adjustment (non-warmup models
+    # only — never set for local/warmup models so their KV prefix is stable).
+    # `defer_extra_tools`: extra tool names to push OUT of the initial prompt
+    # this turn (still tool_search-discoverable). `undefer_tools`: normally-
+    # deferred tool names to force INTO the prompt because the classifier
+    # flagged their group as needed. Both fold into resolve_active_tools's
+    # defer computation. Set by the chat worker from classifier_tool_deferral.
+    defer_extra_tools: object = None
+    undefer_tools: object = None
     # Helpdesk ("Brainy") mode. Set ONLY by the helpdesk endpoint's background
     # call. Unlocks the backend-exclusive `brain-agent-guide` skill (hidden from
     # normal chat) and selects the `helpdesk` tool-resolver purpose. Never set on

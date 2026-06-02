@@ -1692,23 +1692,25 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             )
 
             # Classifier-driven tool gating (auto-route + LLM classifier only):
-            # restrict this turn to the tool groups the analyzer flagged as
-            # needed — but ONLY for models that don't keep a warm KV prefix
-            # (brain.classifier_tool_exclusions gates that internally). Merge
-            # with whatever apply_domain_context already excluded (Websuche /
-            # disable_web_search lockouts) so neither clobbers the other.
+            # reshape this turn's tool DEFERRAL toward the groups the classifier
+            # flagged as needed — un-needed groups deferred OUT (still
+            # tool_search-discoverable, NOT excluded), needed groups un-deferred
+            # IN — but ONLY for models that don't keep a warm KV prefix
+            # (brain.classifier_tool_deferral gates that internally; warm/local
+            # models get ([],[]) so their static deferral + prefix are untouched
+            # on every turn). This does NOT change the model — only deferral.
             _auto_groups = getattr(session, "_auto_tool_groups", None)
             _auto_rm = getattr(session, "_auto_route_model", "") or session.model
-            # Capture the gating decision (applied or not) so the per-turn
-            # classification modal can show what the router did with tools.
+            # Capture the decision (applied or not) so the per-turn
+            # classification modal can show what was done with tools.
             _gating_decision = (engine.classifier_gating_decision(_auto_rm, _auto_groups)
                                 if _auto_groups else None)
             if _auto_groups:
-                _gate_excl = engine.classifier_tool_exclusions(_auto_rm, _auto_groups)
-                if _gate_excl:
+                _defer_extra, _undefer = engine.classifier_tool_deferral(_auto_rm, _auto_groups)
+                if _defer_extra or _undefer:
                     _ctx = engine.get_request_context()
-                    _merged = set(_ctx.exclude_tools or []) | set(_gate_excl)
-                    _ctx.exclude_tools = list(_merged)
+                    _ctx.defer_extra_tools = _defer_extra
+                    _ctx.undefer_tools = _undefer
 
             # Set note context for AI-assisted note editing
             if session.note_context:
@@ -3389,9 +3391,9 @@ class ChatHandlerMixin:
                     session.base_url = provider["base_url"]
                     session.max_context = engine.get_model_max_context(auto_model)
             # Stash the classifier's needed tool groups on the session so the
-            # worker can gate the per-turn tool set (non-warmup models only —
-            # see brain.classifier_tool_exclusions). Cleared each turn (set to
-            # None when no LLM analysis ran) so a stale gate never carries over.
+            # worker can reshape the per-turn tool deferral (non-warmup models
+            # only — see brain.classifier_tool_deferral). Cleared each turn (set
+            # to None when no analysis ran) so a stale shape never carries over.
             with session.lock:
                 session._auto_tool_groups = (
                     auto_analysis.get("tool_groups") if auto_analysis else None)
@@ -3400,6 +3402,26 @@ class ChatHandlerMixin:
             # actually doing the work (the composer label stays "Auto").
             if auto_route:
                 live.emit("auto_route", auto_route)
+        else:
+            # EVERY-TURN tool optimization for concrete-model turns: the model is
+            # NOT chosen here (no auto-route), but we still classify the prompt so
+            # the worker can reshape this turn's tool DEFERRAL toward the needed
+            # groups. Skipped for warm/local models — their KV prefix must stay
+            # stable across turns (tool optimization is never performed for them),
+            # and classifier_tool_deferral would no-op anyway, so don't pay the
+            # classifier cost. Model/provider/session.model are left untouched.
+            with session.lock:
+                session._auto_tool_groups = None
+                session._auto_route_model = session.model or ""
+            if session.model and not engine.model_maintains_warm_prefix(session.model):
+                try:
+                    _ta = engine.resolve_task_analysis(message)
+                    _tg = (_ta or {}).get("tool_groups")
+                    if _tg:
+                        with session.lock:
+                            session._auto_tool_groups = _tg
+                except Exception:
+                    pass  # fail-open: no reshape, static deferral stands
 
         content_blocks = []
         disk_files = []
