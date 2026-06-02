@@ -1,374 +1,385 @@
-# Prompt Classification — Report
+# Prompt Classification — Architecture Report
 
-How prompt classification works in Brain: what it classifies, where it runs,
-how it drives tool selection and model routing, what happens on the pure-regex
-path, and what happens when a model has no benchmark data. All claims are
-grounded in code — file:line references inline.
+How Brain classifies a user's prompt to automatically choose a model and restrict
+the available tools for a turn — the **intent / auto-route** classifier. From the
+high-level flow down to the source, plus the end-user GUI and settings dialogs.
 
----
-
-## 1. There are two independent classification systems
-
-Brain has **two classifiers that have nothing to do with each other** despite the
-shared word "classification". Keep them separate:
-
-| System | What it classifies | LLM? | Drives |
-|---|---|---|---|
-| **Intent / auto-route classifier** | The user's *prompt* → task types, complexity, needed tools | optional (keywords / llm / hybrid) | **model routing + per-turn tool gating** |
-| **Document classification (ARL 20.02.02.06)** | A *document's* sensitivity level (public/internal/confidential/strict/unmarked) | no — pure regex + heuristics | **block / force-local enforcement** (a GDPR-style seam) |
-
-Plus the **GDPR/PII scanner** (71 regex detectors + spaCy German NER), which is a
-third regex-only classifier feeding the same enforcement seam as document
-classification.
-
-This report is mostly about the **intent / auto-route classifier**, with the
-document/GDPR classifiers covered where they answer your specific questions
-(regex-only path, strict-config enforcement).
+> **Scope:** intent / auto-route classifier (v9.55.0–9.57.1). Deliberately
+> **excludes** the document-sensitivity (ARL 20.02.02.06) and GDPR/PII classifiers,
+> which are separate regex-only systems feeding a different enforcement seam.
+>
+> Source-grounded — `file:line` references are inline and reflect the repo at the
+> time of writing (they may drift).
 
 ---
 
-## 2. Intent classification — what it produces
+## 1. High-level overview
 
-Source: `brain.py` (`resolve_task_analysis`, `classify_task_structured`,
-`classify_task_purpose`, ~lines 10466–10863).
+**One job:** turn the user's message into a model choice and a tool budget — without
+the user picking either.
 
-The structured (LLM) classifier returns a closed-vocabulary dict
-(`classify_task_structured`, brain.py:10666–10729):
+When a user types a prompt and the model is set to **"✨ Auto"**, Brain does not
+immediately answer. It first **classifies the prompt** into task types, a complexity
+level, and the set of tool families the task is likely to need. That classification
+then drives two decisions:
+
+1. **Which model** handles the turn (a cheap local model for a yes/no question; a
+   reasoning model for a hard research task).
+2. **Which tools** are exposed to that model for the turn (a coding prompt doesn't
+   need the email or translation tools cluttering the context).
+
+### The pipeline at a glance
+
+| # | Step | What happens | Source |
+|---|------|--------------|--------|
+| 1 | **Trigger** | User sends a prompt under `model="auto"` (or an auto-agent's first turn, or an auto background task). | `handlers/chat.py:3356` |
+| 2 | **Classify** | `resolve_task_analysis(message)` picks a path: keywords (regex), LLM, or hybrid. Produces `task_types`, `complexity`, `tool_groups`. | `brain.py:10820` |
+| 3 | **Route model** | use-case map → benchmark ranking → tier+complexity heuristic. | `brain.py:11070` |
+| 4 | **Gate tools** | For non-warmup models only, exclude every tool group the classifier didn't ask for (keeping a `core`/`workflows` floor). | `brain.py:10771` |
+| 5 | **Run & report** | The turn streams under the chosen model; a per-turn modal exposes the whole decision to the user. | — |
+
+> **Design constraint that shapes everything:** tool gating changes the per-turn
+> tool list, which **invalidates the warm KV-cache prefix** of local / warmup models.
+> So gating is applied **only to models that never warm up** (cloud, no warmup). For
+> warm-prefix models the classifier still picks the model but leaves the full toolset
+> intact. — `brain.py:10751`
+
+---
+
+## 2. What the classifier produces
+
+A closed-vocabulary structured object — no free-form labels reach routing.
+Vocabularies are fixed lists (`_TASK_TYPE_TIER`, `_TASK_TOOL_GROUPS`), so a
+hallucinated label can't leak into the router.
 
 ```python
 {
-  "purpose":     str,        # one of 5 legacy purposes: coding/analysis/creative/agentic/fast
+  "purpose":     str,        # one of 5 legacy purposes: coding | analysis | creative | agentic | fast
   "task_types":  [str],      # 1–3 of: coding, math, research, analysis, reporting,
                              #         creative, orchestration, agentic, fast
-  "tools":       [str],      # 0–6 of 14 labels: python, bash, files, web, memory,
-                             #         email, git, code_graph, delegation, scheduler,
-                             #         translation, image_gen, audio, skills
+  "tools":       [str],      # 0–6 of 14 labels: python, bash, files, web, memory, email,
+                             #         git, code_graph, delegation, scheduler, translation,
+                             #         image_gen, audio, skills
   "tool_groups": [str],      # real TOOL_GROUPS names derived from `tools`
-  "complexity":  "low"|"medium"|"high",
+  "complexity":  "low" | "medium" | "high",
   "reasoning":   str,        # ≤200 chars
   "source":      "llm"
 }
 ```
+`brain.py:10666–10729 — classify_task_structured()`
 
-Vocabularies are **validated/closed** — `_TASK_TYPE_TIER` (brain.py:10538) and
-`_TASK_TOOL_GROUPS` (brain.py:10557) — so a hallucinated label can't leak into
-routing.
-
-The keyword classifier (`classify_task_purpose`, brain.py:10487–10514) produces
-only one of the 5 legacy purposes, by regex match-count (**≥2 hits required** to
-avoid false positives).
+The **keyword** path is leaner: it returns only one of the 5 legacy `purpose` values,
+by regex match-count, requiring **≥2 hits** to fire (avoiding single-word false
+positives). — `brain.py:10487–10514`
 
 ---
 
-## 3. When does classification run? (use cases)
+## 3. When does it run?
 
-### Intent / auto-route classifier
+Not on every turn — only when a model actually has to be *chosen*.
 
-It is **not** run on every turn. It runs only when a model actually has to be
-*chosen*:
+| Use case | Condition | Source |
+|----------|-----------|--------|
+| **Interactive chat — ✨ Auto** | User selected `✨ Auto` in the composer → `want_auto` → `model="auto"` in the POST body. | `handlers/chat.py:3239,3367` |
+| **Auto-agent first turn** | `agent.model == "auto"` **and** `len(session.messages) == 0`. Follow-up turns reuse the pick (warm-prefix stability). | `handlers/chat.py:3356` |
+| **Background fan-out leaf** | `background_task_model == "auto"` → each leaf task classified independently. | `engine/background_tasks.py:82–205` |
 
-**A. Interactive chat — "✨ Auto" model** (`handlers/chat.py` ~3356–3402):
-
-```python
-auto_by_agent = (agent_cfg.get("model") == "auto" and len(session.messages) == 0)
-# runs when: user picked ✨ Auto in the composer (want_auto), OR
-#            agent is configured model="auto" AND it's the FIRST turn
-```
-
-So it runs when:
-- the user explicitly selects **✨ Auto**, or
-- the agent's configured model is `"auto"` **and this is the session's first turn**.
-
-It does **not** run when a concrete model is selected, and it does **not** re-run
-on follow-up turns of an `auto`-agent session (this keeps the warm-pool KV prefix
-stable). Result is recomputed per send, **not cached**; it's transient SSE
-metadata, persisted only as `msg_metadata.auto_route` for the per-turn modal.
-
-**B. Background-task fan-out / leaf tasks** (`engine/background_tasks.py` ~82–205):
-when `background_task_model == "auto"`, each leaf task is classified
-**independently** via `resolve_task_analysis(prompt)` to pick its own model.
-
-### Document / GDPR classification (separate)
-
-Runs at different points entirely:
-- on **attachment upload** (`/v1/attachments/scan`) → composer severity chip
-- on **tool reads** (`read_document`/`read_file`/`python_exec`/`execute_command`
-  output) via `_gdpr_anon_tool_text` → `_classification_gate_tool_text`
-- on **every background LLM call** via the `gdpr_pick_model_for_background` seam
-  (see §7).
+> **Not cached.** The classification is recomputed on every qualifying send. The
+> result is transient SSE metadata, persisted only as `msg_metadata.auto_route` so
+> the per-turn modal can replay it after a reload. It never blocks the turn — on any
+> classifier error it fails open.
 
 ---
 
-## 4. Classifier mode: keywords / llm / hybrid
+## 4. Classifier modes — keywords / llm / hybrid
 
-Mode is read from config (`resolve_task_analysis`, brain.py:10820–10863):
+An admin chooses how much (if any) LLM cost to spend on classification. Mode is read
+from `config.json → auto_route.classifier_mode`, default `"keywords"`.
+— `brain.py:10820 — resolve_task_analysis()`
 
-```python
-mode = ((_sc.get("auto_route") or {}).get("classifier_mode") or "keywords").strip()
-```
+| Mode | Behavior | LLM call? |
+|------|----------|-----------|
+| `keywords` *(default)* | Regex heuristics only (`classify_task_purpose`). Zero latency, zero cost. | Never |
+| `llm` | Call `classify_task_structured` first; **fall back to keywords** on any failure / timeout / unparseable reply. | Every qualifying turn |
+| `hybrid` | Keywords first; call the LLM **only when keywords return `None`** (ambiguous prompts). | Only on keyword miss |
 
-- **Config key:** `config.json → auto_route.classifier_mode`
-- **Default:** `"keywords"` (zero LLM cost, byte-identical legacy behavior)
-
-| Mode | Behavior |
-|---|---|
-| `keywords` | regex heuristics only (`classify_task_purpose`); no LLM call |
-| `llm` | call `classify_task_structured` first; **fall back to keywords** on any failure |
-| `hybrid` | keywords first; call the LLM **only if keywords return `None`** (ambiguous prompts) |
-
-**Which model runs the LLM classifier** (`_resolve_classifier_model`,
-brain.py:10615–10633): it reuses `config.json → chat_summary_model`
-(Settings → Server → Summaries) if set+enabled; otherwise falls to
-`_resolve_auto_model_tiered(None)` (cheapest/local). LLM call is bounded:
-`max_tokens=200`, `timeout_s=25.0`, `max_rounds=1`, input capped at `message[:4000]`.
-**Fail-open:** any error → `None` → caller falls back to keywords. Classification
-never blocks a turn.
+**Which model runs the LLM classifier?** It reuses the **summary model**
+(`config.json → chat_summary_model`, Settings → Server → Summaries) if set and
+enabled; otherwise the cheapest / local model via `_resolve_auto_model_tiered(None)`.
+The call is bounded: `max_tokens=200`, `timeout_s=25`, `max_rounds=1`, input capped at
+`message[:4000]`. — `brain.py:10615–10729`
 
 ---
 
-## 5. How tools are determined from classification
+## 5. How the model is routed
 
-Classification does **not** add tools — it **subtracts** them. The structured
-classifier's `tool_groups` are stashed on the session
-(`session._auto_tool_groups`, handlers/chat.py ~3395), then the worker computes
-exclusions (`classifier_tool_exclusions`, brain.py:10771–10790):
+A four-level precedence ladder — the first level that produces a model wins.
+
+| Level | Rule | Source |
+|-------|------|--------|
+| **A. Attachment MIME match** | If files are attached, restrict candidates to models whose `raw_formats` match; full set if none do. | `brain.py:11104` |
+| **B. Explicit use-case map** | `auto_route.task_models {task_type: model_id}`. First matching enabled task type pins the model outright, overriding everything below. | `brain.py:11111` |
+| **C. Benchmark ranking** | If any candidate has *measured* data for the task type, rank **capable → fast → cheap** (capability floor 50%, ±20 by complexity). | `brain.py:10969,11128` |
+| **D. Tier + complexity heuristic** | The fallback when no benchmark data exists (see §7). Always returns a concrete model. | `brain.py:11147` |
+
+**What benchmarks measure:** per model × task type, a judge model (the server default)
+scores answers 0–100 (`capability`), and throughput is recorded as tokens/sec (`tps`,
+length-independent). Stored at `config.json → models.<id>.benchmark.<task_type>`; an
+admin `override` is sticky across re-runs. — `engine/model_bench.py`
+
+---
+
+## 6. How tools are determined (gating)
+
+Classification never *adds* tools — it *subtracts* the ones the task won't need. The
+classifier's `tool_groups` are stashed on the session, then the worker computes an
+exclusion list and merges it into the per-turn `exclude_tools`:
 
 ```python
 def classifier_tool_exclusions(model, tool_groups):
     if not tool_groups:
-        return []                              # no signal → no gating
+        return []                                # no signal → no gating
     if model_maintains_warm_prefix(model):
-        return []                              # NEVER gate a warming model (KV prefix)
-    keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP   # {"core","workflows"} floor
+        return []                                # NEVER gate a warming model (KV prefix)
+    keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP   # {"core", "workflows"} floor
     excluded = []
     for gname, gtools in TOOL_GROUPS.items():
         if gname not in keep:
             excluded.extend(gtools)
     return excluded
 ```
+`brain.py:10771–10790` · merged at `handlers/chat.py:1706` · applied in
+`resolve_active_tools` `brain.py:1329`
 
-The worker merges this into the per-turn `exclude_tools`
-(handlers/chat.py ~1706–1711):
+### Exclude vs. defer — not the same thing
+
+| | **Deferred** | **Excluded** |
+|---|---|---|
+| Set by | per-agent `tool_overrides.<name>.deferred` or global `tool_settings` | classifier gating + web-search lockouts, via `exclude_tools` |
+| Effect | omitted from the *initial* prompt to save tokens, but stays **discoverable** — the model can pull its schema via `tool_search` and still use it the same turn | removed **entirely** — not in the prompt and **not discoverable** this turn |
+| Source | `resolve_active_tools brain.py:1307` | `resolve_active_tools brain.py:1329,1361` |
+
+They **stack**. Resolution order: base allowed set → purpose filter → **subtract
+deferred** (still discoverable) → **subtract excluded** (gone). So a merely-deferred
+tool that falls outside the classifier's needed groups gets *promoted* to excluded —
+unless it's in the never-strip floor.
+
+> **When the per-agent deferred list is the sole authority:** whenever the model is
+> not ✨ Auto (no `tool_groups`) *or* the model maintains a warm prefix (local /
+> warmup) — gating returns `[]`, so only deferral applies. The `MODEL_PROFILES`
+> per-profile `deferred_tool_groups` (e.g. `speed` = `[]`) is advisory/display only;
+> the real per-turn filter uses the **per-tool** tristate flags.
+
+---
+
+## 7. No benchmark data? The tier fallback
+
+Benchmarking "ships dark" — a fresh install has zero measured data, and routing still
+works. When `bench_cell_value(model, task_type)` is `None` for every candidate,
+benchmark ranking is skipped and routing falls to the tier heuristic:
 
 ```python
-_gate_excl = engine.classifier_tool_exclusions(_auto_rm, _auto_groups)
-_ctx.exclude_tools = list(set(_ctx.exclude_tools or []) | set(_gate_excl))
+tier = _shift_tier(_PURPOSE_TIER.get(purpose or "", "default"), complexity)
+# _PURPOSE_TIER     : purpose → baseline tier            (brain.py:10878)
+# _shift_tier       : high → bump up, low → bump down     (brain.py:11054)
+#   reasoning  → first model with thinking_format != "none"
+#   fast       → _pick_cheapest_cloud()  (cheapest cloud; local last)
+#   default    → highest-priority configured default_model
+```
+`brain.py:11147–11159`
+
+> **Always returns a concrete model** — never empty, never an error. As soon as an
+> admin benchmarks a model for a task type, routing switches to empirical ranking
+> **for that cell only**; un-benchmarked cells keep using the tier heuristic. The two
+> coexist per `(model, task_type)`.
+
+---
+
+## 8. The end-user GUI
+
+What a user actually sees and clicks. (UI strings are German; translations follow in
+*italics*.)
+
+### 8.1 — Selecting ✨ Auto in the composer
+
+In the model dropdown, an extra option sits above the concrete models:
+
+```
+┌─ Composer · model dropdown ──────────┐
+│ ✨ Auto            ← selected         │
+│ Sonnet 4.6                           │
+│ Opus 4.8                             │
+│ devstral-small-latest                │
+└──────────────────────────────────────┘
 ```
 
-`exclude_tools` is then applied as the **final authority** in `resolve_active_tools`
-(brain.py ~1329–1332, and again after the MCP merge ~1361–1362) — excluded tools
-are removed from the wire entirely and are **not even discoverable** this turn.
+Tooltip on the option: *"Selects the best fitting model automatically for each
+message"* (`Wählt für jede Nachricht automatisch das am besten passende Modell`).
+— `settings_agent.js:218` · `utils.js:146`
 
-**Gating is skipped entirely** for any model that keeps a warm KV prefix
-(`model_maintains_warm_prefix`, brain.py:10751–10768): **local models**,
-**warmup-enabled models**, and the conservative `auto`/unknown case all return
-`[]`. Rationale (quoted): varying the tool list changes the KV prefix — free for
-cloud, but it invalidates the prefix for local/warmup models, so we gate only
-models that don't warm up.
+### 8.2 — The status indicator during the turn
 
----
+The composer label stays `✨ Auto`, but while the answer streams, the status spinner
+shows the **model auto-route actually picked**, and hovering the composer shows the
+reason (`chat.autoReason`, e.g. *"Detected research → Opus 4.8"*).
+— `index.html:229` · `chat_send.js:831,915` · `nav.js:320`
 
-## 6. Per-agent deferred tool list vs. classification gating
+### 8.3 — The per-turn classification modal
 
-This was your explicit follow-up. **They are two different mechanisms and they
-compose; classification does not "override" the deferred list — it stacks a
-second, stronger filter on top.**
+Every assistant reply routed via ✨ Auto gets a small ◔ icon button next to it
+(tooltip: *"Show prompt classification & routing decision"*). Clicking it opens the
+decision modal — `openClassificationModal(idx)`:
 
-**Deferred** ≠ **excluded**:
+```
+┌─ Promptklassifikation & Routing ───────────────────────────  × ─┐
+│                                                                  │
+│ KLASSIFIKATION · classification                                  │
+│   Aufgabentypen · task types     [research] [analysis]           │
+│   Benötigte Tools · needed tools [web] [memory]                  │
+│   Komplexität · complexity       hoch · high                     │
+│   Begründung · reasoning         "Multi-source research question │
+│                                   requiring synthesis"           │
+│ ─────────────────────────────────────────────────────────────── │
+│ MODELLENTSCHEIDUNG · model decision                              │
+│   Gewähltes Modell · chosen model   Opus 4.8                      │
+│   Warum · why          Detected research, complexity high →       │
+│                        reasoning tier                            │
+│ ─────────────────────────────────────────────────────────────── │
+│ TOOL-AUSWAHL · tool selection                                    │
+│   Status     [aktiv — Toolset eingeschränkt] · active—restricted │
+│   Aktive Gruppen · kept     core · workflows · web · memory       │
+│   Entfernte Gruppen · removed  email · git · code_graph ·         │
+│                                translation · scheduler           │
+└──────────────────────────────────────────────────────────────────┘
+```
+`chat_render.js:1000` (button) · `1566–1627` (modal) · gating text from
+`brain.py:10793 classifier_gating_decision()`
 
-- **Deferred** (per-agent `token_config.tool_overrides.<name>.deferred`, or global
-  `tool_settings.<name>.deferred`): tool is **omitted from the initial prompt** to
-  save tokens, but **stays discoverable** — the model can pull its schema via
-  `tool_search` and use it the same turn (`resolve_active_tools`, brain.py:1307–1320).
-- **Excluded** (classification gating + web-search lockouts, via `exclude_tools`):
-  tool is **removed entirely** — not in the prompt, **not discoverable**
-  (brain.py:1329–1332).
-
-Resolution order inside `resolve_active_tools`:
-
-1. base allowed set → purpose filter
-2. **subtract deferred** (still discoverable) — brain.py:1317–1320
-3. **subtract excluded** (gone for the turn) — brain.py:1329–1332, repeated after MCP merge 1361–1362
-
-**When is the per-agent deferred list still the sole authority?**
-- When the model is **not** "✨ Auto" / auto-route isn't producing tool_groups
-  (`_auto_tool_groups` empty) → `classifier_tool_exclusions` returns `[]`, so only
-  the deferred filter runs.
-- When the model **maintains a warm prefix** (local / warmup-enabled) → gating
-  returns `[]` regardless of classification → deferred list alone governs.
-
-**When does classification "overrule" it?**
-- Only for **non-warmup models under ✨ Auto** with a structured `tool_groups`
-  result. Then the classifier's exclusions are applied **in addition to** deferral.
-  Net effect: a tool the agent merely *deferred* (still reachable via `tool_search`)
-  becomes *excluded* (unreachable) if it's outside the classifier's needed groups —
-  except the never-strip floor `{"core","workflows"}` (`_TOOL_GATING_NEVER_STRIP`,
-  brain.py:10748), which is always kept.
-
-**Tristate precedence for the deferred flag itself** (brain.py:1312–1316): agent
-`tool_overrides.<name>.deferred` present → wins; absent → inherit global
-`tool_settings.<name>.deferred`.
-
-**MODEL_PROFILES `deferred_tool_groups` (e.g. `speed` profile = `[]`)** is a
-*group-level, display/advisory* hint (engine/model_select.py:62–95; used in
-`tool_breakdown`, brain.py:1064). The **actual per-turn filtering** uses the
-**per-tool** `deferred` flags, not the profile's group list — so the per-tool
-agent/global tristate is what really governs deferral.
+> For a **local or warmup model**, the Tool-Auswahl section flips to *"nicht
+> angewendet — volles Toolset"* (*not applied — full toolset*) with the reason *"model
+> keeps a warm KV prefix … — tools not gated to preserve it"*. In keyword mode with no
+> signal it reads *"no LLM classification (keyword mode or no signal)"*.
 
 ---
 
-## 7. The "strict" classification config — where it's enforced
+## 9. Settings dialogs (admin)
 
-This was your other follow-up. "Strict" is a **document-sensitivity level**, not an
-intent class — it belongs to the ARL 20.02.02.06 system.
+Three admin surfaces govern the classifier. All under Settings.
 
-**Per-level action config** (`brain.py` ~9562–9602):
+### 9.1 — Auto-Routing mode & use-case map
 
-```python
-# config.json → classification_scanner.per_level_action
-_CLASSIFICATION_DEFAULTS = {
-  "per_level_action": {
-    "public":       "ignore",
-    "internal":     "warn",
-    "confidential": "force_local",
-    "strict":       "block",     # always — locked by invariant below
-    "unmarked":     "warn",
-  }
-}
+Settings → General → Server → **Auto-Routing** section.
+— `settings_general_tabs.js:73–94`
+
+- **Mode labels** (verbatim):
+  - `Schlüsselwörter (Standard, ohne Kosten)` — *Keywords (default, no cost)*
+  - `LLM (klassifiziert per günstigem/lokalem Modell)` — *LLM (via cheap/local model)*
+  - `Hybrid (erst Schlüsselwörter, LLM nur bei Bedarf)` — *Hybrid (keywords first, LLM only if needed)*
+  - Apply button: `Setzen` (*Set*)
+- **Use-case map:** JSON `{Aufgabentyp: Modell-ID}` that pins a model per task type,
+  overriding the tier logic (level B in §5). Empty = tier logic only. Apply:
+  `Zuordnung setzen` (*Set mapping*). Example placeholder:
+  ```json
+  {"coding": "CLIProxyAPI/devstral-small-latest", "research": "CLIProxyAPI/mistral-medium-3.5"}
+  ```
+
+### 9.2 — Summary model (the LLM classifier's engine)
+
+Settings → General → Server → **Zusammenfassungen** (*Summaries*). The model chosen
+here (`chat_summary_model`) is reused by the LLM / Hybrid classifier.
+— `settings_general_tabs.js:64–72`
+
+### 9.3 — Benchmarks
+
+Settings → Models. A run button measures every enabled model × 9 task types; results
+feed level C of the router. — `settings_general_tabs.js:179,321–353` ·
+`POST /v1/models/config {action:"benchmark"}` · `GET /v1/models/benchmark/status`
+
+- **Run-all button:** `Benchmark: alle aktivierten` (*Benchmark: all enabled*).
+- **Columns:** `Aufgabe` (task) · `Gemessen` (measured: `capability% · tps tok/s`) ·
+  `Override %` · `Override tok/s`.
+- **Buttons:** `Dieses Modell benchmarken` (this model only) · `Overrides speichern`
+  (save sticky overrides).
+- **Progress:** `Benchmark: {done}/{total} · {model}`, then `Fertig` (*Done*).
+
+```
+┌─ Settings · Models · Benchmark ───────────────────────┐
+│ [ Benchmark: alle aktivierten ]                        │
+│ ┌──────────────┬──────────────┬──────────┬──────────┐ │
+│ │ Aufgabe      │ Gemessen     │ Override%│ Override  │ │
+│ ├──────────────┼──────────────┼──────────┼──────────┤ │
+│ │ coding       │ 88% · 64 t/s │    —     │    —     │ │
+│ │ research     │ 91% · 41 t/s │    —     │    —     │ │
+│ │ fast         │ 72% · 120t/s │    —     │    —     │ │
+│ └──────────────┴──────────────┴──────────┴──────────┘ │
+│ [ Dieses Modell benchmarken ]  [ Overrides speichern ] │
+└────────────────────────────────────────────────────────┘
 ```
 
-**Strict-always-block invariant** (`_classification_effective_action`,
-engine/classification.py:557–579) — ARL §1.11:
+---
 
-```python
-if level == "strict":
-    return "block" if cfg.get("server_block", True) else "force_local"
-```
+## 10. Worked end-to-end examples
 
-Strict resolves to `block` **regardless of admin config** — the admin
-`per_level_action.strict` value is ignored. When the master `server_block` switch
-is OFF, `block` degrades to `force_local` (mirrors the GDPR scanner's master
-switch), never to ignore/warn.
+Three concrete prompts, each through the whole pipeline.
 
-**Where strict (and the rest) is enforced — use cases:**
+### Example A — "ja oder nein" (trivial)
 
-1. **Attachment upload / interactive send** (`/v1/attachments/scan` + composer
-   `classificationActionModal`): strict+block → Cancel only (no model-swap option);
-   confidential+force_local → swap-to-local offered. Skipped if the chosen model is
-   already local.
-2. **Every background LLM call** (chat summary, next-prompt, delegate, scheduler,
-   KG extract, memory classifier, …): `classification_pick_model_for_background`
-   is called **first** inside `gdpr_pick_model_for_background`
-   (brain.py ~9218–9237), before the GDPR/PII scan.
-3. **Tool reads** (`read_document`/`read_file`/`python_exec`/`execute_command`):
-   `_classification_gate_tool_text` (engine/classification.py:582–663). Fail-open
-   on internal error.
+**User** sends under ✨ Auto: *"Ist 17 eine Primzahl? Nur ja oder nein."*
 
-**Error path** (`ClassificationBlockedError`, brain.py:9546–9557): it **subclasses
-`GDPRBlockedError`**. That's the zero-touch trick — the 10+ background sites that
-already `except GDPRBlockedError:` (brain.py:5499, 5640, 5904, 5926, 7235, 8391,
-8418, 8492, 8513, 8847, 8869, …) catch classification blocks automatically and
-soft-degrade (skip / fallback summary / None).
+- **Classify** (keyword mode): matches `fast` patterns (quick / yes-or-no).
+  `complexity=low`.
+- **Route**: tier for `fast` → complexity `low` shifts down → `_pick_cheapest_cloud()`
+  → a cheap cloud model.
+- **Tools**: cheap cloud model is non-warmup → gating applies. `tool_groups`
+  empty/minimal → everything but the `core` / `workflows` floor excluded.
+- **Modal**: Aufgabentypen `fast` · Komplexität *gering* · Status *aktiv*.
 
-**Local models:** the gate **no-ops for local models** (`is_model_local` early
-return — engine/classification.py:615; same check in the background picker
-~764–769). Local models are trusted at every level. But once a `block` action
-*does* fire (e.g. strict reaching a non-local model with no usable local fallback),
-it is enforced regardless — there's no escape hatch past `block` itself.
+### Example B — "fix this Python traceback" (coding)
+
+**User**: *"Here's a stack trace from my pytest run — find the bug and patch it."*
+(LLM mode)
+
+- **Classify** (LLM): `task_types=[coding]`, `tools=[python, files, git]`,
+  `complexity=medium`.
+- **Route**: use-case map has `{"coding": "devstral-small-latest"}` → pinned (level B,
+  beats benchmark/tier).
+- **Tools**: kept = `core`, `workflows`, `code_exec`, `documents`, `git`; removed =
+  `email`, `web`, `translation`, …
+- **Modal**: Gewähltes Modell **devstral-small-latest** · Warum *"use-case map: coding"*.
+
+### Example C — same prompt, but the model is local
+
+Suppose the resolved/selected model is a **local** model (or a cloud model with
+`warmup:true`).
+
+- **Classify & route**: unchanged — the model is still chosen.
+- **Tools**: `model_maintains_warm_prefix` is `true` → `classifier_tool_exclusions`
+  returns `[]`. **No gating.** The full toolset (minus per-agent *deferred* tools) is
+  exposed, preserving the KV prefix.
+- **Modal**: Tool-Auswahl shows *nicht angewendet — volles Toolset*, reason *"model
+  keeps a warm KV prefix … — tools not gated to preserve it"*.
 
 ---
 
-## 8. Pure-regex / no-LLM classification path
+## Code map
 
-Two places run **regex-only**:
-
-**A. Document classification (always regex)** — `engine/classification.py`
-(`detect_classification`, lines 362–450). No LLM at any point:
-- **marker scan** (185–208): German (Öffentlich/Intern/Vertraulich/Streng
-  Vertraulich), English (Public/Internal/Confidential), TLP (RED/AMBER/GREEN/WHITE)
-- **filename hints** (262–275)
-- **content heuristic** (278–312): ~20 German business-term triggers per level +
-  PII finding count
-- **mismatch detection** (315–357): marker level vs heuristic level → flags
-  under-classification
-- PDF-footer fallback via `fitz` when markitdown drops repeating footers (453–541)
-
-The **GDPR/PII scanner** (71 regex detectors + spaCy German NER) is the same
-shape — regex/NER only, no external API — and feeds the same enforcement seam.
-
-**B. Intent classification, keyword mode** — `classify_task_purpose`
-(brain.py:10487–10514): regex heuristics, **≥2 keyword hits** to fire, else
-returns `None`. This is the path when:
-- `classifier_mode == "keywords"` (the **default**), or
-- `llm`/`hybrid` mode and the LLM call **failed/timed out/was unparseable**
-  (fail-open fallback), or
-- `hybrid` mode where keywords already produced a confident hit (LLM skipped).
-
-When the regex path returns `None` (no confident class), routing does **not**
-fail — it falls through to the tier heuristic (next section). Regex-only intent
-classification is therefore **lossy but safe**: worst case is "no signal," which
-just means model routing uses defaults and tool gating is skipped.
-
----
-
-## 9. Model routing — and the no-benchmark-data fallback
-
-Routing entry: `resolve_auto_model_for_task` → `_resolve_auto_model_tiered`
-(brain.py ~11070–11197). Precedence, highest first:
-
-1. **Attachment MIME match** (11104–11109): restrict candidates to models whose
-   `raw_formats` match uploaded files; fall back to full set if none.
-2. **Explicit use-case map** (11111–11126): `config.json → auto_route.task_models`
-   `{task_type: model_id}`. First matching enabled task_type wins outright.
-3. **Benchmark ranking** (11128–11145): if any candidate has *measured* data for
-   the turn's task type → `_pick_by_benchmark(candidates, task_type, complexity)`
-   (brain.py:10969). Ranks **capable → fast → cheap**, with a capability floor
-   (50% base, +20 high complexity / −20 low). Benchmarks come from
-   `engine/model_bench.py` (9 task types × 2 prompts, judge-scored 0–100;
-   `capability` mean score, `tps` throughput tokens/sec; stored at
-   `config.json → models.<id>.benchmark.<task_type>`, admin override sticky).
-
-4. **Tier heuristic — the no-benchmark fallback** (11147–11159): when
-   `bench_cell_value(model, task_type)` is `None` for every candidate (no measured
-   data), benchmark ranking is skipped and routing uses:
-
-   ```python
-   tier = _shift_tier(_PURPOSE_TIER.get(purpose or "", "default"), complexity)
-   ```
-
-   - `_PURPOSE_TIER` (brain.py:10878) maps purpose → baseline tier
-   - `_shift_tier` (brain.py:11054): complexity shifts it (high → up, low → down,
-     medium unchanged)
-   - tier → concrete model:
-     - `reasoning` → first model with `thinking_format != "none"`
-     - `fast` → `_pick_cheapest_cloud()` (cheapest cloud; local last)
-     - `default` → highest-priority configured `default_model`
-
-**Key property:** benchmarking "ships dark." A fresh `config.json` has **no**
-benchmark data, so **every** model routes by tier+complexity until an admin runs
-benchmarks. The fallback **always returns a concrete model** — never empty, never
-an error. As soon as measured data exists for a task type, routing switches to
-empirical ranking for that cell only; un-benchmarked cells keep using the tier
-heuristic. The two coexist per-(model, task_type).
-
----
-
-## 10. One-paragraph summary
-
-When a model must be chosen (✨ Auto, or first turn of an `auto`-agent, or an
-`auto` background leaf task), Brain classifies the prompt — by regex
-(`keywords`, the default), by LLM (`llm`), or regex-then-LLM-on-miss (`hybrid`),
-LLM-failures falling open to regex. The result picks a model
-(use-case map → benchmark ranking → **tier+complexity heuristic when no benchmark
-data exists**) and, for non-warmup models only, **excludes** tools outside the
-classifier's needed groups (a harder filter than the per-agent *deferred* list,
-which only hides tools from the initial prompt while leaving them discoverable;
-deferral and exclusion stack, and the never-strip `core`/`workflows` floor always
-survives). Separately, the regex-only **document-sensitivity** classifier and the
-GDPR/PII scanner enforce per-level actions at the same background/tool/upload
-seams — with **strict always resolving to `block`** (or `force_local` if the master
-switch is off) regardless of admin config, surfaced via
-`ClassificationBlockedError` (a `GDPRBlockedError` subclass) and no-oped for local
-models.
-```
-
+| Concern | Function | Location |
+|---------|----------|----------|
+| Trigger gate (interactive) | `want_auto` / `auto_by_agent` | `handlers/chat.py:3239,3356,3367` |
+| Mode dispatcher | `resolve_task_analysis` | `brain.py:10820–10863` |
+| Keyword classifier | `classify_task_purpose` | `brain.py:10487–10514` |
+| LLM classifier | `classify_task_structured` | `brain.py:10666–10729` |
+| LLM classifier model pick | `_resolve_classifier_model` | `brain.py:10615–10633` |
+| Model routing entry | `resolve_auto_model_for_task` | `brain.py:11162–11197` |
+| Tiered routing ladder | `_resolve_auto_model_tiered` | `brain.py:11070–11159` |
+| Benchmark ranking | `_pick_by_benchmark` | `brain.py:10969` |
+| Benchmark harness | prompts + judge loop | `engine/model_bench.py` |
+| Tool gating | `classifier_tool_exclusions` | `brain.py:10771–10790` |
+| Warm-prefix guard | `model_maintains_warm_prefix` | `brain.py:10751–10768` |
+| Gating transparency text | `classifier_gating_decision` | `brain.py:10793–10817` |
+| Final tool resolution | `resolve_active_tools` | `brain.py:1307,1329,1361` |
+| Composer Auto option | model dropdown | `settings_agent.js:218` · `utils.js:146` |
+| Per-turn modal | `openClassificationModal` | `chat_render.js:1000,1566–1627` |
+| Mode / use-case settings | Auto-Routing section | `settings_general_tabs.js:73–94` |
+| Benchmark settings | benchmark grid | `settings_general_tabs.js:179,321–353` |
+| Status spinner / reason | `spinner-model` / `autoReason` | `index.html:229` · `chat_send.js:831,915` · `nav.js:320` |
