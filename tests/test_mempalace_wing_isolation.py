@@ -37,12 +37,52 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import brain  # noqa: E402
+import engine.mempalace_glue as _mpg  # noqa: E402  (the module that OWNS tool_mempalace_query — its internal calls resolve names in THIS namespace, so mocks must patch here, not just on the brain re-export)
 from engine.context import request_context, get_request_context  # noqa: E402
 
 
 # The visibility predicate. Pre-C3 it's a closure (not importable); post-C3 it
 # must be a module-level helper re-exported on brain. Resolve whichever exists.
 _wing_visible = getattr(brain, "_wing_visible", None)
+
+
+class _FakeCollection:
+    """Stand-in for a chromadb collection so wing-isolation tests that proceed
+    past the visibility gate exercise the real filter code WITHOUT opening the
+    live palace. `.query()` returns the empty chromadb shape; `.get()` likewise."""
+
+    def query(self, *a, **k):
+        return {"documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+    def get(self, *a, **k):
+        return {"ids": [], "documents": [], "metadatas": []}
+
+    def count(self):
+        return 0
+
+
+def _ensure_mempalace_on_path():
+    """Best-effort: put the mempalace venv site-packages on sys.path so the
+    `mempalace.palace.get_collection` patch target is importable even though the
+    tests mock `_ensure_mempalace_importable` (which normally does this insert)."""
+    try:
+        import mempalace.palace  # noqa: F401
+        return True
+    except ImportError:
+        pass
+    import glob
+    for sp in glob.glob(os.path.expanduser(
+            "~/.mempalace/venv/lib/python*/site-packages")):
+        if sp not in sys.path:
+            sys.path.insert(0, sp)
+    try:
+        import mempalace.palace  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+_MEMPALACE_IMPORTABLE = _ensure_mempalace_on_path()
 
 
 def _build_visible(own_user: str, own_teams: set[str]):
@@ -81,14 +121,19 @@ class TestRefuseOnMissingProjectId(_MPFixture):
     so it's reachable with the side-effects stubbed)."""
 
     def _run_query(self, get_project_return):
-        with mock.patch.object(brain, "_load_mempalace_config",
+        # Patch on `_mpg` (owning module). Importability True so the project-pin
+        # logic runs; the stubbed get_collection guarantees no live-palace touch
+        # even if the refuse branch were ever to fall through.
+        with mock.patch.object(_mpg, "_load_mempalace_config",
                                return_value={"enabled": True, "palace_path": "/tmp"}), \
-             mock.patch.object(brain, "_ensure_mempalace_importable",
+             mock.patch.object(_mpg, "_ensure_mempalace_importable",
                                return_value=(True, "")), \
              mock.patch("os.path.isdir", return_value=True), \
+             mock.patch("mempalace.palace.get_collection",
+                        return_value=_FakeCollection()), \
              mock.patch.object(brain.ProjectManager, "get_project",
                                return_value=get_project_return):
-            return brain.tool_mempalace_query({"query": "anything"})
+            return _mpg.tool_mempalace_query({"query": "anything"})
 
     def test_project_pinned_no_id_refuses(self):
         self._ctx(project="someproject", user_id="alice", agent_id="main")
@@ -115,13 +160,24 @@ class TestExplicitWingRefused(_MPFixture):
     `wing` (e.g. wing='user__bob') bypassed the C3 gate entirely. The pre-check
     refuses before any Chroma call, so this is reachable with side-effects stubbed."""
 
-    def _run_query(self, args, importable=(True, "")):
-        with mock.patch.object(brain, "_load_mempalace_config",
+    def _run_query(self, args):
+        # The importability check runs BEFORE the visibility/project logic under
+        # test, so we must let it succeed (importable=True) for the refusals to
+        # fire. To still NEVER touch the live Chroma palace, stub the SOURCE
+        # `mempalace.palace.get_collection` (the glue does a function-local
+        # `from mempalace.palace import get_collection`, so patching the source
+        # module is what intercepts it) to a fake collection returning empty
+        # results. An allowed-wing query then reaches the stub, not
+        # ~/.mempalace/brain; a refused-wing query returns before the stub.
+        # Patch _mpg's helpers (its own namespace owns the internal calls).
+        with mock.patch.object(_mpg, "_load_mempalace_config",
                                return_value={"enabled": True, "palace_path": "/tmp"}), \
-             mock.patch.object(brain, "_ensure_mempalace_importable",
-                               return_value=importable), \
-             mock.patch("os.path.isdir", return_value=True):
-            return brain.tool_mempalace_query(args)
+             mock.patch.object(_mpg, "_ensure_mempalace_importable",
+                               return_value=(True, "")), \
+             mock.patch("os.path.isdir", return_value=True), \
+             mock.patch("mempalace.palace.get_collection",
+                        return_value=_FakeCollection()):
+            return _mpg.tool_mempalace_query(args)
 
     def test_foreign_user_wing_refused(self):
         self._ctx(project=None, user_id="alice", team_ids=[], agent_id="main")
@@ -133,11 +189,13 @@ class TestExplicitWingRefused(_MPFixture):
         self._ctx(project=None, user_id="alice", team_ids=[], agent_id="main")
         out = json.loads(self._run_query({"query": "x", "wing": "project__other"}))
         self.assertIn("error", out, "explicit project wing must be refused from a non-project chat")
+        self.assertIn("not visible", out["error"])
 
     def test_foreign_team_wing_refused(self):
         self._ctx(project=None, user_id="alice", team_ids=["t1"], agent_id="main")
         out = json.loads(self._run_query({"query": "x", "wing": "team__t2"}))
         self.assertIn("error", out, "explicit non-member team wing must be refused")
+        self.assertIn("not visible", out["error"])
 
     def test_own_user_wing_allowed_past_precheck(self):
         # The caller's OWN wing must NOT be refused by the pre-check. Stub the
@@ -145,15 +203,13 @@ class TestExplicitWingRefused(_MPFixture):
         # (no live Chroma): a "not visible" error => the pre-check wrongly refused;
         # the importability error => the pre-check passed (correct).
         self._ctx(project=None, user_id="alice", team_ids=[], agent_id="main")
-        out = json.loads(self._run_query({"query": "x", "wing": "user__alice"},
-                                          importable=(False, "stub: stop after pre-check")))
+        out = json.loads(self._run_query({"query": "x", "wing": "user__alice"}))
         self.assertNotIn("not visible", out.get("error", ""),
                          "own wing must pass the visibility pre-check")
 
     def test_shared_brain_code_wing_allowed_past_precheck(self):
         self._ctx(project=None, user_id="alice", team_ids=[], agent_id="main")
-        out = json.loads(self._run_query({"query": "x", "wing": "brain_code"},
-                                          importable=(False, "stub: stop after pre-check")))
+        out = json.loads(self._run_query({"query": "x", "wing": "brain_code"}))
         self.assertNotIn("not visible", out.get("error", ""),
                          "shared brain_code wing must pass the visibility pre-check")
 
