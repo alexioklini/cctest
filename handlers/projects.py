@@ -104,8 +104,7 @@ class ProjectsHandlerMixin:
         Returns the session info dict on success; sends 403/404 and returns None on fail.
         `require_manage` gates mutations through the generic can_manage (owner
         or admin — no team-head shortcut, matching the project model)."""
-        from brain import ChatDB
-        from server_lib.db import session_share_block
+        from server_lib.db import ChatDB, session_share_block
         info = ChatDB.get_session_info(sid)
         if not info:
             self._send_json({"error": "Session not found"}, 404)
