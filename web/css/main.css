@@ -1948,6 +1948,80 @@ details.msg-references-row[open] .msg-references {
   top: -6px;
 }
 
+/* Numbered inline citation chip [n] — overrides the icon-pin sizing */
+.citation-pin.citation-chip {
+  width: auto;
+  height: auto;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 4px;
+  vertical-align: baseline;
+  line-height: 1;
+}
+.citation-pin.citation-chip sup {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+/* Jump-to-source action inside the popover */
+.citation-popover-action {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-200);
+}
+.citation-popover-action button,
+.citation-popover-action a {
+  font-size: 12px;
+  color: var(--accent-brand);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: none;
+}
+.citation-popover-action button:hover,
+.citation-popover-action a:hover { text-decoration: underline; }
+/* Highlighted cited span in the opened source */
+mark.citation-span {
+  background-color: #fde68a;
+  color: inherit;
+  border-radius: 3px;
+  padding: 1px 2px;
+  outline: 2px solid #f59e0b;
+}
+/* Per-message citation legend (footer) */
+.msg-citation-legend {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-200);
+  border-radius: 8px;
+  background: var(--bg-100);
+  font-size: 12px;
+}
+.msg-citation-legend-head {
+  font-weight: 600;
+  color: var(--text-300);
+  margin-bottom: 4px;
+}
+.msg-citation-legend-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.citation-legend-item {
+  padding: 2px 0;
+  color: var(--text-200);
+  line-height: 1.5;
+}
+.citation-legend-n {
+  font-weight: 600;
+  color: var(--accent-brand);
+  margin-right: 4px;
+}
+.citation-legend-file { font-weight: 500; }
+.citation-legend-quote { color: var(--text-400); font-style: italic; }
+.citation-legend-warn { color: #b45309; }
+
 /* Reference panel sections (right pane) */
 .refs-section {
   margin-bottom: 16px;

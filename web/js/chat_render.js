@@ -774,6 +774,11 @@ function renderAssistantMessage(msg, idx) {
     ? renderMarkdownWithGdprHighlights(content, gdprSpans)
     : renderMarkdown(content);
 
+  // Citation legend: map the inline [n] chips → file + quote, with a
+  // verified/unverified badge from the validator metadata (matched by basename
+  // + quote excerpt). Same parse the chips used, so numbering aligns.
+  const citationLegendHtml = _buildCitationLegend(content, msg.metadata?.citation_validation);
+
   let thinkingHtml = '';
   if (msg._thinking) {
     const summaryNote = msg._thinkingSummary?.reasoning_tokens
@@ -992,6 +997,7 @@ function renderAssistantMessage(msg, idx) {
     <div class="msg-turn msg-turn-assistant"${msg.id != null ? ` data-msg-id="${msg.id}"` : ''}>
       ${thinkingHtml}
       <div class="msg-assistant msg-content">${rendered}</div>
+      ${citationLegendHtml}
       ${filesHtml}
       ${webSourcesHtml}
       ${refsHtml}
@@ -1371,18 +1377,53 @@ function restoreCitationPins(html, citations) {
   // as an attribute so the popover handler can read it.
   const re = new RegExp(CITATION_SENTINEL_OPEN + '(\\d+)' + CITATION_SENTINEL_CLOSE, 'g');
   return html.replace(re, (_match, idStr) => {
-    const c = citations[parseInt(idStr, 10)];
+    const i = parseInt(idStr, 10);
+    const c = citations[i];
     if (!c) return '';
-    return renderCitationPin(c);
+    return renderCitationPin(c, i + 1);   // 1-based chip number (render order)
   });
 }
-function renderCitationPin({ file, locator, quote }) {
-  // Compact "book" icon — Lucide-style open book. Doesn't break text flow.
+function renderCitationPin({ file, locator, quote }, n) {
+  // Numbered superscript chip [n] at the citation point (NotebookLM-style).
+  // Hover → tooltip (file + quote); click → popover with a jump-to-source action.
   const data = encodeURIComponent(JSON.stringify({ file, locator, quote }));
   const tip = quote ? `${file}${locator ? ' · ' + locator : ''}\n\n"${quote}"` : file;
-  const bookSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`;
-  return `<button type="button" class="citation-pin" data-citation="${esc(data)}" title="${esc(tip)}" onclick="openCitationPopover(this, event)" aria-label="Quelle: ${esc(file)}">${bookSvg}</button>`;
+  const label = (n != null) ? String(n) : '•';
+  return `<button type="button" class="citation-pin citation-chip" data-citation="${esc(data)}" title="${esc(tip)}" onclick="openCitationPopover(this, event)" aria-label="Quelle ${esc(label)}: ${esc(file)}"><sup>[${esc(label)}]</sup></button>`;
 }
+// Footer legend: [n] → file — "quote", with a verified/⚠ badge from the
+// validator metadata. Returns '' when the message has no citations.
+function _buildCitationLegend(content, validation) {
+  let citations = [];
+  try { citations = (extractCitationsFromRaw(content) || {}).citations || []; } catch (e) { return ''; }
+  if (!citations.length) return '';
+  // Build a set of (basename, quote-excerpt) that the validator flagged unverified.
+  const unver = [];
+  if (validation && Array.isArray(validation.unverified_samples)) {
+    for (const u of validation.unverified_samples) {
+      unver.push({ base: (u.basename || '').toLowerCase(), q: (u.quote_excerpt || '').slice(0, 40).toLowerCase() });
+    }
+  }
+  const isUnverified = (c) => {
+    const base = (c.file || '').split('/').pop().toLowerCase();
+    const q = (c.quote || '').slice(0, 40).toLowerCase();
+    return unver.some(u => u.base === base && (!u.q || !q || u.q === q));
+  };
+  const rows = citations.map((c, i) => {
+    const n = i + 1;
+    const warn = c.quote ? isUnverified(c) : false;
+    const badge = warn ? '<span class="citation-legend-warn" title="Dieses Zitat konnte nicht in der Quelle verifiziert werden">⚠</span> ' : '';
+    const q = c.quote ? ` — <span class="citation-legend-quote">"${esc(c.quote)}"</span>` : '';
+    const loc = c.locator ? ` · ${esc(c.locator)}` : '';
+    return `<li class="citation-legend-item"><span class="citation-legend-n">[${n}]</span> ${badge}<span class="citation-legend-file">${esc(c.file || '')}</span>${esc(loc)}${q}</li>`;
+  }).join('');
+  return `
+    <div class="msg-citation-legend">
+      <div class="msg-citation-legend-head">Quellen</div>
+      <ol class="msg-citation-legend-list">${rows}</ol>
+    </div>`;
+}
+
 // Click handler: open a popover anchored to the pin showing file + locator + quote.
 let _activeCitationPopover = null;
 function closeCitationPopover() {
@@ -1414,7 +1455,20 @@ function openCitationPopover(pinBtn, ev) {
   const fileLine = `<div class="citation-popover-file">${fileIcon}<span>${esc(data.file || '')}</span></div>`;
   const locLine = data.locator ? `<div class="citation-popover-locator">${esc(data.locator)}</div>` : '';
   const quoteLine = data.quote ? `<div class="citation-popover-quote">${esc(data.quote)}</div>` : '';
-  pop.innerHTML = `<div class="citation-popover-arrow"></div>${fileLine}${locLine}${quoteLine}`;
+  // Jump-to-passage action. A web-source citation (file looks like a host/URL)
+  // links out; a file/drawer citation opens the source in the right panel and
+  // highlights the cited quote.
+  const _f = data.file || '';
+  const _isWeb = /^https?:\/\//i.test(_f) || (/\.[a-z]{2,}$/i.test(_f) && !/\.(pdf|docx?|pptx?|xlsx?|xlsm|csv|md|txt|html?|json|eml|msg)$/i.test(_f) && _f.indexOf(' ') === -1 && _f.indexOf('/') === -1);
+  let actionLine = '';
+  if (data.quote && !_isWeb) {
+    actionLine = `<div class="citation-popover-action"><button type="button" onclick="openCitationSource(this)">Im Dokument öffnen →</button></div>`;
+  } else if (_isWeb) {
+    const _url = /^https?:\/\//i.test(_f) ? _f : ('https://' + _f);
+    actionLine = `<div class="citation-popover-action"><a href="${esc(_url)}" target="_blank" rel="noopener">Quelle öffnen ↗</a></div>`;
+  }
+  pop.innerHTML = `<div class="citation-popover-arrow"></div>${fileLine}${locLine}${quoteLine}${actionLine}`;
+  pop._citationData = data;   // for openCitationSource
   document.body.appendChild(pop);
 
   // Position: prefer below pin, flip above if not enough room
@@ -1450,6 +1504,74 @@ function openCitationPopover(pinBtn, ev) {
     document.addEventListener('click', _citationPopoverOutsideHandler, true);
     document.addEventListener('keydown', _citationPopoverEscHandler);
   }, 0);
+}
+
+// Jump-to-passage: open the cited source file in the right panel and highlight
+// the cited quote (string-match — spec §6 v1). Resolves the file's on-disk path
+// by matching the citation basename against this chat's references (tool-result
+// source links carry the path); falls back to the bare file string.
+function _citationResolvePath(file) {
+  if (!file) return '';
+  const base = file.split('/').pop().toLowerCase();
+  try {
+    const refs = (typeof collectChatReferences === 'function') ? collectChatReferences() : { cited: [], searched: [] };
+    for (const r of [].concat(refs.cited || [], refs.searched || [])) {
+      const link = r.read_path || r.path || r.link || '';
+      if (link && link.split('/').pop().toLowerCase() === base) return link;
+    }
+  } catch (e) {}
+  return file;  // best-effort: the preview endpoint may still resolve a bare name
+}
+
+async function openCitationSource(btn) {
+  const pop = btn.closest('.citation-popover');
+  const data = (pop && pop._citationData) || {};
+  closeCitationPopover();
+  const path = _citationResolvePath(data.file);
+  if (!path) { showToast('Quelle nicht gefunden', true); return; }
+  if (typeof openRightPanel === 'function') openRightPanel('artifacts');
+  const container = document.getElementById('artifact-content');
+  const titleEl = document.getElementById('artifact-title');
+  if (titleEl) titleEl.textContent = data.file || 'Quelle';
+  if (container) container.innerHTML = '<div class="artifact-empty">Lädt…</div>';
+  let content = '';
+  try {
+    const d = await API.getFilePreview(path);
+    content = (d && (d.content || d.preview)) || '';
+  } catch (e) {
+    if (container) container.innerHTML = `<div class="artifact-empty">Quelle nicht verfügbar: ${esc(e.message || e)}</div>`;
+    return;
+  }
+  const ext = (data.file || '').split('.').pop().toLowerCase();
+  const type = (ext === 'md' || ext === 'markdown') ? 'markdown' : (ext === 'html' || ext === 'htm') ? 'html' : 'code';
+  if (typeof renderArtifactContent === 'function') renderArtifactContent(content, type, data.file || 'Quelle', 'utf8');
+  // Highlight the quote substring + scroll into view (unicode-safe, E6).
+  if (data.quote) setTimeout(() => _highlightQuoteIn(container, data.quote), 60);
+}
+
+// Wrap the first occurrence of `quote` (normalised) in the rendered source with
+// a <mark> and scroll to it. Robust fallback (E1): if not found verbatim, try a
+// shortened prefix; give a gentle notice if still not found.
+function _highlightQuoteIn(container, quote) {
+  if (!container || !quote) return;
+  const norm = (s) => s.replace(/\s+/g, ' ').replace(/[„""«»]/g, '"').trim();
+  const needle = norm(quote);
+  const tryFind = (frag) => {
+    let node;
+    const w = document.createTreeWalker(container, window.NodeFilter.SHOW_TEXT, null);
+    while ((node = w.nextNode())) {
+      if (norm(node.nodeValue).indexOf(frag) >= 0) return node;
+    }
+    return null;
+  };
+  let target = tryFind(needle);
+  if (!target && needle.length > 40) target = tryFind(needle.slice(0, 40));
+  if (!target) { showToast('Passage im Dokument nicht exakt gefunden — Quelle geöffnet'); return; }
+  const mark = document.createElement('mark');
+  mark.className = 'citation-span';
+  mark.textContent = target.nodeValue;
+  target.parentNode.replaceChild(mark, target);
+  mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 // LEGACY (no longer called) — replaced by extractCitationsFromRaw +
 // restoreCitationPins which run BEFORE marked.parse so markdown italics
