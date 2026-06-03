@@ -28,7 +28,16 @@ config.json.bak-*
 *.bak-*
 *.bak
 *.bak2
-.claude/
+# Ignore .claude/ contents, but TRACK the committed project settings + safety
+# hooks (the deny hook that blocks SIGKILL to the brain-agent server — SIGKILL
+# corrupts MemPalace HNSW). Note: git can't re-include a file under an excluded
+# DIR, so we ignore the dir's contents (.claude/*) rather than the dir itself,
+# then negate the files we want, un-ignoring the hooks/ subdir on the way down.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/block-sigkill-brain.sh
 agents/*/artifacts/
 agents/*/chats-indexed/
 agents/*/user_profiles/
