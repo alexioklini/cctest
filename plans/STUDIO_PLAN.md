@@ -1,5 +1,8 @@
 # Studio — Per-Project Outputs Surface — Implementation Plan
 
+> ⬆️ **SUPERSEDED by `STUDIO_DETAILED_SPEC.md`** (mockups + workflows + edge
+> cases). Locked decisions below still hold; use the detailed spec to build.
+
 **Status:** SCOPED, not built. Greenlit in the 2026-06-03 NotebookLM-gap session.
 **Depends on:** the shared `project_outputs` store (defined in
 `OUTPUT_PRESETS_PLAN.md` + `AUDIO_OVERVIEW_PLAN.md`) existing first.

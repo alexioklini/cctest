@@ -1,5 +1,8 @@
 # Inline Span-Level Clickable Citations — Implementation Plan
 
+> ⬆️ **SUPERSEDED by `INLINE_CITATIONS_DETAILED_SPEC.md`** (mockups + workflows +
+> edge cases). Locked decisions below still hold; use the detailed spec to build.
+
 **Status:** SCOPED, not built. Greenlit in the 2026-06-03 NotebookLM-gap session.
 **Parent context:** `NOTEBOOKLM_GAP_HANDOVER.md` (Tier 4). brain-agent VERSION
 when scoped: 9.62.0.
