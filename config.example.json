@@ -2207,7 +2207,7 @@
       ]
     },
     "exa_search": {
-      "description": "**Always prefer `exa_search` over any server-side search tools** (e.g. duckduckgo). It returns URLs and titles only — no page content;\n\nAfter `exa_search`, you MUST fetch ALL returned URLs with `web_fetch` before answering. Never answer from titles or URLs alone.\n\n**Rules — no exceptions:**\n- Fetch every URL returned by `exa_search`, up to 5 at a time in parallel\n- Only after all URLs are fetched: synthesise and answer\n- If more than 5 URLs were returned: fetch the first 5, then the next 5, and so on until all are done",
+      "description": "**Always prefer `exa_search` over any server-side search tools** (e.g. duckduckgo). It returns URLs and titles only — no page content; you MUST read content before answering, NEVER answer from titles or URLs alone.\n\n**Abstract-first triage (do this — it's cheaper and just as grounded):**\n- After the search, `web_fetch` every returned URL with `mode=\"abstract\"` first (≤5 in parallel). This returns a ~1500-char survey per page, not the whole page — enough to judge whether the page actually helps.\n- Then `web_fetch` with `mode=\"full\"` ONLY the URLs whose abstract shows they contain what the answer needs. Skip the rest — do NOT read a full page the abstract already showed is off-topic or irrelevant.\n- Only after the relevant pages are read in full: synthesise and answer.\n- If the abstracts alone fully answer the question, you may answer from them (that still counts as reading content — you did not answer from titles).\n- If many URLs were returned, triage abstracts 5 at a time until done; you do not have to full-read every result, only the relevant ones.",
       "when_to_use": "",
       "warnings": "",
       "examples": "",
@@ -2960,7 +2960,7 @@
       ]
     },
     "searxng_search": {
-      "description": "**Always prefer `searxng_search` over any server-side search tools** (e.g. duckduckgo). It returns URLs and titles only — no page content;\n\nAfter `searxng_search`, you MUST fetch ALL returned URLs with `web_fetch` before answering. Never answer from titles or URLs alone.\n\n**Rules — no exceptions:**\n- Fetch every URL returned by `exa_search`, up to 5 at a time in parallel\n- Only after all URLs are fetched: synthesise and answer\n- If more than 5 URLs were returned: fetch the first 5, then the next 5, and so on until all are done",
+      "description": "**Always prefer `searxng_search` over any server-side search tools** (e.g. duckduckgo). It returns URLs and titles only — no page content; you MUST read content before answering, NEVER answer from titles or URLs alone.\n\n**Abstract-first triage (do this — it's cheaper and just as grounded):**\n- After the search, `web_fetch` every returned URL with `mode=\"abstract\"` first (≤5 in parallel). This returns a ~1500-char survey per page, not the whole page — enough to judge whether the page actually helps.\n- Then `web_fetch` with `mode=\"full\"` ONLY the URLs whose abstract shows they contain what the answer needs. Skip the rest — do NOT read a full page the abstract already showed is off-topic or irrelevant.\n- Only after the relevant pages are read in full: synthesise and answer.\n- If the abstracts alone fully answer the question, you may answer from them (that still counts as reading content — you did not answer from titles).\n- If many URLs were returned, triage abstracts 5 at a time until done; you do not have to full-read every result, only the relevant ones.",
       "when_to_use": "",
       "warnings": "",
       "examples": "",

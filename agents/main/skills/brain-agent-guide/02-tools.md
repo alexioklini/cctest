@@ -113,7 +113,11 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
   before fetching the chosen ones in full).
   The chat view shows the method as a colored badge.
 - `exa_search(query, num_results?)` — semantic web search (Exa cloud, API
-  key). **Search-only**: returns title + link, no page content.
+  key). **Search-only**: returns title + link, no page content. Recommended
+  flow (set in the configurable tool description): after a search, `web_fetch`
+  each URL in `mode="abstract"` first to triage relevance cheaply, then
+  `web_fetch(mode="full")` ONLY the results whose abstract shows they help —
+  skip full-reading off-topic pages. Never answer from titles/URLs alone.
 - `searxng_search(query, num_results?, category?)` — self-hosted SearXNG
   search (no API key). Returns `score` + ~300-char `snippet` per result,
   plus an `infobox` when available. `category` accepts `news`. This is a

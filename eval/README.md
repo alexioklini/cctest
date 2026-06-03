@@ -176,3 +176,45 @@ This baseline originally surfaced TWO real defects, both since FIXED in v9.60.2
   `_lead_prose`/`_is_prose_line` now assemble the survey from real prose lines only.
 
 Re-run after touching either function to confirm they stay at 0 content-loss.
+
+---
+
+# Abstract-first triage probe (`web_abstract_triage_probe.py`)
+
+A separate **agentic** probe (runs through the live sidecar, like
+`fanout_probe.py`) that validates the v9.60.x search-tool rule rewrite: after a
+web search, the model should `web_fetch(mode="abstract")` to triage relevance
+cheaply and then full-read (or answer from the abstract of) ONLY the relevant
+results — **not** read the whole website when the abstract shows it won't help.
+
+This is the counterpart to `web_fetch_eval.py`: that one tests whether the
+*abstract content* is sufficient; this one tests whether the *model decides* to
+skip irrelevant full-reads.
+
+**How it works:** a stateful local HTTP stub plays `tool_endpoint` — returns the
+scenario's search results, then per-(url, mode) canned content for each
+`web_fetch` (a short abstract for `mode=abstract`, a big body for `mode=full`).
+It records which URLs the model chose to full-read. Scenarios pair one relevant
+page with off-topic noise; some have deliberately **ambiguous titles** so the
+model MUST abstract-triage (it can't pick the right page from titles alone), and
+all use **fictional/live-only** facts so the model can't answer from prior
+knowledge and bypass the stub.
+
+**Scored per scenario:** searched · grounded in the relevant page (abstract OR
+full) · **skipped off-topic full-reads** (the headline) · answered correctly ·
+`saved_frac` = token savings vs the old "full-fetch every result" baseline.
+`paid_off` = passed AND ≥30% saved.
+
+```bash
+python3 eval/web_abstract_triage_probe.py                     # needs sidecar :8421 up
+python3 eval/web_abstract_triage_probe.py --model mistral-small-latest
+python3 eval/web_abstract_triage_probe.py --only ambiguous_titles
+```
+
+**Baseline (2026-06-03, mistral-medium-3.5): 3/3 pass, 3/3 paid_off** (77–100%
+saved). Regression-checked: with the OLD "fetch ALL in full, no exceptions" rule,
+the same model full-reads all 3 results on every scenario (0% saved,
+`skipped_offtopic=False`) — so the probe catches a revert of the rule rewrite.
+The rule itself lives in `config.json → tool_settings.{exa_search,searxng_search}
+.description` (rendered into the system prompt's TOOL USAGE GUIDE), mirrored in
+`config.example.json` (the tracked copy; `config.json` is gitignored).
