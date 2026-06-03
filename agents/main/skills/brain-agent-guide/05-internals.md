@@ -724,6 +724,35 @@ Startup wipe drops every drawer in `project__*` wings AND clears
   (no project-tagging); the project view's "Geplante Aufgaben" tab just
   filters the schedule list by `project_id`.
 
+## Citation discipline (dynamic, classifier-driven)
+
+The research-mode discipline (REFUSAL + PRECISION + per-claim CITATION,
+`render_research_mode_disciplines()`) + the citation validator fire DYNAMICALLY on
+any **grounding turn** — in ANY chat, project or not — no manual `research_mode`
+toggle needed (v9.67.0).
+
+- **Trigger**: the structured prompt classifier's needed `tool_groups`. A turn is
+  "grounding" when they intersect `{memory, web, documents, context}`
+  (`brain.turn_needs_grounding`). `core` is NOT grounding (writing a file ≠ citing).
+  Keyword-mode installs emit no tool_groups → no dynamic discipline (the explicit
+  toggle still works).
+- **Injection (chat worker)**: every turn stashes `session._grounding_tool_groups`
+  from the classifier (both the auto-route and concrete-model branches; the
+  grounding stash runs regardless of warm-prefix status because the discipline is
+  WIRE-ONLY). On a grounding turn (and only if `research_mode` isn't already
+  forcing it), the discipline is injected as a wire-only preamble via
+  `_inject_web_preamble_into_wire` — NOT the system prompt, so the warm-pool KV
+  prefix stays byte-stable and it works for warm/local models. When `research_mode`
+  is ON the discipline is already in the system prompt (not doubled).
+- **Validator gate**: broadened from "project + research_mode" to
+  `session._citation_discipline_active` (the per-turn decision).
+  `validate_citations_in_response` verifies quotes against the files read this turn,
+  appends a fidelity warning past the threshold (>30% uncited OR ≥2 unverified) —
+  now in any chat. Web-source quotes verify as unverified (not file-backed) — the
+  inline-citation chips handle those by linking out.
+- The per-project `research_mode` flag / per-session override stays as an explicit
+  FORCE-ON override (and the keyword-mode fallback).
+
 ## Tool resolution (3-layer)
 
 ```
