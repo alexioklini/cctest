@@ -5,6 +5,10 @@ Plan files for the brain-agent vs. NotebookLM gap-closing effort. Source map:
 top-down; a plan file is written **only when a feature is greenlit**. Deferred /
 rejected features get a one-line note here, not a file.
 
+**▶ BUILD SEQUENCE:** [IMPLEMENTATION_ORDER.md](IMPLEMENTATION_ORDER.md) — the
+decided order for the four spec'd features: **Fast Research → Output Presets
+(store+endpoint first) → Studio → Deep Research → Inline Citations.**
+
 **Convention:** one plan file per feature, self-contained enough to build in a
 dedicated session. Status values: `scoped` (decided, not started) · `spec'd`
 (detailed spec w/ mockups + workflows) · `building` · `done` · `deferred` ·
