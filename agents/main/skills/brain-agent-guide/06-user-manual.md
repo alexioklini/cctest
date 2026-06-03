@@ -178,7 +178,15 @@ Codebasen, Forschungspapiere, …).
 Die Hilfe auf der Projekt-Einstellungsseite ist ein aufklappbarer
 „Hilfe"-Bereich.
 
-**Recherche-Modus** (Projekt-Standard, pro Chat per 🔬-Knopf überschreibbar):
+**Recherche-Modus** — wie er gesteuert wird, hängt vom Auto-Routing-Modus ab
+(Einstellungen → Server → Auto-Routing):
+- **Bei LLM-/Hybrid-Routing (automatisch):** Die Zitier-/Refuse-Disziplin wird
+  **dynamisch** angewandt, sobald für die Antwort ein Abruf-Tool aktiv ist
+  (Gedächtnis, Websuche, Web-Abruf, Dokument-/Datei-Lesen) — in **jedem** Chat,
+  Projekt oder nicht. Der Projekt-Schalter und der 🔬-Knopf sind dann
+  **deaktiviert** (die Automatik übernimmt).
+- **Bei Schlüsselwort-Routing (Standard):** Der manuelle Schalter steuert es —
+  Projekt-Standard, pro Chat per 🔬-Knopf überschreibbar:
 - **AN** (Frage-Antwort-Projekt) — für Richtlinien-/Compliance-/Q&A-Projekte.
   Das Modell muss zuerst das Projektgedächtnis konsultieren, verweigert
   bei leerem Treffer, muss pro Aussage mit wörtlichem Zitat belegen. Ein

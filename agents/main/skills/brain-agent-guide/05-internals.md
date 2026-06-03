@@ -727,31 +727,31 @@ Startup wipe drops every drawer in `project__*` wings AND clears
 ## Citation discipline (dynamic, classifier-driven)
 
 The research-mode discipline (REFUSAL + PRECISION + per-claim CITATION,
-`render_research_mode_disciplines()`) + the citation validator fire DYNAMICALLY on
-any **grounding turn** — in ANY chat, project or not — no manual `research_mode`
-toggle needed (v9.67.0).
+`render_research_mode_disciplines()` — always all three together) + the citation
+validator. TWO mutually-exclusive modes, chosen by the auto-route classifier mode
+(`brain.classifier_is_llm()` = mode in {llm, hybrid}):
 
-- **Trigger**: the structured prompt classifier's needed `tool_groups`. A turn is
-  "grounding" when they intersect `{memory, web, documents, context}`
-  (`brain.turn_needs_grounding`). `core` is NOT grounding (writing a file ≠ citing).
-  Keyword-mode installs emit no tool_groups → no dynamic discipline (the explicit
-  toggle still works).
-- **Injection (chat worker)**: every turn stashes `session._grounding_tool_groups`
-  from the classifier (both the auto-route and concrete-model branches; the
-  grounding stash runs regardless of warm-prefix status because the discipline is
-  WIRE-ONLY). On a grounding turn (and only if `research_mode` isn't already
-  forcing it), the discipline is injected as a wire-only preamble via
-  `_inject_web_preamble_into_wire` — NOT the system prompt, so the warm-pool KV
-  prefix stays byte-stable and it works for warm/local models. When `research_mode`
-  is ON the discipline is already in the system prompt (not doubled).
-- **Validator gate**: broadened from "project + research_mode" to
-  `session._citation_discipline_active` (the per-turn decision).
-  `validate_citations_in_response` verifies quotes against the files read this turn,
-  appends a fidelity warning past the threshold (>30% uncited OR ≥2 unverified) —
-  now in any chat. Web-source quotes verify as unverified (not file-backed) — the
-  inline-citation chips handle those by linking out.
-- The per-project `research_mode` flag / per-session override stays as an explicit
-  FORCE-ON override (and the keyword-mode fallback).
+- **LLM / hybrid mode → DYNAMIC (effective-tools-driven).** The trigger is the
+  turn's RESOLVED active tool set, NOT the classifier's intent:
+  `brain.turn_has_retrieval_tools(active_tool_names)` is true when the live tools
+  include any of `_RETRIEVAL_TOOLS = {mempalace_query, searxng_search, exa_search,
+  web_fetch, read_document, read_file}`. (Keying off the classifier guess would be
+  wrong — the classifier only REDUCES tools via deferral, so it could suppress
+  discipline on a turn that does retrieve.) When a retrieval tool is live, the chat
+  worker injects the discipline as a WIRE-ONLY preamble
+  (`_inject_web_preamble_into_wire`) — NOT the system prompt, so the warm-pool KV
+  prefix stays byte-stable (works for warm/local too). Applies to ANY chat, project
+  or not. In this mode the per-project `research_mode` flag + the composer 🔬
+  override are DISABLED (`prompt_build` forces `_research_mode=False`; the UI
+  disables the checkbox + hides the button).
+- **Keyword mode (default) → MANUAL only.** No dynamic trigger. The per-project
+  `research_mode` flag / per-session override is the ONLY control and renders the
+  discipline in the SYSTEM PROMPT (`engine/prompt_build.py`), as before.
+- **Validator gate**: `session._citation_discipline_active` (set per turn in both
+  modes). `validate_citations_in_response` verifies quotes against the files read
+  this turn + appends a fidelity warning past the threshold (>30% uncited OR ≥2
+  unverified) — in any chat. Web-source quotes verify as unverified (not
+  file-backed) — the inline-citation chips link those out instead.
 
 ## Tool resolution (3-layer)
 

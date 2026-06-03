@@ -296,11 +296,20 @@ def _build_system_prompt(include_memory_summary: bool = True,
             # _project_research_mode). Surfaced on _thread_local so the
             # chat handler's citation validator + re-round read the same
             # value without recomputing.
-            _rm_override = get_request_context().research_mode_override
-            if _rm_override is None:
-                _research_mode = bool(proj_cfg.get("research_mode", False))
+            # The per-project research_mode flag (+ its per-session override) is
+            # the MANUAL control — honoured ONLY in keyword-classifier mode. Under
+            # LLM/hybrid mode the citation discipline is applied DYNAMICALLY from
+            # the effective tool set (handlers/chat.py, a wire-only preamble), so
+            # the flag is disabled and must NOT also inject via the system prompt
+            # (would double it + break the warm-pool KV prefix per-project).
+            if _brain.classifier_is_llm():
+                _research_mode = False
             else:
-                _research_mode = bool(_rm_override)
+                _rm_override = get_request_context().research_mode_override
+                if _rm_override is None:
+                    _research_mode = bool(proj_cfg.get("research_mode", False))
+                else:
+                    _research_mode = bool(_rm_override)
             # The dynamic counts + the on-disk input-folder list moved out
             # of the system prompt into a per-session first-user-turn preamble
             # (see _project_preamble_text() called from send_message round 0).

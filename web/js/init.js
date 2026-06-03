@@ -370,9 +370,13 @@ async function refreshResearchModeButton() {
   const btns = _composerToggleEls('btn-research-mode');
   if (!btns.length) return;
   const chat = state.activeChat;
+  // Hide under LLM-classifier mode — the citation discipline is applied
+  // dynamically (effective-tools-driven, server-side) so the manual override
+  // is meaningless; the per-project flag is likewise disabled in that mode.
+  const _llm = (typeof classifierModeIsLlm === 'function') ? await classifierModeIsLlm() : false;
   // Hide entirely when not in a project chat — research mode is a
   // per-project concept; non-project chats have nothing to override.
-  const inProject = !!(chat && chat.project);
+  const inProject = !_llm && !!(chat && chat.project);
   for (const btn of btns) {
     btn.style.display = inProject ? '' : 'none';
   }

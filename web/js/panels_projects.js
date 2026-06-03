@@ -1,5 +1,22 @@
 // panels_projects.js — project list/detail/files/members/CRUD/instructions. Split from panels.js (Tier F Phase 3). Global <script>, no modules.
 
+// Cached check: is the auto-route classifier in an LLM-driven mode (llm/hybrid)?
+// In that mode the citation discipline is dynamic (effective-tools-driven,
+// server-side) and the per-project research_mode flag is disabled. Cached for
+// the session — classifier mode is a server config, stable across a session.
+let _classifierModeCache = null;
+async function classifierModeIsLlm() {
+  if (_classifierModeCache !== null) return _classifierModeCache;
+  try {
+    const svc = await API.getServices();
+    const mode = ((svc && svc.server && svc.server.auto_route_classifier_mode) || 'keywords');
+    _classifierModeCache = (mode === 'llm' || mode === 'hybrid');
+  } catch (e) {
+    _classifierModeCache = false;  // fail-open: keep the manual flag usable
+  }
+  return _classifierModeCache;
+}
+
 /* ═══════════════════════════════════════════════════════════
    PROJECTS LIST
    ═══════════════════════════════════════════════════════════ */
@@ -329,11 +346,19 @@ async function loadProjectDetail(agentId, projectName) {
       descEl.innerHTML = '<span style="color:var(--text-400);font-style:italic">Keine Beschreibung</span>';
     }
 
-    // Render the Research / Q&A project checkbox state.
+    // Render the Research / Q&A project checkbox state. Under LLM-classifier
+    // mode the citation discipline is applied DYNAMICALLY (from the effective
+    // tools, server-side) so this manual flag is disabled + a note explains it.
+    // Keyword mode keeps the flag as the manual control.
     const researchCb = document.getElementById('project-research-mode-checkbox');
-    if (researchCb) {
-      researchCb.checked = !!project.research_mode;
-    }
+    const researchNote = document.getElementById('project-research-dynamic-note');
+    classifierModeIsLlm().then(isLlm => {
+      if (researchCb) {
+        researchCb.checked = !isLlm && !!project.research_mode;
+        researchCb.disabled = isLlm;
+      }
+      if (researchNote) researchNote.style.display = isLlm ? '' : 'none';
+    });
     // Render the 'disable web search' checkbox state.
     const disableWebCb = document.getElementById('project-disable-web-checkbox');
     if (disableWebCb) {

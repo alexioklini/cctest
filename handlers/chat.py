@@ -2248,30 +2248,40 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 if _bg_pre:
                     _wire_messages = _inject_web_preamble_into_wire(
                         _wire_messages, _bg_pre)
-                # DYNAMIC research-mode discipline (replaces the per-project
-                # research_mode toggle as the trigger). When the classifier says
-                # this turn will GROUND its answer on retrieved content (memory/
-                # web/file groups) — in ANY chat, project or not — attach the
-                # citation discipline (REFUSAL/PRECISION/CITATION) as a WIRE-ONLY
-                # preamble. Wire-only (not the system prompt) keeps the warm-pool
-                # KV prefix byte-stable, so this fires for warm/local models too.
-                # The explicit research_mode toggle still forces it on regardless.
-                _grounding = engine.turn_needs_grounding(
-                    getattr(session, "_grounding_tool_groups", None))
-                _rm_force = bool(getattr(session, "research_mode_override", None))
-                if not _rm_force and engine.get_request_context().project:
-                    _pc = engine.ProjectManager.get_project(session.agent_id, engine.get_request_context().project)
-                    _rm_force = bool((_pc or {}).get("research_mode", False))
-                session._citation_discipline_active = bool(_grounding or _rm_force)
-                # When research_mode is already ON, the discipline is in the
-                # system prompt already — don't double it; only inject for the
-                # DYNAMIC (grounding, non-research) case.
-                if _grounding and not _rm_force:
-                    _disc = engine.render_research_mode_disciplines()
-                    if _disc:
-                        _disc_pre = ("GROUNDED-ANSWER DISCIPLINE (this answer draws on "
-                                     "retrieved sources — cite + refuse per below):\n" + _disc)
-                        _wire_messages = _inject_web_preamble_into_wire(_wire_messages, _disc_pre)
+                # Research-mode citation discipline — TWO mutually-exclusive paths,
+                # chosen by the auto-route classifier mode:
+                #  • LLM/hybrid mode → DYNAMIC: trigger on the EFFECTIVE active
+                #    tools (_active_tool_names). If any retrieval tool is live
+                #    (memory/web-search/web-fetch/doc-read/file-read) the answer
+                #    can ground on sources → attach the discipline. ANY chat,
+                #    project or not. The per-project research_mode flag is ignored
+                #    (disabled in the UI under LLM mode — dynamic covers it).
+                #    Keyed off the RESOLVED tool set, NOT the classifier's intent:
+                #    the classifier only reduces tools, so its guess could wrongly
+                #    suppress discipline on a turn that does retrieve.
+                #  • keyword mode → MANUAL only: no dynamic trigger; the explicit
+                #    project research_mode flag / session override is the control
+                #    (and renders the discipline in the SYSTEM PROMPT, prompt_build).
+                # Injected as a WIRE-ONLY preamble (not the system prompt) so the
+                # warm-pool KV prefix stays byte-stable (fires for warm/local too).
+                if engine.classifier_is_llm():
+                    _grounding = engine.turn_has_retrieval_tools(_active_tool_names)
+                    session._citation_discipline_active = bool(_grounding)
+                    if _grounding:
+                        _disc = engine.render_research_mode_disciplines()
+                        if _disc:
+                            _disc_pre = ("GROUNDED-ANSWER DISCIPLINE (this answer draws on "
+                                         "retrieved sources — cite + refuse per below):\n" + _disc)
+                            _wire_messages = _inject_web_preamble_into_wire(_wire_messages, _disc_pre)
+                else:
+                    # Keyword mode: the system-prompt path (prompt_build, gated on
+                    # research_mode) already injected the discipline when the flag
+                    # is on — record that so the validator runs to match.
+                    _rm_on = bool(getattr(session, "research_mode_override", None))
+                    if not _rm_on and engine.get_request_context().project:
+                        _pc = engine.ProjectManager.get_project(session.agent_id, engine.get_request_context().project)
+                        _rm_on = bool((_pc or {}).get("research_mode", False))
+                    session._citation_discipline_active = bool(_rm_on)
                 _result = sidecar_proxy.run_turn(
                     messages=_wire_messages,
                     model=session.model,
@@ -3410,14 +3420,6 @@ class ChatHandlerMixin:
                 session._auto_tool_groups = (
                     auto_analysis.get("tool_groups") if auto_analysis else None)
                 session._auto_route_model = auto_model or ""
-                # Dynamic research-mode trigger: a grounding turn (needs memory/
-                # web/file retrieval) carries the citation discipline + validator,
-                # in ANY chat — replaces the per-project research_mode toggle as
-                # the trigger. Separate from _auto_tool_groups because the
-                # discipline is wire-only (KV-safe), so it fires regardless of
-                # warm-prefix status, while tool-deferral reshaping stays gated.
-                session._grounding_tool_groups = (
-                    auto_analysis.get("tool_groups") if auto_analysis else None)
             # Emit the pick at turn start so the spinner shows the model that's
             # actually doing the work (the composer label stays "Auto").
             if auto_route:
@@ -3433,23 +3435,15 @@ class ChatHandlerMixin:
             with session.lock:
                 session._auto_tool_groups = None
                 session._auto_route_model = session.model or ""
-                session._grounding_tool_groups = None
-            # Classify the prompt for (a) the citation-discipline trigger [ALWAYS,
-            # incl. warm/local models — the discipline is a wire-only preamble, so
-            # it never disturbs the KV prefix] and (b) tool-deferral reshaping
-            # [only for non-warm models, to protect the prefix]. One classify call
-            # serves both. Skipped only when classification is off (keyword mode
-            # returns no tool_groups → fail-open: no discipline, static deferral).
-            try:
-                _ta = engine.resolve_task_analysis(message)
-                _tg = (_ta or {}).get("tool_groups")
-                if _tg:
-                    with session.lock:
-                        session._grounding_tool_groups = _tg
-                        if session.model and not engine.model_maintains_warm_prefix(session.model):
+            if session.model and not engine.model_maintains_warm_prefix(session.model):
+                try:
+                    _ta = engine.resolve_task_analysis(message)
+                    _tg = (_ta or {}).get("tool_groups")
+                    if _tg:
+                        with session.lock:
                             session._auto_tool_groups = _tg
-            except Exception:
-                pass  # fail-open: no reshape, no discipline, static deferral stands
+                except Exception:
+                    pass  # fail-open: no reshape, static deferral stands
 
         content_blocks = []
         disk_files = []

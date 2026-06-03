@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.68.0"
+VERSION = "9.69.0"
 VERSION_DATE = "2026-06-03"
 CHANGELOG = [
+    ("9.69.0", "2026-06-03", "fix(citations): the dynamic citation-discipline trigger now keys off the EFFECTIVE ACTIVE TOOLS, not the classifier's intent — and is properly gated by classifier mode. CORRECTS v9.67.0, which keyed the trigger off the classifier analysis's tool_groups: wrong direction, because the classifier only REDUCES tools (deferral), so its guess could SUPPRESS the discipline on a turn that actually retrieves. NOW: brain.turn_has_retrieval_tools(active_tool_names) tests the RESOLVED active tool set (from build_first_turn_prefix, already computed before the injection point) against _RETRIEVAL_TOOLS = {mempalace_query, searxng_search, exa_search, web_fetch, read_document, read_file}. If any is live → the answer can ground on sources → inject the (full three-part: refusal+precision+citation) discipline as a wire-only preamble → run the validator. Applies to ALL interactive chats, project or not. CLASSIFIER-MODE GATING (brain.classifier_is_llm = mode in {llm,hybrid}): • LLM/hybrid mode → DYNAMIC discipline ON (effective-tools); the per-project research_mode flag + the per-session 🔬 override are DISABLED — prompt_build forces _research_mode=False so the system-prompt path never double-injects, and the UI disables the project checkbox (note shown) + hides the composer 🔬 button (handlers/chat.py + engine/prompt_build.py + web/js/panels_projects.js + init.js). • keyword mode (default) → NO dynamic trigger; the project research_mode flag / override is the ONLY control (system-prompt discipline via prompt_build, unchanged). The chat worker records session._citation_discipline_active in both modes so the validator runs to match. REMOVED the v9.67.0 intent-based path: brain.turn_needs_grounding + _GROUNDING_TOOL_GROUPS deleted; session._grounding_tool_groups stash removed from both worker branches (the concrete-model branch reverts to its pre-9.67 form — classifier serves only tool-deferral again, gated on non-warm models). js_gate GREEN (eslint clean, net-globals 1111→1113 [+2: classifierModeIsLlm + cache], smoke 5/5). VERIFIED LIVE (llm mode): non-project web chat → web_fetch live → discipline injected → 7 [Quelle:] citations + validator ran. brain-agent-guide 05-internals + 06-user-manual updated. py compile OK; turn_has_retrieval_tools unit-checked. Backend restart + hard refresh."),
     ("9.68.0", "2026-06-03", "feat(citations): NUMBERED INLINE CITATION CHIPS + footer legend + jump-to-passage — the last of the four-feature order (INLINE_CITATIONS_DETAILED_SPEC). The model's [Quelle: <file> — \"<quote>\"] markers now render as small numbered superscript chips [1][2]… inline at the citation point (was a book-icon pin), a per-message 'Quellen' footer legend maps each number → file + quote with a verified/⚠ badge, and clicking a chip opens the source in the right panel and highlights the cited passage. FRONTEND-ONLY (web/js/chat_render.js + web/css/main.css; no backend/endpoint change — builds on the existing extractCitationsFromRaw parser + the v9.67.0 dynamic validator). CHIPS: renderCitationPin now emits a numbered <sup>[n]</sup> chip (n = extraction order, aligned with the legend) keeping the hover tooltip (file + quote); restoreCitationPins passes the 1-based number. LEGEND: _buildCitationLegend(content, citation_validation) re-runs the same parse, lists [n] file — \"quote\" per message, and badges a quote ⚠ when the validator's unverified_samples (matched by basename + quote excerpt) flagged it. JUMP-TO-PASSAGE: the click popover gained an action — file/drawer citations get 'Im Dokument öffnen →' (openCitationSource: resolves the file's on-disk path by matching the citation basename against this chat's references [tool-result source links], opens it via API.getFilePreview in the right-panel artifact viewer, then _highlightQuoteIn string-matches the quote [unicode-safe, whitespace-normalised, E6] → wraps it in <mark class=citation-span> + scrolls into view; robust fallbacks per E1: shortened-prefix match, then a gentle 'not exactly found' toast); web-source citations (file looks like a host/URL) get 'Quelle öffnen ↗' linking out instead (W5/3.3). Ships the spec's v1 string-match highlight (§6) — drawer-offset anchoring is the deferred refinement; old messages degrade gracefully (E5 — chips + legend still render from the bracket text, jump does a best-effort string find). js_gate GREEN (eslint clean, net-globals 1107→1111 [+4: _buildCitationLegend, openCitationSource, _citationResolvePath, _highlightQuoteIn], Playwright smoke 5/5 zero console errors). brain-agent-guide 06-user-manual updated (DE). FOUR-FEATURE ORDER COMPLETE: Output Presets · Studio · Deep Research · Inline Citations. Hard refresh for the new JS/CSS."),
     ("9.67.0", "2026-06-03", "feat(citations): the research-mode discipline (refusal + precision + per-claim CITATION) + the citation validator now fire DYNAMICALLY on any grounding turn — in ANY chat, project or not — driven by the prompt classifier, no manual research_mode toggle needed. Before, the whole bundle was gated on the per-project research_mode flag (or its per-session override), so a normal chat that searched the web or read a file got no citation discipline and no validation. NOW: the structured classifier's needed tool_groups decide it — a turn is a 'grounding turn' when its groups intersect {memory, web, documents, context} (new brain.turn_needs_grounding + _GROUNDING_TOOL_GROUPS). 'core' is deliberately NOT grounding (writing a file ≠ citing sources). THREE wiring changes, all in the chat worker (handlers/chat.py): (1) every turn stashes session._grounding_tool_groups from the classifier analysis — in BOTH the auto-route branch (from auto_analysis) and the concrete-model branch (one resolve_task_analysis call now serves both the discipline trigger AND the existing tool-deferral reshape; the deferral stash stays gated on non-warm models, but the grounding stash runs regardless because the discipline is wire-only). (2) just before run_turn, if it's a grounding turn AND research_mode isn't already forcing the discipline, the discipline text (render_research_mode_disciplines) is injected as a WIRE-ONLY preamble via _inject_web_preamble_into_wire — NOT the system prompt, so the warm-pool KV prefix stays byte-stable and it works for warm/local models too. When research_mode is already ON the discipline is in the system prompt already → not doubled. session._citation_discipline_active records the decision. (3) the validator gate broadened from `_proj_active and _research_active` to `session._citation_discipline_active` — validate_citations_in_response verifies quotes against the files read this turn, so it's meaningful in any chat, not just projects. The explicit research_mode project toggle/override is preserved as a forced-on override (and remains the fallback on keyword-mode installs, where the classifier emits no tool_groups → fail-open, no dynamic discipline). VERIFIED LIVE end-to-end: a non-project chat asking 'search the web for EU AI Act GPAI transparency obligations and cite' → classifier tools=['web'] → discipline injected → reply carried verbatim [Quelle: …] citations throughout → validator ran + appended the fidelity warning. (NB: the validator verifies file-backed quotes; web-source quotes show as unverified — that's expected, and the upcoming inline-citation chips handle web sources by linking out.) py compile OK; turn_needs_grounding unit-checked. This is the foundation for INLINE_CITATIONS (chips render wherever cited content now appears). Backend restart to load."),
     ("9.66.0", "2026-06-03", "change(research): ONE search backend, like web search in chat — no two-backend merge, ever. The admin enables exactly one search tool (searxng_search OR exa_search) in Settings → Tools; Research calls whichever is enabled. Enabling both is a config problem the admin owns (same as the chat agent, which would then carry both tools) — Research does NOT arbitrate or merge. REMOVED: deep_research.available_backends() (list) → active_backend() (returns the one enabled+configured tool name, or '' ; searxng wins the tiebreak if somehow both on); the _run_search(query, backends) merge-loop → _run_search(query) calling the single active tool; the `backends[]` body param on /research/search + /research/deep; start_research/_run_research `backends` arg. The /research/backends endpoint now returns {backend: '<name>'} (was {backends: [...]}). FRONTEND (panels_research.js): dropped the per-run backend checkboxes + _researchSelectedBackends() (−1 global, baseline 1108→1107); the form just shows 'Suche über <Engine>'; E1-disabled state when no tool is active. The v9.65.1 enable-toggle gate stays (active_backend() still checks _global_tool_enabled). Verified live: /research/backends → {backend:'searxng'}; Fast search + full Deep run (report + 3 proposed sources) work single-backend. js_gate GREEN (eslint, net-globals 1107, smoke 5/5). brain-agent-guide updated (01-api, 05-internals, 06-user-manual). py compile OK. Backend restart + hard refresh. (NB: a transient SearXNG google-engine IndexError can yield 0 results for a query — retry; not a Research bug.)"),
@@ -10898,20 +10899,41 @@ def classifier_gating_decision(model: str, tool_groups: list[str] | None) -> dic
             "kept_groups": kept, "excluded_groups": deferred, "needed_groups": needed}
 
 
-# Tool groups whose presence means the turn will GROUND its answer on retrieved
-# content (memory drawers, web pages, file/document reads) — so the answer must
-# be cite-disciplined + validated. Drives the DYNAMIC research-mode bundle
-# (mem-first + citation discipline + validator) that replaces the per-project
-# research_mode toggle as the trigger (the toggle remains an explicit override).
-_GROUNDING_TOOL_GROUPS = frozenset({"memory", "web", "documents", "context"})
+# Tools whose presence in the turn's EFFECTIVE active set means the answer will
+# be grounded on retrieved content (memory drawers, web, file/document reads) —
+# so it must carry the citation discipline + run the validator. The trigger is
+# the RESOLVED active tools (resolve_active_tools), NOT the classifier's intent:
+# the classifier only REDUCES tools (deferral), so keying off its guess could
+# wrongly suppress the discipline on a turn that does retrieve. What's actually
+# live is the correct signal.
+_RETRIEVAL_TOOLS = frozenset({
+    "mempalace_query",      # memory
+    "searxng_search", "exa_search",  # web search
+    "web_fetch",            # web fetch
+    "read_document",        # doc read
+    "read_file",            # file read
+})
 
 
-def turn_needs_grounding(tool_groups: list[str] | None) -> bool:
-    """True iff the classifier's needed tool groups include a retrieval group —
-    i.e. the turn will answer from sources and should carry the citation
-    discipline + run the validator. Empty/None (keyword-mode miss, fail-open) =>
-    False (no dynamic discipline; the explicit research_mode toggle still works)."""
-    return bool(set(tool_groups or []) & _GROUNDING_TOOL_GROUPS)
+def turn_has_retrieval_tools(active_tool_names) -> bool:
+    """True iff the turn's EFFECTIVE active tool set includes a retrieval tool —
+    i.e. the answer can ground on sources, so it should carry the citation
+    discipline + run the validator. Takes the resolved active tool NAMES (a set/
+    list from build_first_turn_prefix), not the classifier analysis."""
+    return bool(set(active_tool_names or []) & _RETRIEVAL_TOOLS)
+
+
+def classifier_is_llm() -> bool:
+    """True when the auto-route classifier runs in LLM-driven mode ('llm' or
+    'hybrid'). In that mode the DYNAMIC effective-tools citation discipline is
+    active and the per-project research_mode toggle is disabled (redundant). In
+    'keywords' mode (default) the dynamic trigger is OFF and the project flag is
+    the only control."""
+    try:
+        mode = ((_server_config().get("auto_route") or {}).get("classifier_mode") or "keywords").strip()
+    except Exception:
+        mode = "keywords"
+    return mode in ("llm", "hybrid")
 
 
 def resolve_task_analysis(message: str) -> dict | None:
