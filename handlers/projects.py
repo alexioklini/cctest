@@ -1308,18 +1308,18 @@ class ProjectsHandlerMixin:
     # ── Research (Fast + Deep) ──────────────────────────────────────────────
 
     def _handle_research_backends(self, path: str):
-        """GET /v1/agents/{id}/projects/{name}/research/backends — which search
-        backends this install can use (E1 gate: empty = Research disabled)."""
+        """GET /v1/agents/{id}/projects/{name}/research/backends — THE active
+        search backend (the one enabled search tool), or "" if none (E1 gate)."""
         from engine import deep_research
         agent_id = self._parse_agent_from_path(path)
         proj_name = self._parse_project_from_path(path)
         if self._project_access_check(agent_id, proj_name) is None:
             return
-        self._send_json({"backends": deep_research.available_backends()})
+        self._send_json({"backend": deep_research.active_backend()})
 
     def _handle_research_search(self, path: str):
-        """POST /v1/agents/{id}/projects/{name}/research/search {topic, backends?}
-        — Fast Research: search the enabled backends, dedup vs the project's
+        """POST /v1/agents/{id}/projects/{name}/research/search {topic}
+        — Fast Research: search via THE active backend, dedup vs the project's
         web_urls, return rows with an `in_project` flag + trust hint. No import
         here — the FE appends approved URLs via the existing update_project path."""
         from engine import deep_research
@@ -1333,13 +1333,11 @@ class ProjectsHandlerMixin:
         if not topic:
             self._send_json({"error": "topic is required"}, 400)
             return
-        backends = body.get("backends") or deep_research.available_backends()
-        backends = [b for b in backends if b in deep_research.available_backends()]
-        if not backends:
+        if not deep_research.active_backend():
             self._send_json({"error": "No search backend configured."}, 400)
             return
         existing = {deep_research._norm_url(u.get("url", "")) for u in (project.get("web_urls") or [])}
-        results = deep_research._run_search(topic, backends)
+        results = deep_research._run_search(topic)
         rows = [{
             "title": r["title"], "url": r["link"], "snippet": r.get("snippet", ""),
             "trust_hint": deep_research._trust_hint(r["link"]),
@@ -1349,9 +1347,9 @@ class ProjectsHandlerMixin:
                          "total_found": len(results)})
 
     def _handle_research_deep(self, path: str):
-        """POST /v1/agents/{id}/projects/{name}/research/deep {topic, backends?,
-        budget?} — spawn the bounded Deep Research loop; returns {run_id, budget}.
-        Progress via GET …/research/runs/<run_id>."""
+        """POST /v1/agents/{id}/projects/{name}/research/deep {topic, budget?}
+        — spawn the bounded Deep Research loop; returns {run_id, budget}.
+        Uses THE active search backend. Progress via GET …/research/runs/<id>."""
         from engine import deep_research
         agent_id = self._parse_agent_from_path(path)
         proj_name = self._parse_project_from_path(path)
@@ -1363,14 +1361,12 @@ class ProjectsHandlerMixin:
         if not topic:
             self._send_json({"error": "topic is required"}, 400)
             return
-        backends = body.get("backends") or deep_research.available_backends()
-        backends = [b for b in backends if b in deep_research.available_backends()]
-        if not backends:
+        if not deep_research.active_backend():
             self._send_json({"error": "No search backend configured."}, 400)
             return
         user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
         run_id, eff_budget = deep_research.start_research(
-            agent_id=agent_id, project=project, topic=topic, backends=backends,
+            agent_id=agent_id, project=project, topic=topic,
             budget=body.get("budget"), user_id=user["id"])
         self._send_json({"run_id": run_id, "status": "running", "budget": eff_budget})
 

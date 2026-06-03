@@ -215,8 +215,8 @@ class API {
 
   // Research (Fast + Deep)
   static researchBackends(agentId, projectName) { return this.get(`${this._projOutBase(agentId, projectName)}/research/backends`); }
-  static researchSearch(agentId, projectName, topic, backends) { return this.post(`${this._projOutBase(agentId, projectName)}/research/search`, {topic, backends}); }
-  static researchDeep(agentId, projectName, topic, backends, budget) { return this.post(`${this._projOutBase(agentId, projectName)}/research/deep`, {topic, backends, budget}); }
+  static researchSearch(agentId, projectName, topic) { return this.post(`${this._projOutBase(agentId, projectName)}/research/search`, {topic}); }
+  static researchDeep(agentId, projectName, topic, budget) { return this.post(`${this._projOutBase(agentId, projectName)}/research/deep`, {topic, budget}); }
   static researchRun(agentId, projectName, runId) { return this.get(`${this._projOutBase(agentId, projectName)}/research/runs/${encodeURIComponent(runId)}`); }
   static researchCancel(agentId, projectName, runId) { return this.post(`${this._projOutBase(agentId, projectName)}/research/runs/${encodeURIComponent(runId)}/cancel`, {}); }
 

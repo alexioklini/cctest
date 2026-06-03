@@ -71,44 +71,45 @@ def _searxng_available() -> bool:
         return False
 
 
-def available_backends() -> list:
-    """Which search backends this install can use (for the UI + E1 gate).
+def active_backend() -> str:
+    """THE single search backend Research uses, or "" if none is available.
 
-    A backend counts only when it is BOTH configured AND enabled in
-    tool_settings — Research honours the same per-tool enable toggle as the
-    chat agent (so disabling exa_search/searxng_search in Settings → Tools
-    removes it here too)."""
-    out = []
+    The admin enables exactly one search tool (exa_search OR searxng_search) in
+    Settings → Tools — exactly like web search in chat. Research calls whichever
+    is enabled (+ configured). There is no merge and no per-run choice: enabling
+    both is a config problem the admin owns (same as the chat agent, which would
+    then carry both tools). searxng wins the tiebreak if somehow both are on."""
     if _searxng_available():
-        out.append("searxng")
+        return "searxng"
     if _exa_available():
-        out.append("exa")
-    return out
+        return "exa"
+    return ""
 
 
-def _run_search(query, backends):
-    """Run the enabled backends for one query; merge + dedup by normalised URL.
-    Returns [{title, link, snippet, score}]. Degrades if one backend fails (E2)."""
+def _run_search(query):
+    """Run THE active search backend for one query. Returns
+    [{title, link, snippet, score}], deduped by normalised URL. Empty on failure
+    or when no backend is active (E2 degrades to no results for that query)."""
+    backend = active_backend()
+    if not backend:
+        return []
+    try:
+        if backend == "searxng":
+            raw = _brain.tool_searxng_search({"query": query, "num_results": _RESULTS_PER_QUERY})
+        else:  # exa
+            raw = _brain.exa_search(query, num_results=_RESULTS_PER_QUERY)
+        data = json.loads(raw)
+    except Exception:
+        return []
     merged = {}
-    for backend in backends:
-        try:
-            if backend == "searxng":
-                raw = _brain.tool_searxng_search({"query": query, "num_results": _RESULTS_PER_QUERY})
-            elif backend == "exa":
-                raw = _brain.exa_search(query, num_results=_RESULTS_PER_QUERY)
-            else:
-                continue
-            data = json.loads(raw)
-        except Exception:
+    for r in (data.get("results") or []):
+        link = r.get("link") or r.get("url") or ""
+        if not link:
             continue
-        for r in (data.get("results") or []):
-            link = r.get("link") or r.get("url") or ""
-            if not link:
-                continue
-            key = _norm_url(link)
-            if key and key not in merged:
-                merged[key] = {"title": r.get("title", ""), "link": link,
-                               "snippet": r.get("snippet", ""), "score": r.get("score", 0)}
+        key = _norm_url(link)
+        if key and key not in merged:
+            merged[key] = {"title": r.get("title", ""), "link": link,
+                           "snippet": r.get("snippet", ""), "score": r.get("score", 0)}
     return list(merged.values())
 
 
@@ -205,7 +206,7 @@ def _synthesize(topic, sources, coverage_note, model, project_name, agent_id, us
 # ─── The bounded loop (worker thread body) ─────────────────────────────────
 
 def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
-                  topic, backends, budget, existing_norm_urls, user_id):
+                  topic, budget, existing_norm_urls, user_id):
 
     def _cancelled():
         return ChatDB.research_run_cancelled(run_id)
@@ -219,7 +220,7 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
         if not model:
             ChatDB.update_research_run(run_id, status="error", error="No model available (set a server default model).")
             return
-        if not backends:
+        if not active_backend():
             ChatDB.update_research_run(run_id, status="error", error="No search backend configured.")
             return
 
@@ -235,7 +236,7 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
         for q in subqueries[:budget.get("rounds", 8)]:
             if _cancelled():
                 return ChatDB.update_research_run(run_id, status="cancelled")
-            for r in _run_search(q, backends):
+            for r in _run_search(q):
                 key = _norm_url(r["link"])
                 if key and key not in candidates and key not in existing_norm_urls:
                     candidates[key] = r
@@ -324,9 +325,9 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
             pass
 
 
-def start_research(*, agent_id, project, topic, backends, budget, user_id):
+def start_research(*, agent_id, project, topic, budget, user_id):
     """Insert a running research_runs row + spawn the worker. Returns run_id.
-    Caller validated topic + project membership + at least one backend."""
+    Caller validated topic + project membership + an active search backend."""
     run_id = uuid.uuid4().hex
     project_id = project.get("id") or ""
     project_name = project.get("folder_name") or project.get("name") or ""
@@ -343,7 +344,7 @@ def start_research(*, agent_id, project, topic, backends, budget, user_id):
         target=_run_research,
         kwargs={"run_id": run_id, "agent_id": agent_id, "project_name": project_name,
                 "project_id": project_id, "project_dir": project_dir, "topic": topic,
-                "backends": backends, "budget": eff_budget,
+                "budget": eff_budget,
                 "existing_norm_urls": existing, "user_id": user_id},
         daemon=True, name=f"deep_research_{run_id[:8]}").start()
     return run_id, eff_budget

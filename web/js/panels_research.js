@@ -8,7 +8,7 @@
 // panels_projects.js, before init.js.
 
 let _researchPollHandle = null;
-let _researchBackends = null;   // cached availability for the current tab session
+let _researchBackend = '';   // THE active search backend (one tool), '' if none
 
 function loadProjectResearch(agentId, projectName) {
   const el = document.getElementById('project-detail-research');
@@ -16,9 +16,9 @@ function loadProjectResearch(agentId, projectName) {
   state._researchAgent = agentId;
   state._researchProject = projectName;
   el.innerHTML = '<div style="padding:18px 8px;color:var(--text-400);font-size:13px;text-align:center">Lädt…</div>';
-  // E1 — gate on backend availability.
+  // E1 — gate on the active search backend (the one enabled search tool).
   API.researchBackends(agentId, projectName).then(d => {
-    _researchBackends = d.backends || [];
+    _researchBackend = d.backend || '';
     renderResearchForm();
   }).catch(e => {
     el.innerHTML = `<div style="padding:14px;color:var(--error);font-size:13px">${esc(e.message || e)}</div>`;
@@ -28,19 +28,15 @@ function loadProjectResearch(agentId, projectName) {
 function renderResearchForm() {
   const el = document.getElementById('project-detail-research');
   if (!el) return;
-  if (!_researchBackends || !_researchBackends.length) {
+  if (!_researchBackend) {
     el.innerHTML = `
       <div style="padding:14px 16px;border:1px solid var(--border-200);border-radius:10px;color:var(--text-300);font-size:13px">
-        🔍 Research ist nicht verfügbar — kein Such-Backend konfiguriert.
-        <div style="margin-top:6px;color:var(--text-400)">Konfiguriere Exa oder SearXNG in Einstellungen → Tools.</div>
+        🔍 Research ist nicht verfügbar — kein Such-Tool aktiviert.
+        <div style="margin-top:6px;color:var(--text-400)">Aktiviere SearXNG oder Exa in Einstellungen → Tools.</div>
       </div>`;
     return;
   }
-  const backendBoxes = _researchBackends.map(b => `
-    <label style="display:flex;align-items:center;gap:5px">
-      <input type="checkbox" class="research-backend" value="${esc(b)}" checked>
-      ${b === 'exa' ? 'Exa (besser)' : 'SearXNG (frei)'}
-    </label>`).join('');
+  const engineName = _researchBackend === 'exa' ? 'Exa' : 'SearXNG';
   el.innerHTML = `
     <div style="max-width:680px">
       <div style="font-weight:600;font-size:14px;margin-bottom:4px">Neue Quellen für dieses Projekt finden</div>
@@ -52,35 +48,29 @@ function renderResearchForm() {
           <label style="display:flex;align-items:center;gap:5px"><input type="radio" name="research-mode" value="fast" checked> Fast <span style="color:var(--text-400);font-size:11px">(schnelle Suche)</span></label>
           <label style="display:flex;align-items:center;gap:5px"><input type="radio" name="research-mode" value="deep"> Deep <span style="color:var(--text-400);font-size:11px">(plant · liest · schreibt Bericht)</span></label>
         </div>
-        <div style="display:flex;gap:12px;align-items:center"><span>Suche:</span>${backendBoxes}</div>
+        <span style="color:var(--text-400);font-size:12px">Suche über ${esc(engineName)}</span>
       </div>
       <div style="margin-top:12px"><button class="btn-primary" style="padding:6px 16px;font-size:13px" onclick="researchStart()">Recherche starten →</button></div>
       <div id="research-result" style="margin-top:16px"></div>
     </div>`;
 }
 
-function _researchSelectedBackends() {
-  return Array.from(document.querySelectorAll('.research-backend:checked')).map(c => c.value);
-}
-
 function researchStart() {
   const topic = (document.getElementById('research-topic')?.value || '').trim();
   if (!topic) { showToast('Bitte ein Thema eingeben', true); return; }
   const mode = document.querySelector('input[name="research-mode"]:checked')?.value || 'fast';
-  const backends = _researchSelectedBackends();
-  if (!backends.length) { showToast('Mindestens ein Such-Backend wählen', true); return; }
-  if (mode === 'fast') researchRunFast(topic, backends);
-  else researchRunDeep(topic, backends);
+  if (mode === 'fast') researchRunFast(topic);
+  else researchRunDeep(topic);
 }
 
 // ─── Fast Research (search → SERP pick → import) ───────────────────────────
 
-async function researchRunFast(topic, backends) {
+async function researchRunFast(topic) {
   const out = document.getElementById('research-result');
   if (out) out.innerHTML = '<div style="padding:14px;color:var(--text-400);font-size:13px">Sucht…</div>';
   let data;
   try {
-    data = await API.researchSearch(state._researchAgent, state._researchProject, topic, backends);
+    data = await API.researchSearch(state._researchAgent, state._researchProject, topic);
   } catch (e) {
     if (out) out.innerHTML = `<div style="padding:14px;color:var(--error)">${esc(e.message || e)}</div>`;
     return;
@@ -150,12 +140,12 @@ async function researchImportSelected() {
 
 // ─── Deep Research (bounded loop → progress → propose-approve) ─────────────
 
-async function researchRunDeep(topic, backends) {
+async function researchRunDeep(topic) {
   const out = document.getElementById('research-result');
   if (out) out.innerHTML = '<div style="padding:14px;color:var(--text-400);font-size:13px">Startet…</div>';
   let resp;
   try {
-    resp = await API.researchDeep(state._researchAgent, state._researchProject, topic, backends, null);
+    resp = await API.researchDeep(state._researchAgent, state._researchProject, topic, null);
   } catch (e) {
     if (out) out.innerHTML = `<div style="padding:14px;color:var(--error)">${esc(e.message || e)}</div>`;
     return;

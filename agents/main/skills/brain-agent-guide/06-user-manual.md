@@ -255,7 +255,8 @@ Schritt; aktuell stehen die Belege als `[Quelle: …]` im Text.)*
 
 **Neue Quellen finden** (Research-Tab 🔍): Auf der Projektseite gibt es den Tab
 **🔍 Research**, um neue Quellen für das Projekt zu finden. Thema eingeben, Modus
-und Such-Backend wählen, **Recherche starten**. Zwei Modi:
+wählen, **Recherche starten**. (Es wird das eine aktivierte Such-Tool verwendet —
+wie bei der Websuche im Chat; eingestellt unter Einstellungen → Tools.) Zwei Modi:
 - **Fast** — schnelle Suche. Es erscheint eine Trefferliste; die gewünschten
   Treffer ankreuzen und **importieren** → sie werden als Projekt-Quellen
   hinzugefügt und beim nächsten Sync ins Gedächtnis gemined (im Chat durchsuchbar).
@@ -269,8 +270,8 @@ und Such-Backend wählen, **Recherche starten**. Zwei Modi:
   man wählt selbst aus). Das Budget ist begrenzt und der Bericht nennt offen, wenn
   die Abdeckung dadurch beschränkt war.
 
-Research ist nur verfügbar, wenn ein Such-Backend (SearXNG oder Exa) konfiguriert
-ist (sonst ist der Tab mit Hinweis deaktiviert).
+Research ist nur verfügbar, wenn ein Such-Tool (SearXNG oder Exa) in den
+Tool-Einstellungen aktiviert ist (sonst ist der Tab mit Hinweis deaktiviert).
 
 ---
 
