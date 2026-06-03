@@ -569,22 +569,29 @@ Imported as a Python package — no MCP, no subprocess.
 
 - **Wing scheme** (ID-only): `user__<uid>`, `team__<tid>`,
   `project__<pid>`, bare names = shared.
-- **PER-WING COLLECTIONS** (v9.62.0, always on — no flag): each wing has its OWN
-  ChromaDB collection (its own HNSW index), not one shared `mempalace_drawers`
-  collection filtered by a `wing` metadata field. `engine/wing_collections.py`
-  maps wing→collection (`wd_<wing>` drawers / `wc_<wing>` closets) and is the
-  single accessor (`get_wing_collection`, `add_drawer_to_wing`, `purge_wing_room`).
-  WHY: a fault (HNSW corruption from a bulk-delete racing an upsert, or churn from
-  frequent re-indexing) is now contained to ONE wing and auto-heals from that
-  wing's own sqlite via per-collection `rebuild_index` — other wings unaffected
-  (was: any single-wing fault quarantined the whole palace). Query path
-  (`_query_wings`) queries each target wing's collection + merges; a wing's query
-  failure is isolated (skipped, not fatal) and triggers `_rebuild_wings` for ONLY
-  that wing. Requires the vendored miner.py + closet_llm.py `collection_name`
-  patches (`assert_miner_patch` fails loud at startup if absent — no fallback). A
-  one-time `engine/wing_migrate.py` migration moves the old shared collection's
-  drawers into per-wing collections (re-mine files + reset chat cursors to
-  re-derive chat wings from the chat DB), verify-before-drop.
+- **SINGLE SHARED COLLECTION**: all wings share ONE ChromaDB collection
+  `mempalace_drawers` (+ `mempalace_closets`), filtered by a `wing` metadata field;
+  `mempalace_query`/`_query_wings` does one `col.query` over it with a wing filter.
+  (Per-wing collections were tried in v9.62.0 and REVERTED 2026-06-03 — they added
+  dead complexity and did not fix the corruption below.)
+- **The recurring "HNSW corruption on restart" — ROOT CAUSE (fixed v9.70.0).**
+  Symptom: after a restart a query raises `InternalError: Error finding id` and a
+  broad query returns only a fraction of the drawers. It was NOT chromadb failing
+  to persist, NOT per-wing, NOT embeddings. The bug is in the vendored MemPalace
+  `backends/chroma.py` `quarantine_stale_hnsw()`: chromadb 1.5.7 writes
+  `index_metadata.pickle` with `dimensionality=None` even for a COMPLETE segment
+  (the real dim is in `header.bin`), and the validator wrongly treated
+  "labels present + dimensionality None" as corruption → it quarantined the good
+  segment (renamed it `.corrupt-…`) on every open, leaving an empty replacement →
+  "Error finding id" → rebuild loop. It was dormant for weeks because at the old
+  `hnsw:batch_size=50000` the big collection rarely flushed a pickle, so the
+  validator never ran; the per-wing-era `batch_size→100` change made it flush a
+  pickle every compaction, exposing the bug. FIX = a `# BRAIN-PATCH` in that file
+  so a populated segment with `dimensionality=None` is NOT quarantined (only a
+  PRESENT-but-invalid dim is). This patch lives in the gitignored venv — re-apply
+  after any `pip install --upgrade mempalace`. Runtime recovery for a genuinely
+  wedged segment stays with `_try_rebuild_palace` (fires on the real corruption
+  signal; a full rebuild is ~366s/13k drawers so it is NOT used at boot).
 - `_resolve_session_wing` priority: project → team → user → empty.
 - `mempalace_query` in a project chat is **force-scoped** to
   `project__<id>` and refuses if id is missing (never leaks).

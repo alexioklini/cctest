@@ -272,33 +272,26 @@ class AdminObservabilityHandlers:
             if not ok:
                 self._send_json({"session_id": sid, "turn_ids": [], "legacy_count": 0})
                 return
-            # Per-wing: a session's drawers live in its session wing, but we only
-            # have the session_id here — scan every per-wing drawers collection
-            # for source_file matching session/<sid>. (The set is small; each
-            # collection's metadata read is cheap.)
-            import engine.wing_collections as _wc
+            from mempalace.palace import get_collection
+            col = get_collection(palace_path, create=False)
+            if not col:
+                self._send_json({"session_id": sid, "turn_ids": [], "legacy_count": 0})
+                return
+            result = col.get(include=["metadatas"])
             prefix = f"session/{sid}"
-            wings = sorted({_wc.collection_to_wing(n)
-                            for n in _wc.list_wing_collections(palace_path)
-                            if n.startswith("wd_")} - {None})
-            for w in wings:
-                col = _wc.get_wing_collection(palace_path, w, create=False, kind="drawers")
-                if col is None:
+            for m in result.get("metadatas", []):
+                sf = (m.get("source_file") or "")
+                if not sf.startswith(prefix):
                     continue
-                result = col.get(include=["metadatas"])
-                for m in result.get("metadatas", []):
-                    sf = ((m or {}).get("source_file") or "")
-                    if not sf.startswith(prefix):
+                # Shape: session/<sid> or session/<sid>#turn/<id>[...] or legacy session/<sid>#...
+                rest = sf[len(prefix):]
+                if rest.startswith("#turn/"):
+                    after = rest[len("#turn/"):]
+                    tok = after.split("#", 1)[0].split("/", 1)[0]
+                    if tok.isdigit():
+                        turn_ids.add(int(tok))
                         continue
-                    # Shape: session/<sid> or session/<sid>#turn/<id>[...] or legacy.
-                    rest = sf[len(prefix):]
-                    if rest.startswith("#turn/"):
-                        after = rest[len("#turn/"):]
-                        tok = after.split("#", 1)[0].split("/", 1)[0]
-                        if tok.isdigit():
-                            turn_ids.add(int(tok))
-                            continue
-                    legacy_count += 1
+                legacy_count += 1
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
             return
@@ -946,17 +939,22 @@ class AdminObservabilityHandlers:
             return
 
         try:
-            from mempalace.mcp_server import tool_list_tunnels, tool_graph_stats, tool_kg_stats
+            from mempalace.mcp_server import tool_status, tool_get_taxonomy, tool_list_tunnels, tool_graph_stats, tool_kg_stats
+            from mempalace.palace import get_closets_collection
 
+            status = tool_status()
+            taxonomy = tool_get_taxonomy()
             tunnels = tool_list_tunnels()
             graph = tool_graph_stats()
 
-            # PER-WING aggregation (v9.62.0): tool_status/tool_get_taxonomy only
-            # saw the old SHARED collection (now gone), so drawer/closet/wing/hall
-            # numbers must be summed across every per-wing collection instead.
-            import engine.wing_collections as _wc
-            overview = _wc.palace_overview(palace_path)
-            closet_count = overview.get("total_closets", 0)
+            # Closet count
+            closet_count = 0
+            try:
+                closets_col = get_closets_collection(palace_path, create=False)
+                if closets_col:
+                    closet_count = closets_col.count()
+            except Exception:
+                pass
 
             # Knowledge graph stats
             kg = {}
@@ -1022,10 +1020,9 @@ class AdminObservabilityHandlers:
             except Exception:
                 pass
 
-            # Wing breakdown with user isolation info — built from the per-wing
-            # overview (each wing is now its own collection).
+            # Wing breakdown with user isolation info
             wings_detail = {}
-            tax = {w: d["rooms"] for w, d in overview["wings"].items()}
+            tax = taxonomy.get("taxonomy", {})
             # Build user_id → display_name lookup
             _user_names = {}
             try:
@@ -1033,32 +1030,51 @@ class AdminObservabilityHandlers:
                     _user_names[u["id"]] = u.get("display_name") or u.get("username") or u["id"]
             except Exception:
                 pass
-            for wing_name, wd in overview["wings"].items():
-                # ID-only scheme: user wings are `user__<uid>` (the legacy `--`
-                # form is gone); detect the typed prefix for display.
-                user_id = wing_name[len("user__"):] if wing_name.startswith("user__") else None
+            for wing_name, rooms in tax.items():
+                is_user_scoped = "--" in wing_name
+                user_id = wing_name.split("--")[0] if is_user_scoped else None
                 wings_detail[wing_name] = {
-                    "rooms": wd["rooms"],
-                    "drawer_count": wd["drawer_count"],
-                    "room_count": wd["room_count"],
-                    "user_scoped": user_id is not None,
+                    "rooms": rooms,
+                    "drawer_count": sum(rooms.values()),
+                    "room_count": len(rooms),
+                    "user_scoped": is_user_scoped,
                     "user_id": user_id,
                     "user_name": _user_names.get(user_id, user_id) if user_id else None,
                 }
 
-            # Hall stats — from the per-wing overview.
-            halls = overview.get("halls", {})
+            # Hall stats from drawer metadata
+            halls = {}
+            try:
+                all_meta = status.get("_all_meta") or []
+                if not all_meta:
+                    from mempalace.palace import get_collection as _gc
+                    _dcol = _gc(palace_path, create=False)
+                    if _dcol:
+                        _dr = _dcol.get(include=["metadatas"])
+                        all_meta = _dr.get("metadatas", [])
+                for m in all_meta:
+                    h = m.get("hall", "")
+                    if not h:
+                        continue
+                    if h not in halls:
+                        halls[h] = {"count": 0, "rooms": {}}
+                    halls[h]["count"] += 1
+                    r = m.get("room", "")
+                    if r:
+                        halls[h]["rooms"][r] = halls[h]["rooms"].get(r, 0) + 1
+            except Exception:
+                pass
 
             self._send_json({
                 "enabled": True,
                 "palace_path": palace_path,
                 "palace_size_mb": palace_size_mb,
-                "total_drawers": overview.get("total_drawers", 0),
+                "total_drawers": status.get("total_drawers", 0),
                 "total_closets": closet_count,
                 "halls": halls,
                 "wings": wings_detail,
                 "wing_count": len(wings_detail),
-                "room_count": len(set(r for rooms in tax.values() for r in rooms)),
+                "room_count": status.get("total_rooms", len(set(r for rooms in tax.values() for r in rooms))),
                 "graph": graph,
                 "tunnels": tunnels,
                 "knowledge_graph": kg,
@@ -1093,55 +1109,45 @@ class AdminObservabilityHandlers:
             return
 
         try:
-            import engine.wing_collections as _wc
-            # Per-wing: a specific wing → read just its collection; no wing →
-            # iterate every per-wing collection. The collection IS the wing, so
-            # the wing filter is implicit; keep the room filter.
-            if wing:
-                target_wings = [wing]
-            else:
-                target_wings = sorted({_wc.collection_to_wing(n)
-                                       for n in _wc.list_wing_collections(palace_path)
-                                       if n.startswith("wd_")} - {None})
-
+            from mempalace.palace import get_collection, get_closets_collection
+            col = get_collection(palace_path, create=False)
+            result = col.get(include=["metadatas", "documents"])
             drawers = []
-            for w in target_wings:
-                col = _wc.get_wing_collection(palace_path, w, create=False, kind="drawers")
-                if col is None:
+            for did, meta, doc in zip(result["ids"], result["metadatas"], result["documents"]):
+                m_wing = meta.get("wing", "")
+                m_room = meta.get("room", "")
+                if wing and m_wing != wing:
                     continue
-                result = col.get(include=["metadatas", "documents"])
-                for did, meta, doc in zip(result["ids"], result["metadatas"], result["documents"]):
-                    m_wing = (meta or {}).get("wing", "") or w
-                    m_room = (meta or {}).get("room", "")
-                    if room and m_room != room:
-                        continue
-                    drawers.append({
-                        "id": did,
-                        "wing": m_wing,
-                        "room": m_room,
-                        "hall": (meta or {}).get("hall", ""),
-                        "source_file": (meta or {}).get("source_file", ""),
-                        "filed_at": (meta or {}).get("filed_at", ""),
-                        "added_by": (meta or {}).get("added_by", ""),
-                        "text": (doc or "")[:300],
-                    })
+                if room and m_room != room:
+                    continue
+                drawers.append({
+                    "id": did,
+                    "wing": m_wing,
+                    "room": m_room,
+                    "hall": meta.get("hall", ""),
+                    "source_file": meta.get("source_file", ""),
+                    "filed_at": meta.get("filed_at", ""),
+                    "added_by": meta.get("added_by", ""),
+                    "text": (doc or "")[:300],
+                })
             closets = []
             try:
-                for w in target_wings:
-                    ccol = _wc.get_wing_collection(palace_path, w, create=False, kind="closets")
-                    if ccol is None:
-                        continue
+                ccol = get_closets_collection(palace_path, create=False)
+                if ccol:
                     cresult = ccol.get(include=["metadatas", "documents"])
                     for cid, cmeta, cdoc in zip(cresult["ids"], cresult["metadatas"], cresult["documents"]):
-                        c_room = (cmeta or {}).get("room", "")
+                        c_wing = cmeta.get("wing", "")
+                        c_room = cmeta.get("room", "")
+                        if wing and c_wing != wing:
+                            continue
                         if room and c_room != room:
                             continue
                         closets.append({
                             "id": cid,
-                            "wing": (cmeta or {}).get("wing", "") or w,
+                            "wing": c_wing,
                             "room": c_room,
-                            "source_file": (cmeta or {}).get("source_file", ""),
-                            "drawer_count": (cmeta or {}).get("drawer_count", 0),
+                            "source_file": cmeta.get("source_file", ""),
+                            "drawer_count": cmeta.get("drawer_count", 0),
                             "text": (cdoc or "")[:300],
                         })
             except Exception:

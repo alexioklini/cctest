@@ -245,86 +245,6 @@ def _try_rebuild_palace(palace_path: str) -> bool:
         return ok
 
 
-def _query_wings(palace_path, wings, room, query, fetch_n):
-    """Run the vector query over `wings` and return merged (docs, metas, dists).
-
-    Each wing lives in its OWN collection; query each wing's collection
-    separately (room-only where-filter, since the collection already IS the wing)
-    and merge. A wing with no collection yet (never written) contributes nothing —
-    not an error. Each per-collection query is capped at `fetch_n`; merging hands
-    the full pool to the caller's existing cross-encoder rerank/truncate, so
-    recall is at least as good as the old shared+filter case.
-
-    A per-wing query error is isolated: it's recorded and that wing is SKIPPED,
-    so one wedged wing can't fail the whole query — the caller still gets every
-    healthy wing's results, and the failed wing names are returned for targeted
-    recovery. Returns (docs, metas, dists, failed_wings).
-    """
-    import engine.wing_collections as _wc
-
-    wings = [w for w in (wings or []) if w]
-    docs, metas, dists, failed = [], [], [], []
-    where = {"room": room} if room else None
-    for w in wings:
-        try:
-            col = _wc.get_wing_collection(palace_path, w, create=False, kind="drawers")
-            if col is None:
-                continue  # wing never written → empty, not an error
-            kwargs = {"query_texts": [query], "n_results": fetch_n,
-                      "include": ["documents", "metadatas", "distances"]}
-            if where:
-                kwargs["where"] = where
-            r = col.query(**kwargs)
-            docs.extend((r.get("documents") or [[]])[0])
-            metas.extend((r.get("metadatas") or [[]])[0])
-            dists.extend((r.get("distances") or [[]])[0])
-        except Exception as _e:
-            # Isolate: one wing's failure must not sink the others. Record it for
-            # targeted recovery; healthy wings still return results.
-            __import__("logging").warning(
-                "[mempalace] query failed for wing %s: %s: %s — skipping (other "
-                "wings unaffected)", w, type(_e).__name__, _e)
-            failed.append(w)
-    return docs, metas, dists, failed
-
-
-def _rebuild_wings(palace_path, wings) -> bool:
-    """Auto-heal the wedged index for ONLY the affected wing(s).
-
-    Rebuilds each named wing's OWN collection via the package's
-    `rebuild_index(collection_name=...)` (already parameterized), leaving every
-    other wing's index untouched — the minimal-blast-radius recovery that is the
-    whole point of per-wing collections. Cooldown-gated per (palace, collection)
-    so a burst of failing queries triggers one rebuild per wing. Never raises."""
-    import engine.wing_collections as _wc
-    import time as _time
-    _log = __import__("logging")
-    ok_any = False
-    for w in [x for x in (wings or []) if x]:
-        dname = _wc.collection_names_for(w, kind="drawers")
-        key = f"{palace_path}::{dname}"
-        now = _time.monotonic()
-        with _mempalace_rebuild_lock:
-            last = _mempalace_last_rebuild.get(key, 0.0)
-            if now - last < _MEMPALACE_REBUILD_COOLDOWN_S:
-                continue
-            _mempalace_last_rebuild[key] = now
-            try:
-                from mempalace import repair as _mp_repair
-                _log.warning("[mempalace] HNSW corruption in wing %s — rebuilding "
-                             "ONLY its collection %s", w, dname)
-                _mp_repair.rebuild_index(palace_path=palace_path,
-                                         collection_name=dname,
-                                         confirm_truncation_ok=False)
-                ok_any = True
-            except Exception as _re:
-                _log.error("[mempalace] per-wing rebuild failed for %s (%s): %s",
-                           w, dname, _re)
-                _mempalace_last_rebuild[key] = (
-                    now - _MEMPALACE_REBUILD_COOLDOWN_S + _MEMPALACE_REBUILD_FAIL_COOLDOWN_S)
-    return ok_any
-
-
 def _load_mempalace_config() -> dict:
     """Read the 'mempalace' block from config.json. 10s cache."""
     global _mempalace_config_cache, _mempalace_config_cache_time
@@ -523,62 +443,88 @@ def tool_mempalace_query(args: dict) -> str:
     # plus 1 unrelated chunk.
     mempalace_activity = _brain.mempalace_activity
     mempalace_activity.retrieve_begin()
-
-    # Build the search wing set: the resolved wing + any extra wings (e.g. a
-    # project's chat-history wing alongside its knowledge wing). Each is its own
-    # per-wing collection now, so this is the list of collections to query+merge.
-    _search_wings = [w for w in ([wing] + _extra_wings) if w]
-
-    def _to_raw(docs, metas, dists):
-        out = []
-        for doc, meta, dist in zip(docs, metas, dists):
-            meta = meta or {}
-            similarity = max(0.0, 1.0 - float(dist or 0.0))
-            out.append({
-                "wing": meta.get("wing", ""),
-                "room": meta.get("room", ""),
-                "source_file": meta.get("source_file", ""),
-                "similarity": round(similarity, 3),
-                "matched_via": "chroma-vector",
-                "text": doc or "",
-                # Carried so read_document can return only the matched regions of
-                # a file (union of windows around each matched chunk).
-                "chunk_index": meta.get("chunk_index"),
-            })
-        return out
-
     try:
         try:
-            # Per-wing query: queries each wing's OWN collection and merges. A
-            # single wing's failure is isolated (returned in `failed`), so one
-            # wedged wing never sinks the others.
-            docs, metas, dists, failed = _query_wings(
-                palace_path, _search_wings, room, query, fetch_n)
-            raw = _to_raw(docs, metas, dists)
-
-            # AUTO-HEAL the minimal scope: if any wing failed with HNSW
-            # corruption, rebuild ONLY those wings' collections, then re-query
-            # just the recovered wings once and merge their results in. Other
-            # wings already returned and are untouched — minimal blast radius.
-            if failed:
-                corrupt = [w for w in failed]  # _query_wings already logged each
-                if _rebuild_wings(palace_path, corrupt):
-                    try:
-                        d2, m2, di2, still = _query_wings(
-                            palace_path, corrupt, room, query, fetch_n)
-                        raw.extend(_to_raw(d2, m2, di2))
-                    except Exception as _e2:
-                        __import__("logging").error(
-                            "[mempalace] post-rebuild re-query failed: %s", _e2)
-                # If healthy wings returned nothing AND every wing failed even
-                # after a rebuild attempt, surface an error; otherwise return
-                # what we have (degraded but isolated — the design's goal).
-                if not raw and len(failed) == len(_search_wings):
-                    return _err("mempalace_query: all queried wings failed "
-                                f"(corruption); rebuild attempted for {failed}")
+            from mempalace.palace import get_collection as _gc_query
+            from mempalace.searcher import build_where_filter as _build_where
+            col = _gc_query(palace_path, create=False)
+            if col is None:
+                return _err(f"mempalace_query: palace collection not found at {palace_path}")
+            where_filter = _build_where(wing, room)
+            # Multi-wing search (knowledge + chat history): replace the single
+            # wing equality with a `wing $in [...]` clause so a thin chat wing
+            # can't starve retrieval of the knowledge wing. Built directly
+            # (not via _build_where, which takes one wing) and combined with
+            # the room clause the same way _build_where would.
+            if _extra_wings:
+                _all_wings = [wing] + _extra_wings
+                _wing_clause = {"wing": {"$in": _all_wings}}
+                if room:
+                    where_filter = {"$and": [_wing_clause, {"room": room}]}
+                else:
+                    where_filter = _wing_clause
+            kwargs = {
+                "query_texts": [query],
+                "n_results": fetch_n,
+                "include": ["documents", "metadatas", "distances"],
+            }
+            if where_filter:
+                kwargs["where"] = where_filter
+            chroma_res = col.query(**kwargs)
+            # Chroma returns lists-of-lists keyed by query; we ran one query.
+            docs = (chroma_res.get("documents") or [[]])[0]
+            metas = (chroma_res.get("metadatas") or [[]])[0]
+            dists = (chroma_res.get("distances") or [[]])[0]
+            raw = []
+            for doc, meta, dist in zip(docs, metas, dists):
+                meta = meta or {}
+                similarity = max(0.0, 1.0 - float(dist or 0.0))
+                raw.append({
+                    "wing": meta.get("wing", ""),
+                    "room": meta.get("room", ""),
+                    "source_file": meta.get("source_file", ""),
+                    "similarity": round(similarity, 3),
+                    "matched_via": "chroma-vector",
+                    "text": doc or "",
+                    # Carried so read_document can return only the matched
+                    # regions of a file (union of windows around each matched
+                    # chunk) instead of the whole document.
+                    "chunk_index": meta.get("chunk_index"),
+                })
             results = {"results": raw, "total_before_filter": len(raw)}
         except Exception as e:
-            return _err(f"mempalace_query: {type(e).__name__}: {e}")
+            _emsg = f"{type(e).__name__}: {e}"
+            # Self-heal a wedged HNSW segment: rebuild the index from the
+            # surviving sqlite data, then retry the query once. Cooldown-gated
+            # so a burst of concurrent failing queries triggers one rebuild.
+            if _is_hnsw_corruption(_emsg) and _try_rebuild_palace(palace_path):
+                try:
+                    col = _gc_query(palace_path, create=False)
+                    if col is not None:
+                        chroma_res = col.query(**kwargs)
+                        docs = (chroma_res.get("documents") or [[]])[0]
+                        metas = (chroma_res.get("metadatas") or [[]])[0]
+                        dists = (chroma_res.get("distances") or [[]])[0]
+                        raw = []
+                        for doc, meta, dist in zip(docs, metas, dists):
+                            meta = meta or {}
+                            similarity = max(0.0, 1.0 - float(dist or 0.0))
+                            raw.append({
+                                "wing": meta.get("wing", ""),
+                                "room": meta.get("room", ""),
+                                "source_file": meta.get("source_file", ""),
+                                "similarity": round(similarity, 3),
+                                "matched_via": "chroma-vector",
+                                "text": doc or "",
+                                "chunk_index": meta.get("chunk_index"),
+                            })
+                        results = {"results": raw, "total_before_filter": len(raw)}
+                    else:
+                        return _err(f"mempalace_query: {_emsg} (rebuilt, but collection reopen failed)")
+                except Exception as e2:
+                    return _err(f"mempalace_query: {_emsg} (auto-rebuild ran, retry failed: {type(e2).__name__}: {e2})")
+            else:
+                return _err(f"mempalace_query: {_emsg}")
     finally:
         mempalace_activity.retrieve_end()
 
@@ -615,10 +561,15 @@ def tool_mempalace_query(args: dict) -> str:
     # the main scope wasn't already brain_code (avoid double-search).
     if get_request_context().helpdesk_mode and wing != "brain_code":
         try:
-            # brain_code is its own per-wing collection — query it directly via
-            # the same per-wing helper (its failure is isolated + best-effort).
-            _sdocs, _smetas, _sdists, _ = _query_wings(
-                palace_path, ["brain_code"], None, query, n_results)
+            _src_where = _build_where("brain_code", None)
+            _src_res = col.query(
+                query_texts=[query], n_results=n_results,
+                include=["documents", "metadatas", "distances"],
+                where=_src_where,
+            )
+            _sdocs = (_src_res.get("documents") or [[]])[0]
+            _smetas = (_src_res.get("metadatas") or [[]])[0]
+            _sdists = (_src_res.get("distances") or [[]])[0]
             for doc, meta, dist in zip(_sdocs, _smetas, _sdists):
                 meta = meta or {}
                 # source_file is the on-disk clone path

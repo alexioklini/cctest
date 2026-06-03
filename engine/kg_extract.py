@@ -640,12 +640,11 @@ def _iter_wing_drawers(palace_path: str, wing: str, source_prefix: str
     in `wing` whose source_file startswith(source_prefix). Empty source_prefix
     is treated as "match all in wing" — caller must validate this is intended.
     """
-    import engine.wing_collections as _wc
-    col = _wc.get_wing_collection(palace_path, wing, create=False, kind="drawers")
+    from mempalace.palace import get_collection as _get_drawers_col
+    col = _get_drawers_col(palace_path, create=False)
     if not col:
         return
-    # Per-wing: the collection IS the wing, so no wing where-filter needed.
-    got = col.get(include=["metadatas", "documents"])
+    got = col.get(where={"wing": wing}, include=["metadatas", "documents"])
     ids = got.get("ids") or []
     metas = got.get("metadatas") or []
     docs = got.get("documents") or []
@@ -676,11 +675,11 @@ def _iter_wing_source_files(palace_path: str, wing: str, source_prefix: str
     (deleted between mining and extraction) — this iterator only groups
     drawer ids by source.
     """
-    import engine.wing_collections as _wc
-    col = _wc.get_wing_collection(palace_path, wing, create=False, kind="drawers")
+    from mempalace.palace import get_collection as _get_drawers_col
+    col = _get_drawers_col(palace_path, create=False)
     if not col:
         return
-    got = col.get(include=["metadatas"])
+    got = col.get(where={"wing": wing}, include=["metadatas"])
     ids = got.get("ids") or []
     metas = got.get("metadatas") or []
     by_source: dict[str, list[str]] = {}
@@ -1561,13 +1560,7 @@ def run_closet_regen_incremental(
 
     cfg = _ClosetLLMConfig(endpoint=endpoint, key=api_key, model=api_model)
     try:
-        # Per-wing: regen into THIS wing's own drawers/closets collections.
-        import engine.wing_collections as _wc
-        out = _regen(
-            palace_path=palace_path, wing=wing, cfg=cfg,
-            collection_name=_wc.collection_names_for(wing, kind="drawers"),
-            closets_collection_name=_wc.collection_names_for(wing, kind="closets"),
-        ) or {}
+        out = _regen(palace_path=palace_path, wing=wing, cfg=cfg) or {}
     except Exception as e:
         return {"error": f"regen: {type(e).__name__}: {e}",
                 "regen_triggered": False,

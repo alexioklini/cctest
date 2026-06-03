@@ -295,8 +295,9 @@ Tree-sitter AST snapshots. `files(path, sha256, lang, …)`,
 ### MemPalace storage
 - Palace root: from `mempalace.yaml → palace_path`
   (typically `~/.mempalace/<palace_name>/`).
-- ChromaDB collection per wing; SQLite at `<palace>/knowledge_graph.sqlite3`
-  for triples.
+- ONE shared ChromaDB collection (`mempalace_drawers` / `mempalace_closets`) for
+  all wings, filtered by a `wing` metadata field; SQLite at
+  `<palace>/knowledge_graph.sqlite3` for triples.
 - Wing naming: `user__<uid>` / `team__<tid>` / `project__<pid>` / bare
   shared names (e.g. `brain_code`).
 - Rooms: `chat | chat_summary | chat_attachment | reference | general |
