@@ -528,7 +528,17 @@ def main() -> int:
                 effective_judge_model = args.judge_model or judge_cfg["model"]
                 judge_provider = (judge_cfg.get("provider") or "claude_code").lower()
                 if args.judge_model:
-                    judge_provider = "claude_code"
+                    # Route by the override model's actual provider: a model that
+                    # exists in config.json[models] runs via the mistral/OpenAI-shape
+                    # judge path; otherwise it's a claude-cli model (claude -p).
+                    try:
+                        _bcfg = json.load(open(os.path.join(REPO_ROOT, "config.json")))
+                        if args.judge_model in (_bcfg.get("models") or {}):
+                            judge_provider = "mistral"
+                        else:
+                            judge_provider = "claude_code"
+                    except Exception:
+                        judge_provider = "claude_code"
                 if judge_provider == "mistral":
                     judge = run_judge_mistral(q, gold_text, brain_text, rubric,
                                               effective_judge_model, judge_cfg["timeout_seconds"])
