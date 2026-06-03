@@ -152,41 +152,36 @@ class MemPalaceClient:
         if not pp or not os.path.isdir(pp):
             return 0
         deleted = 0
+        # Per-wing: operate on THIS wing's OWN drawers + closets collections.
+        # prefix='' wipes the wing entirely (project delete); a prefix filters by
+        # source_file. The delete touches only this wing's index. Serialized
+        # under the shared palace write lock (bulk delete = corruption trigger).
+        import engine.wing_collections as _wc
         try:
-            # get_collection takes (palace_path, collection_name, create) —
-            # no wing kwarg. Wing filtering must be done via metadata query.
-            col = self._get_collection(pp, create=False)
-            if col is None:
-                return 0
-            results = col.get(where={"wing": wing}, include=["metadatas"])
-            ids_to_delete = [
-                r_id for r_id, meta in zip(
-                    results.get("ids", []),
-                    results.get("metadatas", []))
-                if (meta or {}).get("source_file", "").startswith(prefix)
-            ]
-            if ids_to_delete:
-                col.delete(ids=ids_to_delete)
-            deleted = len(ids_to_delete)
-        except Exception as e:
-            print(f"[MemPalaceClient] purge_by_prefix drawers failed "
-                  f"wing={wing}: {type(e).__name__}: {e}", flush=True)
-        # Also purge closets for this wing+prefix.
-        try:
-            ccol = self._get_closets_collection(pp, create=False)
-            if ccol is not None:
-                cres = ccol.get(where={"wing": wing}, include=["metadatas"])
-                cids = [
-                    cid for cid, meta in zip(
-                        cres.get("ids", []),
-                        cres.get("metadatas", []))
-                    if (meta or {}).get("source_file", "").startswith(prefix)
-                ]
-                if cids:
-                    ccol.delete(ids=cids)
-        except Exception as e:
-            print(f"[MemPalaceClient] purge_by_prefix closets failed "
-                  f"wing={wing}: {type(e).__name__}: {e}", flush=True)
+            from server_daemons import _palace_write_lock
+        except Exception:
+            import contextlib as _cl
+            _palace_write_lock = _cl.nullcontext()
+        for kind in ("drawers", "closets"):
+            try:
+                col = _wc.get_wing_collection(pp, wing, create=False, kind=kind)
+                if col is None:
+                    continue
+                if prefix:
+                    res = col.get(include=["metadatas"])
+                    ids = [rid for rid, meta in zip(res.get("ids", []),
+                                                    res.get("metadatas", []))
+                           if (meta or {}).get("source_file", "").startswith(prefix)]
+                else:
+                    ids = col.get(include=[]).get("ids", [])  # whole wing
+                if ids:
+                    with _palace_write_lock:
+                        col.delete(ids=ids)
+                if kind == "drawers":
+                    deleted = len(ids)
+            except Exception as e:
+                print(f"[MemPalaceClient] purge_by_prefix {kind} failed "
+                      f"wing={wing}: {type(e).__name__}: {e}", flush=True)
         return deleted
 
     def get_collection(self, wing: str = "", create: bool = False):
@@ -2799,58 +2794,23 @@ def _split_profile_sections(content: str) -> dict[str, str]:
     return {k: v for k, v in out.items() if v}
 
 def _purge_drawers_by_room_and_source(wing: str, room: str, source_prefix: str = "") -> int:
-    """List drawers in (wing, room) and delete them. Returns count deleted.
-    Idempotent.
+    """Delete drawers in (wing, room) [optionally filtered by source_prefix] from
+    the wing's OWN per-wing collection. Returns count deleted. Idempotent.
 
-    NOTE on source_prefix: tool_list_drawers' summary view does not include
-    source_file, only content_preview + drawer_id, so we can't actually
-    filter by prefix at list time. For the rooms we own (user_profile,
-    user_daily_summary) the room itself is exclusively ours, so deleting
-    everything in (wing, room) is the right behavior. The argument is kept
-    for caller readability; an empty list result is still safe."""
+    Per-wing: the delete touches only this wing's index (can't corrupt others).
+    Serialized under the shared palace write lock (bulk delete = corruption
+    trigger)."""
     try:
-        from mempalace.mcp_server import tool_list_drawers, tool_delete_drawer
-    except ImportError:
+        import engine.wing_collections as _wc
+        from server_daemons import _palace_write_lock
+        palace_path = (engine._load_mempalace_config() or {}).get("palace_path", "")
+        if not palace_path:
+            return 0
+        with _palace_write_lock:
+            return _wc.purge_wing_room(palace_path, wing, room, source_prefix)
+    except Exception as e:
+        print(f"[profile-purge] failed wing={wing} room={room}: {e}", flush=True)
         return 0
-    deleted = 0
-    while True:
-        try:
-            res = tool_list_drawers(wing=wing, room=room, limit=200, offset=0)
-        except Exception as e:
-            print(f"[profile-purge] list failed wing={wing} room={room}: {e}", flush=True)
-            break
-        # tool_list_drawers returns {drawers:[…], count, offset, limit}
-        if isinstance(res, dict):
-            rows = res.get("drawers") or []
-        elif isinstance(res, list):
-            rows = res
-        else:
-            rows = []
-        if not rows:
-            break
-        for r in rows:
-            did = (r.get("drawer_id") or r.get("id")) if isinstance(r, dict) else None
-            if not did:
-                continue
-            try:
-                tool_delete_drawer(drawer_id=did)
-                deleted += 1
-            except Exception as e:
-                print(f"[profile-purge] delete failed id={did}: {e}", flush=True)
-        # Re-list after deleting; if MemPalace pagination is offset-based
-        # against a shrinking set, we'd skip rows. Fixed-offset 0 + delete-all
-        # converges in O(rows/page) iterations.
-        if len(rows) < 200:
-            # Re-check whether we cleared everything (pagination edge case)
-            try:
-                check = tool_list_drawers(wing=wing, room=room, limit=1, offset=0)
-                if isinstance(check, dict) and not check.get("drawers"):
-                    break
-                if isinstance(check, list) and not check:
-                    break
-            except Exception:
-                break
-    return deleted
 
 def _purge_user_profile_drawers(uid: str) -> int:
     """Drop every drawer in (wing=user__<uid>, room=user_profile)."""
@@ -2864,8 +2824,12 @@ def _mirror_user_profile_to_mempalace(uid: str, content: str):
     """Rewrite the user_profile drawers from the current file content.
     Drops old drawers first so renamed/removed sections don't linger."""
     try:
-        from mempalace.mcp_server import tool_add_drawer
+        import engine.wing_collections as _wc
+        from server_daemons import _palace_write_lock
     except ImportError:
+        return
+    palace_path = (engine._load_mempalace_config() or {}).get("palace_path", "")
+    if not palace_path:
         return
     try:
         _purge_user_profile_drawers(uid)
@@ -2878,13 +2842,13 @@ def _mirror_user_profile_to_mempalace(uid: str, content: str):
             continue
         slug = "".join(c.lower() if c.isalnum() else "_" for c in title).strip("_")
         try:
-            tool_add_drawer(
-                wing=wing,
-                room="user_profile",
-                content=f"# {title}\n\n{body}"[:8000],
-                source_file=f"user/{uid}#profile/{slug}",
-                added_by="brain-user-profile",
-            )
+            with _palace_write_lock:
+                _wc.add_drawer_to_wing(
+                    palace_path, wing, "user_profile",
+                    f"# {title}\n\n{body}"[:8000],
+                    source_file=f"user/{uid}#profile/{slug}",
+                    added_by="brain-user-profile",
+                )
         except Exception as e:
             print(f"[profile] add_drawer {title!r} failed uid={uid}: {e}", flush=True)
 
@@ -3903,6 +3867,22 @@ def main():
     #   3. mempalace.yaml is managed automatically per agent — server creates
     #      and refreshes it; user never touches it.
 
+    # --- Per-wing collections: assert the required venv patch, then run the
+    # one-time migration (background, idempotent) before the write daemons that
+    # depend on per-wing routing start. assert fails LOUD if the patch was wiped
+    # by a pip upgrade (no fallback — re-apply per project_mempalace_venv_patches).
+    try:
+        ok_mp, _ = engine._ensure_mempalace_importable()
+        if ok_mp:
+            import engine.wing_collections as _wc
+            _wc.assert_miner_patch()  # raises if the patch is missing
+            import engine.wing_migrate as _wm
+            threading.Thread(target=_wm.migrate_if_needed, daemon=True,
+                             name="wing-migrate").start()
+    except Exception as _e_wc:
+        print(f"[per-wing] startup check FAILED: {_e_wc}", flush=True)
+        raise  # refuse to start half-isolated — surfaces the re-apply instruction
+
     threading.Thread(target=server_daemons._mempalace_miner_loop, args=(_srv,), daemon=True, name="mempalace-miner").start()
 
     # --- Sidecar supervisor (Phase 2) ---
@@ -4031,7 +4011,8 @@ def main():
                 ok, _ = engine._ensure_mempalace_importable()
                 if not ok:
                     return
-                from mempalace.mcp_server import tool_add_drawer
+                import engine.wing_collections as _wc
+                from server_daemons import _palace_write_lock
                 info = ChatDB.get_session_info(session_id)
                 if not info:
                     return
@@ -4055,9 +4036,12 @@ def main():
                     if body.strip():
                         engine.mempalace_activity.store_begin()
                         try:
-                            res = tool_add_drawer(wing=wing, room=default_room,
-                                                  content=body, source_file=f"session/{session_id}{turn_suffix}",
-                                                  added_by="brain-chat-sync")
+                            # Per-wing: file into this session's own wing collection.
+                            with _palace_write_lock:
+                                res = _wc.add_drawer_to_wing(
+                                    palace_path, wing, default_room, body,
+                                    source_file=f"session/{session_id}{turn_suffix}",
+                                    added_by="brain-chat-sync")
                             if res.get("success") and res.get("reason") != "already_exists":
                                 filed += 1
                         except Exception:

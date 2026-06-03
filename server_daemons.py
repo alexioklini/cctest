@@ -32,6 +32,7 @@ import threading
 import time
 
 import brain as engine
+import engine.wing_collections as _wing_collections  # per-wing collection routing
 from server_lib import auth as _auth_mod  # noqa: F401  (miner/profile user lookups)
 from server_lib.db import (  # noqa: F401
     ChatDB,
@@ -395,6 +396,8 @@ def _mempalace_miner_loop(srv):
                             wing_override=src_wing,
                             agent="brain-miner-source",
                             respect_gitignore=True,
+                            collection_name=_wing_collections.collection_names_for(src_wing, kind="drawers"),
+                            closets_collection_name=_wing_collections.collection_names_for(src_wing, kind="closets"),
                         )
                     for line in buf.getvalue().splitlines():
                         s = line.strip()
@@ -458,13 +461,14 @@ def _mempalace_miner_loop(srv):
                             continue
                         wing = f"{agent_id}_artifacts"
                         try:
-                            res = tool_add_drawer(
-                                wing=wing,
-                                room="artifacts",
-                                content=text[:8000],
-                                source_file=f"session/{sid_prefix}#artifact/{fname}",
-                                added_by="brain-miner-sched",
-                            )
+                            # Per-wing + serialized (was unlocked — latent race).
+                            with _palace_write_lock:
+                                res = _wing_collections.add_drawer_to_wing(
+                                    palace_path, wing, "artifacts",
+                                    text[:8000],
+                                    source_file=f"session/{sid_prefix}#artifact/{fname}",
+                                    added_by="brain-miner-sched",
+                                )
                             if isinstance(res, dict) and res.get("success") \
                                and res.get("reason") != "already_exists":
                                 drawers_filed += 1
@@ -493,6 +497,8 @@ def _mempalace_miner_loop(srv):
                             wing_override=wing,
                             agent="brain-miner-chat",
                             respect_gitignore=False,
+                            collection_name=_wing_collections.collection_names_for(wing, kind="drawers"),
+                            closets_collection_name=_wing_collections.collection_names_for(wing, kind="closets"),
                         )
                     out = buf.getvalue().strip()
                     for line in out.splitlines():
@@ -639,13 +645,9 @@ def _mempalace_chat_sync_loop(srv):
                 ["fact", "preference", "decision", "reference"]))
             clf_min_turns = int(clf_cfg.get("min_turns", 0))
 
-            closets_col = None
-            if do_closets:
-                try:
-                    closets_col = get_closets_collection(palace_path, create=True)
-                except Exception as ce:
-                    print(f"[mempalace-chat-sync] closets collection unavailable: {ce}")
-                    closets_col = None
+            # Closets are now per-wing (opened per dirty group below via
+            # get_wing_collection(kind="closets")); no shared closets collection
+            # is opened here anymore.
 
             pending = ChatDB.mempalace_sessions_needing_sync() or []
             total_new = 0
@@ -719,11 +721,12 @@ def _mempalace_chat_sync_loop(srv):
                             # so this upsert isn't refused by the package's
                             # non-blocking mine_palace_lock (which would silently
                             # drop the drawer) and can't race a bulk delete.
+                            # Per-wing: file into THIS wing's own collection (not
+                            # the shared default) — same dedup-id + metadata
+                            # contract as tool_add_drawer.
                             with _palace_write_lock:
-                                res = tool_add_drawer(
-                                    wing=w,
-                                    room=r,
-                                    content=content,
+                                res = _wing_collections.add_drawer_to_wing(
+                                    palace_path, w, r, content,
                                     source_file=source_file,
                                     added_by="brain-chat-sync",
                                 )
@@ -745,13 +748,16 @@ def _mempalace_chat_sync_loop(srv):
                     if drawer_id:
                         try:
                             hall = detect_hall(content)
-                            dcol = _get_drawers_col(palace_path, create=False)
+                            # Per-wing: stamp on THIS wing's own collection.
+                            dcol = _wing_collections.get_wing_collection(
+                                palace_path, w, create=False, kind="drawers")
                             if dcol and hall:
-                                existing = dcol.get(ids=[drawer_id], include=["metadatas", "documents"])
-                                if existing and existing["ids"]:
-                                    meta = dict(existing["metadatas"][0])
-                                    meta["hall"] = hall
-                                    dcol.upsert(ids=[drawer_id], documents=existing["documents"], metadatas=[meta])
+                                with _palace_write_lock:  # was unlocked — latent race
+                                    existing = dcol.get(ids=[drawer_id], include=["metadatas", "documents"])
+                                    if existing and existing["ids"]:
+                                        meta = dict(existing["metadatas"][0])
+                                        meta["hall"] = hall
+                                        dcol.upsert(ids=[drawer_id], documents=existing["documents"], metadatas=[meta])
                         except Exception:
                             pass  # non-critical
                     group_key = (w, r, source_file)
@@ -922,33 +928,40 @@ def _mempalace_chat_sync_loop(srv):
                         else:
                             summary_hash = _new_summary_hash  # unchanged → keep
 
-                # Rebuild closets per dirty group.
-                if closets_col is not None and dirty_groups:
+                # Rebuild closets per dirty group. Per-wing: each group's closets
+                # live in THAT wing's own closets collection (wc_<wing>), not the
+                # shared one — fetched per group by wing `w`.
+                if do_closets and dirty_groups:
                     for (w, r, source_file), items in dirty_groups.items():
                         drawer_ids = [did for did, _ in items if did]
                         if not drawer_ids:
                             continue
                         concatenated = "\n\n".join(txt for _, txt in items)[:closet_head]
                         try:
-                            purge_file_closets(closets_col, source_file)
-                            lines = build_closet_lines(
-                                source_file=source_file,
-                                drawer_ids=drawer_ids,
-                                content=concatenated,
-                                wing=w,
-                                room=r,
-                            )
-                            if lines:
-                                closet_id_base = (
-                                    f"{w}_{r}_"
-                                    + hashlib.sha256(source_file.encode("utf-8")).hexdigest()[:12]
+                            wing_closets = _wing_collections.get_wing_collection(
+                                palace_path, w, create=True, kind="closets")
+                            if wing_closets is None:
+                                continue
+                            with _palace_write_lock:
+                                purge_file_closets(wing_closets, source_file)
+                                lines = build_closet_lines(
+                                    source_file=source_file,
+                                    drawer_ids=drawer_ids,
+                                    content=concatenated,
+                                    wing=w,
+                                    room=r,
                                 )
-                                upsert_closet_lines(
-                                    closets_col,
-                                    closet_id_base,
-                                    lines,
-                                    {"source_file": source_file, "wing": w, "room": r},
-                                )
+                                if lines:
+                                    closet_id_base = (
+                                        f"{w}_{r}_"
+                                        + hashlib.sha256(source_file.encode("utf-8")).hexdigest()[:12]
+                                    )
+                                    upsert_closet_lines(
+                                        wing_closets,
+                                        closet_id_base,
+                                        lines,
+                                        {"source_file": source_file, "wing": w, "room": r},
+                                    )
                         except Exception as ce:
                             print(f"[mempalace-chat-sync] closet rebuild failed for {source_file}: {ce}")
 
@@ -1345,13 +1358,12 @@ def _project_sync_loop(srv):
         counts after a mine — survives dedup-only re-runs unchanged.
         """
         try:
-            col = _get_drawers_col(palace_path, create=False)
+            # Per-wing: count in THIS wing's own collection (no wing filter).
+            col = _wing_collections.get_wing_collection(
+                palace_path, wing, create=False, kind="drawers")
             if not col:
                 return 0
-            # Chroma supports operator filters; use $and + startswith via
-            # `$contains` is unreliable on metadata. Pull all and filter
-            # in-Python — wings are typically small.
-            got = col.get(where={"wing": wing}, include=["metadatas"])
+            got = col.get(include=["metadatas"])
             metas = got.get("metadatas") or []
             # ANCHOR the directory prefix at a path boundary so folder `/p/proj1`
             # doesn't also count drawers from the sibling `/p/proj1extra` (the
@@ -1370,11 +1382,11 @@ def _project_sync_loop(srv):
 
     def _count_wing_drawers_total(wing: str) -> int:
         try:
-            col = _get_drawers_col(palace_path, create=False)
+            col = _wing_collections.get_wing_collection(
+                palace_path, wing, create=False, kind="drawers")
             if not col:
                 return 0
-            got = col.get(where={"wing": wing}, include=[])
-            return len(got.get("ids") or [])
+            return col.count()
         except Exception:
             return 0
 
@@ -1384,10 +1396,11 @@ def _project_sync_loop(srv):
         they ask "how many files are indexed?" — drawer count is an
         internal storage detail."""
         try:
-            col = _get_drawers_col(palace_path, create=False)
+            col = _wing_collections.get_wing_collection(
+                palace_path, wing, create=False, kind="drawers")
             if not col:
                 return 0
-            got = col.get(where={"wing": wing}, include=["metadatas"])
+            got = col.get(include=["metadatas"])
             seen: set = set()
             for m in (got.get("metadatas") or []):
                 sf = (m or {}).get("source_file") or ""
@@ -1584,11 +1597,16 @@ def _project_sync_loop(srv):
                                     if _src.startswith("/") and not os.path.exists(_src):
                                         return True
                                     return False
-                                _col_sp = _get_col_sp(_palace_sp, create=False)
+                                # Per-wing: the stale purge operates on THIS wing's
+                                # OWN drawers/closets collections. The bulk delete
+                                # therefore touches only this wing's HNSW index —
+                                # the whole point: a churning project's purge can no
+                                # longer corrupt any other wing. No wing where-filter
+                                # needed (the collection IS the wing).
+                                _col_sp = _wing_collections.get_wing_collection(
+                                    _palace_sp, _wing_sp, create=False, kind="drawers")
                                 if _col_sp:
-                                    _res_sp = _col_sp.get(
-                                        where={"wing": _wing_sp},
-                                        include=["metadatas"])
+                                    _res_sp = _col_sp.get(include=["metadatas"])
                                     _stale_ids = [
                                         _did for _did, _m in zip(
                                             _res_sp["ids"], _res_sp["metadatas"])
@@ -1604,11 +1622,10 @@ def _project_sync_loop(srv):
                                               f"{agent_id}/{proj_name}: "
                                               f"deleted {_stale_drawers_purged} drawer(s)",
                                               flush=True)
-                                _ccol_sp = _get_ccol_sp(_palace_sp, create=False)
+                                _ccol_sp = _wing_collections.get_wing_collection(
+                                    _palace_sp, _wing_sp, create=False, kind="closets")
                                 if _ccol_sp:
-                                    _res_sp = _ccol_sp.get(
-                                        where={"wing": _wing_sp},
-                                        include=["metadatas"])
+                                    _res_sp = _ccol_sp.get(include=["metadatas"])
                                     _stale_cids = [
                                         _cid for _cid, _m in zip(
                                             _res_sp["ids"], _res_sp["metadatas"])
@@ -1788,6 +1805,8 @@ def _project_sync_loop(srv):
                                         wing_override=wing,
                                         agent="brain-project-sync",
                                         respect_gitignore=False,
+                                        collection_name=_wing_collections.collection_names_for(wing, kind="drawers"),
+                                        closets_collection_name=_wing_collections.collection_names_for(wing, kind="closets"),
                                     )
                                 for line in buf.getvalue().splitlines():
                                     s = line.strip()
@@ -1891,6 +1910,8 @@ def _project_sync_loop(srv):
                                         wing_override=wing,
                                         agent="brain-project-sync",
                                         respect_gitignore=False,
+                                        collection_name=_wing_collections.collection_names_for(wing, kind="drawers"),
+                                        closets_collection_name=_wing_collections.collection_names_for(wing, kind="closets"),
                                     )
                                 for line in _wu_buf.getvalue().splitlines():
                                     s = line.strip()
@@ -2039,6 +2060,8 @@ def _project_sync_loop(srv):
                                     wing_override=wing,
                                     agent="brain-project-sync",
                                     respect_gitignore=True,
+                                    collection_name=_wing_collections.collection_names_for(wing, kind="drawers"),
+                                    closets_collection_name=_wing_collections.collection_names_for(wing, kind="closets"),
                                 )
                             for line in buf.getvalue().splitlines():
                                 s = line.strip()

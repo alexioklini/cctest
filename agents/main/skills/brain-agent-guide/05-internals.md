@@ -501,6 +501,22 @@ Imported as a Python package — no MCP, no subprocess.
 
 - **Wing scheme** (ID-only): `user__<uid>`, `team__<tid>`,
   `project__<pid>`, bare names = shared.
+- **PER-WING COLLECTIONS** (v9.62.0, always on — no flag): each wing has its OWN
+  ChromaDB collection (its own HNSW index), not one shared `mempalace_drawers`
+  collection filtered by a `wing` metadata field. `engine/wing_collections.py`
+  maps wing→collection (`wd_<wing>` drawers / `wc_<wing>` closets) and is the
+  single accessor (`get_wing_collection`, `add_drawer_to_wing`, `purge_wing_room`).
+  WHY: a fault (HNSW corruption from a bulk-delete racing an upsert, or churn from
+  frequent re-indexing) is now contained to ONE wing and auto-heals from that
+  wing's own sqlite via per-collection `rebuild_index` — other wings unaffected
+  (was: any single-wing fault quarantined the whole palace). Query path
+  (`_query_wings`) queries each target wing's collection + merges; a wing's query
+  failure is isolated (skipped, not fatal) and triggers `_rebuild_wings` for ONLY
+  that wing. Requires the vendored miner.py + closet_llm.py `collection_name`
+  patches (`assert_miner_patch` fails loud at startup if absent — no fallback). A
+  one-time `engine/wing_migrate.py` migration moves the old shared collection's
+  drawers into per-wing collections (re-mine files + reset chat cursors to
+  re-derive chat wings from the chat DB), verify-before-drop.
 - `_resolve_session_wing` priority: project → team → user → empty.
 - `mempalace_query` in a project chat is **force-scoped** to
   `project__<id>` and refuses if id is missing (never leaks).
