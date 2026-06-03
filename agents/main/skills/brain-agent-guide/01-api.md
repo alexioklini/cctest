@@ -171,6 +171,11 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `GET .../projects/<name>/outputs` — list this project's generated outputs
   (poll for `status` generating→ready/error).
 - `GET .../projects/<name>/outputs/<output_id>` — one output's status/metadata.
+- `POST .../projects/<name>/outputs/<output_id>/rename {title}` — rename the
+  output row only (the `.md` file is untouched). Requires manage.
+- `DELETE .../projects/<name>/outputs/<output_id>` — delete the row + its artifact
+  rows + the `.md` on disk (no orphans). Refuses (409) while `status=generating`.
+  Requires manage. The Studio tab on the project page is the UI for all of these.
 - `GET .../ingested` — list ingested files under an agent
 
 ## Scheduler

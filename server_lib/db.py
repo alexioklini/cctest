@@ -914,6 +914,16 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
+    def delete_artifact_rows(artifact_id):
+        """Delete an artifact + its version blobs by id (file removal is the
+        caller's concern). Used by project-output delete (no orphan DB rows)."""
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM artifact_versions WHERE artifact_id = ?", (artifact_id,))
+            conn.execute("DELETE FROM artifacts WHERE id = ?", (artifact_id,))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
     def get_artifact_with_parent_block(artifact_id):
         """Resolve an artifact to (parent_block, visibility_override, parent_label).
         The parent is the producing session (or, for sched-<run> synthetic

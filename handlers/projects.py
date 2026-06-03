@@ -1243,6 +1243,68 @@ class ProjectsHandlerMixin:
             return
         self._send_json(self._output_to_dict(row))
 
+    def _resolve_owned_output(self, path: str, *, output_id_index: int = -1):
+        """Shared guard for output mutations: parse agent/project/output_id, enforce
+        manage, confirm the output belongs to this project. Returns (output_id, row)
+        or None after sending an error response."""
+        from server_lib.db import ChatDB
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        parts = path.rstrip("/").split("/")
+        output_id = parts[output_id_index] if len(parts) >= abs(output_id_index) else ""
+        if not agent_id or not proj_name or not output_id:
+            self._send_json({"error": "Missing parameters"}, 400)
+            return None
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return None
+        row = ChatDB.get_project_output(output_id)
+        if not row or row.get("project_id") != (project.get("id") or ""):
+            self._send_json({"error": "Output not found"}, 404)
+            return None
+        return output_id, row
+
+    def _handle_project_output_rename(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/outputs/{output_id}/rename {title}
+        — rename the output row only (the .md file is untouched). Studio W5."""
+        from server_lib.db import ChatDB
+        resolved = self._resolve_owned_output(path, output_id_index=-2)  # …/<oid>/rename
+        if resolved is None:
+            return
+        output_id, _row = resolved
+        title = (self._read_json().get("title") or "").strip()
+        if not title:
+            self._send_json({"error": "title is required"}, 400)
+            return
+        ChatDB.update_project_output(output_id, title=title[:300])
+        self._send_json({"output_id": output_id, "title": title[:300]})
+
+    def _handle_project_output_delete(self, path: str):
+        """DELETE /v1/agents/{id}/projects/{name}/outputs/{output_id} — delete the
+        row, its artifact rows, AND the .md file on disk (no orphans). Studio W6.
+        Refuses while still generating (E5 — don't delete a file being written)."""
+        from server_lib.db import ChatDB
+        resolved = self._resolve_owned_output(path, output_id_index=-1)
+        if resolved is None:
+            return
+        output_id, row = resolved
+        if row.get("status") == "generating":
+            self._send_json({"error": "Cannot delete an output while it is still generating."}, 409)
+            return
+        # Remove the artifact rows + the file on disk (best-effort; row delete is
+        # the source of truth so a missing file never blocks cleanup).
+        art_id = row.get("artifact_id") or ""
+        if art_id:
+            ChatDB.delete_artifact_rows(art_id)
+        fpath = row.get("path") or ""
+        if fpath and "/outputs/" in fpath and os.path.isfile(fpath):
+            try:
+                os.remove(fpath)
+            except OSError:
+                pass
+        ChatDB.delete_project_output(output_id)
+        self._send_json({"output_id": output_id, "status": "deleted"})
+
     def _handle_project_doc_delete(self, path: str):
         """DELETE /v1/agents/{id}/projects/{name}/docs/{hash}"""
         agent_id = self._parse_agent_from_path(path)

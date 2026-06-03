@@ -226,9 +226,10 @@ Projektgedächtnis (Wing) und den Recherche-Modus wie ein Projekt-Chat.
   davon unberührt (Aufgaben ohne Projektbindung laufen wie bisher
   agent-weit).
 
-**Ausgaben aus den Quellen generieren** (Output-Presets): Aus den Quellen eines
-Projekts lassen sich mit einem Klick fertige, belegte Dokumente erzeugen — vier
-Vorlagen:
+**Ausgaben aus den Quellen generieren** (Output-Presets + Studio): Auf der
+Projektseite gibt es neben **Chats** / **Archiviert** / **Geplante Aufgaben** den
+Tab **Studio**. Dort lassen sich aus den Quellen eines Projekts mit einem Klick
+fertige, belegte Dokumente erzeugen — vier Vorlagen:
 - **Study Guide** (📖) — Schlüsselkonzepte · Begriffe/Definitionen · Wiederholungsfragen.
 - **Briefing** (📋) — Kurzfassung → Kernpunkte → Implikationen.
 - **FAQ** (❓) — belegte Frage-/Antwort-Paare.
@@ -242,9 +243,15 @@ ein **Fokus** (Schwerpunkt-Stichwort) und eine **Länge** (Kurz/Standard/Lang)
 angeben. Hat ein Projekt noch keine Quellen, ist die Generierung nicht möglich
 (erst Dateien/Web-Adressen hinzufügen oder Recherche laufen lassen). Die
 Generierung läuft im Hintergrund (~20–40 s) — man kann die Seite verlassen, die
-fertige Ausgabe taucht danach auf. *(Hinweis: Die Karten-Oberfläche und der
-Studio-Browser zum Durchsuchen/Verwalten der Ausgaben folgen in den nächsten
-Schritten; aktuell ist die Generierung über die API verfügbar.)*
+fertige Ausgabe taucht im Studio-Tab auf (er aktualisiert sich von selbst).
+
+Im **Studio**-Tab sind alle erzeugten Ausgaben nach Typ gruppiert aufgelistet
+(mit Anzahl der Zitate + Zeitpunkt). Pro Ausgabe: **Öffnen** (zeigt das belegte
+Dokument), und über das **⋯**-Menü **Umbenennen**, **Neu generieren** (erzeugt
+eine neue Ausgabe, die alte bleibt erhalten), **Herunterladen** und **Löschen**
+(entfernt Eintrag + Datei; während eine Ausgabe noch generiert, ist Löschen
+gesperrt). *(Hinweis: Inline-Zitat-Chips zum Anklicken folgen in einem späteren
+Schritt; aktuell stehen die Belege als `[Quelle: …]` im Text.)*
 
 ---
 

@@ -365,6 +365,13 @@ a second generation/storage path.
   Stored in code for v1 (admin-tunable config is a deferred item).
 - **Boot reconcile**: a `generating` row whose thread died on shutdown is set to
   `error` at startup (mirrors background tasks).
+- **UI** (`web/js/panels_studio.js`): a "Studio" tab on the project detail page.
+  Hosts the GENERATE panel (four preset cards + Fokus/Länge → `…/generate`) and a
+  BROWSE view (outputs grouped by `kind` with counts; open `.md` in a modal via
+  `getArtifactContent` + `renderMarkdown`; ⋯ menu = rename/regenerate/download/
+  delete). A 2.5s poll live-updates `generating→ready` (mirrors
+  `panels_background.js`), stopping when nothing generates or the tab is left.
+  Rename = `…/outputs/<id>/rename`; delete = `DELETE …/outputs/<id>` (row + file).
 
 ## Brainy helpdesk bot
 

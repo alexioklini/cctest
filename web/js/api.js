@@ -206,6 +206,13 @@ class API {
   static getArtifactContent(id, version) { return this.get(`/v1/artifacts/${id}/content${version ? '?version=' + version : ''}`); }
   static getArtifactDownloadUrl(id, version) { return `${BASE_URL}/v1/artifacts/${id}/download${version ? '?version=' + version : ''}`; }
 
+  // Project outputs (Output Presets / Studio — the SHARED store + generate endpoint)
+  static _projOutBase(agentId, projectName) { return `/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}`; }
+  static generateProjectOutput(agentId, projectName, kind, options) { return this.post(`${this._projOutBase(agentId, projectName)}/generate`, {kind, options: options || {}}); }
+  static listProjectOutputs(agentId, projectName) { return this.get(`${this._projOutBase(agentId, projectName)}/outputs`); }
+  static renameProjectOutput(agentId, projectName, outputId, title) { return this.post(`${this._projOutBase(agentId, projectName)}/outputs/${encodeURIComponent(outputId)}/rename`, {title}); }
+  static deleteProjectOutput(agentId, projectName, outputId) { return this.del(`${this._projOutBase(agentId, projectName)}/outputs/${encodeURIComponent(outputId)}`); }
+
   // Background tasks (Hintergrundaufgaben)
   static getBackgroundTasks(sessionId) { return this.get(`/v1/background-tasks?session_id=${encodeURIComponent(sessionId)}`); }
   static cancelBackgroundTask(taskId) { return this.post('/v1/background-tasks/cancel', {task_id: taskId}); }
