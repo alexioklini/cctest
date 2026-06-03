@@ -1640,6 +1640,10 @@ class BrainAgentHandler(
             self._handle_project_output_get(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/outputs"):
             self._handle_project_outputs_list(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/research/backends"):
+            self._handle_research_backends(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/research/runs/" in path:
+            self._handle_research_run_get(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path:
             self._handle_project_get(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):
@@ -1985,6 +1989,12 @@ class BrainAgentHandler(
             self._handle_project_generate(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/outputs/" in path and path.endswith("/rename"):
             self._handle_project_output_rename(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/research/runs/" in path and path.endswith("/cancel"):
+            self._handle_research_run_cancel(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/research/search"):
+            self._handle_research_search(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/research/deep"):
+            self._handle_research_deep(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/ingest" in path:
             self._handle_project_ingest(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):

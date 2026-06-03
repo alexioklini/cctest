@@ -213,6 +213,13 @@ class API {
   static renameProjectOutput(agentId, projectName, outputId, title) { return this.post(`${this._projOutBase(agentId, projectName)}/outputs/${encodeURIComponent(outputId)}/rename`, {title}); }
   static deleteProjectOutput(agentId, projectName, outputId) { return this.del(`${this._projOutBase(agentId, projectName)}/outputs/${encodeURIComponent(outputId)}`); }
 
+  // Research (Fast + Deep)
+  static researchBackends(agentId, projectName) { return this.get(`${this._projOutBase(agentId, projectName)}/research/backends`); }
+  static researchSearch(agentId, projectName, topic, backends) { return this.post(`${this._projOutBase(agentId, projectName)}/research/search`, {topic, backends}); }
+  static researchDeep(agentId, projectName, topic, backends, budget) { return this.post(`${this._projOutBase(agentId, projectName)}/research/deep`, {topic, backends, budget}); }
+  static researchRun(agentId, projectName, runId) { return this.get(`${this._projOutBase(agentId, projectName)}/research/runs/${encodeURIComponent(runId)}`); }
+  static researchCancel(agentId, projectName, runId) { return this.post(`${this._projOutBase(agentId, projectName)}/research/runs/${encodeURIComponent(runId)}/cancel`, {}); }
+
   // Background tasks (Hintergrundaufgaben)
   static getBackgroundTasks(sessionId) { return this.get(`/v1/background-tasks?session_id=${encodeURIComponent(sessionId)}`); }
   static cancelBackgroundTask(taskId) { return this.post('/v1/background-tasks/cancel', {task_id: taskId}); }

@@ -373,6 +373,32 @@ a second generation/storage path.
   `panels_background.js`), stopping when nothing generates or the tab is left.
   Rename = `…/outputs/<id>/rename`; delete = `DELETE …/outputs/<id>` (row + file).
 
+## Deep Research (the bounded agentic loop)
+
+The marquee feature (`engine/deep_research.py`). Two modes on the project's
+"Research" tab, one import seam:
+- **Fast** — `POST …/research/search` runs the enabled backends, dedups vs
+  `web_urls`, returns a SERP; the UI appends approved URLs via `update_project`
+  (the sync daemon mines them). No background task.
+- **Deep** — `POST …/research/deep` spawns a daemon-thread loop tracked in
+  `research_runs`. DETERMINISTIC orchestration (CLAUDE.md rule 5); the LLM is used
+  at exactly THREE judgment points: (1) decompose topic → ≤8 sub-questions, (2)
+  rank/select the fetched candidates, (3) grounded cited synthesis. Plain code does
+  search (searxng/exa, merged+deduped), `web_fetch` of top candidates within the
+  FETCH budget, dedup, and budget accounting.
+- **Grounding**: synthesis prepends `render_research_mode_disciplines()` (REFUSAL/
+  PRECISION/CITATION) so the report cites verbatim `[Quelle: …]` and omits rather
+  than invents. Saved via `output_gen.save_report_output(kind=research_report)` —
+  the SHARED path, so Studio browses the report with zero new code.
+- **Bounded + visible**: budget default 60 fetches / 80k tok / 8 rounds; the loop
+  stops at the cap and the report states bounded coverage (W8 — never silent). The
+  UI shows phase + budget live (2.5s poll).
+- **Safety**: every LLM call routes through `gdpr_pick_model_for_background` (E5);
+  cooperative cancel via the `research_runs.cancel` flag (E3); degrades if one
+  backend fails (E2); boot reconcile flips a leftover `running` run to `error`.
+- Sources are **proposed, never auto-imported** — the user approves a subset, which
+  appends to `web_urls` like Fast.
+
 ## Brainy helpdesk bot
 
 A read-only helpdesk assistant (the floating bubble), separate from the

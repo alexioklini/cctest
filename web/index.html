@@ -432,6 +432,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             <button class="project-chats-tab" data-pcfilter="archived" onclick="setProjectChatsFilter('archived')">Archiviert</button>
             <button class="project-chats-tab" data-pcfilter="schedules" onclick="setProjectChatsFilter('schedules')">Geplante Aufgaben</button>
             <button class="project-chats-tab" data-pcfilter="studio" onclick="setProjectChatsFilter('studio')">Studio</button>
+            <button class="project-chats-tab" data-pcfilter="research" onclick="setProjectChatsFilter('research')">🔍 Research</button>
           </div>
           <div class="project-chats-bulk" id="project-chats-bulk">
             <button class="btn-secondary" style="padding:3px 10px;font-size:11px" onclick="archiveAllProjectChats()">Alle archivieren</button>
@@ -452,6 +453,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         </div>
         <div class="project-detail-chats" id="project-detail-studio" style="display:none">
           <!-- Generate panel + generated-outputs browse (panels_studio.js) -->
+        </div>
+        <div class="project-detail-chats" id="project-detail-research" style="display:none">
+          <!-- Fast + Deep Research (panels_research.js) -->
         </div>
       </div>
 
@@ -1501,6 +1505,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/panels_background.js"></script>
 <script src="js/panels_artifacts.js"></script>
 <script src="js/panels_studio.js"></script>
+<script src="js/panels_research.js"></script>
 <script src="js/settings_teams.js"></script>
 <script src="js/settings_general.js"></script>
 <script src="js/settings_general_tabs.js"></script>

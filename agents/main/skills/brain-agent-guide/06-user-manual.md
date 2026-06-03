@@ -253,6 +253,25 @@ eine neue Ausgabe, die alte bleibt erhalten), **Herunterladen** und **Löschen**
 gesperrt). *(Hinweis: Inline-Zitat-Chips zum Anklicken folgen in einem späteren
 Schritt; aktuell stehen die Belege als `[Quelle: …]` im Text.)*
 
+**Neue Quellen finden** (Research-Tab 🔍): Auf der Projektseite gibt es den Tab
+**🔍 Research**, um neue Quellen für das Projekt zu finden. Thema eingeben, Modus
+und Such-Backend wählen, **Recherche starten**. Zwei Modi:
+- **Fast** — schnelle Suche. Es erscheint eine Trefferliste; die gewünschten
+  Treffer ankreuzen und **importieren** → sie werden als Projekt-Quellen
+  hinzugefügt und beim nächsten Sync ins Gedächtnis gemined (im Chat durchsuchbar).
+  Bereits im Projekt vorhandene Treffer sind markiert und gesperrt.
+- **Deep** — die KI plant Unterfragen, sucht breit, liest die besten Quellen und
+  schreibt daraus einen **strukturierten, belegten Bericht** (im Studio gespeichert).
+  Der Fortschritt (Planen → Suchen → Lesen → Schreiben) und das Budget (max. Anzahl
+  Seitenabrufe) werden live angezeigt; der Lauf läuft weiter, auch wenn man den Tab
+  verlässt, und lässt sich **abbrechen**. Am Ende: ein Link zum Bericht **und** eine
+  Liste **vorgeschlagener Quellen** zum Import (nichts wird automatisch importiert —
+  man wählt selbst aus). Das Budget ist begrenzt und der Bericht nennt offen, wenn
+  die Abdeckung dadurch beschränkt war.
+
+Research ist nur verfügbar, wenn ein Such-Backend (SearXNG oder Exa) konfiguriert
+ist (sonst ist der Tab mit Hinweis deaktiviert).
+
 ---
 
 ## Übersetzung

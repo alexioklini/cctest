@@ -234,7 +234,23 @@ lives under `agents/<agent>/projects/<name>/outputs/<kind>-<id>.md` and is
 registered as an artifact under synthetic session `output-<id>`. At boot any
 leftover `generating` row is reconciled to `error` ("Server restart — generation
 lost"). SHARED store (browsed by Studio; Audio Overview + Deep Research write to it
-too). See `05-internals.md` → Output generation.
+too — Deep Research saves its report here as `kind=research_report`). See
+`05-internals.md` → Output generation.
+
+### chats.db → research_runs (Deep Research run record)
+```
+id TEXT PK, agent_id TEXT, project_id TEXT, topic TEXT,
+status TEXT (running|done|error|cancelled), phase TEXT (planning|searching|reading|writing|done),
+progress TEXT (JSON {subqueries,candidates,fetched,kept}), budget TEXT (JSON {fetches,tokens,rounds}),
+report_output_id TEXT (→ the project_outputs research_report row), proposed TEXT (JSON [{title,url,snippet,in_project,trust_hint}]),
+coverage_note TEXT, error TEXT, cancel INTEGER (cooperative-cancel flag),
+created_at REAL, created_by TEXT, finished_at REAL
+```
+Index `idx_research_runs_project(project_id, created_at)`. ONE row per Deep Research
+run (`engine/deep_research.py`). The RUN record; the report itself is a
+`project_outputs` row (`kind=research_report`). The worker polls `cancel` at each
+checkpoint (E3). Boot reconcile flips a leftover `running` row to `error`. See
+`05-internals.md` → Deep Research.
 
 ### chats.db → feedback (👍/👎 on responses)
 ```

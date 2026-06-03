@@ -600,26 +600,31 @@ function setProjectChatsFilter(filter) {
   });
   const isSched = filter === 'schedules';
   const isStudio = filter === 'studio';
-  const isChats = !isSched && !isStudio;
+  const isResearch = filter === 'research';
+  const isChats = !isSched && !isStudio && !isResearch;
   const chatsEl = document.getElementById('project-detail-chats');
   const schedEl = document.getElementById('project-detail-schedules');
   const studioEl = document.getElementById('project-detail-studio');
+  const researchEl = document.getElementById('project-detail-research');
   const chatBulk = document.getElementById('project-chats-bulk');
   const schedBulk = document.getElementById('project-sched-bulk');
   const studioBulk = document.getElementById('project-studio-bulk');
   if (chatsEl) chatsEl.style.display = isChats ? '' : 'none';
   if (schedEl) schedEl.style.display = isSched ? '' : 'none';
   if (studioEl) studioEl.style.display = isStudio ? '' : 'none';
+  if (researchEl) researchEl.style.display = isResearch ? '' : 'none';
   if (chatBulk) chatBulk.style.display = isChats ? '' : 'none';
   if (schedBulk) schedBulk.style.display = isSched ? '' : 'none';
   if (studioBulk) studioBulk.style.display = isStudio ? '' : 'none';
-  // Stop the Studio poll whenever we leave the Studio tab.
+  // Stop the per-tab polls whenever we leave their tab.
   if (!isStudio && typeof stopStudioPoll === 'function') stopStudioPoll();
+  if (!isResearch && typeof stopResearchPoll === 'function') stopResearchPoll();
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
   if (!agentId || !projectName) return;
   if (isSched) loadProjectSchedules(agentId, projectName);
   else if (isStudio) loadProjectStudio(agentId, projectName);
+  else if (isResearch) loadProjectResearch(agentId, projectName);
   else loadProjectChats(agentId, projectName);
 }
 

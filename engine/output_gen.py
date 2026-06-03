@@ -106,6 +106,24 @@ def _register_output_artifact(session_id: str, agent_id: str, path: str, name: s
     return artifact_id
 
 
+def save_report_output(output_id, agent_id, project_dir, kind, title, body_md):
+    """SHARED: write a generated report as <pdir>/outputs/<kind>-<id>.md, register
+    it as an artifact, and flip the project_outputs row to ready. Used by the
+    preset generators AND Deep Research so every output saves + browses identically
+    in Studio. The project_outputs row must already exist (status=generating)."""
+    outdir = _outputs_dir(project_dir)
+    fname = f"{kind}-{output_id}.md"
+    path = os.path.join(outdir, fname)
+    body = f"# {title}\n\n{body_md}\n"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(body)
+    artifact_id = _register_output_artifact(f"output-{output_id}", agent_id, path, fname) or ""
+    ChatDB.update_project_output(
+        output_id, status="ready", title=title, path=path,
+        artifact_id=artifact_id, citations=_count_citations(body_md))
+    return output_id, path, artifact_id
+
+
 def _run_generation(*, output_id: str, agent_id: str, project_name: str, project_id: str,
                     project_dir: str, kind: str, opts: dict, user_id: str):
     """Daemon-thread body: gather → transform → write → register → flip row."""
@@ -150,19 +168,7 @@ def _run_generation(*, output_id: str, agent_id: str, project_name: str, project
         proj_cfg = _brain.ProjectManager.get_project(agent_id, project_name) or {}
         display = proj_cfg.get("name") or project_name
         title = f"{output_presets.PRESETS[kind]['title_prefix']} — {display}"
-
-        # Write the .md under the project's outputs/ folder.
-        outdir = _outputs_dir(project_dir)
-        fname = f"{kind}-{output_id}.md"
-        path = os.path.join(outdir, fname)
-        body = f"# {title}\n\n{reply}\n"
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(body)
-
-        artifact_id = _register_output_artifact(f"output-{output_id}", agent_id, path, fname) or ""
-        ChatDB.update_project_output(
-            output_id, status="ready", title=title, path=path,
-            artifact_id=artifact_id, citations=_count_citations(reply))
+        save_report_output(output_id, agent_id, project_dir, kind, title, reply)
     except Exception as e:  # never let the thread die silently — record it
         import traceback
         traceback.print_exc()

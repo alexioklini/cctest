@@ -748,6 +748,40 @@ class ChatDB:
                 "UPDATE project_outputs SET status='error', "
                 "error='Server restart — generation lost', "
                 "finished_at=strftime('%s','now') WHERE status='generating'")
+            # ── Deep Research runs ──
+            # One row per Deep Research run (the bounded agentic loop). Tracks
+            # live progress (phase + budget counters as JSON) so the UI can poll;
+            # on completion holds the report's project_outputs id + the proposed
+            # source set (JSON) the user approves/imports. status:
+            # running|done|error|cancelled. Distinct from project_outputs (the
+            # report itself is a project_outputs row); this is the RUN record.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS research_runs (
+                    id            TEXT PRIMARY KEY,
+                    agent_id      TEXT NOT NULL DEFAULT 'main',
+                    project_id    TEXT NOT NULL,
+                    topic         TEXT NOT NULL DEFAULT '',
+                    status        TEXT NOT NULL DEFAULT 'running',
+                    phase         TEXT NOT NULL DEFAULT 'planning',
+                    progress      TEXT NOT NULL DEFAULT '{}',
+                    budget        TEXT NOT NULL DEFAULT '{}',
+                    report_output_id TEXT NOT NULL DEFAULT '',
+                    proposed      TEXT NOT NULL DEFAULT '[]',
+                    coverage_note TEXT NOT NULL DEFAULT '',
+                    error         TEXT NOT NULL DEFAULT '',
+                    cancel        INTEGER NOT NULL DEFAULT 0,
+                    created_at    REAL DEFAULT (strftime('%s','now')),
+                    created_by    TEXT NOT NULL DEFAULT '',
+                    finished_at   REAL
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_research_runs_project "
+                "ON research_runs(project_id, created_at)")
+            conn.execute(
+                "UPDATE research_runs SET status='error', "
+                "error='Server restart — research run lost', "
+                "finished_at=strftime('%s','now') WHERE status='running'")
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -920,6 +954,62 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("DELETE FROM artifact_versions WHERE artifact_id = ?", (artifact_id,))
             conn.execute("DELETE FROM artifacts WHERE id = ?", (artifact_id,))
+            conn.commit()
+
+    # ── Deep Research run CRUD ──
+
+    @staticmethod
+    @_db_safe(default=None)
+    def create_research_run(run_id, agent_id, project_id, topic, budget_json, created_by):
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO research_runs (id, agent_id, project_id, topic, budget, created_by) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (run_id, agent_id, project_id, topic, budget_json, created_by))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_research_run(run_id, **fields):
+        """Patch a research run row. Whitelisted columns only; sets finished_at
+        when status flips to a terminal state."""
+        allowed = ("status", "phase", "progress", "report_output_id",
+                   "proposed", "coverage_note", "error")
+        sets, vals = [], []
+        for k in allowed:
+            if k in fields:
+                sets.append(f"{k} = ?")
+                vals.append(fields[k])
+        if fields.get("status") in ("done", "error", "cancelled"):
+            sets.append("finished_at = strftime('%s','now')")
+        if not sets:
+            return
+        vals.append(run_id)
+        with _db_conn() as conn:
+            conn.execute(f"UPDATE research_runs SET {', '.join(sets)} WHERE id = ?", vals)
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_research_run(run_id):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM research_runs WHERE id = ?", (run_id,)).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    @_db_safe(default=False)
+    def research_run_cancelled(run_id):
+        """Cheap cancel-flag read for the worker's cooperative cancel checks."""
+        with _db_conn() as conn:
+            row = conn.execute("SELECT cancel FROM research_runs WHERE id = ?", (run_id,)).fetchone()
+            return bool(row and row[0])
+
+    @staticmethod
+    @_db_safe(default=None)
+    def cancel_research_run(run_id):
+        with _db_conn() as conn:
+            conn.execute("UPDATE research_runs SET cancel = 1 WHERE id = ?", (run_id,))
             conn.commit()
 
     @staticmethod

@@ -176,6 +176,18 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `DELETE .../projects/<name>/outputs/<output_id>` — delete the row + its artifact
   rows + the `.md` on disk (no orphans). Refuses (409) while `status=generating`.
   Requires manage. The Studio tab on the project page is the UI for all of these.
+- `GET .../projects/<name>/research/backends` — which search backends this install
+  can use (`["searxng","exa"]` subset). Empty = Research disabled (E1 gate).
+- `POST .../projects/<name>/research/search {topic, backends?}` — Fast Research:
+  search + dedup vs the project's `web_urls`. Returns `{results:[{title, url,
+  snippet, in_project, trust_hint}], total_found}` (SERP capped at 30). No import —
+  the UI appends approved URLs via the existing `update_project` `web_urls` path.
+- `POST .../projects/<name>/research/deep {topic, backends?, budget?}` — spawn the
+  bounded Deep Research loop. Returns `{run_id, budget}`. Requires manage.
+- `GET .../projects/<name>/research/runs/<run_id>` — poll a Deep run: `{status
+  running|done|error|cancelled, phase, progress, budget, report_output_id,
+  proposed[], coverage_note}`. The report is a `project_outputs` row in Studio.
+- `POST .../projects/<name>/research/runs/<run_id>/cancel` — cooperative cancel.
 - `GET .../ingested` — list ingested files under an agent
 
 ## Scheduler

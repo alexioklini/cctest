@@ -1305,6 +1305,131 @@ class ProjectsHandlerMixin:
         ChatDB.delete_project_output(output_id)
         self._send_json({"output_id": output_id, "status": "deleted"})
 
+    # ── Research (Fast + Deep) ──────────────────────────────────────────────
+
+    def _handle_research_backends(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/research/backends — which search
+        backends this install can use (E1 gate: empty = Research disabled)."""
+        from engine import deep_research
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if self._project_access_check(agent_id, proj_name) is None:
+            return
+        self._send_json({"backends": deep_research.available_backends()})
+
+    def _handle_research_search(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/research/search {topic, backends?}
+        — Fast Research: search the enabled backends, dedup vs the project's
+        web_urls, return rows with an `in_project` flag + trust hint. No import
+        here — the FE appends approved URLs via the existing update_project path."""
+        from engine import deep_research
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        body = self._read_json()
+        topic = (body.get("topic") or "").strip()
+        if not topic:
+            self._send_json({"error": "topic is required"}, 400)
+            return
+        backends = body.get("backends") or deep_research.available_backends()
+        backends = [b for b in backends if b in deep_research.available_backends()]
+        if not backends:
+            self._send_json({"error": "No search backend configured."}, 400)
+            return
+        existing = {deep_research._norm_url(u.get("url", "")) for u in (project.get("web_urls") or [])}
+        results = deep_research._run_search(topic, backends)
+        rows = [{
+            "title": r["title"], "url": r["link"], "snippet": r.get("snippet", ""),
+            "trust_hint": deep_research._trust_hint(r["link"]),
+            "in_project": deep_research._norm_url(r["link"]) in existing,
+        } for r in results[:30]]   # E8 — cap the SERP
+        self._send_json({"topic": topic, "results": rows, "result_count": len(rows),
+                         "total_found": len(results)})
+
+    def _handle_research_deep(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/research/deep {topic, backends?,
+        budget?} — spawn the bounded Deep Research loop; returns {run_id, budget}.
+        Progress via GET …/research/runs/<run_id>."""
+        from engine import deep_research
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        body = self._read_json()
+        topic = (body.get("topic") or "").strip()
+        if not topic:
+            self._send_json({"error": "topic is required"}, 400)
+            return
+        backends = body.get("backends") or deep_research.available_backends()
+        backends = [b for b in backends if b in deep_research.available_backends()]
+        if not backends:
+            self._send_json({"error": "No search backend configured."}, 400)
+            return
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        run_id, eff_budget = deep_research.start_research(
+            agent_id=agent_id, project=project, topic=topic, backends=backends,
+            budget=body.get("budget"), user_id=user["id"])
+        self._send_json({"run_id": run_id, "status": "running", "budget": eff_budget})
+
+    def _handle_research_run_get(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/research/runs/{run_id} — poll a
+        Deep Research run (status, phase, progress, budget, proposed sources)."""
+        from server_lib.db import ChatDB
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        run_id = path.rstrip("/").split("/")[-1]
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        row = ChatDB.get_research_run(run_id)
+        if not row or row.get("project_id") != (project.get("id") or ""):
+            self._send_json({"error": "Research run not found"}, 404)
+            return
+        self._send_json(self._research_run_to_dict(row))
+
+    def _handle_research_run_cancel(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/research/runs/{run_id}/cancel
+        — cooperative cancel (E3); the worker stops at its next checkpoint."""
+        from server_lib.db import ChatDB
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        parts = path.rstrip("/").split("/")
+        run_id = parts[-2] if len(parts) >= 2 else ""   # …/runs/<id>/cancel
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        row = ChatDB.get_research_run(run_id)
+        if not row or row.get("project_id") != (project.get("id") or ""):
+            self._send_json({"error": "Research run not found"}, 404)
+            return
+        ChatDB.cancel_research_run(run_id)
+        self._send_json({"run_id": run_id, "status": "cancelling"})
+
+    @staticmethod
+    def _research_run_to_dict(row: dict) -> dict:
+        def _j(v, default):
+            try:
+                return json.loads(v) if v else default
+            except (ValueError, TypeError):
+                return default
+        return {
+            "run_id": row.get("id"),
+            "topic": row.get("topic"),
+            "status": row.get("status"),
+            "phase": row.get("phase"),
+            "progress": _j(row.get("progress"), {}),
+            "budget": _j(row.get("budget"), {}),
+            "report_output_id": row.get("report_output_id") or "",
+            "proposed": _j(row.get("proposed"), []),
+            "coverage_note": row.get("coverage_note") or "",
+            "error": row.get("error") or "",
+            "created_at": row.get("created_at"),
+            "finished_at": row.get("finished_at"),
+        }
+
     def _handle_project_doc_delete(self, path: str):
         """DELETE /v1/agents/{id}/projects/{name}/docs/{hash}"""
         agent_id = self._parse_agent_from_path(path)
