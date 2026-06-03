@@ -113,7 +113,10 @@ reasoning}` over two closed vocabularies that map onto existing machinery:
    capable set, **CLOUD sorts ahead of LOCAL** (the same `never cloud→local` rule
    the fallback walk enforces, applied at the primary pick — a free/fast local
    model must not outrank a capable cloud model on a near-tied, least-trustworthy
-   benchmark), then HIGHER throughput (`tps`, tokens/sec), then lower
+   benchmark), then **BUCKETED** throughput (`_tps_bucket` — tps snapped to a
+   coarse log band, rel-width 0.15, so a model must be ≥~15 % faster to win on
+   speed; near-tied speeds fall through to cost — this stops a 0.3-tok/s
+   measurement-noise difference from preempting a 20× cost gap), then lower
    `cost_input+cost_output`, then static priority. Complexity only MOVES the
    floor. `bench_cell_value` reads `override ?? measured`.
    See **Model benchmark** below.
@@ -134,9 +137,15 @@ configured `default_model`, else the first candidate.
 `engine/model_bench.py` measures each model per task type so the router ranks on
 evidence, not config priority. Admin triggers it from **Settings → Models** — a
 per-model "Dieses Modell benchmarken" button and a top-level "Benchmark: alle
-aktivierten". Each (model × task_type): run a fixed 2-prompt set (`BENCH_PROMPTS`),
-judge each answer 0-100 with the **server `default_model`** as judge, store mean
-capability% + mean throughput (`tps`, tokens/sec — length-independent speed).
+aktivierten". Each (model × task_type): run a **TIERED** prompt set (`BENCH_TASKS`,
+3-5 prompts easy→hard so weak and strong models score differently — the prior
+2-trivial-prompt set scored every model 95-100 and discriminated nobody), score
+each answer 0-100. Scoring is **HYBRID**: prompts with an objective answer carry a
+deterministic `check` (exact/regex/all-substrings/`pyfunc` — `pyfunc` EXECS the
+returned code in a restricted-builtins sandbox and runs assert-cases) scored 0/100
+by code (no judge call, zero judge variance); only open-ended prompts use the
+**server `default_model`** as LLM judge. Store mean capability% + mean throughput
+(`tps`, tokens/sec — length-independent speed).
 Persists to `config.json → models.<id>.benchmark.<task> = {measured, override?}`
 with `measured = {capability, tps, n, ts}`. An admin **override** (editable
 cap%/tps in the same table) wins over `measured` at routing time and survives the next

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.60.4"
-VERSION_DATE = "2026-06-02"
+VERSION = "9.61.0"
+VERSION_DATE = "2026-06-03"
 CHANGELOG = [
+    ("9.61.0", "2026-06-03", "fix+feat(auto-route): BUCKET the speed tiebreak so noise no longer preempts cost, and rebuild the capability benchmark so it actually discriminates between models. Two coupled problems, both seen in chat 641f89ef ('wie wird das Wetter morgen in Wien' → routed to mistral-MEDIUM not small). (1) SPEED-NOISE PREEMPTED COST: _bench_rank_key ranked capable→cloud→tps→cost with tps as a RAW float, so the fast-task cells (medium 11.5 vs small 11.2 tok/s — a 0.3 tok/s, n=2, within-variance difference) decided the pick and the cost axis (where small is ~20× cheaper: 0.1/0.3 vs 1.5/7.5 per 1M) was NEVER consulted. NEW brain._tps_bucket(tps) snaps throughput onto a coarse LOG band (rel width 0.15 → must be ≥~15% faster to change band); the rank key now sorts on -_tps_bucket(tps) so within-band speeds TIE and fall through to cost, while a genuinely faster model (e.g. small's 189 vs medium's 108 tok/s on math) still wins on speed. Net: capability-tied cloud models now pick the CHEAPER one unless one is meaningfully faster. (2) BENCHMARK DIDN'T DISCRIMINATE: the prior 2-trivial-prompts-per-cell set ('capital of Australia?') let even a 2B local model (gemma-4-e2b) score cap 95-100 on EVERY task — identical to a frontier model — so the capability FLOOR separated nobody and routing collapsed onto the speed tiebreak above. engine/model_bench.py rewritten: BENCH_TASKS replaces BENCH_PROMPTS with 3-5 TIERED prompts per task type (easy anchor → genuinely hard) so weak models slip on the hard items and a SPREAD of scores emerges. Scoring is now HYBRID: prompts with an objective answer carry a deterministic `check` (exact/regex/all-substrings/pyfunc — the pyfunc check EXECS the model's returned code in a restricted-builtins sandbox and runs assert-cases) scored 0/100 by code (zero judge variance, no judge call); only open-ended prompts (research/creative/analysis/reporting/orchestration/agentic) still use the LLM judge. BENCH_PROMPTS kept as a derived {task:[str]} back-compat view; TASK_TYPES unchanged; benchmark_cell/benchmark_model signatures unchanged (cell shape still {capability,tps,n,ts,error?}). NEW tests/test_auto_route_ranking.py (14): tps-bucket boundaries + monotonicity, the within-bucket-tie→cost ordering, cloud-beats-faster-local, and every deterministic check incl. a passing reference impl for each pyfunc cell (guards the args-wrapping format). Ranking fix takes effect on restart; the new benchmark needs a re-run to repopulate cells (mistral-medium/small + the 3 gemma-4 local models re-benchmarked after deploy). py compile OK; 14/14 new tests pass. Backend restart to load."),
     ("9.60.4", "2026-06-02", "fix(mempalace): rock-solid pass — fixes ALL 8 findings from an adversarial multi-agent review of the MemPalace integration. (1) CRITICAL cross-tenant LEAK: tool_mempalace_query applied the _wing_visible C3 gate ONLY when `not wing`, so an explicit LLM-supplied wing (e.g. user__<other>, project__<other>, team__<foreign>) from a non-project chat bypassed it and returned the foreign wing's drawers verbatim; it ALSO failed OPEN when current_user_id was empty (searched every wing). Fix: a pre-check that REFUSES a foreign explicit wing + an UNCONDITIONAL post-retrieval _wing_visible filter on the non-project path (empty user now fails CLOSED — only shared wings survive). _wing_visible hardened to default-DENY on near-miss names (user_/team_/project_ single-underscore). Schema text corrected (was falsely 'auto-scoped to the current user'). New regression tests (TestExplicitWingRefused). (2) HIGH silent write-LOSS: chat-sync advanced its cursor to max_msg_id even when a tail drawer write FAILED (add_drawer exception, or success:False from the package's non-blocking mine_palace_lock = MineAlreadyRunning while another daemon writes) → the turn was dropped from memory forever. Fix: track the lowest genuinely-failed message id and clamp the cursor below it (retry next cycle); same guard for the summary hash. (3) HIGH weak RECOVERY: _try_rebuild_palace called only legacy rebuild_index, whose first op (col.count) itself raises for the #1308 'failed to apply logs' class → recovery no-op'd on the common shape. Fix: two-tier — rebuild_index first, then a cross-palace rebuild_from_sqlite + atomic swap (bypasses the chroma read path, avoids the in-place clear_system_cache that would break live daemon clients) with a non-empty verify; failed rebuild now holds a short 15s cooldown (not 120s) so retrieval doesn't black out. (4) corruption markers tightened to the two verified signatures ('error finding id', 'failed to apply logs to the hnsw segment'); dropped the over-broad 'hnsw'/'internal error' (matched benign config/transient errors) + the DEAD 'nothing found for'. (5) NO cross-daemon write serialization: added one in-process _palace_write_lock (RLock) held around every mine()/add_drawer/stale-purge-delete across the miner/chat-sync/project-sync daemons — the package lock is per-palace but NON-BLOCKING, so writes were silently refused + bulk deletes raced upserts (the documented corruption trigger). (6) UNANCHORED prefix match: kg_purge_for_scope (a DELETE) + kg_stats_for_wing + _count_wing_drawers_by_source matched 'proj1' against sibling 'proj1extra' → cross-scope delete/inflated counts; now anchored at a path boundary (= prefix OR LIKE prefix+sep). (7) project-sync had NO per-project try/except → one project's unhandled error starved every later project for the 6h interval; now each project body is isolated (log + clear-live + continue). (8) KG source-invalidation ordering: recorded the new (mtime,size) cursor BEFORE re-extraction + deleted triples-then-progress in two commits → a crash could leave a changed file with ZERO triples permanently; now the source-state cursor commits ONLY after re-extraction finishes (and not if cancelled), and progress is deleted BEFORE triples so the in-between crash state is self-healing. Verified clean by review: reranker cache, config cache, contextvars in the query path, KG per-instance connections. py compile OK; wing-isolation (14) + request-context (7) tests pass. Backend restart to load (server_daemons + glue + kg_extract changes)."),
     ("9.60.3", "2026-06-02", "fix(mempalace): STOP the recurring HNSW corruption loop at its root + graceful shutdown. Diagnosis (user reported corruption recurring even after v9.60.0 removed memdash): the brain palace was being quarantined + rebuilt on essentially every restart (86 quarantine events, ~68 .drift dirs accumulated). Root cause is NOT a second writer (confirmed: the standalone Claude-Code mempalace-mcp defaults to ~/.mempalace/palace, a DIFFERENT palace; nobody but brain-agent writes ~/.mempalace/brain) — it is brain-agent's own lifecycle. chromadb (1.5.7 here, not 0.6.3 as old prose claimed) only flushes the HNSW index to disk after hnsw:sync_threshold=50000 queued ops; brain's ~13k-drawer palace trickles writes (chat-sync/miner) FAR below that, so HNSW is never flushed during normal operation and sqlite (durable per-write) races hours ahead. brain had NO graceful shutdown, so launchd's SIGKILL on restart (kickstart -k) dropped the in-memory HNSW; the next startup scan saw sqlite >> HNSW + integrity-fail and quarantined→rebuilt. TWO fixes: (1) GRACEFUL SHUTDOWN (server.py, in git): a SIGTERM handler re-raises KeyboardInterrupt so the existing clean finally runs and the interpreter exits normally, letting chromadb's atexit flush HNSW to disk. (2) LOW SYNC_THRESHOLD (vendored venv patch — backends/chroma.py _pin_hnsw_threads now sets sync_threshold=1000 alongside the existing num_threads=1 retrofit, applied on every get_collection; tracked in project_mempalace_venv_patches, RE-APPLY ON PIP UPGRADE): HNSW now flushes frequently so even an uncatchable SIGKILL/crash loses almost nothing and the startup scan finds HNSW≈sqlite. Also cleaned up: dropped the orphaned mempalace_drawers__repair_tmp collection (leftover from an interrupted rebuild) + removed 68 stale .drift quarantine dirs (~12MB). chroma.sqlite3 backed up first. VERIFIED: live collection now reports sync_threshold=1000; a clean SIGTERM stop + launchd respawn produced ZERO new quarantines (was 1 per restart); retrieval healthy (12835 drawers, KG integrity ok). RESTART CAVEAT: prefer `launchctl kickstart` (graceful) or `kill SIGTERM` over `kickstart -k` (SIGKILL bypasses the handler — the low threshold is the backstop). py compile OK. Backend restarted."),
     ("9.60.2", "2026-06-02", "fix(web_fetch): two content-quality defects in the web_fetch optimizations, both surfaced by the new web_fetch optimization eval (eval/web_fetch_eval.py). (1) BRAIN_CODE TRIM CLIPPED METHOD TAILS: _trim_to_brain_code_regions (engine/tools/misc_tools.py) kept a fixed window of i-ctx .. i+chunk_len+ctx lines around each matched chunk anchor. When the recorded brain_code chunk was a short fingerprint (e.g. just a def signature line) but the actual method/class body was longer, the window ended INSIDE the body — Brainy got a method header with its tail clipped (the eval caught raise_for_status in requests/models.py losing the HTTPError-raising tail). NEW helper _block_end_line extends the kept window to the END of the indentation-based code block the anchor opens (the run of lines indented deeper than the def/class header, blank lines tolerated, bounded to 200 lines) so the whole matched method/class body is returned; brace-languages fall through to the prior fixed window. Verified: the trim now keeps the full method incl. HTTPError, 1520c of a 41783c file (96% saved, no clip). (2) ABSTRACT RETURNED NAV CHROME ON CHROME-HEAVY PAGES: _to_abstract took the LEAD of the converted markdown for the body fallback (when no <meta> description). On Wikipedia / docs portals that lead is the converted nav + table-of-contents + infobox table (Main menu / Contents / a wall of link rows), so the ~1500c survey contained menus, not prose — useless for relevance triage. NEW _lead_prose ASSEMBLES the survey from real prose lines only (via _is_prose_line: skips headings, list/ToC items, link-fragment and mostly-link lines, infobox table rows, and bare nav labels), gathering sentences in order until ~1500c — so the survey is actual intro prose. Verified on the transformer Wikipedia page: survey now leads with the architecture description + the main idea (was the ToC); MDN/PEP-8 (already meta-driven or prose-first) unchanged. Eval after both fixes: 0/6 content-loss, all 3 abstract cases + brain_code now pay off (full fetch avoided). Pure return-content shaping, no fetch/cache/wire change. py compile OK. Backend restart to load."),
@@ -342,6 +343,7 @@ import contextlib
 import datetime
 import fnmatch
 import logging
+import math
 import glob as globmod
 import hashlib
 import json
@@ -11010,6 +11012,30 @@ def _complexity_floor(complexity: str | None) -> int:
     return max(0, min(100, base))
 
 
+# Relative width of a speed band. Two models whose tps differ by less than this
+# fraction of the faster one are treated as equally fast (the difference is
+# benchmark noise, not a real speed advantage) and the ranking falls through to
+# cost. 0.15 = "must be ≥15 % faster to win on speed alone". Tuned so cloud
+# Mistral Small (cheap) beats Medium on a capability-tied fast task instead of
+# losing by 0.3 tok/s, while a genuinely 2–3× faster model still wins on speed.
+_TPS_BUCKET_REL = 0.15
+
+
+def _tps_bucket(tps: float) -> int:
+    """Snap a throughput (tok/s) onto a coarse logarithmic band index so that
+    only a >~15 % speed difference changes the band. Within a band, models tie
+    on speed and the ranking falls through to cost. Higher band = faster.
+
+    Log-spaced because speed spans orders of magnitude across the fleet (≈9 tok/s
+    local up to ≈190 tok/s cloud) — a fixed linear bucket would merge fast models
+    and over-split slow ones. With rel-width 0.15 each band is ~15 % wider than
+    the last, so 11.2 and 11.5 land in the SAME band (tie → cost decides) while
+    11.2 vs 14 (>15 %) land in different bands (faster wins)."""
+    if tps <= 0:
+        return 0
+    return int(math.log(tps) / math.log(1.0 + _TPS_BUCKET_REL))
+
+
 def _bench_rank_key(model: str, task_type: str, floor: int,
                     complexity: str | None) -> tuple:
     """Sort key for the CAPABLE-ENOUGH → cloud → fast → cheap ordering, best first.
@@ -11036,9 +11062,14 @@ def _bench_rank_key(model: str, task_type: str, floor: int,
     tps = tps if isinstance(tps, (int, float)) and tps > 0 else 0.0
     cost = _model_total_cost(model)
     prio = -(_models_config.get(model, {}).get("priority") or 0)
-    # capable-enough (0) before not (1); cloud (0) before local (1); higher tps
-    # is faster → negate; then cheaper; then higher static priority.
-    return (0 if has_cap else 1, local, -tps, cost, prio)
+    # Speed is BUCKETED before it ranks: a raw tps compare let a noise-sized
+    # delta (e.g. 11.5 vs 11.2 tok/s — within run-to-run variance, n=2) decide
+    # the pick and PREEMPT the much larger cost axis, so a 20×-pricier model won
+    # a "fast" task by 0.3 tok/s. `_tps_bucket` snaps tps to a coarse band so
+    # only a MEANINGFULLY faster model wins on speed; models within one band tie
+    # here and fall through to cost (then static priority). Order is the user's
+    # stated policy: capable-enough → cloud → fast(bucketed) → cheap → priority.
+    return (0 if has_cap else 1, local, -_tps_bucket(tps), cost, prio)
 
 
 def _pick_by_benchmark(candidates: list[str], task_type: str | None,
