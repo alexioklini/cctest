@@ -4,7 +4,9 @@
 # handler, so chromadb never flushes its HNSW index → the MemPalace vector
 # segment is quarantined + rebuilt on next boot (recurring corruption the user
 # explicitly forbade). The ONLY approved restart is a graceful SIGTERM:
-#     launchctl kickstart gui/$(id -u)/com.brain-agent.server   # no -k
+#     launchctl kill SIGTERM gui/$(id -u)/com.brain-agent.server
+# (NB: `launchctl kickstart` WITHOUT a kill flag is a no-op on an already-running
+#  service — it does NOT restart it; use `kill SIGTERM` to trigger a clean cycle.)
 #
 # Reads the PreToolUse JSON on stdin, emits a permissionDecision of "deny" with
 # a reason when the command matches, else "allow". Deterministic — enforced by
@@ -33,21 +35,28 @@ deny() {
   exit 0
 }
 
-ALT='Use a GRACEFUL restart instead: launchctl kickstart gui/$(id -u)/com.brain-agent.server  (no -k → SIGTERM → clean shutdown so chromadb flushes the MemPalace HNSW index). SIGKILL is forbidden without explicit user approval.'
+ALT='Use a GRACEFUL restart instead: launchctl kill SIGTERM gui/$(id -u)/com.brain-agent.server  (SIGTERM → clean shutdown so chromadb flushes the MemPalace HNSW index; note: launchctl kickstart WITHOUT a kill flag is a no-op on an already-running service). SIGKILL is forbidden without explicit user approval.'
 
-# (1) launchctl kickstart with a -k (SIGKILL) flag — matches -k, -kp, -pk, -k -p, etc.
-if printf '%s' "$cmd" | grep -Eq 'kickstart'; then
-  if printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])-[A-Za-z]*k'; then
+# A command only counts as DANGEROUS if it references the brain-agent service —
+# this is the key tightening: descriptive text / echoes / commit messages that
+# merely MENTION the kill flag (but don't target brain-agent) no longer trip the
+# guard, while every genuinely dangerous command (which must name the service to
+# act on it) still does. A real SIGKILL to brain-agent always names it.
+refs_brain() { printf '%s' "$cmd" | grep -Eiq 'brain-agent|brain_agent|mempalace|server\.py|com\.brain-agent'; }
+
+if refs_brain; then
+  # (1) launchctl kickstart with a -k (SIGKILL/kill) flag, as an actual
+  #     invocation: `launchctl ... kickstart ... -<…>k …`. The launchctl+kickstart
+  #     pairing (not the bare word "kickstart") plus a -k flag = the real call.
+  if printf '%s' "$cmd" | grep -Eq 'launchctl[^;|&]*\bkickstart\b[^;|&]*(^|[[:space:]])-[A-Za-z]*k'; then
     deny "Blocked: 'launchctl kickstart -k' SIGKILLs the brain-agent server and corrupts the MemPalace HNSW index. $ALT"
   fi
-fi
 
-# (2) kill / pkill with a KILL signal that references the brain-agent process.
-refs_brain() { printf '%s' "$cmd" | grep -Eiq 'brain-agent|brain_agent|mempalace|server\.py|com\.brain-agent'; }
-is_kill9() { printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])(p?kill)([[:space:]]|$)' \
-             && printf '%s' "$cmd" | grep -Eq -- '-(9|KILL)([[:space:]]|$)|-s[[:space:]]+(KILL|9)|-SIGKILL'; }
-if is_kill9 && refs_brain; then
-  deny "Blocked: SIGKILL (kill -9 / -KILL) of a brain-agent/MemPalace process bypasses graceful shutdown and corrupts the HNSW index. $ALT"
+  # (2) kill / pkill with a KILL signal targeting the brain-agent process.
+  if printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])(p?kill)([[:space:]]|$)' \
+     && printf '%s' "$cmd" | grep -Eq -- '-(9|KILL)([[:space:]]|$)|-s[[:space:]]+(KILL|9)|-SIGKILL'; then
+    deny "Blocked: SIGKILL (kill -9 / -KILL) of a brain-agent/MemPalace process bypasses graceful shutdown and corrupts the HNSW index. $ALT"
+  fi
 fi
 
 # Default: allow.

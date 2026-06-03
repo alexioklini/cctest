@@ -277,6 +277,68 @@ def purge_wing_room(palace_path: str, wing: str, room: str,
     return len(victims)
 
 
+def collection_to_wing(collection_name: str) -> str | None:
+    """Inverse of the name mapper for the COMMON (lossless) case: strip the
+    `wd_`/`wc_` prefix to recover the wing. Returns None for non-per-wing names.
+    Note: for hashed (lossy) wing names this returns the sanitized+hashed core,
+    not the exact original wing — fine for display/aggregation where we read the
+    real wing from each drawer's metadata anyway."""
+    for pfx in (_DRAWERS_PREFIX, _CLOSETS_PREFIX):
+        if collection_name.startswith(pfx):
+            return collection_name[len(pfx):]
+    return None
+
+
+def palace_overview(palace_path: str) -> dict:
+    """Aggregate stats across ALL per-wing collections for the admin dashboard
+    (replaces the package's tool_status/tool_get_taxonomy, which only saw the old
+    shared collection). Returns:
+        {total_drawers, total_closets, wings: {wing: {rooms:{room:n}, drawer_count,
+         room_count}}, halls: {hall: {count, rooms:{room:n}}}}
+    Reads each drawers collection's metadata once. Best-effort; never raises."""
+    out = {"total_drawers": 0, "total_closets": 0, "wings": {}, "halls": {}}
+    try:
+        import chromadb
+        client = chromadb.PersistentClient(path=palace_path)
+        cols = client.list_collections()
+    except Exception:
+        return out
+    for c in cols:
+        name = getattr(c, "name", "")
+        if name.startswith(_CLOSETS_PREFIX):
+            try:
+                out["total_closets"] += c.count()
+            except Exception:
+                pass
+            continue
+        if not name.startswith(_DRAWERS_PREFIX):
+            continue
+        try:
+            got = c.get(include=["metadatas"])
+        except Exception:
+            continue
+        metas = got.get("metadatas") or []
+        for m in metas:
+            m = m or {}
+            wing = m.get("wing") or collection_to_wing(name) or "?"
+            room = m.get("room") or ""
+            hall = m.get("hall") or ""
+            out["total_drawers"] += 1
+            w = out["wings"].setdefault(wing, {"rooms": {}, "drawer_count": 0,
+                                               "room_count": 0})
+            w["drawer_count"] += 1
+            if room:
+                w["rooms"][room] = w["rooms"].get(room, 0) + 1
+            if hall:
+                h = out["halls"].setdefault(hall, {"count": 0, "rooms": {}})
+                h["count"] += 1
+                if room:
+                    h["rooms"][room] = h["rooms"].get(room, 0) + 1
+    for w in out["wings"].values():
+        w["room_count"] = len(w["rooms"])
+    return out
+
+
 def list_wing_collections(palace_path: str) -> list[str]:
     """List the per-wing collection names that physically exist in the palace
     (both drawers + closets). Used by admin/recovery sweeps and migration
