@@ -20,7 +20,8 @@ dedicated session. Status values: `scoped` (decided, not started) · `spec'd`
 | **Live mic input to chat** | 2 | `scoped` | [LIVE_MIC_CHAT_PLAN.md](LIVE_MIC_CHAT_PLAN.md) | Greenlit (full live/streaming) — composer mic over the existing `/v1/translate/live/*` stack in transcribe-only mode. Low priority (real payoff is mobile, which doesn't exist yet) — sequence after higher-value items. |
 | **Output presets (×4)** | 3 | `scoped` | [OUTPUT_PRESETS_PLAN.md](OUTPUT_PRESETS_PLAN.md) | Greenlit — Study Guide/Briefing/FAQ/Timeline. Server endpoint `POST /v1/projects/<id>/generate` → grounded turn → saved `.md` artifact. ⚠️ **SHARED endpoint + project-output store with Audio Overview** (+ later Flashcards/Quizzes) — build once. |
 | **Studio (per-project outputs)** | 3 | `scoped` | [STUDIO_PLAN.md](STUDIO_PLAN.md) | Greenlit — thin browse/manage UI over the shared `project_outputs` store. List endpoint + outputs view grouped by kind + full lifecycle (open/regenerate/rename/delete). Depends on the store existing. |
-| **★ Research → import (Fast + Deep)** | 3 | `spec'd` | [RESEARCH_IMPORT_DETAILED_SPEC.md](RESEARCH_IMPORT_DETAILED_SPEC.md) | **Most important feature.** Full detailed spec: mockups + end-to-end workflows (W1–W9) + error cases (E1–E8). Fast=search→pick→`web_urls`; Deep=bounded agentic loop→propose sources + cited report→Studio. Lean plan [RESEARCH_IMPORT_PLAN.md](RESEARCH_IMPORT_PLAN.md) superseded. **§8 has open questions for the user.** |
+| **★ Research → import (Fast + Deep)** | 3 | `spec'd` | [RESEARCH_IMPORT_DETAILED_SPEC.md](RESEARCH_IMPORT_DETAILED_SPEC.md) | **Most important feature.** Full detailed spec: mockups + end-to-end workflows (W1–W9) + error cases (E1–E8). Fast=search→pick→`web_urls`; Deep=bounded agentic loop→propose sources + cited report→Studio. Lean plan [RESEARCH_IMPORT_PLAN.md](RESEARCH_IMPORT_PLAN.md) superseded. §8 user decisions resolved. |
+| **Inline span citations** | 4 | `scoped` | [INLINE_CITATIONS_PLAN.md](INLINE_CITATIONS_PLAN.md) | Greenlit — numbered inline chips + click→open source→highlight cited span, **drawer-anchored**. Data mostly exists (`[Quelle: file — "quote"]` + validator + drawer `read_path`); ⚠️ new work = resolve+store drawer ref at validation time + span-highlight viewer. |
 
 ## Discussed but not greenlit
 
@@ -31,8 +32,41 @@ dedicated session. Status values: `scoped` (decided, not started) · `spec'd`
   ride the shared `generate` endpoint cheaply as static `.md` if revisited; an
   interactive player (the real NotebookLM experience) is the larger build. No plan
   file until wanted.
+- **Sidebar summaries** (Tier 4) — `deferred` (already solved). Per-chat LLM
+  summaries already exist (generated via `chat_summary_model`, stored on
+  `session.summary`, returned by `list_sessions`, searchable). They surface as a
+  **title hover-tooltip by deliberate design** (`panels_chats.js:25` — "never
+  replaces the title; keeps the list dense"). No real gap. If inline NotebookLM-
+  style subtitles are ever wanted, it's a small reversible JS tweak / user toggle —
+  but it overrides an intentional UX decision. Not building.
+- **Multilingual audio** (Tier 4) — `deferred` (dependency note). Splits in two:
+  **chat** multilingual is largely ALREADY shipped (lang follows model + full
+  translation stack) — possible minor UX polish only. **Audio** is BLOCKED at the
+  TTS layer — the only TTS-capable models are Voxtral (English-only, 10 en_* voices)
+  and no multilingual TTS provider is configured. **Unblock condition:** wire a TTS
+  provider with non-English voices (e.g. ElevenLabs/Azure/Coqui). When that lands,
+  the `AUDIO_OVERVIEW_PLAN.md` voice-roster-per-language fast-follow unblocks with
+  NO architecture change. No build plan until the provider exists.
 
-## Not yet discussed
+## Tier 5 — not built now (platform/reach; lowest priority for self-hosted)
 
-Tier 4 (multilingual audio, span citations, sidebar summaries) · Tier 5 (mobile,
-public links, co-edit, featured, marketplace).
+Skipped 2026-06-03 — none greenlit. Two flagged as **possibly useful later** (the
+user's call), the rest deferred as questionable-fit for a self-hosted tool:
+
+- **Real-time collaborative co-editing** — ⭐ *possibly useful later* (user-flagged).
+  Sessions/projects are already shareable (user/team/global per
+  `[[project_sharing_model_v835]]`); live co-edit is the large add. Not now.
+- **Featured / curated notebooks** — ⭐ *possibly useful later* (user-flagged).
+  Content/curation surface, not core infra. Not now.
+- **Native mobile apps** (iOS/Android) — `deferred`. Large effort; web + Electron +
+  Telegram cover reach today. (Note: this is the unblock for Tier 2 live-mic's real
+  payoff + Tier 4 audio-on-mobile.)
+- **Public "anyone with link" share** — `deferred`. Needs an anonymous-access model;
+  current sharing is within-instance (user/team/global) only.
+- **Integrations marketplace / one-click connectors** — `deferred`. MCP-via-config
+  exists; an in-app marketplace is not core.
+
+## All five NotebookLM gap tiers now walked
+
+Tiers 1–4 worked feature-by-feature (10 scoped/spec'd, 4 deferred). Tier 5 logged
+above. Nothing built yet — these are decision/planning artifacts.
