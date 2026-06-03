@@ -377,6 +377,11 @@ a second generation/storage path.
 
 The marquee feature (`engine/deep_research.py`). Two modes on the project's
 "Research" tab, one import seam:
+- **Backends** — `available_backends()` lists a backend only when it is BOTH
+  configured (exa: API key; searxng: base URL) AND enabled in
+  `tool_settings.<tool>.enabled`. So disabling `exa_search`/`searxng_search` in
+  Settings → Tools removes it from Research too — the SAME toggle that gates the
+  chat agent. Empty list ⇒ the Research tab is disabled (E1).
 - **Fast** — `POST …/research/search` runs the enabled backends, dedups vs
   `web_urls`, returns a SERP; the UI appends approved URLs via `update_project`
   (the sync daemon mines them). No background task.

@@ -49,6 +49,11 @@ def _trust_hint(url: str) -> str:
 
 
 def _exa_available() -> bool:
+    # Same gate as the chat agent: the admin's tool_settings.exa_search.enabled
+    # toggle wins, AND a key must be configured. A disabled tool is never a
+    # Research backend even if a key exists.
+    if not _brain._global_tool_enabled("exa_search"):
+        return False
     try:
         import os
         cfg = _brain.get_tool_config().get("exa_search", {})
@@ -58,6 +63,8 @@ def _exa_available() -> bool:
 
 
 def _searxng_available() -> bool:
+    if not _brain._global_tool_enabled("searxng_search"):
+        return False
     try:
         return bool(_brain._searxng_base_url())
     except Exception:
@@ -65,7 +72,12 @@ def _searxng_available() -> bool:
 
 
 def available_backends() -> list:
-    """Which search backends this install can use (for the UI + E1 gate)."""
+    """Which search backends this install can use (for the UI + E1 gate).
+
+    A backend counts only when it is BOTH configured AND enabled in
+    tool_settings — Research honours the same per-tool enable toggle as the
+    chat agent (so disabling exa_search/searxng_search in Settings → Tools
+    removes it here too)."""
     out = []
     if _searxng_available():
         out.append("searxng")
