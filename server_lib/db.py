@@ -712,6 +712,42 @@ class ChatDB:
                 "UPDATE background_tasks SET status='error', "
                 "error='Server restart — task lost', "
                 "finished_at=strftime('%s','now') WHERE status='running'")
+            # ── Project outputs (Output Presets / Studio / Research) ──
+            # SHARED store: one row per grounded output a project generates
+            # (study_guide|briefing|faq|timeline|audio_overview|research_report|…).
+            # A row is inserted status='generating' at request time and flipped to
+            # 'ready'/'error' by the background generation thread. `opts` (JSON)
+            # makes regenerate reproducible. `path`/`artifact_id` link the saved
+            # .md (.mp3 later) so Studio can open + version it. Defined by
+            # OUTPUT_PRESETS_DETAILED_SPEC §2; browsed by Studio.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS project_outputs (
+                    id          TEXT PRIMARY KEY,
+                    agent_id    TEXT NOT NULL DEFAULT 'main',
+                    project_id  TEXT NOT NULL,
+                    kind        TEXT NOT NULL,
+                    title       TEXT NOT NULL DEFAULT '',
+                    path        TEXT NOT NULL DEFAULT '',
+                    artifact_id TEXT NOT NULL DEFAULT '',
+                    opts        TEXT NOT NULL DEFAULT '{}',
+                    status      TEXT NOT NULL DEFAULT 'generating',
+                    error       TEXT NOT NULL DEFAULT '',
+                    citations   INTEGER DEFAULT 0,
+                    created_at  REAL DEFAULT (strftime('%s','now')),
+                    created_by  TEXT NOT NULL DEFAULT '',
+                    finished_at REAL
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_project_outputs_project "
+                "ON project_outputs(project_id, created_at)")
+            # Crash reconcile: any output still 'generating' at boot lost its
+            # thread on the previous shutdown — mark it errored so the UI never
+            # shows a zombie generating forever (mirrors background_tasks).
+            conn.execute(
+                "UPDATE project_outputs SET status='error', "
+                "error='Server restart — generation lost', "
+                "finished_at=strftime('%s','now') WHERE status='generating'")
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -813,6 +849,67 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("UPDATE artifacts SET visibility_override = ? WHERE id = ?",
                          (override or "", artifact_id))
+            conn.commit()
+
+    # ── Project outputs CRUD (Output Presets / Studio / Research) ──
+
+    @staticmethod
+    @_db_safe(default=None)
+    def create_project_output(output_id, agent_id, project_id, kind, title, opts_json, created_by):
+        """Insert a project output in 'generating' state; flipped to ready/error
+        by the generation thread via update_project_output."""
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO project_outputs (id, agent_id, project_id, kind, title, opts, created_by) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (output_id, agent_id, project_id, kind, title, opts_json, created_by))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_project_output(output_id, **fields):
+        """Patch an output row. Whitelisted columns only; sets finished_at when
+        status flips to a terminal state."""
+        allowed = ("status", "title", "path", "artifact_id", "error", "citations")
+        sets, vals = [], []
+        for k in allowed:
+            if k in fields:
+                sets.append(f"{k} = ?")
+                vals.append(fields[k])
+        if fields.get("status") in ("ready", "error"):
+            sets.append("finished_at = strftime('%s','now')")
+        if not sets:
+            return
+        vals.append(output_id)
+        with _db_conn() as conn:
+            conn.execute(f"UPDATE project_outputs SET {', '.join(sets)} WHERE id = ?", vals)
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_project_output(output_id):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM project_outputs WHERE id = ?", (output_id,)).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_project_outputs(project_id):
+        """All outputs for a project, newest first."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM project_outputs WHERE project_id = ? ORDER BY created_at DESC",
+                (project_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def delete_project_output(output_id):
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM project_outputs WHERE id = ?", (output_id,))
             conn.commit()
 
     @staticmethod

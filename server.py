@@ -1636,6 +1636,10 @@ class BrainAgentHandler(
             self._handle_project_sync_run_detail(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/image"):
             self._handle_project_image_get(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/outputs/" in path:
+            self._handle_project_output_get(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/outputs"):
+            self._handle_project_outputs_list(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path:
             self._handle_project_get(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):
@@ -1977,6 +1981,8 @@ class BrainAgentHandler(
             self._handle_project_full_resync(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-cancel"):
             self._handle_project_sync_cancel(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/generate"):
+            self._handle_project_generate(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/ingest" in path:
             self._handle_project_ingest(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):

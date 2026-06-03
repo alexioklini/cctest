@@ -162,6 +162,15 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `POST .../projects/<name>/sync-cancel` — abort live sync
 - `POST .../projects/<name>/ingest` — upload files (multipart)
 - `GET .../projects/<name>/image` — project thumbnail
+- `POST .../projects/<name>/generate` — generate a grounded output from the
+  project's sources. Body `{kind: study_guide|briefing|faq|timeline,
+  options?: {focus?: str, length?: short|std|long}}` → `{output_id,
+  status:"generating"}`. Requires manage; refuses (400) if the project has no
+  sources. Runs async — a cited `.md` is written + saved as a `project_outputs`
+  row. SHARED endpoint (Output Presets now; Audio Overview + Deep Research later).
+- `GET .../projects/<name>/outputs` — list this project's generated outputs
+  (poll for `status` generating→ready/error).
+- `GET .../projects/<name>/outputs/<output_id>` — one output's status/metadata.
 - `GET .../ingested` — list ingested files under an agent
 
 ## Scheduler

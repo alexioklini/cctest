@@ -217,6 +217,25 @@ each result reaches the model exactly once and never re-enters history. At boot,
 any leftover `running` row is reconciled to `error` ("Server restart — task
 lost") so the panel shows no zombie. See `05-internals.md` → Background tasks.
 
+### chats.db → project_outputs (generated outputs — Output Presets / Studio / Research)
+```
+id TEXT PK (uuid), agent_id TEXT, project_id TEXT (uuid hex — the MemPalace wing key),
+kind TEXT (study_guide|briefing|faq|timeline|audio_overview|research_report|…),
+title TEXT (editable), path TEXT (the saved .md / .mp3 on disk),
+artifact_id TEXT (links artifact_versions so Studio can open/version it),
+opts TEXT (JSON — the generation options; makes regenerate reproducible),
+status TEXT (generating|ready|error), error TEXT, citations INTEGER (count of [Quelle: …]),
+created_at REAL, created_by TEXT (user_id), finished_at REAL
+```
+Index `idx_project_outputs_project(project_id, created_at)`. ONE row per output a
+project generates. Inserted `generating` by `POST …/projects/<name>/generate`,
+flipped to `ready`/`error` by the daemon worker (`engine/output_gen.py`). The .md
+lives under `agents/<agent>/projects/<name>/outputs/<kind>-<id>.md` and is
+registered as an artifact under synthetic session `output-<id>`. At boot any
+leftover `generating` row is reconciled to `error` ("Server restart — generation
+lost"). SHARED store (browsed by Studio; Audio Overview + Deep Research write to it
+too). See `05-internals.md` → Output generation.
+
 ### chats.db → feedback (👍/👎 on responses)
 ```
 id INTEGER PK AUTOINCREMENT, surface TEXT, target_id TEXT,

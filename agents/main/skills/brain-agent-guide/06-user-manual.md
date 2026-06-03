@@ -226,6 +226,26 @@ Projektgedächtnis (Wing) und den Recherche-Modus wie ein Projekt-Chat.
   davon unberührt (Aufgaben ohne Projektbindung laufen wie bisher
   agent-weit).
 
+**Ausgaben aus den Quellen generieren** (Output-Presets): Aus den Quellen eines
+Projekts lassen sich mit einem Klick fertige, belegte Dokumente erzeugen — vier
+Vorlagen:
+- **Study Guide** (📖) — Schlüsselkonzepte · Begriffe/Definitionen · Wiederholungsfragen.
+- **Briefing** (📋) — Kurzfassung → Kernpunkte → Implikationen.
+- **FAQ** (❓) — belegte Frage-/Antwort-Paare.
+- **Timeline** (🕒) — chronologische, datierte Ereignisse (lässt sie weg statt
+  zu erfinden, wenn die Quellen keine Daten enthalten).
+
+Jede Ausgabe wird **streng aus dem Projektgedächtnis** erzeugt und **verbatim
+zitiert** (`[Quelle: … — "…"]`); nichts wird hinzuerfunden. Das Ergebnis ist eine
+gespeicherte `.md`-Datei, die im Projekt erhalten bleibt. Optional lassen sich
+ein **Fokus** (Schwerpunkt-Stichwort) und eine **Länge** (Kurz/Standard/Lang)
+angeben. Hat ein Projekt noch keine Quellen, ist die Generierung nicht möglich
+(erst Dateien/Web-Adressen hinzufügen oder Recherche laufen lassen). Die
+Generierung läuft im Hintergrund (~20–40 s) — man kann die Seite verlassen, die
+fertige Ausgabe taucht danach auf. *(Hinweis: Die Karten-Oberfläche und der
+Studio-Browser zum Durchsuchen/Verwalten der Ausgaben folgen in den nächsten
+Schritten; aktuell ist die Generierung über die API verfügbar.)*
+
 ---
 
 ## Übersetzung

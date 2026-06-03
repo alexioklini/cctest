@@ -1145,6 +1145,105 @@ class ProjectsHandlerMixin:
         else:
             self._send_json(result)
 
+    # ── Output Presets / Studio / Research shared store ──
+
+    @staticmethod
+    def _output_to_dict(row: dict) -> dict:
+        """Project_outputs row → API shape (drop internal-only fields)."""
+        return {
+            "output_id": row.get("id"),
+            "project_id": row.get("project_id"),
+            "kind": row.get("kind"),
+            "title": row.get("title"),
+            "status": row.get("status"),
+            "path": row.get("path"),
+            "artifact_id": row.get("artifact_id"),
+            "citations": row.get("citations") or 0,
+            "error": row.get("error") or "",
+            "created_at": row.get("created_at"),
+            "created_by": row.get("created_by"),
+            "finished_at": row.get("finished_at"),
+        }
+
+    def _handle_project_generate(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/generate
+        Body: {kind: study_guide|briefing|faq|timeline, options?: {focus?, length?}}
+        Inserts a project_outputs row (status=generating), spawns the generation
+        worker, returns {output_id, status}. SHARED endpoint (Output Presets +
+        Audio Overview + Research)."""
+        from engine import output_presets, output_gen
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        body = self._read_json()
+        kind = (body.get("kind") or "").strip()
+        if not output_presets.is_valid_kind(kind):
+            self._send_json(
+                {"error": f"Unknown kind '{kind}'. Valid: {', '.join(output_presets.PRESETS)}"}, 400)
+            return
+        # No sources → refuse cleanly (W2). Sources = uploaded/ingested chunks,
+        # mined input folders, or project web URLs (all feed the project wing).
+        if (not project.get("chunks")
+                and not (project.get("web_urls") or [])
+                and not (project.get("input_folders") or [])):
+            self._send_json({"error": "This project has no sources yet."}, 400)
+            return
+        opts = body.get("options") or {}
+        if not isinstance(opts, dict):
+            opts = {}
+        length = opts.get("length")
+        if length and length not in ("short", "std", "long"):
+            self._send_json({"error": f"Invalid length '{length}'"}, 400)
+            return
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        output_id = output_gen.start_generation(
+            agent_id=agent_id, project=project, kind=kind,
+            opts={"focus": (opts.get("focus") or "").strip(), "length": length or "std"},
+            user_id=user["id"])
+        self._send_json({"output_id": output_id, "status": "generating"})
+
+    def _handle_project_outputs_list(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/outputs — list this project's
+        outputs (UI polls this for generating→ready). Studio extends this."""
+        from server_lib.db import ChatDB
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        rows = ChatDB.list_project_outputs(project.get("id") or "")
+        self._send_json({
+            "agent": agent_id, "project": proj_name,
+            "outputs": [self._output_to_dict(r) for r in rows],
+        })
+
+    def _handle_project_output_get(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/outputs/{output_id} — single
+        output status (poll target during generation)."""
+        from server_lib.db import ChatDB
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        output_id = path.rstrip("/").split("/")[-1]
+        if not agent_id or not proj_name or not output_id:
+            self._send_json({"error": "Missing parameters"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        row = ChatDB.get_project_output(output_id)
+        if not row or row.get("project_id") != (project.get("id") or ""):
+            self._send_json({"error": "Output not found"}, 404)
+            return
+        self._send_json(self._output_to_dict(row))
+
     def _handle_project_doc_delete(self, path: str):
         """DELETE /v1/agents/{id}/projects/{name}/docs/{hash}"""
         agent_id = self._parse_agent_from_path(path)

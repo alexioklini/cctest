@@ -337,6 +337,35 @@ run WITHOUT blocking the chat. Mechanics (`engine/background_tasks.py`,
 
 Differs from `delegate_task` (targets ANOTHER agent, can block for the result).
 
+## Output generation (Output Presets / Studio / Deep Research)
+
+One SHARED pipeline turns a project's sources into a grounded, cited document
+saved to the `project_outputs` store (`03-storage.md`). Built once, reused by
+every generator (presets now; Audio Overview + Deep Research later) — do NOT fork
+a second generation/storage path.
+
+- **Endpoint** `POST /v1/agents/<a>/projects/<name>/generate {kind, options}`
+  (`handlers/projects.py:_handle_project_generate`): validates `kind` +
+  project-membership (manage), refuses if the project has no sources, inserts a
+  `project_outputs` row `status=generating`, spawns the worker, returns
+  `{output_id, status:"generating"}`. The UI polls `GET …/outputs[/<id>]`.
+- **Worker** (`engine/output_gen.py`, daemon thread — fresh thread = bleed-free
+  contextvars): gathers sources via `tool_mempalace_query` inside a
+  `with request_context(project=<name>)` (project-scoped, top-25 drawers, a
+  coverage note if truncated — never a silent cut) → ONE
+  `sidecar_proxy.background_call(purpose="transform", project=<name>,
+  model=_background_model_default())` with the preset prompt → writes the cited
+  `.md` under `…/projects/<name>/outputs/` → registers it as an artifact (synthetic
+  session `output-<id>`, so the existing artifact-content endpoint opens it) →
+  flips the row `ready`/`error` and records the `[Quelle: …]` citation count.
+- **Prompts** (`engine/output_presets.py`): four canned grounded prompts
+  (study_guide · briefing · faq · timeline) + a shared GROUNDING discipline
+  mirroring research-mode Topic B — cite verbatim, use ONLY the retrieved sources,
+  omit-don't-invent (Timeline says "no datable events" rather than fabricating).
+  Stored in code for v1 (admin-tunable config is a deferred item).
+- **Boot reconcile**: a `generating` row whose thread died on shutdown is set to
+  `error` at startup (mirrors background tasks).
+
 ## Brainy helpdesk bot
 
 A read-only helpdesk assistant (the floating bubble), separate from the
