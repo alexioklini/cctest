@@ -620,6 +620,14 @@ def _mempalace_chat_sync_loop(srv):
 
     while True:
         try:
+            # Startup-race guard: the daemon thread can begin a cycle before
+            # ChatDB's class body has finished binding its mempalace_* staticmethods
+            # (the class body is ~1300 lines; under the boot thread-storm a cycle
+            # occasionally lands mid-binding → AttributeError, once). Skip quietly
+            # until the methods exist instead of logging a scary cycle error.
+            if not hasattr(ChatDB, "mempalace_sessions_needing_sync"):
+                time.sleep(2)
+                continue
             mcfg2 = engine._load_mempalace_config()
             if not mcfg2.get("enabled", True):
                 return
@@ -985,6 +993,15 @@ def _mempalace_chat_sync_loop(srv):
 
             if total_new:
                 print(f"[mempalace-chat-sync] filed {total_new} new drawer(s) across {len(pending)} session(s)")
+        except AttributeError as e:
+            # Transient boot race (ChatDB.mempalace_* not yet bound) — the
+            # hasattr guard above closes all but a microscopic window; if we still
+            # land in it, treat as a skipped cycle (the next cycle succeeds), not
+            # an error. Re-raise any OTHER AttributeError (a real bug).
+            if "mempalace_" in str(e):
+                time.sleep(2)
+            else:
+                print(f"[mempalace-chat-sync] cycle error: {type(e).__name__}: {e}")
         except Exception as e:
             print(f"[mempalace-chat-sync] cycle error: {type(e).__name__}: {e}")
 
