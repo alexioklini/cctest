@@ -1139,6 +1139,80 @@ class ProjectsHandlerMixin:
         docs = engine.IngestManager.list_ingested(agent_id, project_name=proj_name)
         self._send_json({"agent": agent_id, "project": proj_name, "documents": docs})
 
+    def _handle_project_folder_tree(self, path: str):
+        """GET …/projects/{name}/folder-tree?path=<abs folder> — the REAL,
+        read-only subtree of an ingested input folder, each file coloured by its
+        MemPalace state (indexed/pending/stale). Lazy: called only when a folder
+        node is expanded in the source tree. The folder hierarchy is fixed (the
+        user can't regroup files inside it — see the source-tree feature)."""
+        import os
+        import urllib.parse as _up
+        from server_lib.db import _project_wing
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        # The dispatcher strips the query string from `path`; read it off
+        # self.path (the raw request line) instead.
+        qs = _up.parse_qs(_up.urlparse(self.path).query)
+        folder = (qs.get("path", [""])[0] or "").strip()
+        if not folder:
+            self._send_json({"error": "path is required"}, 400)
+            return
+        # Security: the requested folder MUST be one of the project's configured
+        # input folders (or a descendant) — never an arbitrary disk path.
+        configured = [(f.get("path") or "") for f in (project.get("input_folders") or [])
+                      if isinstance(f, dict)]
+        real = os.path.realpath(folder)
+        if not any(real == os.path.realpath(c) or real.startswith(os.path.realpath(c) + os.sep)
+                   for c in configured if c):
+            self._send_json({"error": "Folder is not an input folder of this project"}, 403)
+            return
+        if not os.path.isdir(real):
+            self._send_json({"error": "Folder not found on disk"}, 404)
+            return
+        # Which source_files are indexed in this project's wing.
+        try:
+            palace_path = (engine._load_mempalace_config() or {}).get("palace_path", "")
+        except Exception:
+            palace_path = ""
+        wing = _project_wing(project.get("id") or "")
+        indexed = engine.indexed_source_files_for_wing(palace_path, wing) if palace_path else set()
+
+        # Walk the folder (depth-bounded) → nested {name,type,children|state}.
+        _SKIP = {".brain-extracted", ".git", "__pycache__", ".DS_Store"}
+
+        def _state_for(fp):
+            real_fp = os.path.realpath(fp)
+            if real_fp in indexed:
+                return "indexed"
+            # companion form: <folder>/.brain-extracted/<rel>.<ext>.md
+            return "pending" if indexed else "pending"
+
+        def _walk(d, depth=0):
+            kids = []
+            try:
+                entries = sorted(os.listdir(d))
+            except OSError:
+                return kids
+            for name in entries:
+                if name in _SKIP or name.startswith("."):
+                    continue
+                fp = os.path.join(d, name)
+                if os.path.isdir(fp):
+                    if depth >= 8:   # safety bound on recursion
+                        continue
+                    kids.append({"name": name, "type": "dir", "path": fp,
+                                 "children": _walk(fp, depth + 1)})
+                elif os.path.isfile(fp):
+                    kids.append({"name": name, "type": "file", "path": fp,
+                                 "state": _state_for(fp)})
+            return kids
+
+        self._send_json({"path": real, "tree": _walk(real),
+                         "has_index": bool(indexed)})
+
     def _handle_agent_ingested_delete(self, path: str):
         """DELETE /v1/agents/{id}/ingested/{hash}"""
         agent_id = self._parse_agent_from_path(path)

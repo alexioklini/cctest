@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.77.0"
+VERSION = "9.78.0"
 VERSION_DATE = "2026-06-05"
 CHANGELOG = [
+    ("9.78.0", "2026-06-05", "feat(projects): source-tree backend foundation (C1 of 4) — for the upcoming unified virtual-filesystem source panel. NO UI yet; backend only, additive. (1) project.json gains a whitelisted `source_groups` field: per groupable type (files/folders/urls — 'instructions' is a singleton, never grouped) a list of user virtual folders {id,name,parent,order} + a flat assign map {item-stable-id → group-id}. _sanitise_source_groups() (brain.py) enforces the invariants on every save: only the 3 valid types, ≤3-level depth (parent-chain walk; over-deep OR cyclic parents flattened to root), assignments only to existing groups — a malformed client payload can NEVER corrupt project.json or yield an un-renderable tree (drops, never raises). Unit-tested (depth cap, self-cycle, invalid-type/group drop). (2) NEW endpoint GET …/projects/{name}/folder-tree?path=<input-folder> returns the REAL read-only subtree of an ingested folder, each file coloured by MemPalace state — engine.indexed_source_files_for_wing(palace_path, wing) (mempalace_glue, re-exported) returns the wing's drawer source_files INCLUDING the .brain-extracted/<x>.md→original-binary derivation, so a disk file matches whether stored as companion or original. Security: the requested folder must be (a descendant of) a configured input_folder — never an arbitrary path. Lazy by design (only on node-expand). VERIFIED LIVE (kg-real-policies): real folder hierarchy walked, policy PDFs → 'indexed', junk like Thumbs.db → 'pending'. GOTCHA fixed: the GET dispatcher strips the query string before passing `path` to handlers — the handler reads ?path= off self.path. py compile OK. Next: C2 tree render (read-only), C3 grouping/DnD, C4 polish."),
     ("9.77.0", "2026-06-05", "feat(studio): generating cards now show LIVE PROGRESS + a STOP button (cooperative cancel). A Studio generation (study guide/briefing/report/timeline) is a daemon thread: gather sources → one long synthesis LLM call → save; the card only showed a static '⟳ generiert…' and could not be stopped. NOW: (1) PROGRESS — project_outputs gains a `phase` column; _run_generation sets phase='gathering' then 'writing', surfaced on the card as 'Quellen sammeln…' / 'Bericht schreiben…' with a LIVE elapsed clock (studioTickElapsed, 1s ticker tied to the existing 2.5s poll, driven by data-since=created_at) so the long single LLM call never looks frozen. (2) STOP — new `cancel` column + ChatDB.cancel_project_output/project_output_cancelled + POST .../outputs/{id}/cancel; the worker checks the flag before each phase AND after the LLM returns (aborting the save), flipping status='cancelled'. HONEST LIMIT (shown in the toast): an in-flight LLM call still finishes — no sidecar cancel-token — then the run aborts. A 'cancelled' card shows ⊘ Abgebrochen + Löschen. (3) BONUS FIX — the ⋯ output menu (Umbenennen/Neu generieren/Herunterladen/Löschen) clipped off-screen for cards near the viewport bottom; it now flips ABOVE the trigger when it would overflow and clamps to an 8px margin, always fully visible. update_project_output whitelists `phase` + treats 'cancelled' as terminal (finished_at). js_gate green (net-globals 1125→1128 baseline bumped; smoke 5/5); py compile OK; migration verified live (cancel+phase columns). Note: the previously-'stuck' briefing was just an in-flight generation; the boot-reconcile already clears orphaned generating rows on restart. Backend restart + hard refresh."),
     ("9.76.1", "2026-06-05", "fix(studio): generated-output cards showed ONLY 'Öffnen' — delete was buried in a ⋯ menu that wasn't discoverable, and there was NO archive for generated deliverables at all (study guides/briefings/reports/timelines). Now each READY output card shows the same VISIBLE actions as the chat-artifact cards: Öffnen (primary) / Archivieren / 🗑 Löschen, plus a ⋯ for the secondary Umbenennen + Neu generieren. ARCHIVE support added for project_outputs: new `archived` INTEGER column (migration, mirrors artifacts.archived), list_project_outputs now excludes archived rows, ChatDB.set_project_output_archived + POST .../outputs/{id}/archive (non-destructive — row+file survive, just hidden from the list). error-status cards get a clearer '🗑 Löschen' too. panels_studio.js studioArchiveOutput added. js_gate green (net-globals 1124→1125 baseline bumped; smoke 5/5); py compile OK; migration verified live (archived column present). Verified via screenshot: webnews outputs now show Öffnen/Archivieren/🗑/⋯. NOTE seen in passing: one briefing is stuck status='generating' (lost its thread on a prior shutdown — the boot reconcile should mark it errored; worth a look if it persists). Backend restart + hard refresh."),
     ("9.76.0", "2026-06-05", "fix(projects): four bugs from a webnews/macrumors report after importing web_urls from Deep Research. (1) AUTO-SYNC ON SOURCE CHANGE: update_project now calls _project_sync_request when web_urls OR input_folders changed (handlers/projects.py) — before, newly added URLs/folders waited up to the 6h scheduled cycle, so importing from Research appeared to do nothing. (2) FALSE RED BULLET / stale kg_state=error: the project-sync KG step set an item's kg_state to 'error' whenever res.errors>0 AND triples==0 (server_daemons.py:1460). But per-chunk JSON parse-errors on content with no extractable relations — e.g. news articles under the policy-oriented `normative` profile — are NORMAL noise, not a failure; the false 'error' lit a red bullet that never cleared (all-skip re-runs never reset it). Now a COMPLETED pass = 'idle' regardless of triple count; only the exception path (pass crashed) is a real item error. Self-heals on the next sync. (3) DISABLED KG BUTTON was misleading: tooltip said 'noch keine Beziehungen — zuerst abgleichen' even for projects that WERE synced but whose content yields no triples (re-syncing won't help). Now distinguishes never-synced ('zuerst abgleichen') from synced-but-empty ('keine Beziehungen extrahiert — bei Nachrichten-/Fließtext-Inhalten normal'). (4) WEB_URLS LIST didn't refresh in the right panel after a Research import — researchImportSelected/Proposed updated state but never re-rendered; both now call renderProjectWebUrls(merged) so the list updates without a reload. js_gate green (net-globals unchanged, smoke 5/5); py compile OK. Backend restart + hard refresh."),
@@ -4316,6 +4317,69 @@ def _project_research_mode(cfg: dict) -> bool:
     return not bool((cfg.get("instructions") or "").strip())
 
 
+# Virtual-folder grouping for the project source-panel tree. Per type (files /
+# folders / urls — 'instructions' is a singleton, never grouped), a list of
+# user-created virtual folders + a flat map of item-id → group-id. Depth is
+# capped at 3 levels (a group's parent chain length ≤ 2 → node depth ≤ 3).
+_SOURCE_GROUP_TYPES = ("files", "folders", "urls")
+_SOURCE_GROUP_MAX_DEPTH = 3
+
+
+def _sanitise_source_groups(raw) -> dict:
+    """Coerce a client source_groups payload into the canonical, safe on-disk
+    shape: only the 3 groupable types, each with `groups` (id/name/parent/order,
+    depth-capped, no parent cycles) + `assign` (item-id → existing group-id).
+    Drops anything malformed rather than raising — a bad payload must never
+    corrupt project.json or yield an un-renderable tree."""
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for t in _SOURCE_GROUP_TYPES:
+        bucket = raw.get(t) or {}
+        if not isinstance(bucket, dict):
+            bucket = {}
+        # 1) Clean groups: keep well-formed ones, index by id.
+        groups = {}
+        for g in (bucket.get("groups") or []):
+            if not isinstance(g, dict):
+                continue
+            gid = str(g.get("id") or "").strip()
+            if not gid or gid in groups:
+                continue
+            groups[gid] = {
+                "id": gid,
+                "name": str(g.get("name") or "").strip()[:120] or "Gruppe",
+                "parent": str(g.get("parent") or "").strip(),
+                "order": int(g.get("order") or 0) if str(g.get("order") or "0").lstrip("-").isdigit() else 0,
+            }
+        # 2) Resolve parents: a parent must be an existing group; break cycles
+        #    and enforce the depth cap by walking the parent chain.
+        def _depth(gid, _seen=None):
+            _seen = _seen or set()
+            g = groups.get(gid)
+            if not g or gid in _seen:
+                return 99  # cycle → treat as too-deep so it gets flattened
+            p = g.get("parent")
+            if not p or p not in groups:
+                return 1
+            return 1 + _depth(p, _seen | {gid})
+        for gid, g in list(groups.items()):
+            p = g.get("parent")
+            if p and p not in groups:
+                g["parent"] = ""           # dangling parent → root
+            if _depth(gid) > _SOURCE_GROUP_MAX_DEPTH:
+                g["parent"] = ""           # too deep / cyclic → flatten to root
+        # 3) Clean assignments: item-id → an existing group-id.
+        assign = {}
+        for item_id, gid in (bucket.get("assign") or {}).items():
+            gid = str(gid or "").strip()
+            if gid and gid in groups:
+                assign[str(item_id)] = gid
+        out[t] = {"groups": sorted(groups.values(), key=lambda x: (x["order"], x["name"])),
+                  "assign": assign}
+    return out
+
+
 class ProjectManager:
     """CRUD operations for per-agent projects."""
 
@@ -4532,9 +4596,16 @@ class ProjectManager:
                        "input_folders", "input_folders_last_scan", "sync_status",
                        "visibility", "owner_user_id", "owner_team_id",
                        "extra_member_user_ids", "excluded_user_ids",
-                       "research_mode", "web_urls", "disable_web_search"):
+                       "research_mode", "web_urls", "disable_web_search",
+                       "source_groups"):
                 if k in updates:
                     cfg[k] = updates[k]
+            # source_groups (virtual-folder tree for the source-panel UI):
+            # sanitise to a stable shape + enforce the ≤3-level depth invariant
+            # so a malformed client payload can't corrupt project.json or build
+            # an un-renderable tree.
+            if "source_groups" in updates:
+                cfg["source_groups"] = _sanitise_source_groups(updates["source_groups"])
             # Coerce research_mode to bool so the on-disk shape is stable.
             if "research_mode" in updates:
                 cfg["research_mode"] = bool(updates["research_mode"])
@@ -12031,6 +12102,7 @@ from engine.mempalace_glue import (  # noqa: E402
     tool_mempalace_kg_query,
     tool_mempalace_kg_search,
     tool_mempalace_kg_neighbors,
+    indexed_source_files_for_wing,
 )
 # E4 — remaining tool bodies extracted into engine/tools/ submodules.
 from engine.tools.context_tools import (  # noqa: E402

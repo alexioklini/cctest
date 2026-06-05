@@ -1872,3 +1872,33 @@ def tool_mempalace_kg_neighbors(args: dict) -> str:
         "edges": edges[:300],
         "read_hint": _KG_READ_HINT,
     })
+
+
+def indexed_source_files_for_wing(palace_path: str, wing: str) -> set:
+    """Set of `source_file` values that have ≥1 drawer in `wing`. Used by the
+    project source-tree to colour a file 'indexed' iff its companion .md is in
+    MemPalace. Folder files are stored under their `.brain-extracted/...md`
+    companion path; both the companion AND the derived ORIGINAL binary path are
+    returned so the caller can match a disk file either way. Best-effort: any
+    error → empty set (caller then shows everything as 'pending')."""
+    out = set()
+    if not (palace_path and wing):
+        return out
+    try:
+        from mempalace.palace import get_collection as _gc
+        col = _gc(palace_path, create=False)
+        if col is None:
+            return out
+        meta = col.get(where={"wing": wing}, include=["metadatas"])
+        for m in (meta.get("metadatas") or []):
+            sf = ((m or {}).get("source_file") or "").strip()
+            if not sf:
+                continue
+            out.add(sf)
+            # Map the .brain-extracted/<x>.<ext>.md companion back to its
+            # original binary path so a disk-file lookup matches either form.
+            if "/.brain-extracted/" in sf and sf.endswith(".md"):
+                out.add(sf[:-3].replace("/.brain-extracted/", "/", 1))
+    except Exception:
+        pass
+    return out

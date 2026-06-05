@@ -1629,6 +1629,8 @@ class BrainAgentHandler(
             self._handle_mcp_registry()
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes" in path:
             self._handle_notes(path, "GET")
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/folder-tree" in path:
+            self._handle_project_folder_tree(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/docs" in path:
             self._handle_project_docs(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/input-folders"):
