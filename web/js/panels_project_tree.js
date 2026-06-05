@@ -17,6 +17,20 @@ const _PT_STATE = {
   stale:   { cls: 'stale',   label: 'Veraltet' },
 };
 
+// Feather-style SVG icons (match the rest of the app — no emoji). 14px, inherit
+// stroke so they tint with the row color.
+function _ptSvg(paths) {
+  return `<svg class="pt-svgicon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+}
+const _PT_ICON = {
+  instructions: _ptSvg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>'),
+  files: _ptSvg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>'),
+  folders: _ptSvg('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
+  folderOpen: _ptSvg('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
+  urls: _ptSvg('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'),
+  file: _ptSvg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>'),
+};
+
 // localStorage key for the per-project expand/collapse state (UI-only, per user).
 function _ptExpandKey() {
   const pid = (state._projectDetail && state._projectDetail.id) || state._researchProject || 'p';
@@ -98,7 +112,7 @@ function _ptInstructionsNode(p) {
     <div class="pt-branch" data-node="instructions">
       <div class="pt-row pt-typerow" onclick="ptToggle('instructions')">
         ${_ptCaret(open)}
-        <span class="pt-icon">📋</span>
+        <span class="pt-icon">${_PT_ICON.instructions}</span>
         <span class="pt-label">Anweisungen</span>
         <span class="pt-actions">
           <button class="pt-act" onclick="event.stopPropagation(); editProjectInstructions()" title="Bearbeiten">✎</button>
@@ -112,7 +126,7 @@ function _ptInstructionsNode(p) {
 // (C3) render INSIDE #pt-items-<type>; C2 just lists the flat items.
 function _ptTypeNode(type, label, p) {
   const open = _ptIsExpanded(type, true);
-  const icon = type === 'files' ? '📄' : type === 'folders' ? '🗂️' : '🌐';
+  const icon = type === 'files' ? _PT_ICON.files : type === 'folders' ? _PT_ICON.folders : _PT_ICON.urls;
   const addAction = type === 'files'
     ? `<label class="pt-act" title="Dateien hinzufügen" onclick="event.stopPropagation()">＋<input type="file" multiple style="display:none" onchange="uploadProjectFiles(this.files)"></label>`
     : type === 'folders'
@@ -161,7 +175,7 @@ async function _ptFillFiles(agentId, projectName) {
       const st = _ptItemState('attachment', id);
       return `<div class="pt-row pt-item" data-type="files" data-id="${esc(id)}" title="${esc(d.source || d.name || '')}">
         ${_ptDot(st)}
-        <span class="pt-icon pt-fileicon">📄</span>
+        <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
         <span class="pt-label">${esc(d.source || d.name || 'Dokument')}</span>
         <span class="pt-actions"><button class="pt-act" onclick="event.stopPropagation(); deleteProjectFile('${esc(agentId)}','${esc(projectName)}','${esc(id)}')" title="Entfernen">✕</button></span>
       </div>`;
@@ -186,7 +200,7 @@ async function _ptFillFolders(agentId, projectName) {
         <div class="pt-row pt-item pt-folderrow" data-type="folders" data-id="${esc(path)}" onclick="ptToggleFolder(this, '${esc(agentId)}','${esc(projectName)}','${esc(path)}')" title="${esc(path)}">
           ${_ptCaret(false)}
           ${_ptDot(st)}
-          <span class="pt-icon">🗂️</span>
+          <span class="pt-icon">${_PT_ICON.folders}</span>
           <span class="pt-label">${esc(nm)}</span>
           <span class="pt-actions"><button class="pt-act" onclick="event.stopPropagation(); removeProjectInputFolder(${i})" title="Entfernen">✕</button></span>
         </div>
@@ -205,14 +219,22 @@ function _ptFillUrls(p) {
   host.innerHTML = urls.map((u, i) => {
     const url = u.url || '';
     let host_ = url; try { host_ = new URL(url).host.replace(/^www\./, ''); } catch (_) {}
-    const st = _ptItemState('weburl', url);
+    // Web URLs are mined as a batch → no per-URL sync item. Render with a
+    // placeholder dot, then patch from /web-url-states below (state._ptUrlStates).
+    const st = (state._ptUrlStates || {})[url] || 'pending';
     return `<div class="pt-row pt-item" data-type="urls" data-id="${esc(url)}" title="${esc(url)}">
       ${_ptDot(st)}
-      <span class="pt-icon">🌐</span>
+      <span class="pt-icon">${_PT_ICON.urls}</span>
       <span class="pt-label">${esc(u.title || host_)}</span>
       <span class="pt-actions"><button class="pt-act" onclick="event.stopPropagation(); removeProjectWebUrl(${i})" title="Entfernen">✕</button></span>
     </div>`;
   }).join('');
+  // Fetch real per-URL states (companion .md indexed in MemPalace) + patch dots.
+  const agentId = state._projectDetailAgent || 'main';
+  const projectName = state._projectDetailName || '';
+  API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/web-url-states`)
+    .then(d => { state._ptUrlStates = d.states || {}; repaintProjectTreeDots(); })
+    .catch(() => {});
 }
 
 function _ptSetCount(type, n) {
@@ -249,7 +271,7 @@ function _ptRenderFolderTree(nodes) {
       return `<div class="pt-branch pt-realdir">
         <div class="pt-row pt-realrow" onclick="ptToggleRealDir(this)">
           ${_ptCaret(false)}
-          <span class="pt-icon">📁</span>
+          <span class="pt-icon">${_PT_ICON.folders}</span>
           <span class="pt-label">${esc(n.name)}</span>
         </div>
         <div class="pt-children" style="display:none">${_ptRenderFolderTree(n.children || [])}</div>
@@ -257,7 +279,7 @@ function _ptRenderFolderTree(nodes) {
     }
     return `<div class="pt-row pt-realfile" title="${esc(n.path || n.name)}">
       ${_ptDot(n.state || 'pending')}
-      <span class="pt-icon pt-fileicon">📄</span>
+      <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
       <span class="pt-label">${esc(n.name)}</span>
     </div>`;
   }).join('');
@@ -277,10 +299,17 @@ function ptToggleRealDir(rowEl) {
 function repaintProjectTreeDots() {
   document.querySelectorAll('#project-source-tree .pt-item[data-type][data-id]').forEach(row => {
     const type = row.dataset.type, id = row.dataset.id;
-    const kind = type === 'files' ? 'attachment' : type === 'folders' ? 'folder' : 'weburl';
     const dot = row.querySelector('.pt-dot');
     if (!dot) return;
-    const s = _PT_STATE[_ptItemState(kind, id)] || _PT_STATE.pending;
+    let stateName;
+    if (type === 'urls') {
+      // Web URLs: derived per-URL state (no per-URL sync item) from /web-url-states.
+      stateName = (state._ptUrlStates || {})[id] || 'pending';
+    } else {
+      const kind = type === 'files' ? 'attachment' : 'folder';
+      stateName = _ptItemState(kind, id);
+    }
+    const s = _PT_STATE[stateName] || _PT_STATE.pending;
     dot.setAttribute('data-state', s.cls);
     dot.setAttribute('title', s.label);
   });

@@ -1213,6 +1213,30 @@ class ProjectsHandlerMixin:
         self._send_json({"path": real, "tree": _walk(real),
                          "has_index": bool(indexed)})
 
+    def _handle_project_web_url_states(self, path: str):
+        """GET …/projects/{name}/web-url-states → {url: 'indexed'|'pending'} per
+        configured web URL. Web URLs are mined as a BATCH (one sync-status item),
+        so there's no per-URL state — derive it from each URL's
+        web-urls/<slug>.md companion being indexed in MemPalace (same wing match
+        as folder files). Lets the source tree show an accurate per-URL dot
+        instead of a blanket 'Ausstehend'."""
+        import server_daemons
+        from server_lib.db import _project_wing
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        try:
+            palace_path = (engine._load_mempalace_config() or {}).get("palace_path", "")
+        except Exception:
+            palace_path = ""
+        wing = _project_wing(project.get("id") or "")
+        indexed = engine.indexed_source_files_for_wing(palace_path, wing) if palace_path else set()
+        pdir = project.get("dir") or ""
+        states = server_daemons.weburl_states(pdir, project.get("web_urls") or [], indexed)
+        self._send_json({"states": states})
+
     def _handle_agent_ingested_delete(self, path: str):
         """DELETE /v1/agents/{id}/ingested/{hash}"""
         agent_id = self._parse_agent_from_path(path)

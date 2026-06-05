@@ -1100,6 +1100,63 @@ def _conditional_fetch(url, etag, last_modified, timeout):
         return "error", f"{type(e).__name__}: {e}"
 
 
+def weburl_base_slug(url: str) -> str:
+    """Stable per-URL slug base used for the `web-urls/<slug>_<ts>.md` companion
+    filenames. MUST stay byte-identical between the sync writer and any reader
+    (e.g. the per-URL state endpoint) or the companion lookup misses."""
+    from urllib.parse import urlparse as _up
+    try:
+        p = _up(url)
+        base = (p.netloc + p.path).strip("/")
+    except Exception:
+        base = url
+    s = re.sub(r"[^A-Za-z0-9]+", "-", base).strip("-").lower()
+    return s[:60] or "url"
+
+
+def weburl_slug(url: str, slug_counts: dict) -> str:
+    """Final slug for a URL: the clean base, OR base + 8-hex hash when the base
+    collides with another configured URL (slug_counts[base] > 1)."""
+    b = weburl_base_slug(url)
+    if slug_counts.get(b, 0) > 1:
+        return f"{b}-{hashlib.sha256(url.encode('utf-8')).hexdigest()[:8]}"
+    return b
+
+
+def weburl_states(pdir: str, web_urls, indexed_source_files) -> dict:
+    """url → 'indexed' | 'pending'. A URL is 'indexed' iff its
+    `web-urls/<slug>_*.md` companion exists on disk AND that companion's path is
+    in the MemPalace indexed set (drawer source_files). Used by the source-tree
+    endpoint for per-URL state dots (web URLs are mined as a batch, so there's
+    no per-URL sync-status item — we derive it from the companions instead)."""
+    folder = os.path.join(pdir, "web-urls")
+    urls = [(u.get("url") or "").strip() for u in (web_urls or [])
+            if isinstance(u, dict) and (u.get("url") or "").strip()]
+    counts = {}
+    for u in urls:
+        b = weburl_base_slug(u)
+        counts[b] = counts.get(b, 0) + 1
+    # Map slug → its newest companion .md path on disk.
+    on_disk = {}
+    try:
+        for fn in os.listdir(folder):
+            if fn.endswith(".md") and "_" in fn:
+                slug = fn.rsplit("_", 1)[0]
+                fp = os.path.join(folder, fn)
+                # keep newest (lexical max of the timestamp suffix works here)
+                if slug not in on_disk or fn > os.path.basename(on_disk[slug]):
+                    on_disk[slug] = fp
+    except OSError:
+        pass
+    idx = indexed_source_files or set()
+    out = {}
+    for u in urls:
+        slug = weburl_slug(u, counts)
+        comp = on_disk.get(slug)
+        out[u] = "indexed" if (comp and os.path.realpath(comp) in idx) else "pending"
+    return out
+
+
 def _sync_project_web_urls(pdir, web_urls):
     """Fetch the project's configured web URLs into a `web-urls/` subfolder as
     hash-gated `.md` companion files, so the existing project-sync mine + KG
@@ -1136,16 +1193,7 @@ def _sync_project_web_urls(pdir, web_urls):
     # configured URLs would otherwise slugify to the same name (http vs
     # https, trailing slash, long paths sharing a 60-char prefix) — so the
     # common case stays readable and collisions still never overwrite.
-    def _base_slug(_u):
-        from urllib.parse import urlparse as _up
-        try:
-            p = _up(_u)
-            base = (p.netloc + p.path).strip("/")
-        except Exception:
-            base = _u
-        s = re.sub(r"[^A-Za-z0-9]+", "-", base).strip("-").lower()
-        return s[:60] or "url"
-
+    _base_slug = weburl_base_slug
     # Which base slugs collide across the configured URL set → those need the
     # disambiguating hash; everyone else gets the clean slug.
     _all_urls = [(u.get("url") or "").strip() for u in (web_urls or [])
@@ -1156,10 +1204,7 @@ def _sync_project_web_urls(pdir, web_urls):
         _slug_counts[_b] = _slug_counts.get(_b, 0) + 1
 
     def _url_slug(_u):
-        b = _base_slug(_u)
-        if _slug_counts.get(b, 0) > 1:
-            return f"{b}-{_hl.sha256(_u.encode('utf-8')).hexdigest()[:8]}"
-        return b
+        return weburl_slug(_u, _slug_counts)
 
     # Recognise a web-url companion (current slug scheme OR legacy weburl-<hash>).
     def _is_weburl_md(fn):

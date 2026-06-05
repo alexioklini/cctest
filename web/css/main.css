@@ -3372,12 +3372,14 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   transition: transform 0.12s;
 }
 .pt-caret.open { transform: rotate(90deg); }
-.pt-icon { flex-shrink: 0; font-size: 13px; line-height: 1; }
+.pt-icon { flex-shrink: 0; display: inline-flex; align-items: center; color: var(--text-400); }
+.pt-svgicon { display: block; }
+.pt-typerow .pt-icon { color: var(--text-300); }
 .pt-label {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--text-100); font-weight: 400;
+  color: var(--sidebar-text); font-weight: 400;
 }
-.pt-typerow .pt-label { color: var(--text-000); }
+.pt-typerow .pt-label { color: var(--sidebar-text); }
 .pt-count { color: var(--text-400); font-size: 11px; font-weight: 400; flex-shrink: 0; }
 
 .pt-actions {
