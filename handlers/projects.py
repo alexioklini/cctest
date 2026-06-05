@@ -1218,10 +1218,23 @@ class ProjectsHandlerMixin:
         project = self._project_access_check(agent_id, proj_name)
         if project is None:
             return
-        rows = ChatDB.list_project_outputs(project.get("id") or "")
+        pid = project.get("id") or ""
+        rows = ChatDB.list_project_outputs(pid)
+        # Also surface output-role artifacts written by this project's CHAT
+        # sessions (live join, read-only) so Studio is the one home for project
+        # outputs — generated deliverables AND chat-produced files. Intermediates
+        # (.py/.csv/.log) are excluded by the role filter; the global Artifacts
+        # view still shows everything.
+        chat_arts = ChatDB.list_project_output_artifacts(pid)
         self._send_json({
             "agent": agent_id, "project": proj_name,
             "outputs": [self._output_to_dict(r) for r in rows],
+            "chat_artifacts": [{
+                "artifact_id": a.get("id"), "session_id": a.get("session_id"),
+                "name": a.get("name"), "type": a.get("type"),
+                "latest_version": a.get("latest_version"),
+                "created_at": a.get("created_at"), "updated_at": a.get("updated_at"),
+            } for a in chat_arts],
         })
 
     def _handle_project_output_get(self, path: str):
@@ -1304,6 +1317,62 @@ class ProjectsHandlerMixin:
                 pass
         ChatDB.delete_project_output(output_id)
         self._send_json({"output_id": output_id, "status": "deleted"})
+
+    def _resolve_project_chat_artifact(self, path, *, require_manage, art_id_index):
+        """Shared guard for the Studio chat-artifact actions: resolve the project
+        (with access check) + the artifact, and verify the artifact's session
+        actually belongs to THIS project (no cross-project reach). Returns
+        (project, artifact_dict) or None (after sending the error)."""
+        from server_lib.db import ChatDB
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        art_id = path.rstrip("/").split("/")[art_id_index]
+        project = self._project_access_check(agent_id, proj_name, require_manage=require_manage)
+        if project is None:
+            return None
+        art = ChatDB.get_artifact(art_id)
+        if not art:
+            self._send_json({"error": "Artifact not found"}, 404)
+            return None
+        sess = ChatDB.get_session_info(art.get("session_id") or "")
+        if not sess or (sess.get("project_id") or "") != (project.get("id") or ""):
+            self._send_json({"error": "Artifact not in this project"}, 404)
+            return None
+        return project, art
+
+    def _handle_project_artifact_archive(self, path: str):
+        """POST .../projects/{name}/artifacts/{artifact_id}/archive {archived?}
+        — archive/unarchive a project chat artifact from Studio. Non-destructive:
+        the file + row survive and stay in the global Artifacts view."""
+        from server_lib.db import ChatDB
+        resolved = self._resolve_project_chat_artifact(path, require_manage=True, art_id_index=-2)
+        if resolved is None:
+            return
+        _project, art = resolved
+        body = self._read_json() or {}
+        archived = bool(body.get("archived", True))   # default = archive
+        ChatDB.set_artifact_archived(art.get("id"), archived)
+        self._send_json({"artifact_id": art.get("id"),
+                         "archived": archived, "status": "ok"})
+
+    def _handle_project_artifact_delete(self, path: str):
+        """DELETE .../projects/{name}/artifacts/{artifact_id} — delete a project
+        chat artifact from Studio: removes the artifact + version rows AND the
+        file on disk (best-effort). Row delete is the source of truth."""
+        import os
+        from server_lib.db import ChatDB
+        resolved = self._resolve_project_chat_artifact(path, require_manage=True, art_id_index=-1)
+        if resolved is None:
+            return
+        _project, art = resolved
+        fpath = art.get("path") or ""
+        ChatDB.delete_artifact_rows(art.get("id"))
+        if fpath and os.path.isfile(fpath):
+            try:
+                os.remove(fpath)
+            except OSError:
+                pass
+        self._send_json({"artifact_id": art.get("id"), "status": "deleted"})
 
     # ── Research (Fast + Deep) ──────────────────────────────────────────────
 

@@ -439,6 +439,13 @@ class ChatDB:
                 conn.execute("ALTER TABLE artifacts ADD COLUMN visibility_override TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Archive flag (migration): 1 = hidden from the Studio project-output
+            # list. Orthogonal to visibility_override (sharing) — the file + row
+            # survive and remain in the global Artifacts view. Studio-only knob.
+            try:
+                conn.execute("ALTER TABLE artifacts ADD COLUMN archived INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session_user ON sessions(user_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_user ON artifacts(user_id)")
             # Add save_to_memory flag (migration)
@@ -831,6 +838,50 @@ class ChatDB:
                 d["message_idx"] = d["versions"][0]["message_idx"] if d["versions"] else None
                 results.append(d)
             return results
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_project_output_artifacts(project_id):
+        """Output-role artifacts written by a project's CHAT sessions, newest
+        first — surfaced in Studio alongside generated deliverables. Live join
+        artifacts→sessions on sessions.project_id (no denormalised column). Only
+        role='output' (deliverable-like: .md/.html/.pdf/images; intermediates
+        like .py/.csv/.log are excluded). Synthetic 'output-*' sessions (Studio's
+        OWN generated outputs, already listed via project_outputs) are excluded
+        so they don't double-list. Light columns — no content."""
+        if not project_id:
+            return []
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT a.id, a.session_id, a.agent_id, a.name, a.path, a.type,
+                       a.role, a.created_at, s.project AS project_name,
+                       COALESCE(v.latest_version, 0) AS latest_version,
+                       COALESCE(v.last_modified, a.created_at) AS updated_at
+                FROM artifacts a
+                JOIN sessions s ON a.session_id = s.id
+                LEFT JOIN (SELECT artifact_id, MAX(version) AS latest_version,
+                                  MAX(created_at) AS last_modified
+                           FROM artifact_versions GROUP BY artifact_id) v
+                  ON a.id = v.artifact_id
+                WHERE s.project_id = ?
+                  AND a.role = 'output'
+                  AND a.session_id NOT LIKE 'output-%'
+                  AND COALESCE(a.archived, 0) = 0
+                ORDER BY updated_at DESC
+            """, (project_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def set_artifact_archived(artifact_id, archived):
+        """Archive/unarchive an artifact (Studio). Orthogonal to sharing
+        (visibility_override) — archive only hides it from the Studio list; the
+        file + row survive and stay in the global Artifacts view."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE artifacts SET archived = ? WHERE id = ?",
+                         (1 if archived else 0, artifact_id))
+            conn.commit()
 
     @staticmethod
     @_db_safe(default=None)
