@@ -3299,6 +3299,40 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   border-radius: 4px;
 }
 .project-panel-section-action:hover { background: var(--bg-300); }
+/* Icon buttons for the Speicher & Abgleich section — square, tooltip on hover.
+   Real <button>s so :disabled greying works (the KG action greys when empty). */
+.project-mem-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--border-200);
+  background: var(--bg-200);
+  color: var(--text-200);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.05s;
+}
+.project-mem-iconbtn:hover:not(:disabled) {
+  background: var(--bg-300);
+  border-color: var(--border-300);
+  color: var(--text-100);
+}
+.project-mem-iconbtn:active:not(:disabled) { transform: scale(0.94); }
+.project-mem-iconbtn:disabled { opacity: 0.45; cursor: default; }
+.project-mem-iconbtn.primary {
+  background: var(--accent-brand);
+  border-color: var(--accent-brand);
+  color: #fff;
+}
+.project-mem-iconbtn.primary:hover:not(:disabled) { filter: brightness(1.08); color: #fff; }
+.project-mem-iconbtn.danger { color: var(--red, #d33); }
+.project-mem-iconbtn.danger:hover:not(:disabled) {
+  background: var(--red, #d33);
+  border-color: var(--red, #d33);
+  color: #fff;
+}
 .project-panel-section-body {
   font-size: 13px;
   color: var(--text-300);
@@ -3469,38 +3503,6 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
    * surface is cursor:default. Real actions live on the buttons next to it. */
   cursor: default;
 }
-/* Row that hosts the Memory chip + the project actions buttons. */
-.project-detail-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 6px;
-}
-.project-detail-action-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 500;
-  background: var(--bg-200);
-  border: 1px solid var(--border-200);
-  color: var(--text-200);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.project-detail-action-btn:hover {
-  background: var(--bg-300);
-  border-color: var(--border-300);
-  color: var(--text-100);
-}
-.project-detail-action-btn[disabled] {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.project-detail-action-btn svg { flex-shrink: 0; }
 .project-sync-text {
   display: flex;
   flex-direction: column;

@@ -375,34 +375,6 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           </button>
         </div>
         <div class="project-detail-desc" id="project-detail-desc"></div>
-        <div class="project-detail-actions">
-          <div id="project-sync-chip" class="project-sync-chip" style="display:none">
-            <span class="project-sync-dot" id="project-sync-dot"></span>
-            <span class="project-sync-text">
-              <span id="project-sync-label">Speicher: inaktiv</span>
-              <span id="project-sync-sublabel" class="project-sync-sublabel"></span>
-            </span>
-          </div>
-          <button class="project-detail-action-btn" id="project-action-sync" onclick="projectSyncNow()" title="Speicherabgleich jetzt ausführen">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-            Jetzt abgleichen
-          </button>
-          <!-- Admin-only — refreshProjectSyncStatus reveals it for admins on
-               every project open. Hidden by default to prevent a flash for
-               non-admins between view-mount and first refresh. -->
-          <button class="project-detail-action-btn" id="project-action-full-resync" onclick="projectFullResync()" title="Gesamten Speicher löschen und von Grund auf neu abgleichen" style="display:none;color:var(--red,#d33)">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
-            Vollständiger Neuabgleich
-          </button>
-          <button class="project-detail-action-btn" id="project-action-kg" onclick="projectOpenKnowledgeGraph()" title="Knowledge Graph aufschlüsseln" style="display:none">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="7.7" y1="7.5" x2="10.3" y2="16.5"/><line x1="16.3" y1="7.5" x2="13.7" y2="16.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/></svg>
-            Knowledge graph
-          </button>
-          <button class="project-detail-action-btn" id="project-action-sync-history" onclick="projectSyncHistory()" title="Verlauf der Abgleich-Läufe anzeigen" style="display:none">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            Verlauf
-          </button>
-        </div>
       </div>
 
       <!-- Sync history modal -->
@@ -575,10 +547,6 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <div id="project-panel-input-folders">
           <span class="project-panel-placeholder">Noch keine Ordner verknüpft.</span>
         </div>
-        <button class="project-upload-btn" onclick="projectSyncNow()" style="margin-top:6px">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          Jetzt abgleichen
-        </button>
       </div>
       <div class="project-panel-section">
         <div class="project-panel-section-header">
@@ -592,6 +560,39 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         </div>
         <div id="project-panel-web-urls">
           <span class="project-panel-placeholder">Noch keine Web-Adressen hinterlegt.</span>
+        </div>
+      </div>
+      <div class="project-panel-section">
+        <div class="project-panel-section-header">
+          <span class="project-panel-section-title">Speicher &amp; Abgleich</span>
+        </div>
+        <div class="project-panel-help">
+          Deine Quellen werden ins Projektgedächtnis eingelesen und durchsuchbar
+          gemacht. Der Abgleich läuft automatisch im Hintergrund – hier siehst du
+          den Status und kannst ihn bei Bedarf sofort anstoßen.
+        </div>
+        <div id="project-sync-chip" class="project-sync-chip" style="display:none;margin:8px 0">
+          <span class="project-sync-dot" id="project-sync-dot"></span>
+          <span class="project-sync-text">
+            <span id="project-sync-label">Speicher: inaktiv</span>
+            <span id="project-sync-sublabel" class="project-sync-sublabel"></span>
+          </span>
+        </div>
+        <!-- Memory actions — icon buttons (tooltips on hover). The primary sync
+             stays slightly emphasised; admin actions reveal for admins. -->
+        <div class="project-mem-actions" style="display:flex;gap:8px;margin-top:8px;align-items:center">
+          <button class="project-mem-iconbtn primary" id="project-action-sync" onclick="projectSyncNow()" title="Jetzt abgleichen" aria-label="Jetzt abgleichen">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+          <button class="project-mem-iconbtn" id="project-action-kg" onclick="projectOpenKnowledgeGraph()" title="Knowledge Graph aufschlüsseln" aria-label="Knowledge Graph" style="display:none">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="7.7" y1="7.5" x2="10.3" y2="16.5"/><line x1="16.3" y1="7.5" x2="13.7" y2="16.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/></svg>
+          </button>
+          <button class="project-mem-iconbtn" id="project-action-sync-history" onclick="projectSyncHistory()" title="Verlauf der Abgleich-Läufe anzeigen" aria-label="Verlauf" style="display:none">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </button>
+          <button class="project-mem-iconbtn danger" id="project-action-full-resync" onclick="projectFullResync()" title="Vollständiger Neuabgleich — Speicher löschen und neu aufbauen" aria-label="Vollständiger Neuabgleich" style="display:none">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
+          </button>
         </div>
       </div>
     </div>
