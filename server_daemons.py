@@ -1456,9 +1456,15 @@ def _project_sync_loop(srv):
                 triples_cumulative = int(cum_stats.get("triples", 0))
             except Exception:
                 pass
+            # kg_state reflects whether the PASS itself failed, NOT whether it
+            # found triples. Per-chunk parse errors (res.errors) on content with
+            # no extractable relations — e.g. news articles under the normative
+            # (policy) profile — are normal noise, not a failure; flagging them
+            # as 'error' lit a false red bullet that never cleared on all-skip
+            # re-runs. Only the exception path below (the pass crashed) is a real
+            # item error. A completed pass = idle, even with 0 triples.
             item_set_fn(item_kind, item_id,
-                kg_state=("error" if res.errors and not res.triples_extracted
-                          else "idle"),
+                kg_state="idle",
                 triples_extracted=triples_cumulative,
                 triples_last_cycle=int(res.triples_extracted),
                 kg_drawers_processed=int(res.drawers_processed),

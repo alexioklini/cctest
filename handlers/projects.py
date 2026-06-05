@@ -210,6 +210,15 @@ class ProjectsHandlerMixin:
         if "error" in result:
             self._send_json(result, 400)
         else:
+            # Auto-kick a sync when the SOURCE set changed (web_urls / input
+            # folders are mined into the project wing+KG). Without this, newly
+            # added URLs/folders waited up to the 6h scheduled cycle — the user
+            # added sources from Research and saw nothing happen.
+            if "web_urls" in body or "input_folders" in body:
+                try:
+                    _srv()._project_sync_request(agent_id, proj_name)
+                except Exception:
+                    pass
             self._send_json(result)
 
     def _handle_project_image_upload(self, path: str):

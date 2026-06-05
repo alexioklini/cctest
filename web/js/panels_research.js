@@ -194,6 +194,7 @@ async function researchImportSelected() {
   try {
     await API.updateProject(state._researchAgent, state._researchProject, { web_urls: merged });
     if (state._projectDetail) state._projectDetail.web_urls = merged;
+    if (typeof renderProjectWebUrls === 'function') renderProjectWebUrls(merged);  // refresh right panel without reload
     showToast(`${toAdd.length} Quellen importiert — werden jetzt ins Gedächtnis gemined`);
     const out = document.getElementById('research-result');
     if (out) out.innerHTML = `
@@ -397,7 +398,8 @@ async function researchImportProposed() {
   try {
     await API.updateProject(state._researchAgent, state._researchProject, { web_urls: merged });
     if (state._projectDetail) state._projectDetail.web_urls = merged;
-    showToast(`${toAdd.length} Quellen importiert — werden gemined`);
+    if (typeof renderProjectWebUrls === 'function') renderProjectWebUrls(merged);  // refresh right panel without reload
+    showToast(`${toAdd.length} Quellen importiert — werden jetzt gemined`);
     setProjectChatsFilter('active');
   } catch (e) {
     showToast('Import fehlgeschlagen: ' + (e.message || e), true);

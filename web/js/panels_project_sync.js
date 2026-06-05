@@ -455,9 +455,16 @@ async function refreshProjectSyncStatus(agentId, projectName) {
         kgBtn.style.display = '';
         const hasRelations = (st.total_triples || 0) > 0;
         kgBtn.disabled = !hasRelations;
+        // Distinguish "never synced" from "synced but this content has no
+        // extractable relations" — the latter is normal (e.g. news articles
+        // under the policy-oriented profile yield 0 triples), NOT a problem to
+        // fix by re-syncing, so don't tell the user to sync again.
+        const everSynced = !!(st.last_run_finished || st.total_files);
         kgBtn.title = hasRelations
           ? `Knowledge-Graph-Detailansicht öffnen (${st.total_triples} Beziehungen)`
-          : 'Noch keine Beziehungen extrahiert — dieses Projekt zuerst abgleichen';
+          : (everSynced
+              ? 'Aus den Quellen dieses Projekts wurden keine Beziehungen extrahiert (z. B. bei Nachrichten-/Fließtext-Inhalten normal).'
+              : 'Noch keine Beziehungen extrahiert — dieses Projekt zuerst abgleichen.');
       }
     }
     const syncBtn = document.getElementById('project-action-sync');
