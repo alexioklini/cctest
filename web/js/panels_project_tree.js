@@ -125,7 +125,7 @@ function _ptInstructionsNode(p) {
 // One groupable type branch (files / folders / urls). The virtual-folder groups
 // (C3) render INSIDE #pt-items-<type>; C2 just lists the flat items.
 function _ptTypeNode(type, label, p) {
-  const open = _ptIsExpanded(type, true);
+  const open = _ptIsExpanded(type, false);   // default collapsed; localStorage remembers per-project
   const icon = type === 'files' ? _PT_ICON.files : type === 'folders' ? _PT_ICON.folders : _PT_ICON.urls;
   const addAction = type === 'files'
     ? `<label class="pt-act" title="Dateien hinzufügen" onclick="event.stopPropagation()">＋<input type="file" multiple style="display:none" onchange="uploadProjectFiles(this.files)"></label>`
