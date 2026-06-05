@@ -392,6 +392,15 @@ The marquee feature (`engine/deep_research.py`). Two modes on the project's
   rank/select the fetched candidates, (3) grounded cited synthesis. Plain code does
   search (searxng/exa, merged+deduped), `web_fetch` of top candidates within the
   FETCH budget, dedup, and budget accounting.
+- **Concurrent I/O**: the per-sub-question searches AND the candidate fetches each
+  fan out over a BOUNDED `ThreadPoolExecutor` (the loop itself stays deterministic —
+  this is plain-code parallelism, NOT model-driven fan-out / delegation). Worker
+  threads run inside `contextvars.copy_context().copy().run(...)` so the request
+  scope propagates (fresh pool threads start empty). Dedup/merge + `fetched`/
+  `fetches_used` are mutated ONLY in the parent as futures complete (no lock). Caps:
+  `config.json → research.{fetch_workers,search_workers}` (default 4 each, clamped
+  1–16). The FETCH cap is the main protection for the crawl4ai render service (an
+  uncapped `ThreadingHTTPServer`) — keep it modest on a single box, raise on Spark.
 - **Grounding**: synthesis prepends `render_research_mode_disciplines()` (REFUSAL/
   PRECISION/CITATION) so the report cites verbatim `[Quelle: …]` and omits rather
   than invents. Saved via `output_gen.save_report_output(kind=research_report)` —

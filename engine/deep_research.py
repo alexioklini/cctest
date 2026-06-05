@@ -13,6 +13,8 @@
 # never silent). All LLM calls route through gdpr_pick_model_for_background (E5).
 # Cooperative cancel via the research_runs.cancel flag (E3).
 
+import concurrent.futures
+import contextvars
 import json
 import re
 import threading
@@ -29,6 +31,24 @@ _MAX_SUBQUERIES = 8
 _RESULTS_PER_QUERY = 8
 _FETCH_MAX_LEN = 12000          # per-source markdown cap fed to synthesis
 _MIN_USABLE_CONTENT = 200       # chars; below this a fetch is treated as failed
+
+# I/O concurrency for the search + fetch phases. The fetch cap is the main
+# protection for the crawl4ai render service (an uncapped ThreadingHTTPServer) —
+# keep it modest on a single Mac box; raise on the Spark move. Searches hit the
+# one search backend, so a low cap respects its rate limits. config.json →
+# research.{fetch_workers,search_workers} overrides these; see _io_workers().
+_DEFAULT_FETCH_WORKERS = 4
+_DEFAULT_SEARCH_WORKERS = 4
+
+
+def _io_workers(key: str, default: int) -> int:
+    """Read research.<key> from server config, clamped to [1, 16]. Falls back to
+    the default on any missing/garbage value (never lets config widen past 16)."""
+    try:
+        v = int((_brain._server_config().get("research") or {}).get(key, default))
+    except (TypeError, ValueError, AttributeError):
+        return default
+    return max(1, min(16, v))
 
 _LOW_TRUST = ("reddit.com", "quora.com", "medium.com", "facebook.com",
               "twitter.com", "x.com", "pinterest.com")
@@ -231,16 +251,30 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
         subqueries = _decompose(topic, model, project_name, agent_id, user_id)
         _progress("searching", subqueries=len(subqueries), candidates=0)
 
-        # 2. Search (bounded by rounds = number of sub-queries, capped)
+        # 2. Search — fan out the sub-queries concurrently (bounded by rounds =
+        #    number of sub-queries, capped). The per-query searches run in a
+        #    thread pool; dedup/merge into `candidates` happens single-threaded
+        #    in this parent thread as each result lands, so the dict + the
+        #    existing-URL exclusion stay race-free without a lock. contextvars
+        #    propagate via copy_context().run (fresh pool threads start empty).
+        if _cancelled():
+            return ChatDB.update_research_run(run_id, status="cancelled")
+        queries = subqueries[:budget.get("rounds", 8)]
         candidates = {}  # norm_url → {title, link, snippet, score}
-        for q in subqueries[:budget.get("rounds", 8)]:
-            if _cancelled():
-                return ChatDB.update_research_run(run_id, status="cancelled")
-            for r in _run_search(q):
-                key = _norm_url(r["link"])
-                if key and key not in candidates and key not in existing_norm_urls:
-                    candidates[key] = r
-            _progress("searching", subqueries=len(subqueries), candidates=len(candidates))
+        parent_ctx = contextvars.copy_context()
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=_io_workers("search_workers", _DEFAULT_SEARCH_WORKERS)) as ex:
+            futs = {ex.submit(parent_ctx.copy().run, _run_search, q): q for q in queries}
+            for fut in concurrent.futures.as_completed(futs):
+                try:
+                    results = fut.result()
+                except Exception:
+                    results = []
+                for r in results:
+                    key = _norm_url(r["link"])
+                    if key and key not in candidates and key not in existing_norm_urls:
+                        candidates[key] = r
+                _progress("searching", subqueries=len(subqueries), candidates=len(candidates))
         cand_list = sorted(candidates.values(), key=lambda x: x.get("score", 0), reverse=True)
 
         if not cand_list:
@@ -250,24 +284,42 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
                 coverage_note="No new sources found for this topic. Try broadening it or use Fast Research.")
             return
 
-        # 3. Fetch + read top candidates within the fetch budget
+        # 3. Fetch + read top candidates within the fetch budget — fan out over
+        #    a BOUNDED pool (the cap is the main protection for the crawl4ai
+        #    render service, an uncapped ThreadingHTTPServer). Each worker runs
+        #    tool_web_fetch inside the parent's copied contextvars context (fresh
+        #    pool threads start empty — tool_web_fetch reads request scope), and
+        #    one fetch = one candidate. fetches_used + the `fetched` list are
+        #    mutated ONLY here in the parent as futures complete, so no lock.
+        if _cancelled():
+            return ChatDB.update_research_run(run_id, status="cancelled")
         fetch_cap = min(len(cand_list), int(budget.get("fetches", 60)))
         fetched = []
-        for c in cand_list[:fetch_cap]:
-            if _cancelled():
-                return ChatDB.update_research_run(run_id, status="cancelled")
-            try:
-                raw = _brain.tool_web_fetch({"url": c["link"], "max_length": _FETCH_MAX_LEN})
+        parent_ctx = contextvars.copy_context()
+
+        def _fetch_one(c):
+            raw = _brain.tool_web_fetch({"url": c["link"], "max_length": _FETCH_MAX_LEN})
+            fr = json.loads(raw)
+            content = (fr.get("content") or "").strip()
+            if not fr.get("error") and len(content) >= _MIN_USABLE_CONTENT:
+                return {"title": c["title"] or c["link"], "link": c["link"],
+                        "snippet": c.get("snippet", ""), "content": content}
+            return None
+
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=_io_workers("fetch_workers", _DEFAULT_FETCH_WORKERS)) as ex:
+            futs = {ex.submit(parent_ctx.copy().run, _fetch_one, c): c
+                    for c in cand_list[:fetch_cap]}
+            for fut in concurrent.futures.as_completed(futs):
                 fetches_used += 1
-                fr = json.loads(raw)
-                content = (fr.get("content") or "").strip()
-                if not fr.get("error") and len(content) >= _MIN_USABLE_CONTENT:
-                    fetched.append({"title": c["title"] or c["link"], "link": c["link"],
-                                    "snippet": c.get("snippet", ""), "content": content})
-            except Exception:
-                pass
-            _progress("reading", subqueries=len(subqueries),
-                      candidates=len(cand_list), fetched=fetches_used, kept=len(fetched))
+                try:
+                    item = fut.result()
+                except Exception:
+                    item = None
+                if item:
+                    fetched.append(item)
+                _progress("reading", subqueries=len(subqueries),
+                          candidates=len(cand_list), fetched=fetches_used, kept=len(fetched))
 
         if not fetched:
             ChatDB.update_research_run(
