@@ -1301,6 +1301,19 @@ class ProjectsHandlerMixin:
         ChatDB.update_project_output(output_id, title=title[:300])
         self._send_json({"output_id": output_id, "title": title[:300]})
 
+    def _handle_project_output_archive(self, path: str):
+        """POST .../outputs/{output_id}/archive {archived?} — archive/unarchive a
+        generated output. Non-destructive: row + .md file survive, just hidden
+        from the Studio list. Default action = archive."""
+        from server_lib.db import ChatDB
+        resolved = self._resolve_owned_output(path, output_id_index=-2)  # …/<oid>/archive
+        if resolved is None:
+            return
+        output_id, _row = resolved
+        archived = bool((self._read_json() or {}).get("archived", True))
+        ChatDB.set_project_output_archived(output_id, archived)
+        self._send_json({"output_id": output_id, "archived": archived, "status": "ok"})
+
     def _handle_project_output_delete(self, path: str):
         """DELETE /v1/agents/{id}/projects/{name}/outputs/{output_id} — delete the
         row, its artifact rows, AND the .md file on disk (no orphans). Studio W6.

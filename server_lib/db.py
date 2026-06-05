@@ -748,6 +748,13 @@ class ChatDB:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_project_outputs_project "
                 "ON project_outputs(project_id, created_at)")
+            # Archive flag (migration): 1 = hidden from the Studio list; row +
+            # file survive. Mirrors the artifacts.archived knob so generated
+            # deliverables and chat artifacts archive the same way.
+            try:
+                conn.execute("ALTER TABLE project_outputs ADD COLUMN archived INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             # Crash reconcile: any output still 'generating' at boot lost its
             # thread on the previous shutdown — mark it errored so the UI never
             # shows a zombie generating forever (mirrors background_tasks).
@@ -982,13 +989,24 @@ class ChatDB:
     @staticmethod
     @_db_safe(default=list)
     def list_project_outputs(project_id):
-        """All outputs for a project, newest first."""
+        """Non-archived outputs for a project, newest first."""
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT * FROM project_outputs WHERE project_id = ? ORDER BY created_at DESC",
+                "SELECT * FROM project_outputs WHERE project_id = ? "
+                "AND COALESCE(archived, 0) = 0 ORDER BY created_at DESC",
                 (project_id,)).fetchall()
             return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def set_project_output_archived(output_id, archived):
+        """Archive/unarchive a generated output (Studio). Non-destructive — the
+        row + file survive; just hidden from the list. Mirrors set_artifact_archived."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE project_outputs SET archived = ? WHERE id = ?",
+                         (1 if archived else 0, output_id))
+            conn.commit()
 
     @staticmethod
     @_db_safe(default=None)

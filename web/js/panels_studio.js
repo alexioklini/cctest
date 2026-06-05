@@ -258,13 +258,23 @@ function studioOutputCardHtml(o) {
     actions = '';
   } else if (o.status === 'error') {
     statusLine = `<span style="color:var(--error)" title="${esc(o.error || '')}">⚠ Fehler</span>`;
-    actions = `<button class="studio-act" onclick="studioDeleteOutput('${esc(o.output_id)}')" style="background:none;border:none;color:var(--text-400);cursor:pointer;font-size:12px;padding:2px 4px">Entfernen</button>`;
+    actions = `<button class="studio-act" onclick="studioDeleteOutput('${esc(o.output_id)}')"
+                style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px">🗑 Löschen</button>`;
   } else {
+    const oid = esc(o.output_id);
     const cites = (o.citations || 0) + ' Zitate';
     statusLine = `<span style="color:var(--text-400)">${cites} · ${esc(when)}</span>`;
+    // Visible actions matching the chat-artifact cards (Öffnen/Archivieren/
+    // Löschen) + a ⋯ for the secondary actions (Umbenennen/Neu generieren).
     actions = `
-      <button class="studio-act" onclick="studioOpenOutput('${esc(o.output_id)}')" style="background:none;border:none;color:var(--accent-main-200,#6c5ce7);cursor:pointer;font-size:12px;padding:2px 4px">Öffnen</button>
-      <button class="studio-act" onclick="studioOutputMenu(event, '${esc(o.output_id)}')" style="background:none;border:none;color:var(--text-400);cursor:pointer;font-size:12px;padding:2px 4px" title="Weitere Optionen">⋯</button>`;
+      <button class="studio-act" onclick="studioOpenOutput('${oid}')"
+              style="background:var(--accent-brand);border:none;color:#fff;cursor:pointer;font-size:12px;padding:4px 12px;border-radius:6px">Öffnen</button>
+      <button class="studio-act" onclick="studioArchiveOutput('${oid}')"
+              style="background:var(--bg-100);border:1px solid var(--border-200);color:var(--text-200);cursor:pointer;font-size:12px;padding:4px 12px;border-radius:6px">Archivieren</button>
+      <button class="studio-act" onclick="studioDeleteOutput('${oid}')"
+              style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px" title="Löschen">🗑</button>
+      <button class="studio-act" onclick="studioOutputMenu(event, '${oid}')"
+              style="background:none;border:1px solid var(--border-200);color:var(--text-400);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px" title="Weitere Optionen (Umbenennen, Neu generieren)">⋯</button>`;
   }
   return `
     <div class="studio-card" data-oid="${esc(o.output_id)}" style="flex:1 1 220px;min-width:200px;max-width:320px;border:1px solid var(--border-200);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
@@ -353,6 +363,14 @@ async function studioDeleteOutput(outputId) {
     showToast('Ausgabe gelöscht');
     refreshStudioOutputs();
   } catch (e) { showToast('Löschen fehlgeschlagen: ' + (e.message || e), true); }
+}
+
+async function studioArchiveOutput(outputId) {
+  try {
+    await API.archiveProjectOutput(state._studioAgent, state._studioProject, outputId, true);
+    showToast('Archiviert');
+    refreshStudioOutputs();
+  } catch (e) { showToast('Archivieren fehlgeschlagen: ' + (e.message || e), true); }
 }
 
 // ─── Poll (live generating→ready, mirrors panels_background.js) ────────────

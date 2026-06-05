@@ -856,6 +856,7 @@
     "STUDIO_KIND_META": "writable",
     "STUDIO_PRESETS": "writable",
     "studioArchiveChatArtifact": "writable",
+    "studioArchiveOutput": "writable",
     "studioChatArtifactCardHtml": "writable",
     "studioDeleteChatArtifact": "writable",
     "studioDeleteOutput": "writable",
