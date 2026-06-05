@@ -996,21 +996,116 @@ def _mempalace_chat_sync_loop(srv):
         time.sleep(max(15, next_interval))
 
 
+# Default: only re-fetch a project web URL every 6h (overridable via config
+# project_sync.web_url_refresh_seconds). Standing reference pages rarely change
+# intra-day, so re-fetching all of a project's URLs every 30-min mining cycle is
+# wasted work — most of all for projects nobody is touching. Combined with the
+# conditional-GET (ETag/Last-Modified) below, a due-but-unchanged URL costs one
+# 304 with no body, and an un-due URL costs nothing at all.
+_WEBURL_DEFAULT_REFRESH_SECONDS = 6 * 3600
+# Hard staleness ceiling: even when a server keeps answering 304 (or sends a
+# sticky/buggy ETag that never changes), force a full body fetch once this much
+# time has passed since the last REAL 200-body fetch. Defends against servers
+# that honor conditional GET incorrectly. Time-based (not cycle-based) so it's
+# stable across interval retunes and missed/slow cycles.
+_WEBURL_DEFAULT_MAX_STALE_SECONDS = 24 * 3600
+_WEBURL_STATE_FILE = ".fetch-state.json"
+
+
+def _weburl_refresh_seconds():
+    try:
+        cfg = (engine._server_config().get("project_sync") or {})
+        v = int(cfg.get("web_url_refresh_seconds", _WEBURL_DEFAULT_REFRESH_SECONDS))
+        return max(0, v)  # 0 ⇒ always re-fetch (old behavior)
+    except (TypeError, ValueError, AttributeError):
+        return _WEBURL_DEFAULT_REFRESH_SECONDS
+
+
+def _weburl_max_stale_seconds():
+    try:
+        cfg = (engine._server_config().get("project_sync") or {})
+        v = int(cfg.get("web_url_max_stale_seconds", _WEBURL_DEFAULT_MAX_STALE_SECONDS))
+        return max(0, v)  # 0 ⇒ never force (trust 304 fully)
+    except (TypeError, ValueError, AttributeError):
+        return _WEBURL_DEFAULT_MAX_STALE_SECONDS
+
+
+def _load_weburl_state(folder):
+    """slug → {etag, last_modified, last_fetch} for conditional GET + refresh
+    gating. Best-effort: a missing/corrupt file just means 'no prior state'."""
+    try:
+        with open(os.path.join(folder, _WEBURL_STATE_FILE), "r", encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_weburl_state(folder, state):
+    try:
+        with open(os.path.join(folder, _WEBURL_STATE_FILE), "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except OSError:
+        pass
+
+
+def _conditional_fetch(url, etag, last_modified, timeout):
+    """A direct conditional GET (Lever B). Returns one of:
+      ("not_modified", None)        — server said 304; reuse the on-disk copy
+      ("ok", {content,url,etag,last_modified}) — fresh body
+      ("error", "<reason>")         — transient failure; keep the prior copy
+
+    Done HERE rather than through tool_web_fetch because that tool returns a
+    content dict (never a 304) and is shared by many callers — we don't want to
+    teach the general fetch tool about conditional GET. JS-rendered pages still
+    work: a 200 here hands the raw HTML to the same markitdown/crawl4ai pass via
+    tool_web_fetch on the NON-304 path below (see caller)."""
+    import urllib.request as _ur
+    import urllib.error as _ue
+    req_headers = {
+        "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
+    }
+    if etag:
+        req_headers["If-None-Match"] = etag
+    if last_modified:
+        req_headers["If-Modified-Since"] = last_modified
+    try:
+        req = _ur.Request(url, headers=req_headers, method="GET")
+        with _ur.urlopen(req, timeout=timeout) as resp:
+            new_etag = resp.headers.get("ETag", "") or ""
+            new_lm = resp.headers.get("Last-Modified", "") or ""
+            return "ok", {"etag": new_etag, "last_modified": new_lm, "status": resp.status}
+    except _ue.HTTPError as e:
+        if e.code == 304:
+            return "not_modified", None
+        return "error", f"HTTP {e.code}"
+    except Exception as e:
+        return "error", f"{type(e).__name__}: {e}"
+
+
 def _sync_project_web_urls(pdir, web_urls):
     """Fetch the project's configured web URLs into a `web-urls/` subfolder as
     hash-gated `.md` companion files, so the existing project-sync mine + KG
     pass treats each URL's content like any other project source file.
 
-    Change detection mirrors the file path: re-fetch every cycle, but only
-    rewrite the `.md` (→ re-mine + re-extract) when the fetched content's hash
-    differs from what's on disk. Files for URLs no longer configured are
-    deleted (the loop's stale-path purge then drops their drawers/triples).
+    Refresh is now COST-GATED two ways (was: re-fetch every cycle):
+      • interval (Lever A) — a URL with an on-disk copy fetched < refresh window
+        ago is skipped entirely this cycle (web_url_refresh_seconds, default 6h);
+      • conditional GET (Lever B) — when a URL IS due, a HEAD-cheap conditional
+        GET (If-None-Match / If-Modified-Since) lets the server answer 304 and we
+        reuse the on-disk copy without downloading the body.
+    Only a real 200-with-changed-content rewrites the `.md` (→ re-mine), exactly
+    as before. Per-URL fetch metadata lives in `web-urls/.fetch-state.json`.
+    Files for URLs no longer configured are deleted (the loop's stale-path purge
+    then drops their drawers/triples).
 
     Returns the absolute path of the `web-urls/` folder (created on demand), or
     "" when there are no URLs configured.
     """
     import hashlib as _hl
     import datetime as _dt
+    import time as _time
     folder = os.path.join(pdir, "web-urls")
     urls = [(u.get("url") or "").strip() for u in (web_urls or []) if isinstance(u, dict)]
     urls = [u for u in urls if u]
@@ -1068,6 +1163,11 @@ def _sync_project_web_urls(pdir, web_urls):
     os.makedirs(folder, exist_ok=True)
     # Slugs we keep this cycle; any other web-url .md is pruned at the end.
     kept_files = set()
+    state = _load_weburl_state(folder)          # slug → {etag, last_modified, last_fetch, last_full_fetch}
+    refresh_s = _weburl_refresh_seconds()
+    max_stale_s = _weburl_max_stale_seconds()
+    now = _time.time()
+    wf_timeout = engine.get_tool_config().get("web_fetch", {}).get("timeout", 30)
     for entry in (web_urls or []):
         if not isinstance(entry, dict):
             continue
@@ -1080,6 +1180,54 @@ def _sync_project_web_urls(pdir, web_urls):
         existing = sorted(
             fn for fn in os.listdir(folder)
             if fn.startswith(slug + "_") and fn.endswith(".md"))
+        st = state.get(slug) or {}
+
+        # Lever A — interval gate. If we have an on-disk copy and it was fetched
+        # within the refresh window, skip this URL entirely this cycle (no
+        # network at all). refresh_s == 0 disables the gate (always re-fetch).
+        if existing and refresh_s and (now - float(st.get("last_fetch", 0))) < refresh_s:
+            kept_files.update(existing)
+            continue
+
+        _has_validator = bool(st.get("etag") or st.get("last_modified"))
+        _full_age = now - float(st.get("last_full_fetch", 0))
+        _ceiling_due = bool(max_stale_s) and _full_age >= max_stale_s
+
+        # No-validator skip — a due URL whose server gave us NO ETag/Last-Modified
+        # on the last full fetch can't be checked cheaply, so don't pay a full
+        # fetch every refresh window for it. Skip until the staleness ceiling
+        # (max_stale, default 24h since the last real body fetch) forces one. The
+        # sites we can't detect change on are thus the ones we refetch LEAST —
+        # accepting up to `max_stale` staleness for them (fine for standing
+        # reference pages, the whole premise of project web URLs). A URL we've
+        # fetched before but have no validator AND no last_full_fetch for is
+        # treated as ceiling-due (so it gets one full fetch to (re)learn).
+        if existing and not _has_validator and not _ceiling_due \
+                and st.get("last_full_fetch"):
+            kept_files.update(existing)
+            continue
+
+        # Hard staleness ceiling — if it's been too long since a REAL body fetch,
+        # skip the 304 path and force a full fetch below (defends against servers
+        # that answer 304 wrongly / send a sticky ETag). last_full_fetch is
+        # bumped ONLY on a 200-body fetch, never on a 304.
+        _force_full = _ceiling_due
+
+        # Lever B — conditional GET. When we DO refresh and have a prior copy +
+        # a validator (ETag / Last-Modified), ask the server first; a 304 lets
+        # us reuse the on-disk copy without downloading or re-mining the body.
+        # Skipped when the staleness ceiling forces a full fetch.
+        if existing and not _force_full and _has_validator:
+            kind, info = _conditional_fetch(url, st.get("etag"), st.get("last_modified"), wf_timeout)
+            if kind == "not_modified":
+                kept_files.update(existing)
+                st["last_fetch"] = now
+                state[slug] = st
+                continue
+            # "ok" → fall through to the full fetch below (we need the body to
+            # markitdown/render + hash); "error" → also fall through, the full
+            # fetch's own error handling keeps the prior copy.
+
         try:
             parsed = json.loads(engine.tool_web_fetch({"url": url, "force_fresh": True}))
         except (ValueError, TypeError):
@@ -1090,6 +1238,14 @@ def _sync_project_web_urls(pdir, web_urls):
                   f"{parsed.get('error', 'unknown')}", flush=True)
             kept_files.update(existing)
             continue
+        # Real 200-body fetch succeeded — record fetch time, the validators
+        # (captured from the SAME fetch, no extra round-trip), and reset the
+        # full-fetch clock that the staleness ceiling measures against.
+        st["last_fetch"] = now
+        st["last_full_fetch"] = now
+        st["etag"] = parsed.get("etag", "") or ""
+        st["last_modified"] = parsed.get("last_modified", "") or ""
+        state[slug] = st
         body = (f"<!-- brain-source: {url} -->\n"
                 f"# {title or parsed.get('url', url)}\n\n"
                 f"Source URL: {parsed.get('url', url)}\n\n{parsed['content']}\n")
@@ -1132,6 +1288,11 @@ def _sync_project_web_urls(pdir, web_urls):
                 os.remove(os.path.join(folder, fn))
             except OSError:
                 pass
+    # Persist fetch state, dropping entries for URLs no longer configured (their
+    # slugs aren't in this cycle's set) so the file doesn't grow unbounded.
+    live_slugs = {_url_slug(u) for u in urls}
+    state = {k: v for k, v in state.items() if k in live_slugs}
+    _save_weburl_state(folder, state)
     return folder
 
 

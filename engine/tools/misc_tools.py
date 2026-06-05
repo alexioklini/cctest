@@ -689,7 +689,12 @@ def tool_web_fetch(args: dict) -> str:
         # later non-Brainy fetch (or a fetch without a recorded hit) of the same
         # URL still gets everything.
         result = {"url": final_url, "status": resp.status, "length": len(text),
-                  "content": text, "fetch_method": fetch_method}
+                  "content": text, "fetch_method": fetch_method,
+                  # Caching validators — additive; ignored by every caller except
+                  # the project web-url sync, which stores them for conditional
+                  # GET (If-None-Match / If-Modified-Since) on the next refresh.
+                  "etag": resp.headers.get("ETag", "") or "",
+                  "last_modified": resp.headers.get("Last-Modified", "") or ""}
         if cache_key:
             _brain._web_cache.put(cache_key, dict(result))
         _repo_path = _github_raw_repo_path(final_url) or _github_raw_repo_path(url)

@@ -274,6 +274,18 @@ source — no stale/old-version noise.
 This is a DIFFERENT mechanism from project `web_urls` (mined into the
 project wing/KG by the project-sync daemon) — do not merge them.
 
+**Project `web_urls` refresh is cost-gated** (not re-fetched every cycle).
+Per-URL state lives in `web-urls/.fetch-state.json`. A URL is (A) SKIPPED with
+no network if its on-disk copy is younger than `project_sync.web_url_refresh_seconds`
+(default 6h); when due, (B) a validator-bearing URL gets a conditional GET
+(`If-None-Match`/`If-Modified-Since`) and a 304 reuses the on-disk copy with no
+body download / no re-mine; (C) a URL whose server gives NO ETag/Last-Modified is
+SKIPPED until `project_sync.web_url_max_stale_seconds` (default 24h) since its last
+real body fetch — that ceiling also forces a full fetch for validator URLs stuck
+answering 304 (sticky/buggy ETag). `last_full_fetch` bumps only on a 200 body, never
+a 304. The content hash-gate is still the final re-mine backstop. refresh=0 ⇒ always
+re-fetch; ceiling=0 ⇒ trust 304 fully.
+
 ## Background tasks (detached, Claude-Desktop-style)
 
 The `run_background_task(title, prompt)` tool spins off a long, output-heavy
