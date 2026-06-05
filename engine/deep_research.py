@@ -304,10 +304,16 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
         queries = subqueries[:budget.get("rounds", 8)]
         candidates = {}  # norm_url → {title, link, snippet, score}
         parent_ctx = contextvars.copy_context()
+        _search_aborted = False
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers=_io_workers("search_workers", _DEFAULT_SEARCH_WORKERS)) as ex:
             futs = {ex.submit(parent_ctx.copy().run, _run_search, q): q for q in queries}
             for fut in concurrent.futures.as_completed(futs):
+                if _cancelled():
+                    _search_aborted = True
+                    for f in futs:
+                        f.cancel()
+                    break
                 try:
                     results = fut.result()
                 except Exception:
@@ -317,6 +323,8 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
                     if key and key not in candidates and key not in existing_norm_urls:
                         candidates[key] = r
                 _progress("searching", subqueries=len(subqueries), candidates=len(candidates))
+        if _search_aborted:
+            return ChatDB.update_research_run(run_id, status="cancelled")
         cand_list = sorted(candidates.values(), key=lambda x: x.get("score", 0), reverse=True)
 
         if not cand_list:
@@ -348,11 +356,20 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
                         "snippet": c.get("snippet", ""), "content": content}
             return None
 
+        _aborted = False
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers=_io_workers("fetch_workers", _DEFAULT_FETCH_WORKERS)) as ex:
             futs = {ex.submit(parent_ctx.copy().run, _fetch_one, c): c
                     for c in cand_list[:fetch_cap]}
             for fut in concurrent.futures.as_completed(futs):
+                # Mid-phase cancel — abort the reading fan-out promptly instead
+                # of only at the phase boundary. Stop draining results + cancel
+                # any not-yet-started futures (the `with` exit also joins).
+                if _cancelled():
+                    _aborted = True
+                    for f in futs:
+                        f.cancel()
+                    break
                 fetches_used += 1
                 try:
                     item = fut.result()
@@ -362,6 +379,8 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
                     fetched.append(item)
                 _progress("reading", subqueries=len(subqueries),
                           candidates=len(cand_list), fetched=fetches_used, kept=len(fetched))
+        if _aborted:
+            return ChatDB.update_research_run(run_id, status="cancelled")
 
         if not fetched:
             ChatDB.update_research_run(

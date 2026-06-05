@@ -94,7 +94,7 @@ function renderFastResults(topic, data) {
                 : (r.trust_hint ? `<span style="color:var(--warn,#b8860b);font-size:11px"> · ⚠ ${esc(r.trust_hint)}</span>` : '');
     return `
       <label style="display:flex;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border-100);align-items:flex-start;${disabled ? 'opacity:0.55' : ''}">
-        <input type="checkbox" class="research-pick" data-idx="${i}" ${disabled ? 'disabled' : ''} style="margin-top:3px">
+        <input type="checkbox" class="research-pick" data-idx="${i}" ${disabled ? 'disabled' : ''} style="margin-top:3px;accent-color:var(--accent-brand)">
         <span style="flex:1;min-width:0">
           <span style="font-size:13px;color:var(--text-100)">${esc(r.title || r.url)}${badge}</span>
           <span style="display:block;font-size:11px;color:var(--text-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.url)}</span>
@@ -151,26 +151,54 @@ async function researchRunDeep(topic) {
     return;
   }
   state._researchRunId = resp.run_id;
-  renderDeepProgress({ status: 'running', phase: 'planning', progress: {}, budget: resp.budget, topic });
+  state._researchCancelling = false;
+  state._researchStartedAt = Date.now() / 1000;   // fallback; replaced by created_at from poll
+  state._researchLast = { status: 'running', phase: 'planning', progress: {}, budget: resp.budget, topic };
+  renderDeepProgress(state._researchLast);
   startResearchPoll();
+  startResearchTimer();
 }
 
 function startResearchPoll() {
   if (_researchPollHandle) return;
   _researchPollHandle = setInterval(async () => {
     if (state.currentView !== 'project-detail' || state._projectChatsFilter !== 'research' || !state._researchRunId) {
-      stopResearchPoll(); return;
+      stopResearchPoll(); stopResearchTimer(); return;
     }
     try {
       const r = await API.researchRun(state._researchAgent, state._researchProject, state._researchRunId);
-      if (r.status === 'running') renderDeepProgress(r);
-      else { stopResearchPoll(); renderDeepDone(r); }
+      if (r.created_at) state._researchStartedAt = r.created_at;
+      if (r.status === 'running') { state._researchLast = r; renderDeepProgress(r); }
+      else { stopResearchPoll(); stopResearchTimer(); renderDeepDone(r); }
     } catch (_) { /* transient — keep polling */ }
   }, 2500);
 }
 
 function stopResearchPoll() {
   if (_researchPollHandle) { clearInterval(_researchPollHandle); _researchPollHandle = null; }
+}
+
+// Independent 1s ticker so the elapsed time + the working heartbeat move every
+// second even though the run is polled only every 2.5s — the long "writing"
+// phase is a single LLM call that emits no intermediate progress, so without
+// this the panel looks frozen.
+let _researchTimerHandle = null;
+function startResearchTimer() {
+  if (_researchTimerHandle) return;
+  _researchTimerHandle = setInterval(updateResearchElapsed, 1000);
+}
+function stopResearchTimer() {
+  if (_researchTimerHandle) { clearInterval(_researchTimerHandle); _researchTimerHandle = null; }
+}
+function _fmtElapsed(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+function updateResearchElapsed() {
+  const el = document.getElementById('research-elapsed');
+  if (!el || !state._researchStartedAt) return;
+  el.textContent = _fmtElapsed(Date.now() / 1000 - state._researchStartedAt);
 }
 
 const _RESEARCH_PHASES = [
@@ -189,28 +217,49 @@ function renderDeepProgress(r) {
     if (key === 'planning' && p.subqueries) detail = ` (${p.subqueries} Sub-Fragen)`;
     if (key === 'searching' && p.candidates != null) detail = ` (${p.candidates} Kandidaten)`;
     if (key === 'reading' && p.fetched != null) detail = ` (${p.fetched} gelesen, ${p.kept || 0} behalten)`;
+    // The writing phase is one long LLM call with no sub-progress — show the
+    // source count + a live ⟳ so it's clearly working, not frozen.
+    if (key === 'writing' && i === curIdx) detail = ` (Synthese aus ${p.kept || 0} Quellen…)`;
     return `<div style="font-size:13px;color:${i === curIdx ? 'var(--text-100)' : 'var(--text-400)'}">${mark} ${esc(label)}${esc(detail)}</div>`;
   }).join('');
   const fetched = p.fetched || 0, fcap = b.fetches || 60;
+  const cancelling = !!state._researchCancelling;
   out.innerHTML = `
     <div style="border:1px solid var(--border-200);border-radius:10px;padding:14px 16px;max-width:560px">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
         <span style="font-weight:600;font-size:13px">🔬 Deep Research läuft…</span>
-        <button class="btn-secondary" style="margin-left:auto;padding:3px 10px;font-size:11px" onclick="researchCancel()">Abbrechen</button>
+        <span style="font-size:11px;color:var(--text-400)">⏱ <span id="research-elapsed">0:00</span></span>
+        <button class="btn-secondary" style="margin-left:auto;padding:3px 10px;font-size:11px"
+                onclick="researchCancel()" ${cancelling ? 'disabled' : ''}>
+          ${cancelling ? 'Wird abgebrochen…' : 'Abbrechen'}</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:5px">${steps}</div>
       <div style="margin-top:10px;font-size:11px;color:var(--text-400)">Budget: ${fetched} / ${fcap} Fetches</div>
-      <div style="margin-top:8px;font-size:11px;color:var(--text-400)">Du kannst diesen Tab verlassen — der Lauf läuft weiter.</div>
+      <div style="margin-top:8px;font-size:11px;color:var(--text-400)">${cancelling
+        ? 'Abbruch wird beim nächsten Schritt wirksam…'
+        : 'Du kannst diesen Tab verlassen — der Lauf läuft weiter.'}</div>
     </div>`;
+  updateResearchElapsed();  // paint immediately so it isn't 0:00 for a tick
 }
 
 async function researchCancel() {
   if (!state._researchRunId) return;
-  try { await API.researchCancel(state._researchAgent, state._researchProject, state._researchRunId); showToast('Wird abgebrochen…'); }
-  catch (e) { showToast('Abbrechen fehlgeschlagen: ' + (e.message || e), true); }
+  // Immediate feedback: flip the button to a disabled 'Wird abgebrochen…' and
+  // explain it lands at the next checkpoint (the worker checks the cancel flag
+  // between/within phases; an in-flight synthesis LLM call still completes).
+  state._researchCancelling = true;
+  if (state._researchLast) renderDeepProgress(state._researchLast);
+  try { await API.researchCancel(state._researchAgent, state._researchProject, state._researchRunId); }
+  catch (e) {
+    state._researchCancelling = false;
+    if (state._researchLast) renderDeepProgress(state._researchLast);
+    showToast('Abbrechen fehlgeschlagen: ' + (e.message || e), true);
+  }
 }
 
 function renderDeepDone(r) {
+  state._researchCancelling = false;
+  stopResearchTimer();
   const out = document.getElementById('research-result');
   if (!out) return;
   if (r.status === 'error') {
@@ -244,7 +293,7 @@ function renderDeepDone(r) {
                 : (s.trust_hint ? `<span style="color:var(--warn,#b8860b);font-size:11px"> · ⚠ ${esc(s.trust_hint)}</span>` : '');
     return `
       <label style="display:flex;gap:8px;padding:6px 4px;align-items:flex-start;${disabled ? 'opacity:0.55' : ''}">
-        <input type="checkbox" class="research-pick" data-idx="${i}" ${disabled ? 'disabled' : 'checked'} style="margin-top:3px">
+        <input type="checkbox" class="research-pick" data-idx="${i}" ${disabled ? 'disabled' : 'checked'} style="margin-top:3px;accent-color:var(--accent-brand)">
         <span style="flex:1;min-width:0">
           <span style="font-size:13px">${esc(s.title || s.url)}${badge}</span>
           <span style="display:block;font-size:11px;color:var(--text-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.url)}</span>
