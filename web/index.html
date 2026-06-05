@@ -488,25 +488,27 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <span class="project-panel-section-title">Projektmodus</span>
         </div>
         <div class="project-panel-section-body">
-          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;line-height:1.4">
-            <input type="checkbox" id="project-research-mode-checkbox"
-                   onchange="toggleProjectResearchMode(this.checked)"
-                   style="margin-top:2px;flex-shrink:0">
-            <span><strong>Recherche- / Frage-Antwort-Projekt</strong></span>
-          </label>
-          <div class="project-panel-help">
-            Geeignet, wenn du Fragen zu deinen hinterlegten Unterlagen
-            stellst. Das Projekt antwortet dann streng auf Basis der
-            gespeicherten Dokumente, sagt offen Bescheid, wenn etwas nicht
-            belegt ist, und gibt zu jeder Aussage die Quelle an. Schalte das
-            ab, wenn du die Inhalte stattdessen als Material für Aufgaben
-            nutzt – etwa zum Schreiben von Texten oder Code.
+          <div id="project-research-manual">
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;line-height:1.4">
+              <input type="checkbox" id="project-research-mode-checkbox"
+                     onchange="toggleProjectResearchMode(this.checked)"
+                     style="margin-top:2px;flex-shrink:0">
+              <span><strong>Recherche- / Frage-Antwort-Projekt</strong></span>
+            </label>
+            <div class="project-panel-help">
+              Geeignet, wenn du Fragen zu deinen hinterlegten Unterlagen
+              stellst. Das Projekt antwortet dann streng auf Basis der
+              gespeicherten Dokumente, sagt offen Bescheid, wenn etwas nicht
+              belegt ist, und gibt zu jeder Aussage die Quelle an. Schalte das
+              ab, wenn du die Inhalte stattdessen als Material für Aufgaben
+              nutzt – etwa zum Schreiben von Texten oder Code.
+            </div>
           </div>
-          <div class="project-panel-help" id="project-research-dynamic-note" style="display:none;margin-top:6px;color:var(--text-400)">
-            ⓘ Automatik aktiv: Die Zitier-Disziplin wird dynamisch angewandt,
-            sobald eine Antwort auf abgerufenen Quellen beruht (Gedächtnis-,
-            Web- oder Dokument-Abfrage) – in jedem Chat. Dieser Schalter ist
-            daher deaktiviert.
+          <div class="project-panel-help" id="project-research-dynamic-note" style="display:none;color:var(--text-400)">
+            ⓘ Der Recherche-Modus wird automatisch aktiviert, wenn deine
+            Anfrage ihn benötigt – also sobald eine Antwort auf abgerufenen
+            Quellen beruht (Gedächtnis-, Web- oder Dokument-Abfrage). Eine
+            manuelle Umschaltung ist nicht nötig.
           </div>
           <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;line-height:1.4;margin-top:12px">
             <input type="checkbox" id="project-disable-web-checkbox"

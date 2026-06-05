@@ -183,8 +183,10 @@ Die Hilfe auf der Projekt-Einstellungsseite ist ein aufklappbarer
 - **Bei LLM-/Hybrid-Routing (automatisch):** Die Zitier-/Refuse-Disziplin wird
   **dynamisch** angewandt, sobald für die Antwort ein Abruf-Tool aktiv ist
   (Gedächtnis, Websuche, Web-Abruf, Dokument-/Datei-Lesen) — in **jedem** Chat,
-  Projekt oder nicht. Der Projekt-Schalter und der 🔬-Knopf sind dann
-  **deaktiviert** (die Automatik übernimmt).
+  Projekt oder nicht. Der manuelle Projekt-Schalter und der 🔬-Knopf werden
+  dann **ausgeblendet** (statt deaktiviert) — an ihrer Stelle steht der Hinweis,
+  dass der Recherche-Modus automatisch aktiviert wird, wenn die Anfrage ihn
+  benötigt. Eine manuelle Umschaltung ist nicht nötig.
 - **Bei Schlüsselwort-Routing (Standard):** Der manuelle Schalter steuert es —
   Projekt-Standard, pro Chat per 🔬-Knopf überschreibbar:
 - **AN** (Frage-Antwort-Projekt) — für Richtlinien-/Compliance-/Q&A-Projekte.

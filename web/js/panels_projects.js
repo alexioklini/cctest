@@ -346,17 +346,17 @@ async function loadProjectDetail(agentId, projectName) {
       descEl.innerHTML = '<span style="color:var(--text-400);font-style:italic">Keine Beschreibung</span>';
     }
 
-    // Render the Research / Q&A project checkbox state. Under LLM-classifier
-    // mode the citation discipline is applied DYNAMICALLY (from the effective
-    // tools, server-side) so this manual flag is disabled + a note explains it.
-    // Keyword mode keeps the flag as the manual control.
+    // Render the Research / Q&A project control. Under LLM-classifier mode the
+    // citation discipline is applied DYNAMICALLY (from the effective tools,
+    // server-side), so the manual flag is meaningless — HIDE it entirely and
+    // show an explanatory note instead (a disabled-but-visible unchecked box
+    // misleadingly reads as 'off'). Keyword mode keeps the manual control.
     const researchCb = document.getElementById('project-research-mode-checkbox');
+    const researchManual = document.getElementById('project-research-manual');
     const researchNote = document.getElementById('project-research-dynamic-note');
     classifierModeIsLlm().then(isLlm => {
-      if (researchCb) {
-        researchCb.checked = !isLlm && !!project.research_mode;
-        researchCb.disabled = isLlm;
-      }
+      if (researchCb) researchCb.checked = !isLlm && !!project.research_mode;
+      if (researchManual) researchManual.style.display = isLlm ? 'none' : '';
       if (researchNote) researchNote.style.display = isLlm ? '' : 'none';
     });
     // Render the 'disable web search' checkbox state.
