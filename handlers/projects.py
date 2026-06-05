@@ -1168,6 +1168,7 @@ class ProjectsHandlerMixin:
             "artifact_id": row.get("artifact_id"),
             "citations": row.get("citations") or 0,
             "error": row.get("error") or "",
+            "phase": row.get("phase") or "",
             "created_at": row.get("created_at"),
             "created_by": row.get("created_by"),
             "finished_at": row.get("finished_at"),
@@ -1313,6 +1314,21 @@ class ProjectsHandlerMixin:
         archived = bool((self._read_json() or {}).get("archived", True))
         ChatDB.set_project_output_archived(output_id, archived)
         self._send_json({"output_id": output_id, "archived": archived, "status": "ok"})
+
+    def _handle_project_output_cancel(self, path: str):
+        """POST .../outputs/{output_id}/cancel — cooperative cancel of a running
+        generation. The worker stops at its next phase check; an in-flight LLM
+        call still completes before the abort takes effect."""
+        from server_lib.db import ChatDB
+        resolved = self._resolve_owned_output(path, output_id_index=-2)  # …/<oid>/cancel
+        if resolved is None:
+            return
+        output_id, row = resolved
+        if row.get("status") != "generating":
+            self._send_json({"error": "Output is not generating."}, 409)
+            return
+        ChatDB.cancel_project_output(output_id)
+        self._send_json({"output_id": output_id, "status": "cancelling"})
 
     def _handle_project_output_delete(self, path: str):
         """DELETE /v1/agents/{id}/projects/{name}/outputs/{output_id} — delete the

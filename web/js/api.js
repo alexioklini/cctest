@@ -212,6 +212,7 @@ class API {
   static listProjectOutputs(agentId, projectName) { return this.get(`${this._projOutBase(agentId, projectName)}/outputs`); }
   static renameProjectOutput(agentId, projectName, outputId, title) { return this.post(`${this._projOutBase(agentId, projectName)}/outputs/${encodeURIComponent(outputId)}/rename`, {title}); }
   static archiveProjectOutput(agentId, projectName, outputId, archived) { return this.post(`${this._projOutBase(agentId, projectName)}/outputs/${encodeURIComponent(outputId)}/archive`, {archived}); }
+  static cancelProjectOutput(agentId, projectName, outputId) { return this.post(`${this._projOutBase(agentId, projectName)}/outputs/${encodeURIComponent(outputId)}/cancel`, {}); }
   static deleteProjectOutput(agentId, projectName, outputId) { return this.del(`${this._projOutBase(agentId, projectName)}/outputs/${encodeURIComponent(outputId)}`); }
   static archiveProjectArtifact(agentId, projectName, artifactId, archived) { return this.post(`${this._projOutBase(agentId, projectName)}/artifacts/${encodeURIComponent(artifactId)}/archive`, {archived}); }
   static deleteProjectArtifact(agentId, projectName, artifactId) { return this.del(`${this._projOutBase(agentId, projectName)}/artifacts/${encodeURIComponent(artifactId)}`); }

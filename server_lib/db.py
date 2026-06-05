@@ -755,6 +755,17 @@ class ChatDB:
                 conn.execute("ALTER TABLE project_outputs ADD COLUMN archived INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+            # Cooperative-cancel flag + coarse phase label for generating
+            # outputs (the worker checks cancel between phases; the card shows
+            # the phase + elapsed). Mirrors research_runs.cancel/phase.
+            try:
+                conn.execute("ALTER TABLE project_outputs ADD COLUMN cancel INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE project_outputs ADD COLUMN phase TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             # Crash reconcile: any output still 'generating' at boot lost its
             # thread on the previous shutdown — mark it errored so the UI never
             # shows a zombie generating forever (mirrors background_tasks).
@@ -962,13 +973,13 @@ class ChatDB:
     def update_project_output(output_id, **fields):
         """Patch an output row. Whitelisted columns only; sets finished_at when
         status flips to a terminal state."""
-        allowed = ("status", "title", "path", "artifact_id", "error", "citations")
+        allowed = ("status", "title", "path", "artifact_id", "error", "citations", "phase")
         sets, vals = [], []
         for k in allowed:
             if k in fields:
                 sets.append(f"{k} = ?")
                 vals.append(fields[k])
-        if fields.get("status") in ("ready", "error"):
+        if fields.get("status") in ("ready", "error", "cancelled"):
             sets.append("finished_at = strftime('%s','now')")
         if not sets:
             return
@@ -1007,6 +1018,23 @@ class ChatDB:
             conn.execute("UPDATE project_outputs SET archived = ? WHERE id = ?",
                          (1 if archived else 0, output_id))
             conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def cancel_project_output(output_id):
+        """Set the cooperative-cancel flag — the generation worker checks it
+        between phases and aborts to status='cancelled'."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE project_outputs SET cancel = 1 WHERE id = ?", (output_id,))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=False)
+    def project_output_cancelled(output_id):
+        """Cheap cancel-flag read for the worker's cooperative checks."""
+        with _db_conn() as conn:
+            row = conn.execute("SELECT cancel FROM project_outputs WHERE id = ?", (output_id,)).fetchone()
+            return bool(row and row[0])
 
     @staticmethod
     @_db_safe(default=None)

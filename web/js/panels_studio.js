@@ -254,8 +254,17 @@ function studioOutputCardHtml(o) {
   const when = o.created_at ? formatTimeAgo(new Date(o.created_at * 1000)) : '';
   let statusLine, actions;
   if (o.status === 'generating') {
-    statusLine = `<span style="color:var(--text-400)">⟳ generiert… ${esc(when)}</span>`;
-    actions = '';
+    const phaseLabel = o.phase === 'gathering' ? 'Quellen sammeln'
+                     : o.phase === 'writing' ? 'Bericht schreiben'
+                     : 'Wird vorbereitet';
+    // Live elapsed clock (data-since drives the ticker; see studioTickElapsed).
+    statusLine = `<span style="color:var(--text-400)">⟳ ${esc(phaseLabel)}… <span class="studio-elapsed" data-since="${o.created_at || ''}">0:00</span></span>`;
+    actions = `<button class="studio-act" onclick="studioCancelOutput('${esc(o.output_id)}')"
+                style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 12px;border-radius:6px">Stoppen</button>`;
+  } else if (o.status === 'cancelled') {
+    statusLine = `<span style="color:var(--text-400)">⊘ Abgebrochen</span>`;
+    actions = `<button class="studio-act" onclick="studioDeleteOutput('${esc(o.output_id)}')"
+                style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px">🗑 Löschen</button>`;
   } else if (o.status === 'error') {
     statusLine = `<span style="color:var(--error)" title="${esc(o.error || '')}">⚠ Fehler</span>`;
     actions = `<button class="studio-act" onclick="studioDeleteOutput('${esc(o.output_id)}')"
@@ -337,7 +346,15 @@ function studioOutputMenu(event, outputId) {
   document.body.appendChild(menu);
   const r = event.target.getBoundingClientRect();
   menu.style.left = Math.min(r.left, window.innerWidth - 170) + 'px';
-  menu.style.top = (r.bottom + 4) + 'px';
+  // Flip ABOVE the button when the menu would overflow the bottom of the
+  // viewport (cards near the bottom previously clipped the menu off-screen);
+  // clamp to a small margin so it's always fully visible either way.
+  const mh = menu.offsetHeight || 160;
+  const below = r.bottom + 4;
+  const top = (below + mh > window.innerHeight - 8)
+    ? Math.max(8, r.top - mh - 4)
+    : below;
+  menu.style.top = top + 'px';
   setTimeout(() => document.addEventListener('click', function _cl() { menu.remove(); document.removeEventListener('click', _cl); }), 10);
 }
 
@@ -376,6 +393,7 @@ async function studioArchiveOutput(outputId) {
 // ─── Poll (live generating→ready, mirrors panels_background.js) ────────────
 
 function startStudioPoll() {
+  if (!_studioElapsedHandle) _studioElapsedHandle = setInterval(studioTickElapsed, 1000);
   if (_studioPollHandle) return;
   _studioPollHandle = setInterval(() => {
     // Only poll while still on the Studio tab of this project.
@@ -386,4 +404,25 @@ function startStudioPoll() {
 
 function stopStudioPoll() {
   if (_studioPollHandle) { clearInterval(_studioPollHandle); _studioPollHandle = null; }
+  if (_studioElapsedHandle) { clearInterval(_studioElapsedHandle); _studioElapsedHandle = null; }
+}
+
+let _studioElapsedHandle = null;
+// Tick every generating card's elapsed clock from its data-since epoch, so the
+// long single LLM "writing" phase never looks frozen (no per-token progress).
+function studioTickElapsed() {
+  document.querySelectorAll('.studio-elapsed[data-since]').forEach(el => {
+    const since = parseFloat(el.dataset.since);
+    if (!since) return;
+    const sec = Math.max(0, Math.floor(Date.now() / 1000 - since));
+    el.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  });
+}
+
+async function studioCancelOutput(outputId) {
+  try {
+    await API.cancelProjectOutput(state._studioAgent, state._studioProject, outputId);
+    showToast('Wird gestoppt… (eine laufende KI-Anfrage läuft noch zu Ende)');
+    refreshStudioOutputs();
+  } catch (e) { showToast('Stoppen fehlgeschlagen: ' + (e.message || e), true); }
 }

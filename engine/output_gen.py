@@ -126,10 +126,19 @@ def save_report_output(output_id, agent_id, project_dir, kind, title, body_md):
 
 def _run_generation(*, output_id: str, agent_id: str, project_name: str, project_id: str,
                     project_dir: str, kind: str, opts: dict, user_id: str):
-    """Daemon-thread body: gather → transform → write → register → flip row."""
+    """Daemon-thread body: gather → transform → write → register → flip row.
+    Cooperative cancel: checks the row's `cancel` flag before each phase (an
+    in-flight LLM call still completes — no sidecar cancel-token — then aborts)."""
+    def _cancelled():
+        return ChatDB.project_output_cancelled(output_id)
+
     try:
         focus = (opts.get("focus") or "").strip()
         length = opts.get("length") or "std"
+        if _cancelled():
+            ChatDB.update_project_output(output_id, status="cancelled", phase="")
+            return
+        ChatDB.update_project_output(output_id, phase="gathering")
         corpus, n = _gather_sources(agent_id, project_name, focus, user_id)
         if not corpus:
             ChatDB.update_project_output(
@@ -145,6 +154,10 @@ def _run_generation(*, output_id: str, agent_id: str, project_name: str, project
                 error="No model available (set a server default model).")
             return
 
+        if _cancelled():
+            ChatDB.update_project_output(output_id, status="cancelled", phase="")
+            return
+        ChatDB.update_project_output(output_id, phase="writing")
         from handlers import sidecar_proxy
         result = sidecar_proxy.background_call(
             messages=[{"role": "user", "content": prompt}],
@@ -162,6 +175,12 @@ def _run_generation(*, output_id: str, agent_id: str, project_name: str, project
         reply = (result.get("reply") or "").strip()
         if not reply:
             ChatDB.update_project_output(output_id, status="error", error="Model returned an empty output.")
+            return
+
+        # Cancelled while the (uninterruptible) LLM call ran → abort the save so
+        # we don't materialise a file the user asked to stop.
+        if _cancelled():
+            ChatDB.update_project_output(output_id, status="cancelled", phase="")
             return
 
         # Title: "<preset prefix> — <project display name>".

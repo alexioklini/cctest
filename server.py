@@ -1998,6 +1998,8 @@ class BrainAgentHandler(
             self._handle_project_output_rename(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/outputs/" in path and path.endswith("/archive"):
             self._handle_project_output_archive(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/outputs/" in path and path.endswith("/cancel"):
+            self._handle_project_output_cancel(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/artifacts/" in path and path.endswith("/archive"):
             self._handle_project_artifact_archive(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/research/runs/" in path and path.endswith("/cancel"):
