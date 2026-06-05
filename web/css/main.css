@@ -3187,11 +3187,14 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   gap: 4px;
 }
 .project-chats-tab {
-  padding: 6px 12px;
-  font-size: 13px;
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 32px;
   color: var(--text-400);
-  border-radius: 6px;
+  border: none;
+  border-radius: 7px;
   background: transparent;
   cursor: pointer;
   transition: color 0.1s, background 0.1s;
@@ -3201,6 +3204,7 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   color: var(--text-000);
   background: var(--bg-200);
 }
+.project-chats-tab svg { display: block; }
 .project-chats-bulk {
   display: flex;
   gap: 6px;
@@ -3321,12 +3325,12 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 .project-mem-iconbtn:active:not(:disabled) { transform: scale(0.94); }
 .project-mem-iconbtn:disabled { opacity: 0.45; cursor: default; }
-.project-mem-iconbtn.primary {
+.project-mem-iconbtn.primary { color: var(--accent-brand); }
+.project-mem-iconbtn.primary:hover:not(:disabled) {
   background: var(--accent-brand);
   border-color: var(--accent-brand);
   color: #fff;
 }
-.project-mem-iconbtn.primary:hover:not(:disabled) { filter: brightness(1.08); color: #fff; }
 .project-mem-iconbtn.danger { color: var(--red, #d33); }
 .project-mem-iconbtn.danger:hover:not(:disabled) {
   background: var(--red, #d33);
