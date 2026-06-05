@@ -207,7 +207,14 @@ aus dem Projektgedächtnis antworten. Das ist eine **harte, modell-
 unabhängige** Sperre (die Tools werden für den Turn entfernt), nicht nur
 eine Bitte im Prompt: manche Modelle (z. B. mistral-medium) ignorieren den
 Prompt-Hinweis und googeln trotzdem — diese Sperre verhindert das
-zuverlässig. Empfohlen für Projekte mit bewusst kuratierten Quellen.
+zuverlässig. Empfohlen für Projekte mit bewusst kuratierten Quellen. Bei
+aktiver Sperre weist der Agent im Prompt explizit darauf hin, dass er aus
+einem **geschlossenen Korpus** antwortet (nur die kuratierten, geprüften
+Projektquellen — jede Web-Quelle ist EINE gespeicherte Seite, kein Crawl der
+ganzen Website) und sagt klar, wenn etwas nicht abgedeckt ist, statt eine
+breitere Web-Analyse vorzutäuschen. Mehr Tiefe holt man, indem man VOR dem
+Sperren eine Deep-Recherche fährt (Quellen finden → prüfen → übernehmen) —
+nicht durch tieferes Mining.
 
 **Synchronisierung**: Eingabeordner werden von einem Daemon alle 6 h
 eingespeist. Knöpfe auf der Projektseite:

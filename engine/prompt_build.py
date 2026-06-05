@@ -284,6 +284,23 @@ def _build_system_prompt(include_memory_summary: bool = True,
             )
             if proj_desc:
                 system_instruction += f" {proj_desc}"
+            # Web-locked projects: the 3 web tools are removed (disable_web_search,
+            # applied in apply_domain_context). Make the boundary HONEST — the
+            # model can ONLY reach the curated, mined project sources (each web
+            # source is a single fetched page, not a crawl), so a thin answer must
+            # read as "this is the limited curated corpus", not implied exhaustive
+            # web analysis. Stable per project ⇒ KV-cache-safe (project is in the
+            # cache key; same value every turn).
+            if proj_cfg.get("disable_web_search"):
+                system_instruction += (
+                    "\nCLOSED CORPUS: Live web access is disabled for this project. "
+                    "You can answer ONLY from the project's curated, inspected sources "
+                    "(its memory + documents; each web source is a single saved page, "
+                    "not a crawl of the wider site). You CANNOT search the web or fetch "
+                    "new pages. If the curated sources do not cover the question, say so "
+                    "plainly and state what is missing — do NOT fill the gap with general "
+                    "knowledge or imply a broader web analysis than the corpus supports."
+                )
             try:
                 _kg_enabled_for_prompt = bool(
                     (_brain._load_mempalace_config().get("kg") or {}).get(

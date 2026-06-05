@@ -727,7 +727,15 @@ Startup wipe drops every drawer in `project__*` wings AND clears
   `apply_domain_context(agent_id, project|project_id, user_id,
   research_mode_override, base_exclude_tools)` sets project scope (+resolves
   project_id→name), team_ids, research_mode_override and the
-  `disable_web_search` web-tool lockout on the request context;
+  `disable_web_search` web-tool lockout on the request context. When that
+  lockout is on, `_build_system_prompt` also appends a **CLOSED CORPUS** notice
+  (the agent answers ONLY from curated/inspected project sources — each web
+  source is a single saved page, not a crawl — and must say so rather than imply
+  broader web analysis; KV-safe, gated on the per-project flag already in the
+  prompt cache key). Project `web_urls` mining is deliberately single-page (NOT a
+  link-following crawler): depth for a locked project comes from running Deep
+  Research BEFORE locking (search relevance + the inspect→approve gate), keeping
+  the corpus known/inspected.
   `build_tool_context(session_id, agent_id, user_id, gdpr_mapping_id)`
   snapshots the context into the tool_context dict for `run_turn`. Both the
   chat worker (`handlers/chat.py`) and the scheduler fire-path
