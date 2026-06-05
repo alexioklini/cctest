@@ -176,6 +176,7 @@ function renderFastResults(topic, data) {
       <button class="btn-secondary" style="padding:2px 10px;font-size:11px" onclick="researchPickAll(false)">Leeren</button>
     </div>
     <div style="max-height:360px;overflow:auto;border:1px solid var(--border-200);border-radius:8px;padding:4px 8px">${rows}</div>
+    <div style="margin-top:8px;font-size:11px;color:var(--text-400)">🔎 ${esc(data.backend || 'Suche')}${data.duration_s != null ? ' · ' + data.duration_s + ' s' : ''} · ${data.total_found || results.length} Treffer · keine KI-Kosten (reine Suche)</div>
     <div style="margin-top:12px"><button class="btn-primary" style="padding:6px 16px;font-size:13px" onclick="researchImportSelected()">Ausgewählte Quellen ins Projekt importieren →</button></div>`;
 }
 

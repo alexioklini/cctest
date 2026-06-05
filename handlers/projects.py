@@ -1546,15 +1546,23 @@ class ProjectsHandlerMixin:
         if not deep_research.active_backend():
             self._send_json({"error": "No search backend configured."}, 400)
             return
+        import time as _time
+        _t0 = _time.time()
         existing = {deep_research._norm_url(u.get("url", "")) for u in (project.get("web_urls") or [])}
+        backend = deep_research.active_backend()
         results = deep_research._run_search(topic)
         rows = [{
             "title": r["title"], "url": r["link"], "snippet": r.get("snippet", ""),
             "trust_hint": deep_research._trust_hint(r["link"]),
             "in_project": deep_research._norm_url(r["link"]) in existing,
         } for r in results[:30]]   # E8 — cap the SERP
+        # Honest execution metadata for the Fast-Research view. NO model/cost —
+        # Fast Research makes no LLM call (pure search), so a $0 line would
+        # mislead; we surface what's actually true: backend, timing, counts.
         self._send_json({"topic": topic, "results": rows, "result_count": len(rows),
-                         "total_found": len(results)})
+                         "total_found": len(results),
+                         "backend": "Exa" if backend == "exa" else "SearXNG" if backend == "searxng" else backend,
+                         "duration_s": round(_time.time() - _t0, 2)})
 
     def _handle_research_deep(self, path: str):
         """POST /v1/agents/{id}/projects/{name}/research/deep {topic, budget?}
