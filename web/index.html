@@ -511,66 +511,14 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       </div>
       <div class="project-panel-section">
         <div class="project-panel-section-header">
-          <span class="project-panel-section-title">Anweisungen</span>
-          <span class="project-panel-section-action" onclick="editProjectInstructions()">Bearbeiten</span>
+          <span class="project-panel-section-title">Quellen</span>
         </div>
         <div class="project-panel-help">
-          Zusätzliche Hinweise, an die sich das Projekt in jeder Antwort
-          halten soll – zum Beispiel Tonfall, Sprache oder Formatvorgaben.
-          Optional.
+          Anweisungen, Dateien, Ordner und Web-Adressen dieses Projekts. Klappe
+          die Bereiche bis auf Dateiebene auf; die Farbpunkte zeigen, ob ein
+          Element bereits im Projektgedächtnis indexiert ist.
         </div>
-        <div class="project-panel-section-body" id="project-panel-instructions">
-          <span class="project-panel-placeholder">Noch keine Anweisungen hinterlegt.</span>
-        </div>
-      </div>
-      <div class="project-panel-section">
-        <div class="project-panel-section-header">
-          <span class="project-panel-section-title">Dateien</span>
-          <label class="project-panel-section-action" style="cursor:pointer">
-            Dateien hinzufügen
-            <input type="file" multiple style="display:none" onchange="uploadProjectFiles(this.files)">
-          </label>
-        </div>
-        <div class="project-panel-help">
-          Lade PDFs, Dokumente oder andere Texte hoch. Das Projekt nutzt sie
-          als Wissensquelle und kann Fragen dazu beantworten.
-        </div>
-        <div id="project-panel-files">
-          <span class="project-panel-placeholder">Noch keine Dateien hochgeladen.</span>
-        </div>
-        <label class="project-upload-btn">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          Dateien hochladen
-          <input type="file" multiple style="display:none" onchange="uploadProjectFiles(this.files)">
-        </label>
-      </div>
-      <div class="project-panel-section">
-        <div class="project-panel-section-header">
-          <span class="project-panel-section-title">Ordner</span>
-          <span class="project-panel-section-action" onclick="addProjectInputFolder()">+ Hinzufügen</span>
-        </div>
-        <div class="project-panel-help">
-          Verknüpfe Ordner auf der Festplatte. Deren Inhalte werden
-          regelmäßig (etwa alle 30 Minuten) eingelesen und durchsuchbar
-          gemacht – neue oder geänderte Dateien automatisch.
-        </div>
-        <div id="project-panel-input-folders">
-          <span class="project-panel-placeholder">Noch keine Ordner verknüpft.</span>
-        </div>
-      </div>
-      <div class="project-panel-section">
-        <div class="project-panel-section-header">
-          <span class="project-panel-section-title">Web-Adressen</span>
-          <span class="project-panel-section-action" onclick="addProjectWebUrl()">+ Hinzufügen</span>
-        </div>
-        <div class="project-panel-help">
-          Hinterlege Internetseiten als Wissensquelle. Sie werden regelmäßig
-          abgerufen und – wie verknüpfte Ordner – durchsuchbar gemacht. Bei
-          Änderungen wird die Seite automatisch aktualisiert.
-        </div>
-        <div id="project-panel-web-urls">
-          <span class="project-panel-placeholder">Noch keine Web-Adressen hinterlegt.</span>
-        </div>
+        <div id="project-source-tree" class="project-source-tree"></div>
       </div>
       <div class="project-panel-section">
         <div class="project-panel-section-header">
@@ -1519,6 +1467,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/panels_chats.js"></script>
 <script src="js/panels_projects.js"></script>
 <script src="js/panels_project_sync.js"></script>
+<script src="js/panels_project_tree.js"></script>
 <script src="js/panels_right.js"></script>
 <script src="js/panels_websuche.js"></script>
 <script src="js/panels_background.js"></script>

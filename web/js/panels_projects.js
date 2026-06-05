@@ -365,16 +365,8 @@ async function loadProjectDetail(agentId, projectName) {
       disableWebCb.checked = !!project.disable_web_search;
     }
 
-    // Render instructions panel — markdown rendered, capped height with
-    // vertical scroll so long default disciplines don't push attachments
-    // + input folders below the fold.
-    const instrEl = document.getElementById('project-panel-instructions');
-    if (project.instructions) {
-      instrEl.innerHTML = `<div class="project-panel-instructions-rendered">${renderMarkdown(project.instructions)}</div>`;
-      instrEl.classList.remove('project-panel-placeholder');
-    } else {
-      instrEl.innerHTML = '<span class="project-panel-placeholder">Noch keine Anweisungen hinterlegt.</span>';
-    }
+    // Instructions now render inside the unified source tree (the Anweisungen
+    // node) — no separate panel section.
 
     // Personalise the composer placeholder with the project name. Falls back
     // to the routing slug when the display name is missing.
@@ -384,18 +376,15 @@ async function loadProjectDetail(agentId, projectName) {
       composerInput.placeholder = `Ihre Nachricht an ${displayName}`;
     }
 
-    // Load project files
-    loadProjectFiles(agentId, projectName);
-
-    // Render project-level web URLs (mined into the project's memory + KG by
-    // the sync daemon, like input folders). Read straight off the config.
-    renderProjectWebUrls(project.web_urls || []);
+    // Unified source tree (files + folders + web URLs + instructions) with
+    // per-item MemPalace state colors + collapse/expand to file level. Replaces
+    // the four separate panel sections.
+    renderProjectSourceTree();
 
     // Apply the persisted "Hilfe" toggle state to this freshly-rendered panel.
     applyProjectHelpState();
 
-    // Load input folders + start polling sync status.
-    loadProjectInputFolders(agentId, projectName);
+    // Start polling sync status (repaints the tree's state dots).
     startProjectSyncPoll(agentId, projectName);
 
     // Load project conversations
@@ -493,32 +482,11 @@ function toggleProjectDesc() {
   }
 }
 
+// Shim: files now render inside the unified source tree. Refresh the Dateien
+// branch in place (re-fetches /docs) so upload/delete callers stay working.
 async function loadProjectFiles(agentId, projectName) {
-  const container = document.getElementById('project-panel-files');
-  try {
-    const data = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/docs`);
-    const docs = data.documents || [];
-    if (!docs.length) {
-      container.innerHTML = '<span class="project-panel-placeholder">Noch keine Dateien hochgeladen.</span>';
-      return;
-    }
-    container.innerHTML = '';
-    for (const doc of docs) {
-      const item = document.createElement('div');
-      item.className = 'project-file-item';
-      const srcHash = doc.source_hash || '';
-      item.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        <span class="project-file-name" title="${esc(doc.source || doc.name || '')}">${esc(doc.source || doc.name || 'Dokument')}</span>
-        <span data-pif-pill data-pif-kind="attachment" data-pif-id="${esc(srcHash)}">${projectItemPillHtml('attachment', srcHash)}</span>
-        <span class="project-file-delete" onclick="deleteProjectFile('${esc(agentId)}','${esc(projectName)}','${esc(srcHash)}'); event.stopPropagation();" title="Entfernen">
-          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </span>
-      `;
-      container.appendChild(item);
-    }
-  } catch(e) {
-    container.innerHTML = '<span class="project-panel-placeholder">Dateien konnten nicht geladen werden.</span>';
+  if (typeof _ptFillFiles === 'function' && document.getElementById('pt-items-files')) {
+    return _ptFillFiles(agentId, projectName);
   }
 }
 
@@ -1142,28 +1110,14 @@ async function toggleProjectDisableWeb(enabled) {
 // Reached via memory/KG retrieval — NOT injected per turn (that's the
 // separate per-chat Websuche basket).
 // Stored in project.json → web_urls as [{url,title}].
+// Shim: web URLs now render inside the unified source tree. Keep
+// state._projectDetail.web_urls authoritative, then re-render the tree (the
+// tree reads it). Expand/collapse state survives via localStorage.
 function renderProjectWebUrls(urls) {
-  const el = document.getElementById('project-panel-web-urls');
-  if (!el) return;
-  if (!urls.length) {
-    el.innerHTML = '<span class="project-panel-placeholder">Noch keine Web-Adressen hinterlegt.</span>';
-    return;
+  if (state._projectDetail && Array.isArray(urls)) state._projectDetail.web_urls = urls;
+  if (typeof renderProjectSourceTree === 'function' && document.getElementById('project-source-tree')) {
+    renderProjectSourceTree();
   }
-  el.innerHTML = urls.map((u, idx) => {
-    let host = u.url || '';
-    try { host = new URL(u.url).hostname.replace(/^www\./, ''); } catch (e) {}
-    return `
-      <div class="project-input-folder-row">
-        <div class="pif-row-head">
-          <svg class="pif-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
-          <span class="pif-name" title="${esc(u.url)}">${esc(u.title || host)}</span>
-          <button class="pif-action-btn pif-delete" onclick="removeProjectWebUrl(${idx})" title="URL entfernen" aria-label="Entfernen">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
-          </button>
-        </div>
-        <div class="pif-path" dir="ltr" title="${esc(u.url)}"><a href="${esc(u.url)}" target="_blank" rel="noopener" style="color:inherit">${esc(u.url)}</a></div>
-      </div>`;
-  }).join('');
 }
 
 async function _saveProjectWebUrls(urls) {
@@ -1225,15 +1179,9 @@ async function saveProjectInstructions() {
     await API.updateProject(agentId, projectName, { instructions });
     showToast('Anweisungen gespeichert');
     document.querySelector('.modal-overlay')?.remove();
-    // Update panel display — render as markdown to match loadProjectDetail.
-    const instrEl = document.getElementById('project-panel-instructions');
-    if (instructions) {
-      instrEl.innerHTML = `<div class="project-panel-instructions-rendered">${renderMarkdown(instructions)}</div>`;
-      instrEl.classList.remove('project-panel-placeholder');
-    } else {
-      instrEl.innerHTML = '<span class="project-panel-placeholder">Noch keine Anweisungen hinterlegt.</span>';
-    }
+    // Instructions live in the source tree now — update state + re-render it.
     if (state._projectDetail) state._projectDetail.instructions = instructions;
+    if (typeof renderProjectSourceTree === 'function') renderProjectSourceTree();
   } catch(e) {
     showToast('Anweisungen konnten nicht gespeichert werden');
   }

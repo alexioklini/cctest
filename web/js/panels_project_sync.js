@@ -1,47 +1,16 @@
 // panels_project_sync.js — project input-folders, sync, sync-history. Split from panels.js (Tier F Phase 3). Global <script>, no modules.
 
 // ─── Project input folders + sync indicator ───────────────────────────
+// Shim: input folders now render inside the unified source tree. Still stash
+// state._projectInputFolders for the edit modal, then refresh the tree's
+// Ordner branch in place.
 async function loadProjectInputFolders(agentId, projectName) {
-  const container = document.getElementById('project-panel-input-folders');
-  if (!container) return;
   try {
     const data = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/input-folders`);
-    const folders = data.folders || [];
-    // Stash for the edit modal so it doesn't need to refetch.
-    state._projectInputFolders = folders;
-    if (!folders.length) {
-      container.innerHTML = '<span class="project-panel-placeholder">Noch keine Ordner verknüpft.</span>';
-      return;
-    }
-    container.innerHTML = folders.map((f, idx) => {
-      const fullPath = f.path || '';
-      // Folder name = last path segment (or full path if there is no separator).
-      const nameMatch = fullPath.replace(/\/+$/, '').split('/').filter(Boolean);
-      const name = nameMatch.length ? nameMatch[nameMatch.length - 1] : fullPath;
-      const recursive = f.recursive !== false;
-      const autoSync = f.auto_sync !== false;  // default true for legacy entries
-      return `
-      <div class="project-input-folder-row">
-        <div class="pif-row-head">
-          <svg class="pif-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-          <span class="pif-name" title="${esc(fullPath)}">${esc(name)}</span>
-          <button class="pif-action-btn" onclick="editProjectInputFolder(${idx})" title="Ordnereinstellungen bearbeiten" aria-label="Bearbeiten">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
-          </button>
-          <button class="pif-action-btn pif-delete" onclick="removeProjectInputFolder(${idx})" title="Ordner entfernen" aria-label="Entfernen">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
-          </button>
-        </div>
-        <div class="pif-path" dir="ltr" title="${esc(fullPath)}">${esc(fullPath)}</div>
-        <div class="pif-badges">
-          <span class="pif-flag">${recursive ? 'mit Unterordnern' : 'nur oberste Ebene'}</span>
-          ${autoSync ? '' : '<span class="pif-flag" data-flag="paused" title="Wird nicht automatisch abgeglichen — nur bei „Jetzt abgleichen“">automatischer Abgleich aus</span>'}
-          <span data-pif-pill data-pif-kind="folder" data-pif-id="${esc(fullPath)}">${projectItemPillHtml('folder', fullPath)}</span>
-        </div>
-      </div>
-    `;}).join('');
-  } catch(e) {
-    container.innerHTML = '<span class="project-panel-placeholder">Ordner konnten nicht geladen werden.</span>';
+    state._projectInputFolders = data.folders || data.input_folders || [];
+  } catch (_) { /* keep stale stash on transient error */ }
+  if (typeof _ptFillFolders === 'function' && document.getElementById('pt-items-folders')) {
+    return _ptFillFolders(agentId, projectName);
   }
 }
 
@@ -487,6 +456,8 @@ async function refreshProjectSyncStatus(agentId, projectName) {
     }
     // Re-paint per-item pills without re-fetching the underlying lists.
     paintProjectItemPills();
+    // Re-tint the source-tree state dots from the fresh sync state.
+    if (typeof repaintProjectTreeDots === 'function') repaintProjectTreeDots();
   } catch(e) {
     // Hide on auth/404 — non-managers may not be able to read it.
     chip.style.display = 'none';

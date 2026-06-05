@@ -3337,6 +3337,68 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   border-color: var(--red, #d33);
   color: #fff;
 }
+
+/* ── Project source tree (unified Quellen panel) ─────────────────────────── */
+.project-source-tree { margin-top: 6px; font-size: 13px; }
+.pt-legend {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  font-size: 11px; color: var(--text-400);
+  padding: 4px 2px 10px; border-bottom: 1px solid var(--border-100); margin-bottom: 6px;
+}
+.pt-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.pt-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--text-400); display: inline-block;
+}
+.pt-dot[data-state="indexed"] { background: #3fb950; }   /* green */
+.pt-dot[data-state="pending"] { background: #d29922; }   /* amber */
+.pt-dot[data-state="error"]   { background: #f85149; }   /* red */
+.pt-dot[data-state="stale"]   { background: #8b949e; }   /* grey */
+
+.pt-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 6px; border-radius: 6px; cursor: default;
+  min-width: 0;
+}
+.pt-typerow { cursor: pointer; font-weight: 600; }
+.pt-item, .pt-folderrow, .pt-realrow, .pt-realfile { cursor: default; }
+.pt-folderrow, .pt-realrow { cursor: pointer; }
+.pt-row:hover { background: var(--bg-200); }
+.pt-row:hover .pt-actions { opacity: 1; }
+
+.pt-caret {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; flex-shrink: 0; color: var(--text-400);
+  transition: transform 0.12s;
+}
+.pt-caret.open { transform: rotate(90deg); }
+.pt-icon { flex-shrink: 0; font-size: 13px; line-height: 1; }
+.pt-label {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-100); font-weight: 400;
+}
+.pt-typerow .pt-label { color: var(--text-000); }
+.pt-count { color: var(--text-400); font-size: 11px; font-weight: 400; flex-shrink: 0; }
+
+.pt-actions {
+  display: inline-flex; gap: 2px; flex-shrink: 0;
+  opacity: 0; transition: opacity 0.1s;
+}
+.pt-act {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 4px;
+  border: none; background: none; border-radius: 4px;
+  color: var(--text-400); cursor: pointer; font-size: 13px; line-height: 1;
+}
+.pt-act:hover { background: var(--bg-300); color: var(--text-100); }
+
+.pt-children { margin-left: 14px; border-left: 1px solid var(--border-100); padding-left: 4px; }
+.pt-items { display: flex; flex-direction: column; }
+.pt-empty, .pt-loading { color: var(--text-400); font-size: 12px; padding: 4px 8px; font-style: italic; }
+.pt-instructions { padding: 4px 8px; color: var(--text-200); font-size: 12.5px; }
+.pt-instructions :is(p, ul, ol) { margin: 4px 0; }
+.pt-foldertree { margin-left: 20px; }
+
 .project-panel-section-body {
   font-size: 13px;
   color: var(--text-300);
