@@ -1009,6 +1009,13 @@ _WEBURL_DEFAULT_REFRESH_SECONDS = 6 * 3600
 # that honor conditional GET incorrectly. Time-based (not cycle-based) so it's
 # stable across interval retunes and missed/slow cycles.
 _WEBURL_DEFAULT_MAX_STALE_SECONDS = 24 * 3600
+# Re-verify ceiling for VALIDATOR-bearing URLs: even when a server keeps
+# answering a clean 304, force ONE full body fetch this often (default 7 days)
+# as a safety net against a sticky/buggy ETag OR conversion drift (the upstream
+# validator reflects the raw bytes, not necessarily what markitdown/crawl4ai
+# renders). Distinct from the 24h no-validator ceiling — verified URLs are
+# trustworthy, so they only need an occasional re-check, not a daily one.
+_WEBURL_DEFAULT_REVERIFY_SECONDS = 7 * 24 * 3600
 _WEBURL_STATE_FILE = ".fetch-state.json"
 
 
@@ -1025,9 +1032,18 @@ def _weburl_max_stale_seconds():
     try:
         cfg = (engine._server_config().get("project_sync") or {})
         v = int(cfg.get("web_url_max_stale_seconds", _WEBURL_DEFAULT_MAX_STALE_SECONDS))
-        return max(0, v)  # 0 ⇒ never force (trust 304 fully)
+        return max(0, v)  # 0 ⇒ never force (no-validator URLs trusted fully)
     except (TypeError, ValueError, AttributeError):
         return _WEBURL_DEFAULT_MAX_STALE_SECONDS
+
+
+def _weburl_reverify_seconds():
+    try:
+        cfg = (engine._server_config().get("project_sync") or {})
+        v = int(cfg.get("web_url_reverify_seconds", _WEBURL_DEFAULT_REVERIFY_SECONDS))
+        return max(0, v)  # 0 ⇒ trust 304 indefinitely (never re-verify)
+    except (TypeError, ValueError, AttributeError):
+        return _WEBURL_DEFAULT_REVERIFY_SECONDS
 
 
 def _load_weburl_state(folder):
@@ -1166,6 +1182,7 @@ def _sync_project_web_urls(pdir, web_urls):
     state = _load_weburl_state(folder)          # slug → {etag, last_modified, last_fetch, last_full_fetch}
     refresh_s = _weburl_refresh_seconds()
     max_stale_s = _weburl_max_stale_seconds()
+    reverify_s = _weburl_reverify_seconds()
     now = _time.time()
     wf_timeout = engine.get_tool_config().get("web_fetch", {}).get("timeout", 30)
     for entry in (web_urls or []):
@@ -1193,31 +1210,30 @@ def _sync_project_web_urls(pdir, web_urls):
         _full_age = now - float(st.get("last_full_fetch", 0))
         _ceiling_due = bool(max_stale_s) and _full_age >= max_stale_s
 
-        # No-validator skip — a due URL whose server gave us NO ETag/Last-Modified
-        # on the last full fetch can't be checked cheaply, so don't pay a full
-        # fetch every refresh window for it. Skip until the staleness ceiling
-        # (max_stale, default 24h since the last real body fetch) forces one. The
-        # sites we can't detect change on are thus the ones we refetch LEAST —
-        # accepting up to `max_stale` staleness for them (fine for standing
-        # reference pages, the whole premise of project web URLs). A URL we've
-        # fetched before but have no validator AND no last_full_fetch for is
-        # treated as ceiling-due (so it gets one full fetch to (re)learn).
-        if existing and not _has_validator and not _ceiling_due \
-                and st.get("last_full_fetch"):
-            kept_files.update(existing)
-            continue
+        # Two ceilings, each measured against the last REAL 200-body fetch
+        # (last_full_fetch, never bumped by a 304):
+        #   • no-validator URLs (can't verify cheaply) — full fetch every
+        #     max_stale_s (default 24h).
+        #   • validator URLs (304-verifiable) — a clean 304 is the server's
+        #     certain "not modified", so we trust it and only re-verify with a
+        #     full body fetch every reverify_s (default 7d), as a safety net
+        #     against a sticky/buggy ETag or conversion drift.
+        if existing and not _has_validator:
+            # Can't verify cheaply: skip until the 24h ceiling forces a full
+            # fetch. (No validator AND no last_full_fetch ⇒ ceiling-due, so it
+            # gets one full fetch to (re)learn whether it has validators.)
+            if not _ceiling_due and st.get("last_full_fetch"):
+                kept_files.update(existing)
+                continue
+            # else: fall through to the full fetch below.
 
-        # Hard staleness ceiling — if it's been too long since a REAL body fetch,
-        # skip the 304 path and force a full fetch below (defends against servers
-        # that answer 304 wrongly / send a sticky ETag). last_full_fetch is
-        # bumped ONLY on a 200-body fetch, never on a 304.
-        _force_full = _ceiling_due
+        _reverify_due = bool(reverify_s) and _full_age >= reverify_s
 
-        # Lever B — conditional GET. When we DO refresh and have a prior copy +
-        # a validator (ETag / Last-Modified), ask the server first; a 304 lets
-        # us reuse the on-disk copy without downloading or re-mining the body.
-        # Skipped when the staleness ceiling forces a full fetch.
-        if existing and not _force_full and _has_validator:
+        # Lever B — conditional GET. When a validator-bearing URL is due AND it's
+        # not yet time to re-verify, ask the server first; a 304 reuses the
+        # on-disk copy with no body download / no re-mine. When the 7d re-verify
+        # window has elapsed we skip the 304 path and force a full body fetch.
+        if existing and _has_validator and not _reverify_due:
             kind, info = _conditional_fetch(url, st.get("etag"), st.get("last_modified"), wf_timeout)
             if kind == "not_modified":
                 kept_files.update(existing)

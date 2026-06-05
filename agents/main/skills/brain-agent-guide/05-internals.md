@@ -281,10 +281,13 @@ no network if its on-disk copy is younger than `project_sync.web_url_refresh_sec
 (`If-None-Match`/`If-Modified-Since`) and a 304 reuses the on-disk copy with no
 body download / no re-mine; (C) a URL whose server gives NO ETag/Last-Modified is
 SKIPPED until `project_sync.web_url_max_stale_seconds` (default 24h) since its last
-real body fetch — that ceiling also forces a full fetch for validator URLs stuck
-answering 304 (sticky/buggy ETag). `last_full_fetch` bumps only on a 200 body, never
-a 304. The content hash-gate is still the final re-mine backstop. refresh=0 ⇒ always
-re-fetch; ceiling=0 ⇒ trust 304 fully.
+real body fetch. Two un-equal ceilings, both measured against `last_full_fetch`
+(the last real 200 body; a 304 never bumps it): validator URLs are trusted (304 =
+certain no-change) and only force a full RE-VERIFY every
+`project_sync.web_url_reverify_seconds` (default 7d, safety net vs sticky ETag /
+conversion drift); no-validator URLs force a full fetch every 24h. `refresh=0` ⇒
+always re-fetch; `reverify=0` ⇒ trust 304 indefinitely; `max_stale=0` ⇒ trust
+no-validator URLs fully. The content hash-gate is still the final re-mine backstop.
 
 ## Background tasks (detached, Claude-Desktop-style)
 
