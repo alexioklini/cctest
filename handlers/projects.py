@@ -1370,6 +1370,23 @@ class ProjectsHandlerMixin:
             budget=body.get("budget"), user_id=user["id"])
         self._send_json({"run_id": run_id, "status": "running", "budget": eff_budget})
 
+    def _handle_research_runs_list(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/research/runs — recent runs for
+        the project (newest first), so the tab can restore + browse history
+        after a reload (the proposed sources live in the DB, not just in JS)."""
+        from server_lib.db import ChatDB
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        runs = ChatDB.list_research_runs(project.get("id") or "", limit=20)
+        self._send_json({"runs": [{
+            "run_id": r.get("id"), "topic": r.get("topic"), "status": r.get("status"),
+            "phase": r.get("phase"), "report_output_id": r.get("report_output_id") or "",
+            "created_at": r.get("created_at"), "finished_at": r.get("finished_at"),
+        } for r in runs]})
+
     def _handle_research_run_get(self, path: str):
         """GET /v1/agents/{id}/projects/{name}/research/runs/{run_id} — poll a
         Deep Research run (status, phase, progress, budget, proposed sources)."""
@@ -1384,7 +1401,10 @@ class ProjectsHandlerMixin:
         if not row or row.get("project_id") != (project.get("id") or ""):
             self._send_json({"error": "Research run not found"}, 404)
             return
-        self._send_json(self._research_run_to_dict(row))
+        # Mark proposed sources already in the project's web_urls as in_project
+        # (computed LIVE — the worker stored in_project:False, and the user may
+        # have imported some since), so a restored run shows what's left.
+        self._send_json(self._research_run_to_dict(row, project.get("web_urls") or []))
 
     def _handle_research_run_cancel(self, path: str):
         """POST /v1/agents/{id}/projects/{name}/research/runs/{run_id}/cancel
@@ -1405,12 +1425,26 @@ class ProjectsHandlerMixin:
         self._send_json({"run_id": run_id, "status": "cancelling"})
 
     @staticmethod
-    def _research_run_to_dict(row: dict) -> dict:
+    def _research_run_to_dict(row: dict, project_web_urls=None) -> dict:
         def _j(v, default):
             try:
                 return json.loads(v) if v else default
             except (ValueError, TypeError):
                 return default
+        proposed = _j(row.get("proposed"), [])
+        # Re-mark proposed sources that are NOW in the project (the user may have
+        # imported some since the run finished) so a restored run dims them. Uses
+        # the worker's own URL normaliser for an apples-to-apples match.
+        if project_web_urls is not None and isinstance(proposed, list):
+            try:
+                from engine.deep_research import _norm_url
+                have = {_norm_url(u.get("url", "")) for u in project_web_urls
+                        if isinstance(u, dict)}
+                for s in proposed:
+                    if isinstance(s, dict):
+                        s["in_project"] = _norm_url(s.get("url", "")) in have
+            except Exception:
+                pass
         return {
             "run_id": row.get("id"),
             "topic": row.get("topic"),
@@ -1419,7 +1453,7 @@ class ProjectsHandlerMixin:
             "progress": _j(row.get("progress"), {}),
             "budget": _j(row.get("budget"), {}),
             "report_output_id": row.get("report_output_id") or "",
-            "proposed": _j(row.get("proposed"), []),
+            "proposed": proposed,
             "coverage_note": row.get("coverage_note") or "",
             "error": row.get("error") or "",
             "created_at": row.get("created_at"),

@@ -1647,6 +1647,8 @@ class BrainAgentHandler(
             self._handle_project_outputs_list(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/research/backends"):
             self._handle_research_backends(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.rstrip("/").endswith("/research/runs"):
+            self._handle_research_runs_list(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/research/runs/" in path:
             self._handle_research_run_get(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path:

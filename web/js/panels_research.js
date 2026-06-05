@@ -20,9 +20,76 @@ function loadProjectResearch(agentId, projectName) {
   API.researchBackends(agentId, projectName).then(d => {
     _researchBackend = d.backend || '';
     renderResearchForm();
+    loadResearchHistory();   // restore latest + list recent (persisted in DB)
   }).catch(e => {
     el.innerHTML = `<div style="padding:14px;color:var(--error);font-size:13px">${esc(e.message || e)}</div>`;
   });
+}
+
+// Recent runs are persisted in research_runs — fetch them so proposed sources +
+// reports survive a reload / tab switch (previously only state._researchProposed
+// in JS held them). Renders a 'Letzte Recherchen' list and auto-restores the
+// most recent run's results into the result area.
+async function loadResearchHistory() {
+  let data;
+  try {
+    data = await API.researchRuns(state._researchAgent, state._researchProject);
+  } catch (_) { return; }
+  const runs = (data && data.runs) || [];
+  state._researchRuns = runs;
+  renderResearchHistory(runs);
+  // Auto-restore the most recent run: re-attach if still running, else show
+  // its results. Skipped if a run is already live in this view.
+  if (!state._researchRunId && runs.length) {
+    const latest = runs[0];
+    if (latest.status === 'running') { researchReopen(latest.run_id, true); }
+    else { researchReopen(latest.run_id, false); }
+  }
+}
+
+function renderResearchHistory(runs) {
+  const host = document.getElementById('research-history');
+  if (!host) return;
+  if (!runs.length) { host.innerHTML = ''; return; }
+  const _ico = { done: '✓', error: '✕', cancelled: '⊘', running: '⟳' };
+  const rows = runs.map(r => {
+    const when = r.created_at ? new Date(r.created_at * 1000).toLocaleString('de-DE',
+      { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    const ico = _ico[r.status] || '•';
+    return `<div class="research-hist-row" onclick="researchReopen('${esc(r.run_id)}', ${r.status === 'running'})"
+                 style="display:flex;gap:8px;align-items:center;padding:5px 6px;border-radius:6px;cursor:pointer;font-size:12px"
+                 onmouseover="this.style.background='var(--bg-100)'" onmouseout="this.style.background=''">
+      <span style="color:var(--text-400)">${ico}</span>
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.topic || '(ohne Thema)')}</span>
+      <span style="color:var(--text-400);font-size:11px;flex-shrink:0">${esc(when)}</span>
+    </div>`;
+  }).join('');
+  host.innerHTML = `
+    <div style="margin-top:22px;max-width:680px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:4px">Letzte Recherchen</div>
+      <div style="border:1px solid var(--border-200);border-radius:8px;padding:4px">${rows}</div>
+    </div>`;
+}
+
+// Re-open a persisted run: if running, re-attach the live progress + poll;
+// otherwise fetch its final state and render the proposed sources + report.
+async function researchReopen(runId, isRunning) {
+  state._researchRunId = runId;
+  state._researchCancelling = false;
+  if (isRunning) {
+    try {
+      const r = await API.researchRun(state._researchAgent, state._researchProject, runId);
+      if (r.created_at) state._researchStartedAt = r.created_at;
+      state._researchLast = r;
+      renderDeepProgress(r);
+      startResearchPoll(); startResearchTimer();
+    } catch (e) { showToast('Lauf konnte nicht geladen werden: ' + (e.message || e), true); }
+    return;
+  }
+  try {
+    const r = await API.researchRun(state._researchAgent, state._researchProject, runId);
+    renderDeepDone(r);
+  } catch (e) { showToast('Ergebnis konnte nicht geladen werden: ' + (e.message || e), true); }
 }
 
 function renderResearchForm() {
@@ -52,6 +119,7 @@ function renderResearchForm() {
       </div>
       <div style="margin-top:12px"><button class="btn-primary" style="padding:6px 16px;font-size:13px" onclick="researchStart()">Recherche starten →</button></div>
       <div id="research-result" style="margin-top:16px"></div>
+      <div id="research-history"></div>
     </div>`;
 }
 
@@ -169,7 +237,7 @@ function startResearchPoll() {
       const r = await API.researchRun(state._researchAgent, state._researchProject, state._researchRunId);
       if (r.created_at) state._researchStartedAt = r.created_at;
       if (r.status === 'running') { state._researchLast = r; renderDeepProgress(r); }
-      else { stopResearchPoll(); stopResearchTimer(); renderDeepDone(r); }
+      else { stopResearchPoll(); stopResearchTimer(); renderDeepDone(r); loadResearchHistory(); }
     } catch (_) { /* transient — keep polling */ }
   }, 2500);
 }

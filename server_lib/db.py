@@ -998,6 +998,21 @@ class ChatDB:
             return dict(row) if row else None
 
     @staticmethod
+    @_db_safe(default=[])
+    def list_research_runs(project_id, limit=20):
+        """Recent research runs for a project, newest first. Light columns only
+        (no proposed/report bodies — those load on the per-run GET) so the tab's
+        history list stays cheap."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, topic, status, phase, report_output_id, created_at, "
+                "finished_at FROM research_runs WHERE project_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (project_id, int(limit))).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
     @_db_safe(default=False)
     def research_run_cancelled(run_id):
         """Cheap cancel-flag read for the worker's cooperative cancel checks."""
