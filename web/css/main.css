@@ -3401,6 +3401,21 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 .pt-instructions :is(p, ul, ol) { margin: 4px 0; }
 .pt-foldertree { margin-left: 20px; }
 
+/* C3 — virtual groups, selection, drag/drop */
+.pt-grouprow { cursor: pointer; }
+.pt-grouprow .pt-icon { color: var(--accent-brand); }
+.pt-grouprow .pt-label { font-weight: 500; }
+.pt-groupbody { margin-left: 14px; border-left: 1px dashed var(--border-200); padding-left: 4px; }
+.pt-item[draggable="true"] { cursor: grab; }
+.pt-item.pt-selected { background: color-mix(in srgb, var(--accent-brand) 18%, transparent); }
+.pt-item.pt-selected:hover { background: color-mix(in srgb, var(--accent-brand) 24%, transparent); }
+/* Drop affordances */
+.pt-droparmed { outline: 1px dashed color-mix(in srgb, var(--accent-brand) 45%, transparent); outline-offset: -1px; border-radius: 6px; }
+.pt-dropover {
+  background: color-mix(in srgb, var(--accent-brand) 22%, transparent) !important;
+  outline: 1.5px solid var(--accent-brand); outline-offset: -1px; border-radius: 6px;
+}
+
 .project-panel-section-body {
   font-size: 13px;
   color: var(--text-300);
