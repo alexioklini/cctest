@@ -174,8 +174,17 @@ def _run_search(query):
     return list(merged.values())
 
 
-def _bg_text(messages, system_prompt, model, project_name, agent_id, user_id, purpose, max_tokens=None):
-    """One grounded background LLM call, GDPR-gated (E5). Returns (reply, err)."""
+# Per-run usage accumulator, thread-local (each research run = its own daemon
+# thread). _run_research seeds it; _bg_text adds each call's usage to it so the
+# run stores the SUM across decompose + select + synthesize.
+_usage_tls = threading.local()
+
+
+def _bg_text(messages, system_prompt, model, project_name, agent_id, user_id, purpose,
+             max_tokens=None):
+    """One grounded background LLM call, GDPR-gated (E5). Returns (reply, err).
+    Cost-counts the call (attributed to user_id, like chats) + accumulates
+    tokens/cost into the run's thread-local accumulator."""
     safe_model, [sys_safe, msg_safe], deanon = _brain.gdpr_pick_model_for_background(
         model, [system_prompt, messages], purpose=purpose)
     from handlers import sidecar_proxy
@@ -184,6 +193,16 @@ def _bg_text(messages, system_prompt, model, project_name, agent_id, user_id, pu
         model=safe_model, system_prompt=sys_safe, purpose=purpose,
         agent_id=agent_id, project=project_name, user_id=user_id,
         max_rounds=1, max_tokens=max_tokens)
+    # Cost-count + accumulate (the actual model that ran is safe_model).
+    acc = getattr(_usage_tls, "acc", None)
+    if acc is not None:
+        m = _brain.account_background_usage(
+            res, safe_model, session_id=f"research-{acc.get('run_id', '')}",
+            user_id=user_id, agent_id=agent_id)
+        acc["tokens_in"] += m["tokens_in"]
+        acc["tokens_out"] += m["tokens_out"]
+        acc["cost"] += m["cost"]
+        acc["model"] = safe_model
     if res.get("error"):
         return "", str(res["error"])
     return deanon((res.get("reply") or "").strip()), ""
@@ -275,6 +294,11 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
 
     def _progress(phase, **counts):
         ChatDB.update_research_run(run_id, phase=phase, progress=json.dumps(counts))
+
+    import time as _time
+    _t0 = _time.time()
+    # Seed the per-run usage accumulator (thread-local; _bg_text adds to it).
+    _usage_tls.acc = {"run_id": run_id, "tokens_in": 0, "tokens_out": 0, "cost": 0.0, "model": ""}
 
     fetches_used = 0
     try:
@@ -424,6 +448,15 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
             ChatDB.update_research_run(run_id, status="error", error=detail)
             return
 
+        # Execution metadata: SUM across decompose + select + synthesize (from
+        # the thread-local accumulator; each call was already cost-logged).
+        _acc = getattr(_usage_tls, "acc", None) or {}
+        meta = {"model": _acc.get("model", model),
+                "tokens_in": _acc.get("tokens_in", 0),
+                "tokens_out": _acc.get("tokens_out", 0),
+                "cost": round(_acc.get("cost", 0.0), 6),
+                "duration_s": round(_time.time() - _t0, 1)}
+
         # 8. Save as a project_outputs row (kind=research_report) — reuses the
         #    SHARED save path so Studio browses it with zero new code.
         output_id = uuid.uuid4().hex
@@ -431,7 +464,8 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
         ChatDB.create_project_output(output_id, agent_id, project_id, "research_report",
                                      title, json.dumps({"topic": topic}), user_id)
         body = f"{report_md}\n\n---\n*{coverage_note}*\n"
-        output_gen.save_report_output(output_id, agent_id, project_dir, "research_report", title, body)
+        output_gen.save_report_output(output_id, agent_id, project_dir, "research_report",
+                                      title, body, meta=meta)
 
         # 9. Propose the selected sources for approval (dedup'd vs project already).
         proposed = [{"title": s["title"], "url": s["link"], "snippet": s.get("snippet", ""),
@@ -441,6 +475,8 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
             run_id, status="done", phase="done",
             report_output_id=output_id, proposed=json.dumps(proposed),
             coverage_note=coverage_note,
+            model=meta["model"], tokens_in=meta["tokens_in"], tokens_out=meta["tokens_out"],
+            cost=meta["cost"], duration_s=meta["duration_s"],
             progress=json.dumps({"subqueries": len(subqueries), "candidates": len(cand_list),
                                  "fetched": fetches_used, "kept": len(selected)}))
     except Exception as e:
@@ -450,6 +486,8 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
             ChatDB.update_research_run(run_id, status="error", error=f"{type(e).__name__}: {e}"[:500])
         except Exception:
             pass
+    finally:
+        _usage_tls.acc = None   # clear the per-run accumulator
 
 
 def start_research(*, agent_id, project, topic, budget, user_id):

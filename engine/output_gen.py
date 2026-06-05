@@ -106,21 +106,48 @@ def _register_output_artifact(session_id: str, agent_id: str, path: str, name: s
     return artifact_id
 
 
-def save_report_output(output_id, agent_id, project_dir, kind, title, body_md):
+def render_metadata_footer(meta: dict) -> str:
+    """A markdown '## Metadaten' footer (model · date/time · duration · in/out
+    tokens · cost) appended to a generated report. Shared by Studio outputs +
+    Deep Research so the footer reads identically everywhere. Empty string when
+    there's no usable metadata."""
+    if not meta:
+        return ""
+    import datetime as _dt
+    when = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    dur = meta.get("duration_s") or 0
+    dur_str = f"{int(dur // 60)} min {int(dur % 60)} s" if dur >= 60 else f"{dur:.1f} s"
+    ti, to = meta.get("tokens_in", 0), meta.get("tokens_out", 0)
+    cost = meta.get("cost", 0)
+    return (
+        "\n\n---\n\n## Metadaten\n"
+        f"- **Modell:** {meta.get('model', '—')}\n"
+        f"- **Erstellt:** {when}\n"
+        f"- **Dauer:** {dur_str}\n"
+        f"- **Tokens:** {ti:,} Eingabe · {to:,} Ausgabe\n"
+        f"- **Kosten:** ${cost:.4f}\n")
+
+
+def save_report_output(output_id, agent_id, project_dir, kind, title, body_md, meta=None):
     """SHARED: write a generated report as <pdir>/outputs/<kind>-<id>.md, register
     it as an artifact, and flip the project_outputs row to ready. Used by the
     preset generators AND Deep Research so every output saves + browses identically
-    in Studio. The project_outputs row must already exist (status=generating)."""
+    in Studio. The project_outputs row must already exist (status=generating).
+    `meta` (model/tokens/cost/duration) is appended as a footer + stored on the row."""
     outdir = _outputs_dir(project_dir)
     fname = f"{kind}-{output_id}.md"
     path = os.path.join(outdir, fname)
-    body = f"# {title}\n\n{body_md}\n"
+    body = f"# {title}\n\n{body_md}\n" + render_metadata_footer(meta)
     with open(path, "w", encoding="utf-8") as f:
         f.write(body)
     artifact_id = _register_output_artifact(f"output-{output_id}", agent_id, path, fname) or ""
-    ChatDB.update_project_output(
-        output_id, status="ready", title=title, path=path,
-        artifact_id=artifact_id, citations=_count_citations(body_md))
+    fields = dict(status="ready", title=title, path=path,
+                  artifact_id=artifact_id, citations=_count_citations(body_md))
+    if meta:
+        fields.update(model=meta.get("model", ""), tokens_in=meta.get("tokens_in", 0),
+                      tokens_out=meta.get("tokens_out", 0), cost=meta.get("cost", 0),
+                      duration_s=meta.get("duration_s", 0))
+    ChatDB.update_project_output(output_id, **fields)
     return output_id, path, artifact_id
 
 
@@ -132,6 +159,8 @@ def _run_generation(*, output_id: str, agent_id: str, project_name: str, project
     def _cancelled():
         return ChatDB.project_output_cancelled(output_id)
 
+    import time as _time
+    _t0 = _time.time()
     try:
         focus = (opts.get("focus") or "").strip()
         length = opts.get("length") or "std"
@@ -183,11 +212,18 @@ def _run_generation(*, output_id: str, agent_id: str, project_name: str, project
             ChatDB.update_project_output(output_id, status="cancelled", phase="")
             return
 
+        # Cost-count this LLM call (attributed to user_id, like chats) + capture
+        # the execution metadata for the card + report footer.
+        meta = _brain.account_background_usage(
+            result, model, session_id=f"output-{output_id}",
+            user_id=user_id, agent_id=agent_id)
+        meta["duration_s"] = round(_time.time() - _t0, 1)
+
         # Title: "<preset prefix> — <project display name>".
         proj_cfg = _brain.ProjectManager.get_project(agent_id, project_name) or {}
         display = proj_cfg.get("name") or project_name
         title = f"{output_presets.PRESETS[kind]['title_prefix']} — {display}"
-        save_report_output(output_id, agent_id, project_dir, kind, title, reply)
+        save_report_output(output_id, agent_id, project_dir, kind, title, reply, meta=meta)
     except Exception as e:  # never let the thread die silently — record it
         import traceback
         traceback.print_exc()

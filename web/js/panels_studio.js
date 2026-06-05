@@ -285,10 +285,19 @@ function studioOutputCardHtml(o) {
       <button class="studio-act" onclick="studioOutputMenu(event, '${oid}')"
               style="background:none;border:1px solid var(--border-200);color:var(--text-400);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px" title="Weitere Optionen (Umbenennen, Neu generieren)">⋯</button>`;
   }
+  // Metadata line (ready outputs only): model · cost. Full detail (date,
+  // duration, tokens) lives in the report footer.
+  let metaLine = '';
+  if (o.status === 'ready' && (o.model || o.cost)) {
+    const costStr = o.cost ? `$${Number(o.cost).toFixed(4)}` : '';
+    const parts = [o.model && esc(o.model), costStr].filter(Boolean).join(' · ');
+    if (parts) metaLine = `<div style="font-size:10px;color:var(--text-400)" title="Modell · Kosten dieser Generierung">${parts}</div>`;
+  }
   return `
     <div class="studio-card" data-oid="${esc(o.output_id)}" style="flex:1 1 220px;min-width:200px;max-width:320px;border:1px solid var(--border-200);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
       <div style="font-weight:600;font-size:13px;line-height:1.3">📄 ${esc(o.title || o.kind)}</div>
       <div style="font-size:11px">${statusLine}</div>
+      ${metaLine}
       <div style="display:flex;gap:4px;margin-top:2px">${actions}</div>
     </div>`;
 }

@@ -766,6 +766,19 @@ class ChatDB:
                 conn.execute("ALTER TABLE project_outputs ADD COLUMN phase TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Execution metadata (migration): the model that ran, token usage,
+            # cost (USD, same rates as the chat ledger), and wall-clock duration.
+            # Shown on the Studio card + the report footer; cost is ALSO logged
+            # to costs.db per-user (account_background_usage) like chats.
+            for _col, _decl in (("model", "TEXT DEFAULT ''"),
+                                ("tokens_in", "INTEGER DEFAULT 0"),
+                                ("tokens_out", "INTEGER DEFAULT 0"),
+                                ("cost", "REAL DEFAULT 0"),
+                                ("duration_s", "REAL DEFAULT 0")):
+                try:
+                    conn.execute(f"ALTER TABLE project_outputs ADD COLUMN {_col} {_decl}")
+                except sqlite3.OperationalError:
+                    pass
             # Crash reconcile: any output still 'generating' at boot lost its
             # thread on the previous shutdown — mark it errored so the UI never
             # shows a zombie generating forever (mirrors background_tasks).
@@ -803,6 +816,17 @@ class ChatDB:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_research_runs_project "
                 "ON research_runs(project_id, created_at)")
+            # Execution metadata (migration) — SUMMED across the run's LLM calls
+            # (decompose + select + synthesize). Same fields as project_outputs.
+            for _col, _decl in (("model", "TEXT DEFAULT ''"),
+                                ("tokens_in", "INTEGER DEFAULT 0"),
+                                ("tokens_out", "INTEGER DEFAULT 0"),
+                                ("cost", "REAL DEFAULT 0"),
+                                ("duration_s", "REAL DEFAULT 0")):
+                try:
+                    conn.execute(f"ALTER TABLE research_runs ADD COLUMN {_col} {_decl}")
+                except sqlite3.OperationalError:
+                    pass
             conn.execute(
                 "UPDATE research_runs SET status='error', "
                 "error='Server restart — research run lost', "
@@ -973,7 +997,8 @@ class ChatDB:
     def update_project_output(output_id, **fields):
         """Patch an output row. Whitelisted columns only; sets finished_at when
         status flips to a terminal state."""
-        allowed = ("status", "title", "path", "artifact_id", "error", "citations", "phase")
+        allowed = ("status", "title", "path", "artifact_id", "error", "citations", "phase",
+                   "model", "tokens_in", "tokens_out", "cost", "duration_s")
         sets, vals = [], []
         for k in allowed:
             if k in fields:
@@ -1071,7 +1096,8 @@ class ChatDB:
         """Patch a research run row. Whitelisted columns only; sets finished_at
         when status flips to a terminal state."""
         allowed = ("status", "phase", "progress", "report_output_id",
-                   "proposed", "coverage_note", "error")
+                   "proposed", "coverage_note", "error",
+                   "model", "tokens_in", "tokens_out", "cost", "duration_s")
         sets, vals = [], []
         for k in allowed:
             if k in fields:

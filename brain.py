@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.80.1"
+VERSION = "9.81.0"
 VERSION_DATE = "2026-06-05"
 CHANGELOG = [
+    ("9.81.0", "2026-06-05", "feat(cost): Studio outputs + Deep/Fast Research now COST-COUNTED per user + execution metadata on records, cards, and report footers. THE GAP FIXED: background generation (output_gen, deep_research) called sidecar_proxy.background_call and DISCARDED usage_total — every Studio output + research run logged $0 to costs.db, untracked + unattributed (no quota impact). NOW: brain.account_background_usage(result, model, session_id, user_id, agent_id) logs the call to costs.db via _log_call_cost (which gained explicit user_id/agent_id params — the request context is EMPTY on the daemon thread, so the run's user_id must be passed) AND returns {model,tokens_in,tokens_out,cost} (cost via the same _compute_cost rates the chat ledger uses). output_gen._run_generation accounts its one synthesis call; deep_research sums across its 3 LLM calls (decompose+select+synthesize) via a thread-local accumulator (_usage_tls, seeded per run, cleared in finally). METADATA STORED: project_outputs + research_runs gain model/tokens_in/tokens_out/cost/duration_s columns (migrations); update_*/serializers whitelist them. DISPLAY: Studio ready-cards show 'model · $cost'; the research done-view shows model · cost · duration · tokens; every generated report .md gets a German '## Metadaten' footer (Modell/Erstellt/Dauer/Tokens/Kosten) via output_gen.render_metadata_footer (shared by Studio + Deep Research). Fast Research does no LLM synthesis → no footer. VERIFIED LIVE: a faq generation logged cost_log user=17368b7961d3 model=mistral-medium-3.5 16138/3034 tok $0.0470 (matches the output row + the .md footer) — previously $0/untracked. js_gate green (no new globals; smoke 5/5); py compile OK; migrations verified live."),
     ("9.80.1", "2026-06-05", "polish(projects): source-tree C4 (final of 4) — UX polish on the grouping. (1) Group create/rename now use the app's showPrompt() dialog (utils.js) instead of the browser prompt() — matches the modal style, Enter-to-submit. (2) MULTI-SELECT DRAG GHOST: dragging >1 selected item shows a 'N Elemente' count badge as the drag image (.pt-dragghost) instead of a single-row ghost. (3) SELECTION CHIP: a '<n> ausgewählt · ziehen oder Esc' chip appears in the legend bar when >1 item is selected (.pt-selcount), so multi-select state is visible. (4) ESCAPE clears the selection (one guarded keydown listener, idempotent via window._ptEscWired). (5) Tidied the redundant plain-click branch in ptItemClick (both arms did the same thing); cmd-click of a different type now starts a fresh same-type selection (groups are type-locked, mixing is meaningless). No new globals (net-globals 1173 unchanged); js_gate green (smoke 5/5, zero console errors — the authoritative no-regression check); py compile OK. This COMPLETES the unified source-tree feature (C1 backend → C2 read-only tree+colors → C3 grouping/DnD → C4 polish)."),
     ("9.80.0", "2026-06-05", "feat(projects): source-tree GROUPING + drag/drop + multi-select (C3 of 4). Users can now organise each groupable type (Dateien/Ordner/Web-Adressen) into VIRTUAL FOLDERS, ≤3 levels deep, type-locked (a Files group holds only files, etc.). All in panels_project_tree.js, persisted to project.json → source_groups (the C1 field; the C1 server-side sanitiser enforces depth/type/no-orphan on every save). (1) GROUP CRUD: ⊞ on a type header = new top-level group; ＋ on a group = subgroup (blocked at depth 3 with a toast); ✎ rename; ✕ dissolves the group (items + child groups move up to its parent — NEVER deletes the underlying source). prompt()-based naming. (2) DRAG/DROP: items are draggable; drop onto a virtual group (same type) assigns them, drop onto the type root un-groups. Delegated dragover/drop on the container with type-lock (a folder can't drop into a files group) + live drop affordances (armed dashed outline on valid targets, solid highlight on hover). (3) MULTI-SELECT: cmd/ctrl-click toggles selection (terracotta highlight); a drag moves the whole same-type selection. (4) INGESTED FOLDERS: the folder's TOP NODE is the draggable/groupable item; its real read-only subtree (from C2) is NOT draggable — fixed hierarchy preserved. _ptRenderGrouped nests items under their assigned folders; the 3 type fillers build an id→row map + delegate to it. Group expand/collapse persists in localStorage like the type branches. VERIFIED LIVE: created an 'Apple News' urls group, assigned 3 URLs via the save+refresh path ptDrop uses → 3 items render inside the group, persisted to the server (re-fetched source_groups confirms), zero console errors. js_gate green (net-globals 1152→1173 baseline bumped; smoke 5/5); py compile OK. Next: C4 polish (context menus, keyboard, empty states)."),
     ("9.79.2", "2026-06-05", "fix(projects): source tree now defaults to FULLY COLLAPSED — the 3 type branches (Dateien/Ordner/Web-Adressen) defaulted to expanded (_ptIsExpanded(type, true)); flipped to false so a fresh project load starts collapsed. Per-project expand state still persists in localStorage (expand a branch → it stays expanded across reloads), only the untouched default changed. js_gate green (net-globals unchanged, smoke 5/5)."),
@@ -13360,16 +13361,24 @@ def _get_agent_limits(agent_id: str | None = None) -> dict:
 
 def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
                    session_id: str | None = None, tool_round: int = 0,
-                   api_key: str = ""):
-    """Log an LLM call to the cost tracker (if initialized)."""
+                   api_key: str = "", user_id: str | None = None,
+                   agent_id: str | None = None):
+    """Log an LLM call to the cost tracker (if initialized).
+
+    `user_id`/`agent_id` default to the request context (interactive path), but
+    can be passed EXPLICITLY for background work (Studio gen, Deep Research) that
+    runs on a daemon thread with no request context — otherwise the cost would be
+    logged unattributed."""
     if not _cost_tracker:
         return
     if tokens_in == 0 and tokens_out == 0:
         return  # Skip if no usage data available
-    agent = get_request_context().current_agent or _current_agent
-    agent_id = agent.agent_id if agent else "main"
+    if agent_id is None:
+        agent = get_request_context().current_agent or _current_agent
+        agent_id = agent.agent_id if agent else "main"
     provider = _models_config.get(model, {}).get("provider", "")
-    user_id = get_request_context().current_user_id or ""
+    if user_id is None:
+        user_id = get_request_context().current_user_id or ""
     # Resolve key_name from the pool using the api_key value
     key_name = ""
     if api_key and provider:
@@ -13393,6 +13402,25 @@ def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
             _rate_limiter.record_usage(agent_id, tokens_in + tokens_out, cost)
     except Exception as e:
         logging.warning(f"Cost logging error: {e}")
+
+
+def account_background_usage(result: dict, model: str, *, session_id: str,
+                             user_id: str = "", agent_id: str = "main") -> dict:
+    """Log a background_call's token usage to costs.db (attributed to user_id,
+    like chats) AND return a metadata dict {model, tokens_in, tokens_out, cost}.
+
+    The single seam for cost-counting Studio generation + Deep Research. Reads
+    `usage_total.{input_tokens,output_tokens}` from the sidecar result; cost is
+    derived via the same _compute_cost rates the chat ledger uses. Safe on a 0/
+    missing-usage result (returns zeros, logs nothing)."""
+    usage = (result or {}).get("usage_total") or {}
+    ti = int(usage.get("input_tokens", 0) or 0)
+    to = int(usage.get("output_tokens", 0) or 0)
+    if ti or to:
+        _log_call_cost(model, ti, to, session_id=session_id,
+                       user_id=user_id, agent_id=agent_id)
+    return {"model": model, "tokens_in": ti, "tokens_out": to,
+            "cost": round(_compute_cost(model, ti, to), 6)}
 
 
 # System-prompt assembly + first-turn preambles moved to engine/prompt_build.py
