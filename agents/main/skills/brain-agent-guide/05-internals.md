@@ -420,6 +420,16 @@ The marquee feature (`engine/deep_research.py`). Two modes on the project's
   PRECISION/CITATION) so the report cites verbatim `[Quelle: …]` and omits rather
   than invents. Saved via `output_gen.save_report_output(kind=research_report)` —
   the SHARED path, so Studio browses the report with zero new code.
+- **Tunable breadth/cost**: all knobs read from `config.json → research.*` (absent ⇒
+  prior defaults). `max_subqueries` (8, the real sub-question ceiling — `rounds` is
+  pinned at it), `results_per_query` (8, candidates per sub-question search), and the
+  budget defaults `fetches`/`tokens`/`rounds` (the per-run API budget still overrides
+  these). Candidate breadth ≈ `min(rounds, max_subqueries) × results_per_query`.
+  Single reader `_research_int(key, default, lo, hi)`. The `tokens` synthesis ceiling
+  (`_fit_corpus`) stays the backstop — widen discovery + tokens together or _fit_corpus
+  just drops the extra. (NOT a link-following crawler: Deep Research IS the relevance-
+  driven 'go wide on a topic' mechanism; outbound-link crawling optimises author
+  navigation, not relevance.)
 - **Bounded + visible**: budget default 60 fetches / 80k tok / 8 rounds; the loop
   stops at the cap and the report states bounded coverage (W8 — never silent). The
   UI shows phase + budget live (2.5s poll). The `tokens` budget is enforced at

@@ -25,10 +25,15 @@ from engine import output_gen
 from server_lib.db import ChatDB
 
 # Budget defaults (server-side, generous per spec §8.1: ~60 fetches / ~80k tok /
-# ~4 min). Surfaced live in the UI — never silent.
+# ~4 min). Surfaced live in the UI — never silent. Every breadth/cost knob below
+# is overridable from config.json → research.* (read via _research_int at the use
+# site); these remain the DEFAULTS, so behavior is unchanged unless configured.
+#   research.{fetches,tokens,rounds}   — per-run budget (DEFAULT_BUDGET)
+#   research.max_subqueries            — sub-question ceiling (_MAX_SUBQUERIES)
+#   research.results_per_query         — candidates per sub-question search
 DEFAULT_BUDGET = {"fetches": 60, "tokens": 80000, "rounds": 8}
-_MAX_SUBQUERIES = 8
-_RESULTS_PER_QUERY = 8
+_MAX_SUBQUERIES = 8        # default; override via research.max_subqueries
+_RESULTS_PER_QUERY = 8     # default; override via research.results_per_query
 _FETCH_MAX_LEN = 12000          # per-source markdown cap fed to synthesis
 _MIN_USABLE_CONTENT = 200       # chars; below this a fetch is treated as failed
 _CHARS_PER_TOKEN = 3.5          # rough corpus-size → token estimate (conservative)
@@ -71,11 +76,19 @@ _DEFAULT_SEARCH_WORKERS = 4
 def _io_workers(key: str, default: int) -> int:
     """Read research.<key> from server config, clamped to [1, 16]. Falls back to
     the default on any missing/garbage value (never lets config widen past 16)."""
+    return _research_int(key, default, 1, 16)
+
+
+def _research_int(key: str, default: int, lo: int, hi: int) -> int:
+    """Read an integer research.<key> from server config, clamped to [lo, hi].
+    Falls back to `default` on any missing/garbage value. The single config
+    reader for every Deep Research breadth/cost knob — keeps all the limits
+    overridable from config.json without changing the (unchanged) defaults."""
     try:
         v = int((_brain._server_config().get("research") or {}).get(key, default))
     except (TypeError, ValueError, AttributeError):
         return default
-    return max(1, min(16, v))
+    return max(lo, min(hi, v))
 
 _LOW_TRUST = ("reddit.com", "quora.com", "medium.com", "facebook.com",
               "twitter.com", "x.com", "pinterest.com")
@@ -140,11 +153,12 @@ def _run_search(query):
     backend = active_backend()
     if not backend:
         return []
+    n = _research_int("results_per_query", _RESULTS_PER_QUERY, 1, 50)
     try:
         if backend == "searxng":
-            raw = _brain.tool_searxng_search({"query": query, "num_results": _RESULTS_PER_QUERY})
+            raw = _brain.tool_searxng_search({"query": query, "num_results": n})
         else:  # exa
-            raw = _brain.exa_search(query, num_results=_RESULTS_PER_QUERY)
+            raw = _brain.exa_search(query, num_results=n)
         data = json.loads(raw)
     except Exception:
         return []
@@ -178,17 +192,18 @@ def _bg_text(messages, system_prompt, model, project_name, agent_id, user_id, pu
 # ─── Judgment point 1: decompose the topic into sub-questions ──────────────
 
 def _decompose(topic, model, project_name, agent_id, user_id):
+    max_subq = _research_int("max_subqueries", _MAX_SUBQUERIES, 1, 32)
     sys = ("You are a research planner. Break the user's topic into focused, "
            "distinct sub-questions that together cover it. Output ONLY a JSON "
            "array of strings (the sub-questions), nothing else. "
-           f"Return between 3 and {_MAX_SUBQUERIES} sub-questions.")
+           f"Return between 3 and {max_subq} sub-questions.")
     reply, err = _bg_text(f"Topic: {topic}", sys, model, project_name, agent_id, user_id,
                           purpose="transform", max_tokens=600)
     if err:
         return [topic]  # degrade: search the raw topic
     subs = _extract_json_list(reply)
     subs = [s.strip() for s in subs if isinstance(s, str) and s.strip()]
-    return subs[:_MAX_SUBQUERIES] or [topic]
+    return subs[:max_subq] or [topic]
 
 
 def _extract_json_list(text):
@@ -425,7 +440,13 @@ def start_research(*, agent_id, project, topic, budget, user_id):
     project_id = project.get("id") or ""
     project_name = project.get("folder_name") or project.get("name") or ""
     project_dir = project.get("dir") or ""
-    eff_budget = dict(DEFAULT_BUDGET)
+    # Budget precedence: config.json default (research.<k>) → per-run override.
+    # Config absent ⇒ DEFAULT_BUDGET, so behavior is unchanged unless configured.
+    eff_budget = {
+        "fetches": _research_int("fetches", DEFAULT_BUDGET["fetches"], 1, 500),
+        "tokens": _research_int("tokens", DEFAULT_BUDGET["tokens"], 4000, 1_000_000),
+        "rounds": _research_int("rounds", DEFAULT_BUDGET["rounds"], 1, 32),
+    }
     if isinstance(budget, dict):
         for k in ("fetches", "tokens", "rounds"):
             if isinstance(budget.get(k), int) and budget[k] > 0:
