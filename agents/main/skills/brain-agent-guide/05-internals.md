@@ -407,7 +407,10 @@ The marquee feature (`engine/deep_research.py`). Two modes on the project's
   the SHARED path, so Studio browses the report with zero new code.
 - **Bounded + visible**: budget default 60 fetches / 80k tok / 8 rounds; the loop
   stops at the cap and the report states bounded coverage (W8 — never silent). The
-  UI shows phase + budget live (2.5s poll).
+  UI shows phase + budget live (2.5s poll). The `tokens` budget is enforced at
+  synthesis by `_fit_corpus()` — it packs the rank-ordered sources until the budget
+  is spent and drops the rest (stated in the coverage note), so the synthesis prompt
+  never overflows the model context (overflow → empty completion → 'Empty report').
 - **Safety**: every LLM call routes through `gdpr_pick_model_for_background` (E5);
   cooperative cancel via the `research_runs.cancel` flag (E3); degrades if one
   backend fails (E2); boot reconcile flips a leftover `running` run to `error`.

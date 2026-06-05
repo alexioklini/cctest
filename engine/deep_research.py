@@ -31,6 +31,33 @@ _MAX_SUBQUERIES = 8
 _RESULTS_PER_QUERY = 8
 _FETCH_MAX_LEN = 12000          # per-source markdown cap fed to synthesis
 _MIN_USABLE_CONTENT = 200       # chars; below this a fetch is treated as failed
+_CHARS_PER_TOKEN = 3.5          # rough corpus-size → token estimate (conservative)
+_SYNTH_OVERHEAD_TOKENS = 8000   # reserve for discipline/prompt/reply headroom
+
+
+def _fit_corpus(sources, token_budget):
+    """Pack RANK-ORDERED sources into the synthesis corpus until the token
+    budget is spent, so the prompt never overflows the model's context (an
+    overflowed prompt silently returns an EMPTY completion → 'Empty report.').
+
+    `sources` is already best-first (from _select_sources). Returns
+    (kept_sources, n_dropped). At least the top source is always kept (trimmed
+    to fit if it alone exceeds the budget) so a report is still produced."""
+    char_budget = int(max(1, token_budget - _SYNTH_OVERHEAD_TOKENS) * _CHARS_PER_TOKEN)
+    kept, used = [], 0
+    for i, s in enumerate(sources):
+        clen = len(s.get("content") or "")
+        if i == 0 and clen > char_budget:
+            # Top source alone is too big — trim it rather than drop everything.
+            s = {**s, "content": s["content"][:char_budget]}
+            kept.append(s)
+            used = char_budget
+            continue
+        if used + clen > char_budget:
+            break
+        kept.append(s)
+        used += clen
+    return kept, len(sources) - len(kept)
 
 # I/O concurrency for the search + fetch phases. The fetch cap is the main
 # protection for the crawl4ai render service (an uncapped ThreadingHTTPServer) —
@@ -333,23 +360,37 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
         keep_idx = _select_sources(topic, fetched, model, project_name, agent_id, user_id)
         selected = [fetched[i] for i in keep_idx]
 
-        # 5. Coverage note (W8 — bounded coverage stated, never silent)
+        # 5. Fit the ranked corpus to the token budget so synthesis never
+        #    overflows the model context (overflow → empty completion → 'Empty
+        #    report'). budget["tokens"] (default 80k) is enforced HERE — it was
+        #    declared but never wired before; with parallel fetch now keeping all
+        #    selected sources, a large corpus (e.g. 37×12k chars) overflowed.
+        synth_sources, n_dropped = _fit_corpus(selected, int(budget.get("tokens", 80000)))
+
+        # 6. Coverage note (W8 — bounded coverage stated, never silent)
+        drop_note = (f" Dropped {n_dropped} lower-ranked source(s) to fit the "
+                     f"{budget.get('tokens', 80000)}-token synthesis budget."
+                     if n_dropped else "")
         coverage_note = (
             f"Coverage: planned {len(subqueries)} sub-questions, found "
             f"{len(cand_list)} candidate sources, fetched {fetches_used} within "
-            f"budget ({budget.get('fetches')} max), synthesized from {len(selected)}.")
+            f"budget ({budget.get('fetches')} max), synthesized from "
+            f"{len(synth_sources)}.{drop_note}")
 
-        # 6. Synthesize (judgment) → cited report
+        # 7. Synthesize (judgment) → cited report
         _progress("writing", subqueries=len(subqueries), candidates=len(cand_list),
-                  fetched=fetches_used, kept=len(selected))
-        report_md, err = _synthesize(topic, selected, coverage_note, model,
+                  fetched=fetches_used, kept=len(synth_sources))
+        report_md, err = _synthesize(topic, synth_sources, coverage_note, model,
                                      project_name, agent_id, user_id)
         if err or not report_md:
-            ChatDB.update_research_run(run_id, status="error",
-                                       error=("Synthesis failed: " + err) if err else "Empty report.")
+            detail = ("Synthesis failed: " + err) if err else (
+                f"Synthesis returned no text (model produced an empty completion "
+                f"from {len(synth_sources)} source(s) — likely a context/length "
+                f"limit; lower research.tokens or the fetch count).")
+            ChatDB.update_research_run(run_id, status="error", error=detail)
             return
 
-        # 7. Save as a project_outputs row (kind=research_report) — reuses the
+        # 8. Save as a project_outputs row (kind=research_report) — reuses the
         #    SHARED save path so Studio browses it with zero new code.
         output_id = uuid.uuid4().hex
         title = f"Research — {topic[:80]}"
@@ -358,7 +399,7 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
         body = f"{report_md}\n\n---\n*{coverage_note}*\n"
         output_gen.save_report_output(output_id, agent_id, project_dir, "research_report", title, body)
 
-        # 8. Propose the selected sources for approval (dedup'd vs project already).
+        # 9. Propose the selected sources for approval (dedup'd vs project already).
         proposed = [{"title": s["title"], "url": s["link"], "snippet": s.get("snippet", ""),
                      "trust_hint": _trust_hint(s["link"]), "in_project": False}
                     for s in selected]
