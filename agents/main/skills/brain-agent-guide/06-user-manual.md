@@ -178,6 +178,20 @@ Codebasen, Forschungspapiere, …).
 Die Hilfe auf der Projekt-Einstellungsseite ist ein aufklappbarer
 „Hilfe"-Bereich.
 
+**Quellen-Baum** (rechter Bereich der Projektseite): Anweisungen, Dateien,
+Ordner und Web-Adressen erscheinen als ein gemeinsamer, aufklappbarer Baum
+— bis auf Dateiebene. Ein **Farbpunkt** pro Element zeigt den Status im
+Projektgedächtnis: 🟢 indexiert · 🟠 ausstehend · 🔴 Fehler · ⚪ veraltet
+(Legende oben). Eingespeiste Ordner lassen sich bis zu den echten Dateien
+aufklappen (schreibgeschützt — die Ordnerstruktur ist fest). Du kannst
+**virtuelle Gruppen** anlegen (⊞ in der Bereichszeile, ＋ für Untergruppen,
+bis zu 3 Ebenen) und Elemente per **Ziehen & Ablegen** hineinsortieren;
+mit Cmd/Strg-Klick mehrere gleichartige Elemente auswählen und gemeinsam
+ziehen (Esc hebt die Auswahl auf). Gruppen sind typgebunden (eine Datei-
+Gruppe nimmt nur Dateien). Eine Gruppe aufzulösen löscht NUR die virtuelle
+Gruppierung, nie die Quellen. Der Baum startet eingeklappt; den Aufklapp-
+Zustand merkt sich der Browser pro Projekt.
+
 **Recherche-Modus** — wie er gesteuert wird, hängt vom Auto-Routing-Modus ab
 (Einstellungen → Server → Auto-Routing):
 - **Bei LLM-/Hybrid-Routing (automatisch):** Die Zitier-/Refuse-Disziplin wird

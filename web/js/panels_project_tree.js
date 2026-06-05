@@ -197,6 +197,17 @@ function renderProjectSourceTree() {
   // Delegated drag/drop on the container (handlers check _ptDrag + type-lock).
   host.ondragover = ptDragOver;
   host.ondrop = ptDrop;
+  // Escape clears the multi-selection (wired once, idempotent).
+  if (!window._ptEscWired) {
+    window._ptEscWired = true;
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && state._ptSelected && state._ptSelected.size
+          && document.getElementById('project-source-tree')) {
+        state._ptSelected.clear();
+        _ptPaintSelection();
+      }
+    });
+  }
 
   // Populate the three groupable branches (async/data-driven). Instructions is
   // already inlined above (its text is on project.json).
@@ -441,7 +452,7 @@ async function ptCreateGroup(type, parentId) {
     showToast(`Maximal ${_PT_MAX_DEPTH} Ebenen — hier ist keine Untergruppe möglich.`, true);
     return;
   }
-  const name = (prompt('Name der neuen Gruppe:') || '').trim();
+  const name = ((await showPrompt('Name der neuen Gruppe:', '', 'Neue Gruppe')) || '').trim();
   if (!name) return;
   const b = _ptEnsureBucket(type);
   b.groups.push({ id: _ptNewGroupId(), name: name.slice(0, 120), parent: parentId || '', order: b.groups.length });
@@ -453,7 +464,7 @@ async function ptRenameGroup(type, gid) {
   const b = _ptEnsureBucket(type);
   const g = b.groups.find(x => x.id === gid);
   if (!g) return;
-  const name = (prompt('Gruppe umbenennen:', g.name) || '').trim();
+  const name = ((await showPrompt('Gruppe umbenennen:', g.name, 'Gruppe umbenennen')) || '').trim();
   if (!name) return;
   g.name = name.slice(0, 120);
   await _ptSaveGroups();
@@ -491,12 +502,13 @@ function ptItemClick(ev, type, id) {
   if (!state._ptSelected) state._ptSelected = new Set();
   const k = _ptSelKey(type, id);
   if (ev.metaKey || ev.ctrlKey) {
+    // toggle into a same-type-only multi-selection (mixing types is meaningless
+    // since groups are type-locked; a cmd-click of another type starts fresh).
+    if (![...state._ptSelected].every(x => x.startsWith(type + ':'))) state._ptSelected.clear();
     if (state._ptSelected.has(k)) state._ptSelected.delete(k); else state._ptSelected.add(k);
   } else {
-    // plain click on a different-type selection clears it; selecting one item.
-    const sameType = [...state._ptSelected].every(x => x.startsWith(type + ':'));
     state._ptSelected.clear();
-    if (sameType) state._ptSelected.add(k); else state._ptSelected.add(k);
+    state._ptSelected.add(k);
   }
   _ptPaintSelection();
 }
@@ -506,6 +518,21 @@ function _ptPaintSelection() {
     const k = _ptSelKey(row.dataset.type, row.dataset.id);
     row.classList.toggle('pt-selected', !!(state._ptSelected && state._ptSelected.has(k)));
   });
+  // Selection-count chip in the legend bar.
+  const n = (state._ptSelected && state._ptSelected.size) || 0;
+  let chip = document.getElementById('pt-selcount');
+  const legend = document.querySelector('#project-source-tree .pt-legend');
+  if (n > 1 && legend) {
+    if (!chip) {
+      chip = document.createElement('span');
+      chip.id = 'pt-selcount';
+      chip.className = 'pt-selcount';
+      legend.appendChild(chip);
+    }
+    chip.textContent = `${n} ausgewählt · ziehen oder Esc`;
+  } else if (chip) {
+    chip.remove();
+  }
 }
 
 // Folder rows: caret toggles the real subtree; clicking the row body selects.
@@ -528,6 +555,15 @@ function ptDragStart(ev, type, id) {
   state._ptDrag = { type, ids };
   ev.dataTransfer.effectAllowed = 'move';
   try { ev.dataTransfer.setData('text/plain', type + '\n' + ids.join('\n')); } catch (_) {}
+  // Multi-select: drag a small count badge instead of a single row ghost.
+  if (ids.length > 1) {
+    const ghost = document.createElement('div');
+    ghost.className = 'pt-dragghost';
+    ghost.textContent = `${ids.length} Elemente`;
+    document.body.appendChild(ghost);
+    try { ev.dataTransfer.setDragImage(ghost, 10, 10); } catch (_) {}
+    setTimeout(() => ghost.remove(), 0);
+  }
   document.querySelectorAll('#project-source-tree [data-droptarget]').forEach(t => {
     if (t.dataset.type === type) t.classList.add('pt-droparmed');
   });

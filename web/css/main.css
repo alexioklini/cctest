@@ -3415,6 +3415,17 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   background: color-mix(in srgb, var(--accent-brand) 22%, transparent) !important;
   outline: 1.5px solid var(--accent-brand); outline-offset: -1px; border-radius: 6px;
 }
+.pt-dragghost {
+  position: fixed; top: -1000px; left: -1000px;
+  background: var(--accent-brand); color: #fff;
+  padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+.pt-selcount {
+  margin-left: auto; color: var(--accent-brand); font-weight: 600;
+  white-space: nowrap;
+}
+.pt-legend { align-items: center; }
 
 .project-panel-section-body {
   font-size: 13px;
