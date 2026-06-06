@@ -156,22 +156,27 @@ Audio-Knöpfe (neben Kopieren):
 - **🔊 Vorlesen** — liest die Antwort laut vor (Text-zu-Sprache). Lange
   Antworten werden automatisch in Stücke geteilt und nacheinander abgespielt;
   während der Wiedergabe **leuchtet der Knopf** (aktive Audioausgabe), erneut
-  klicken stoppt. Die Sprache wird **einmal zu Beginn** erkannt und für die
-  gesamte Wiedergabe festgehalten — ein fremdsprachiges Zitat in einem späteren
-  Stück lässt die Stimme nicht mehr umschalten. (Markdown/Code wird vor dem
-  Vorlesen entfernt.)
+  klicken stoppt. Während Sprache erkannt + Audio erzeugt wird **pulsiert der
+  Knopf**, sobald wirklich abgespielt wird **leuchtet er** (aktive Audioausgabe).
+  Die Sprache wird **einmal zu Beginn** erkannt und für die gesamte Wiedergabe
+  festgehalten — ein fremdsprachiges Zitat in einem späteren Stück lässt die
+  Stimme nicht mehr umschalten. (Markdown/Code wird vor dem Vorlesen entfernt.)
 - **🎧 Podcast aus diesem Chat** — erzeugt einen **Audio Overview** (zwei Hosts)
   über den **gesamten bisherigen Chatverlauf** — wie der Studio-Podcast eines
   Projekts, nur aus der Unterhaltung. Dauert ~1 Minute; währenddessen **pulsiert
   der Knopf**, und ein erneuter Klick **bricht die Erstellung ab**. Danach öffnet
-  sich ein Player und die `.mp3` (plus Skript) liegt in den Artefakten der
-  Sitzung. Die
+  sich ein Player und die `.mp3` (plus Skript) liegt — mit sprechendem Namen
+  („Podcast — <Chattitel>“) — in den Artefakten der Sitzung; ein Klick darauf
+  spielt sie direkt im Panel ab. **Solange sich der Chat nicht ändert, wird der
+  vorhandene Podcast wiederverwendet** statt neu (und kostenpflichtig) erzeugt —
+  erst bei geändertem Inhalt entsteht eine neue Folge. Die
   **Sprache wird automatisch erkannt** — ein deutscher Chat ergibt einen deutschen
   Podcast (Voxtral spricht 9 Sprachen). Standardmäßig werden englische Stimmen
   verwendet; für muttersprachlichen Klang eine eigene Stimme unter **Einstellungen
   → Tools → Sprachausgabe → „🎙️ Stimmen verwalten“** klonen. Geht in JEDEM Chat,
-  auch ohne Projekt. *(Im Chat genügt auch die Bitte „mach einen Podcast aus
-  diesem Gespräch“.)*
+  auch ohne Projekt. Die **Kosten** (Skript-LLM + Sprachsynthese) werden erfasst
+  und zählen wie jeder andere Aufruf ins Nutzungsbudget. *(Im Chat genügt auch
+  die Bitte „mach einen Podcast aus diesem Gespräch“.)*
 
 **Suche** (Seitenleiste): semantisch + Stichwort über alle sichtbaren
 Nachrichten.

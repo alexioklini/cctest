@@ -259,6 +259,23 @@ class CostTracker:
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"OCR cost tracking error: {e}")
 
+    def log_tts(self, agent: str, session_id: str, model: str, provider: str,
+                chars: int, cost_usd: float, user_id: str = "",
+                key_name: str = ""):
+        """Log a text-to-speech render as a synthetic cost row. Chars synthesized
+        stashed in tokens_in (output stays 0); explicit USD cost bypasses
+        _compute_cost (TTS is char-billed, not token-billed). Aggregates sum
+        cost_usd correctly without changes — mirrors log_ocr."""
+        try:
+            with _cost_conn() as conn:
+                conn.execute("""
+                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cost_usd, tool_round)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", int(chars), 0, float(cost_usd), 0))
+                conn.commit()
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"TTS cost tracking error: {e}")
+
     def per_provider_key_stats(self, days: int = 30) -> list[dict]:
         """Return per-provider + per-key call/token/cost aggregates."""
         try:

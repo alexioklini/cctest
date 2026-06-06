@@ -15,12 +15,23 @@ let _chatAudioQueue = [];      // pending TTS chunk texts (read-aloud)
 let _chatAudioStopped = false;
 let _chatAudioLang = '';       // language pinned at start — stays fixed across all chunks
 
+// Button shows two states: pulsating while audio is being generated/fetched,
+// solid-lit once it's actually playing.
+function _chatAudioBtnState(state) {
+  if (!_chatAudioBtn) return;
+  _chatAudioBtn.classList.toggle('msg-action-generating', state === 'generating');
+  _chatAudioBtn.classList.toggle('msg-action-active', state === 'playing');
+}
+
 function _chatAudioStop() {
   _chatAudioStopped = true;
   _chatAudioQueue = [];
   _chatAudioLang = '';
   if (_chatAudioEl) { try { _chatAudioEl.pause(); } catch (_) {} _chatAudioEl = null; }
-  if (_chatAudioBtn) { _chatAudioBtn.classList.remove('msg-action-active'); _chatAudioBtn = null; }
+  if (_chatAudioBtn) {
+    _chatAudioBtn.classList.remove('msg-action-active', 'msg-action-generating');
+    _chatAudioBtn = null;
+  }
 }
 
 // ─── read an assistant reply aloud ────────────────────────────────────────────
@@ -83,11 +94,15 @@ async function _ttsBlobUrl(text, lang) {
 // Play the queued chunks one after another (fetch chunk N+1 while N plays).
 async function _playChatQueue() {
   if (_chatAudioStopped || !_chatAudioQueue.length) {
-    if (!_chatAudioStopped && _chatAudioBtn) _chatAudioBtn.classList.remove('msg-action-active');
+    if (!_chatAudioStopped && _chatAudioBtn) {
+      _chatAudioBtn.classList.remove('msg-action-active', 'msg-action-generating');
+    }
     _chatAudioBtn = null;
     return;
   }
   const text = _chatAudioQueue.shift();
+  // Fetching/synthesizing this chunk — pulsate until it actually plays.
+  _chatAudioBtnState('generating');
   let url;
   try {
     url = await _ttsBlobUrl(text, _chatAudioLang);
@@ -101,6 +116,9 @@ async function _playChatQueue() {
   _chatAudioEl = audio;
   audio.onended = () => { URL.revokeObjectURL(url); _chatAudioEl = null; _playChatQueue(); };
   audio.onerror = () => { URL.revokeObjectURL(url); _chatAudioStop(); };
+  // Solid-lit once playback truly starts (onplaying), not merely when play()
+  // resolves — keeps the pulsate visible through any buffering.
+  audio.onplaying = () => { _chatAudioBtnState('playing'); };
   audio.play().catch(() => { /* autoplay/gesture issues — surface quietly */ });
 }
 
@@ -115,7 +133,7 @@ async function readMessageAloud(idx, btn) {
   if (!speech) { showToast('Nichts zum Vorlesen', true); return; }
   _chatAudioQueue = _chunkForTts(speech, 3000);
   _chatAudioBtn = btn;
-  if (btn) btn.classList.add('msg-action-active');
+  _chatAudioBtnState('generating');   // pulsate while we detect lang + fetch audio
   // Detect the language ONCE on the full text and pin it for every chunk, so
   // the voice can't switch mid-playback (a foreign quote in a later chunk must
   // not flip the voice). Best-effort: on failure we fall back to per-chunk
@@ -155,12 +173,13 @@ async function generateChatPodcast(btn) {
     const resp = await fetch(`/v1/sessions/${encodeURIComponent(chat.sessionId)}/audio-overview`, {
       method: 'POST',
       headers: API._headers({ 'Content-Type': 'application/json' }),
+      // Server reuses the last podcast if the chat content hasn't changed.
       body: JSON.stringify({ length: 'std' }),
       signal: ctrl.signal,
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data.ok) throw new Error(data.error || `HTTP ${resp.status}`);
-    showToast('Podcast fertig — wird abgespielt');
+    showToast(data.cached ? 'Podcast (unverändert) — wird abgespielt' : 'Podcast fertig — wird abgespielt');
     if (typeof refreshRightPanelContent === 'function') { try { refreshRightPanelContent(); } catch (_) {} }
     if (data.artifact_id) _openChatPodcastModal(data.artifact_id, data.audio_file);
   } catch (e) {

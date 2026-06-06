@@ -220,21 +220,51 @@ class SessionsHandlerMixin:
         length = (body.get("length") or "std").strip()
         if length not in ("short", "std", "long"):
             length = "std"
+        focus = (body.get("focus") or "").strip()
+        force = bool(body.get("force"))
         agent_id = session.agent_id
         user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
         try:
             from engine import audio_overview
-            import uuid as _uuid
+            import hashlib
+
+            # Cache key = the exact material the podcast is built from (transcript
+            # corpus) + the knobs that change the output. If nothing changed since
+            # the last podcast AND its artifact still exists, reuse it instead of
+            # paying for a fresh script-gen + per-line TTS render. `force` bypasses.
+            corpus, _turns = audio_overview._chat_corpus(sid)
+            content_hash = hashlib.sha256(
+                f"{length}|{focus}|{corpus}".encode("utf-8")).hexdigest()
+            if not force:
+                cached = ChatDB.get_chat_audio_overview(sid)
+                if cached and cached.get("content_hash") == content_hash:
+                    art = ChatDB.get_artifact(cached.get("artifact_id") or "")
+                    if art:
+                        self._send_json({
+                            "ok": True, "cached": True,
+                            "artifact_id": cached.get("artifact_id", ""),
+                            "audio_file": cached.get("audio_file", ""),
+                            "script_file": cached.get("script_file", ""),
+                            "spoken_lines": cached.get("spoken_lines", 0),
+                            "cost": cached.get("cost", 0),
+                        })
+                        return
+
             folder = engine._get_artifact_session_folder(sid)
             out_dir = _os.path.join(engine.AGENTS_DIR, agent_id, "artifacts", folder)
-            basename = f"audio_overview-{_uuid.uuid4().hex[:8]}"
+            # Name the files after the chat's content (its title), not a hex id —
+            # "Podcast — Wetter in Berlin.mp3" reads far better than
+            # "audio_overview-3f9a1b2c.mp3". Keep a short uuid suffix so repeated
+            # podcasts from the same chat don't overwrite each other.
+            seed = (getattr(session, "title", "") or getattr(session, "summary", "") or "").strip()
+            basename = audio_overview.make_basename(seed)
             # Run inside a request context so background_call resolves agent config.
             with engine.request_context():
                 engine.get_request_context().current_agent = engine.AgentConfig(agent_id)
                 engine.get_request_context().current_session_id = sid
                 res = audio_overview.generate_from_chat(
                     agent_id=agent_id, session_id=sid, out_dir=out_dir,
-                    opts={"length": length, "focus": (body.get("focus") or "").strip()},
+                    opts={"length": length, "focus": focus},
                     user_id=user["id"], basename=basename)
             if not res.get("ok"):
                 self._send_json({"ok": False, "error": res.get("error", "generation failed")}, 400)
@@ -251,12 +281,22 @@ class SessionsHandlerMixin:
                     sid, agent_id, p, _os.path.basename(p)) or ""
                 if p == res.get("mp3_path"):
                     artifact_id = aid
+            audio_file = _os.path.basename(res["mp3_path"])
+            script_file = _os.path.basename(res["script_path"])
+            cost = res.get("cost", 0)
+            # Cache so a re-click on the unchanged chat replays instead of rebuilding.
+            ChatDB.set_chat_audio_overview(sid, {
+                "content_hash": content_hash, "artifact_id": artifact_id,
+                "audio_file": audio_file, "script_file": script_file,
+                "spoken_lines": res.get("lines", 0), "cost": cost,
+            })
             self._send_json({
                 "ok": True,
                 "artifact_id": artifact_id,
-                "audio_file": _os.path.basename(res["mp3_path"]),
-                "script_file": _os.path.basename(res["script_path"]),
+                "audio_file": audio_file,
+                "script_file": script_file,
                 "spoken_lines": res.get("lines", 0),
+                "cost": cost,
             })
         except Exception as e:
             self._send_json({"ok": False, "error": str(e)}, 500)

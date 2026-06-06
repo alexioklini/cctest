@@ -450,13 +450,15 @@ def tool_generate_audio_overview(args: dict) -> str:
     # Write into the session's artifact folder (same convention as write_file).
     folder = _get_artifact_session_folder(session_id)
     out_dir = os.path.join(_brain.AGENTS_DIR, agent_id, "artifacts", folder)
-    import uuid as _uuid
-    basename = f"audio_overview-{_uuid.uuid4().hex[:8]}"
+    # Content-based filename: prefer the topic, else the project name (chat path
+    # has no obvious seed → the helper falls back to a plain 'Podcast' label).
+    basename = audio_overview.make_basename(opts.get("focus") or project or "")
     print(f"[audio_overview] tool start project={project or '(chat)'} length={length}", flush=True)
     if project:
         res = audio_overview.generate_to_folder(
             agent_id=agent_id, project_name=project, out_dir=out_dir,
-            opts=opts, user_id=user_id, basename=basename)
+            opts=opts, user_id=user_id, basename=basename,
+            cost_session_id=session_id)
     else:
         # No project → make the overview from this chat's transcript.
         res = audio_overview.generate_from_chat(
@@ -476,6 +478,7 @@ def tool_generate_audio_overview(args: dict) -> str:
         "audio_file": os.path.basename(res["mp3_path"]),
         "script_file": os.path.basename(res["script_path"]),
         "spoken_lines": res.get("lines", 0),
+        "cost_usd": res.get("cost", 0),
         "hosts": f"{audio_overview.HOST_A_NAME} & {audio_overview.HOST_B_NAME} (English)",
         "note": "Audio overview generated and saved to the session artifact folder. "
                 "The .mp3 is the podcast; the .md is the dialogue script.",

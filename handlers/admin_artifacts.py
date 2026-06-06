@@ -1676,7 +1676,7 @@ class AdminArtifactsHandlers:
             return
 
         content_raw = ver_data["content"]
-        is_binary = artifact["type"] in ("image", "document")
+        is_binary = artifact["type"] in ("image", "document", "audio")
 
         if content_raw is None:
             # Disk-only fallback (file was > 5MB)

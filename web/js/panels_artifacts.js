@@ -501,6 +501,17 @@ async function loadArtifactVersion(version) {
   const container = document.getElementById('artifact-content');
   container.innerHTML = '<div class="artifact-empty"><div class="wave-bars"><span></span><span></span><span></span></div></div>';
 
+  // Audio (.mp3/.wav/…): never pull the bytes through the JSON /content endpoint
+  // — that base64s the whole clip and feeds binary into hljs, which hangs the
+  // panel. Play it inline from an auth'd blob (download URL is Bearer-only), the
+  // same pattern Studio uses.
+  const reg = (state.artifacts[state.activeChat?.sessionId] || []).find(a => a.id === artifactId);
+  const regExt = (reg?.name || '').split('.').pop().toLowerCase();
+  if (reg?.type === 'audio' || ['mp3', 'wav', 'm4a', 'ogg'].includes(regExt)) {
+    await renderArtifactAudio(artifactId, version, reg?.name || 'audio');
+    return;
+  }
+
   try {
     const data = await API.getArtifactContent(artifactId, version);
     if (!data || !data.content) {
@@ -512,6 +523,25 @@ async function loadArtifactVersion(version) {
   } catch (e) {
     console.error('[artifact] Load failed for', artifactId, 'version', version, e);
     container.innerHTML = `<div class="artifact-empty">Inhalt konnte nicht geladen werden: ${e.message || e}</div>`;
+  }
+}
+
+// Inline audio player for an audio artifact, fed by an auth'd blob.
+async function renderArtifactAudio(artifactId, version, name) {
+  const container = document.getElementById('artifact-content');
+  container.innerHTML = `<div style="display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;height:100%;padding:24px 16px">
+    <div style="font-size:48px">🎧</div>
+    <div style="font-size:13px;color:var(--text-400);text-align:center;word-break:break-word">${esc(name)}</div>
+    <div class="artifact-audio-mount" style="width:100%;display:flex;justify-content:center">Lädt…</div>
+  </div>`;
+  const mount = container.querySelector('.artifact-audio-mount');
+  try {
+    const resp = await fetch(API.getArtifactDownloadUrl(artifactId, version), { headers: API._headers() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const url = URL.createObjectURL(await resp.blob());
+    mount.innerHTML = `<audio controls autoplay preload="metadata" style="width:100%;max-width:520px" src="${url}"></audio>`;
+  } catch (e) {
+    mount.innerHTML = `<div style="color:var(--error)">Audio konnte nicht geladen werden: ${esc(e.message || e)}</div>`;
   }
 }
 

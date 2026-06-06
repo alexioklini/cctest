@@ -551,6 +551,14 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN gdpr_action_pref TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Cached chat Audio Overview (the 🎧 podcast button). JSON:
+            # {content_hash, artifact_id, audio_file, script_file, spoken_lines}.
+            # Lets the button reuse the last podcast unless the chat content
+            # changed — generation is slow + costs a TTS call per line.
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN chat_audio_overview TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             # ── MemPalace chat-sync cursor ──
             # Tracks which messages have already been mirrored into MemPalace,
             # per session. `last_message_id` is the highest messages.id filed so far.
@@ -1803,6 +1811,32 @@ class ChatDB:
             except (json.JSONDecodeError, TypeError):
                 meta = None
         return (row[0], meta)
+
+    @staticmethod
+    @_db_safe(default=None)
+    def set_chat_audio_overview(session_id, data):
+        """Persist the cached chat Audio Overview for a session (dict or None to
+        clear). See the `chat_audio_overview` column for the shape."""
+        with _db_conn() as conn:
+            conn.execute(
+                "UPDATE sessions SET chat_audio_overview = ? WHERE id = ?",
+                (json.dumps(data) if data else "", session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_chat_audio_overview(session_id):
+        """Return the cached chat Audio Overview dict, or None if none/invalid."""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT chat_audio_overview FROM sessions WHERE id = ?",
+                (session_id,)).fetchone()
+        if not row or not row[0]:
+            return None
+        try:
+            return json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return None
 
     @staticmethod
     @_db_safe(default=None)

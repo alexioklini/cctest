@@ -41,6 +41,21 @@ DEFAULT_HOST_B_VOICE = "gb_jane_sarcasm"     # female
 HOST_A_NAME = "Oliver"
 HOST_B_NAME = "Jane"
 
+def make_basename(seed: str) -> str:
+    """Build a human-readable, filesystem-safe basename for an audio overview
+    from a content seed (the chat title/summary, the project name, or a topic) —
+    so the files read 'Podcast — Wetter in Berlin (3f9a1b2c).mp3' instead of
+    'audio_overview-3f9a1b2c.mp3'. A short uuid suffix keeps repeated podcasts
+    from the same source from overwriting each other. No extension."""
+    slug = re.sub(r"\s+", " ", (seed or "").strip())
+    # Drop characters awkward in filenames across macOS/Linux/Windows.
+    slug = re.sub(r'[\\/:*?"<>|]+', "", slug).strip(" .-")
+    if len(slug) > 60:
+        slug = slug[:60].rsplit(" ", 1)[0].strip()
+    suffix = uuid.uuid4().hex[:8]
+    return f"Podcast — {slug} ({suffix})" if slug else f"Podcast ({suffix})"
+
+
 # length → rough exchange-count guidance baked into the script-gen prompt.
 _LENGTH_GUIDANCE = {
     "short": "Keep it tight: ~6–10 exchanges, a focused 2–3 minute conversation.",
@@ -244,12 +259,14 @@ def _tts_segment(text: str, voice: str) -> bytes:
 
 
 def _stitch(lines: list[tuple[str, str]], voice_a: str, voice_b: str,
-            on_progress=None) -> tuple[bytes, int]:
+            on_progress=None) -> tuple[bytes, int, int]:
     """Render every dialogue line and concatenate the MP3 segments (raw byte
     concat — validated playable; ffmpeg deliberately not required). Returns
-    (mp3_bytes, rendered_line_count). Skips empty/over-cap lines."""
+    (mp3_bytes, rendered_line_count, chars_synthesized). Skips empty/over-cap
+    lines. `chars_synthesized` drives TTS cost accounting (char-billed)."""
     segments: list[bytes] = []
     rendered = 0
+    chars = 0
     capped = lines[:_MAX_LINES]
     for i, (host, text) in enumerate(capped):
         if not text.strip():
@@ -257,11 +274,35 @@ def _stitch(lines: list[tuple[str, str]], voice_a: str, voice_b: str,
         voice = voice_a if host == "A" else voice_b
         segments.append(_tts_segment(text, voice))
         rendered += 1
+        chars += len(text)
         if on_progress:
             on_progress(i + 1, len(capped))
     if len(lines) > _MAX_LINES:
         print(f"[audio_overview] script had {len(lines)} lines, capped to {_MAX_LINES}")
-    return b"".join(segments), rendered
+    return b"".join(segments), rendered, chars
+
+
+def _log_tts_cost(chars: int, *, session_id: str, user_id: str, agent_id: str) -> float:
+    """Log a synthetic cost row for the TTS render (char-billed, not token-billed)
+    and return the computed USD cost. Rate from text_to_speech.cost_per_1k_chars_usd
+    (0 = don't meter). Best-effort — never raises into the render path."""
+    if chars <= 0:
+        return 0.0
+    try:
+        cfg = _brain.get_tool_config().get("text_to_speech", {}) or {}
+        rate = float(cfg.get("cost_per_1k_chars_usd", 0) or 0)
+        model_id = (cfg.get("default_model") or "").strip()
+        cost = round((chars / 1000.0) * rate, 6)
+        tracker = getattr(_brain, "_cost_tracker", None)
+        if tracker is not None and (rate > 0 or model_id):
+            provider = _brain._models_config.get(model_id, {}).get("provider", "")
+            tracker.log_tts(agent=agent_id or "main", session_id=session_id or "",
+                            model=model_id or "tts", provider=provider,
+                            chars=chars, cost_usd=cost, user_id=user_id or "")
+        return cost
+    except Exception as e:
+        print(f"[audio_overview] TTS cost log failed: {e}", flush=True)
+        return 0.0
 
 
 def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
@@ -323,10 +364,12 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
         proj_cfg = _brain.ProjectManager.get_project(agent_id, project_name) or {}
         display = proj_cfg.get("name") or project_name
         title = f"Audio Overview — {display}"
+        # Content-based filenames (the project name) instead of a hex id.
+        base = make_basename(display)
 
         # Save the script as a sibling .md artifact (debuggable / re-renderable).
         outdir = output_gen._outputs_dir(project_dir)
-        script_name = f"audio_overview-{output_id}.md"
+        script_name = f"{base}.md"
         script_path = os.path.join(outdir, script_name)
         script_md = (f"# {title} — Script\n\n*Hosts: {HOST_A_NAME} ({voice_a}) · "
                      f"{HOST_B_NAME} ({voice_b})*\n\n")
@@ -347,11 +390,13 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
             # Cheap heartbeat so the UI shows movement on long episodes.
             ChatDB.update_project_output(output_id, phase=f"voicing {done}/{total}")
         try:
-            mp3, rendered = _stitch(lines, voice_a, voice_b, on_progress=_progress)
+            mp3, rendered, tts_chars = _stitch(lines, voice_a, voice_b, on_progress=_progress)
         except Exception as e:
             ChatDB.update_project_output(
                 output_id, status="error", error=f"TTS render failed: {e}"[:500])
             return
+        tts_cost = _log_tts_cost(tts_chars, session_id=f"output-{output_id}",
+                                 user_id=user_id, agent_id=agent_id)
         if not mp3:
             ChatDB.update_project_output(output_id, status="error",
                                          error="No audio was produced (all lines empty).")
@@ -361,18 +406,20 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
             ChatDB.update_project_output(output_id, status="cancelled", phase="")
             return
 
-        mp3_name = f"audio_overview-{output_id}.mp3"
+        mp3_name = f"{base}.mp3"
         mp3_path = os.path.join(outdir, mp3_name)
         with open(mp3_path, "wb") as f:
             f.write(mp3)
         artifact_id = output_gen._register_output_artifact(
             f"output-{output_id}", agent_id, mp3_path, mp3_name) or ""
 
-        # Cost-account the script-gen call (TTS billed separately by provider;
-        # not metered here). Reuse the shared footer-meta shape.
+        # Cost-account the script-gen call, then ADD the TTS render cost (logged
+        # separately above as its own cost_log row) into the row's total so the
+        # Studio card + footer show the full price of the overview.
         meta = _brain.account_background_usage(
             result, model, session_id=f"output-{output_id}",
             user_id=user_id, agent_id=agent_id)
+        meta["cost"] = round(meta.get("cost", 0) + tts_cost, 6)
         meta["duration_s"] = round(time.time() - t0, 1)
 
         ChatDB.update_project_output(
@@ -392,12 +439,15 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
 
 def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
                      user_id: str, basename: str, project_name: str = "",
+                     cost_session_id: str = "audio-tool",
                      source_label: str = "RETRIEVED PROJECT SOURCES") -> dict:
     """SYNCHRONOUS core: pre-gathered corpus → script .md + stitched .mp3 in
-    `out_dir`. Returns {ok, mp3_path, script_path, lines, error}. Shared by the
-    project-sources path (generate_to_folder) and the chat-transcript path
+    `out_dir`. Returns {ok, mp3_path, script_path, lines, cost, error}. Shared by
+    the project-sources path (generate_to_folder) and the chat-transcript path
     (generate_from_chat) — only the corpus differs. Does NOT touch the
-    project_outputs table; the file-write tracker registers the artifacts."""
+    project_outputs table; the file-write tracker registers the artifacts.
+    Cost-accounts BOTH the script-gen LLM call and the TTS render (char-billed)
+    against `cost_session_id`."""
     length = opts.get("length") or "std"
     audience = (opts.get("audience") or "").strip()
     focus = (opts.get("focus") or "").strip()
@@ -426,7 +476,7 @@ def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
             corpus, focus=focus, length=length, audience=audience,
             source_label=source_label, lang=lang)}],
         model=model, purpose="transform", agent_id=agent_id,
-        session_id="audio-tool", project=project_name, user_id=user_id, max_rounds=1)
+        session_id=cost_session_id, project=project_name, user_id=user_id, max_rounds=1)
     if result.get("error"):
         return {"ok": False, "error": str(result["error"])[:300]}
     lines = parse_dialogue((result.get("reply") or "").strip())
@@ -443,7 +493,7 @@ def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
         f.write(script_md)
 
     try:
-        mp3, rendered = _stitch(lines, voice_a, voice_b)
+        mp3, rendered, tts_chars = _stitch(lines, voice_a, voice_b)
     except Exception as e:
         return {"ok": False, "error": f"TTS render failed: {e}"[:300], "script_path": script_path}
     if not mp3:
@@ -451,11 +501,19 @@ def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
     mp3_path = os.path.join(out_dir, basename + ".mp3")
     with open(mp3_path, "wb") as f:
         f.write(mp3)
-    return {"ok": True, "mp3_path": mp3_path, "script_path": script_path, "lines": rendered}
+    # Account both cost legs (script-gen LLM + TTS render) against the session.
+    script_meta = _brain.account_background_usage(
+        result, model, session_id=cost_session_id, user_id=user_id, agent_id=agent_id)
+    tts_cost = _log_tts_cost(tts_chars, session_id=cost_session_id,
+                             user_id=user_id, agent_id=agent_id)
+    total_cost = round(script_meta.get("cost", 0) + tts_cost, 6)
+    return {"ok": True, "mp3_path": mp3_path, "script_path": script_path,
+            "lines": rendered, "cost": total_cost, "tts_chars": tts_chars}
 
 
 def generate_to_folder(*, agent_id: str, project_name: str, out_dir: str,
-                       opts: dict, user_id: str, basename: str) -> dict:
+                       opts: dict, user_id: str, basename: str,
+                       cost_session_id: str = "audio-tool") -> dict:
     """Agent-tool / project path: gather the PROJECT's sources, then build audio."""
     focus = (opts.get("focus") or "").strip()
     corpus, _n = output_gen._gather_sources(agent_id, project_name, focus, user_id)
@@ -463,7 +521,7 @@ def generate_to_folder(*, agent_id: str, project_name: str, out_dir: str,
         return {"ok": False, "error": "No sources found for this project."}
     return _corpus_to_audio(corpus=corpus, agent_id=agent_id, out_dir=out_dir,
                             opts=opts, user_id=user_id, basename=basename,
-                            project_name=project_name)
+                            project_name=project_name, cost_session_id=cost_session_id)
 
 
 # A chat needs at least this many user/assistant turns to be worth an overview.
@@ -503,6 +561,7 @@ def generate_from_chat(*, agent_id: str, session_id: str, out_dir: str,
                                       "overview — have a longer conversation first."}
     return _corpus_to_audio(corpus=corpus, agent_id=agent_id, out_dir=out_dir,
                             opts=opts, user_id=user_id, basename=basename,
+                            cost_session_id=session_id,
                             source_label="CONVERSATION TRANSCRIPT")
 
 

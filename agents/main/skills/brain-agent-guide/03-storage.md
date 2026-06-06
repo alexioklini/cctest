@@ -94,7 +94,11 @@ last_system_prompt TEXT, gdpr_action_pref TEXT,
 allow_further_web INTEGER (0/1, sticky; lifts the Websuche tool lockout),
 web_basket TEXT (JSON list of curated Websuche sources
   {url,title,snippet,query,enabled} — PER SESSION, never shared across
-  chats; '' = empty)
+  chats; '' = empty),
+chat_audio_overview TEXT (JSON cache of the chat-podcast button's last
+  Audio Overview {content_hash,artifact_id,audio_file,script_file,
+  spoken_lines,cost}; lets a re-click on an unchanged chat replay instead
+  of regenerating; '' = none)
 ```
 
 Status values: `active | archived | note_chat` (note_chat = AI-editing

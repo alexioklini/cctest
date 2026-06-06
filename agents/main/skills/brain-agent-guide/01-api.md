@@ -52,10 +52,15 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
 - `POST /v1/sessions/<sid>/warmup` — manually trigger warmup
 - `POST /v1/sessions/<sid>/audio-overview` — generate a two-host podcast (.mp3)
   from THIS CHAT's transcript (the chat-podcast button). Body `{length?:
-  short|std|long, focus?: str}`. Synchronous (~1 min); writes .mp3 + .md into the
+  short|std|long, focus?: str, force?: bool}`. Synchronous (~1 min); writes
+  .mp3 + .md (named after the chat title, e.g. `Podcast — <title>.mp3`) into the
   session artifact folder → `{ok, artifact_id, audio_file, script_file,
-  spoken_lines}`. Language auto-detected (spoken in the chat's language, voice
-  matched if available). (The project equivalent is the `audio_overview` kind on
+  spoken_lines, cost, cached?}`. **Cached**: the result (transcript+length+focus
+  hash) is stored on `sessions.chat_audio_overview`; an unchanged chat returns
+  the prior podcast with `cached:true` instead of regenerating — `force:true`
+  rebuilds. Cost-counted (script-gen LLM + char-billed TTS). Language
+  auto-detected (spoken in the chat's language, voice matched if available).
+  (The project equivalent is the `audio_overview` kind on
   `.../projects/<name>/generate`.)
 - `GET /v1/translate/tts/voices` — list TTS voices `{voices:[{slug,id,name,gender,
   languages,tags}]}`. `POST` (admin) — clone a voice `{name, sample_audio_b64,
