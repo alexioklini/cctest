@@ -144,13 +144,16 @@ Audio-Knöpfe (neben Kopieren):
 - **🔊 Vorlesen** — liest die Antwort laut vor (Text-zu-Sprache). Lange
   Antworten werden automatisch in Stücke geteilt und nacheinander abgespielt;
   erneut klicken stoppt. (Markdown/Code wird vor dem Vorlesen entfernt.)
-- **🎧 Podcast aus diesem Chat** — erzeugt einen **Audio Overview** (zwei Hosts,
-  Oliver & Jane) über den **gesamten bisherigen Chatverlauf** — wie der Studio-
-  Podcast eines Projekts, nur aus der Unterhaltung. Dauert ~1 Minute; danach
-  öffnet sich ein Player und die `.mp3` (plus Skript) liegt in den Artefakten der
-  Sitzung. **Audio ist immer englisch** (Stimmen-Grenze). Geht in JEDEM Chat, auch
-  ohne Projekt. *(Im Chat genügt auch die Bitte „mach einen Podcast aus diesem
-  Gespräch“ — der Agent ruft dann dasselbe.)*
+- **🎧 Podcast aus diesem Chat** — erzeugt einen **Audio Overview** (zwei Hosts)
+  über den **gesamten bisherigen Chatverlauf** — wie der Studio-Podcast eines
+  Projekts, nur aus der Unterhaltung. Dauert ~1 Minute; danach öffnet sich ein
+  Player und die `.mp3` (plus Skript) liegt in den Artefakten der Sitzung. Die
+  **Sprache wird automatisch erkannt** — ein deutscher Chat ergibt einen deutschen
+  Podcast (Voxtral spricht 9 Sprachen). Standardmäßig werden englische Stimmen
+  verwendet; für muttersprachlichen Klang eine eigene Stimme unter **Einstellungen
+  → Tools → Sprachausgabe → „🎙️ Stimmen verwalten“** klonen. Geht in JEDEM Chat,
+  auch ohne Projekt. *(Im Chat genügt auch die Bitte „mach einen Podcast aus
+  diesem Gespräch“.)*
 
 **Suche** (Seitenleiste): semantisch + Stichwort über alle sichtbaren
 Nachrichten.
@@ -295,12 +298,13 @@ fertige, belegte Dokumente erzeugen — vier Vorlagen:
   (Oliver & Jane) besprechen die Projektinhalte in einem natürlichen Gespräch.
   Ergebnis ist eine **`.mp3`-Audiodatei** (plus das Dialog-Skript als `.md`). Über
   **Öffnen** erscheint ein Audio-Player direkt im Studio; **Herunterladen** lädt
-  die MP3. **Wichtig: Das Audio ist immer auf Englisch** — auch bei
-  deutschsprachigen Quellen (technische Grenze der Sprachstimmen). Ein
-  deutschsprachiges Projekt ergibt also einen englischen Podcast *über* den
-  deutschen Inhalt. Die Generierung dauert länger als ein Textdokument
-  (Skript schreiben → jede Zeile vertonen → zusammenfügen); der Fortschritt wird
-  als Phase angezeigt (Sammeln → Skript → Vertonen N/M).
+  die MP3. **Die Sprache wird automatisch erkannt** — ein deutschsprachiges Projekt
+  ergibt einen deutschen Podcast (Voxtral spricht 9 Sprachen: en/fr/de/es/nl/pt/it/
+  hi/ar). Es werden Stimmen passend zur Sprache gewählt, sofern vorhanden; sonst
+  englische Standardstimmen (für muttersprachlichen Klang eine Stimme unter
+  Einstellungen → Tools → Sprachausgabe klonen). Die Generierung dauert länger als
+  ein Textdokument (Skript schreiben → jede Zeile vertonen → zusammenfügen); der
+  Fortschritt wird als Phase angezeigt (Sammeln → Skript → Vertonen N/M).
 
 Jede Text-Ausgabe wird **streng aus dem Projektgedächtnis** erzeugt und **verbatim
 zitiert** (`[Quelle: … — "…"]`); nichts wird hinzuerfunden. Das Ergebnis ist eine

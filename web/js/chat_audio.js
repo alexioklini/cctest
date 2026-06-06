@@ -64,7 +64,8 @@ async function _ttsBlobUrl(text) {
   const resp = await fetch('/v1/translate/tts', {
     method: 'POST',
     headers: API._headers({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ text }),
+    // auto_voice: detect the reply's language → matching voice (else English).
+    body: JSON.stringify({ text, auto_voice: true }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
@@ -136,6 +137,115 @@ async function generateChatPodcast(btn) {
   } finally {
     if (btn) { btn.dataset.busy = '0'; btn.classList.remove('msg-action-active'); }
   }
+}
+
+// ─── voice manager (clone / list / delete custom TTS voices) ──────────────────
+
+async function openVoiceManager() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal-content" style="max-width:640px;width:92vw;max-height:88vh;display:flex;flex-direction:column">
+    <div class="modal-header" style="display:flex;align-items:center;gap:10px">
+      <span style="font-weight:600">🎙️ TTS-Stimmen</span>
+      <button class="modal-close" style="margin-left:auto" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+    </div>
+    <div style="padding:14px 16px;overflow:auto">
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px">Neue Stimme klonen</div>
+      <div style="font-size:11px;color:var(--text-400);margin-bottom:8px">Eine Audioprobe (≥3 s, klare Sprache) der Zielstimme hochladen. Die Sprache der Probe sollte der Zielsprache entsprechen.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px">
+        <input id="vm-name" type="text" placeholder="Name (z. B. Klaus DE)" class="form-input" style="font-size:12px;flex:1 1 160px">
+        <select id="vm-lang" class="form-select" style="font-size:12px">
+          <option value="de">Deutsch</option><option value="fr">Französisch</option>
+          <option value="es">Spanisch</option><option value="it">Italienisch</option>
+          <option value="nl">Niederländisch</option><option value="pt">Portugiesisch</option>
+          <option value="hi">Hindi</option><option value="ar">Arabisch</option>
+          <option value="en">Englisch</option>
+        </select>
+        <select id="vm-gender" class="form-select" style="font-size:12px">
+          <option value="male">männlich</option><option value="female">weiblich</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px">
+        <input id="vm-file" type="file" accept="audio/*" style="font-size:12px;flex:1">
+        <button class="btn-primary" style="font-size:12px;padding:4px 12px" onclick="submitCloneVoice(this)">Klonen</button>
+      </div>
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px">Vorhandene Stimmen</div>
+      <div id="vm-list" style="font-size:12px;color:var(--text-300)">Lädt…</div>
+    </div>
+  </div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  _refreshVoiceList(overlay);
+}
+
+async function _refreshVoiceList(root) {
+  const list = (root || document).querySelector('#vm-list');
+  if (!list) return;
+  try {
+    const data = await API.get('/v1/translate/tts/voices');
+    const voices = (data && data.voices) || [];
+    list.innerHTML = voices.map(v => {
+      const langs = (v.languages || []).join(', ');
+      const id = v.id || v.slug || '';
+      const custom = v.user_id ? '' : ' <span style="color:var(--text-500)">(Standard)</span>';
+      const delBtn = v.user_id
+        ? `<button class="btn-secondary" style="font-size:11px;padding:2px 8px" onclick="deleteVoice('${esc(id)}', this)">Löschen</button>`
+        : '';
+      return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border-100)">
+        <span style="flex:1">${esc(v.name || id)} <span style="color:var(--text-500)">· ${esc(langs)} · ${esc(v.gender || '')}</span>${custom}</span>
+        ${delBtn}</div>`;
+    }).join('') || '<div style="color:var(--text-400)">Keine Stimmen.</div>';
+  } catch (e) {
+    list.innerHTML = `<div style="color:var(--error)">Konnte Stimmen nicht laden: ${esc(e.message || e)}</div>`;
+  }
+}
+
+async function submitCloneVoice(btn) {
+  const root = btn.closest('.modal-content');
+  const name = root.querySelector('#vm-name').value.trim();
+  const lang = root.querySelector('#vm-lang').value;
+  const gender = root.querySelector('#vm-gender').value;
+  const fileEl = root.querySelector('#vm-file');
+  const file = fileEl.files && fileEl.files[0];
+  if (!name || !file) { showToast('Name und Audioprobe erforderlich', true); return; }
+  btn.disabled = true; btn.textContent = 'Klont…';
+  try {
+    const b64 = await _fileToBase64(file);
+    const data = await API.post('/v1/translate/tts/voices', {
+      name, sample_audio_b64: b64, sample_filename: file.name,
+      languages: [lang], gender,
+    });
+    if (data && data.error) throw new Error(data.error);
+    showToast('Stimme geklont — wird ab sofort für ' + lang + ' verwendet');
+    root.querySelector('#vm-name').value = ''; fileEl.value = '';
+    _refreshVoiceList(root.closest('.modal-overlay'));
+  } catch (e) {
+    showToast('Klonen fehlgeschlagen: ' + (e.message || e), true);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Klonen';
+  }
+}
+
+async function deleteVoice(voiceId, btn) {
+  if (!confirm('Diese Stimme löschen?')) return;
+  btn.disabled = true;
+  try {
+    await API.del(`/v1/translate/tts/voices/${encodeURIComponent(voiceId)}`);
+    showToast('Stimme gelöscht');
+    _refreshVoiceList(btn.closest('.modal-overlay'));
+  } catch (e) {
+    showToast('Löschen fehlgeschlagen: ' + (e.message || e), true);
+    btn.disabled = false;
+  }
+}
+
+function _fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');  // strip data: prefix
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
 }
 
 // Open a small modal with an <audio> player fed by an auth'd blob (NOT a bare

@@ -1205,6 +1205,7 @@ class BrainAgentHandler(
         "/v1/auth/users",
         "/v1/auth/migrate",
         "/v1/auth/permissions",
+        "/v1/translate/tts/voices",
         "/v1/restart",
         "/v1/providers",
         "/v1/providers/test",
@@ -1282,6 +1283,8 @@ class BrainAgentHandler(
         return False
 
     def _is_admin_delete(self, path: str) -> bool:
+        if path.startswith("/v1/translate/tts/voices/"):
+            return True
         if path.startswith("/v1/agents/"):
             rest = path[len("/v1/agents/"):]
             parts = rest.split("/", 1)
@@ -1959,7 +1962,7 @@ class BrainAgentHandler(
         elif path == "/v1/refine":
             self._handle_refine()
         elif path == "/v1/translate/tts/voices":
-            self._handle_translate_tts_voices()
+            self._handle_tts_voice_create()
         elif path == "/v1/translate/tts":
             self._handle_translate_tts()
         elif path == "/v1/translate/detect":
@@ -2074,6 +2077,9 @@ class BrainAgentHandler(
             self._auth_user = user
         if path == "/v1/background-tasks":
             self._handle_background_task_delete()
+            return
+        if path.startswith("/v1/translate/tts/voices/"):
+            self._handle_tts_voice_delete(path)
             return
         if path.startswith("/v1/sessions/"):
             sid = path.split("/")[-1]

@@ -228,7 +228,11 @@ function renderToolIntegrationFields(name, cfg) {
         <select id="tool-tts-model" class="form-select" style="font-size:11px;width:100%">${opts}</select>
         ${lbl('Stimme')}
         <input id="tool-tts-voice" type="text" value="${esc(cfg.voice||'en_paul_neutral')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
-        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Nur Modelle mit der Fähigkeit <code>tts</code> werden aufgelistet. Das Tool verwendet die konfigurierte ID exakt.</div>`;
+        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Nur Modelle mit der Fähigkeit <code>tts</code> werden aufgelistet. Das Tool verwendet die konfigurierte ID exakt.</div>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-200)">
+          <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="openVoiceManager()">🎙️ Stimmen verwalten / klonen</button>
+          <div style="font-size:10px;color:var(--text-400);margin-top:4px">Eigene Stimmen aus einer Audioprobe klonen (z. B. eine deutsche Stimme). Audio Overview &amp; Vorlesen wählen automatisch eine Stimme passend zur erkannten Sprache.</div>
+        </div>`;
     }
     case 'translation':
       return `${lbl('Standardmodell')}

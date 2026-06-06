@@ -81,6 +81,89 @@ class TranslateHandlerMixin:
                 {"slug": "gb_jane_sarcasm", "name": "Jane - Sarcasm", "gender": "female", "languages": ["en_gb"], "tags": []},
             ], "error": str(e)})
 
+    def _tts_provider(self):
+        """Resolve (base_url, api_key) for the configured TTS model, or None."""
+        import brain
+        cfg = brain.get_tool_config().get("text_to_speech", {}) or {}
+        model_id = (cfg.get("default_model") or "").strip()
+        if not model_id:
+            return None
+        prov = brain.resolve_provider_for_model(model_id)
+        base_url = (prov.get("base_url") or "").rstrip("/")
+        api_key = prov.get("api_key") or ""
+        if not base_url or not api_key:
+            return None
+        return base_url, api_key
+
+    def _handle_tts_voice_create(self):
+        """POST /v1/translate/tts/voices — clone a custom voice.
+        Body: {name, sample_audio_b64, sample_filename?, languages?: [iso], gender?,
+        age?, tags?}. Proxies to Mistral POST /v1/audio/voices. Lets the user
+        register native-accent voices (e.g. German) so audio auto-uses them."""
+        import urllib.request
+        body = self._read_json() or {}
+        name = (body.get("name") or "").strip()
+        sample = (body.get("sample_audio_b64") or body.get("sample_audio") or "").strip()
+        if not name or not sample:
+            self._send_json({"error": "name and sample_audio_b64 are required"}, 400)
+            return
+        prov = self._tts_provider()
+        if not prov:
+            self._send_json({"error": "no TTS provider configured"}, 503)
+            return
+        base_url, api_key = prov
+        payload = {"name": name, "sample_audio": sample,
+                   "sample_filename": body.get("sample_filename") or "sample.mp3"}
+        for k in ("languages", "gender", "age", "tags"):
+            if body.get(k):
+                payload[k] = body[k]
+        try:
+            req = urllib.request.Request(
+                f"{base_url}/audio/voices", data=json.dumps(payload).encode(), method="POST",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read())
+            # Bust the audio_overview voice-roster cache so the new voice is
+            # usable immediately (it auto-picks by language on the next render).
+            try:
+                from engine import audio_overview as _ao
+                _ao._voices_cache["voices"] = None
+            except Exception:
+                pass
+            self._send_json({"ok": True, "voice": data})
+        except urllib.error.HTTPError as e:
+            self._send_json({"error": f"voice create failed {e.code}: {e.read().decode()[:300]}"}, 502)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_tts_voice_delete(self, path):
+        """DELETE /v1/translate/tts/voices/<voice_id> — remove a cloned voice."""
+        import urllib.request
+        voice_id = path.rstrip("/").split("/")[-1]
+        if not voice_id:
+            self._send_json({"error": "voice_id required"}, 400)
+            return
+        prov = self._tts_provider()
+        if not prov:
+            self._send_json({"error": "no TTS provider configured"}, 503)
+            return
+        base_url, api_key = prov
+        try:
+            req = urllib.request.Request(
+                f"{base_url}/audio/voices/{voice_id}", method="DELETE",
+                headers={"Authorization": f"Bearer {api_key}"})
+            urllib.request.urlopen(req, timeout=20)
+            try:
+                from engine import audio_overview as _ao
+                _ao._voices_cache["voices"] = None
+            except Exception:
+                pass
+            self._send_json({"ok": True})
+        except urllib.error.HTTPError as e:
+            self._send_json({"error": f"voice delete failed {e.code}: {e.read().decode()[:200]}"}, 502)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     def _handle_translate_tts(self):
         """POST /v1/translate/tts — {text, lang, [model, voice]} → audio/mpeg bytes.
 
@@ -105,7 +188,19 @@ class TranslateHandlerMixin:
             if not model_id:
                 self._send_json({"error": "no TTS model configured — set text_to_speech.default_model in the Tools tab"}, 503)
                 return
-            voice = (body.get("voice") or "").strip() or cfg.get("voice") or "nova"
+            voice = (body.get("voice") or "").strip()
+            # Auto voice: when the caller doesn't pin a voice, detect the input
+            # language and pick a voice tagged for it (falls back to English).
+            # Lets read-aloud speak German text with a German voice if one exists.
+            if not voice and body.get("auto_voice"):
+                try:
+                    from engine import audio_overview as _ao
+                    _lang = _ao._detect_corpus_lang(text)
+                    _va, _ = _ao._voices_for_lang(_lang)
+                    voice = _va
+                except Exception:
+                    voice = ""
+            voice = voice or cfg.get("voice") or "nova"
 
             # Resolve provider for the TTS model. resolve_provider_for_model
             # uses _models_config[model_id] exactly — no fuzzy match. If the

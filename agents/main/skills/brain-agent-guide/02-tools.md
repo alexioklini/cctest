@@ -231,8 +231,11 @@ write/exec tool is deliberately excluded.
   voiced via TTS into a `.mp3` (+ a `.md` dialogue script) in the session artifact
   folder. **Source depends on context:** in a PROJECT it discusses the project's
   sources; OUTSIDE a project it discusses the CURRENT CHAT's conversation (so any
-  chat can become a podcast). Audio is **English-only** whatever the source
-  language. `length` ∈ short|std|long. (group: `audio`)
+  chat can become a podcast). **Multilingual:** the material's language is
+  auto-detected and the podcast is spoken in it (Voxtral's 9 languages:
+  en/fr/de/es/nl/pt/it/hi/ar), using a voice tagged for that language if one
+  exists (else the English default voices — clone a native voice in Settings →
+  Tools to upgrade). `length` ∈ short|std|long. (group: `audio`)
 
 ## Image / media
 

@@ -54,8 +54,15 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
   from THIS CHAT's transcript (the chat-podcast button). Body `{length?:
   short|std|long, focus?: str}`. Synchronous (~1 min); writes .mp3 + .md into the
   session artifact folder → `{ok, artifact_id, audio_file, script_file,
-  spoken_lines}`. English-only audio. (The project equivalent is the
-  `audio_overview` kind on `.../projects/<name>/generate`.)
+  spoken_lines}`. Language auto-detected (spoken in the chat's language, voice
+  matched if available). (The project equivalent is the `audio_overview` kind on
+  `.../projects/<name>/generate`.)
+- `GET /v1/translate/tts/voices` — list TTS voices `{voices:[{slug,id,name,gender,
+  languages,tags}]}`. `POST` (admin) — clone a voice `{name, sample_audio_b64,
+  sample_filename?, languages?:[iso], gender?}` → the new voice (auto-used for its
+  language). `DELETE /v1/translate/tts/voices/<id>` (admin) — remove a cloned voice.
+- `POST /v1/translate/tts` — `{text, voice?, model?, auto_voice?}` → MP3 bytes.
+  `auto_voice:true` detects the text's language and picks a matching voice.
 - `GET /v1/sessions/<sid>/gdpr-maps` — admin: pseudonym maps for this chat
 - `GET /v1/sessions/<sid>/gdpr-maps/<id>` — admin: decrypt one map
 

@@ -52,12 +52,103 @@ _LENGTH_GUIDANCE = {
 # hundreds of provider hits. Lines beyond this are dropped (logged, not silent).
 _MAX_LINES = 80
 
+# ISO-639-1 → human language name, for the script-gen prompt when non-English.
+# Voxtral TTS officially speaks these 9 (mistral.ai/news/voxtral-tts). Detection
+# of any other language falls back to an English overview.
+_TTS_LANGUAGES = {
+    "en": "English", "fr": "French", "de": "German", "es": "Spanish",
+    "nl": "Dutch", "pt": "Portuguese", "it": "Italian", "hi": "Hindi", "ar": "Arabic",
+}
+
+# Short-TTL cache of the provider voice roster so we don't re-list per line.
+_voices_cache = {"at": 0.0, "voices": None}
+_VOICES_TTL = 300.0
+
+
+def _list_voices() -> list:
+    """Fetch the Voxtral voice roster ({slug,id,languages,gender,...}), cached.
+    Returns [] on failure (callers fall back to the English defaults)."""
+    now = time.time()
+    if _voices_cache["voices"] is not None and (now - _voices_cache["at"]) < _VOICES_TTL:
+        return _voices_cache["voices"]
+    import urllib.request
+    voices = []
+    try:
+        cfg = _brain.get_tool_config().get("text_to_speech", {}) or {}
+        model_id = (cfg.get("default_model") or "").strip()
+        prov = _brain.resolve_provider_for_model(model_id)
+        base_url = (prov.get("base_url") or "").rstrip("/")
+        api_key = prov.get("api_key") or ""
+        if base_url and api_key:
+            offset = 0
+            for _ in range(10):
+                req = urllib.request.Request(
+                    f"{base_url}/audio/voices?limit=50&offset={offset}",
+                    headers={"Authorization": f"Bearer {api_key}"})
+                data = json.loads(urllib.request.urlopen(req, timeout=10).read())
+                items = data.get("items") or data.get("voices") or []
+                voices.extend(items)
+                if len(items) < 50:
+                    break
+                offset += 50
+    except Exception as e:
+        print(f"[audio_overview] voice list failed: {e}", flush=True)
+    _voices_cache["voices"] = voices
+    _voices_cache["at"] = now
+    return voices
+
+
+def _lang_matches(voice_langs: list, lang: str) -> bool:
+    """A voice supports `lang` if any of its language tags starts with the ISO
+    code (e.g. 'de' matches 'de_de'; 'en' matches 'en_us'/'en_gb')."""
+    return any(str(vl).lower().startswith(lang) for vl in (voice_langs or []))
+
+
+def _voices_for_lang(lang: str) -> tuple[str, str]:
+    """Pick (male_voice, female_voice) slugs for `lang`. Prefers a male+female
+    pair tagged for the language; falls back to the English Oliver/Jane defaults
+    when the roster has no match (today's case for non-English — until a voice is
+    cloned). Returns slugs (or voice ids) the speech endpoint accepts."""
+    if lang == "en":
+        return DEFAULT_HOST_A_VOICE, DEFAULT_HOST_B_VOICE
+    voices = _list_voices()
+    male = female = None
+    for v in voices:
+        if not _lang_matches(v.get("languages"), lang):
+            continue
+        ident = v.get("slug") or v.get("id")
+        g = (v.get("gender") or "").lower()
+        if g == "male" and not male:
+            male = ident
+        elif g == "female" and not female:
+            female = ident
+        elif not male:
+            male = ident
+        elif not female:
+            female = ident
+    # Fall back to English defaults for any host we couldn't match.
+    return (male or DEFAULT_HOST_A_VOICE), (female or DEFAULT_HOST_B_VOICE)
+
+
+def _detect_corpus_lang(text: str) -> str:
+    """Detect the dominant language of the material (ISO-639-1). Returns 'en' on
+    any failure or for a language Voxtral can't speak (→ English overview)."""
+    try:
+        from server_lib.translate import detect_language
+        r = detect_language((text or "")[:4000]) or {}
+        lang = (r.get("lang") or "en").lower()[:2]
+        return lang if lang in _TTS_LANGUAGES else "en"
+    except Exception:
+        return "en"
+
 
 def _build_script_prompt(sources_text: str, *, focus: str, length: str,
-                         audience: str, source_label: str = "RETRIEVED PROJECT SOURCES") -> str:
+                         audience: str, source_label: str = "RETRIEVED PROJECT SOURCES",
+                         lang: str = "en") -> str:
     """The user-turn prompt for the dialogue script-gen transform call.
     `source_label` names the material so the prompt reads naturally for both
-    project sources and a chat transcript."""
+    project sources and a chat transcript. `lang` (ISO-639-1) is the language the
+    spoken dialogue should be written in (one of the 9 Voxtral languages)."""
     length_guidance = _LENGTH_GUIDANCE.get(length, _LENGTH_GUIDANCE["std"])
     aud = (audience or "").strip()
     audience_line = (
@@ -66,6 +157,17 @@ def _build_script_prompt(sources_text: str, *, focus: str, length: str,
     focus_line = (
         f"\nFOCUS: centre the conversation on — {focus.strip()}" if (focus or "").strip()
         else "")
+    lang_name = _TTS_LANGUAGES.get(lang, "English")
+    if lang == "en":
+        language_clause = (
+            "LANGUAGE: write the spoken dialogue in ENGLISH even if the material is in "
+            "another language — render names/quotes/terms naturally for an English speaker.")
+    else:
+        language_clause = (
+            f"LANGUAGE: write the ENTIRE spoken dialogue in {lang_name} — the hosts "
+            f"speak {lang_name} natively. The material may be in {lang_name} already; "
+            f"keep the conversation in {lang_name} throughout (only quote foreign terms "
+            f"verbatim where natural).")
     return (
         f"You are scripting a two-host audio overview (a podcast) about the "
         f"material in the {source_label} below. Two hosts, "
@@ -81,9 +183,7 @@ def _build_script_prompt(sources_text: str, *, focus: str, length: str,
         "or 'HOST_B: '. No stage directions, no markdown, no section headers, no "
         "narrator — only spoken dialogue lines. Do not write '[laughs]' or similar; "
         "write only words that should be spoken aloud.\n\n"
-        "LANGUAGE: write the spoken dialogue in ENGLISH even if the material is in "
-        "another language — this is an English-language overview ABOUT the material. "
-        "Render names/quotes/terms naturally for an English speaker.\n\n"
+        f"{language_clause}\n\n"
         "GROUNDING: base the conversation ONLY on the material below. Do not "
         "invent facts, numbers, names, or dates that aren't in it. It is "
         "fine to simplify and paraphrase for a spoken register, but stay faithful. "
@@ -301,11 +401,21 @@ def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
     length = opts.get("length") or "std"
     audience = (opts.get("audience") or "").strip()
     focus = (opts.get("focus") or "").strip()
-    voice_a = (opts.get("host_a_voice") or "").strip() or DEFAULT_HOST_A_VOICE
-    voice_b = (opts.get("host_b_voice") or "").strip() or DEFAULT_HOST_B_VOICE
 
     if not corpus:
         return {"ok": False, "error": "No content to make an overview from."}
+
+    # Detect the material's language → speak the podcast in it, with voices tagged
+    # for that language (falling back to the English defaults when none exist).
+    # An explicit language override (opts.lang) or explicit voices skip detection.
+    lang = (opts.get("lang") or "").strip().lower()[:2] or _detect_corpus_lang(corpus)
+    if lang not in _TTS_LANGUAGES:
+        lang = "en"
+    auto_a, auto_b = _voices_for_lang(lang)
+    voice_a = (opts.get("host_a_voice") or "").strip() or auto_a
+    voice_b = (opts.get("host_b_voice") or "").strip() or auto_b
+    print(f"[audio_overview] lang={lang} voices=({voice_a},{voice_b})", flush=True)
+
     model = _brain._background_model_default()
     if not model:
         return {"ok": False, "error": "No background model configured."}
@@ -314,7 +424,7 @@ def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
     result = sidecar_proxy.background_call(
         messages=[{"role": "user", "content": _build_script_prompt(
             corpus, focus=focus, length=length, audience=audience,
-            source_label=source_label)}],
+            source_label=source_label, lang=lang)}],
         model=model, purpose="transform", agent_id=agent_id,
         session_id="audio-tool", project=project_name, user_id=user_id, max_rounds=1)
     if result.get("error"):
