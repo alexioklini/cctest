@@ -418,7 +418,7 @@ Once a feedback row exists, user and admin exchange short one-line messages
 - `GET /v1/cache/stats` / `POST /v1/cache/clear`
 - `GET /v1/notifications` / `/unread` / `POST /notifications/{settings,dismiss,read}`
 - `GET /v1/backup/info` / `POST /v1/backup` / `POST /v1/restore`
-- `POST /v1/refine` — `{text, purpose}` polish-don't-rewrite LLM call
+- `POST /v1/refine` — `{text, purpose, tier, caveman}` one-shot refine LLM call. `purpose` ∈ `chat_prompt`(default)/`scheduled_task`/`soul`/`profile_field`. `tier` ∈ `polish`(default)/`engineer`: **polish** = conservative grammar/clarity cleaner (intent verbatim); **engineer** = intent-extract + restructure, grounded in active model hint + resolved tool names + project instructions (`scheduled_task` adds unattended stop-condition/safeguard discipline; `soul` becomes a structural editor; `profile_field` always falls back to polish). Engineer keeps good drafts unchanged and asks-back on hopelessly-vague drafts rather than inventing scope. Response echoes `tier`.
 
 ## Tasks (delegate API)
 

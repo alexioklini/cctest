@@ -1404,6 +1404,12 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <button class="composer-btn" data-id="btn-refine" data-composer-toggle="btn-refine" onclick="refineInput()" title="Nachricht vor dem Senden überarbeiten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
         </button>
+        <!-- Refine TIER toggle: Polish (default) ↔ Engineer. Sibling to the
+             refine button; UI-only pref (localStorage refine-tier:chat).
+             Accent colour = Engineer active. Read by refineInput(). -->
+        <button class="composer-btn" data-id="btn-refine-tier" data-composer-toggle="btn-refine-tier" onclick="toggleRefineTierComposer()" title="Verfeinerung: Polish (säubern) — klicken für Engineer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 00-5.4 5.2L4 17v3h3l5.5-5.3a4 4 0 005.2-5.4l-2.6 2.6-2.1-.5-.5-2.1z"/></svg>
+        </button>
         <button class="composer-btn" data-id="btn-toggle-tools" data-composer-toggle="btn-toggle-tools" onclick="toggleToolDisplay()" title="Tool-Aufrufe umschalten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
         </button>

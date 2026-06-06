@@ -14,6 +14,7 @@ function _schedShowForm() {
 function _schedRefineControls(textareaId) {
   return `
     <span style="display:inline-flex;align-items:center;gap:6px">
+      ${_refineTierButton('sched:' + textareaId)}
       ${_refineCavemanButton(textareaId)}
       <button type="button" id="${textareaId}-refine"
         onclick="refineSchedPrompt('${textareaId}')"
@@ -36,16 +37,17 @@ async function refineSchedPrompt(textareaId) {
   const btn = document.getElementById(textareaId + '-refine');
   const lbl = document.getElementById(textareaId + '-refine-label');
   const caveman = _refineCavemanValue(textareaId);
+  const tier = _refineTierValue('sched:' + textareaId);
   const origLabel = lbl?.textContent || 'Mit KI verfeinern';
   if (btn) btn.disabled = true;
   if (lbl) lbl.textContent = 'Verfeinere…';
   ta.disabled = true;
   const original = ta.value;
   try {
-    // Default purpose=chat_prompt — same rewrite rules as the composer
-    // refine button, since a scheduled task prompt is a chat-style prompt
-    // the agent will execute. No session_id (no history context).
-    const result = await API.post('/v1/refine', { text, caveman });
+    // purpose=scheduled_task so the Engineer tier adds unattended-run
+    // discipline (stop conditions, destructive-action safeguards). Polish
+    // tier ignores purpose nuance and just cleans. No session_id (no history).
+    const result = await API.post('/v1/refine', { text, caveman, tier, purpose: 'scheduled_task' });
     if (result && result.refined && result.refined !== text) {
       ta.value = result.refined;
       if (lbl) lbl.textContent = 'Rückgängig';

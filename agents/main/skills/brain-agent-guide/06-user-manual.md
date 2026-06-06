@@ -71,7 +71,8 @@ pro Runde sofort verbucht, gehen also nicht verloren).
 - 📎 Dateien anhängen
 - 🧠 Thinking-Level (off / low / medium / high — nur bei Modellen, die es können)
 - 🔬 Recherche-Modus-Override (nur in Projekt-Chats)
-- ✨ Verfeinern — den Entwurf vor dem Senden polieren
+- ✨ Verfeinern — den Entwurf vor dem Senden überarbeiten
+- 🔧 Verfeinerungs-Modus (Polish ↔ Engineer) — der Schalter direkt neben ✨. **Polish** (Standard) säubert nur Grammatik/Klarheit und lässt die Absicht unverändert. **Engineer** (akzentfarben, wenn aktiv) strukturiert den Prompt um: präzisiert die Aufgabe, nutzt das aktive Modell + verfügbare Tools + Projekt-Anweisungen als Kontext, fragt bei hoffnungslos vagen Entwürfen nach (statt Details zu erfinden) und lässt bereits gute Entwürfe unangetastet. Pro Oberfläche gemerkt (Chat, geplante Aufgaben, Soul-Editor)
 - 🔧 Tool-Aufrufe im Verlauf ein-/ausblenden
 - 🛡️ GDPR-Details (PII-Funde inline aus-/einblenden)
 - 💾 In-Gedächtnis-speichern-Zyklus (aus / an / auto)
@@ -846,7 +847,7 @@ eingespeist hat (Projekt → **Dateien**-Tab listet sie).
   Klassifizierer behält Nützliches, verwirft Smalltalk.
 - Für signalstarke Projekte (Forschung, Entscheidungen) auf **an** und pro
   Turn über das 🌐-Menü prüfen.
-- **Verfeinern** (✨) bei unsauberem Entwurf — poliert ohne Sinnänderung.
+- **Verfeinern** (✨) bei unsauberem Entwurf — Polish poliert ohne Sinnänderung; Engineer (Schalter daneben) strukturiert um und ergänzt fehlende Klarheit/Schutzregeln, ohne Inhalte zu erfinden.
 - Caveman-Modus für „gib mir eine Zeile, sonst nichts."
 
 **Für Projekte:**

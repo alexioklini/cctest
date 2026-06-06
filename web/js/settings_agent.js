@@ -180,6 +180,7 @@ async function switchAgentTab(agentId, tab, btn) {
           <div style="font-size:12px;color:var(--text-400);margin-bottom:6px">System-Prompt — definiert Persönlichkeit und Verhalten des Agents</div>
           <textarea id="agent-soul-editor" class="form-textarea" style="flex:3 1 0;min-height:80px;font-size:13px;overflow-y:auto">${esc(soul)}</textarea>
           <div style="display:flex;justify-content:flex-end;gap:8px;margin:6px 0;align-items:center">
+            ${_refineTierButton('soul:' + esc(agentId))}
             <button type="button" id="agent-soul-editor-refine"
               onclick="refineAgentSoul('${esc(agentId)}')"
               title="Die Soul mit KI verfeinern (bewahrt die Du-/Sie-Anrede und die Markdown-Struktur)"
@@ -1379,9 +1380,10 @@ async function refineAgentSoul(agentId) {
   // compresses the soul dynamically at request time (see
   // _build_system_prompt). Compressing the saved soul.md too would
   // double-apply and lock the user into a level they can't reverse.
+  const tier = _refineTierValue('soul:' + agentId);
   try {
     const result = await API.post('/v1/refine', {
-      text, purpose: 'soul', field_label: agentId,
+      text, purpose: 'soul', field_label: agentId, tier,
     });
     if (result && result.refined && result.refined !== text) {
       ta.value = result.refined;

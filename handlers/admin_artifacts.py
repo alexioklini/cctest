@@ -42,6 +42,17 @@ class AdminArtifactsHandlers:
         context = body.get("context", "general")
         purpose = (body.get("purpose") or "").strip().lower()
         field_label = (body.get("field_label") or "").strip()
+        # Two-tier refine (REFINE_ENHANCEMENT_DESIGN.md): "polish" = the
+        # conservative grammar/clarity cleaner (default, unchanged behaviour);
+        # "engineer" = intent-extract + restructure + grounding. Engineer is a
+        # no-op for profile_field (a bio has nothing to engineer) → falls back
+        # to polish. The Engineer prompts here are the spec validated by
+        # eval/refine_eval.py (build_new) — keep the two in sync.
+        tier = (body.get("tier") or "polish").strip().lower()
+        if tier not in ("polish", "engineer"):
+            tier = "polish"
+        if purpose == "profile_field":
+            tier = "polish"  # engineering a profile field is meaningless
         # Optional caveman compression for the *refine LLM call itself*
         # (0 off / 1 lite / 2 full / 3 ultra). Compresses the polish system
         # prompt + appends the chat-style suffix so the refiner produces
@@ -77,7 +88,7 @@ class AdminArtifactsHandlers:
         project = body.get("project", "")
         chat_context = ""
 
-        if purpose != "profile_field":
+        if purpose not in ("profile_field", "soul"):
             # Get agent info
             try:
                 agent_cfg = engine.AgentConfig(agent_id)
@@ -113,6 +124,41 @@ class AdminArtifactsHandlers:
                 f"{chat_context}\n"
             )
 
+        # Engineer-tier grounding: model hint + active tool NAMES + project
+        # instructions excerpt. Built ONLY for engineer (the polish one-click
+        # path pays nothing extra). Tool names let the rewrite say e.g. "read
+        # the file with read_document first"; the model hint steers
+        # reasoning-native / local targets; project instructions keep the
+        # rewrite inside project discipline.
+        ground_block = ""
+        if tier == "engineer" and purpose != "profile_field":
+            grounds = []
+            hint = self._refine_model_hint(refine_model)
+            if hint:
+                grounds.append(hint)
+            try:
+                _tools = engine.resolve_active_tools(
+                    purpose="interactive", agent_id=agent_id)
+                _names = [t.get("name", "") for t in _tools if t.get("name")]
+                if _names:
+                    grounds.append(
+                        "Available tools: " + ", ".join(sorted(_names)[:40]) +
+                        " — reference them by name when the task needs one.")
+            except Exception:
+                pass
+            if project:
+                try:
+                    _proj = engine.get_project(agent_id, project) or {}
+                    _instr = (_proj.get("instructions") or "").strip()
+                    if _instr:
+                        grounds.append(
+                            f"Active project '{project}' instructions (respect them): "
+                            + _instr[:400])
+                except Exception:
+                    pass
+            if grounds:
+                ground_block = "\nGROUNDING:\n" + "\n".join(grounds) + "\n"
+
         if purpose == "profile_field":
             # Polish a free-text profile entry. Different rules: the user
             # is describing themselves, not asking the AI a question, so
@@ -136,6 +182,39 @@ class AdminArtifactsHandlers:
             request_line = (
                 "Polish this profile text (output ONLY the polished "
                 "version, preserve line breaks):\n\n" + text
+            )
+        elif purpose == "soul" and tier == "engineer":
+            # Engineer soul: structural improvement (tighten, dedupe, surface
+            # implied guardrails) WITHOUT changing identity. Validated against
+            # eval/refine_eval.py build_new soul branch — restraint is the
+            # default; over-editing a tight soul is a failure.
+            instructions = (
+                "You are an EDITOR for an AI agent's soul.md (its system prompt, "
+                "second person: 'You are ...', 'Your job is ...'). Improve it "
+                "structurally without changing who the agent is.\n"
+                "CRITICAL RULES:\n"
+                "- Output ONLY the improved soul. No commentary.\n"
+                "- Keep second-person voice. Keep the agent's name, role, and "
+                "listed tools.\n"
+                "- You MAY: tighten wording, remove redundancy, group related "
+                "rules, surface a missing stop-condition/guardrail that the "
+                "existing rules clearly imply.\n"
+                "- You MUST NOT: invent new capabilities, tools, or behaviours "
+                "the user didn't imply; remove an existing rule; change the "
+                "tone; pad with ceremony.\n"
+                "- Do NOT add Markdown you weren't given: no new bold/**emphasis**, "
+                "no converting bullets to numbered lists, no extra nesting, and "
+                "NEVER wrap the whole soul in a ```code fence```. Match the "
+                "input's existing formatting exactly.\n"
+                "- Preserve all Markdown structure and code/inline `code` exactly.\n"
+                "- DEFAULT TO RETURNING IT UNCHANGED. Only edit if there is a real "
+                "grammar error, true redundancy, or a clearly-implied missing "
+                "guardrail. If the soul already reads cleanly, return it "
+                "byte-for-byte. Restructuring a good soul is a failure."
+            )
+            request_line = (
+                "Improve this soul.md (output ONLY the improved version):\n\n"
+                + text
             )
         elif purpose == "soul":
             # Polish an agent's soul.md — its system prompt that defines
@@ -177,6 +256,62 @@ class AdminArtifactsHandlers:
                 "preserve all Markdown structure and code blocks):\n\n"
                 + text
             )
+        elif tier == "engineer":
+            # Engineer chat / scheduled_task: intent-extract + restructure +
+            # grounding + (for scheduled) unattended discipline. Validated
+            # against eval/refine_eval.py build_new — restraint is default,
+            # ask-back on hopelessly-vague drafts, no invented specifics.
+            instructions = (
+                "You are a PROMPT ENGINEER for an AI assistant. The user gives you "
+                "a draft of what they want the assistant to do. Sharpen it into a "
+                "single, clear prompt — WITHOUT inventing anything they didn't say.\n"
+                "CRITICAL RULES:\n"
+                "- Output ONLY the rewritten prompt. No commentary, no 'here is'.\n"
+                "- Preserve the user's actual intent and language. Do NOT answer "
+                "the request.\n"
+                "- NEVER invent concrete specifics the draft did not contain: no "
+                "filenames, paths, URLs, numbers, API fields, pixel sizes, tools, "
+                "or acceptance tests the user did not mention. Sharpen what IS "
+                "there; do not add a spec that isn't.\n"
+                "- Replace vague verbs with precise ones, but stay at the user's "
+                "level of detail.\n"
+                "- If the draft is ALREADY clear and specific, return it "
+                "essentially unchanged (fix only grammar). Restructuring a good "
+                "draft is a FAILURE.\n"
+                "- Only when the draft is genuinely vague: make the single most "
+                "useful clarification the draft implies — never a checklist of "
+                "assumptions.\n"
+                "- If the draft is so under-specified that you cannot sharpen it "
+                "without GUESSING (no file, no symptom, no defined goal), do NOT "
+                "invent those details. Instead return a short prompt that asks the "
+                "user for exactly the missing piece(s). One focused question beats "
+                "a confident wrong guess.\n"
+                "- If two unrelated tasks are mixed, keep the primary one and note "
+                "the split in ONE trailing line '(Second task: ...)' — do not "
+                "silently drop it.\n"
+                "- Keep it as short as it can be while load-bearing.\n"
+                "- For simple requests output plain prose. Only for genuinely "
+                "complex multi-part requests you MAY use <context>/<task>/"
+                "<constraints> XML sections — never for a one-line ask. No "
+                "commentary outside the prompt."
+            )
+            if purpose == "scheduled_task":
+                instructions += (
+                    "\nThis prompt runs UNATTENDED on a schedule. Additionally, but "
+                    "ONLY if the draft does not already cover them (do NOT restate "
+                    "what's already there):\n"
+                    "- If no stop/completion condition is stated, add a brief one.\n"
+                    "- If the task performs a destructive action "
+                    "(delete/overwrite/send/transfer) and has NO safeguard, add: "
+                    "'Stop and report instead of acting if uncertain.'\n"
+                    "- If it relies on info that may be missing, add: 'Report "
+                    "instead of guessing if information is missing.'\n"
+                    "Add nothing else. A well-scoped scheduled draft comes back "
+                    "essentially unchanged."
+                )
+            instructions += ground_block + context_block
+            request_line = (
+                f"Rewrite this draft (output ONLY the rewritten prompt):\n\n{text}")
         else:
             instructions = (
                 "You are a PROMPT REWRITER for an AI chat system. "
@@ -220,7 +355,7 @@ class AdminArtifactsHandlers:
         _refine_deanon = engine._identity_deanon
         try:
             refine_model, (_pii_content,), _refine_deanon = engine.gdpr_pick_model_for_background(
-                refine_model, [wire_content], purpose=f"refine_{purpose or 'chat_prompt'}")
+                refine_model, [wire_content], purpose=f"refine_{purpose or 'chat_prompt'}_{tier}")
             wire_content = _pii_content
         except engine.GDPRBlockedError as e:
             self._send_json({"error": f"refine blocked by GDPR policy: {e}"}, 503)
@@ -243,9 +378,32 @@ class AdminArtifactsHandlers:
                 self._send_json({"error": str(_res["error"])}, 500)
                 return
             self._send_json({"refined": result or text, "model": refine_model,
-                             "caveman": caveman})
+                             "caveman": caveman, "tier": tier})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
+
+    def _refine_model_hint(self, model: str) -> str:
+        """One short, non-drifting steering hint for the Engineer tier, derived
+        from OUR model config (never a static external claim). Reasoning-native
+        targets must not get CoT scaffolding; local/open-weight targets want
+        flat explicit prompts. Returns "" when neither applies."""
+        try:
+            is_local = engine.is_model_local(model)
+        except Exception:
+            is_local = False
+        m = ((engine._server_config() or {}).get("models", {}) or {}).get(model, {})
+        inf = (m.get("inference", {}) or {}) if isinstance(m, dict) else {}
+        name = (model or "").lower()
+        reasoning = bool(inf.get("thinking_level")) or any(
+            t in name for t in ("r1", "o3", "o4-mini", "qwen3", "reason", "think"))
+        if reasoning:
+            return ("Target model reasons internally — do NOT add 'think step by "
+                    "step' or other reasoning scaffolding; state the goal and the "
+                    "desired output cleanly.")
+        if is_local:
+            return ("Target is a local/open-weight model — keep the prompt flat "
+                    "and explicit; avoid deep nesting.")
+        return ""
 
     def _handle_soul_chat(self, path):
         """POST /v1/agents/<id>/soul-chat — chat to edit soul.md with LLM."""

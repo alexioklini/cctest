@@ -165,6 +165,7 @@ async function refineInput() {
       text: text,
       session_id: state.activeChat?.sessionId || null,
       caveman: parseInt(state.activeChat?.cavemanMode || 0, 10) || 0,
+      tier: _refineTierGet('chat'),
     });
 
     if (result.refined) {
@@ -177,6 +178,27 @@ async function refineInput() {
   } catch(e) {
     showToast('Verfeinern fehlgeschlagen: ' + e.message, true);
     for (const btn of refineBtns) btn.style.opacity = '';
+  }
+}
+
+// Chat-composer refine-tier toggle. UI-only preference (localStorage 'refine-tier:chat',
+// shared with the settings helpers). Updates every cloned composer button +
+// reflects active state with the accent colour. Read by refineInput().
+function toggleRefineTierComposer() {
+  const next = (_refineTierGet('chat') === 'engineer') ? 'polish' : 'engineer';
+  try { localStorage.setItem('refine-tier:chat', next); } catch(e) {}
+  _applyRefineTierComposer();
+  showToast(next === 'engineer'
+    ? 'Verfeinerung: Engineer (umstrukturieren)'
+    : 'Verfeinerung: Polish (säubern)');
+}
+function _applyRefineTierComposer() {
+  const cur = _refineTierGet('chat');
+  for (const btn of _composerToggleEls('btn-refine-tier')) {
+    btn.style.color = cur === 'engineer' ? 'var(--accent-brand)' : '';
+    btn.title = cur === 'engineer'
+      ? 'Verfeinerung: Engineer (umstrukturieren) — klicken für Polish'
+      : 'Verfeinerung: Polish (säubern) — klicken für Engineer';
   }
 }
 
@@ -413,6 +435,55 @@ async function refreshResearchModeButton() {
 // Click cycles 0→1→2→3→0; tooltip names the level. Persists to
 // localStorage('refine-caveman:<textareaId>'); dependants read the
 // current value via _refineCavemanValue(textareaId).
+// ── Refine TIER toggle (Polish ↔ Engineer) ───────────────────────────────
+// Two-tier refine (REFINE_ENHANCEMENT_DESIGN.md): "polish" = the conservative
+// grammar/clarity cleaner (default everywhere), "engineer" = intent-extract +
+// restructure + grounding. Mirrors the caveman-button pattern: a small toggle
+// with data-tier state + localStorage persistence per surface key, read at
+// send time via _refineTierValue(key). Default is Polish everywhere (opt-in).
+function _refineTierLabel(tier) {
+  return tier === 'engineer' ? 'Engineer (umstrukturieren)' : 'Polish (säubern)';
+}
+function _refineTierIcon(tier) {
+  const common = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"';
+  if (tier === 'engineer') {
+    // Wrench — "engineer"
+    return `<svg ${common}><path d="M14.7 6.3a4 4 0 00-5.4 5.2L4 17v3h3l5.5-5.3a4 4 0 005.2-5.4l-2.6 2.6-2.1-.5-.5-2.1z"/></svg>`;
+  }
+  // Sparkle/broom — "polish"
+  return `<svg ${common}><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z"/><path d="M18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8z"/></svg>`;
+}
+function _refineTierGet(key) {
+  let cur = 'polish';
+  try { cur = localStorage.getItem('refine-tier:' + key) || 'polish'; } catch(e) {}
+  return cur === 'engineer' ? 'engineer' : 'polish';
+}
+function _refineTierButton(key) {
+  const cur = _refineTierGet(key);
+  return `<button type="button" id="refine-tier-${key}"
+    data-tier="${cur}"
+    onclick="_refineTierCycle('${key}')"
+    title="Verfeinerungs-Modus: ${_refineTierLabel(cur)} — klicken zum Wechseln"
+    style="background:transparent;border:1px solid var(--border-light);border-radius:4px;width:24px;height:24px;padding:2px;color:${cur === 'engineer' ? 'var(--accent-brand)' : 'var(--text-300)'};cursor:pointer;display:inline-flex;align-items:center;justify-content:center">${_refineTierIcon(cur)}</button>`;
+}
+function _refineTierCycle(key) {
+  const btn = document.getElementById('refine-tier-' + key);
+  if (!btn) return;
+  const next = (btn.dataset.tier === 'engineer') ? 'polish' : 'engineer';
+  btn.dataset.tier = next;
+  btn.innerHTML = _refineTierIcon(next);
+  btn.style.color = next === 'engineer' ? 'var(--accent-brand)' : 'var(--text-300)';
+  btn.title = `Verfeinerungs-Modus: ${_refineTierLabel(next)} — klicken zum Wechseln`;
+  try { localStorage.setItem('refine-tier:' + key, next); } catch(e) {}
+}
+function _refineTierValue(key) {
+  const btn = document.getElementById('refine-tier-' + key);
+  if (btn && btn.dataset && btn.dataset.tier) {
+    return btn.dataset.tier === 'engineer' ? 'engineer' : 'polish';
+  }
+  return _refineTierGet(key);
+}
+
 function _refineCavemanLabel(mode) {
   return ['aus (Raumschiff)', 'lite (Auto)', 'voll (Pferd)', 'ultra (Lagerfeuer)'][mode] || 'aus';
 }
@@ -1050,6 +1121,7 @@ async function init() {
   // Clone composer template into all three views before any code queries IDs
   initComposers();
   _initComposerListeners();
+  _applyRefineTierComposer();  // reflect saved refine-tier:chat on the toggle
 
   // Load theme
   const savedTheme = localStorage.getItem('theme') || 'light';
