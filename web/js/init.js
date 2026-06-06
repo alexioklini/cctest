@@ -445,12 +445,14 @@ function _refineTierLabel(tier) {
   return tier === 'engineer' ? 'Engineer (umstrukturieren)' : 'Polish (säubern)';
 }
 function _refineTierIcon(tier) {
-  const common = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"';
+  const common = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"';
   if (tier === 'engineer') {
-    // Wrench — "engineer"
-    return `<svg ${common}><path d="M14.7 6.3a4 4 0 00-5.4 5.2L4 17v3h3l5.5-5.3a4 4 0 005.2-5.4l-2.6 2.6-2.1-.5-.5-2.1z"/></svg>`;
+    // Sliders/tuning — "engineer": restructure & tune. Bold horizontal rails
+    // + knobs read clearly at small size and are unmistakable from the wrench
+    // (tools toggle) and the ✨ pen (refine).
+    return `<svg ${common}><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="9" cy="7" r="2.2" fill="currentColor"/><circle cx="15" cy="12" r="2.2" fill="currentColor"/><circle cx="8" cy="17" r="2.2" fill="currentColor"/></svg>`;
   }
-  // Sparkle/broom — "polish"
+  // Sparkle — "polish": light touch-up.
   return `<svg ${common}><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z"/><path d="M18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8z"/></svg>`;
 }
 function _refineTierGet(key) {
