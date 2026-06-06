@@ -1407,9 +1407,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <!-- Refine TIER toggle: Polish (default) ↔ Engineer. Sibling to the
              refine button; UI-only pref (localStorage refine-tier:chat).
              Accent colour = Engineer active. Read by refineInput().
-             Sliders/tuning icon — distinct from the wrench (tools toggle). -->
+             Atom (scientist) icon — distinct from the wrench (tools toggle). -->
         <button class="composer-btn" data-id="btn-refine-tier" data-composer-toggle="btn-refine-tier" onclick="toggleRefineTierComposer()" title="Verfeinerung: Polish (säubern) — klicken für Engineer">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="9" cy="7" r="2.2" fill="currentColor"/><circle cx="15" cy="12" r="2.2" fill="currentColor"/><circle cx="8" cy="17" r="2.2" fill="currentColor"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><ellipse cx="12" cy="12" rx="10" ry="4.3"/><ellipse cx="12" cy="12" rx="10" ry="4.3" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4.3" transform="rotate(120 12 12)"/></svg>
         </button>
         <button class="composer-btn" data-id="btn-toggle-tools" data-composer-toggle="btn-toggle-tools" onclick="toggleToolDisplay()" title="Tool-Aufrufe umschalten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>

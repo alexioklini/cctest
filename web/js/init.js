@@ -447,10 +447,10 @@ function _refineTierLabel(tier) {
 function _refineTierIcon(tier) {
   const common = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"';
   if (tier === 'engineer') {
-    // Sliders/tuning — "engineer": restructure & tune. Bold horizontal rails
-    // + knobs read clearly at small size and are unmistakable from the wrench
-    // (tools toggle) and the ✨ pen (refine).
-    return `<svg ${common}><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="9" cy="7" r="2.2" fill="currentColor"/><circle cx="15" cy="12" r="2.2" fill="currentColor"/><circle cx="8" cy="17" r="2.2" fill="currentColor"/></svg>`;
+    // Atom (scientist) — "engineer": the deeper, more analytical rewrite.
+    // Nucleus + three electron orbits read as "science" at small size and are
+    // unmistakable from the wrench (tools toggle) and the ✨ pen (refine).
+    return `<svg ${common}><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><ellipse cx="12" cy="12" rx="10" ry="4.3"/><ellipse cx="12" cy="12" rx="10" ry="4.3" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4.3" transform="rotate(120 12 12)"/></svg>`;
   }
   // Sparkle — "polish": light touch-up.
   return `<svg ${common}><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z"/><path d="M18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8z"/></svg>`;
