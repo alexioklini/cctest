@@ -5189,6 +5189,19 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   .welcome-text { font-size: 28px; }
   .composer-wrapper { max-width: 100%; }
 
+  /* Composer footer: on 342px the left tools + the model selector + send
+     button don't fit on one row and overflowed the composer's right edge
+     (the "composer too wide" symptom). Allow the footer to wrap, let each
+     half shrink, and clip a long model name so the send button stays in. */
+  .composer-footer { flex-wrap: wrap; gap: 6px; padding: 6px 10px 10px; }
+  .composer-footer-left,
+  .composer-footer-right { min-width: 0; flex-wrap: wrap; }
+  .composer-footer-right { margin-left: auto; }
+  .model-selector-btn { min-width: 0; max-width: 100%; }
+  .model-selector-btn .model-name {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
   /* Right-panel goes essentially full-screen on a phone. */
   #right-panel { width: 100vw; }
 
