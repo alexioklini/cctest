@@ -278,12 +278,27 @@ fertige, belegte Dokumente erzeugen — vier Vorlagen:
 - **FAQ** (❓) — belegte Frage-/Antwort-Paare.
 - **Timeline** (🕒) — chronologische, datierte Ereignisse (lässt sie weg statt
   zu erfinden, wenn die Quellen keine Daten enthalten).
+- **Audio Overview** (🎧) — ein **Podcast** im Stil von NotebookLM: zwei KI-Hosts
+  (Oliver & Jane) besprechen die Projektinhalte in einem natürlichen Gespräch.
+  Ergebnis ist eine **`.mp3`-Audiodatei** (plus das Dialog-Skript als `.md`). Über
+  **Öffnen** erscheint ein Audio-Player direkt im Studio; **Herunterladen** lädt
+  die MP3. **Wichtig: Das Audio ist immer auf Englisch** — auch bei
+  deutschsprachigen Quellen (technische Grenze der Sprachstimmen). Ein
+  deutschsprachiges Projekt ergibt also einen englischen Podcast *über* den
+  deutschen Inhalt. Die Generierung dauert länger als ein Textdokument
+  (Skript schreiben → jede Zeile vertonen → zusammenfügen); der Fortschritt wird
+  als Phase angezeigt (Sammeln → Skript → Vertonen N/M).
 
-Jede Ausgabe wird **streng aus dem Projektgedächtnis** erzeugt und **verbatim
+Jede Text-Ausgabe wird **streng aus dem Projektgedächtnis** erzeugt und **verbatim
 zitiert** (`[Quelle: … — "…"]`); nichts wird hinzuerfunden. Das Ergebnis ist eine
-gespeicherte `.md`-Datei, die im Projekt erhalten bleibt. Optional lassen sich
-ein **Fokus** (Schwerpunkt-Stichwort) und eine **Länge** (Kurz/Standard/Lang)
-angeben. Hat ein Projekt noch keine Quellen, ist die Generierung nicht möglich
+gespeicherte `.md`-Datei, die im Projekt erhalten bleibt (beim Audio Overview eine
+`.mp3`). Optional lassen sich ein **Fokus** (Schwerpunkt-Stichwort) und eine
+**Länge** (Kurz/Standard/Lang) angeben.
+
+> Der Audio Overview lässt sich auch **im Chat** erzeugen: in einem geöffneten
+> Projekt einfach nach einem „Podcast“ / „Audio-Überblick“ fragen — der Agent nutzt
+> dann das Tool `generate_audio_overview` und legt die MP3 in den Artefakten der
+> Sitzung ab. Außerhalb eines Projekts geht das nicht (es fehlen die Quellen). Hat ein Projekt noch keine Quellen, ist die Generierung nicht möglich
 (erst Dateien/Web-Adressen hinzufügen oder Recherche laufen lassen). Die
 Generierung läuft im Hintergrund (~20–40 s) — man kann die Seite verlassen, die
 fertige Ausgabe taucht im Studio-Tab auf (er aktualisiert sich von selbst).

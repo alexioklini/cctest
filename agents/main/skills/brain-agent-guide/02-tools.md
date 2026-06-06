@@ -226,6 +226,12 @@ write/exec tool is deliberately excluded.
 - `detect_language(text)`
 - `list_glossaries()` / `get_glossary(slug)`
 - `transcribe_audio(path)` — Whisper/Voxtral
+- `generate_audio_overview(topic?, audience?, length?)` — NotebookLM-style **audio
+  overview / podcast**. Generates a two-host (Oliver & Jane) English conversation
+  about the CURRENT PROJECT's sources, voiced via TTS into a `.mp3` (+ a `.md`
+  dialogue script) in the session artifact folder. **Project-only** — refuses
+  outside a project (no sources to ground on). Audio is **English-only** whatever
+  the source language. `length` ∈ short|std|long. (group: `audio`)
 
 ## Image / media
 
@@ -256,7 +262,7 @@ mcp           mcp_connect mcp_disconnect mcp_servers
 skills        use_skill
 nodes         list_nodes
 code_exec     python_exec
-audio         transcribe_audio
+audio         transcribe_audio generate_audio_overview
 translation   translate_text translate_document detect_language
               list_glossaries get_glossary
 workflows     ask_user_for_file ask_llm

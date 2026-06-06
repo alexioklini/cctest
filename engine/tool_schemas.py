@@ -114,6 +114,33 @@ TOOL_DEFINITIONS = [
         "primary_field": "transcript",
     },
     {
+        "name": "generate_audio_overview",
+        "description": (
+            "Generate a NotebookLM-style AUDIO OVERVIEW (a two-host podcast .mp3) "
+            "from the CURRENT PROJECT's sources. Two AI hosts (Oliver & Jane) "
+            "discuss the project's material in a natural, engaging conversation, "
+            "synthesised to speech and stitched into one audio file. Use when the "
+            "user asks for a podcast, audio overview, audio summary, or 'listen to' "
+            "version of a project. PROJECT-ONLY: requires an open project (it grounds "
+            "the conversation in that project's sources) — refuses outside one. "
+            "AUDIO IS ENGLISH-ONLY regardless of source language (TTS voice "
+            "constraint) — a German project yields an English podcast about it. "
+            "Saves a .mp3 (the podcast) plus a .md (the dialogue script) to the "
+            "session artifact folder. Returns: {status, audio_file, script_file, "
+            "spoken_lines, hosts}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "Optional focus — what within the project the conversation should centre on. Omit for a broad overview."},
+                "audience": {"type": "string", "description": "Optional target audience to pitch the explanation level (e.g. 'beginners', 'compliance officers')."},
+                "length": {"type": "string", "enum": ["short", "std", "long"], "description": "Episode length: short (~2-3 min), std (~5-7 min), long (deep dive). Default std."},
+            },
+            "required": [],
+        },
+        "primary_field": "audio_file",
+    },
+    {
         "name": "translate_text",
         "description": (
             "Translate a text passage into another language using the configured Mistral model. "

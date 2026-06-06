@@ -423,6 +423,62 @@ def tool_transcribe_audio(args: dict) -> str:
     return _ok(out)
 
 
+def tool_generate_audio_overview(args: dict) -> str:
+    """Generate a two-host audio overview (NotebookLM-style podcast .mp3) from the
+    CURRENT PROJECT's sources. English-only audio (Voxtral TTS constraint). Writes
+    a script .md + a stitched .mp3 into the session artifact folder. Project-only —
+    refuses outside a project (no sources to ground on)."""
+    import brain as _brain
+    from engine import audio_overview
+
+    project = get_request_context().project or ""
+    if not project:
+        return _err("generate_audio_overview: open a project first — this generates a "
+                    "podcast from a project's sources. Outside a project there are no sources.")
+    _ag = get_request_context().current_agent or _brain._current_agent
+    agent_id = getattr(_ag, "agent_id", None) or (_ag if isinstance(_ag, str) else "main")
+    user_id = get_request_context().current_user_id or ""
+    session_id = get_request_context().current_session_id or "audio"
+
+    length = (args.get("length") or "std").strip()
+    if length not in ("short", "std", "long"):
+        length = "std"
+    opts = {
+        "focus": (args.get("topic") or "").strip(),
+        "length": length,
+        "audience": (args.get("audience") or "").strip(),
+        "host_a_voice": (args.get("host_a_voice") or "").strip(),
+        "host_b_voice": (args.get("host_b_voice") or "").strip(),
+    }
+    # Write into the session's artifact folder (same convention as write_file).
+    folder = _get_artifact_session_folder(session_id)
+    out_dir = os.path.join(_brain.AGENTS_DIR, agent_id, "artifacts", folder)
+    import uuid as _uuid
+    basename = f"audio_overview-{_uuid.uuid4().hex[:8]}"
+    print(f"[audio_overview] tool start project={project} length={length}", flush=True)
+    res = audio_overview.generate_to_folder(
+        agent_id=agent_id, project_name=project, out_dir=out_dir,
+        opts=opts, user_id=user_id, basename=basename)
+    if not res.get("ok"):
+        return _err(f"generate_audio_overview: {res.get('error', 'generation failed')}")
+    # Register both files so they appear in the Artifacts panel + emit SSE.
+    for p in (res.get("script_path"), res.get("mp3_path")):
+        if p:
+            try:
+                _brain._after_file_write(p, "created", agent_id)
+            except Exception:
+                pass
+    return _ok({
+        "status": "done",
+        "audio_file": os.path.basename(res["mp3_path"]),
+        "script_file": os.path.basename(res["script_path"]),
+        "spoken_lines": res.get("lines", 0),
+        "hosts": f"{audio_overview.HOST_A_NAME} & {audio_overview.HOST_B_NAME} (English)",
+        "note": "Audio overview generated and saved to the session artifact folder. "
+                "The .mp3 is the podcast; the .md is the dialogue script.",
+    })
+
+
 # ─── Translation tools ──────────────────────────────────────────────────────
 
 def tool_translate_text(args: dict) -> str:

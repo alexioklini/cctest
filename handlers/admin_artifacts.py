@@ -1729,6 +1729,7 @@ class AdminArtifactsHandlers:
             "js": "application/javascript", "ts": "text/typescript",
             "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
             "gif": "image/gif", "svg": "image/svg+xml",
+            "mp3": "audio/mpeg", "wav": "audio/wav", "m4a": "audio/mp4", "ogg": "audio/ogg",
         }
         ct = content_types.get(ext, "application/octet-stream")
 
@@ -1750,7 +1751,10 @@ class AdminArtifactsHandlers:
         self.send_response(200)
         self.send_header("Content-Type", ct)
         self.send_header("Content-Length", len(data))
-        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        # Audio plays inline in the Studio <audio> element; everything else
+        # force-downloads as before.
+        disposition = "inline" if ct.startswith("audio/") else "attachment"
+        self.send_header("Content-Disposition", f'{disposition}; filename="{filename}"')
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(data)

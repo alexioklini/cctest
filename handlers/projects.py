@@ -1294,9 +1294,12 @@ class ProjectsHandlerMixin:
             return
         body = self._read_json()
         kind = (body.get("kind") or "").strip()
-        if not output_presets.is_valid_kind(kind):
+        # audio_overview is a project_outputs kind too, but it runs a DIFFERENT
+        # worker (script-gen + two-voice stitch → .mp3) — not a text preset. It's
+        # valid here even though it's not in output_presets.PRESETS.
+        if kind != "audio_overview" and not output_presets.is_valid_kind(kind):
             self._send_json(
-                {"error": f"Unknown kind '{kind}'. Valid: {', '.join(output_presets.PRESETS)}"}, 400)
+                {"error": f"Unknown kind '{kind}'. Valid: {', '.join(output_presets.PRESETS)}, audio_overview"}, 400)
             return
         # No sources → refuse cleanly (W2). Sources = uploaded/ingested chunks,
         # mined input folders, or project web URLs (all feed the project wing).
@@ -1313,10 +1316,20 @@ class ProjectsHandlerMixin:
             self._send_json({"error": f"Invalid length '{length}'"}, 400)
             return
         user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
-        output_id = output_gen.start_generation(
-            agent_id=agent_id, project=project, kind=kind,
-            opts={"focus": (opts.get("focus") or "").strip(), "length": length or "std"},
-            user_id=user["id"])
+        if kind == "audio_overview":
+            from engine import audio_overview
+            output_id = audio_overview.start(
+                agent_id=agent_id, project=project, user_id=user["id"],
+                opts={"focus": (opts.get("focus") or "").strip(),
+                      "length": length or "std",
+                      "audience": (opts.get("audience") or "").strip(),
+                      "host_a_voice": (opts.get("host_a_voice") or "").strip(),
+                      "host_b_voice": (opts.get("host_b_voice") or "").strip()})
+        else:
+            output_id = output_gen.start_generation(
+                agent_id=agent_id, project=project, kind=kind,
+                opts={"focus": (opts.get("focus") or "").strip(), "length": length or "std"},
+                user_id=user["id"])
         self._send_json({"output_id": output_id, "status": "generating"})
 
     def _handle_project_outputs_list(self, path: str):

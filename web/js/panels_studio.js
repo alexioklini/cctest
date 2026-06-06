@@ -8,10 +8,11 @@
 // the generate endpoint validates. Research reports / audio overviews are also
 // project_outputs kinds (rendered in the browse groups) but generated elsewhere.
 const STUDIO_PRESETS = [
-  { kind: 'study_guide', icon: '📖', label: 'Study Guide', blurb: 'Konzepte · Begriffe · Wiederholungsfragen' },
-  { kind: 'briefing',    icon: '📋', label: 'Briefing',    blurb: 'Kurzfassung · Kernpunkte · Implikationen' },
-  { kind: 'faq',         icon: '❓', label: 'FAQ',          blurb: 'Belegte Frage-/Antwort-Paare' },
-  { kind: 'timeline',    icon: '🕒', label: 'Timeline',    blurb: 'Datierte Ereignisse (chronologisch)' },
+  { kind: 'study_guide',    icon: '📖', label: 'Study Guide',    blurb: 'Konzepte · Begriffe · Wiederholungsfragen' },
+  { kind: 'briefing',       icon: '📋', label: 'Briefing',       blurb: 'Kurzfassung · Kernpunkte · Implikationen' },
+  { kind: 'faq',            icon: '❓', label: 'FAQ',             blurb: 'Belegte Frage-/Antwort-Paare' },
+  { kind: 'timeline',       icon: '🕒', label: 'Timeline',       blurb: 'Datierte Ereignisse (chronologisch)' },
+  { kind: 'audio_overview', icon: '🎧', label: 'Audio Overview', blurb: 'Podcast: zwei Hosts (englisch) · .mp3' },
 ];
 
 // kind → display label/icon for browse-group headers (covers presets + the
@@ -308,11 +309,13 @@ async function studioOpenOutput(outputId) {
   const o = (state._studioOutputs || []).find(x => x.output_id === outputId);
   if (!o) return;
   if (!o.artifact_id) { showToast('Keine Datei für diese Ausgabe gefunden', true); return; }
+  const isAudio = o.kind === 'audio_overview';
+  const icon = isAudio ? '🎧' : '📄';
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `<div class="modal-content" style="max-width:900px;width:90vw;max-height:88vh;display:flex;flex-direction:column">
     <div class="modal-header" style="display:flex;align-items:center;gap:10px">
-      <span style="font-weight:600">📄 ${esc(o.title || o.kind)}</span>
+      <span style="font-weight:600">${icon} ${esc(o.title || o.kind)}</span>
       <a class="btn-secondary" style="margin-left:auto;padding:3px 10px;font-size:12px;text-decoration:none" href="${esc(API.getArtifactDownloadUrl(o.artifact_id))}" target="_blank" rel="noopener">Herunterladen</a>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
     </div>
@@ -321,6 +324,20 @@ async function studioOpenOutput(outputId) {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   document.body.appendChild(overlay);
   const body = overlay.querySelector('.studio-view-body');
+  // Audio overview: the artifact IS the .mp3 — play it inline (the dialogue
+  // script is a separate .md artifact, surfaced under chat/Artifacts).
+  if (isAudio) {
+    const url = API.getArtifactDownloadUrl(o.artifact_id);
+    body.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:14px;align-items:center;padding:24px 8px">
+        <div style="font-size:48px">🎧</div>
+        <div style="font-size:13px;color:var(--text-400);text-align:center">Zwei-Host-Podcast (englisch) aus den Projektquellen.</div>
+        <audio controls preload="metadata" style="width:100%;max-width:520px" src="${esc(url)}">
+          Dein Browser kann diese Audiodatei nicht abspielen — nutze „Herunterladen“.
+        </audio>
+      </div>`;
+    return;
+  }
   try {
     const data = await API.getArtifactContent(o.artifact_id);
     const text = (data && data.content) || '';
