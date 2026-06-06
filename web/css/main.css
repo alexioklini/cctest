@@ -5192,12 +5192,24 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   /* Right-panel goes essentially full-screen on a phone. */
   #right-panel { width: 100vw; }
 
-  /* Give the page header room for the hamburger and let the title ellipsize. */
+  /* Give the page header room for the hamburger and let the title ellipsize.
+     The LEFT block (hamburger + title) must be allowed to shrink (flex:1 +
+     min-width:0) and the title must clip — otherwise a long chat title grows
+     the left block past the viewport and pushes the RIGHT block (the "Panel"
+     button) off-screen, making it unreachable on a portrait phone. The right
+     block must never shrink. */
   .page-header { padding: 0 10px; gap: 6px; }
+  .page-header-left {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+  }
   .page-header-title {
+    flex: 1 1 auto;
     min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  .page-header-right { flex: 0 0 auto; }
   .right-panel-toggle-btn { white-space: nowrap; }
 
   /* Centered content containers span the screen instead of a fixed column. */
