@@ -5202,6 +5202,17 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
     min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
+  /* Session status bar (bottom): ~11 items in one non-wrapping flex row
+     overran a 390px screen. Let it wrap to multiple lines and tighten the
+     gaps/padding so it stays compact. The right-hand action group (session
+     id + LCM/inspect buttons) keeps its margin-left:auto but now wraps onto
+     its own line instead of being pushed off-screen. */
+  .status-bar { flex-wrap: wrap; gap: 6px 10px; padding: 4px 10px; }
+
+  /* Turn status line under a reply (Modell · Dauer · Tempo · Kosten · Token …)
+     was white-space:nowrap, so it ran off the right edge — allow it to wrap. */
+  .msg-turn-stats { white-space: normal; }
+
   /* Right-panel goes essentially full-screen on a phone. */
   #right-panel { width: 100vw; }
 
