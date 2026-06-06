@@ -327,15 +327,24 @@ async function studioOpenOutput(outputId) {
   // Audio overview: the artifact IS the .mp3 — play it inline (the dialogue
   // script is a separate .md artifact, surfaced under chat/Artifacts).
   if (isAudio) {
-    const url = API.getArtifactDownloadUrl(o.artifact_id);
     body.innerHTML = `
       <div style="display:flex;flex-direction:column;gap:14px;align-items:center;padding:24px 8px">
         <div style="font-size:48px">🎧</div>
         <div style="font-size:13px;color:var(--text-400);text-align:center">Zwei-Host-Podcast (englisch) aus den Projektquellen.</div>
-        <audio controls preload="metadata" style="width:100%;max-width:520px" src="${esc(url)}">
-          Dein Browser kann diese Audiodatei nicht abspielen — nutze „Herunterladen“.
-        </audio>
+        <div class="studio-audio-mount" style="width:100%;display:flex;justify-content:center">Lädt…</div>
       </div>`;
+    // Auth'd blob fetch — a bare download URL in <audio src> 401s (Bearer-only).
+    (async () => {
+      const mount = body.querySelector('.studio-audio-mount');
+      try {
+        const resp = await fetch(API.getArtifactDownloadUrl(o.artifact_id), { headers: API._headers() });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const url = URL.createObjectURL(await resp.blob());
+        mount.innerHTML = `<audio controls preload="metadata" style="width:100%;max-width:520px" src="${url}"></audio>`;
+      } catch (e) {
+        mount.innerHTML = `<div style="color:var(--error)">Audio konnte nicht geladen werden: ${esc(e.message || e)}</div>`;
+      }
+    })();
     return;
   }
   try {

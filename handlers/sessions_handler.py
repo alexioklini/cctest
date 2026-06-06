@@ -201,6 +201,66 @@ class SessionsHandlerMixin:
         except Exception as e:
             self._send_json({"suggestion": None, "error": str(e)}, 500)
 
+    def _handle_session_audio_overview(self, path):
+        """POST /v1/sessions/<id>/audio-overview — generate a two-host podcast (.mp3)
+        from THIS CHAT's conversation (the chat-podcast button). Synchronous (~50s):
+        builds the overview from the transcript, writes .mp3 + .md into the session
+        artifact folder, returns {ok, artifact_id, audio_file, script_file,
+        spoken_lines}. Body: {length?: short|std|long, focus?: str}."""
+        import os as _os
+        parts = path.split("/")
+        sid = parts[3]
+        if self._session_access_check(sid) is None:
+            return
+        session = sessions.get(sid)
+        if not session:
+            self._send_json({"ok": False, "error": "session_not_found"}, 404)
+            return
+        body = self._read_json() or {}
+        length = (body.get("length") or "std").strip()
+        if length not in ("short", "std", "long"):
+            length = "std"
+        agent_id = session.agent_id
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        try:
+            from engine import audio_overview
+            import uuid as _uuid
+            folder = engine._get_artifact_session_folder(sid)
+            out_dir = _os.path.join(engine.AGENTS_DIR, agent_id, "artifacts", folder)
+            basename = f"audio_overview-{_uuid.uuid4().hex[:8]}"
+            # Run inside a request context so background_call resolves agent config.
+            with engine.request_context():
+                engine.get_request_context().current_agent = engine.AgentConfig(agent_id)
+                engine.get_request_context().current_session_id = sid
+                res = audio_overview.generate_from_chat(
+                    agent_id=agent_id, session_id=sid, out_dir=out_dir,
+                    opts={"length": length, "focus": (body.get("focus") or "").strip()},
+                    user_id=user["id"], basename=basename)
+            if not res.get("ok"):
+                self._send_json({"ok": False, "error": res.get("error", "generation failed")}, 400)
+                return
+            # Register both files directly (returns the artifact_id — the same path
+            # the project worker uses; the generic file-write hook is unreliable
+            # outside the chat-worker thread). The mp3's id is what the button opens.
+            from engine import output_gen
+            artifact_id = ""
+            for p in (res.get("script_path"), res.get("mp3_path")):
+                if not p:
+                    continue
+                aid = output_gen._register_output_artifact(
+                    sid, agent_id, p, _os.path.basename(p)) or ""
+                if p == res.get("mp3_path"):
+                    artifact_id = aid
+            self._send_json({
+                "ok": True,
+                "artifact_id": artifact_id,
+                "audio_file": _os.path.basename(res["mp3_path"]),
+                "script_file": _os.path.basename(res["script_path"]),
+                "spoken_lines": res.get("lines", 0),
+            })
+        except Exception as e:
+            self._send_json({"ok": False, "error": str(e)}, 500)
+
     def _handle_session_inspect(self, path):
         """GET /v1/sessions/<id>/inspect — full session debug view."""
         parts = path.split("/")

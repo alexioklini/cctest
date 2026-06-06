@@ -116,18 +116,16 @@ TOOL_DEFINITIONS = [
     {
         "name": "generate_audio_overview",
         "description": (
-            "Generate a NotebookLM-style AUDIO OVERVIEW (a two-host podcast .mp3) "
-            "from the CURRENT PROJECT's sources. Two AI hosts (Oliver & Jane) "
-            "discuss the project's material in a natural, engaging conversation, "
-            "synthesised to speech and stitched into one audio file. Use when the "
-            "user asks for a podcast, audio overview, audio summary, or 'listen to' "
-            "version of a project. PROJECT-ONLY: requires an open project (it grounds "
-            "the conversation in that project's sources) — refuses outside one. "
-            "AUDIO IS ENGLISH-ONLY regardless of source language (TTS voice "
-            "constraint) — a German project yields an English podcast about it. "
-            "Saves a .mp3 (the podcast) plus a .md (the dialogue script) to the "
-            "session artifact folder. Returns: {status, audio_file, script_file, "
-            "spoken_lines, hosts}."
+            "Generate a NotebookLM-style AUDIO OVERVIEW (a two-host podcast .mp3). "
+            "Two AI hosts (Oliver & Jane) discuss the material in a natural, engaging "
+            "conversation, synthesised to speech and stitched into one audio file. "
+            "Use when the user asks for a podcast, audio overview, audio summary, or "
+            "'listen to' version. SOURCE: in a PROJECT it discusses the project's "
+            "sources; OUTSIDE a project it discusses the CURRENT CHAT's conversation "
+            "(so any chat can become a podcast). AUDIO IS ENGLISH-ONLY regardless of "
+            "source language (TTS voice constraint). Saves a .mp3 (the podcast) plus "
+            "a .md (the dialogue script) to the session artifact folder. Returns: "
+            "{status, audio_file, script_file, spoken_lines, hosts}."
         ),
         "input_schema": {
             "type": "object",

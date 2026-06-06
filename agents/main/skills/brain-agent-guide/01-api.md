@@ -50,6 +50,12 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
 - `GET /v1/sessions/<sid>/next-prompt` — model-suggested follow-up
 - `GET /v1/sessions/<sid>/warmup` / `/warmup-status` — warm-pool state
 - `POST /v1/sessions/<sid>/warmup` — manually trigger warmup
+- `POST /v1/sessions/<sid>/audio-overview` — generate a two-host podcast (.mp3)
+  from THIS CHAT's transcript (the chat-podcast button). Body `{length?:
+  short|std|long, focus?: str}`. Synchronous (~1 min); writes .mp3 + .md into the
+  session artifact folder → `{ok, artifact_id, audio_file, script_file,
+  spoken_lines}`. English-only audio. (The project equivalent is the
+  `audio_overview` kind on `.../projects/<name>/generate`.)
 - `GET /v1/sessions/<sid>/gdpr-maps` — admin: pseudonym maps for this chat
 - `GET /v1/sessions/<sid>/gdpr-maps/<id>` — admin: decrypt one map
 

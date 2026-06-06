@@ -424,17 +424,14 @@ def tool_transcribe_audio(args: dict) -> str:
 
 
 def tool_generate_audio_overview(args: dict) -> str:
-    """Generate a two-host audio overview (NotebookLM-style podcast .mp3) from the
-    CURRENT PROJECT's sources. English-only audio (Voxtral TTS constraint). Writes
-    a script .md + a stitched .mp3 into the session artifact folder. Project-only —
-    refuses outside a project (no sources to ground on)."""
+    """Generate a two-host audio overview (NotebookLM-style podcast .mp3). In a
+    PROJECT it discusses the project's sources; OUTSIDE a project it discusses the
+    CURRENT CHAT's conversation. English-only audio (Voxtral TTS constraint). Writes
+    a script .md + a stitched .mp3 into the session artifact folder."""
     import brain as _brain
     from engine import audio_overview
 
     project = get_request_context().project or ""
-    if not project:
-        return _err("generate_audio_overview: open a project first — this generates a "
-                    "podcast from a project's sources. Outside a project there are no sources.")
     _ag = get_request_context().current_agent or _brain._current_agent
     agent_id = getattr(_ag, "agent_id", None) or (_ag if isinstance(_ag, str) else "main")
     user_id = get_request_context().current_user_id or ""
@@ -455,10 +452,16 @@ def tool_generate_audio_overview(args: dict) -> str:
     out_dir = os.path.join(_brain.AGENTS_DIR, agent_id, "artifacts", folder)
     import uuid as _uuid
     basename = f"audio_overview-{_uuid.uuid4().hex[:8]}"
-    print(f"[audio_overview] tool start project={project} length={length}", flush=True)
-    res = audio_overview.generate_to_folder(
-        agent_id=agent_id, project_name=project, out_dir=out_dir,
-        opts=opts, user_id=user_id, basename=basename)
+    print(f"[audio_overview] tool start project={project or '(chat)'} length={length}", flush=True)
+    if project:
+        res = audio_overview.generate_to_folder(
+            agent_id=agent_id, project_name=project, out_dir=out_dir,
+            opts=opts, user_id=user_id, basename=basename)
+    else:
+        # No project → make the overview from this chat's transcript.
+        res = audio_overview.generate_from_chat(
+            agent_id=agent_id, session_id=session_id, out_dir=out_dir,
+            opts=opts, user_id=user_id, basename=basename)
     if not res.get("ok"):
         return _err(f"generate_audio_overview: {res.get('error', 'generation failed')}")
     # Register both files so they appear in the Artifacts panel + emit SSE.

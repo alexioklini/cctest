@@ -139,6 +139,19 @@ Web- oder Dokument-Abfrage) — in jedem Chat, ohne manuelle Einstellung.
 - Teilen — Sichtbarkeit ändern (privat / bestimmte Nutzer / Team / global)
 - Turns merken / verwerfen — auswählen, welche Nachrichten ins Gedächtnis kommen
 
+**Audio zu jeder Antwort** — unter jeder Assistenten-Antwort gibt es zwei
+Audio-Knöpfe (neben Kopieren):
+- **🔊 Vorlesen** — liest die Antwort laut vor (Text-zu-Sprache). Lange
+  Antworten werden automatisch in Stücke geteilt und nacheinander abgespielt;
+  erneut klicken stoppt. (Markdown/Code wird vor dem Vorlesen entfernt.)
+- **🎧 Podcast aus diesem Chat** — erzeugt einen **Audio Overview** (zwei Hosts,
+  Oliver & Jane) über den **gesamten bisherigen Chatverlauf** — wie der Studio-
+  Podcast eines Projekts, nur aus der Unterhaltung. Dauert ~1 Minute; danach
+  öffnet sich ein Player und die `.mp3` (plus Skript) liegt in den Artefakten der
+  Sitzung. **Audio ist immer englisch** (Stimmen-Grenze). Geht in JEDEM Chat, auch
+  ohne Projekt. *(Im Chat genügt auch die Bitte „mach einen Podcast aus diesem
+  Gespräch“ — der Agent ruft dann dasselbe.)*
+
 **Suche** (Seitenleiste): semantisch + Stichwort über alle sichtbaren
 Nachrichten.
 

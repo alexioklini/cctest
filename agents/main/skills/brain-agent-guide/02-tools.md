@@ -228,10 +228,11 @@ write/exec tool is deliberately excluded.
 - `transcribe_audio(path)` — Whisper/Voxtral
 - `generate_audio_overview(topic?, audience?, length?)` — NotebookLM-style **audio
   overview / podcast**. Generates a two-host (Oliver & Jane) English conversation
-  about the CURRENT PROJECT's sources, voiced via TTS into a `.mp3` (+ a `.md`
-  dialogue script) in the session artifact folder. **Project-only** — refuses
-  outside a project (no sources to ground on). Audio is **English-only** whatever
-  the source language. `length` ∈ short|std|long. (group: `audio`)
+  voiced via TTS into a `.mp3` (+ a `.md` dialogue script) in the session artifact
+  folder. **Source depends on context:** in a PROJECT it discusses the project's
+  sources; OUTSIDE a project it discusses the CURRENT CHAT's conversation (so any
+  chat can become a podcast). Audio is **English-only** whatever the source
+  language. `length` ∈ short|std|long. (group: `audio`)
 
 ## Image / media
 

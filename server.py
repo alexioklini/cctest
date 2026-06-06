@@ -1915,6 +1915,8 @@ class BrainAgentHandler(
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})
+        elif path.startswith("/v1/sessions/") and path.endswith("/audio-overview"):
+            self._handle_session_audio_overview(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/warmup"):
             sid = path.split("/")[3]
             s = sessions.get(sid)

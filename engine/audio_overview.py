@@ -54,8 +54,10 @@ _MAX_LINES = 80
 
 
 def _build_script_prompt(sources_text: str, *, focus: str, length: str,
-                         audience: str) -> str:
-    """The user-turn prompt for the dialogue script-gen transform call."""
+                         audience: str, source_label: str = "RETRIEVED PROJECT SOURCES") -> str:
+    """The user-turn prompt for the dialogue script-gen transform call.
+    `source_label` names the material so the prompt reads naturally for both
+    project sources and a chat transcript."""
     length_guidance = _LENGTH_GUIDANCE.get(length, _LENGTH_GUIDANCE["std"])
     aud = (audience or "").strip()
     audience_line = (
@@ -66,7 +68,7 @@ def _build_script_prompt(sources_text: str, *, focus: str, length: str,
         else "")
     return (
         f"You are scripting a two-host audio overview (a podcast) about the "
-        f"material in the RETRIEVED PROJECT SOURCES below. Two hosts, "
+        f"material in the {source_label} below. Two hosts, "
         f"{HOST_A_NAME} and {HOST_B_NAME}, discuss it in an engaging, natural, "
         f"conversational style — they explain, react, ask each other questions, "
         f"and build on each other. NOT a lecture; a real conversation.\n\n"
@@ -79,15 +81,15 @@ def _build_script_prompt(sources_text: str, *, focus: str, length: str,
         "or 'HOST_B: '. No stage directions, no markdown, no section headers, no "
         "narrator — only spoken dialogue lines. Do not write '[laughs]' or similar; "
         "write only words that should be spoken aloud.\n\n"
-        "LANGUAGE: write the spoken dialogue in ENGLISH even if the sources are in "
+        "LANGUAGE: write the spoken dialogue in ENGLISH even if the material is in "
         "another language — this is an English-language overview ABOUT the material. "
         "Render names/quotes/terms naturally for an English speaker.\n\n"
-        "GROUNDING: base the conversation ONLY on the retrieved sources. Do not "
-        "invent facts, numbers, names, or dates that aren't in the sources. It is "
+        "GROUNDING: base the conversation ONLY on the material below. Do not "
+        "invent facts, numbers, names, or dates that aren't in it. It is "
         "fine to simplify and paraphrase for a spoken register, but stay faithful. "
-        "If the sources are thin, keep the episode short rather than padding with "
+        "If the material is thin, keep the episode short rather than padding with "
         "invented content.\n\n"
-        "=== RETRIEVED PROJECT SOURCES ===\n"
+        f"=== {source_label} ===\n"
         f"{sources_text}"
     )
 
@@ -288,24 +290,22 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
             pass
 
 
-def generate_to_folder(*, agent_id: str, project_name: str, out_dir: str,
-                        opts: dict, user_id: str, basename: str) -> dict:
-    """SYNCHRONOUS generation for the agent tool path. Gathers project sources,
-    writes the script .md + stitched .mp3 into `out_dir` (the caller's session
-    artifact folder), and returns {ok, mp3_path, script_path, lines, error}.
-
-    Unlike run_audio_overview this does NOT touch the project_outputs table —
-    the agent-tool deliverable is just the artifact files in the session folder
-    (the file-write tracker auto-registers them + emits artifact_updated)."""
-    focus = (opts.get("focus") or "").strip()
+def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
+                     user_id: str, basename: str, project_name: str = "",
+                     source_label: str = "RETRIEVED PROJECT SOURCES") -> dict:
+    """SYNCHRONOUS core: pre-gathered corpus → script .md + stitched .mp3 in
+    `out_dir`. Returns {ok, mp3_path, script_path, lines, error}. Shared by the
+    project-sources path (generate_to_folder) and the chat-transcript path
+    (generate_from_chat) — only the corpus differs. Does NOT touch the
+    project_outputs table; the file-write tracker registers the artifacts."""
     length = opts.get("length") or "std"
     audience = (opts.get("audience") or "").strip()
+    focus = (opts.get("focus") or "").strip()
     voice_a = (opts.get("host_a_voice") or "").strip() or DEFAULT_HOST_A_VOICE
     voice_b = (opts.get("host_b_voice") or "").strip() or DEFAULT_HOST_B_VOICE
 
-    corpus, _n = output_gen._gather_sources(agent_id, project_name, focus, user_id)
     if not corpus:
-        return {"ok": False, "error": "No sources found for this project."}
+        return {"ok": False, "error": "No content to make an overview from."}
     model = _brain._background_model_default()
     if not model:
         return {"ok": False, "error": "No background model configured."}
@@ -313,7 +313,8 @@ def generate_to_folder(*, agent_id: str, project_name: str, out_dir: str,
     from handlers import sidecar_proxy
     result = sidecar_proxy.background_call(
         messages=[{"role": "user", "content": _build_script_prompt(
-            corpus, focus=focus, length=length, audience=audience)}],
+            corpus, focus=focus, length=length, audience=audience,
+            source_label=source_label)}],
         model=model, purpose="transform", agent_id=agent_id,
         session_id="audio-tool", project=project_name, user_id=user_id, max_rounds=1)
     if result.get("error"):
@@ -341,6 +342,58 @@ def generate_to_folder(*, agent_id: str, project_name: str, out_dir: str,
     with open(mp3_path, "wb") as f:
         f.write(mp3)
     return {"ok": True, "mp3_path": mp3_path, "script_path": script_path, "lines": rendered}
+
+
+def generate_to_folder(*, agent_id: str, project_name: str, out_dir: str,
+                       opts: dict, user_id: str, basename: str) -> dict:
+    """Agent-tool / project path: gather the PROJECT's sources, then build audio."""
+    focus = (opts.get("focus") or "").strip()
+    corpus, _n = output_gen._gather_sources(agent_id, project_name, focus, user_id)
+    if not corpus:
+        return {"ok": False, "error": "No sources found for this project."}
+    return _corpus_to_audio(corpus=corpus, agent_id=agent_id, out_dir=out_dir,
+                            opts=opts, user_id=user_id, basename=basename,
+                            project_name=project_name)
+
+
+# A chat needs at least this many user/assistant turns to be worth an overview.
+_MIN_CHAT_TURNS = 2
+
+
+def _chat_corpus(session_id: str) -> tuple[str, int]:
+    """Build an overview corpus from a chat's transcript. Returns (corpus, turns).
+    Uses only real user/assistant turns (skips internal thinking/tool rows); the
+    conversation text IS the source material the hosts discuss."""
+    from server_lib.db import ChatDB
+    msgs = ChatDB.load_messages(session_id) or []
+    blocks, turns = [], 0
+    for m in msgs:
+        role = m.get("role")
+        if role not in ("user", "human", "assistant"):
+            continue  # skip thinking/tool/system rows
+        content = m.get("content")
+        if not isinstance(content, str):
+            continue  # tool-call / structured rows
+        text = content.strip()
+        if not text:
+            continue
+        who = "User" if role in ("user", "human") else "Assistant"
+        blocks.append(f"{who}: {text}")
+        turns += 1
+    return "\n\n".join(blocks), turns
+
+
+def generate_from_chat(*, agent_id: str, session_id: str, out_dir: str,
+                       opts: dict, user_id: str, basename: str) -> dict:
+    """Chat path: build the corpus from the chat transcript (no project), then
+    build audio. Used outside a project so any chat can become a podcast."""
+    corpus, turns = _chat_corpus(session_id)
+    if turns < _MIN_CHAT_TURNS:
+        return {"ok": False, "error": "This chat is too short to make an audio "
+                                      "overview — have a longer conversation first."}
+    return _corpus_to_audio(corpus=corpus, agent_id=agent_id, out_dir=out_dir,
+                            opts=opts, user_id=user_id, basename=basename,
+                            source_label="CONVERSATION TRANSCRIPT")
 
 
 def start(*, agent_id: str, project: dict, opts: dict, user_id: str) -> str:
