@@ -1191,6 +1191,14 @@ textarea { resize: none; }
   margin-top: 8px;
 }
 .msg-turn:hover .msg-actions-bar { display: flex; }
+/* Touch devices have no :hover, so the hover-reveal above never fires — the
+   action bar (which CONTAINS the turn status line: Modell · Dauer · Kosten …)
+   stays invisible. On any no-hover device show it permanently so the stats +
+   actions are reachable. Targets touch by capability, not pixel width, so it
+   covers touch iPad too. It may wrap (see the phone block) — that's fine. */
+@media (hover: none) {
+  .msg-actions-bar { display: flex; flex-wrap: wrap; }
+}
 .msg-action-btn {
   width: 28px;
   height: 28px;
