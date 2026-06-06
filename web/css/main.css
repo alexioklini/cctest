@@ -5141,7 +5141,35 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 /* ═══════════════════════════════════════════════════════════
    Responsive
    ═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE  —  three optimised tiers
+     phone   : max-width 768px   (sidebar = drawer, right-panel = overlay)
+     tablet  : 769px..1024px     (sidebar inline, right-panel = overlay)
+     desktop : >1024px           (full 3-column, the default rules above)
+   Breakpoint edges MUST match MOBILE_BREAKPOINT / TABLET_BREAKPOINT in
+   web/js/nav.js (syncMobileChrome).
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Right-panel as a slide-over overlay (phone + tablet) ──
+   On a fixed 480px column an iPad-portrait (768–834px) or phone has no room
+   left for the chat. Below desktop the panel floats over the content full-
+   width-ish and is dismissed with the same toggle button. */
+@media (max-width: 1024px) {
+  #right-panel {
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: min(440px, 92vw);
+    min-width: 0;
+    max-width: 100vw;
+    z-index: 200;
+    box-shadow: -8px 0 32px rgba(0,0,0,0.22);
+  }
+  /* The desktop drag-to-resize handle is meaningless for a fixed overlay. */
+  .right-panel-resize-handle { display: none; }
+}
+
 @media (max-width: 768px) {
+  /* Sidebar becomes a slide-in drawer reachable via #mobile-hamburger. */
   #sidebar {
     position: fixed;
     left: -288px;
@@ -5157,8 +5185,66 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
     z-index: 99;
   }
   #sidebar-backdrop.active { display: block; }
+
   .welcome-text { font-size: 28px; }
   .composer-wrapper { max-width: 100%; }
+
+  /* Right-panel goes essentially full-screen on a phone. */
+  #right-panel { width: 100vw; }
+
+  /* Give the page header room for the hamburger and let the title ellipsize. */
+  .page-header { padding: 0 10px; gap: 6px; }
+  .page-header-title {
+    min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .right-panel-toggle-btn { white-space: nowrap; }
+
+  /* Centered content containers span the screen instead of a fixed column. */
+  .wf-container,
+  .tr-container { max-width: 100% !important; padding-left: 14px; padding-right: 14px; }
+
+  /* Fixed-width modals shrink to the viewport. */
+  .modal-content,
+  .modal-content.wide,
+  .modal-content.x-wide,
+  .wf-modal-content,
+  .auth-container,
+  .pii-card { width: min(94vw, 560px) !important; max-width: 94vw !important; }
+
+  /* Settings modal: the vertical tab rail + body don't fit side-by-side on a
+     phone. Stack them — tab rail becomes a horizontal scroll strip on top,
+     body fills the rest. (Targets the real .has-sidebar-tabs grid layout.) */
+  .modal-content.has-sidebar-tabs {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: auto auto 1fr !important;
+    width: 94vw !important;
+    max-width: 94vw !important;
+    height: 90vh !important;
+    max-height: 90vh !important;
+  }
+  .modal-tabs.modal-tabs-vertical {
+    grid-column: 1 !important;
+    grid-row: 2 !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border-100);
+  }
+  .modal-tabs.modal-tabs-vertical .modal-tab { white-space: nowrap; flex: 0 0 auto; }
+  /* Group labels are noise in a horizontal strip — hide to save width. */
+  .modal-tabs.modal-tabs-vertical .sidebar-group-label { display: none; }
+  .modal-content.has-sidebar-tabs > .modal-body {
+    grid-column: 1 !important;
+    grid-row: 3 !important;
+  }
+
+  /* Multi-column flex rows that don't fit a phone wrap to a stack. */
+  .settings-row,
+  .settings-grid,
+  .form-row,
+  .two-col { flex-wrap: wrap; }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -8166,3 +8252,61 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 .act-tool-card .tool-result-pre.terminal,
 .bgtask-transcript .tool-result-pre.terminal {
   background: var(--bg-200); color: var(--text-100); }
+
+/* ═══════════════════════════════════════════════════════════
+   TYPOGRAPHY NORMALIZATION  (loaded last → wins)
+   Goal: one font, one body size, no italics, bold reserved for headers.
+   Scope is deliberate — readable BODY text is unified; small functional
+   chrome (badges, pills, counters, status bar, icons) keeps its fitted
+   size so dense controls don't overflow. Code keeps the mono font.
+   ═══════════════════════════════════════════════════════════ */
+
+/* (1) No italics anywhere — catches inline styles, <em>/<i>, and the *…*
+   markdown that the chat renderer turns into <em>. One rule beats chasing
+   every emphasis site across the JS + the markdown pipeline. */
+* { font-style: normal !important; }
+
+/* (2) Single body size. Applied to the readable-text roots; everything inside
+   inherits. Small functional bits are re-pinned in (4) so they keep fitting. */
+:root { --font-body: 15px; }
+body,
+.msg-content, .msg-content p, .msg-content li,
+.modal-body, .settings-body,
+.sb-nav, .sb-label,
+.project-detail-desc,
+input, textarea, select, button {
+  font-size: var(--font-body);
+}
+
+/* (3) Bold only on real headers. Body text renders at normal weight; the
+   markdown renderer's **bold** (→ <strong>/<b>) is flattened too. Header
+   classes below keep their weight. */
+.msg-content, .msg-content p, .msg-content li,
+.modal-body, .settings-body,
+.sb-nav, .project-detail-desc {
+  font-weight: 400;
+}
+.msg-content strong, .msg-content b { font-weight: 400; }
+/* Headers that may stay bold + larger. */
+.welcome-text, .modal-title, .wf-title, .tr-title, .cls-title,
+.page-header-title, .project-detail-name,
+.sidebar-group-label, .sb-section-title,
+.right-panel-header, .right-panel-title,
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+}
+
+/* (4) Re-pin small functional chrome to its fitted size (these are NOT body
+   text — counters, status chips, pills, badges, monospace filenames). */
+.role-badge, .wf-pill, .wf-card-fname,
+.bgtasks-pill, .bgtasks-pill-count,
+.right-panel-tab-badge, .right-panel-toggle-btn,
+.sidebar-group-label, .sb-section-title,
+#status-bar, #status-bar * {
+  font-size: 11px;
+}
+
+/* (5) Code stays monospace (alignment) — explicitly preserved. */
+code, pre, .tool-result-pre, .wf-card-fname, .font-mono {
+  font-family: var(--font-mono);
+}

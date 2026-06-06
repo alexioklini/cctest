@@ -3,6 +3,9 @@
    ═══════════════════════════════════════════════════════════ */
 function navigateTo(view, opts) {
   state.currentView = view;
+  // On mobile, picking a view dismisses the slide-in sidebar drawer so the
+  // chosen view is actually visible (no-op on desktop where it's inline).
+  closeMobileSidebar();
   // Stop project-sync polling whenever we leave the project-detail view.
   if (view !== 'project-detail') stopProjectSyncPoll();
 
@@ -1125,6 +1128,49 @@ function closeMobileSidebar() {
   document.getElementById('sidebar').classList.remove('mobile-open');
   document.getElementById('sidebar-backdrop').classList.remove('active');
 }
+
+// ── Responsive chrome ──────────────────────────────────────────────
+// Three optimised tiers — phone / tablet (iPad) / desktop — whose pixel
+// edges MUST match the @media blocks in main.css:
+//   phone   : width <= 768  (sidebar is a slide-in drawer; right-panel overlays)
+//   tablet  : 769..1024     (sidebar inline; right-panel overlays, not a column)
+//   desktop : width > 1024  (full 3-column layout)
+// On phones the sidebar drawer is reachable ONLY via the hamburger (hidden on
+// wider tiers), so we toggle it here and reset a slid-out drawer on resize so
+// a rotate never strands the drawer open over the content.
+const MOBILE_BREAKPOINT = 768;
+const TABLET_BREAKPOINT = 1024;
+
+function isMobileViewport() {
+  return window.innerWidth <= MOBILE_BREAKPOINT;
+}
+function isTabletViewport() {
+  return window.innerWidth > MOBILE_BREAKPOINT && window.innerWidth <= TABLET_BREAKPOINT;
+}
+
+function syncMobileChrome() {
+  const mobile = isMobileViewport();
+  const tablet = isTabletViewport();
+  const burger = document.getElementById('mobile-hamburger');
+  if (burger) burger.classList.toggle('hidden', !mobile);
+  document.body.classList.toggle('is-mobile', mobile);
+  document.body.classList.toggle('is-tablet', tablet);
+  if (!mobile) {
+    // Leaving mobile width: ensure the drawer + its backdrop are reset so
+    // the sidebar shows inline again on tablet/desktop.
+    closeMobileSidebar();
+  }
+}
+
+// Debounced resize so orientation changes / soft-keyboard resizes are cheap.
+let _mobileChromeRaf = null;
+window.addEventListener('resize', () => {
+  if (_mobileChromeRaf) return;
+  _mobileChromeRaf = requestAnimationFrame(() => {
+    _mobileChromeRaf = null;
+    syncMobileChrome();
+  });
+});
 
 function renderRecentChats() {
   // Always refresh the favourites sidebar block alongside Recent — same poll cadence.

@@ -1135,6 +1135,10 @@ async function init() {
   }
   restoreSidebarSections();
 
+  // Show the hamburger + set mobile body state for the current viewport
+  // (a resize listener in nav.js keeps it in sync afterwards).
+  syncMobileChrome();
+
   // Init artifact panel resize
   initArtifactResize();
 

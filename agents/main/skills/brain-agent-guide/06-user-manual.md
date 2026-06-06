@@ -67,6 +67,18 @@ Runde, nicht erst am Ende). Wird eine Antwort **mitten im Stream abgebrochen**,
 bleiben die bis dahin verbrauchten Tokens **und Kosten** erhalten (sie werden
 pro Runde sofort verbucht, gehen also nicht verloren).
 
+**Handy & Tablet (Responsive)** — die Oberfläche passt sich drei Größen an:
+- **Desktop** (breit) — volle Drei-Spalten-Ansicht (Seitenleiste · Inhalt ·
+  rechtes Panel).
+- **Tablet/iPad** — die Seitenleiste bleibt fest sichtbar, das rechte Panel
+  legt sich als Overlay über den Inhalt (statt ihn zu verengen).
+- **Handy/iPhone** — die Seitenleiste ist ein **ausklappbares Menü**: oben
+  links erscheint ein **☰-Knopf**, der sie einblendet; nach Auswahl einer
+  Ansicht schließt sie sich wieder. So sind **alle** Funktionen (Projekte,
+  Einstellungen, Workflows usw.) auch auf dem Handy erreichbar — nicht nur der
+  Chat. Das rechte Panel und Einstellungs-Dialoge füllen auf dem Handy den
+  Bildschirm.
+
 **Eingabe-Werkzeugleiste** (über dem Textfeld, links):
 - 📎 Dateien anhängen
 - 🧠 Thinking-Level (off / low / medium / high — nur bei Modellen, die es können)
