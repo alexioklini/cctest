@@ -10,11 +10,18 @@ purpose (chat_prompt/scheduled_task/soul), and the refined output.
    know exactly what is being asked? Grammar/structure count here.
 
 2. **intent_preserved** (0–1) — Did the refinement keep the user's ACTUAL goal, in their
-   language, WITHOUT inventing scope, files, requirements, or tasks the draft did not
-   contain? This is a **HARD GATE**:
-   - Score < 0.7 here = the whole sample is marked `intent_drift: true` and FAILS,
-     regardless of the other three axes. Restructuring is allowed; inventing scope is not.
-   - Dropping a task the user clearly wanted (without noting it) is intent loss → low score.
+   language? The Engineer tier is EXPECTED to add structure, output-format, success
+   criteria, and an expert role — that is its job and is NOT a violation. The HARD GATE
+   fires ONLY on **fabricated FACTS**: a specific filename/path/URL, a number, an API
+   field, a library name, or a concrete requirement the user never mentioned and that
+   the assistant could get *wrong*. Adding `[the relevant file]` is fine; inventing
+   `index.html` is fabrication.
+   - Score < 0.7 here = `intent_drift: true` and the sample FAILS — but reserve that ONLY
+     for fabricated facts (above) or for dropping/changing the user's actual goal.
+   - Adding unrequested structure/role/format to an already-complete prompt is NOT drift
+     — it is a token_economy penalty (axis 4), not an intent violation. Keep
+     intent_preserved ≥ 0.7 in that case.
+   - Dropping a task the user clearly wanted (without noting it) IS intent loss → low score.
 
 3. **actionability** (0–1) — Would an AI agent, handed this refined prompt, produce the
    RIGHT result on the first try? Are success criteria / scope / stop-conditions present

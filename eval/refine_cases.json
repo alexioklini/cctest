@@ -32,6 +32,20 @@
       "intent": "Already a clean, specific, grounded prompt. A GOOD refine returns it nearly unchanged — Engineer must NOT bloat it. Tests over-engineering."
     },
     {
+      "id": "CHAT6_bare_sort_users",
+      "purpose": "chat_prompt",
+      "draft": "write me a function that sorts users",
+      "context": {},
+      "intent": "BARE context (no tools, no project — the real chat-composer case). Engineer MUST meaningfully strengthen: name the output (a single function), surface the obvious missing decision (sort by WHAT — but as a parameter/criterion, not a fabricated field name), maybe a success note. Must be clearly MORE than Polish's grammar fix, WITHOUT inventing a concrete field like 'sort by email'."
+    },
+    {
+      "id": "CHAT7_bare_analyze_risk",
+      "purpose": "chat_prompt",
+      "draft": "analyze the risk data and give me recommendations",
+      "context": {},
+      "intent": "BARE context. Engineer should add output structure (e.g. findings + ranked recommendations) and an expert framing, WITHOUT inventing which dataset/file. Must visibly out-engineer Polish."
+    },
+    {
       "id": "CHAT5_reasoning_model_no_cot",
       "purpose": "chat_prompt",
       "draft": "think step by step and carefully reason through why my recursive function stack overflows",

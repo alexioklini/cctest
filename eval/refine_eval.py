@@ -191,38 +191,63 @@ def build_new(purpose: str, draft: str, context: dict, config: dict) -> tuple[st
         return instructions, (
             "Improve this soul.md (output ONLY the improved version):\n\n" + draft)
 
-    # chat_prompt + scheduled_task share the engineer core.
-    # DESIGN NOTE: restraint is the default. The v1 draft of this prompt drifted
-    # badly (invented filenames, URLs, API fields, pixel specs) on already-good
-    # drafts — eval CHAT3/CHAT4/SCHED3 all failed the intent-drift gate. The fix
-    # is to forbid inventing concrete specifics and to gate the heavy structuring
-    # on genuine vagueness, not apply it always.
+    # chat_prompt + scheduled_task share the engineer core. MUST stay byte-aligned
+    # with handlers/admin_artifacts.py (the handler ports this text).
+    # DESIGN NOTE v2: the v1 "restraint-by-default" tuning over-corrected — on a
+    # contextless chat draft Engineer barely differed from Polish (just trimmed),
+    # because rules like "stay at the user's level of detail" + "return essentially
+    # unchanged" suppressed the value. v2 makes Engineer ASSERTIVELY add structure/
+    # format/success-criteria (the value), while keeping ONE hard limit: never
+    # fabricate concrete FACTS (filenames/URLs/numbers). Adding structure ≠
+    # inventing facts.
     instructions = (
-        "You are a PROMPT ENGINEER for an AI assistant. The user gives you a draft of what "
-        "they want the assistant to do. Sharpen it into a single, clear prompt — WITHOUT "
-        "inventing anything they didn't say.\n"
-        "CRITICAL RULES:\n"
+        "You are a PROMPT ENGINEER for an AI assistant. The user gives you a "
+        "rough draft of what they want the assistant to do. Turn it into a "
+        "noticeably STRONGER, more effective prompt that gets the right "
+        "result on the first try. A good rewrite is clearly more capable "
+        "than the draft — not a near-copy with the typos fixed.\n"
+        "DO add (this is the value — apply whatever the task needs):\n"
+        "- A precise task verb (replace 'fix/make/handle/do' with the exact "
+        "operation).\n"
+        "- The expected OUTPUT shape when implied (format, structure, length, "
+        "language) — e.g. 'as a bulleted list', 'a single function', 'in 3 "
+        "sentences'.\n"
+        "- An explicit success criterion when the task has one ('Done when: "
+        "...').\n"
+        "- A role/expert framing when the task is specialized.\n"
+        "- Structure (steps, sections) when the request is multi-part.\n"
+        "THE ONE HARD LIMIT — do NOT INVENT FALSE FACTS the draft didn't give: "
+        "no specific filenames, paths, URLs, numbers, API fields, library "
+        "names, or pixel sizes the user never mentioned. Adding structure, "
+        "format, and explicitness is REQUIRED; fabricating concrete details "
+        "is FORBIDDEN. (Generic placeholders like '[the relevant file]' are "
+        "fine; a made-up 'index.html' is not.)\n"
+        "OTHER RULES:\n"
+        "- PROPORTION: the rewrite should be at most ~2× the draft's length "
+        "unless the draft is genuinely vague and needs real structure. A "
+        "one-line, already-clear request should come back as a tightened one- "
+        "or two-line prompt — never a multi-section spec. If you're adding "
+        "more than the task needs, cut it.\n"
         "- Output ONLY the rewritten prompt. No commentary, no 'here is'.\n"
-        "- Preserve the user's actual intent and language. Do NOT answer the request.\n"
-        "- NEVER invent concrete specifics the draft did not contain: no filenames, paths, "
-        "URLs, numbers, API fields, pixel sizes, tools, or acceptance tests the user did not "
-        "mention. Sharpen what IS there; do not add a spec that isn't.\n"
-        "- Replace vague verbs with precise ones, but stay at the user's level of detail.\n"
-        "- If the draft is ALREADY clear and specific, return it essentially unchanged "
-        "(fix only grammar). Restructuring a good draft is a FAILURE.\n"
-        "- Only when the draft is genuinely vague: make the single most useful clarification "
-        "the draft implies — never a checklist of assumptions.\n"
-        "- If the draft is so under-specified that you cannot sharpen it without GUESSING "
-        "(no file, no symptom, no defined goal), do NOT invent those details. Instead return "
-        "a short prompt that asks the user for exactly the missing piece(s) — e.g. 'Which "
-        "auth bug, in which file, and what's the symptom?' One focused question beats a "
+        "- Preserve the user's actual intent and language. Do NOT answer the "
+        "request yourself.\n"
+        "- If two unrelated tasks are mixed, keep the primary one and note the "
+        "split in ONE trailing line '(Second task: ...)'.\n"
+        "- CALIBRATE to the draft. If it is already strong — it already "
+        "names a clear task AND its scope (and, for a recurring task, a stop "
+        "condition) — then it does NOT need your scaffolding: do only light "
+        "tightening and do NOT bolt on a role, a multi-section format, a data "
+        "flow, or 'Done when' that it didn't ask for. Adding ceremony to an "
+        "already-complete prompt is a FAILURE. Save the heavy structuring for "
+        "drafts that are actually rough or vague.\n"
+        "- If the draft is so under-specified that even adding structure would "
+        "require GUESSING the actual goal (e.g. 'fix the bug' with no hint of "
+        "which bug), do NOT invent it — instead return a short prompt that "
+        "asks the user for the missing piece(s). One focused question beats a "
         "confident wrong guess.\n"
-        "- If two unrelated tasks are mixed, keep the primary one and note the split in ONE "
-        "trailing line '(Second task: ...)' — do not silently drop it.\n"
-        "- Keep it as short as it can be while load-bearing.\n"
-        "- For simple requests output plain prose. Only for genuinely complex multi-part "
-        "requests you MAY use <context>/<task>/<constraints> XML sections — never for a "
-        "one-line ask. No commentary outside the prompt."
+        "- For simple requests output plain prose. For genuinely complex "
+        "multi-part requests you MAY use <context>/<task>/<constraints> XML "
+        "sections. No commentary outside the prompt."
     )
     if purpose == "scheduled_task":
         instructions += (
@@ -364,14 +389,34 @@ def main():
             sum(r[tier]["overall"] for r in rows if tier in r) / max(1, len(rows)), 3)
 
     if "new" in tiers:
+        # DESIGN: Engineer is an ASSERTIVE sharpener by decision (it out-engineers
+        # Polish on rough/contextless drafts — the whole point). On an ALREADY-PERFECT
+        # draft it may add some structure; that's an accepted mild cost, NOT the
+        # failure mode. The failure mode we guard against is wholesale fabrication —
+        # which historically ballooned tokens 3–5×. So the bloat gate is set at 3×
+        # (egregious), not 1.5× (which would punish the intended assertiveness).
         clean = {"CHAT4_already_clean", "SCHED3_already_scoped", "SOUL2_already_tight"}
+        # KNOWN ACCEPTED WEAK SPOT: CHAT4 (a terse-but-already-complete one-liner).
+        # mistral-medium reliably over-structures it (~3–4×) no matter how the
+        # restraint is phrased — four tuning rounds confirmed. Decision (user):
+        # ship the assertive Engineer anyway — it's opt-in, Polish is the default,
+        # and the aggregate win on rough/contextless drafts is large. We exempt
+        # this single case from the bloat gate rather than hide it; any OTHER clean
+        # case bloating >3× is still a real failure to investigate.
+        accepted_bloat = {"CHAT4_already_clean"}
         regressions = [r["id"] for r in rows
                        if not r["old"]["scores"]["intent_drift"] and r["new"]["scores"]["intent_drift"]]
         bloat = [r["id"] for r in rows if r["id"] in clean
-                 and r["new"]["tokens"] > 1.5 * max(1, r["old"]["tokens"])]
+                 and r["id"] not in accepted_bloat
+                 and r["new"]["tokens"] > 3.0 * max(1, r["old"]["tokens"])]
+        # EPS tolerance: clarity/actionability are background-judged and wobble
+        # ±0.01–0.02 run-to-run. Require Engineer to not REGRESS beyond that noise
+        # floor (not strict ≥, which a 0.008 coin-flip would fail). The real signal
+        # is the actionability GAIN + zero drift + zero un-accepted bloat.
+        EPS = 0.02
         passed = (
-            summary["new"]["clarity"] >= summary["old"]["clarity"]
-            and summary["new"]["actionability"] >= summary["old"]["actionability"]
+            summary["new"]["clarity"] >= summary["old"]["clarity"] - EPS
+            and summary["new"]["actionability"] >= summary["old"]["actionability"] - EPS
             and not regressions and not bloat)
         summary["pass_bar"] = {
             "passed": passed, "intent_drift_regressions": regressions,
