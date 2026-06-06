@@ -189,13 +189,17 @@ class TranslateHandlerMixin:
                 self._send_json({"error": "no TTS model configured — set text_to_speech.default_model in the Tools tab"}, 503)
                 return
             voice = (body.get("voice") or "").strip()
-            # Auto voice: when the caller doesn't pin a voice, detect the input
-            # language and pick a voice tagged for it (falls back to English).
-            # Lets read-aloud speak German text with a German voice if one exists.
-            if not voice and body.get("auto_voice"):
+            # Language-matched voice selection when the caller doesn't pin a voice.
+            # Prefer an EXPLICIT `lang` (the Translation tab knows the source/target
+            # language exactly — a better signal than re-detection); otherwise, if
+            # `auto_voice` is set, detect the language from the text. Either way we
+            # pick a voice tagged for that language, falling back to English when
+            # none exists (e.g. no German voice cloned yet).
+            _req_lang = (body.get("lang") or "").strip().lower()[:2]
+            if not voice and (_req_lang or body.get("auto_voice")):
                 try:
                     from engine import audio_overview as _ao
-                    _lang = _ao._detect_corpus_lang(text)
+                    _lang = _req_lang or _ao._detect_corpus_lang(text)
                     _va, _ = _ao._voices_for_lang(_lang)
                     voice = _va
                 except Exception:

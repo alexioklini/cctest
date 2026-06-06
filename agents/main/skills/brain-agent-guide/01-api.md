@@ -61,8 +61,11 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
   languages,tags}]}`. `POST` (admin) — clone a voice `{name, sample_audio_b64,
   sample_filename?, languages?:[iso], gender?}` → the new voice (auto-used for its
   language). `DELETE /v1/translate/tts/voices/<id>` (admin) — remove a cloned voice.
-- `POST /v1/translate/tts` — `{text, voice?, model?, auto_voice?}` → MP3 bytes.
-  `auto_voice:true` detects the text's language and picks a matching voice.
+- `POST /v1/translate/tts` — `{text, voice?, lang?, model?, auto_voice?}` → MP3
+  bytes. Voice selection (when `voice` is not pinned): an explicit `lang` (ISO)
+  picks a voice tagged for it; else `auto_voice:true` detects the text's language;
+  else the configured default. The Translation Text + Live-mic tabs pass `lang`
+  per side, so they auto-use language-matched voices.
 - `GET /v1/sessions/<sid>/gdpr-maps` — admin: pseudonym maps for this chat
 - `GET /v1/sessions/<sid>/gdpr-maps/<id>` — admin: decrypt one map
 
