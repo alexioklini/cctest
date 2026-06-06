@@ -13,10 +13,12 @@ let _chatAudioEl = null;
 let _chatAudioBtn = null;
 let _chatAudioQueue = [];      // pending TTS chunk texts (read-aloud)
 let _chatAudioStopped = false;
+let _chatAudioLang = '';       // language pinned at start — stays fixed across all chunks
 
 function _chatAudioStop() {
   _chatAudioStopped = true;
   _chatAudioQueue = [];
+  _chatAudioLang = '';
   if (_chatAudioEl) { try { _chatAudioEl.pause(); } catch (_) {} _chatAudioEl = null; }
   if (_chatAudioBtn) { _chatAudioBtn.classList.remove('msg-action-active'); _chatAudioBtn = null; }
 }
@@ -60,12 +62,16 @@ function _chunkForTts(text, maxLen) {
   return out;
 }
 
-async function _ttsBlobUrl(text) {
+async function _ttsBlobUrl(text, lang) {
+  // Pin the voice via an explicit `lang` so it stays fixed across every chunk
+  // (detected once at start). Only fall back to per-chunk auto_voice if no
+  // language was resolved — otherwise a chunk with a foreign quote would flip
+  // the voice mid-playback.
+  const body = lang ? { text, lang } : { text, auto_voice: true };
   const resp = await fetch('/v1/translate/tts', {
     method: 'POST',
     headers: API._headers({ 'Content-Type': 'application/json' }),
-    // auto_voice: detect the reply's language → matching voice (else English).
-    body: JSON.stringify({ text, auto_voice: true }),
+    body: JSON.stringify(body),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
@@ -84,7 +90,7 @@ async function _playChatQueue() {
   const text = _chatAudioQueue.shift();
   let url;
   try {
-    url = await _ttsBlobUrl(text);
+    url = await _ttsBlobUrl(text, _chatAudioLang);
   } catch (e) {
     showToast('Vorlesen fehlgeschlagen: ' + (e.message || e), true);
     _chatAudioStop();
@@ -98,7 +104,7 @@ async function _playChatQueue() {
   audio.play().catch(() => { /* autoplay/gesture issues — surface quietly */ });
 }
 
-function readMessageAloud(idx, btn) {
+async function readMessageAloud(idx, btn) {
   // Toggle off if this same button is already playing.
   if (_chatAudioBtn === btn) { _chatAudioStop(); return; }
   _chatAudioStop();               // stop anything else first
@@ -110,22 +116,47 @@ function readMessageAloud(idx, btn) {
   _chatAudioQueue = _chunkForTts(speech, 3000);
   _chatAudioBtn = btn;
   if (btn) btn.classList.add('msg-action-active');
+  // Detect the language ONCE on the full text and pin it for every chunk, so
+  // the voice can't switch mid-playback (a foreign quote in a later chunk must
+  // not flip the voice). Best-effort: on failure we fall back to per-chunk
+  // auto_voice.
+  _chatAudioLang = '';
+  try {
+    const det = await API.post('/v1/translate/detect', { text: speech });
+    if (_chatAudioStopped) return;   // user toggled off during detection
+    _chatAudioLang = (det && det.lang ? String(det.lang) : '').slice(0, 2);
+  } catch (_) { /* fall back to auto_voice per chunk */ }
   _playChatQueue();
 }
 
 // ─── generate a podcast (Audio Overview) from this chat ───────────────────────
 
+// In-flight podcast generation, so a second click on the same button cancels it.
+let _chatPodcastBtn = null;
+let _chatPodcastAbort = null;
+
+function _chatPodcastStop() {
+  if (_chatPodcastAbort) { try { _chatPodcastAbort.abort(); } catch (_) {} _chatPodcastAbort = null; }
+  if (_chatPodcastBtn) { _chatPodcastBtn.dataset.busy = '0'; _chatPodcastBtn.classList.remove('msg-action-generating'); _chatPodcastBtn = null; }
+}
+
 async function generateChatPodcast(btn) {
+  // Toggle off if this same button is already generating.
+  if (btn && btn.dataset.busy === '1') { _chatPodcastStop(); showToast('Podcast-Erstellung abgebrochen'); return; }
   const chat = state.activeChat;
   if (!chat || !chat.sessionId) { showToast('Kein aktiver Chat', true); return; }
-  if (btn && btn.dataset.busy === '1') return;
-  if (btn) { btn.dataset.busy = '1'; btn.classList.add('msg-action-active'); }
-  showToast('Podcast wird erstellt — das dauert ~1 Minute…');
+  _chatPodcastStop();             // stop any other in-flight generation first
+  const ctrl = new AbortController();
+  _chatPodcastAbort = ctrl;
+  _chatPodcastBtn = btn;
+  if (btn) { btn.dataset.busy = '1'; btn.classList.add('msg-action-generating'); }
+  showToast('Podcast wird erstellt — das dauert ~1 Minute… (nochmal klicken zum Abbrechen)');
   try {
     const resp = await fetch(`/v1/sessions/${encodeURIComponent(chat.sessionId)}/audio-overview`, {
       method: 'POST',
       headers: API._headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ length: 'std' }),
+      signal: ctrl.signal,
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data.ok) throw new Error(data.error || `HTTP ${resp.status}`);
@@ -133,9 +164,11 @@ async function generateChatPodcast(btn) {
     if (typeof refreshRightPanelContent === 'function') { try { refreshRightPanelContent(); } catch (_) {} }
     if (data.artifact_id) _openChatPodcastModal(data.artifact_id, data.audio_file);
   } catch (e) {
+    if (e && e.name === 'AbortError') return;   // user cancelled — already toasted
     showToast('Podcast fehlgeschlagen: ' + (e.message || e), true);
   } finally {
-    if (btn) { btn.dataset.busy = '0'; btn.classList.remove('msg-action-active'); }
+    // Only clear if this call still owns the button (a later click may have taken over).
+    if (_chatPodcastBtn === btn) { _chatPodcastAbort = null; _chatPodcastStop(); }
   }
 }
 

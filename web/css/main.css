@@ -1211,6 +1211,21 @@ textarea { resize: none; }
 }
 .msg-action-btn:hover { background: var(--bg-200); color: var(--text-200); }
 .msg-action-btn svg { width: 16px; height: 16px; }
+/* Read-aloud playing: solid lit state signalling active audio output. */
+.msg-action-btn.msg-action-active,
+.msg-action-btn.msg-action-active:hover {
+  background: color-mix(in srgb, var(--accent-brand) 18%, transparent);
+  color: var(--accent-brand);
+}
+/* Podcast (Audio Overview) being generated: pulsate until it's ready. */
+.msg-action-btn.msg-action-generating {
+  color: var(--accent-brand);
+  animation: msg-action-pulse 1.2s ease-in-out infinite;
+}
+@keyframes msg-action-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
 .msg-turn-stats {
   font-family: var(--font-mono);
   font-size: 11px;

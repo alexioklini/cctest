@@ -155,11 +155,17 @@ Web- oder Dokument-Abfrage) — in jedem Chat, ohne manuelle Einstellung.
 Audio-Knöpfe (neben Kopieren):
 - **🔊 Vorlesen** — liest die Antwort laut vor (Text-zu-Sprache). Lange
   Antworten werden automatisch in Stücke geteilt und nacheinander abgespielt;
-  erneut klicken stoppt. (Markdown/Code wird vor dem Vorlesen entfernt.)
+  während der Wiedergabe **leuchtet der Knopf** (aktive Audioausgabe), erneut
+  klicken stoppt. Die Sprache wird **einmal zu Beginn** erkannt und für die
+  gesamte Wiedergabe festgehalten — ein fremdsprachiges Zitat in einem späteren
+  Stück lässt die Stimme nicht mehr umschalten. (Markdown/Code wird vor dem
+  Vorlesen entfernt.)
 - **🎧 Podcast aus diesem Chat** — erzeugt einen **Audio Overview** (zwei Hosts)
   über den **gesamten bisherigen Chatverlauf** — wie der Studio-Podcast eines
-  Projekts, nur aus der Unterhaltung. Dauert ~1 Minute; danach öffnet sich ein
-  Player und die `.mp3` (plus Skript) liegt in den Artefakten der Sitzung. Die
+  Projekts, nur aus der Unterhaltung. Dauert ~1 Minute; währenddessen **pulsiert
+  der Knopf**, und ein erneuter Klick **bricht die Erstellung ab**. Danach öffnet
+  sich ein Player und die `.mp3` (plus Skript) liegt in den Artefakten der
+  Sitzung. Die
   **Sprache wird automatisch erkannt** — ein deutscher Chat ergibt einen deutschen
   Podcast (Voxtral spricht 9 Sprachen). Standardmäßig werden englische Stimmen
   verwendet; für muttersprachlichen Klang eine eigene Stimme unter **Einstellungen
