@@ -172,6 +172,7 @@ def _build_script_prompt(sources_text: str, *, focus: str, length: str,
     focus_line = (
         f"\nFOCUS: centre the conversation on — {focus.strip()}" if (focus or "").strip()
         else "")
+    today = time.strftime("%B %-d, %Y")
     lang_name = _TTS_LANGUAGES.get(lang, "English")
     if lang == "en":
         language_clause = (
@@ -199,6 +200,9 @@ def _build_script_prompt(sources_text: str, *, focus: str, length: str,
         "narrator — only spoken dialogue lines. Do not write '[laughs]' or similar; "
         "write only words that should be spoken aloud.\n\n"
         f"{language_clause}\n\n"
+        f"TODAY'S DATE is {today}. If the hosts refer to the current time, "
+        f"recent events, or 'this year', anchor it to this date — do NOT assume "
+        f"an earlier year.\n\n"
         "GROUNDING: base the conversation ONLY on the material below. Do not "
         "invent facts, numbers, names, or dates that aren't in it. It is "
         "fine to simplify and paraphrase for a spoken register, but stay faithful. "
@@ -282,10 +286,12 @@ def _stitch(lines: list[tuple[str, str]], voice_a: str, voice_b: str,
     return b"".join(segments), rendered, chars
 
 
-def _log_tts_cost(chars: int, *, session_id: str, user_id: str, agent_id: str) -> float:
+def _log_tts_cost(chars: int, *, session_id: str, user_id: str, agent_id: str,
+                  purpose: str = "read_aloud") -> float:
     """Log a synthetic cost row for the TTS render (char-billed, not token-billed)
     and return the computed USD cost. Rate from text_to_speech.cost_per_1k_chars_usd
-    (0 = don't meter). Best-effort — never raises into the render path."""
+    (0 = don't meter). `purpose` is the cost-ledger use-case bucket (audio_overview
+    for Studio podcasts, read_aloud for chat). Best-effort — never raises."""
     if chars <= 0:
         return 0.0
     try:
@@ -298,7 +304,8 @@ def _log_tts_cost(chars: int, *, session_id: str, user_id: str, agent_id: str) -
             provider = _brain._models_config.get(model_id, {}).get("provider", "")
             tracker.log_tts(agent=agent_id or "main", session_id=session_id or "",
                             model=model_id or "tts", provider=provider,
-                            chars=chars, cost_usd=cost, user_id=user_id or "")
+                            chars=chars, cost_usd=cost, user_id=user_id or "",
+                            purpose=purpose)
         return cost
     except Exception as e:
         print(f"[audio_overview] TTS cost log failed: {e}", flush=True)
@@ -347,7 +354,7 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
         result = sidecar_proxy.background_call(
             messages=[{"role": "user", "content": _build_script_prompt(
                 corpus, focus=focus, length=length, audience=audience)}],
-            model=model, purpose="transform", agent_id=agent_id,
+            model=model, cost_purpose="audio_overview", agent_id=agent_id,
             session_id=f"output-{output_id}", project=project_name,
             user_id=user_id, max_rounds=1)
         if result.get("error"):
@@ -396,7 +403,8 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
                 output_id, status="error", error=f"TTS render failed: {e}"[:500])
             return
         tts_cost = _log_tts_cost(tts_chars, session_id=f"output-{output_id}",
-                                 user_id=user_id, agent_id=agent_id)
+                                 user_id=user_id, agent_id=agent_id,
+                                 purpose="audio_overview")
         if not mp3:
             ChatDB.update_project_output(output_id, status="error",
                                          error="No audio was produced (all lines empty).")
@@ -416,9 +424,11 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
         # Cost-account the script-gen call, then ADD the TTS render cost (logged
         # separately above as its own cost_log row) into the row's total so the
         # Studio card + footer show the full price of the overview.
+        # Compute-only: background_call already wrote the LLM cost row centrally;
+        # we only fold the (separately-logged) TTS cost into the displayed total.
         meta = _brain.account_background_usage(
             result, model, session_id=f"output-{output_id}",
-            user_id=user_id, agent_id=agent_id)
+            user_id=user_id, agent_id=agent_id, purpose="audio_overview", log=False)
         meta["cost"] = round(meta.get("cost", 0) + tts_cost, 6)
         meta["duration_s"] = round(time.time() - t0, 1)
 
@@ -475,7 +485,7 @@ def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
         messages=[{"role": "user", "content": _build_script_prompt(
             corpus, focus=focus, length=length, audience=audience,
             source_label=source_label, lang=lang)}],
-        model=model, purpose="transform", agent_id=agent_id,
+        model=model, cost_purpose="audio_overview", agent_id=agent_id,
         session_id=cost_session_id, project=project_name, user_id=user_id, max_rounds=1)
     if result.get("error"):
         return {"ok": False, "error": str(result["error"])[:300]}
@@ -501,11 +511,14 @@ def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
     mp3_path = os.path.join(out_dir, basename + ".mp3")
     with open(mp3_path, "wb") as f:
         f.write(mp3)
-    # Account both cost legs (script-gen LLM + TTS render) against the session.
+    # Script-gen LLM cost was already logged centrally by background_call
+    # (compute-only here); the TTS render is a separate char-billed cost row.
     script_meta = _brain.account_background_usage(
-        result, model, session_id=cost_session_id, user_id=user_id, agent_id=agent_id)
+        result, model, session_id=cost_session_id, user_id=user_id,
+        agent_id=agent_id, purpose="audio_overview", log=False)
     tts_cost = _log_tts_cost(tts_chars, session_id=cost_session_id,
-                             user_id=user_id, agent_id=agent_id)
+                             user_id=user_id, agent_id=agent_id,
+                             purpose="audio_overview")
     total_cost = round(script_meta.get("cost", 0) + tts_cost, 6)
     return {"ok": True, "mp3_path": mp3_path, "script_path": script_path,
             "lines": rendered, "cost": total_cost, "tts_chars": tts_chars}
