@@ -43,6 +43,34 @@ purpose (chat_prompt/scheduled_task/soul), and the refined output.
 - **soul drafts**: switching voice (2nd→1st/3rd person), changing the agent's name/role,
   or inventing capabilities → intent_preserved < 0.7 (drift, fails).
 
+## casual-lookup cases (mode: "casual_lookup")
+
+Some drafts are casual factual questions whose answer comes from a quick web lookup
+("what's the weather tomorrow", "today's EUR/USD rate"). The user wants a normal answer
+from any decent source — NOT a forensic, citation-grade report. For these the CORRECT
+refine is light cleanup only (fix spelling/casing/grammar, keep it one short line).
+
+The failure mode to catch is **over-strictness**: the Engineer injecting precision or
+officialness that RAISES the downstream agent's evidentiary bar so it refuses ordinary
+web results instead of answering. Treat as over-strict (and FAIL the sample) any
+injected demand for:
+- precision/exactness words the user didn't ask for — "präzise", "genau", "exakt",
+  "verbindlich", "precise", "exact", "to N decimal places", "real-time";
+- an authoritative/official source requirement — "offizielle Quelle", "authoritative
+  source", "official forecast", naming a specific authority the user never named;
+- a rigid output spec (mandated fields/table/sections) on a one-line casual question.
+
+Scoring for `casual_lookup`:
+- **intent_preserved** = how well the output stays a CASUAL lookup. A light cleanup =
+  1.0. Injecting precision/officialness/strictness = `intent_drift: true` (< 0.7) and
+  the sample FAILS — even though no fact was fabricated and the prompt is short. The
+  harm is real: it changes what counts as a satisfactory answer.
+- **actionability** = would the agent ANSWER from a normal web result? A casual prompt =
+  high. An over-strict prompt that would make the agent refuse / hunt for an official
+  source = low (≤ 0.4).
+- **token_economy** = a one-line casual question should come back as a one-line prompt.
+- The judge is told `mode=casual_lookup` so it scores on this basis.
+
 ## ask-back cases (mode: "ask_back")
 
 Some drafts are hopelessly under-specified (no file, no symptom, no definition of

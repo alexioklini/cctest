@@ -245,6 +245,18 @@ def build_new(purpose: str, draft: str, context: dict, config: dict) -> tuple[st
         "which bug), do NOT invent it — instead return a short prompt that "
         "asks the user for the missing piece(s). One focused question beats a "
         "confident wrong guess.\n"
+        "- DO NOT OVER-STRICTIFY a casual factual lookup. If the draft is a "
+        "casual everyday question whose answer is a quick web lookup (weather, "
+        "exchange/stock price, sports score, opening hours, 'what is X'), keep "
+        "it casual: fix spelling/grammar and stop. Do NOT add words that demand "
+        "precision or an official source ('präzise', 'genau', 'exakt', "
+        "'verbindlich', 'offizielle Quelle', 'precise', 'exact', 'authoritative/"
+        "official source', 'to N decimal places', 'real-time'), and do NOT impose "
+        "a rigid output spec. Those raise the assistant's evidentiary bar so it "
+        "REFUSES ordinary web results instead of just answering — the opposite "
+        "of helpful. 'wie wird das wetter morgen in wien' → 'Wie wird das Wetter "
+        "morgen in Wien?', NOT 'Gib eine präzise Wettervorhersage … aus "
+        "offizieller Quelle'.\n"
         "- For simple requests output plain prose. For genuinely complex "
         "multi-part requests you MAY use <context>/<task>/<constraints> XML "
         "sections. No commentary outside the prompt."
@@ -409,6 +421,17 @@ def main():
         bloat = [r["id"] for r in rows if r["id"] in clean
                  and r["id"] not in accepted_bloat
                  and r["new"]["tokens"] > 3.0 * max(1, r["old"]["tokens"])]
+        # OVER-STRICTNESS GATE (2026-06-06 regression): casual_lookup drafts are
+        # casual factual web-lookups. Engineer must NOT inject precision/officialness
+        # that makes the downstream agent refuse ordinary web results (the "präzise
+        # Wettervorhersage aus offizieller Quelle" → refusal bug). This is an ABSOLUTE
+        # failure of the NEW tier — unlike intent_drift_regressions it does NOT require
+        # OLD to have passed (Polish may also over-strictify, but Engineer is the tier
+        # that did it in production and the one we're guarding). Any casual_lookup case
+        # that NEW marks drift=true is a hard fail.
+        casual_ids = {c["id"] for c in cases if c.get("mode") == "casual_lookup"}
+        over_strict = [r["id"] for r in rows
+                       if r["id"] in casual_ids and r["new"]["scores"]["intent_drift"]]
         # EPS tolerance: clarity/actionability are background-judged and wobble
         # ±0.01–0.02 run-to-run. Require Engineer to not REGRESS beyond that noise
         # floor (not strict ≥, which a 0.008 coin-flip would fail). The real signal
@@ -417,10 +440,11 @@ def main():
         passed = (
             summary["new"]["clarity"] >= summary["old"]["clarity"] - EPS
             and summary["new"]["actionability"] >= summary["old"]["actionability"] - EPS
-            and not regressions and not bloat)
+            and not regressions and not bloat and not over_strict)
         summary["pass_bar"] = {
             "passed": passed, "intent_drift_regressions": regressions,
             "clean_case_bloat": bloat,
+            "over_strict_casual": over_strict,
             "clarity_delta": round(summary["new"]["clarity"] - summary["old"]["clarity"], 3),
             "actionability_delta": round(summary["new"]["actionability"] - summary["old"]["actionability"], 3)}
 

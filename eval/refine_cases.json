@@ -53,6 +53,22 @@
       "intent": "Target is a reasoning-native model. Engineer's model-hint should AVOID adding/keeping CoT scaffolding (it degrades reasoning models). Tests model-awareness."
     },
     {
+      "id": "CHAT8_casual_weather_de",
+      "purpose": "chat_prompt",
+      "mode": "casual_lookup",
+      "draft": "Wie wird das wetter morgen in wien",
+      "context": {"model": "mistral-small-latest", "tools": ["searxng_search", "web_fetch"], "project": ""},
+      "intent": "PRODUCTION REGRESSION (2026-06-06): a casual factual web-lookup. The user just wants tomorrow's Vienna weather from any decent source. A GOOD refine fixes the spelling/casing and stops there — at most 'Wie wird das Wetter morgen in Wien?'. Engineer must NOT inject precision/officialness words ('präzise', 'offiziell', 'genau', 'exakt', 'verbindlich', 'aus offizieller Quelle') or a rigid output spec. Those raise the downstream agent's EVIDENTIARY BAR: with 'präzise Wettervorhersage aus offizieller Quelle' the agent rejected normal web results and REFUSED, while the casual phrasing answered fine. This is NOT fabrication and NOT bloat — it is OVER-STRICTNESS that breaks the result. The over-strict variant FAILS even though intent is technically preserved and the prompt is short."
+    },
+    {
+      "id": "CHAT9_casual_lookup_en",
+      "purpose": "chat_prompt",
+      "mode": "casual_lookup",
+      "draft": "whats the eur usd rate today",
+      "context": {"model": "mistral-small-latest", "tools": ["searxng_search", "web_fetch"], "project": ""},
+      "intent": "Casual factual web-lookup (language-robustness sibling of CHAT8). The user wants today's approximate EUR/USD rate from any decent source. A GOOD refine lightly cleans it: 'What is the EUR/USD exchange rate today?'. Engineer must NOT inject strictness/officialness ('precise', 'exact', 'authoritative/official source', 'to 4 decimal places', 'real-time') or a rigid spec — those raise the agent's evidentiary bar and induce a refusal on ordinary web data. Over-strict = FAIL; light cleanup = PASS."
+    },
+    {
       "id": "SCHED1_email_summary",
       "purpose": "scheduled_task",
       "draft": "summarize my emails every morning",
