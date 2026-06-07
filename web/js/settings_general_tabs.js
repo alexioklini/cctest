@@ -2034,3 +2034,60 @@ async function _saveHelpdeskConfig() {
     showToast('Speichern fehlgeschlagen', true);
   }
 }
+
+// ─── DOCTOR: config-health diagnostics (model/provider integrity, MemPalace,
+// KG, provider reachability). Static by default; live probes on demand. ───
+function _doctorRenderFindings(findings, summary) {
+  const COLOR = { ok: 'var(--success)', warn: '#d9a000', fail: 'var(--error)' };
+  const ICON = { ok: '✓', warn: '!', fail: '✕' };
+  const s = summary || { overall: 'ok', counts: { ok: 0, warn: 0, fail: 0 } };
+  const head = `<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">
+    <span style="font-size:20px;font-weight:700;color:${COLOR[s.overall]}">${ICON[s.overall]} ${esc((s.overall || '').toUpperCase())}</span>
+    <span style="font-size:12px;color:var(--text-400)">
+      ${s.counts.ok} ok · ${s.counts.warn} Warnung · ${s.counts.fail} Fehler</span>
+  </div>`;
+  // sort fail → warn → ok so problems surface first
+  const order = { fail: 0, warn: 1, ok: 2 };
+  const sorted = [...(findings || [])].sort((a, b) => (order[a.status] ?? 3) - (order[b.status] ?? 3));
+  const rows = sorted.map(f => {
+    const c = COLOR[f.status] || 'var(--text-400)';
+    const detail = f.detail ? `<div style="font-size:12px;color:var(--text-300);margin-top:3px">${esc(f.detail)}</div>` : '';
+    const fix = (f.status !== 'ok' && f.fix)
+      ? `<div style="font-size:12px;color:var(--text-400);margin-top:3px">→ ${esc(f.fix)}</div>` : '';
+    return `<div style="padding:10px 12px;border-left:3px solid ${c};background:var(--bg-200);border-radius:6px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;align-items:baseline">
+        <span style="color:${c};font-weight:700;font-family:monospace">${ICON[f.status] || '·'}</span>
+        <span style="font-weight:600">${esc(f.title || f.check || '')}</span>
+        <span style="margin-left:auto;font-size:10px;color:var(--text-500);font-family:monospace">${esc(f.check || '')}</span>
+      </div>${detail}${fix}</div>`;
+  }).join('');
+  return head + (rows || '<div style="color:var(--text-400)">Keine Befunde.</div>');
+}
+
+async function _genTab_doctor(C) {
+  C.innerHTML = `<div style="padding:16px;max-width:820px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <h3 style="margin:0">System-Doctor</h3>
+      <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="_doctorRun(false)">Erneut prüfen</button>
+      <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="_doctorRun(true)">Live-Prüfungen (langsamer)</button>
+    </div>
+    <p style="font-size:12px;color:var(--text-400);margin:0 0 14px">
+      Erkennt Fehlkonfigurationen, die sonst still scheitern: Modelle/Konfig-Verweise auf
+      nicht existierende Provider oder deaktivierte Modelle, Provider-Lücken, MemPalace-Zustand
+      (Backend, Embedding-Gerät, Drawer-Zahl) und fehlschlagende KG-Extraktion.</p>
+    <div id="doctor-results"><div style="color:var(--text-400)">Lädt…</div></div>
+  </div>`;
+  await _doctorRun(false);
+}
+
+async function _doctorRun(live) {
+  const box = document.getElementById('doctor-results');
+  if (!box) return;
+  box.innerHTML = `<div style="color:var(--text-400)">${live ? 'Live-Prüfungen laufen…' : 'Prüfe…'}</div>`;
+  try {
+    const d = live ? await API.post('/v1/doctor/live', {}) : await API.get('/v1/doctor');
+    box.innerHTML = _doctorRenderFindings(d.findings, d.summary);
+  } catch (e) {
+    box.innerHTML = `<div style="color:var(--error)">Doctor-Prüfung fehlgeschlagen: ${esc(e.message || String(e))}</div>`;
+  }
+}
