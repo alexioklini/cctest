@@ -211,7 +211,7 @@ def _ocr_config() -> dict:
     # Defaults.
     return {
         "engine": ocr.get("engine", "mistral_ocr"),  # mistral_ocr | local_vision | auto | none
-        "provider": ocr.get("provider", "mistral-experimental"),
+        "provider": ocr.get("provider", "mistral-direct"),
         "model": ocr.get("model", "mistral-ocr-latest"),
         "max_pages_per_cycle": int(ocr.get("max_pages_per_cycle", 1000)),
         "trigger_chars_per_page": int(ocr.get("trigger_chars_per_page", _OCR_TRIGGER_CHARS_PER_PAGE)),

@@ -827,6 +827,34 @@ class AdminObservabilityHandlers:
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    def _handle_doctor(self):
+        """GET /v1/doctor — static config-health checks (admin, read-only).
+        Detects model→provider misconfig, provider gaps, MemPalace + KG health."""
+        if self._require_role("admin") is None:
+            return
+        try:
+            from engine import doctor
+            findings = doctor.run_static_checks()
+            self._send_json({"findings": findings,
+                             "summary": doctor.summarize(findings),
+                             "mode": "static"})
+        except Exception as e:
+            self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
+
+    def _handle_doctor_live(self):
+        """POST /v1/doctor/live — static checks PLUS on-demand live probes
+        (test embedding, provider credential resolution). Slower (admin)."""
+        if self._require_role("admin") is None:
+            return
+        try:
+            from engine import doctor
+            findings = doctor.run_static_checks() + doctor.run_live_checks()
+            self._send_json({"findings": findings,
+                             "summary": doctor.summarize(findings),
+                             "mode": "live"})
+        except Exception as e:
+            self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
+
     def _handle_kg_reextract(self):
         """POST /v1/mempalace/kg/reextract — purge a project's triples and
         kick the daemon to rebuild. Body: {agent_id, project, source_prefix?}.

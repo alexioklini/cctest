@@ -1486,6 +1486,27 @@ def _project_sync_loop(srv):
                 progress_cb=_kg_progress_cb,
             )
             _kg_chunks_total[0] = res.drawers_processed + res.drawers_skipped
+            # LOUD detection of a BROKEN extraction model (vs. benign parse
+            # misses). The 2026-06 policy-KG incident — extraction_model pointed
+            # at a non-existent provider → every call "sidecar returned no reply"
+            # → 0 triples — was invisible because per-chunk errors are treated as
+            # normal noise. Surface it explicitly: a transport-class error string,
+            # OR errors with zero successful triples on a non-empty run, means the
+            # MODEL/PROVIDER is broken, not the content. This is the signal an
+            # operator needs to catch a dead extraction model during re-mine.
+            _emsg = (res.error_msg or "").lower()
+            _transport_broken = any(s in _emsg for s in (
+                "no reply", "could not resolve", "connection", "auth",
+                "timeout", "unauthorized", "not found", "no provider"))
+            if res.errors and (_transport_broken or
+                               (res.triples_extracted == 0 and res.drawers_processed == 0
+                                and res.errors >= 3)):
+                print(f"[project-sync.kg] *** EXTRACTION MODEL APPEARS BROKEN *** "
+                      f"wing={wing} model={model} errors={res.errors} "
+                      f"triples={res.triples_extracted} last_error={res.error_msg!r} "
+                      f"— check that the extraction_model's provider exists + is "
+                      f"reachable (Settings → KG). Cursor NOT advanced; will retry.",
+                      flush=True)
             # Cumulative triple count for this source prefix, queried
             # straight from the KG. `res.triples_extracted` is the per-
             # cycle delta — fine to log, wrong for the UI's "M triples"

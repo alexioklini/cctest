@@ -1552,6 +1552,8 @@ class BrainAgentHandler(
             self._handle_costs()
         elif path == "/v1/costs/daily":
             self._handle_costs_daily()
+        elif path == "/v1/costs/breakdown":
+            self._handle_costs_breakdown()
         elif path == "/v1/quotas/me":
             self._handle_quota_me()
         elif path == "/v1/quotas/config":
@@ -1626,6 +1628,8 @@ class BrainAgentHandler(
             self._handle_kg_extraction_log(self._kg_qs())
         elif path == "/v1/mempalace/kg/config":
             self._handle_kg_config_get()
+        elif path == "/v1/doctor":
+            self._handle_doctor()
         elif path == "/v1/mcp/connections":
             self._handle_mcp_list()
         elif path == "/v1/mcp/registry":
@@ -1897,6 +1901,8 @@ class BrainAgentHandler(
             self._handle_mempalace_classifier_save()
         elif path == "/v1/mempalace/kg/config":
             self._handle_kg_config_save()
+        elif path == "/v1/doctor/live":
+            self._handle_doctor_live()
         elif path == "/v1/mempalace/kg/reextract":
             self._handle_kg_reextract()
         elif path == "/v1/quotas/config":
@@ -3182,6 +3188,7 @@ def _user_profile_run_llm(uid: str, prior_profile: str, samples: list[str],
                 system_prompt=_PROFILE_SYSTEM_PROMPT,
                 agent_id="main",
                 user_id=uid,
+                cost_purpose="user_profile",
                 max_tokens=2000,
             )
             result = _profile_deanon(_res.get("reply") or "")
@@ -3906,6 +3913,7 @@ def main():
     print("  POST /v1/schedule       — manage schedules")
     print("  GET  /v1/costs          — cost stats")
     print("  GET  /v1/costs/daily    — daily cost breakdown")
+    print("  GET  /v1/costs/breakdown — per-use-case × per-model cost breakdown")
     print("  GET  /v1/tasks          — background tasks")
     print("  GET  /v1/agents/{id}/workflows — list workflows")
     print("  POST /v1/agents/{id}/workflows — save workflow")

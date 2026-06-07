@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.88.0"
+VERSION = "9.90.1"
 VERSION_DATE = "2026-06-06"
 CHANGELOG = [
+    ("9.90.1", "2026-06-06", "fix(ui): the Plan-Nutzung / Kostenaufschlüsselung popover could not always be scrolled. ROOT CAUSE: the popover root had a fixed max-height:80vh + overflow-y:auto and was anchored just above the status-bar pill — when its content exceeded the gap between the viewport top and the pill, part of the scrollable box (incl. the bottom rows + the scroll track) sat off-screen and was unreachable; the async breakdown load only nudged the top edge, never re-fitting. FIX (web/js/monitors.js): the popover is now a flex column with a PINNED header + a dedicated inner scroll region (#quota-modal-scroll); a new repositionQuotaModal() anchors it to the pill (prefers above, falls back below — whichever side is roomier) AND sets max-height to the REAL space available at that anchor (clamped to 88vh), so the scroll region is always fully on-screen and the scrollbar reachable. Re-fits on open, after the async breakdown loads, and on window resize (listener cleaned up on close). Verified via Playwright at 500/700/900px viewport heights: modal fully on-screen + inner region scrolls to bottom at the tight height, no scrollbar when it fits. js_gate green (net-globals 1220→1221: repositionQuotaModal replaces the former local positionPopover closure; eslint clean; smoke 5/5). Frontend-only — no backend restart needed (static asset; reload the page)."),
+    ("9.90.0", "2026-06-06", "feat(cost): COMPLETE cost coverage — every LLM call now writes a cost_log row, including $0 local/free calls and zero-usage calls, so the breakdown is a full audit (a $0 row that should cost money flags a rate-config gap; a missing row flags a logging gap). FOLLOWS v9.89.0 (per-use-case breakdown), which only covered ~12 of ~27 LLM call sites. THE FIX — central seam: sidecar_proxy.background_call() now logs cost CENTRALLY (one row per call, even at $0 / zero reported usage) via a new account_cost=True param — so EVERY current OR FUTURE background caller is auto-tracked and can't be forgotten. _log_call_cost no longer early-returns on tokens==0 (zero-usage rows are now written deliberately as an audit signal). The ~15 previously-UNTRACKED sites are now covered: next_prompt, auto_route_classify, memory_extract, memory_classifier, user_profile, relationship_discovery, delegate_task, lcm_summarize/condense/recall (+fallbacks), kg_extract, code_graph_summary, ask_llm, soul_chat, helpdesk (Brainy turn + search-term extraction), lang_detect, citation_reround. De-dup: the previously-tracked sites (translate text/document, Studio, Deep Research, audio, chat_summary, background_tasks) switched their explicit account_background_usage/_log_call_cost to compute-only (account_background_usage gained log=False) so the central seam is the SOLE logger — no double counting. Each background_call now passes a correct purpose= so the central row buckets right (was defaulting to 'transform'); the request context's cost_purpose still wins when set (bg-tasks keep tool-purpose 'interactive' but cost-bucket 'background_task'). Direct run_turn paths (chat per-round, scheduler) unchanged; helpdesk_call + the citation re-round (direct run_turn_blocking) got their own log. Benchmark calls (model_bench) pass account_cost=False (measurement, not user spend). admin_costs use-case map extended with all new purposes (Delegation, ask_llm-Tool, Auto-Routing-Klassifikation, Soul-Editor, Code-Graph, Chat (Zitat-Prüfung), …). py compile OK; backend restart required."),
+    ("9.89.0", "2026-06-06", "feat(cost): detailed per-use-case × per-model cost breakdown in the status-bar Plan-usage popover. WHY: the popover only showed quota bars (daily + cycle); there was no way to see WHAT the spend went on. THE BLOCKER: costs.db→cost_log had no use-case column — rows were keyed only by {agent,user_id,model,provider,session_id}, so aggregating by use-case was impossible from existing data. NOW: (1) SCHEMA — cost_log gains a `purpose` column (additive migration, idempotent PRAGMA-guarded like user_id/key_name; pre-migration rows = '' → surfaced as 'Unbekannt (Altdaten)'); CostTracker.log_call/log_ocr/log_tts take a purpose arg; new CostTracker.breakdown(since,until,user_id,agent) groups by (purpose,model). (2) CAPTURE — purpose threaded to the single cost choke point: new RequestContext.cost_purpose (read by _log_call_cost as the default) + explicit purpose= on account_background_usage. Each caller tags its own bucket inside its existing request_context: chat→'chat', chat_summary→'chat_summary' (was UNTRACKED — now accounted), scheduler→'scheduled', background_tasks→'background_task', Studio→'studio', Deep Research→'deep_research', audio podcast→'audio_overview', read-aloud TTS→'read_aloud' (the /v1/translate/tts endpoint was UNTRACKED — now char-billed via _log_tts_cost), translate text+document→'translate_*' (were UNTRACKED — now accounted per call/chunk). (3) ENDPOINT — GET /v1/costs/breakdown?window=<key>&user_id=&agent= (handlers/admin_costs.py) with window keys today/week/7d/30d/180d/365d/ytd/all/cycle/last_cycle; cycle/last_cycle reuse QuotaManager.cycle_window (single source of truth for billing periods); raw purpose→display bucket via _use_case_for (+ prefix fallbacks for future variants). Owner/admin-gated like /v1/costs. (4) UI — the Plan-usage popover (web/js/monitors.js) gains a 'Kostenaufschlüsselung' section: window <select> + headline total + per-use-case rows with proportional cost bars (palette-accented), %-of-total, call counts, expandable to a per-model split (tokens + cost + share). Widened popover to 420px, scrollable. NOTE: no backfill — long windows skew to 'Altdaten' until new tagged data accrues (background calls share chat session_ids, so retroactive inference can't separate summary/refine). js_gate green (net-globals 1210→1220: _costFmt/_tokFmt/_COST_PALETTE/_costBreakdownWindow/_COST_WINDOWS/renderCostBreakdownSection/onCostBreakdownWindowChange/loadCostBreakdown/renderCostBreakdownBody/toggleCostUseCase; eslint clean; smoke 5/5). py compile OK. Migration: cost_log.purpose column (additive). Backend restart required."),
     ("9.88.0", "2026-06-06", "feat(audio): human-readable podcast filenames, fix panel mp3 playback hang, cache podcasts (regen only on content change), track TTS cost, + read-aloud pulsates while preparing. FIVE fixes to the Audio Overview UX. (1) NAMING: files were 'audio_overview-<hex>.md/.mp3'; now content-based via engine.audio_overview.make_basename(seed) — 'Podcast — <chat title> (<short id>).mp3' (slugified, fs-safe, short uuid suffix avoids collisions). Seed = chat title/summary (chat button), project name (Studio worker), or topic (agent tool). (2) PANEL HANG: opening an mp3 artifact from the right panel hung — loadArtifactVersion pulled the bytes through the JSON /content endpoint (base64) then renderArtifactContent fed binary into hljs (no 'audio' case → default code-highlight). Now audio artifacts short-circuit to renderArtifactAudio (inline <audio> from an auth'd blob, the Studio pattern); server-side is_binary now includes 'audio' so /content never UTF-8-decodes mp3 bytes. (3) CACHING: the 🎧 button regenerated every click. Now the chat-podcast endpoint hashes the transcript corpus + length/focus; if it matches the last podcast (cached on sessions.chat_audio_overview, new column) AND that artifact still exists, it replays instead of rebuilding (returns cached:true). force:true bypasses; a changed chat → hash miss → fresh build. (4) COST: chat-podcast + agent-tool paths logged NOTHING (script-gen cost discarded, TTS untracked). Now _corpus_to_audio accounts the script-gen call (account_background_usage) AND the TTS render via a new char-billed synthetic cost row (CostTracker.log_tts, mirrors log_ocr; rate text_to_speech.cost_per_1k_chars_usd, 0=off), both attributed to the real session_id (threaded via cost_session_id). Studio worker folds tts_cost into the project_outputs row total. (5) READ-ALOUD STATE: the 🔊 button now PULSATES (msg-action-generating) while detecting language + fetching/synthesizing each chunk, then goes solid-lit (msg-action-active) on the audio's onplaying event — so 'preparing' vs 'playing' are visually distinct. js_gate green (net-globals 1208→1210: _chatAudioBtnState + renderArtifactAudio; eslint clean; smoke 5/5). py compile OK. Migration: sessions.chat_audio_overview column (additive). Backend restart required."),
     ("9.87.0", "2026-06-06", "feat(ui): chat audio buttons now SHOW their running state and stop on re-click; read-aloud voice no longer switches language mid-clip. ROOT CAUSE for the missing state: the JS added/removed a .msg-action-active class that had NO CSS rule, so neither the 🔊 read-aloud button (while playing) nor the 🎧 podcast button (while generating) gave any visual feedback. FIX (3 parts): (1) CSS — .msg-action-active = solid lit accent (active audio output); new .msg-action-generating = accent + msg-action-pulse keyframe (pulsates while the Audio Overview is being built). (2) Podcast (generateChatPodcast): now toggleable — a second click on a generating 🎧 button aborts the in-flight fetch (AbortController) and clears the pulse; uses .msg-action-generating, not the read-aloud active class. (3) Read-aloud (readMessageAloud): the spoken language is now detected ONCE up front via POST /v1/translate/detect on the full text and pinned as an explicit `lang` on every chunk's /v1/translate/tts call — so a foreign quote in a later chunk can no longer flip the voice (the first language stays final). Falls back to per-chunk auto_voice only if detection fails. js_gate green (net-globals 1204->1208, baseline bumped same commit; eslint clean; smoke 5/5). Frontend-only."),
     ("9.86.4", "2026-06-06", "fix(ui): touch devices (iPhone/iPad) — the per-turn status line was INVISIBLE. ROOT CAUSE (pre-existing, surfaced now): .msg-turn-stats lives INSIDE .msg-actions-bar, which is display:none and revealed only by .msg-turn:hover — but touch devices have no :hover, so the bar (and thus the turn stats: Modell · Dauer · Tempo · Kosten · Token · thinking · caveman) never appeared on a phone/tablet. NOT caused by the v9.86.3 white-space change (that only affected wrapping). FIX: @media (hover: none) { .msg-actions-bar { display:flex; flex-wrap:wrap } } — show the action bar permanently on any no-hover device (capability-based, so it also covers touch iPad regardless of width; the v9.86.0 phone block lets it wrap). VERIFIED with Playwright: on a touch 390px context the bar is display:flex and the stats render visible (right edge 382<=390, zero overflow even with a long stats line + 5 action buttons); on desktop (hover:fine) the bar stays display:none — hover-reveal preserved, no regression. js_gate green (no new globals; smoke 5/5). Frontend-only."),
@@ -2636,7 +2639,7 @@ _TOOLS_CONFIG_DEFAULTS = {
         "venv_path": "",
     },
     "transcribe_audio": {
-        "default_model": "mistral-experimental/voxtral-mini-latest",
+        "default_model": "mistral-direct/voxtral-mini-latest",
         "fallback_model": "whisper-base",
     },
     "translation": {
@@ -2646,7 +2649,7 @@ _TOOLS_CONFIG_DEFAULTS = {
     },
     "text_to_speech": {
         "enabled": True,
-        "default_model": "mistral-experimental/voxtral-mini-tts-latest",
+        "default_model": "mistral-direct/voxtral-mini-tts-latest",
         "voice": "en_paul_neutral",  # slug from /audio/voices (Mistral voxtral-tts)
         # TTS is billed by characters synthesized (not tokens), so it can't use
         # the LLM rate table. Audio-overview rendering logs a synthetic cost row
@@ -5679,6 +5682,7 @@ def generate_next_prompt_suggestion(session) -> str | None:
                 model=model,
                 agent_id=getattr(session, "agent_id", "main") or "main",
                 user_id=(getattr(session, "user_id", "") or ""),
+                cost_purpose="next_prompt",
                 max_tokens=200,
             )
             text = _deanon(_res.get("reply") or "")
@@ -5828,6 +5832,7 @@ def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_respo
             model=model,
             system_prompt="You are a memory extraction assistant. Output only valid JSON.",
             agent_id=agent_id,
+            cost_purpose="memory_extract",
             max_tokens=256,
         )
         result = _mem_deanon(_res.get("reply") or "")
@@ -6077,6 +6082,7 @@ def trigger_relationship_discovery(agent_id: str):
                 model=model,
                 system_prompt=_sys,
                 agent_id=agent_id,
+                cost_purpose="relationship_discovery",
                 max_tokens=16384,
             )
             if _res.get("error") and fallback_model and fallback_model != model:
@@ -6097,6 +6103,7 @@ def trigger_relationship_discovery(agent_id: str):
                     model=_fb_model,
                     system_prompt=_sys,
                     agent_id=agent_id,
+                    cost_purpose="relationship_discovery",
                     max_tokens=16384,
                 )
                 _rel_deanon = _fb_deanon
@@ -7405,7 +7412,7 @@ class TaskRunner:
                         from handlers import sidecar_proxy as _sidecar_proxy
                         _res = _sidecar_proxy.background_call(
                             messages=_wire_messages, model=model, system_prompt=_wire_system,
-                            agent_id=agent_id,
+                            agent_id=agent_id, cost_purpose="delegate_task",
                             max_tokens=int(delegate_inf.get("max_tokens") or 0) or None,
                         )
                         result_text = _del_deanon(_res.get("reply") or "")
@@ -8568,7 +8575,7 @@ class ContextManager:
                 _sys = "You are a precise conversation summarizer. Output only the summary."
                 _res = _sidecar_proxy.background_call(
                     messages=_msg, model=model, system_prompt=_sys,
-                    session_id=session_id, max_tokens=2000,
+                    session_id=session_id, cost_purpose="lcm_summarize", max_tokens=2000,
                 )
                 if _res.get("error") and fallback_model and fallback_model != model:
                     # Re-gate so the fallback model picks up its own swap
@@ -8591,7 +8598,7 @@ class ContextManager:
                         )}]
                         _res = _sidecar_proxy.background_call(
                             messages=_msg, model=_fb_model, system_prompt=_sys,
-                            session_id=session_id, max_tokens=2000,
+                            session_id=session_id, cost_purpose="lcm_summarize", max_tokens=2000,
                         )
                         _sum_deanon = _fb_deanon
                 result = _sum_deanon(_res.get("reply") or "")
@@ -8666,7 +8673,7 @@ class ContextManager:
                         _sys = "You are a precise summarizer. Output only the condensed summary."
                         _res = _sidecar_proxy.background_call(
                             messages=_msg, model=c_model, system_prompt=_sys,
-                            session_id=session_id, max_tokens=3000,
+                            session_id=session_id, cost_purpose="lcm_condense", max_tokens=3000,
                         )
                         if _res.get("error") and c_fallback and c_fallback != c_model:
                             _fb_model = c_fallback
@@ -8685,7 +8692,7 @@ class ContextManager:
                                 )}]
                                 _res = _sidecar_proxy.background_call(
                                     messages=_msg, model=_fb_model, system_prompt=_sys,
-                                    session_id=session_id, max_tokens=3000,
+                                    session_id=session_id, cost_purpose="lcm_condense", max_tokens=3000,
                                 )
                                 _cd_deanon = _fb_deanon
                         result = _cd_deanon(_res.get("reply") or "")
@@ -9020,7 +9027,7 @@ class ContextManager:
             _sys = "Answer based only on the provided context. Be specific and cite details."
             _res = _sidecar_proxy.background_call(
                 messages=_msg, model=r_model, system_prompt=_sys,
-                session_id=session_id, max_tokens=2000,
+                session_id=session_id, cost_purpose="lcm_recall", max_tokens=2000,
             )
             if _res.get("error") and r_fallback and r_fallback != r_model:
                 _fb_model = r_fallback
@@ -9040,7 +9047,7 @@ class ContextManager:
                 )}]
                 _res = _sidecar_proxy.background_call(
                     messages=_msg, model=_fb_model, system_prompt=_sys,
-                    session_id=session_id, max_tokens=2000,
+                    session_id=session_id, cost_purpose="lcm_recall", max_tokens=2000,
                 )
                 _rc_deanon = _fb_deanon
             result = _rc_deanon(_res.get("reply") or "")
@@ -10179,6 +10186,7 @@ def classify_chat_for_memory(user_text: str, assistant_text: str,
             messages=messages,
             model=model,
             system_prompt=_MEMORY_CLASSIFIER_PROMPT,
+            cost_purpose="memory_classifier",
             max_tokens=20,
         )
         text = _deanon(_res.get("reply") or "")
@@ -10557,15 +10565,14 @@ def _ensure_audio_models() -> None:
             "_caps_canonical": True,
         }
     # One-shot backfill of 'audio' capability on existing voxtral entries
-    # served by the mistral-experimental provider. Other voxtral rows in the
-    # registry are orphans (provider removed, manual=True kept them around);
-    # they don't route anywhere so flagging them would just litter the dropdown.
-    # The marker per entry means the user can remove the capability later
-    # without it coming back on the next startup.
+    # served by the mistral-direct provider (the real Mistral API; the old
+    # 'mistral-experimental' provider was removed and its refs were dangling —
+    # 2026-06 cleanup). The marker per entry means the user can remove the
+    # capability later without it coming back on the next startup.
     for mid, cfg in _models_config.items():
         if cfg.get("_audio_backfilled"):
             continue
-        if cfg.get("provider") != "mistral-experimental":
+        if cfg.get("provider") != "mistral-direct":
             continue
         sn = (cfg.get("shortname") or mid).lower()
         base = (cfg.get("base_model_id") or "").lower()
@@ -10868,7 +10875,7 @@ def classify_task_structured(message: str) -> dict | None:
             messages=[{"role": "user", "content": message[:4000]}],
             model=classifier_model,
             system_prompt=_STRUCTURED_CLASSIFY_SYSTEM,
-            purpose="transform",
+            cost_purpose="auto_route_classify",
             max_tokens=200,
             max_rounds=1,
             timeout_s=25.0,
@@ -12711,6 +12718,19 @@ def run_citation_reround(messages: list, original_reply: str, validation: dict,
             max_rounds=1,
             timeout_s=timeout,
         )
+        # Cost ledger — the citation re-round is a direct run_turn_blocking (not
+        # background_call), so log it here under its own bucket.
+        try:
+            _u = _res.get("usage_total") or {}
+            _ti = (int(_u.get("input_tokens", 0) or 0)
+                   + int(_u.get("cache_creation_input_tokens", 0) or 0)
+                   + int(_u.get("cache_read_input_tokens", 0) or 0))
+            _to = int(_u.get("output_tokens", 0) or 0)
+            _log_call_cost(model, _ti, _to, session_id=sid,
+                           api_key=api_key or prov.get("api_key", ""),
+                           purpose="citation_reround")
+        except Exception:
+            pass
         content = (_res.get("reply") or "").strip()
         if not content:
             return original_reply, {}
@@ -13385,23 +13405,32 @@ def _get_agent_limits(agent_id: str | None = None) -> dict:
 def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
                    session_id: str | None = None, tool_round: int = 0,
                    api_key: str = "", user_id: str | None = None,
-                   agent_id: str | None = None):
+                   agent_id: str | None = None, purpose: str | None = None):
     """Log an LLM call to the cost tracker (if initialized).
 
     `user_id`/`agent_id` default to the request context (interactive path), but
     can be passed EXPLICITLY for background work (Studio gen, Deep Research) that
     runs on a daemon thread with no request context — otherwise the cost would be
-    logged unattributed."""
+    logged unattributed.
+
+    `purpose` is the use-case tag for the per-use-case cost breakdown (chat,
+    chat_summary, scheduled, translate, ...). None → read the request context's
+    `cost_purpose`; pass explicitly when the local call site knows its purpose."""
     if not _cost_tracker:
         return
-    if tokens_in == 0 and tokens_out == 0:
-        return  # Skip if no usage data available
+    # NOTE: we deliberately do NOT skip zero-usage calls. A row is written even
+    # when tokens_in == tokens_out == 0 so that "a call happened but reported no
+    # usage" is visible in the cost breakdown — that's a traffic/logging-error
+    # signal worth surfacing, not noise to hide. $0 local/free calls (real
+    # tokens, zero cost) are likewise always logged for a complete audit.
     if agent_id is None:
         agent = get_request_context().current_agent or _current_agent
         agent_id = agent.agent_id if agent else "main"
     provider = _models_config.get(model, {}).get("provider", "")
     if user_id is None:
         user_id = get_request_context().current_user_id or ""
+    if purpose is None:
+        purpose = get_request_context().cost_purpose or ""
     # Resolve key_name from the pool using the api_key value
     key_name = ""
     if api_key and provider:
@@ -13418,7 +13447,7 @@ def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
     try:
         _cost_tracker.log_call(agent_id, session_id, model, provider,
                                tokens_in, tokens_out, tool_round, user_id=user_id,
-                               key_name=key_name)
+                               key_name=key_name, purpose=purpose or "")
         # Record in rate limiter too
         if _rate_limiter:
             cost = _compute_cost(model, tokens_in, tokens_out)
@@ -13428,20 +13457,25 @@ def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
 
 
 def account_background_usage(result: dict, model: str, *, session_id: str,
-                             user_id: str = "", agent_id: str = "main") -> dict:
-    """Log a background_call's token usage to costs.db (attributed to user_id,
-    like chats) AND return a metadata dict {model, tokens_in, tokens_out, cost}.
+                             user_id: str = "", agent_id: str = "main",
+                             purpose: str | None = None, log: bool = True) -> dict:
+    """Compute a background_call's usage metadata `{model, tokens_in, tokens_out,
+    cost}` from the sidecar result, optionally logging a cost_log row.
 
-    The single seam for cost-counting Studio generation + Deep Research. Reads
-    `usage_total.{input_tokens,output_tokens}` from the sidecar result; cost is
-    derived via the same _compute_cost rates the chat ledger uses. Safe on a 0/
-    missing-usage result (returns zeros, logs nothing)."""
+    `log=True` (default) writes the cost row (attributed to user_id, like chats).
+    `log=False` is COMPUTE-ONLY — returns the numbers WITHOUT a ledger write, for
+    callers (Studio cards, Deep Research footer, audio totals) that already get a
+    central row from `background_call` and only need the figures for display. Cost
+    is derived via the same _compute_cost rates the chat ledger uses. Includes
+    cache tokens in the input count so the figure matches the central row."""
     usage = (result or {}).get("usage_total") or {}
-    ti = int(usage.get("input_tokens", 0) or 0)
+    ti = (int(usage.get("input_tokens", 0) or 0)
+          + int(usage.get("cache_creation_input_tokens", 0) or 0)
+          + int(usage.get("cache_read_input_tokens", 0) or 0))
     to = int(usage.get("output_tokens", 0) or 0)
-    if ti or to:
+    if log:
         _log_call_cost(model, ti, to, session_id=session_id,
-                       user_id=user_id, agent_id=agent_id)
+                       user_id=user_id, agent_id=agent_id, purpose=purpose)
     return {"model": model, "tokens_in": ti, "tokens_out": to,
             "cost": round(_compute_cost(model, ti, to), 6)}
 

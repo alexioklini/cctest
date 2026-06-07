@@ -575,6 +575,7 @@ def extract_triples_from_drawer(
             messages=[{"role": "user", "content": user_content}],
             model=resolved_model,
             system_prompt=system_prompt,
+            cost_purpose="kg_extract",
             max_tokens=inference_max_tokens,
         )
         raw = _kg_deanon(_res.get("reply") or "") or None
@@ -1003,8 +1004,12 @@ def run_kg_post_pass(
                     with _write_lock:
                         result.errors += 1
                         last_error = err
-                    _progress_record(chats_db_path, wing, did, sf,
-                                     adapter_name, 0, error=err[:240])
+                    # DO NOT advance the cursor on a real extraction failure —
+                    # retry next cycle instead of silently locking in 0 triples.
+                    # (See the per-chunk branch below for the full rationale.)
+                    print(f"{log_prefix} KG extract FAILED drawer {did} "
+                          f"{os.path.basename(sf)}: {err[:160]} — NOT advancing "
+                          f"cursor, will retry next cycle", flush=True)
                     continue
                 written = _write_triples_to_kg(triples, sf, did)
                 _progress_record(chats_db_path, wing, did, sf,
@@ -1069,8 +1074,15 @@ def run_kg_post_pass(
                 with _write_lock:
                     result.errors += 1
                     last_error = err
-                _progress_record(chats_db_path, wing, cursor_key, sf,
-                                 adapter_name, 0, error=err[:240])
+                # DO NOT advance the cursor on a real extraction failure (model
+                # error / "no reply" / timeout): persisting a progress row here
+                # would mark the chunk processed-with-0-triples → skipped forever,
+                # silently zeroing the KG on a provider outage (the 2026-06 policy
+                # KG incident). Leaving it unrecorded means the next cycle retries.
+                # Mirrors the chat-sync cursor-clamp-below-failed-writes guard.
+                print(f"{log_prefix} KG extract FAILED chunk {cursor_key} "
+                      f"{os.path.basename(sf)}: {err[:160]} — NOT advancing "
+                      f"cursor, will retry next cycle", flush=True)
                 if progress_cb:
                     try:
                         progress_cb("error", drawer_id=cursor_key, error=err)
