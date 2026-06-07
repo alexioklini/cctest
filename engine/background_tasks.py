@@ -263,6 +263,7 @@ class BackgroundTaskRunner:
                 current_agent=_brain.AgentConfig(snap["agent_id"]),
                 current_user_id=snap["user_id"],
                 current_bg_task=True,  # nesting guard: run_background_task refuses here
+                cost_purpose="background_task",  # cost-ledger use-case bucket
             ):
                 system_prompt, _tools, _ = _brain.build_first_turn_prefix(
                     model, snap["agent_id"],
@@ -320,13 +321,11 @@ class BackgroundTaskRunner:
                     "is_error": bool(_ev.get("is_error")),
                     "elapsed_ms": _ev.get("elapsed_ms"),
                 })
-            # Cost logging — keyed by `model`, which by here is the ACTUAL
-            # executing model (fan-out offload swap + any GDPR force-local swap
-            # both already applied). Still inside the request_context above, so
-            # agent/user resolve like every other _log_call_cost caller. Skips
-            # itself when usage is 0 (cancel/error before any tokens).
-            _brain._log_call_cost(model, usage_in, usage_out,
-                                  session_id=snap["session_id"])
+            # Cost is logged CENTRALLY by background_call above (one row, keyed
+            # by the ACTUAL executing model — fan-out offload + GDPR force-local
+            # swaps are already applied to `model` — and tagged 'background_task'
+            # via the request_context cost_purpose set in this worker). No
+            # explicit _log_call_cost here, or it would double-count.
             if cancel_ev.is_set():
                 status = "cancelled"
             elif res.get("error"):
@@ -336,6 +335,11 @@ class BackgroundTaskRunner:
                 status = "cancelled"
         except _Cancelled:
             status = "cancelled"
+        except _brain.GDPRSkipError as se:
+            # Policy 'skip' — deliberate no-op, NOT a failure. Complete the task
+            # empty rather than marking it error (which would read as broken).
+            status = "done"
+            output = f"(Übersprungen durch DSGVO-Richtlinie: {se})"
         except _brain.GDPRBlockedError as ge:
             status = "error"
             error = f"Blocked before run: {ge}"

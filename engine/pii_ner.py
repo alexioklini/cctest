@@ -10,6 +10,7 @@ Phase 1: German only. Phase 2 will add EN + RU and language routing.
 from __future__ import annotations
 
 import logging
+import re as _re
 import threading
 from typing import Any, Optional
 
@@ -291,7 +292,7 @@ PII_RULE_CATEGORIES: dict[str, str] = {
     "ro_cnp": "national_id", "hu_taj": "national_id",
     "gr_amka": "national_id", "bg_egn": "national_id",
     "ie_pps": "national_id", "br_cpf": "national_id",
-    "br_cnpj": "national_id", "ca_sin": "national_id",
+    "ca_sin": "national_id",
     "mx_curp": "national_id", "ar_dni": "national_id",
     "in_aadhaar": "national_id", "jp_mynumber": "national_id",
     "kr_rrn": "national_id", "sg_nric": "national_id",
@@ -302,13 +303,18 @@ PII_RULE_CATEGORIES: dict[str, str] = {
 
     # Context-fallback — keyword + shape, no checksum. Softer category.
     "svnr_ctx": "national_id_ctx", "ssn_ctx_loose": "national_id_ctx",
-    "tax_id_ctx": "national_id_ctx", "insurance_number_ctx": "national_id_ctx",
+    "insurance_number_ctx": "national_id_ctx",
     "id_card_ctx": "national_id_ctx", "drivers_license_ctx": "national_id_ctx",
     "passport_ctx_loose": "national_id_ctx", "health_insurance_ctx": "national_id_ctx",
 
     # Financial
     "iban": "financial", "credit_card": "financial",
     "bank_account_ctx": "financial",
+
+    # Business / legal-entity identifiers — NOT a natural person, so not
+    # personal data under GDPR. Detected for the audit view but default-ignore.
+    "br_cnpj": "business_id", "tax_id_ctx": "business_id",
+    "organisation": "business_id",
 
     # Contact info (emails + phone) — often intentional, allowlist-aware
     "email": "contact", "phone": "contact",
@@ -325,8 +331,10 @@ PII_RULE_CATEGORIES: dict[str, str] = {
     # who want stricter handling flip the category to warn/block in Settings.
     # rule_ids minted in engine/pii_ner.py — keep in sync.
     "name": "contact",
-    "address": "contact",
-    "organisation": "contact",
+    # address moves to 'personal' (warn) but only fires when person-name-gated
+    # — see the address context gate in _pii_scan_text. organisation moves to
+    # business_id (above). name stays contact/ignore (noisy sm-model PER tags).
+    "address": "personal",
 
     # Heuristic fallback
     "bare_identifier": "bare_id",
@@ -343,6 +351,33 @@ PII_DEFAULT_CATEGORY_ACTIONS: dict[str, str] = {
     "network":         "ignore",
     "personal":        "warn",
     "bare_id":         "warn",
+    "business_id":     "ignore",   # company/legal-entity IDs — not personal data
+}
+
+# Per-rule minimum DISTINCT occurrences required before a rule fires for a
+# document. A rule contributes ZERO findings unless ≥ N distinct matched values
+# appear (counted per whole document; chat = per message). Default 1 (fire on
+# first match) for any rule not listed. Tuned to suppress false positives on
+# number-dense / prose documents without losing genuine repeated PII. Admin-
+# overridable per rule via gdpr_scanner.min_occurrences in config.json.
+# Rationale per rule captured in the 2026-06-07 rule review.
+PII_DEFAULT_MIN_OCCURRENCES: dict[str, int] = {
+    # Context-gated date — only person-linked dates, AND ≥10 distinct.
+    "date": 10,
+    # Weak checksum-only bare-digit national IDs.
+    "jp_mynumber": 10,
+    "pl_pesel": 5, "no_fnr": 5, "gr_amka": 5, "bg_egn": 5, "ro_cnp": 5,
+    "be_national": 5, "se_personnummer": 5, "ca_sin": 5, "uk_nhs": 5,
+    "cz_rc": 5, "es_dni_nie": 5, "dk_cpr": 5,
+    "at_svnr": 3, "us_ssn": 3,
+    # Financial bare-shape.
+    "credit_card": 3, "phone": 3,
+    # Hard-coded secret (after the entropy/length bar is raised).
+    "generic_secret_assignment": 3,
+    # Keyword-anchored loose-shape context fallbacks (no checksum).
+    "svnr_ctx": 3, "ssn_ctx_loose": 3, "insurance_number_ctx": 3,
+    "id_card_ctx": 3, "drivers_license_ctx": 3, "passport_ctx_loose": 3,
+    "bank_account_ctx": 3, "health_insurance_ctx": 3,
 }
 
 
@@ -678,12 +713,14 @@ def _pii_rules() -> list[dict]:
         return not _re.search(r"://[^:]*:(password|changeme|example|xxx+|\*+)@", m, _re.IGNORECASE)
 
     def _generic_secret_ok(m: str) -> bool:
-        g = _re.search(r"[\"']([A-Za-z0-9+/=_\-]{20,})[\"']", m)
+        # Bar raised 2026-06-07: length >=24 AND >=10 distinct chars (was 20/6)
+        # to cut false positives on config IDs / hashes-as-labels.
+        g = _re.search(r"[\"']([A-Za-z0-9+/=_\-]{24,})[\"']", m)
         if not g: return False
         v = g.group(1)
         if _re.fullmatch(r"(?:xxx+|\*+|changeme|example|placeholder|your[_-]?(?:key|token|secret))", v, _re.IGNORECASE):
             return False
-        return len(set(v)) >= 6
+        return len(set(v)) >= 10
 
     _PII_RULES = [
         # ── Tier 2: cloud secrets (distinct prefixes → high priority) ──
@@ -729,7 +766,7 @@ def _pii_rules() -> list[dict]:
          "re": _re.compile(r"\b(?:https?|ftp|ssh|git|postgres|postgresql|mysql|mongodb|redis)://[^\s:@/]+:[^\s@/]+@[A-Za-z0-9.\-]+"),
          "ok": _basic_auth_ok},
         {"id": "generic_secret_assignment", "label": "Hard-coded secret",
-         "re": _re.compile(r"\b(?:api[_-]?key|secret|token|password|passwd|pwd|auth|bearer)[\s:=]{1,4}[\"']([A-Za-z0-9+/=_\-]{20,})[\"']", _re.IGNORECASE),
+         "re": _re.compile(r"\b(?:api[_-]?key|secret|token|password|passwd|pwd|auth|bearer)[\s:=]{1,4}[\"']([A-Za-z0-9+/=_\-]{24,})[\"']", _re.IGNORECASE),
          "ok": _generic_secret_ok},
 
         # ── Context-gated first (keyword+digits beats bare-digits rules below) ──
@@ -782,7 +819,13 @@ def _pii_rules() -> list[dict]:
          "re": _re.compile(r"(?<!\d)(?:\d{2})?\d{6}[-+]?\d{4}(?!\d)"),
          "ok": _se_personnummer_ok},
         {"id": "dk_cpr", "label": "Danish CPR",
-         "re": _re.compile(r"(?<!\d)\d{6}[- ]?\d{4}(?!\d)"),
+         # Keyword-anchored (2026-06-07): the bare DDMMYY-#### shape with only a
+         # date-validity gate (no checksum — DK abolished it) over-fired on any
+         # date+4-digit pair. Now require a CPR/personnummer label within ~20
+         # chars before. `_dk_cpr_ok` runs on the full match but extracts digits
+         # via _digits(), and the label carries no digits, so the 10-digit CPR
+         # validity check is unaffected.
+         "re": _re.compile(r"(?:\bCPR\b|CPR[- ]?nr\.?|CPR[- ]?nummer|personnummer)[^\d\n]{0,20}((?<!\d)\d{6}[- ]?\d{4}(?!\d))", _re.IGNORECASE),
          "ok": _dk_cpr_ok},
         {"id": "no_fnr", "label": "Norwegian fødselsnummer",
          "re": _re.compile(r"(?<!\d)\d{11}(?!\d)"),
@@ -947,6 +990,46 @@ def _pii_scan_bare_identifiers(text: str) -> list[dict]:
     return findings
 
 
+# Max char distance for a date/address to count as "near" a person name
+# (same or adjacent sentence). Tuned in the 2026-06-07 rule review.
+_DATE_ADDRESS_NAME_PROXIMITY = 120
+
+# Birth / life-event keywords that make a nearby date personal even without an
+# NER name (the merged `dob` logic — geboren/born/died/married/hire/leave).
+_BIRTH_CONTEXT_RE = _re.compile(
+    r"\b(?:geboren|geburtsdatum|geb\.|born|date\s+of\s+birth|\bDOB\b|"
+    r"n[ée]|né|née|nacido|nata|nato|"
+    r"gestorben|verstorben|died|deceased|d[ée]c[ée]d[ée]|"
+    r"heirat|verheiratet|married|mariage|"
+    r"eingestellt|eintritt|einstellungsdatum|date\s+of\s+hire|hired|"
+    r"austritt|ausgeschieden|date\s+of\s+leaving)\b",
+    _re.IGNORECASE)
+
+
+def _name_within(start: int, end: int, name_spans: list, max_dist: int) -> bool:
+    """True if any person-name span is within `max_dist` chars of [start,end)."""
+    for ns, ne in name_spans:
+        # Gap between the two spans (0 if they overlap).
+        if ne <= start:
+            gap = start - ne
+        elif ns >= end:
+            gap = ns - end
+        else:
+            gap = 0
+        if gap <= max_dist:
+            return True
+    return False
+
+
+def _date_has_birth_context(text: str, start: int, end: int,
+                            window: int = 30) -> bool:
+    """True if a birth/life-event keyword sits within `window` chars before/after
+    the date span — the merged dob check (date + born/geboren/hire/…)."""
+    lo = max(0, start - window)
+    hi = min(len(text), end + window)
+    return bool(_BIRTH_CONTEXT_RE.search(text[lo:hi]))
+
+
 def _pii_scan_text(text: str, max_findings: int = 100,
                    cfg: dict | None = None) -> list[dict]:
     """Scan text for PII. Returns list of {rule_id, label, start, end, category,
@@ -954,6 +1037,8 @@ def _pii_scan_text(text: str, max_findings: int = 100,
 
     Applies per-category actions: rules with action='ignore' are skipped entirely;
     email findings matching `email_allowlist` are suppressed regardless of action.
+    A per-rule min_occurrences gate (distinct values, whole document) and the
+    date/address person-name proximity gates run as a post-pass.
     """
     if not text or not isinstance(text, str):
         return []
@@ -964,11 +1049,15 @@ def _pii_scan_text(text: str, max_findings: int = 100,
     _get_gdpr_scanner_config = _brain._get_gdpr_scanner_config
     _pii_effective_action = _brain._pii_effective_action
     _pii_email_allowed = _brain._pii_email_allowed
+    _pii_min_occurrences = _brain._pii_min_occurrences
     if cfg is None:
         cfg = _get_gdpr_scanner_config()
     allowlist = cfg.get("email_allowlist") or []
     findings: list[dict] = []
     spans: list[tuple[int, int]] = []
+    # Track distinct matched values per rule_id for the min_occurrences gate.
+    # `value` (normalised, lowercased) is stashed on each finding so the post-
+    # pass can both count distinct values AND drop a whole rule below threshold.
     for rule in _pii_rules():
         rid = rule["id"]
         action = _pii_effective_action(rid, cfg)
@@ -994,9 +1083,12 @@ def _pii_scan_text(text: str, max_findings: int = 100,
                 "start": s, "end": e, "len": e - s,
                 "category": PII_RULE_CATEGORIES.get(rid, "personal"),
                 "action": action,
+                "_value": match.strip().lower(),
             })
             if len(findings) >= max_findings:
-                return findings
+                break
+        if len(findings) >= max_findings:
+            break
     # Heuristic: bare-identifier fallback when the rule catalog didn't cover a
     # paste of ID-shaped numbers. Checksum-strict rules above still win first.
     bare_action = _pii_effective_action("bare_identifier", cfg)
@@ -1007,6 +1099,7 @@ def _pii_scan_text(text: str, max_findings: int = 100,
             spans.append((f["start"], f["end"]))
             f["category"] = "bare_id"
             f["action"] = bare_action
+            f["_value"] = text[f["start"]:f["end"]].strip().lower()
             findings.append(f)
             if len(findings) >= max_findings:
                 break
@@ -1014,28 +1107,75 @@ def _pii_scan_text(text: str, max_findings: int = 100,
     # spaCy NER pass (Phase 1: German PER/LOC/ORG → name/address/organisation).
     # Runs after regex + bare-id so checksum-validated findings win on overlap.
     # Cap inherits remaining budget. Never raises into the regex pipeline.
-    # Action policy is governed by the `contact` category — admins who don't
-    # want NER findings set `contact` to ignore (default) in Settings → GDPR.
-    if len(findings) < max_findings:
-        try:
-            # Phase 1 hard-codes lang='de' — only model loaded. Phase 2 wires
-            # language detection (server_lib/translate/detect.py).
-            if is_available("de"):
-                for f in scan_text(text, lang="de",
-                                           max_findings=max_findings - len(findings)):
-                    s, e = f["start"], f["end"]
-                    if any(s < se and e > ss for ss, se in spans):
-                        continue
-                    action = _pii_effective_action(f["rule_id"], cfg)
-                    if action == "ignore":
-                        continue
-                    spans.append((s, e))
-                    f["action"] = action
-                    findings.append(f)
-                    if len(findings) >= max_findings:
-                        break
-        except Exception as e:
-            # NER must never break the regex pipeline.
-            print(f"[pii_ner] scan skipped: {e}", flush=True)
+    # Action policy is governed by the rule's category — admins who don't
+    # want NER findings set the category to ignore in Settings → GDPR.
+    # `name_spans` (PER entity char-ranges) feed the date/address context gates
+    # below — a date or address only counts as personal when a person name is
+    # adjacent (~120 chars). Collected even when `name` itself resolves to
+    # ignore, because the gate needs the spans regardless of the name action.
+    name_spans: list[tuple[int, int]] = []
+    try:
+        if is_available("de"):
+            ner_findings = scan_text(text, lang="de", max_findings=max_findings)
+            for f in ner_findings:
+                if f.get("rule_id") == "name":
+                    name_spans.append((f["start"], f["end"]))
+            for f in ner_findings:
+                if len(findings) >= max_findings:
+                    break
+                s, e = f["start"], f["end"]
+                if any(s < se and e > ss for ss, se in spans):
+                    continue
+                action = _pii_effective_action(f["rule_id"], cfg)
+                if action == "ignore":
+                    continue
+                spans.append((s, e))
+                f["action"] = action
+                f["_value"] = text[s:e].strip().lower()
+                findings.append(f)
+    except Exception as e:
+        # NER must never break the regex pipeline.
+        print(f"[pii_ner] scan skipped: {e}", flush=True)
 
+    # ── Context gates (person-name proximity) ────────────────────────────────
+    # `date` and `address` only count as personal data when tied to a person.
+    # Drop their findings that have no person NAME within ~120 chars (same/
+    # adjacent sentence). `date` ALSO keeps its birth/life-event keyword path
+    # (a date next to 'geboren'/'born'/etc. counts even without an NER name) —
+    # that half is handled by _date_has_birth_context().
+    _prox = _DATE_ADDRESS_NAME_PROXIMITY
+    kept: list[dict] = []
+    for f in findings:
+        rid = f.get("rule_id")
+        if rid == "address":
+            # Only a person-linked address is personal data.
+            if not _name_within(f["start"], f["end"], name_spans, _prox):
+                continue
+        elif rid == "date":
+            # A bare date is not PII; keep only person- or birth-linked dates.
+            near_name = _name_within(f["start"], f["end"], name_spans, _prox)
+            near_birth = _date_has_birth_context(text, f["start"], f["end"])
+            if not (near_name or near_birth):
+                continue
+        kept.append(f)
+    findings = kept
+
+    # ── min_occurrences gate (per rule, distinct values, whole document) ──────
+    # A rule contributes ZERO findings unless ≥ N DISTINCT matched values are
+    # present. Counted per call (= per whole document where the caller passes
+    # full-document text). Gates the WHOLE rule for the document.
+    if findings:
+        by_rule: dict[str, set] = {}
+        for f in findings:
+            by_rule.setdefault(f["rule_id"], set()).add(f.get("_value", ""))
+        dropped_rules = {
+            rid for rid, vals in by_rule.items()
+            if len(vals) < _pii_min_occurrences(rid, cfg)
+        }
+        if dropped_rules:
+            findings = [f for f in findings if f["rule_id"] not in dropped_rules]
+
+    # Strip the internal _value key before returning (audit/UI never see it).
+    for f in findings:
+        f.pop("_value", None)
     return findings

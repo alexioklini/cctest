@@ -277,7 +277,8 @@ LLM-driven document → triples over project input folders + attachments (post-p
 
 ## Cost Tracking & Rate Limiting
 
-- `CostTracker` logs every LLM call to `costs.db`. Rates from `_cost_rates` + per-model `cost_input/output`.
+- `CostTracker` logs every LLM call to `costs.db` (one `cost_log` row per round). Rates from `_cost_rates` + per-model `cost_input/output`.
+- **Use-case tagging + COMPLETE coverage** (`cost_log.purpose`, v9.89.0 + v9.90.0): EVERY LLM call writes a row — including $0 local/free calls and zero-usage calls (a $0 row that should cost flags a rate gap; a missing row flags a logging gap). The central seam is **`sidecar_proxy.background_call`**, which logs once per call (`account_cost=True`, set `False` only for non-billable benchmarking). Direct `run_turn` paths log themselves: chat (per-round), scheduler, `helpdesk_call`, citation-reround. `_log_call_cost` does NOT skip `tokens==0` (zero-usage rows are an audit signal). **`cost_purpose` is SEPARATE from `purpose`**: `purpose` must stay one of `_VALID_PURPOSES` (interactive/transform/memory_summary/research_minimal/helpdesk — it drives `resolve_active_tools`); the cost tag comes from `background_call(cost_purpose=…)` → context `cost_purpose` → `purpose`. Sites that need usage numbers for display call `account_background_usage(…, log=False)` (compute-only, no second row). `GET /v1/costs/breakdown?window=…` groups by `(purpose, model)` → display buckets (cycle/last_cycle reuse `QuotaManager.cycle_window`); surfaced in the status-bar Plan-usage popover. Additive migration; pre-tagging rows = `''` = *Unbekannt (Altdaten)*. OCR/TTS rows are char/page-billed via `log_ocr`/`log_tts`.
 - `RateLimiter`: sliding-window per agent (requests/min, tokens/hr, cost/day) from `rate_limits` in `agent.json`.
 
 ## Per-User Account Settings & User Profile

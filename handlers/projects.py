@@ -1180,15 +1180,30 @@ class ProjectsHandlerMixin:
         wing = _project_wing(project.get("id") or "")
         indexed = engine.indexed_source_files_for_wing(palace_path, wing) if palace_path else set()
 
+        # Per-file KG state (triples / GDPR-skipped) from the extraction cursor,
+        # so each file shows mined+kg / mined / skipped / not-mined honestly.
+        kg_states = {}
+        try:
+            from engine import kg_extract as _kg
+            chats_db = os.path.join(engine.AGENTS_DIR, "main", "chats.db")
+            kg_states = _kg.kg_source_states_for_wing(chats_db, wing)
+        except Exception:
+            kg_states = {}
+
         # Walk the folder (depth-bounded) → nested {name,type,children|state}.
         _SKIP = {".brain-extracted", ".git", "__pycache__", ".DS_Store"}
 
         def _state_for(fp):
+            """Return {mined, kg, skip_reason} for one file.
+            mined: 'indexed' (drawers present) | 'pending' (not yet mined).
+            kg:    'kg' (triples) | 'skipped' (GDPR/classification) |
+                   'empty' (extracted, no relations) | 'none' (not extracted)."""
             real_fp = os.path.realpath(fp)
-            if real_fp in indexed:
-                return "indexed"
-            # companion form: <folder>/.brain-extracted/<rel>.<ext>.md
-            return "pending" if indexed else "pending"
+            mined = "indexed" if real_fp in indexed else "pending"
+            ks = kg_states.get(real_fp)
+            kg = ks["kg"] if ks else "none"
+            reason = ks.get("skip_reason", "") if ks else ""
+            return {"mined": mined, "kg": kg, "skip_reason": reason}
 
         def _walk(d, depth=0):
             kids = []
@@ -1206,12 +1221,17 @@ class ProjectsHandlerMixin:
                     kids.append({"name": name, "type": "dir", "path": fp,
                                  "children": _walk(fp, depth + 1)})
                 elif os.path.isfile(fp):
+                    st = _state_for(fp)
+                    # `state` kept (legacy string) for back-compat; `mined`/`kg`
+                    # are the new per-doc fields the project view reads.
                     kids.append({"name": name, "type": "file", "path": fp,
-                                 "state": _state_for(fp)})
+                                 "state": st["mined"], "mined": st["mined"],
+                                 "kg": st["kg"], "skip_reason": st["skip_reason"]})
             return kids
 
         self._send_json({"path": real, "tree": _walk(real),
-                         "has_index": bool(indexed)})
+                         "has_index": bool(indexed),
+                         "has_kg": bool(kg_states)})
 
     def _handle_project_web_url_states(self, path: str):
         """GET …/projects/{name}/web-url-states → {url: 'indexed'|'pending'} per

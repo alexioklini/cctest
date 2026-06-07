@@ -492,8 +492,8 @@ class AdminConfigHandlers:
 
             if "background_pii_action" in gs_in:
                 v = gs_in["background_pii_action"]
-                if v not in ("anonymise", "swap_to_local", "abort"):
-                    self._send_json({"error": "background_pii_action must be one of: anonymise, swap_to_local, abort"}, 400)
+                if v not in ("anonymise", "swap_to_local", "skip", "abort"):
+                    self._send_json({"error": "background_pii_action must be one of: anonymise, swap_to_local, skip, abort"}, 400)
                     return
                 gs["background_pii_action"] = v
             if "background_anonymise_fail_action" in gs_in:
@@ -543,6 +543,25 @@ class AdminConfigHandlers:
                         return
                     out_ovr[rid] = act
                 gs["rule_overrides"] = out_ovr
+
+            # Per-rule min_occurrences — reject unknown rule_ids; clamp to >=1.
+            if "min_occurrences" in gs_in:
+                mo_in = gs_in["min_occurrences"] or {}
+                if not isinstance(mo_in, dict):
+                    self._send_json({"error": "gdpr_scanner.min_occurrences must be an object"}, 400)
+                    return
+                out_mo = {}
+                valid_rules = set(engine.PII_RULE_CATEGORIES.keys())
+                for rid, n in mo_in.items():
+                    if rid not in valid_rules:
+                        self._send_json({"error": f"min_occurrences: unknown rule_id '{rid}'"}, 400)
+                        return
+                    try:
+                        out_mo[rid] = max(1, int(n))
+                    except (TypeError, ValueError):
+                        self._send_json({"error": f"min_occurrences[{rid}] must be an integer >= 1"}, 400)
+                        return
+                gs["min_occurrences"] = out_mo
 
             # Email allowlist — strip/lowercase/dedupe. Accept "x@y.com" and
             # "@y.com" patterns; reject anything with internal whitespace.

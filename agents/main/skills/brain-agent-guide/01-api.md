@@ -268,6 +268,7 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 
 - `GET /v1/costs?start=&end=&agent=&user=&model=` — flat cost log
 - `GET /v1/costs/daily` — aggregated per-day
+- `GET /v1/costs/breakdown?window=&agent=&user_id=` — per-use-case × per-model cost for a time window. `window` ∈ `today|week|7d|30d|180d|365d|ytd|all|cycle|last_cycle` (cycle/last_cycle reuse the quota billing-cycle config). Returns `{window,label,since,until,total_cost,total_calls,by_use_case:[{use_case,cost,calls,tokens_in,tokens_out,by_model:[…]}]}`. Use-cases are display buckets (Chat, Chat-Zusammenfassung, Geplante Aufgaben, Übersetzung, Studio, Deep Research, Audio Overview, Vorlesen, …) collapsed from the raw `cost_log.purpose`; pre-tagging rows show as *Unbekannt (Altdaten)*.
 - `GET /v1/quotas/me` — caller's daily + cycle usage vs limit
 - `GET /v1/quotas/config` — admin: server-wide quota config
 - `POST /v1/quotas/config` — admin: save quota config
@@ -424,6 +425,17 @@ Once a feedback row exists, user and admin exchange short one-line messages
 ## Services / Notifications / Backup / Status
 
 - `GET /v1/status` — server uptime + version
+- `GET /v1/doctor` — admin: static config-health checks (model→provider
+  integrity, provider gaps, MemPalace + KG health, **GDPR/classification
+  scanner-disabled warnings**). `POST /v1/doctor/live` adds live probes (test
+  embedding, provider credential resolution). Returns `{findings[], summary}`.
+- `GET /v1/services/models` — admin: every service-model slot (default,
+  chat-summary, fan-out, KG-extraction, TTS, transcribe) + OCR, each with a
+  resolve status (`ok`/`unset`/`missing`/`disabled`) + the dropdown option
+  lists. `POST /v1/services/models` — save any subset (model-id strings, `''`
+  to unset, or an `ocr:{engine,provider,model}` object). **Fail-loud**: an
+  unknown model id or OCR provider is rejected 400 — never coerced to a
+  default. Powers Settings → Allgemein → **Service-Modelle**.
 - `GET /v1/services` — daemon status (mempalace-miner, chat-sync, …)
 - `GET /v1/services/log?name=&lines=` — tail a service log
 - `POST /v1/services/telegram` / `/services/server` — start/stop/restart.

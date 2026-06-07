@@ -188,9 +188,12 @@ def _bg_text(messages, system_prompt, model, project_name, agent_id, user_id, pu
     safe_model, [sys_safe, msg_safe], deanon = _brain.gdpr_pick_model_for_background(
         model, [system_prompt, messages], purpose=purpose)
     from handlers import sidecar_proxy
+    # `purpose` here is the cost-ledger label (e.g. 'deep_research'); the
+    # tool-resolution purpose stays 'transform' (no tools, single round).
     res = sidecar_proxy.background_call(
         messages=[{"role": "user", "content": msg_safe}],
-        model=safe_model, system_prompt=sys_safe, purpose=purpose,
+        model=safe_model, system_prompt=sys_safe, purpose="transform",
+        cost_purpose=purpose,
         agent_id=agent_id, project=project_name, user_id=user_id,
         max_rounds=1, max_tokens=max_tokens)
     # Cost-count + accumulate (the actual model that ran is safe_model).
@@ -198,7 +201,7 @@ def _bg_text(messages, system_prompt, model, project_name, agent_id, user_id, pu
     if acc is not None:
         m = _brain.account_background_usage(
             res, safe_model, session_id=f"research-{acc.get('run_id', '')}",
-            user_id=user_id, agent_id=agent_id)
+            user_id=user_id, agent_id=agent_id, purpose="deep_research", log=False)
         acc["tokens_in"] += m["tokens_in"]
         acc["tokens_out"] += m["tokens_out"]
         acc["cost"] += m["cost"]
@@ -217,7 +220,7 @@ def _decompose(topic, model, project_name, agent_id, user_id):
            "array of strings (the sub-questions), nothing else. "
            f"Return between 3 and {max_subq} sub-questions.")
     reply, err = _bg_text(f"Topic: {topic}", sys, model, project_name, agent_id, user_id,
-                          purpose="transform", max_tokens=600)
+                          purpose="deep_research", max_tokens=600)
     if err:
         return [topic]  # degrade: search the raw topic
     subs = _extract_json_list(reply)
@@ -253,7 +256,7 @@ def _select_sources(topic, fetched, model, project_name, agent_id, user_id):
            "off-topic, duplicate, or low-quality sources. Output ONLY a JSON array "
            "of the integer indices to keep.")
     reply, err = _bg_text(f"Topic: {topic}\n\nSources:\n{catalog}", sys, model,
-                          project_name, agent_id, user_id, purpose="transform", max_tokens=400)
+                          project_name, agent_id, user_id, purpose="deep_research", max_tokens=400)
     if err:
         return list(range(len(fetched)))
     idxs = [i for i in _extract_json_list(reply) if isinstance(i, int) and 0 <= i < len(fetched)]
@@ -281,7 +284,7 @@ def _synthesize(topic, sources, coverage_note, model, project_name, agent_id, us
     prompt = (f"Research topic: {topic}\n\n"
               f"{coverage_note}\n\n=== FETCHED SOURCES ===\n{corpus}")
     return _bg_text(prompt, sys, model, project_name, agent_id, user_id,
-                    purpose="transform", max_tokens=4096)
+                    purpose="deep_research", max_tokens=4096)
 
 
 # ─── The bounded loop (worker thread body) ─────────────────────────────────

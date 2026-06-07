@@ -121,6 +121,7 @@ def tool_ask_llm(args: dict) -> str:
             system_prompt=system_prompt,
             agent_id=(_agent_id or "main"),
             session_id=(sid or ""),
+            cost_purpose="ask_llm",
         )
         text = _res.get("reply") or ""
         return _ok({"text": text.strip(), "model": model})

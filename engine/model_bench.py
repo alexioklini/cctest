@@ -303,6 +303,7 @@ def benchmark_cell(model: str, task_type: str, judge_model: str,
             max_tokens=1024,
             max_rounds=1,
             timeout_s=timeout_s,
+            account_cost=False,  # benchmark measurement, not user-facing spend
         )
         _secs = max(1e-6, time.monotonic() - _t0)
         if ans.get("error"):
@@ -331,6 +332,7 @@ def benchmark_cell(model: str, task_type: str, judge_model: str,
             max_tokens=8,
             max_rounds=1,
             timeout_s=timeout_s,
+            account_cost=False,  # benchmark measurement, not user-facing spend
         )
         if judged.get("error"):
             errors.append("judge: " + str(judged["error"])[:100])

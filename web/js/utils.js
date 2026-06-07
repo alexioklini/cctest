@@ -294,37 +294,43 @@ const PIIScanner = {
     it_codicefiscale:'national_id', us_ssn:'national_id', us_ssn_ctx:'national_id',
     // Context fallback
     svnr_ctx:'national_id_ctx', ssn_ctx_loose:'national_id_ctx',
-    tax_id_ctx:'national_id_ctx', insurance_number_ctx:'national_id_ctx',
+    insurance_number_ctx:'national_id_ctx',
     id_card_ctx:'national_id_ctx', drivers_license_ctx:'national_id_ctx',
     passport_ctx_loose:'national_id_ctx', health_insurance_ctx:'national_id_ctx',
     // Financial
     iban:'financial', credit_card:'financial', bank_account_ctx:'financial',
+    // Business / legal-entity IDs — not personal data (default ignore).
+    br_cnpj:'business_id', tax_id_ctx:'business_id', organisation:'business_id',
     // Contact
     email:'contact', phone:'contact',
     // Network
     ipv4:'network', ipv6:'network',
-    // Personal / biographical
-    passport:'personal', dob:'personal', date:'personal',
+    // Personal / biographical. Server-side `date` only fires when person/birth-
+    // gated; `address` (spaCy) only when person-name-adjacent (server gates).
+    // Client keeps the keyword-gated `dob` rule (its browser equivalent of the
+    // birth-context date gate — the browser can't run spaCy NER).
+    passport:'personal', date:'personal', address:'personal', dob:'personal',
     // spaCy NER findings (Phase 1: German). Server-only — no client-side
-    // detector is registered for these. Grouped under `contact` alongside
-    // email/phone so the same default `ignore` action applies.
-    name:'contact', address:'contact', organisation:'contact',
+    // detector. `name` stays contact/ignore (noisy); `address`→personal,
+    // `organisation`→business_id (above).
+    name:'contact',
     // Heuristic
     bare_identifier:'bare_id',
   },
   defaultCategoryActions: {
     secrets:'block', national_id:'warn', national_id_ctx:'warn',
     financial:'warn', contact:'ignore', network:'ignore',
-    personal:'warn', bare_id:'warn',
+    personal:'warn', bare_id:'warn', business_id:'ignore',
   },
   categoryLabels: {
     secrets:'Secrets & API-Keys',
     national_id:'Nationale IDs (prüfsummengeprüft)',
     national_id_ctx:'ID-ähnliche Werte (kontextbasiert)',
     financial:'Finanzen (IBAN, Karten, Konten)',
-    contact:'Kontaktdaten (E-Mails, Telefon, Namen, Adressen, Organisationen)',
+    business_id:'Unternehmens-IDs (keine personenbezogenen Daten)',
+    contact:'Kontaktdaten (E-Mails, Telefon, Namen)',
     network:'Netzwerkadressen (IP)',
-    personal:'Biografisch (Reisepass, Geburtsdatum)',
+    personal:'Biografisch (Reisepass, Geburtsdatum, Adresse)',
     bare_id:'Reine numerische Bezeichner',
   },
 

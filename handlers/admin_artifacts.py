@@ -398,6 +398,7 @@ class AdminArtifactsHandlers:
                 agent_id=agent_id,
                 session_id=session_id or "",
                 project=project or "",
+                cost_purpose="refine",
                 provider_resolver=self._resolve_provider,
             )
             result = _refine_deanon(_res.get("reply") or "")
@@ -481,6 +482,7 @@ class AdminArtifactsHandlers:
                 messages=messages,
                 model=model,
                 agent_id=agent_id,
+                cost_purpose="soul_chat",
                 provider_resolver=self._resolve_provider,
             )
             if _res.get("error") and not _res.get("reply"):
@@ -518,7 +520,7 @@ class AdminArtifactsHandlers:
                     "background_pii_action": (
                         server_config.get("gdpr_scanner", {}).get("background_pii_action")
                         if server_config.get("gdpr_scanner", {}).get("background_pii_action")
-                            in ("anonymise", "swap_to_local", "abort")
+                            in ("anonymise", "swap_to_local", "skip", "abort")
                         else "anonymise"
                     ),
                     "background_anonymise_fail_action": (
@@ -527,10 +529,22 @@ class AdminArtifactsHandlers:
                             in ("swap_to_local", "abort")
                         else "swap_to_local"
                     ),
-                    "categories": server_config.get("gdpr_scanner", {}).get("categories") or {
-                        cat: {"action": act} for cat, act in engine.PII_DEFAULT_CATEGORY_ACTIONS.items()
+                    # Merge defaults UNDER saved so newly-added categories
+                    # (e.g. business_id) always surface even when an older
+                    # saved config predates them.
+                    "categories": {
+                        **{cat: {"action": act} for cat, act in engine.PII_DEFAULT_CATEGORY_ACTIONS.items()},
+                        **(server_config.get("gdpr_scanner", {}).get("categories") or {}),
                     },
                     "rule_overrides": server_config.get("gdpr_scanner", {}).get("rule_overrides") or {},
+                    # Per-rule min_occurrences — seeded from code defaults, with
+                    # any saved overrides merged on top so the UI shows the
+                    # effective thresholds (e.g. date=10) even before the admin
+                    # touches them.
+                    "min_occurrences": {
+                        **dict(engine.PII_DEFAULT_MIN_OCCURRENCES),
+                        **(server_config.get("gdpr_scanner", {}).get("min_occurrences") or {}),
+                    },
                     "email_allowlist": server_config.get("gdpr_scanner", {}).get("email_allowlist") or [],
                 },
                 "available_tools": sorted(engine.TOOL_DISPATCH.keys()),

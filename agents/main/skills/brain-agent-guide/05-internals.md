@@ -586,16 +586,31 @@ preamble goes in first-user-message instead.
 
 ## GDPR / PII scanner
 
-- 71 regex rules in JS (`web/index.html → PIIScanner`) mirrored in Python
-  (`brain.py → _pii_rules` + `_pii_scan_text` + `_pii_scan_bare_identifiers`).
-- Phase 1 NER: spaCy `de_core_news_md` adds `name|address|organisation`
-  in the `contact` category. Loaded eagerly at startup. Runtime control:
-  `GET/POST /v1/gdpr/ner-models`.
-- Rule order matters — context-gated rules first, `credit_card` after
-  national IDs, `phone` after national IDs.
+- ~70 regex rules in JS (`web/index.html → PIIScanner`) mirrored in Python
+  (`engine/pii_ner.py → _pii_rules` + `_pii_scan_text` + `_pii_scan_bare_identifiers`).
+- NER: spaCy adds `name|address|organisation`. `name` stays `contact`/ignore;
+  `address` → `personal`/warn but ONLY when a person name is adjacent (~120ch);
+  `organisation` → `business_id`/ignore. Runtime control: `GET/POST /v1/gdpr/ner-models`.
+- **Precision controls (9.93.0)**:
+  - **min_occurrences** (`PII_DEFAULT_MIN_OCCURRENCES` / `_pii_min_occurrences` /
+    config `gdpr_scanner.min_occurrences`): a rule yields nothing unless ≥N
+    DISTINCT matched values appear, counted per WHOLE document (gates the whole
+    rule). Default 1; GUI-editable per rule. Applied as a post-pass in `_pii_scan_text`.
+  - **Context gates**: `date` is not PII alone — fires only near a birth/life-
+    event keyword OR a spaCy person name (~120ch); old `dob` merged in.
+    `address` fires only near a person name. (`_name_within` +
+    `_date_has_birth_context`.)
+  - **`business_id`** category (default ignore) — company IDs (`br_cnpj`,
+    `tax_id_ctx`, `organisation`) are not personal data.
+  - `dk_cpr` keyword-anchored; `generic_secret_assignment` entropy bar = len≥24
+    AND ≥10 distinct chars.
+- Rule order matters — context-gated rules first, `credit_card`/`phone` after
+  national IDs (do NOT reorder `_pii_rules`).
 - Single decision point for non-interactive calls:
-  `gdpr_pick_model_for_background(model, texts, purpose)` → scan → audit
-  → swap to local fallback / raise / warn.
+  `gdpr_pick_model_for_background(model, texts, purpose)` → scan → audit →
+  anonymise / swap to local / **skip** (succeed empty, `GDPRSkipError`) / abort,
+  per `gdpr_scanner.background_pii_action`. KG mining makes a whole-document
+  decision in `_process_source` (full-doc scan → correct per-doc min_occurrences).
 - `is_model_local()` bypasses the block entirely (data stays on-prem).
 - Client interlock: `piiBlockActive(chat)` filters dropdown to local-only
   when scanner enabled + server_block + chat has PII.
@@ -678,6 +693,23 @@ modes: `source_file` (default, re-chunk markdown) or drawer-grouped.
 Per-source change invalidation: snapshots `kg_extraction_source_state`,
 on diff DELETEs `triples` matching exact source_file + progress rows +
 orphan-entity sweep.
+
+**GDPR policy + KG (9.92.0)**: KG extraction obeys `gdpr_scanner.background_pii_action`
+like every other non-interactive caller — it does NOT hardwire its own behaviour
+(the v9.91.0 hardwired pre-check was removed). The policy has **four** values:
+`anonymise` (default — pseudonymise→send→de-anonymise; destructive on PII-dense
+docs, the 2026-06 incident), `swap_to_local` (extract on the local fallback,
+full text stays on host), `skip` (don't extract — succeed empty), `abort` (raise
++ refuse). `skip` raises `brain.GDPRSkipError` (a `GDPRBlockedError` subclass, so
+the ~20 existing `except GDPRBlockedError:` sites soft-return for free); KG marks
+the whole document done with `kg_skipped: gdpr_skip` (cursor advances → no
+retry-loop), counted in `RunResult.gdpr_skipped`, NOT an error. The 3 sites that
+map a block to an error status (background_tasks, scheduler, KG) add a narrow
+`except GDPRSkipError` → complete-empty instead of error.
+Per-file KG state (`kg_extract.kg_source_states_for_wing` → `kg|skipped|empty`)
+is exposed on the project `/folder-tree` endpoint and rendered as a colour-coded
+KG badge per file in the source tree (green KG / amber KG⊘ skipped / grey KG·
+mined-no-triples). Dormant while GDPR is disabled.
 
 KG path: `<palace_path>/knowledge_graph.sqlite3`, NOT
 `~/.mempalace/knowledge_graph.sqlite3`.
@@ -833,7 +865,26 @@ at dispatch (`tool_context['allowed_tools']`), not just at list-build.
 
 ## Cost & quotas
 
-- `CostTracker` logs every LLM call to `costs.db`.
+- `CostTracker` logs every LLM call to `costs.db` (`cost_log`), one row per round.
+- **Use-case tagging + COMPLETE coverage** (v9.89.0 + v9.90.0): EVERY LLM call
+  writes one `cost_log` row, including $0 local/free calls and zero-usage calls —
+  so the breakdown is a full audit (a $0 row that should cost = rate-config gap; a
+  missing row = logging gap). The central seam is `sidecar_proxy.background_call`
+  (logs once per call via `account_cost=True`; `False` only for non-billable
+  benchmarking). Direct `run_turn` paths log themselves: chat (per-round),
+  scheduler, `helpdesk_call`, the citation re-round. `_log_call_cost` no longer
+  skips `tokens==0`. **`cost_purpose` is SEPARATE from `purpose`**: `purpose` stays
+  one of the 5 `_VALID_PURPOSES` (drives `resolve_active_tools`); the cost tag is
+  `background_call(cost_purpose=…)` → context `cost_purpose` → `purpose`. ~27 call
+  sites now covered (chat, chat_summary, next_prompt, auto_route_classify,
+  scheduled, background_task, delegate_task, studio, deep_research, audio_overview,
+  read_aloud, translate_*, lang_detect, helpdesk, soul_chat, refine, ask_llm,
+  kg_extract, code_graph_summary, lcm_*, memory_*, relationship_discovery,
+  user_profile, citation_reround, ocr). Sites needing usage numbers for display
+  call `account_background_usage(…, log=False)` (compute-only — no double row).
+  `GET /v1/costs/breakdown?window=…` groups by `(purpose, model)` → display buckets;
+  cycle/last_cycle reuse `QuotaManager.cycle_window`. No backfill — pre-v9.89.0 rows
+  bucket as *Unbekannt (Altdaten)*.
 - `QuotaManager` (30s cache). Two axes per user: Daily (rolling UTC) +
   Cycle (`monthly|weekly|yearly` w/ anchor). Worst-axis wins.
 - Pre-flight gate in `send_message` round 0, AFTER GDPR.

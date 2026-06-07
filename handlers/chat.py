@@ -958,6 +958,7 @@ def _generate_chat_summary(session):
         engine.get_request_context().current_agent = session.agent
         engine.get_request_context().memory_store = None
         engine.get_request_context().current_user_id = (getattr(session, "user_id", "") or "")
+        engine.get_request_context().cost_purpose = "chat_summary"
         msgs = session.messages
         # Only the user's questions feed the summary — the assistant's answers are
         # excluded by design (sidebar synopsis should reflect what was asked).
@@ -1032,7 +1033,9 @@ def _generate_chat_summary(session):
                 system_prompt="Output only a brief summary sentence. No quotes, no prefix.",
                 agent_id=session.agent_id,
                 session_id=session.id,
+                user_id=(getattr(session, "user_id", "") or ""),
                 project=(session.project or ""),
+                cost_purpose="chat_summary",  # cost row written centrally by background_call
                 max_tokens=120,
             )
             result = _summary_deanon(_res.get("reply") or "")
@@ -1662,6 +1665,9 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             engine.get_request_context().current_agent = agent_config
             engine.get_request_context().current_session_id = sid
             engine.get_request_context().current_user_id = session.user_id or ""
+            # Cost-ledger use-case tag — per-round cost_log rows for this turn
+            # land in the "Chat" bucket of the per-use-case breakdown.
+            engine.get_request_context().cost_purpose = "chat"
             # (team_ids are set below by apply_domain_context — single source)
 
             # Reset per-request state (prevents cross-session leaks in pooled threads)

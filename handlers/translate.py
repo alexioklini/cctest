@@ -263,6 +263,19 @@ class TranslateHandlerMixin:
             else:
                 audio_bytes = raw
 
+            # Cost-account the read-aloud render (char-billed) under the
+            # "Read aloud" use-case. Best-effort — reuses the audio_overview
+            # helper so the rate lookup matches the podcast path exactly.
+            try:
+                from engine import audio_overview as _ao
+                _rc = brain.get_request_context()
+                _ao._log_tts_cost(
+                    len(text), session_id=(_rc.current_session_id or ""),
+                    user_id=(_rc.current_user_id or ""), agent_id="main",
+                    purpose="read_aloud")
+            except Exception:
+                pass
+
             self.send_response(200)
             self.send_header("Content-Type", "audio/mpeg")
             self.send_header("Content-Length", str(len(audio_bytes)))

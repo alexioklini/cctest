@@ -1535,6 +1535,10 @@ def _project_sync_loop(srv):
                 triples_last_cycle=int(res.triples_extracted),
                 kg_drawers_processed=int(res.drawers_processed),
                 kg_parse_errors=int(res.errors),
+                # Source files GDPR/classification skipped this pass — the doc
+                # would be blocked/anonymised, so KG extraction was deliberately
+                # not attempted. Surfaced per-doc in the project view.
+                kg_gdpr_skipped=int(getattr(res, "gdpr_skipped", 0)),
                 kg_last_error=res.error_msg or "",
                 kg_elapsed_s=round(res.elapsed_s, 1))
         except Exception as e:

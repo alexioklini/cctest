@@ -331,12 +331,50 @@ def check_kg_health(cfg):
     return findings
 
 
+# ── Check 5: GDPR / classification scanners enabled (static) ─────────────────
+# These are correctness-relevant security/compliance scanners. When DISABLED,
+# personal data and classified content flow to cloud models unredacted — a
+# deliberate operator choice (e.g. the 2026-06 incident where GDPR anonymise
+# was gutting policy docs), but one that's easy to forget is still off. Surface
+# it as a WARN so the operator sees the posture rather than silently assuming
+# the scanners are protecting them.
+
+def check_scanners_enabled(cfg):
+    findings = []
+    gdpr = cfg.get("gdpr_scanner", {}) or {}
+    cls = cfg.get("classification_scanner", {}) or {}
+    if gdpr.get("enabled", True) is False:
+        findings.append(_finding(
+            "gdpr_scanner", _WARN,
+            "GDPR / PII scanner is DISABLED",
+            "gdpr_scanner.enabled = false — personal data is sent to cloud "
+            "models without anonymisation or blocking.",
+            "Re-enable in Settings → GDPR once the underlying issue is resolved "
+            "(KG extraction now skips docs GDPR would block/anonymise)."))
+    else:
+        findings.append(_finding(
+            "gdpr_scanner", _OK, "GDPR / PII scanner enabled"))
+    if cls.get("enabled", True) is False:
+        findings.append(_finding(
+            "classification_scanner", _WARN,
+            "Document classification scanner is DISABLED",
+            "classification_scanner.enabled = false — document-sensitivity "
+            "(ARL 20.02.02.06) enforcement is off.",
+            "Re-enable in Settings → Classification when ready."))
+    else:
+        findings.append(_finding(
+            "classification_scanner", _OK,
+            "Document classification scanner enabled"))
+    return findings
+
+
 # ── Orchestration ────────────────────────────────────────────────────────────
 def run_static_checks():
     cfg = _cfg()
     out = []
     for fn in (check_model_provider_integrity, check_provider_config,
-               check_mempalace_health, check_kg_health):
+               check_mempalace_health, check_kg_health,
+               check_scanners_enabled):
         try:
             out.extend(fn(cfg))
         except Exception as e:

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.90.1"
-VERSION_DATE = "2026-06-06"
+VERSION = "9.93.0"
+VERSION_DATE = "2026-06-07"
 CHANGELOG = [
+    ("9.93.0", "2026-06-07", "feat(gdpr-precision): minimize PII false positives via per-rule min_occurrences + context gates + a business_id category — outcome of a full one-by-one review of all ~70 detectors. (1) NEW MECHANISM min_occurrences (engine/pii_ner.PII_DEFAULT_MIN_OCCURRENCES + brain._pii_min_occurrences + config gdpr_scanner.min_occurrences): a rule contributes ZERO findings unless ≥N DISTINCT matched values appear; counted per WHOLE DOCUMENT (gates the whole rule per doc), GUI-editable per rule, default 1 (= prior behaviour, so untouched rules unchanged). Applied as a post-pass in _pii_scan_text. Seeded values: date=10, jp_mynumber=10; pl_pesel/no_fnr/gr_amka/bg_egn/ro_cnp/be_national/se_personnummer/ca_sin/uk_nhs/cz_rc/es_dni_nie/dk_cpr=5; at_svnr/us_ssn/credit_card/phone/generic_secret_assignment/svnr_ctx/ssn_ctx_loose/insurance_number_ctx/id_card_ctx/drivers_license_ctx/passport_ctx_loose/bank_account_ctx/health_insurance_ctx=3. (2) CONTEXT GATES: `date` is no longer PII on its own — fires only when a birth/life-event keyword OR a spaCy PERSON name is within ~120 chars (the old `dob` rule is merged in); `address` (spaCy LOC) moved contact→personal/warn and fires only when person-name-adjacent (~120 chars). Both implemented via _name_within + _date_has_birth_context using NER name-spans collected in the same pass. This directly kills the 2026-06 incident (215× date-as-personal → anonymise gutted policy chunks). (3) dk_cpr: added a keyword anchor (CPR|CPR-nr|CPR-nummer|personnummer within ~20 chars) — was the weakest gate (date-prefix only, no checksum). (4) generic_secret_assignment entropy bar raised: value length≥24 AND ≥10 distinct chars (was 20/6). (5) NEW CATEGORY business_id (default action ignore) for company/legal-entity IDs — recategorized br_cnpj, tax_id_ctx (whole rule), and spaCy organisation OUT of personal-data handling (an org/company number isn't personal data). (6) KG mining: whole-document GDPR decision moved into _process_source (scans full file_text once → correct per-doc min_occurrences counting), POLICY-DRIVEN (obeys background_pii_action incl. the v9.92.0 'skip'), replacing the v9.91.0 hardwired pre-check. (7) GDPR settings UI: per-rule min_occurrences number input + the business_id category + client ruleCategories/categoryLabels mirrored; config save/validate accept min_occurrences (reject unknown rule_ids, clamp ≥1). INVARIANT preserved: _pii_rules ordering unchanged (only rule bodies edited in place). js_gate green (net-globals unchanged; smoke 5/5). py compile OK. Backend restart required. NOTE: tuned by rule semantics, NOT against the dev corpus (not production-representative, per user)."),
+    ("9.92.0", "2026-06-07", "feat(gdpr): 'skip' is now a 4th selectable background_pii_action — and KG no longer hardwires it. SUPERSEDES the v9.91.0 hardwired KG skip-gate (which silently overrode the configured policy — the exact hidden-behaviour class this project is trying to kill). NOW: (1) NEW POLICY VALUE 'skip' (config.json → gdpr_scanner.background_pii_action ∈ anonymise|swap_to_local|skip|abort). 'skip' = on PII + cloud model, DON'T make the call, succeed EMPTY (deliberate no-op, NOT an error). Implemented via new brain.GDPRSkipError(GDPRBlockedError) — the same subclass trick ClassificationBlockedError uses, so all ~20 existing `except GDPRBlockedError:` sites catch it for free and soft-return (None/empty/fallback) with zero per-site changes. gdpr_pick_model_for_background gained the 'skip' branch (audits pii_skipped, raises) placed after the local/no-PII early-exits (a local model or no-PII still proceeds). (2) KG DE-HARDWIRED: removed the v9.91.0 per-document pre-check + the gdpr_would_block_or_anonymise() probe entirely. KG extraction now calls gdpr_pick_model_for_background like every other background caller and OBEYS the policy: skip→skip the doc, anonymise→anonymise (only if admin explicitly picks it), swap_to_local→extract locally, abort→refuse. extract_triples_from_drawer returns a distinct 'gdpr_skip:' marker (vs 'gdpr_block:'); the chunk loop treats it as skip-the-whole-document (all chunks marked done with 'kg_skipped: gdpr_skip' → cursor advances, no retry-loop, KG⊘ badge), NOT an error. (3) QUIET-SKIP at the 3 sites that map a block to an error status — background_tasks (status=done + 'Übersprungen'-note, not error), scheduler (status=success + note), KG (skipped, not error) — so 'skip' never reads as a failure or trips the broken-model alarm. The other ~17 GDPRBlockedError sites already soft-return → skip is quiet there for free. (4) CONFIG VALIDATION (admin_config + admin_artifacts readback) accept 'skip'; (5) GDPR settings dropdown gains 'Überspringen (kein Aufruf, leer fortfahren)' + rewritten helper text describing all 4 options + the per-doc KG⊘ behaviour. NET: nothing hardcoded — every non-interactive PII outcome is one configurable, predictable policy applied uniformly across all background callers; the interactive chat still prompts per-turn. js_gate green (net-globals unchanged; smoke 5/5). py compile OK. Backend restart required."),
+    ("9.91.0", "2026-06-07", "feat(kg+config+doctor): three operator-facing improvements. NOTE: the v9.91.0 hardwired KG skip-gate described below was SUPERSEDED by v9.92.0 (replaced with the configurable 'skip' policy value — KG no longer overrides the admin policy). The per-document state/badge plumbing all remains. (1) GDPR-SKIP FOR KG + PER-DOCUMENT STATE — the proper fix for the 2026-06 policy-KG incident (GDPR anonymise gutted policy chunks → empty extraction). KG extraction now runs a per-DOCUMENT GDPR/classification skip-gate (engine/kg_extract.py _process_source, via new brain.gdpr_would_block_or_anonymise(text, model) — a decision-only probe mirroring gdpr_pick_model_for_background's early-exit ladder WITHOUT swapping the model or anonymising): when the scanner would BLOCK or ANONYMISE a source file, extraction is deliberately NOT attempted (no model swap, no anonymise-then-extract-garbage); the source is marked done with a 'kg_skipped: gdpr_<reason>' progress row so it doesn't retry-loop. RunResult gains gdpr_skipped; surfaced per-doc. Per-file KG state is now persisted (kg_extraction_progress, keyed per source_file) and exposed: new kg_extract.kg_source_states_for_wing() aggregates {source_file: kg|skipped|empty} (keyed under BOTH the .brain-extracted companion AND the derived original-binary path, mirroring indexed_source_files_for_wing); the project /folder-tree endpoint joins it so each file returns {mined, kg, skip_reason}; the source tree (web/js/panels_project_tree.js) renders a colour-coded KG badge per file (green KG = triples, amber KG⊘ = GDPR/classification-skipped w/ reason tooltip, grey KG· = mined-but-no-triples). Currently dormant (GDPR disabled) but makes re-enabling safe. (2) UNIFIED SERVICE-MODELS PANEL + FAIL-LOUD — Settings→Allgemein→'Service-Modelle' is the single editable home for every service-model slot (default/chat-summary/fan-out/KG + OCR + TTS/transcribe), validated dropdowns, FAIL-LOUD: an unset/unknown slot is an error (red pill), never a fabricated default. New GET/POST /v1/services/models (handlers/admin_observability.py) aggregates slots across config.json + tools_config.json, rejects unknown model/provider 400. Removed the last read-time hardcoded model defaults in engine/doc_convert.py _ocr_config (engine→'none' fail-safe, provider/model→'' with explicit guards; dropped the hardcoded https://api.mistral.ai/v1 base_url fallback). (3) DOCTOR — flags GDPR + classification scanners as WARN when disabled (engine/doctor.check_scanners_enabled), so the disabled posture is visible (overall now 'warn', not the prior false '7/7 OK'). js_gate green (net-globals 1224→1232; eslint clean; smoke 5/5). py compile OK. Backend restart required (new endpoints + KG skip-gate)."),
     ("9.90.1", "2026-06-06", "fix(ui): the Plan-Nutzung / Kostenaufschlüsselung popover could not always be scrolled. ROOT CAUSE: the popover root had a fixed max-height:80vh + overflow-y:auto and was anchored just above the status-bar pill — when its content exceeded the gap between the viewport top and the pill, part of the scrollable box (incl. the bottom rows + the scroll track) sat off-screen and was unreachable; the async breakdown load only nudged the top edge, never re-fitting. FIX (web/js/monitors.js): the popover is now a flex column with a PINNED header + a dedicated inner scroll region (#quota-modal-scroll); a new repositionQuotaModal() anchors it to the pill (prefers above, falls back below — whichever side is roomier) AND sets max-height to the REAL space available at that anchor (clamped to 88vh), so the scroll region is always fully on-screen and the scrollbar reachable. Re-fits on open, after the async breakdown loads, and on window resize (listener cleaned up on close). Verified via Playwright at 500/700/900px viewport heights: modal fully on-screen + inner region scrolls to bottom at the tight height, no scrollbar when it fits. js_gate green (net-globals 1220→1221: repositionQuotaModal replaces the former local positionPopover closure; eslint clean; smoke 5/5). Frontend-only — no backend restart needed (static asset; reload the page)."),
     ("9.90.0", "2026-06-06", "feat(cost): COMPLETE cost coverage — every LLM call now writes a cost_log row, including $0 local/free calls and zero-usage calls, so the breakdown is a full audit (a $0 row that should cost money flags a rate-config gap; a missing row flags a logging gap). FOLLOWS v9.89.0 (per-use-case breakdown), which only covered ~12 of ~27 LLM call sites. THE FIX — central seam: sidecar_proxy.background_call() now logs cost CENTRALLY (one row per call, even at $0 / zero reported usage) via a new account_cost=True param — so EVERY current OR FUTURE background caller is auto-tracked and can't be forgotten. _log_call_cost no longer early-returns on tokens==0 (zero-usage rows are now written deliberately as an audit signal). The ~15 previously-UNTRACKED sites are now covered: next_prompt, auto_route_classify, memory_extract, memory_classifier, user_profile, relationship_discovery, delegate_task, lcm_summarize/condense/recall (+fallbacks), kg_extract, code_graph_summary, ask_llm, soul_chat, helpdesk (Brainy turn + search-term extraction), lang_detect, citation_reround. De-dup: the previously-tracked sites (translate text/document, Studio, Deep Research, audio, chat_summary, background_tasks) switched their explicit account_background_usage/_log_call_cost to compute-only (account_background_usage gained log=False) so the central seam is the SOLE logger — no double counting. Each background_call now passes a correct purpose= so the central row buckets right (was defaulting to 'transform'); the request context's cost_purpose still wins when set (bg-tasks keep tool-purpose 'interactive' but cost-bucket 'background_task'). Direct run_turn paths (chat per-round, scheduler) unchanged; helpdesk_call + the citation re-round (direct run_turn_blocking) got their own log. Benchmark calls (model_bench) pass account_cost=False (measurement, not user spend). admin_costs use-case map extended with all new purposes (Delegation, ask_llm-Tool, Auto-Routing-Klassifikation, Soul-Editor, Code-Graph, Chat (Zitat-Prüfung), …). py compile OK; backend restart required."),
     ("9.89.0", "2026-06-06", "feat(cost): detailed per-use-case × per-model cost breakdown in the status-bar Plan-usage popover. WHY: the popover only showed quota bars (daily + cycle); there was no way to see WHAT the spend went on. THE BLOCKER: costs.db→cost_log had no use-case column — rows were keyed only by {agent,user_id,model,provider,session_id}, so aggregating by use-case was impossible from existing data. NOW: (1) SCHEMA — cost_log gains a `purpose` column (additive migration, idempotent PRAGMA-guarded like user_id/key_name; pre-migration rows = '' → surfaced as 'Unbekannt (Altdaten)'); CostTracker.log_call/log_ocr/log_tts take a purpose arg; new CostTracker.breakdown(since,until,user_id,agent) groups by (purpose,model). (2) CAPTURE — purpose threaded to the single cost choke point: new RequestContext.cost_purpose (read by _log_call_cost as the default) + explicit purpose= on account_background_usage. Each caller tags its own bucket inside its existing request_context: chat→'chat', chat_summary→'chat_summary' (was UNTRACKED — now accounted), scheduler→'scheduled', background_tasks→'background_task', Studio→'studio', Deep Research→'deep_research', audio podcast→'audio_overview', read-aloud TTS→'read_aloud' (the /v1/translate/tts endpoint was UNTRACKED — now char-billed via _log_tts_cost), translate text+document→'translate_*' (were UNTRACKED — now accounted per call/chunk). (3) ENDPOINT — GET /v1/costs/breakdown?window=<key>&user_id=&agent= (handlers/admin_costs.py) with window keys today/week/7d/30d/180d/365d/ytd/all/cycle/last_cycle; cycle/last_cycle reuse QuotaManager.cycle_window (single source of truth for billing periods); raw purpose→display bucket via _use_case_for (+ prefix fallbacks for future variants). Owner/admin-gated like /v1/costs. (4) UI — the Plan-usage popover (web/js/monitors.js) gains a 'Kostenaufschlüsselung' section: window <select> + headline total + per-use-case rows with proportional cost bars (palette-accented), %-of-total, call counts, expandable to a per-model split (tokens + cost + share). Widened popover to 420px, scrollable. NOTE: no backfill — long windows skew to 'Altdaten' until new tagged data accrues (background calls share chat session_ids, so retroactive inference can't separate summary/refine). js_gate green (net-globals 1210→1220: _costFmt/_tokFmt/_COST_PALETTE/_costBreakdownWindow/_COST_WINDOWS/renderCostBreakdownSection/onCostBreakdownWindowChange/loadCostBreakdown/renderCostBreakdownBody/toggleCostUseCase; eslint clean; smoke 5/5). py compile OK. Migration: cost_log.purpose column (additive). Backend restart required."),
@@ -8299,6 +8302,7 @@ from engine.pii_ner import (  # noqa: E402
     _pii_scan_text,
     PII_RULE_CATEGORIES,
     PII_DEFAULT_CATEGORY_ACTIONS,
+    PII_DEFAULT_MIN_OCCURRENCES,
 )
 
 
@@ -9181,6 +9185,10 @@ def _get_gdpr_scanner_config() -> dict:
         "background_anonymise_fail_action": "swap_to_local",
         "categories": {cat: {"action": act} for cat, act in PII_DEFAULT_CATEGORY_ACTIONS.items()},
         "rule_overrides": {},
+        # Per-rule minimum DISTINCT occurrences before a rule fires (see
+        # PII_DEFAULT_MIN_OCCURRENCES). Seeded from defaults; admin overrides
+        # merge over them. Default 1 for any rule not present.
+        "min_occurrences": dict(PII_DEFAULT_MIN_OCCURRENCES),
         "email_allowlist": [],
     }
     cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -9210,6 +9218,14 @@ def _get_gdpr_scanner_config() -> dict:
             for rid, act in ovr_in.items():
                 if act in ("ignore", "warn", "block") and rid in PII_RULE_CATEGORIES:
                     cfg["rule_overrides"][rid] = act
+        mo_in = loaded.get("min_occurrences") or {}
+        if isinstance(mo_in, dict):
+            for rid, n in mo_in.items():
+                if rid in PII_RULE_CATEGORIES:
+                    try:
+                        cfg["min_occurrences"][rid] = max(1, int(n))
+                    except (TypeError, ValueError):
+                        pass
         al_in = loaded.get("email_allowlist") or []
         if isinstance(al_in, list):
             cfg["email_allowlist"] = [str(e).strip().lower() for e in al_in
@@ -9240,6 +9256,21 @@ def _pii_effective_action(rule_id: str, cfg: dict | None = None) -> str:
     if action == "block" and not cfg.get("server_block", False):
         action = "warn"
     return action
+
+
+def _pii_min_occurrences(rule_id: str, cfg: dict | None = None) -> int:
+    """Minimum DISTINCT occurrences a rule needs before it fires for a document.
+    Resolves config `min_occurrences[rule_id]` → PII_DEFAULT_MIN_OCCURRENCES →
+    1. Always ≥1."""
+    if cfg is None:
+        cfg = _get_gdpr_scanner_config()
+    mo = (cfg.get("min_occurrences") or {}).get(rule_id)
+    if mo is None:
+        mo = PII_DEFAULT_MIN_OCCURRENCES.get(rule_id, 1)
+    try:
+        return max(1, int(mo))
+    except (TypeError, ValueError):
+        return 1
 
 
 def _pii_email_allowed(email: str, allowlist: list[str]) -> bool:
@@ -9331,6 +9362,20 @@ class GDPRBlockedError(RuntimeError):
     chat path — that surface has its own RuntimeError branch with a different
     message aimed at the end user.
     """
+
+
+class GDPRSkipError(GDPRBlockedError):
+    """Raised when `gdpr_scanner.background_pii_action == 'skip'` and PII is
+    found on a non-interactive (background) call to a cloud model.
+
+    'skip' means: don't make the call, succeed empty — a deliberate no-op, NOT
+    an error. Subclasses GDPRBlockedError so the ~20 existing
+    `except GDPRBlockedError:` sites catch it for free and soft-return (None /
+    empty / fallback) with zero per-site changes — the same subclass trick
+    ClassificationBlockedError uses. Sites that map a block to an error status
+    (background tasks, KG extraction) add a narrow `except GDPRSkipError`
+    BEFORE their GDPRBlockedError catch to record it as 'skipped' rather than
+    'error' (so it doesn't loop or trip a broken-model alarm)."""
 
 
 def _identity_deanon(text):
@@ -9533,6 +9578,33 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = ""):
             except Exception:
                 pass
         return (model, samples if not _input_was_str else samples[0], _identity_deanon)
+
+    # --- Policy: skip (don't make the call, succeed empty) ---
+    # Non-interactive only — there is no user to prompt. Raises GDPRSkipError
+    # (a GDPRBlockedError subclass) so every caller's existing soft-return path
+    # turns this into a quiet no-op. Unlike 'abort' it is NOT a failure: sites
+    # that distinguish it record 'skipped', not 'error', and KG advances its
+    # cursor so the doc isn't retried every cycle.
+    if _policy == "skip":
+        if _log_audit:
+            try:
+                _audit_log.log_action(
+                    agent=_agent_id,
+                    action_type="pii_skipped",
+                    tool_name="gdpr_scanner",
+                    args_summary=f"model={model}",
+                    result_summary=f"purpose={purpose or '-'} findings={_n} policy=skip",
+                    result_status="warning",
+                    session_id=_sid or None,
+                    source="background",
+                )
+            except Exception:
+                pass
+        raise GDPRSkipError(
+            f"[GDPR skip] Background call skipped (purpose={purpose or '-'}): "
+            f"{_n} personal-data finding(s); "
+            f"gdpr_scanner.background_pii_action='skip'."
+        )
 
     # --- Policy: abort (explicit admin choice — only this raises) ---
     if _policy == "abort":

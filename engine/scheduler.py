@@ -1066,6 +1066,11 @@ class Scheduler:
                 user_id=(task_row.get("user_id") or ""),
                 research_mode_override=None,
             )
+            # Cost-ledger use-case tag — every cost_log row this run writes
+            # lands in the "Scheduled" bucket of the per-use-case breakdown.
+            # (Distinct from `_sched_purpose`, which is the tool-resolution
+            # purpose; the ledger groups all scheduled runs together.)
+            _brain.get_request_context().cost_purpose = "scheduled"
             # The resolved project name now lives on the context; reuse it for
             # the purpose decision + the artifact preamble below.
             _task_project_name = _brain.get_request_context().project or ""
@@ -1240,6 +1245,12 @@ class Scheduler:
                             _ofs = 1
                         for _i, _idx in enumerate(_msg_idx):
                             messages[_idx] = {**messages[_idx], "content": _new_blobs[_ofs + _i]}
+                except _brain.GDPRSkipError as _se:
+                    # Policy 'skip' — deliberate no-op, not a failure. Complete
+                    # the run with a note instead of an error status.
+                    result_text = f"(Übersprungen durch DSGVO-Richtlinie: {_se})"
+                    status = "success"
+                    _sidecar_blocked = True
                 except _brain.GDPRBlockedError as _ge:
                     result_text = f"[DELEGATION ERROR] {_ge}"
                     status = "error"

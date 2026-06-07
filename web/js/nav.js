@@ -498,6 +498,17 @@ function collectGdprFormConfig() {
     if (rid && sel.value) rule_overrides[rid] = sel.value;
   }
 
+  // Per-rule min_occurrences — only send explicit values (blank = use default).
+  const min_occurrences = {};
+  for (const inp of document.querySelectorAll('.gdpr-rule-minocc')) {
+    const rid = inp.dataset.rule;
+    const v = (inp.value || '').trim();
+    if (rid && v) {
+      const n = parseInt(v, 10);
+      if (Number.isFinite(n) && n >= 1) min_occurrences[rid] = n;
+    }
+  }
+
   const allowlistRaw = document.getElementById('gdpr-email-allowlist')?.value || '';
   const email_allowlist = allowlistRaw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
 
@@ -506,7 +517,7 @@ function collectGdprFormConfig() {
     default_local_fallback_model: fallback,
     background_pii_action: bgPii,
     background_anonymise_fail_action: bgFail,
-    categories, rule_overrides, email_allowlist,
+    categories, rule_overrides, min_occurrences, email_allowlist,
   };
 }
 

@@ -855,6 +855,231 @@ class AdminObservabilityHandlers:
         except Exception as e:
             self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
 
+    # ── Service Models — unified editor for every service-model slot ─────────
+    # The model-ref slots the Doctor checks live scattered across TWO config
+    # files: most in config.json (default/summary/fan-out/KG/OCR), but TTS +
+    # transcribe live in tools_config.json (via get_tool_config/save_tool_config).
+    # This pair of handlers presents them as ONE editable surface. Saves write
+    # back to the correct file per slot. FAIL-LOUD: a model id that isn't in
+    # models{} (or, for OCR, a provider not in providers{}) is rejected 400 —
+    # never silently coerced. Empty is allowed and surfaced as 'unset' so the
+    # Doctor's config-model-ref check flags it.
+    #
+    # Slot registry: (key, label, file, capability-or-None). `file` is
+    # 'config' (config.json) or 'tools' (tools_config.json). OCR is special-
+    # cased (it has engine + provider + model, not a single model id).
+    _SERVICE_MODEL_SLOTS = [
+        ("default_model", "Server-Standardmodell", "config", None),
+        ("chat_summary_model", "Chat-Zusammenfassung", "config", None),
+        ("background_task_model", "Fan-out-Hintergrundmodell", "config", None),
+        ("kg_extraction_model", "KG-Extraktion", "config", None),
+        ("tts_model", "Text-to-Speech", "tools", "tts"),
+        ("transcribe_model", "Transkription (STT)", "tools", "audio"),
+    ]
+
+    def _service_models_read(self):
+        """Read every slot's current value + the OCR block from disk config."""
+        import brain as _brain
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "config.json")
+        cfg = {}
+        try:
+            with open(config_path) as f:
+                cfg = json.load(f)
+        except (OSError, ValueError):
+            cfg = {}
+        tool_cfg = {}
+        try:
+            tool_cfg = _brain.get_tool_config() or {}
+        except Exception:
+            tool_cfg = {}
+        kg = ((cfg.get("mempalace") or {}).get("kg") or {})
+        values = {
+            "default_model": cfg.get("default_model", "") or "",
+            "chat_summary_model": cfg.get("chat_summary_model", "") or "",
+            "background_task_model": cfg.get("background_task_model", "") or "",
+            "kg_extraction_model": kg.get("extraction_model", "") or "",
+            "tts_model": (tool_cfg.get("text_to_speech") or {}).get("default_model", "") or "",
+            "transcribe_model": (tool_cfg.get("transcribe_audio") or {}).get("default_model", "") or "",
+        }
+        ocr = cfg.get("ocr") or {}
+        ocr_block = {
+            "engine": ocr.get("engine", "none"),
+            "provider": ocr.get("provider", "") or "",
+            "model": ocr.get("model", "") or "",
+        }
+        return cfg, values, ocr_block
+
+    def _handle_service_models_get(self):
+        """GET /v1/services/models — every service-model slot + resolve status
+        + the option lists (enabled models, providers) for the dropdowns.
+        Admin read-only."""
+        if self._require_role("admin") is None:
+            return
+        try:
+            import brain as _brain
+            _cfg, values, ocr_block = self._service_models_read()
+            models = getattr(_brain, "_models_config", None) or {}
+            providers = (_cfg.get("providers") or {})
+
+            def _resolve(ref):
+                """('ok'|'unset'|'missing'|'disabled', why) — mirrors the
+                Doctor's tolerant scoped/base-id resolution."""
+                if not ref:
+                    return "unset", ""
+                prov = ref.split("/", 1)[0] if "/" in ref else None
+                mid = ref.split("/", 1)[1] if "/" in ref else ref
+                if prov and prov not in providers:
+                    return "missing", f"Provider {prov!r} existiert nicht"
+                cands = [mc for k, mc in models.items()
+                         if isinstance(mc, dict)
+                         and (k == ref or k == mid or mc.get("base_model_id") == mid)]
+                if not cands:
+                    return "missing", "Modell-ID nicht in models{}"
+                if any(mc.get("enabled") is not False for mc in cands):
+                    return "ok", ""
+                return "disabled", "Modell ist deaktiviert"
+
+            slots = []
+            for key, label, _file, cap in self._SERVICE_MODEL_SLOTS:
+                ref = values.get(key, "")
+                status, why = _resolve(ref)
+                slots.append({"key": key, "label": label, "value": ref,
+                              "capability": cap, "status": status, "why": why})
+
+            # Enabled model option list (id + display + capabilities + is_local).
+            model_opts = []
+            for mid, mc in models.items():
+                if not isinstance(mc, dict) or mc.get("enabled") is False:
+                    continue
+                model_opts.append({
+                    "id": mid,
+                    "display": mc.get("display_name") or mid,
+                    "is_local": bool(mc.get("is_local")),
+                    "capabilities": list(mc.get("capabilities") or []),
+                })
+            model_opts.sort(key=lambda m: (-1 if m["is_local"] else 0, m["display"].lower()))
+
+            # OCR resolve status (provider/model into one ref).
+            ocr_status = "unset"
+            ocr_why = ""
+            if ocr_block["engine"] in ("mistral_ocr", "auto"):
+                if not ocr_block["provider"] or not ocr_block["model"]:
+                    ocr_status, ocr_why = "missing", "Provider und Modell erforderlich"
+                elif ocr_block["provider"] not in providers:
+                    ocr_status, ocr_why = "missing", f"Provider {ocr_block['provider']!r} existiert nicht"
+                else:
+                    ocr_status = "ok"
+            elif ocr_block["engine"] == "local_vision":
+                lv = (_cfg.get("ocr") or {}).get("local_vision_model") or ""
+                ocr_status = "ok" if lv else "missing"
+                ocr_why = "" if lv else "local_vision_model erforderlich"
+            else:  # none
+                ocr_status, ocr_why = "off", "OCR deaktiviert"
+
+            self._send_json({
+                "slots": slots,
+                "ocr": {**ocr_block, "status": ocr_status, "why": ocr_why},
+                "model_options": model_opts,
+                "providers": sorted(providers.keys()),
+            })
+        except Exception as e:
+            self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
+
+    def _handle_service_models_save(self):
+        """POST /v1/services/models — save any subset of slots (admin).
+        Body keys: any of the slot keys (model id strings, '' to unset) and/or
+        an `ocr` object {engine, provider, model}. FAIL-LOUD on unknown model/
+        provider (400). Writes config.json slots + ocr; routes tts/transcribe
+        through save_tool_config. Busts the relevant caches."""
+        user = self._require_role("admin")
+        if user is None:
+            return
+        import brain as _brain
+        body = self._read_json() or {}
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "config.json")
+        try:
+            cfg = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    cfg = json.load(f)
+            models = getattr(_brain, "_models_config", None) or cfg.get("models") or {}
+            providers = cfg.get("providers") or {}
+
+            def _validate_model(ref):
+                """Empty ok (unset). Else must match an enabled-or-known model id."""
+                ref = (ref or "").strip()
+                if not ref:
+                    return ""
+                mid = ref.split("/", 1)[1] if "/" in ref else ref
+                ok = any(k == ref or k == mid or
+                         (isinstance(mc, dict) and mc.get("base_model_id") == mid)
+                         for k, mc in models.items())
+                if not ok:
+                    raise ValueError(f"Unbekannte Modell-ID: {ref}")
+                return ref
+
+            # config.json slots
+            if "default_model" in body:
+                cfg["default_model"] = _validate_model(body["default_model"])
+            if "chat_summary_model" in body:
+                cfg["chat_summary_model"] = _validate_model(body["chat_summary_model"])
+            if "background_task_model" in body:
+                cfg["background_task_model"] = _validate_model(body["background_task_model"])
+            if "kg_extraction_model" in body:
+                mp = cfg.setdefault("mempalace", {})
+                kg = mp.setdefault("kg", {})
+                kg["extraction_model"] = _validate_model(body["kg_extraction_model"])
+            # OCR block
+            if "ocr" in body and isinstance(body["ocr"], dict):
+                o = body["ocr"]
+                ocr = cfg.setdefault("ocr", {})
+                if "engine" in o:
+                    eng = str(o["engine"] or "none").strip()
+                    if eng not in ("mistral_ocr", "local_vision", "auto", "none"):
+                        self._send_json({"error": f"Unbekannte OCR-Engine: {eng}"}, 400)
+                        return
+                    ocr["engine"] = eng
+                if "provider" in o:
+                    p = str(o["provider"] or "").strip()
+                    if p and p not in providers:
+                        self._send_json({"error": f"Unbekannter Provider: {p}"}, 400)
+                        return
+                    ocr["provider"] = p
+                if "model" in o:
+                    ocr["model"] = str(o["model"] or "").strip()
+
+            # tools_config.json slots (tts/transcribe) — route through the
+            # tool-config saver so we don't clobber the other tool integrations.
+            tool_updates = {}
+            if "tts_model" in body:
+                tts = dict((_brain.get_tool_config().get("text_to_speech") or {}))
+                tts["default_model"] = _validate_model(body["tts_model"])
+                tool_updates["text_to_speech"] = tts
+            if "transcribe_model" in body:
+                ta = dict((_brain.get_tool_config().get("transcribe_audio") or {}))
+                ta["default_model"] = _validate_model(body["transcribe_model"])
+                tool_updates["transcribe_audio"] = ta
+
+            with open(config_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+            # Bust the mempalace cache (KG slot). The top-level slots
+            # (default/summary/fan-out) + OCR are read from server_config /
+            # config.json on demand and fully refresh on restart — same as the
+            # existing server-config + KG-config save endpoints.
+            engine._mempalace_config_cache = None
+            if tool_updates:
+                _brain.save_tool_config(tool_updates)
+
+            self._send_json({"ok": True})
+        except ValueError as e:
+            self._send_json({"error": str(e)}, 400)
+        except Exception as e:
+            self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
+
     def _handle_kg_reextract(self):
         """POST /v1/mempalace/kg/reextract — purge a project's triples and
         kick the daemon to rebuild. Body: {agent_id, project, source_prefix?}.

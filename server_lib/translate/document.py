@@ -200,6 +200,7 @@ def _rewrite_chunks(runs: list[str], *,
             messages=[{"role": "user", "content": prompt}],
             model=model,
             system_prompt=system_prompt,
+            cost_purpose="translate_document_rewrite",  # cost row written centrally
         )
         response = _res.get("reply") or ""
         if response and not _res.get("error"):
@@ -271,6 +272,7 @@ def _translate_chunks(runs: list[str], *,
             messages=[{"role": "user", "content": prompt}],
             model=model,
             system_prompt=system_prompt,
+            cost_purpose="translate_document",  # cost row written centrally
         )
         response = _res.get("reply") or ""
         parsed: list[str] | None = None

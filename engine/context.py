@@ -105,6 +105,12 @@ class RequestContext:
     # normal chat) and selects the `helpdesk` tool-resolver purpose. Never set on
     # a normal chat/scheduler/warmup turn.
     helpdesk_mode: bool = False
+    # Cost-ledger use-case tag for this turn (chat, chat_summary, scheduled,
+    # translate, ...). Read by brain._log_call_cost as the default `purpose` when
+    # the caller doesn't pass one explicitly, so cost_log rows are attributed to
+    # a use-case for the per-use-case cost breakdown. Set by each caller inside
+    # its own `with request_context()`; '' → "unknown (legacy)" in the breakdown.
+    cost_purpose: str = ""
     # True while a detached background task is executing (engine/background_tasks
     # ._run). run_background_task reads it to refuse nested spawns (no fan-out
     # regress). Never set on a normal chat/scheduler/warmup turn.

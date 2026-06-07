@@ -510,6 +510,54 @@ def list_kg_extraction_log(db_path: str, wing: str | None = None,
         conn.close()
 
 
+def kg_source_states_for_wing(db_path: str, wing: str) -> dict[str, dict]:
+    """Aggregate the per-source-file KG state for a wing from the progress
+    cursor, for per-document UI badges. Returns
+        {realpath(source_file): {"triples": int, "kg": "kg"|"skipped"|"empty",
+                                 "skip_reason": str}}.
+    A source_file is 'skipped' if ANY of its chunk rows carries a
+    'kg_skipped:' error (the GDPR/classification skip-gate); 'kg' if it has
+    ≥1 extracted triple; else 'empty' (processed but no extractable relations).
+    `error` rows that are NOT skip-markers don't appear here as a state — a
+    real extraction failure leaves NO progress row (cursor not advanced), so
+    the file simply reads as not-yet-extracted, which is correct.
+    Keyed by realpath so it matches the folder-tree walk's realpath check."""
+    init_kg_progress_schema(db_path)
+    conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+    try:
+        rows = conn.execute(
+            "SELECT source_file, triples, error FROM kg_extraction_progress "
+            "WHERE palace_wing = ? AND source_file != ''", (wing,)).fetchall()
+    finally:
+        conn.close()
+    def _accumulate(out, key, tri, err):
+        cur = out.setdefault(key, {"triples": 0, "kg": "empty", "skip_reason": ""})
+        cur["triples"] += int(tri or 0)
+        e = (err or "")
+        if e.startswith("kg_skipped:"):
+            cur["kg"] = "skipped"
+            # e.g. "kg_skipped: gdpr_anonymise" → "gdpr_anonymise"
+            cur["skip_reason"] = e.split(":", 1)[1].strip()
+
+    out: dict[str, dict] = {}
+    for sf, tri, err in rows:
+        if not sf:
+            continue
+        rp = os.path.realpath(sf)
+        _accumulate(out, rp, tri, err)
+        # Source files are stored under their .brain-extracted/<x>.<ext>.md
+        # companion; the project source-tree walks the ORIGINAL binaries. Key
+        # the state under the derived original path too so an original-file
+        # lookup matches (mirrors indexed_source_files_for_wing's mapping).
+        if "/.brain-extracted/" in sf and sf.endswith(".md"):
+            orig = sf[:-3].replace("/.brain-extracted/", "/", 1)
+            _accumulate(out, os.path.realpath(orig), tri, err)
+    for rp, st in out.items():
+        if st["kg"] != "skipped":
+            st["kg"] = "kg" if st["triples"] > 0 else "empty"
+    return out
+
+
 # ── Core: per-drawer extraction ──────────────────────────────────────────────
 
 def _truncate_for_llm(text: str, max_chars: int) -> str:
@@ -555,6 +603,11 @@ def extract_triples_from_drawer(
         resolved_model, (_pii_content,), _kg_deanon = cc.gdpr_pick_model_for_background(
             model, [user_content], purpose="kg_extract")
         user_content = _pii_content
+    except cc.GDPRSkipError as e:
+        # Policy 'skip' — deliberate no-op, NOT an error. Distinct marker so
+        # the caller marks the chunk/doc skipped-and-done (cursor advances),
+        # not failed (which would retry-loop + count as an error).
+        return [], f"gdpr_skip: {e}"
     except cc.GDPRBlockedError as e:
         return [], f"gdpr_block: {e}"
     except Exception:
@@ -752,6 +805,10 @@ class RunResult:
     errors: int = 0
     error_msg: str = ""
     elapsed_s: float = 0.0
+    # Source files skipped because GDPR/classification would block or anonymise
+    # them — extraction deliberately NOT attempted (no model swap, no
+    # anonymise-then-extract-garbage). Surfaced per-document in the UI.
+    gdpr_skipped: int = 0
 
 
 def run_kg_post_pass(
@@ -1000,6 +1057,15 @@ def run_kg_post_pass(
                     max_drawer_chars=max_drawer_chars,
                     min_confidence=min_confidence,
                     cancel_token=cancel_token)
+                if err and err.startswith("gdpr_skip:"):
+                    # Policy 'skip' — mark this drawer done (no retry), count once.
+                    _progress_record(chats_db_path, wing, did, sf,
+                                     adapter_name, 0, error="kg_skipped: gdpr_skip")
+                    with _write_lock:
+                        _already.add(did)
+                        result.drawers_skipped += 1
+                        result.gdpr_skipped += 1
+                    continue
                 if err:
                     with _write_lock:
                         result.errors += 1
@@ -1022,6 +1088,48 @@ def run_kg_post_pass(
             return
 
         file_text = _strip_brain_frontmatter(file_text)
+
+        # ── Document-level GDPR/classification decision (whole-doc scan) ──────
+        # POLICY-DRIVEN (obeys gdpr_scanner.background_pii_action) — not
+        # hardwired. Scanning the FULL document here (rather than per chunk)
+        # is what makes the per-rule min_occurrences gate count DISTINCT values
+        # across the whole document, the agreed counting scope. On a 'skip' or
+        # block/abort policy outcome the whole source is marked done (cursor
+        # advances → no retry-loop), surfaced per-file as 'KG⊘'. On
+        # anonymise/swap/proceed the per-chunk extraction below re-applies the
+        # policy normally.
+        try:
+            import brain as _cc
+            _cc.gdpr_pick_model_for_background(
+                model, [file_text], purpose="kg_extract")
+            _doc_gdpr = ""          # proceed
+        except Exception as _ge:
+            _name = type(_ge).__name__
+            if _name == "GDPRSkipError":
+                _doc_gdpr = "skip"
+            elif _name in ("GDPRBlockedError", "ClassificationBlockedError"):
+                _doc_gdpr = "block"
+            else:
+                _doc_gdpr = ""      # scanner error → fail open, proceed
+        if _doc_gdpr:
+            cursor_key = f"{rep_did}#0"
+            _progress_record(chats_db_path, wing, cursor_key, sf,
+                             adapter_name, 0,
+                             error=f"kg_skipped: gdpr_{_doc_gdpr}")
+            with _write_lock:
+                _already.add(cursor_key)
+                result.drawers_skipped += len(src["drawer_ids"])
+                result.gdpr_skipped += 1
+            print(f"{log_prefix} GDPR policy={_doc_gdpr} — KG extraction skipped "
+                  f"for {os.path.basename(sf)} (whole-doc PII decision)", flush=True)
+            if progress_cb:
+                try:
+                    progress_cb("gdpr_skipped", source_file=sf, reason=_doc_gdpr)
+                except Exception:
+                    pass
+            _commit_source_state()
+            return
+
         chunks = _chunk_text_paragraphs(file_text, source_chunk_chars)
         if not chunks:
             cursor_key = f"{rep_did}#0"
@@ -1069,6 +1177,32 @@ def run_kg_post_pass(
                 max_drawer_chars=max_drawer_chars,
                 min_confidence=min_confidence,
                 cancel_token=cancel_token)
+
+            # Policy 'skip' (background_pii_action='skip') — PII found, deliberate
+            # no-op. The whole document shares the same PII profile, so skip the
+            # ENTIRE source file: mark every chunk done with a kg_skipped reason
+            # (cursor advances → no retry-loop), count it, and return. NOT an
+            # error — the doc is intentionally excluded from the KG, surfaced
+            # per-file as a 'KG⊘' badge.
+            if err and err.startswith("gdpr_skip:"):
+                for _ci in range(len(chunks)):
+                    _ck = f"{rep_did}#{_ci}"
+                    _progress_record(chats_db_path, wing, _ck, sf,
+                                     adapter_name, 0, error="kg_skipped: gdpr_skip")
+                    with _write_lock:
+                        _already.add(_ck)
+                with _write_lock:
+                    result.drawers_skipped += len(src["drawer_ids"])
+                    result.gdpr_skipped += 1
+                print(f"{log_prefix} GDPR policy=skip — KG extraction skipped "
+                      f"for {os.path.basename(sf)} (PII found)", flush=True)
+                if progress_cb:
+                    try:
+                        progress_cb("gdpr_skipped", source_file=sf, reason="skip")
+                    except Exception:
+                        pass
+                _commit_source_state()
+                return
 
             if err:
                 with _write_lock:

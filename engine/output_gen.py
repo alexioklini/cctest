@@ -191,7 +191,7 @@ def _run_generation(*, output_id: str, agent_id: str, project_name: str, project
         result = sidecar_proxy.background_call(
             messages=[{"role": "user", "content": prompt}],
             model=model,
-            purpose="transform",
+            cost_purpose="studio",
             agent_id=agent_id,
             session_id=f"output-{output_id}",
             project=project_name,
@@ -214,9 +214,10 @@ def _run_generation(*, output_id: str, agent_id: str, project_name: str, project
 
         # Cost-count this LLM call (attributed to user_id, like chats) + capture
         # the execution metadata for the card + report footer.
+        # Compute-only: background_call already wrote the cost row centrally.
         meta = _brain.account_background_usage(
             result, model, session_id=f"output-{output_id}",
-            user_id=user_id, agent_id=agent_id)
+            user_id=user_id, agent_id=agent_id, purpose="studio", log=False)
         meta["duration_s"] = round(_time.time() - _t0, 1)
 
         # Title: "<preset prefix> — <project display name>".

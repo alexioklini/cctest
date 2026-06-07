@@ -145,16 +145,27 @@ Columns include: `id` (= run_id, synthetic session = `sched-<id>`),
 
 ### costs.db → cost_log
 ```
-ts REAL, session_id TEXT, agent_id TEXT, user_id TEXT,
-model TEXT, provider TEXT,
-input_tokens INTEGER, output_tokens INTEGER,
-cache_read INTEGER, cache_write INTEGER,
-input_cost REAL, output_cost REAL, total_cost REAL,
-purpose TEXT (chat|sched|profile|summary|classifier|kg_extract|…),
-metadata TEXT
+id INTEGER PK, agent TEXT, session_id TEXT, user_id TEXT,
+model TEXT, provider TEXT, key_name TEXT,
+tokens_in INTEGER, tokens_out INTEGER, cost_usd REAL,
+tool_round INTEGER,
+purpose TEXT,        -- use-case tag — EVERY LLM call writes one (chat|
+                     -- chat_summary|next_prompt|scheduled|background_task|
+                     -- delegate_task|studio|deep_research|audio_overview|
+                     -- read_aloud|translate_*|lang_detect|helpdesk|soul_chat|
+                     -- refine|ask_llm|kg_extract|code_graph_summary|lcm_*|
+                     -- memory_*|relationship_discovery|user_profile|
+                     -- citation_reround|auto_route_classify|ocr|…);
+                     -- '' = pre-tagging legacy. $0/local + zero-usage calls
+                     -- are logged too (audit completeness).
+created_at TEXT      -- UTC, sqlite datetime('now')
 ```
 
-Empty `user_id` = pre-quota legacy rows.
+Empty `user_id` = pre-quota legacy rows. Empty `purpose` = pre-v9.89.0 legacy
+rows (the column is additive; one row per LLM round). OCR rows stash pages and
+TTS rows stash chars in `tokens_in` with an explicit `cost_usd` (char/page-billed,
+not token-billed). The `/v1/costs/breakdown` endpoint groups by `(purpose, model)`
+and collapses `purpose` into display use-case buckets.
 
 ### auth.db → users
 ```

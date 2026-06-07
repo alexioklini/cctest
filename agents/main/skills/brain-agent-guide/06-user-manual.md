@@ -67,6 +67,18 @@ Runde, nicht erst am Ende). Wird eine Antwort **mitten im Stream abgebrochen**,
 bleiben die bis dahin verbrauchten Tokens **und Kosten** erhalten (sie werden
 pro Runde sofort verbucht, gehen also nicht verloren).
 
+Ein Klick auf **Plan-Nutzung** öffnet ein Fenster mit den Kontingent-Balken
+(täglich + Abrechnungszeitraum) und darunter der **Kostenaufschlüsselung**: oben
+die Gesamtkosten, dann die Kosten **pro Anwendungsfall** (Chat, Chat-Zusammenfassung,
+Übersetzung, Geplante Aufgaben, Studio, Deep Research, Audio Overview/Podcast,
+Vorlesen, …) mit Balken, Prozentanteil und Aufrufzahl. Jede Zeile lässt sich
+aufklappen, um die **Aufteilung nach Modell** (Tokens, Kosten, Anteil) zu zeigen.
+Über das Auswahlmenü oben rechts wählt man den **Zeitraum** (Heute, Diese Woche,
+letzte 7/30/180/365 Tage, seit Jahresbeginn, aktueller/letzter Abrechnungszeitraum,
+Gesamt). Hinweis: lokale Modelle sind kostenlos und erscheinen mit 0 $ (aber echten
+Tokens); Aufrufe von vor der Einführung dieser Funktion erscheinen als
+*Unbekannt (Altdaten)*.
+
 **Handy & Tablet (Responsive)** — die Oberfläche passt sich drei Größen an:
 - **Desktop** (breit) — volle Drei-Spalten-Ansicht (Seitenleiste · Inhalt ·
   rechtes Panel).
@@ -664,6 +676,13 @@ Zahnrad, unten links. Je nach Rolle zwei Bereiche:
   hier gewählten (meist günstigeren) Modell; leer = bleiben auf diesem Modell.
   **✨ Auto** klassifiziert stattdessen die Absicht jedes Leaf-Tasks und wählt
   je Task das passende Modell (gesteuert über Server → Auto-Routing).
+- **Service-Modelle** — eine zentrale Stelle für die Modellzuordnung aller
+  Hintergrunddienste: Server-Standardmodell, Chat-Zusammenfassung,
+  Fan-out-Hintergrundmodell, KG-Extraktion, Text-to-Speech, Transkription sowie
+  **OCR** (Engine/Provider/Modell). Jeder Slot ist ein geprüftes Dropdown; es
+  gibt **keine fest verdrahteten Standardwerte** — ein nicht zugewiesener oder
+  unbekannter Slot ist ein Fehler (rote Markierung) und wird auch vom **Doctor**
+  gemeldet, statt still auf ein Modell zurückzufallen.
 - **Agents** — Liste + anlegen
 - **Teams** — Team-CRUD + ACLs
 - **Kosten** — globale Kostenansicht pro Nutzer/Modell/Tag
@@ -677,14 +696,35 @@ Zahnrad, unten links. Je nach Rolle zwei Bereiche:
   **Verlauf der Unterhaltung** mit dem Nutzer und ein **Antwortfeld** (eine
   Zeile, Enter zum Senden) — die Antwort erscheint beim Nutzer am Daumen als
   Ungelesen-Punkt.
-- **GDPR** — PII-Scanner, Kategorie-Aktionen, NER-Modelle, Regel-Overrides
+- **GDPR** — PII-Scanner, Kategorie-Aktionen, NER-Modelle, Regel-Overrides.
+  Pro Regel lässt sich eine **Mindestanzahl** unterschiedlicher Treffer setzen
+  (eine Regel löst erst aus, wenn ≥N verschiedene Werte im Dokument vorkommen —
+  unterdrückt Fehlalarme bei zahlenreichen Texten; Standard 1). Die Richtlinie
+  für nicht-interaktive Aufrufe (**„Wenn PII erkannt wird"**) bietet
+  Anonymisieren / lokales Modell / **Überspringen** (kein Aufruf, leer fortfahren)
+  / Abbrechen. Reine Unternehmens-IDs (Kategorie **Unternehmens-IDs**) und
+  bloße Datumsangaben/Orte ohne Personenbezug gelten nicht als personenbezogene
+  Daten und lösen standardmäßig nicht aus.
 - **Kontext** — LCM-Schwellen (Lossless Context Manager)
 - **MemPalace** — Statistik (Drawers/Closets/Wings/Rooms/Halls/DB-Größe),
   Palace-Explorer, Chat-Sync-Klassifizierer, Wing-Regeln, **Daemons**
 - **Knowledge Graph** — Extraktionsprofil + Closet-Konfiguration
 - **Tools** — Pro-Tool aktivieren/deferren/Purpose + Prosatexte; enthält
   auch den **Brainy**-Tab (siehe unten)
+- **Doctor** — Konfig-Diagnose: erkennt Modell-/Konfig-Verweise auf nicht
+  existierende Provider oder deaktivierte Modelle, Provider-Lücken,
+  MemPalace-Zustand (Backend, Embedding-Gerät, Drawer-Zahl), fehlschlagende
+  KG-Extraktion und **deaktivierte DSGVO-/Klassifizierungs-Scanner** (Warnung,
+  damit der Aus-Zustand sichtbar bleibt). „Live-Prüfungen" testet zusätzlich
+  Embedding + Provider-Zugangsdaten.
 - **Recherche-Modus** — Disziplintexte (Verweigerung / Präzision / Zitat)
+
+Im **Quellbaum eines Projekts** zeigt jede Datei neben dem Mining-Punkt ein
+kleines **KG-Abzeichen**: grünes „KG" = Tripel extrahiert, graues „KG·" =
+gemined, aber keine extrahierbaren Tripel, gelbes „KG⊘" = KG-Extraktion
+übersprungen, weil DSGVO/Klassifizierung das Dokument blockieren oder
+anonymisieren würde (Tooltip nennt den Grund). So ist pro Dokument sichtbar, was
+in den Knowledge Graph eingeflossen ist und was nicht.
 
 ### Konto (jeder Nutzer)
 Nutzermenü (Avatar oben rechts):

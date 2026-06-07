@@ -1004,6 +1004,7 @@ class CodeGraph:
                     messages=[{"role": "user", "content": prompt}],
                     model=model,
                     system_prompt="Output only numbered one-line summaries. No markdown, no explanations.",
+                    cost_purpose="code_graph_summary",
                     max_tokens=2000,
                 )
                 result = _res.get("reply") or ""

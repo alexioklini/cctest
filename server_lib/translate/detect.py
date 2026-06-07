@@ -96,6 +96,7 @@ def _llm_detect(text: str, model: str) -> str:
             messages=[{"role": "user", "content": f"Detect the language of this text. Reply with only the ISO 639-1 two-letter code (e.g. 'en', 'de'). No explanation.\n\n{_pii_text}"}],
             model=model,
             system_prompt="You are a language identifier. Output a single ISO 639-1 code, lowercase, nothing else.",
+            cost_purpose="lang_detect",
             max_tokens=8,
         )
         out = _deanon(_res.get("reply") or "")

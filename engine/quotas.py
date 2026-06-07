@@ -209,6 +209,7 @@ class CostTracker:
                     tokens_out INTEGER NOT NULL DEFAULT 0,
                     cost_usd REAL NOT NULL DEFAULT 0.0,
                     tool_round INTEGER DEFAULT 0,
+                    purpose TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
@@ -219,6 +220,11 @@ class CostTracker:
                     conn.execute("ALTER TABLE cost_log ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
                 if "key_name" not in cols:
                     conn.execute("ALTER TABLE cost_log ADD COLUMN key_name TEXT NOT NULL DEFAULT ''")
+                # `purpose` = use-case tag (chat, chat_summary, scheduled, translate,
+                # ...) for the per-use-case cost breakdown. Pre-migration rows keep
+                # '' → surfaced as "unknown (legacy)" in the breakdown.
+                if "purpose" not in cols:
+                    conn.execute("ALTER TABLE cost_log ADD COLUMN purpose TEXT NOT NULL DEFAULT ''")
             except sqlite3.Error as e:
                 logging.warning(f"cost_log migration: {e}")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_agent ON cost_log(agent)")
@@ -226,42 +232,43 @@ class CostTracker:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_created ON cost_log(created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_user ON cost_log(user_id, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_provider ON cost_log(provider, key_name, created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_purpose ON cost_log(purpose, created_at)")
             conn.commit()
 
     def log_call(self, agent: str, session_id: str, model: str, provider: str,
                  tokens_in: int, tokens_out: int, tool_round: int = 0,
-                 user_id: str = "", key_name: str = ""):
+                 user_id: str = "", key_name: str = "", purpose: str = ""):
         """Log an LLM call with cost estimation."""
         cost = _compute_cost(model, tokens_in, tokens_out)
         try:
             with _cost_conn() as conn:
                 conn.execute("""
-                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cost_usd, tool_round)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", tokens_in, tokens_out, cost, tool_round))
+                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cost_usd, tool_round, purpose)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", tokens_in, tokens_out, cost, tool_round, purpose or ""))
                 conn.commit()
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"Cost tracking error: {e}")
 
     def log_ocr(self, agent: str, session_id: str, model: str, provider: str,
                 pages: int, cost_usd: float, user_id: str = "",
-                key_name: str = ""):
+                key_name: str = "", purpose: str = "ocr"):
         """Log an OCR call as a synthetic cost row. Pages stashed in tokens_in
         (output stays 0); explicit USD cost bypasses _compute_cost which only
         knows tokens. Aggregates sum cost_usd correctly without changes."""
         try:
             with _cost_conn() as conn:
                 conn.execute("""
-                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cost_usd, tool_round)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", int(pages), 0, float(cost_usd), 0))
+                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cost_usd, tool_round, purpose)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", int(pages), 0, float(cost_usd), 0, purpose or "ocr"))
                 conn.commit()
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"OCR cost tracking error: {e}")
 
     def log_tts(self, agent: str, session_id: str, model: str, provider: str,
                 chars: int, cost_usd: float, user_id: str = "",
-                key_name: str = ""):
+                key_name: str = "", purpose: str = "read_aloud"):
         """Log a text-to-speech render as a synthetic cost row. Chars synthesized
         stashed in tokens_in (output stays 0); explicit USD cost bypasses
         _compute_cost (TTS is char-billed, not token-billed). Aggregates sum
@@ -269,9 +276,9 @@ class CostTracker:
         try:
             with _cost_conn() as conn:
                 conn.execute("""
-                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cost_usd, tool_round)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", int(chars), 0, float(cost_usd), 0))
+                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cost_usd, tool_round, purpose)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", int(chars), 0, float(cost_usd), 0, purpose or "read_aloud"))
                 conn.commit()
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"TTS cost tracking error: {e}")
@@ -380,6 +387,44 @@ class CostTracker:
                 return [dict(r) for r in rows]
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"Cost daily error: {e}")
+            return []
+
+    def breakdown(self, since_iso: str | None = None, until_iso: str | None = None,
+                  user_id: str | None = None, agent: str | None = None) -> list[dict]:
+        """Per-(purpose, model) aggregate for the [since, until) window. Either
+        bound may be None (None since = all-time start; None until = now).
+        Rows: {purpose, model, calls, tokens_in, tokens_out, cost}. The caller
+        maps raw `purpose` → display use-case buckets and nests by model."""
+        try:
+            with _cost_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                where = "WHERE 1=1"
+                params: list = []
+                if since_iso:
+                    where += " AND created_at >= ?"
+                    params.append(since_iso)
+                if until_iso:
+                    where += " AND created_at < ?"
+                    params.append(until_iso)
+                if agent:
+                    where += " AND agent = ?"
+                    params.append(agent)
+                if user_id is not None:
+                    where += " AND user_id = ?"
+                    params.append(user_id)
+                rows = conn.execute(f"""
+                    SELECT purpose, model,
+                           COUNT(*) as calls,
+                           COALESCE(SUM(tokens_in), 0) as tokens_in,
+                           COALESCE(SUM(tokens_out), 0) as tokens_out,
+                           COALESCE(SUM(cost_usd), 0.0) as cost
+                    FROM cost_log {where}
+                    GROUP BY purpose, model
+                    ORDER BY cost DESC
+                """, params).fetchall()
+                return [dict(r) for r in rows]
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"Cost breakdown error: {e}")
             return []
 
     def sum_user_window(self, user_id: str, since_iso: str) -> float:

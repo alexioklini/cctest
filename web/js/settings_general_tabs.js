@@ -1405,6 +1405,7 @@ async function _genTab_gdpr(C) {
 
       const policyCats = gs.categories || {};
       const policyOverrides = gs.rule_overrides || {};
+      const policyMinOcc = gs.min_occurrences || {};
 
       // Build per-category rule expander
       const catRows = Object.keys(PIIScanner.categoryLabels).map(cat => {
@@ -1414,9 +1415,11 @@ async function _genTab_gdpr(C) {
         const overrideCount = rules.filter(r => policyOverrides[r]).length;
         const ruleRows = rules.map(rid => {
           const ovr = policyOverrides[rid] || '';
+          const mo = policyMinOcc[rid];
           return `<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border-100)">
-            <code style="font-size:10px;color:var(--text-400);min-width:180px">${esc(rid)}</code>
+            <code style="font-size:10px;color:var(--text-400);min-width:160px">${esc(rid)}</code>
             <span style="flex:1;font-size:11px;color:var(--text-200)">${esc(ruleLabel(rid))}</span>
+            <input type="number" min="1" class="form-input gdpr-rule-minocc" data-rule="${esc(rid)}" value="${mo!=null?esc(String(mo)):''}" placeholder="1" title="Mindestanzahl UNTERSCHIEDLICHER Treffer im Dokument, bevor diese Regel auslöst (Standard 1)" style="width:64px;font-size:11px">
             <select class="form-select gdpr-rule-override" data-rule="${esc(rid)}" style="width:150px;font-size:11px">
               <option value="">Kategorie verwenden (${catAction})</option>
               <option value="ignore" ${ovr==='ignore'?'selected':''}>Ignorieren</option>
@@ -1490,6 +1493,7 @@ async function _genTab_gdpr(C) {
             <select class="form-select" id="gdpr-bg-pii-action" style="flex:1">
               <option value="anonymise"${(gs.background_pii_action||'anonymise')==='anonymise'?' selected':''}>Auto-Anonymisierung (pseudonymisieren, dann Antwort de-anonymisieren)</option>
               <option value="swap_to_local"${gs.background_pii_action==='swap_to_local'?' selected':''}>Zum lokalen Fallback-Modell wechseln</option>
+              <option value="skip"${gs.background_pii_action==='skip'?' selected':''}>Überspringen (kein Aufruf, leer fortfahren)</option>
               <option value="abort"${gs.background_pii_action==='abort'?' selected':''}>Aufruf abbrechen</option>
             </select>
           </div>
@@ -1500,7 +1504,7 @@ async function _genTab_gdpr(C) {
               <option value="abort"${gs.background_anonymise_fail_action==='abort'?' selected':''}>Aufruf abbrechen</option>
             </select>
           </div>
-          <div style="font-size:11px;color:var(--text-400)">Nur die <i>Abbrechen</i>-Optionen lehnen einen Aufruf tatsächlich ab. Die beiden Wechsel-Pfade fahren immer fort: Gelingt die Anonymisierung, verwendet der Aufruf das konfigurierte Cloud-Modell mit pseudonymisiertem Text; ist kein nutzbarer lokaler Fallback konfiguriert, fällt der Aufruf mit einer Warnung im Audit-Log auf das Originalmodell zurück.</div>
+          <div style="font-size:11px;color:var(--text-400)"><b>Anonymisierung</b>: Cloud-Modell mit pseudonymisiertem Text, Antwort wird de-anonymisiert (Qualitätsverlust bei PII-dichten Texten wie Richtlinien — kann die KG-Extraktion entwerten). <b>Lokales Modell</b>: voller Text, bleibt auf dem Gerät (braucht ein konfiguriertes lokales Fallback-Modell; sonst Warn-Durchlauf aufs Originalmodell). <b>Überspringen</b>: der Aufruf wird gar nicht ausgeführt und fährt leer fort — die KG-Extraktion lässt das betroffene Dokument aus (im Quellbaum als „KG⊘" markiert) und versucht es nicht erneut; <i>kein</i> Fehler. <b>Abbrechen</b>: lehnt den Aufruf mit einem Fehler ab. Gilt für alle nicht-interaktiven Aufrufe einheitlich; der interaktive Chat fragt weiterhin pro Durchlauf.</div>
         </div>
 
         ${SEC('E-Mail-Allowlist')}
@@ -2089,5 +2093,141 @@ async function _doctorRun(live) {
     box.innerHTML = _doctorRenderFindings(d.findings, d.summary);
   } catch (e) {
     box.innerHTML = `<div style="color:var(--error)">Doctor-Prüfung fehlgeschlagen: ${esc(e.message || String(e))}</div>`;
+  }
+}
+
+// ─── Service Models — one editable home for every service-model slot ───
+// Slots live across config.json + tools_config.json; this tab is the unified
+// editor. Fail-loud: an unset slot shows a red 'nicht konfiguriert' pill (the
+// server rejects unknown ids on save, and the Doctor flags unset/broken refs).
+const _SVCMODEL_STATUS = {
+  ok:      { c: 'var(--success)', t: 'OK' },
+  unset:   { c: 'var(--error)',   t: 'nicht konfiguriert' },
+  missing: { c: 'var(--error)',   t: 'fehlt' },
+  disabled:{ c: '#d9a000',        t: 'deaktiviert' },
+  off:     { c: 'var(--text-500)', t: 'aus' },
+};
+
+function _svcModelPill(status, why) {
+  const s = _SVCMODEL_STATUS[status] || _SVCMODEL_STATUS.unset;
+  const tip = why ? ` title="${esc(why)}"` : '';
+  return `<span${tip} style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid ${s.c};color:${s.c};white-space:nowrap">${esc(s.t)}</span>`;
+}
+
+function _svcModelSelect(id, value, options, status) {
+  // '' option first (explicit unset = fail-loud), then enabled models.
+  const unsetSel = value ? '' : ' selected';
+  const opts = `<option value=""${unsetSel}>— nicht konfiguriert —</option>`
+    + options.map(m => {
+        const sel = m.id === value ? ' selected' : '';
+        const tag = m.is_local ? ' [lokal]' : '';
+        return `<option value="${esc(m.id)}"${sel}>${esc(m.display)}${tag}</option>`;
+      }).join('');
+  // If the saved value isn't in the enabled list, keep it visible (legacy/missing).
+  const known = !value || options.some(m => m.id === value);
+  const legacy = known ? '' : `<option value="${esc(value)}" selected>${esc(value)} (fehlt/deaktiviert)</option>`;
+  return `<select class="form-select" id="${id}">${legacy}${opts}</select>`;
+}
+
+async function _genTab_service_models(C) {
+  const isAdmin = state.authUser && state.authUser.role === 'admin';
+  let d;
+  try {
+    d = await API.get('/v1/services/models');
+  } catch (e) {
+    C.innerHTML = P(`<div style="color:var(--error)">Service-Modelle konnten nicht geladen werden: ${esc(e.message || e)}</div>`);
+    return;
+  }
+  const opts = d.model_options || [];
+  const dis = isAdmin ? '' : ' disabled';
+
+  const slotRows = (d.slots || []).map(s => {
+    // capability hint for which models are appropriate (informational only).
+    const capHint = s.capability ? ` <span style="${MONO}">benötigt: ${esc(s.capability)}</span>` : '';
+    return `<div style="display:grid;grid-template-columns:200px 1fr auto;gap:10px;align-items:center">
+      <label style="font-size:12px;color:var(--text-300)">${esc(s.label)}${capHint}</label>
+      <div${dis ? ' style="opacity:.6;pointer-events:none"' : ''}>${_svcModelSelect('svc-' + s.key, s.value, opts, s.status)}</div>
+      <span id="svc-pill-${s.key}">${_svcModelPill(s.status, s.why)}</span>
+    </div>`;
+  }).join('');
+
+  const ocr = d.ocr || { engine: 'none', provider: '', model: '', status: 'off' };
+  const engineOpts = ['none', 'mistral_ocr', 'local_vision', 'auto'].map(e =>
+    `<option value="${e}"${e === ocr.engine ? ' selected' : ''}>${e}</option>`).join('');
+  const provOpts = '<option value="">— —</option>' + (d.providers || []).map(p =>
+    `<option value="${esc(p)}"${p === ocr.provider ? ' selected' : ''}>${esc(p)}</option>`).join('');
+
+  C.innerHTML = P(`<div style="${G('16px')}">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:14px;font-weight:500;color:var(--text-100)">Service-Modelle</span>
+      <span style="${MONO}">zentrale Modellzuordnung für Hintergrunddienste</span>
+    </div>
+    <p style="font-size:12px;color:var(--text-400);margin:0">
+      Jeder Dienst nutzt ausschließlich das hier zugewiesene Modell — es gibt <b>keine fest verdrahteten
+      Standardwerte</b>. Ein nicht zugewiesener Slot ist ein Fehler (rot) und wird auch vom System-Doctor
+      gemeldet. Werte werden in <code>config.json</code> bzw. <code>tools_config.json</code> gespeichert.</p>
+
+    ${SEC('Modellzuweisungen')}
+    <div style="${G('12px')};padding:12px;border:1px solid var(--border-100);border-radius:8px">
+      ${slotRows}
+    </div>
+
+    ${SEC('OCR (gescannte PDFs)')}
+    <div style="${G('10px')};padding:12px;border:1px solid var(--border-100);border-radius:8px">
+      <div style="display:grid;grid-template-columns:200px 1fr auto;gap:10px;align-items:center">
+        <label style="font-size:12px;color:var(--text-300)">Engine</label>
+        <select class="form-select" id="svc-ocr-engine"${dis} onchange="_svcOcrEngineToggle()">${engineOpts}</select>
+        <span id="svc-pill-ocr">${_svcModelPill(ocr.status, ocr.why)}</span>
+      </div>
+      <div id="svc-ocr-cloud" style="${G('10px')}">
+        <div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center">
+          <label style="font-size:12px;color:var(--text-300)">Provider</label>
+          <select class="form-select" id="svc-ocr-provider"${dis}>${provOpts}</select>
+        </div>
+        <div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center">
+          <label style="font-size:12px;color:var(--text-300)">Modell</label>
+          <input type="text" class="form-input" id="svc-ocr-model" value="${esc(ocr.model || '')}" placeholder="z.B. mistral-ocr-latest"${dis}>
+        </div>
+        <div style="font-size:11px;color:var(--text-400);margin-left:210px;margin-top:-4px">
+          <b>none</b>: OCR aus. <b>mistral_ocr</b>: Cloud-OCR-Endpoint. <b>local_vision</b>: lokales Vision-LLM
+          (Modell unter <code>ocr.local_vision_model</code>). <b>auto</b>: Cloud zuerst, bei Fehler/PII lokal.</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn-primary" id="svc-save-btn" onclick="saveServiceModels()"${dis}>${isAdmin ? 'Service-Modelle speichern' : 'Nur für Administratoren'}</button>
+    </div>
+  </div>`);
+  _svcOcrEngineToggle();
+}
+
+function _svcOcrEngineToggle() {
+  const eng = document.getElementById('svc-ocr-engine');
+  const cloud = document.getElementById('svc-ocr-cloud');
+  if (!eng || !cloud) return;
+  // provider/model only relevant for cloud OCR engines.
+  cloud.style.display = (eng.value === 'mistral_ocr' || eng.value === 'auto') ? '' : 'none';
+}
+
+async function saveServiceModels() {
+  const body = {};
+  ['default_model', 'chat_summary_model', 'background_task_model', 'kg_extraction_model',
+   'tts_model', 'transcribe_model'].forEach(k => {
+    const el = document.getElementById('svc-' + k);
+    if (el) body[k] = el.value || '';
+  });
+  body.ocr = {
+    engine: document.getElementById('svc-ocr-engine')?.value || 'none',
+    provider: document.getElementById('svc-ocr-provider')?.value || '',
+    model: document.getElementById('svc-ocr-model')?.value || '',
+  };
+  try {
+    await API.post('/v1/services/models', body);
+    showToast('Service-Modelle gespeichert');
+    // re-render to refresh status pills.
+    const C = document.getElementById('general-tab-content');
+    if (C) await _genTab_service_models(C);
+  } catch (e) {
+    showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
   }
 }

@@ -139,10 +139,12 @@ def translate_text(text: str, target_lang: str, *,
         except brain.GDPRBlockedError as e:
             raise RuntimeError(f"translation blocked by GDPR policy: {e}")
         from handlers import sidecar_proxy as _sidecar_proxy
+        # Cost row written centrally by background_call under "translate_text".
         _res = _sidecar_proxy.background_call(
             messages=[{"role": "user", "content": _wire_text}],
             model=chosen_model,
             system_prompt=system_prompt,
+            cost_purpose="translate_text",
         )
         if _res.get("error"):
             raise RuntimeError(f"translation failed: {_res['error']}")
@@ -175,10 +177,12 @@ def translate_text(text: str, target_lang: str, *,
             _wire_translated = None
         if _wire_translated is not None:
             from handlers import sidecar_proxy as _sidecar_proxy
+            # Cost row written centrally by background_call.
             _res = _sidecar_proxy.background_call(
                 messages=[{"role": "user", "content": _wire_translated}],
                 model=rewrite_model,
                 system_prompt=rewrite_prompt,
+                cost_purpose="translate_text_rewrite",
             )
             rewritten = _rewrite_deanon(_res.get("reply") or "")
             if rewritten and not _res.get("error"):

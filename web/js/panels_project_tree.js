@@ -66,6 +66,30 @@ function _ptDot(stateName) {
   return `<span class="pt-dot" data-state="${s.cls}" title="${esc(s.label)}"></span>`;
 }
 
+// Per-file KG badge for the source tree. `kg` ∈ kg|skipped|empty|none.
+// Combined with `mined` so the operator sees the full per-document state:
+//   indexed + kg      → "Gemined + KG" (green KG pill)
+//   indexed + skipped → "KG übersprungen (DSGVO/Klassifizierung)" (amber)
+//   indexed + empty   → "Gemined, keine Triples" (grey)
+//   indexed + none    → "Gemined" (no KG pill — KG not run for this doc)
+//   pending           → not mined yet (no KG pill)
+const _PT_KG = {
+  kg:      { c: 'var(--success)', t: 'KG', label: 'Knowledge-Graph-Triples extrahiert' },
+  skipped: { c: '#d9a000',        t: 'KG⊘', label: 'KG übersprungen' },
+  empty:   { c: 'var(--text-500)', t: 'KG·', label: 'Gemined, keine extrahierbaren Triples' },
+};
+function _ptKgBadge(node) {
+  const kg = node && node.kg;
+  const info = _PT_KG[kg];
+  if (!info) return '';  // 'none'/missing → no badge
+  let tip = info.label;
+  if (kg === 'skipped' && node.skip_reason) {
+    const r = String(node.skip_reason).replace('gdpr_', 'DSGVO: ').replace('classification', 'Klassifizierung');
+    tip = `KG-Extraktion übersprungen — ${r}. Das Dokument würde durch DSGVO/Klassifizierung blockiert oder anonymisiert; eine Extraktion würde verfälschte Triples liefern.`;
+  }
+  return `<span class="pt-kgbadge" title="${esc(tip)}" style="font-size:9px;padding:1px 4px;margin-left:4px;border-radius:3px;border:1px solid ${info.c};color:${info.c};white-space:nowrap">${esc(info.t)}</span>`;
+}
+
 function _ptCaret(open) {
   return `<span class="pt-caret ${open ? 'open' : ''}">
     <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
@@ -400,6 +424,7 @@ function _ptRenderFolderTree(nodes) {
       ${_ptDot(n.state || 'pending')}
       <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
       <span class="pt-label">${esc(n.name)}</span>
+      ${_ptKgBadge(n)}
     </div>`;
   }).join('');
 }

@@ -1630,6 +1630,8 @@ class BrainAgentHandler(
             self._handle_kg_config_get()
         elif path == "/v1/doctor":
             self._handle_doctor()
+        elif path == "/v1/services/models":
+            self._handle_service_models_get()
         elif path == "/v1/mcp/connections":
             self._handle_mcp_list()
         elif path == "/v1/mcp/registry":
@@ -1903,6 +1905,8 @@ class BrainAgentHandler(
             self._handle_kg_config_save()
         elif path == "/v1/doctor/live":
             self._handle_doctor_live()
+        elif path == "/v1/services/models":
+            self._handle_service_models_save()
         elif path == "/v1/mempalace/kg/reextract":
             self._handle_kg_reextract()
         elif path == "/v1/quotas/config":

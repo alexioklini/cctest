@@ -848,6 +848,8 @@ def background_call(
     provider_resolver=None,
     turn_id: str | None = None,
     bg_task: bool = False,
+    account_cost: bool = True,
+    cost_purpose: str | None = None,
 ) -> dict:
     """Thin convenience wrapper around `run_turn_blocking` for background /
     non-interactive LLM calls (Phase 4).
@@ -864,7 +866,22 @@ def background_call(
 
     Returns the same dict shape as `run_turn_blocking`. Caller decides how to
     handle `error` / `reply`.
-    """
+
+    `account_cost` (default True): log this call to the cost ledger CENTRALLY —
+    one `cost_log` row per background_call, attributed to `user_id`/`agent_id`,
+    even when the cost is $0 (local/free model) or the sidecar reported no usage.
+    This is the single seam that makes EVERY background LLM call appear in the
+    cost breakdown (so a $0 row that should cost money flags a rate-config gap,
+    and a missing row flags a logging gap). Set False ONLY for non-billable
+    measurement (e.g. model benchmarking).
+
+    `cost_purpose`: the cost-ledger USE-CASE tag (chat_summary, translate_text,
+    kg_extract, …) — SEPARATE from `purpose`, which must stay one of the 5
+    tool-resolution purposes in `_VALID_PURPOSES` (interactive / transform /
+    memory_summary / research_minimal / helpdesk). Effective tag is: this arg →
+    else the request context's `cost_purpose` → else `purpose`. Callers that need
+    the usage numbers for display call `brain.account_background_usage(result,
+    model, …, log=False)` (compute-only — no second row)."""
     if provider_resolver is None:
         provider_resolver = engine.resolve_provider_for_model
     prov = provider_resolver(model)
@@ -895,7 +912,7 @@ def background_call(
         "top_k": inf.get("top_k"),
         "stop_sequences": inf.get("stop") or inf.get("stop_sequences"),
     }
-    return run_turn_blocking(
+    result = run_turn_blocking(
         messages=messages,
         model=model,
         api_key=prov["api_key"],
@@ -910,6 +927,31 @@ def background_call(
         timeout_s=timeout_s,
         turn_id=turn_id,
     )
+    # Central cost ledger seam — one row per background_call, even at $0 (local/
+    # free) or zero reported usage, so the breakdown is a complete audit. Tagged
+    # with `purpose`; attributed to the resolved user/agent. Best-effort: a cost
+    # logging hiccup must never fail the actual call.
+    if account_cost:
+        try:
+            usage = (result or {}).get("usage_total") or {}
+            ti = (int(usage.get("input_tokens", 0) or 0)
+                  + int(usage.get("cache_creation_input_tokens", 0) or 0)
+                  + int(usage.get("cache_read_input_tokens", 0) or 0))
+            to = int(usage.get("output_tokens", 0) or 0)
+            # Cost-ledger bucket, in priority order: explicit cost_purpose arg →
+            # request context's cost_purpose (e.g. bg-tasks set 'background_task'
+            # while tool-purpose stays 'interactive') → the tool-resolution
+            # `purpose`. Kept SEPARATE from `purpose` so the cost tag can be
+            # fine-grained without breaking resolve_active_tools' _VALID_PURPOSES.
+            _cost_purpose = (cost_purpose
+                             or engine.get_request_context().cost_purpose
+                             or purpose)
+            engine._log_call_cost(model, ti, to, session_id=session_id,
+                                  user_id=_user_id, agent_id=agent_id,
+                                  purpose=_cost_purpose, api_key=prov.get("api_key", ""))
+        except Exception as _ce:
+            print(f"[background_call] cost log failed: {_ce}", flush=True)
+    return result
 
 
 def helpdesk_call(
@@ -976,7 +1018,7 @@ def helpdesk_call(
         "top_k": inf.get("top_k"),
         "stop_sequences": inf.get("stop") or inf.get("stop_sequences"),
     }
-    return run_turn(
+    result = run_turn(
         messages=messages,
         model=model,
         api_key=prov["api_key"],
@@ -992,3 +1034,17 @@ def helpdesk_call(
         cancel_token=cancel_token,
         timeout_s=timeout_s,
     )
+    # Central cost ledger — Brainy turns go through run_turn (not background_call),
+    # so log here. Attributed to the helpdesk session + user; tagged 'helpdesk'.
+    try:
+        usage = (result or {}).get("usage_total") or {}
+        ti = (int(usage.get("input_tokens", 0) or 0)
+              + int(usage.get("cache_creation_input_tokens", 0) or 0)
+              + int(usage.get("cache_read_input_tokens", 0) or 0))
+        to = int(usage.get("output_tokens", 0) or 0)
+        engine._log_call_cost(model, ti, to, session_id=session_id,
+                              user_id=user_id or "", agent_id="main",
+                              purpose="helpdesk", api_key=prov.get("api_key", ""))
+    except Exception as _ce:
+        print(f"[helpdesk_call] cost log failed: {_ce}", flush=True)
+    return result

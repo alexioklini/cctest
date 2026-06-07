@@ -192,7 +192,7 @@ def _translate_question_to_code_terms(question: str, model: str) -> list[str]:
         )
         out = sidecar_proxy.background_call(
             messages=[{"role": "user", "content": question}],
-            model=model, system_prompt=sys_p, purpose="transform",
+            model=model, system_prompt=sys_p, purpose="helpdesk",
             max_tokens=80, max_rounds=1, timeout_s=30.0,
         )
         raw = (out.get("reply") or "").strip()

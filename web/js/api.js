@@ -172,6 +172,10 @@ class API {
     if (agent) url += `&agent=${agent}`;
     return this.get(url);
   }
+  // Per-use-case × per-model cost breakdown for a named time window.
+  static getCostBreakdown(window) {
+    return this.get(`/v1/costs/breakdown?window=${encodeURIComponent(window||'30d')}`);
+  }
 
   // Schedule
   static getSchedule() { return this.get('/v1/schedule'); }

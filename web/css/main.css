@@ -8369,3 +8369,8 @@ h1, h2, h3, h4, h5, h6 {
 code, pre, .tool-result-pre, .wf-card-fname, .font-mono {
   font-family: var(--font-mono);
 }
+
+/* Cost breakdown rows (status-bar Plan-usage popover) — subtle hover affordance
+   so the expand/collapse target reads as interactive. */
+.cost-uc-head { transition: background 0.12s ease; }
+.cost-uc-head:hover { background: var(--bg-100); }

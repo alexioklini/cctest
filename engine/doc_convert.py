@@ -199,8 +199,14 @@ _ocr_pages_this_cycle = 0
 
 
 def _ocr_config() -> dict:
-    """Read the `ocr` block from config.json. Returns dict with sensible
-    defaults if the section is missing entirely."""
+    """Read the `ocr` block from config.json.
+
+    FAIL-LOUD: provider/model are NEVER fabricated — they come from config or
+    are empty (callers error cleanly on empty, and the Doctor's config-model-ref
+    check flags an OCR provider/model that doesn't resolve). The only "default"
+    here is `engine='none'` when the section is missing entirely, which means
+    "OCR off" — a fail-SAFE switch, not a guessed model. Non-model knobs
+    (caps/dpi/cost) keep numeric defaults; those aren't model references."""
     try:
         cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
         with open(cfg_path, "r", encoding="utf-8") as f:
@@ -208,11 +214,11 @@ def _ocr_config() -> dict:
         ocr = cfg.get("ocr") or {}
     except (OSError, ValueError):
         ocr = {}
-    # Defaults.
     return {
-        "engine": ocr.get("engine", "mistral_ocr"),  # mistral_ocr | local_vision | auto | none
-        "provider": ocr.get("provider", "mistral-direct"),
-        "model": ocr.get("model", "mistral-ocr-latest"),
+        # engine unset → OCR disabled (no hardcoded provider/model guess).
+        "engine": ocr.get("engine", "none"),  # mistral_ocr | local_vision | auto | none
+        "provider": ocr.get("provider", ""),
+        "model": ocr.get("model", ""),
         "max_pages_per_cycle": int(ocr.get("max_pages_per_cycle", 1000)),
         "trigger_chars_per_page": int(ocr.get("trigger_chars_per_page", _OCR_TRIGGER_CHARS_PER_PAGE)),
         # USD per page for billing — Mistral OCR is $1 per 1000 pages today.
@@ -247,6 +253,11 @@ def _extract_with_mistral_ocr(path: str) -> tuple[str, str | None, int]:
     cfg = _ocr_config()
     if cfg["engine"] != "mistral_ocr":
         return "", "ocr disabled", 0
+    # Fail loud on missing config — no fabricated provider/model.
+    if not cfg["provider"]:
+        return "", "ocr.provider not configured", 0
+    if not cfg["model"]:
+        return "", "ocr.model not configured", 0
     if _ocr_pages_this_cycle >= cfg["max_pages_per_cycle"]:
         return "", f"per-cycle cap {cfg['max_pages_per_cycle']} reached", 0
 
@@ -257,9 +268,11 @@ def _extract_with_mistral_ocr(path: str) -> tuple[str, str | None, int]:
             full = json.load(f)
         prov = (full.get("providers") or {}).get(cfg["provider"]) or {}
         api_key = prov.get("api_key", "")
-        base_url = prov.get("base_url", "https://api.mistral.ai/v1")
+        base_url = prov.get("base_url", "")
     except (OSError, ValueError) as e:
         return "", f"provider config read failed: {e}", 0
+    if not base_url:
+        return "", f"provider {cfg['provider']} has no base_url", 0
     if not api_key:
         return "", f"provider {cfg['provider']} has no api_key", 0
 

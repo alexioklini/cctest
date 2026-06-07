@@ -494,68 +494,102 @@ function openQuotaModal() {
   // Outside-click handler attached to document — popover itself isn't an overlay
   const onDocClick = (e) => {
     const pop = document.getElementById('quota-modal');
-    if (!pop) { document.removeEventListener('mousedown', onDocClick, true); return; }
+    if (!pop) { document.removeEventListener('mousedown', onDocClick, true); window.removeEventListener('resize', repositionQuotaModal); return; }
     if (!pop.contains(e.target) && e.target !== pill && !pill.contains(e.target)) {
       pop.remove();
       document.removeEventListener('mousedown', onDocClick, true);
+      window.removeEventListener('resize', repositionQuotaModal);
     }
   };
   const onKeydown = (e) => {
     if (e.key === 'Escape') {
       document.getElementById('quota-modal')?.remove();
       document.removeEventListener('keydown', onKeydown, true);
+      window.removeEventListener('resize', repositionQuotaModal);
     }
   };
   const pop = document.createElement('div');
   pop.id = 'quota-modal';
-  pop.style.cssText = 'position:fixed;width:340px;background:var(--bg-000);border:1px solid var(--border-100);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:100;padding:14px 16px;font-size:13px;visibility:hidden;left:0;top:0';
+  // Flex column: fixed header + a single scrollable content region. The scroll
+  // lives on #quota-modal-scroll (not the popover root) so the title bar stays
+  // pinned and the body scrolls reliably regardless of height/anchor. max-height
+  // is set dynamically by repositionQuotaModal() to the real space available at
+  // the chosen anchor, so the scrollbar is always fully on-screen + reachable.
+  pop.style.cssText = 'position:fixed;width:420px;display:flex;flex-direction:column;background:var(--bg-000);border:1px solid var(--border-100);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:100;font-size:13px;visibility:hidden;left:0;top:0;overflow:hidden';
   pop.onclick = (e) => e.stopPropagation();
   const isAdmin = (state.authUser?.role || 'admin') === 'admin';
   pop.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+    <div style="display:flex;align-items:center;gap:8px;padding:14px 16px 10px;flex:0 0 auto">
       <div style="font-size:13px;font-weight:600;color:var(--text-100);flex:1">Plan-Nutzung</div>
       ${isAdmin ? `<button onclick="document.getElementById('quota-modal')?.remove();openGeneralSettings();setTimeout(()=>{const t=document.querySelector('.modal-tab[onclick*=&quot;quotas&quot;]');if(t)switchGeneralTab('quotas',t);},50);"
               style="background:transparent;border:1px solid var(--border-100);color:var(--text-300);
                      border-radius:6px;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center"
               title="Kontingent-Einstellungen öffnen">&#x2192;</button>` : ''}
     </div>
-    <div id="quota-modal-body"><div style="color:var(--text-300);text-align:center;padding:12px">Wird geladen…</div></div>`;
+    <div id="quota-modal-scroll" style="overflow-y:auto;padding:0 16px 14px;flex:1 1 auto;min-height:0">
+      <div id="quota-modal-body"><div style="color:var(--text-300);text-align:center;padding:12px">Wird geladen…</div></div>
+      <div id="cost-breakdown-section" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border-100)"></div>
+    </div>`;
   document.body.appendChild(pop);
+
+  // Cost breakdown: window selector + per-use-case × per-model table. Lazy —
+  // fetched on open and whenever the window changes, NOT on the 30s quota poll.
+  renderCostBreakdownSection();
 
   // Render synchronously so we can measure the real height before positioning.
   // Without this, the first paint uses the placeholder body and the upward
   // offset is too small — the bottom third clips below the viewport edge.
   renderQuotaModalBody();
 
-  const positionPopover = () => {
-    const r = pill.getBoundingClientRect();
-    const popW = pop.offsetWidth || 340;
-    const popH = pop.offsetHeight || 200;
-    const margin = 8;
-    let left = r.right - popW;
-    if (left < margin) left = margin;
-    if (left + popW > window.innerWidth - margin) left = window.innerWidth - popW - margin;
-    let top = r.top - popH - margin;
-    if (top < margin) {
-      // Not enough room above; place below pill but clamp so bottom edge stays visible
-      top = Math.min(r.bottom + margin, window.innerHeight - popH - margin);
-      if (top < margin) top = margin;
-    }
-    pop.style.left = left + 'px';
-    pop.style.top = top + 'px';
-    pop.style.visibility = 'visible';
-  };
   // First measure after layout, then refresh once more after the async fetch
   // so the height reflects the final content.
-  requestAnimationFrame(positionPopover);
+  requestAnimationFrame(repositionQuotaModal);
 
   // Defer outside-click handler so the click that opened us doesn't close us
   setTimeout(() => document.addEventListener('mousedown', onDocClick, true), 0);
   document.addEventListener('keydown', onKeydown, true);
+  // Re-fit on viewport resize (rotate / window resize) while the modal is open.
+  window.addEventListener('resize', repositionQuotaModal);
 
   QuotaMonitor.refresh().then(() => {
-    if (document.getElementById('quota-modal')) requestAnimationFrame(positionPopover);
+    if (document.getElementById('quota-modal')) requestAnimationFrame(repositionQuotaModal);
   }).catch(() => {});
+}
+
+// Anchor the Plan-usage popover to the status-bar pill AND size its scroll
+// region to the real space available, so the scrollbar is always fully on-screen
+// and reachable. Prefers placing above the pill; falls back below. Called on
+// open, after the async breakdown loads, on expand/collapse, and on resize.
+function repositionQuotaModal() {
+  const pop = document.getElementById('quota-modal');
+  const pill = document.getElementById('status-quota');
+  // Modal closed (e.g. via the settings-shortcut button) — detach this resize
+  // handler so it doesn't linger.
+  if (!pop) { window.removeEventListener('resize', repositionQuotaModal); return; }
+  if (!pill) return;
+  const margin = 8;
+  const r = pill.getBoundingClientRect();
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const popW = pop.offsetWidth || 420;
+  // Space above the pill vs below it; pick the roomier side.
+  const spaceAbove = r.top - margin * 2;
+  const spaceBelow = vh - r.bottom - margin * 2;
+  const placeAbove = spaceAbove >= spaceBelow;
+  const avail = Math.max(120, Math.floor(placeAbove ? spaceAbove : spaceBelow));
+  // Cap the whole popover to the available space (also never exceed ~88vh).
+  const maxH = Math.min(avail, Math.floor(vh * 0.88));
+  pop.style.maxHeight = maxH + 'px';
+  // Now measure the (possibly clamped) height and place it.
+  const popH = Math.min(pop.offsetHeight || 200, maxH);
+  let left = r.right - popW;
+  if (left < margin) left = margin;
+  if (left + popW > vw - margin) left = vw - popW - margin;
+  let top = placeAbove ? (r.top - popH - margin) : (r.bottom + margin);
+  if (top < margin) top = margin;
+  if (top + popH > vh - margin) top = Math.max(margin, vh - popH - margin);
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
+  pop.style.visibility = 'visible';
 }
 
 function renderQuotaModalBody() {
@@ -613,6 +647,173 @@ function renderQuotaModalBody() {
         Über dem konfigurierten Limit, aber die Durchsetzung steht auf <b>nur warnen</b> &mdash; Anfragen sind weiterhin erlaubt.
       </div>` : ''}
   `;
+}
+
+// --- Cost breakdown (per use-case × per model, multi-window) ---
+
+// Remembered across opens within a session so the user's window choice sticks.
+let _costBreakdownWindow = '30d';
+const _COST_WINDOWS = [
+  ['today', 'Heute'],
+  ['week', 'Diese Woche'],
+  ['7d', 'Letzte 7 Tage'],
+  ['30d', 'Letzte 30 Tage'],
+  ['180d', 'Letzte 180 Tage'],
+  ['365d', 'Letzte 365 Tage'],
+  ['ytd', 'Seit Jahresbeginn'],
+  ['cycle', 'Aktueller Abrechnungszeitraum'],
+  ['last_cycle', 'Letzter Abrechnungszeitraum'],
+  ['all', 'Gesamt'],
+];
+
+function _costFmt(v) {
+  const n = Number(v) || 0;
+  if (n === 0) return '$0.00';
+  if (n < 0.01) return '$' + n.toFixed(4);
+  if (n < 1) return '$' + n.toFixed(3);
+  if (n < 1000) return '$' + n.toFixed(2);
+  return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+function _tokFmt(n) {
+  n = Number(n) || 0;
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+  return String(n);
+}
+
+// Stable accent palette for use-case bars (cycles for >8 buckets). Tuned to
+// read well on both light + dark themes.
+const _COST_PALETTE = [
+  '#6366f1', '#0ea5e9', '#10b981', '#f59e0b',
+  '#ec4899', '#8b5cf6', '#14b8a6', '#ef4444',
+];
+
+function renderCostBreakdownSection() {
+  const sec = document.getElementById('cost-breakdown-section');
+  if (!sec) return;
+  const opts = _COST_WINDOWS.map(([k, label]) =>
+    `<option value="${k}"${k === _costBreakdownWindow ? ' selected' : ''}>${esc(label)}</option>`).join('');
+  sec.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <div style="font-size:13px;font-weight:600;color:var(--text-100);flex:1;display:flex;align-items:center;gap:6px">
+        <span style="font-size:14px">📊</span>Kostenaufschlüsselung
+      </div>
+      <select id="cost-breakdown-window" onchange="onCostBreakdownWindowChange(this.value)"
+              style="background:var(--bg-100);border:1px solid var(--border-100);color:var(--text-100);
+                     border-radius:7px;padding:4px 8px;font-size:12px;cursor:pointer;font-family:inherit">${opts}</select>
+    </div>
+    <div id="cost-breakdown-body"><div style="color:var(--text-300);text-align:center;padding:14px">Wird geladen…</div></div>`;
+  loadCostBreakdown(_costBreakdownWindow);
+}
+
+function onCostBreakdownWindowChange(w) {
+  _costBreakdownWindow = w || '30d';
+  loadCostBreakdown(_costBreakdownWindow);
+}
+
+function loadCostBreakdown(window) {
+  const body = document.getElementById('cost-breakdown-body');
+  if (!body) return;
+  body.innerHTML = `<div style="color:var(--text-300);text-align:center;padding:12px">Wird geladen…</div>`;
+  API.getCostBreakdown(window).then((data) => {
+    renderCostBreakdownBody(data);
+    // Content height changed — re-anchor + re-fit the scroll region.
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(repositionQuotaModal);
+  }).catch((e) => {
+    body.innerHTML = `<div style="color:var(--error);padding:8px;font-size:12px">Fehler beim Laden: ${esc(String(e && e.message || e))}</div>`;
+  });
+}
+
+function toggleCostUseCase(id) {
+  const e = document.getElementById(id);
+  const r = document.getElementById(id + '-row');
+  if (!e) return;
+  const open = e.style.display !== 'none';
+  e.style.display = open ? 'none' : 'block';
+  if (r) r.setAttribute('data-open', open ? '0' : '1');
+  const arr = document.getElementById(id + '-arr');
+  if (arr) arr.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
+}
+
+function renderCostBreakdownBody(data) {
+  const body = document.getElementById('cost-breakdown-body');
+  if (!body) return;
+  const buckets = (data && data.by_use_case) || [];
+  const total = (data && data.total_cost) || 0;
+  const totalCalls = (data && data.total_calls) || 0;
+  const totalTok = ((data && data.total_tokens_in) || 0) + ((data && data.total_tokens_out) || 0);
+  const range = data && data.since
+    ? `${(data.since || '').slice(0, 10)} – ${(data.until || '').slice(0, 10) || 'jetzt'}`
+    : 'Gesamter Zeitraum';
+
+  // Headline total — the number users scan for first.
+  const headline = `
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;
+                background:var(--bg-100);border:1px solid var(--border-100);border-radius:9px;
+                padding:10px 13px;margin-bottom:12px">
+      <div>
+        <div style="font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-400);margin-bottom:2px">Gesamtkosten</div>
+        <div style="font-size:22px;font-weight:700;color:var(--text-100);line-height:1">${esc(_costFmt(total))}</div>
+      </div>
+      <div style="text-align:right;font-size:11px;color:var(--text-400);line-height:1.5">
+        <div>${esc(range)}</div>
+        <div>${totalCalls.toLocaleString('de-DE')} Aufrufe · ${esc(_tokFmt(totalTok))} Tokens</div>
+      </div>
+    </div>`;
+
+  if (!buckets.length) {
+    body.innerHTML = headline + `
+      <div style="color:var(--text-300);text-align:center;padding:18px 8px;font-size:12px">
+        Keine Kosten in diesem Zeitraum.<br>
+        <span style="color:var(--text-400);font-size:11px">Lokale Modelle sind kostenlos und erscheinen nur, wenn sie Tokens verbraucht haben.</span>
+      </div>`;
+    return;
+  }
+
+  const maxCost = Math.max(...buckets.map((b) => Number(b.cost) || 0), 1e-9);
+
+  const rows = buckets.map((b, i) => {
+    const models = (b.by_model || []);
+    const id = `cost-uc-${i}`;
+    const color = _COST_PALETTE[i % _COST_PALETTE.length];
+    const cost = Number(b.cost) || 0;
+    const pctOfTotal = total > 0 ? (cost / total * 100) : 0;
+    const barW = Math.max(2, (cost / maxCost) * 100);
+    const modelRows = models.map((m) => `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;
+                  padding:4px 0 4px 22px;font-size:11px;color:var(--text-300)">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"
+              title="${esc(m.model)}">${esc(modelShortName(m.model) || m.model || '—')}</span>
+        <span style="white-space:nowrap;color:var(--text-400);font-variant-numeric:tabular-nums">${esc(_tokFmt((m.tokens_in||0)+(m.tokens_out||0)))} tok</span>
+        <span style="white-space:nowrap;color:var(--text-200);font-variant-numeric:tabular-nums;min-width:54px;text-align:right">${esc(_costFmt(m.cost))}</span>
+        <span style="white-space:nowrap;color:var(--text-400);min-width:32px;text-align:right">${b.calls ? Math.round((m.calls/b.calls)*100) : 0}%</span>
+      </div>`).join('');
+    return `
+      <div id="${id}-row" data-open="0">
+        <div onclick="toggleCostUseCase('${id}')" class="cost-uc-head"
+             style="display:flex;align-items:center;gap:8px;padding:7px 4px;cursor:pointer;border-radius:7px">
+          <span id="${id}-arr" style="color:var(--text-400);font-size:9px;display:inline-block;width:10px;
+                transition:transform .15s ease;flex-shrink:0">▶</span>
+          <span style="width:8px;height:8px;border-radius:2px;background:${color};flex-shrink:0"></span>
+          <span style="flex:1;min-width:0">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+              <span style="font-size:12.5px;color:var(--text-100);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(b.use_case)}</span>
+              <span style="font-size:12.5px;color:var(--text-100);font-weight:600;white-space:nowrap;margin-left:8px;font-variant-numeric:tabular-nums">${esc(_costFmt(b.cost))}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div style="flex:1;height:5px;background:var(--bg-200);border-radius:999px;overflow:hidden">
+                <div style="height:100%;width:${barW.toFixed(1)}%;background:${color};border-radius:999px"></div>
+              </div>
+              <span style="font-size:10.5px;color:var(--text-400);white-space:nowrap;font-variant-numeric:tabular-nums">${pctOfTotal.toFixed(0)}% · ${b.calls}×</span>
+            </div>
+          </span>
+        </div>
+        <div id="${id}" style="display:none;padding:2px 0 8px">${modelRows}</div>
+      </div>`;
+  }).join('');
+
+  body.innerHTML = headline + `<div style="display:flex;flex-direction:column;gap:1px">${rows}</div>`;
 }
 
 function openQueueModal() {
