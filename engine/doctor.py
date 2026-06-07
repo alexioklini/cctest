@@ -29,8 +29,17 @@ def _finding(check, status, title, detail="", fix=""):
 
 
 def _cfg():
+    """Return a config dict for the checks. IMPORTANT: the live models dict is
+    `brain._models_config`, NOT `server_config['models']` (server_config holds
+    providers + scalar settings; models are a separate module global). Merge the
+    real models in so model-ref checks see the actual enabled set — reading
+    server_config['models'] (absent) made every model-ref look 'not found'."""
     import brain as _brain
-    return _brain._server_config() or {}
+    cfg = dict(_brain._server_config() or {})
+    live_models = getattr(_brain, "_models_config", None)
+    if isinstance(live_models, dict) and live_models:
+        cfg["models"] = live_models
+    return cfg
 
 
 # ── Check 1: model → provider integrity ──────────────────────────────────────
