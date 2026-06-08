@@ -316,6 +316,33 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 - `GET /v1/gdpr/ner-models` — admin: list spaCy NER model state
 - `POST /v1/gdpr/ner-models` — `{action: "load"|"unload", lang}` toggle
 
+## Document Review (GDPR + Classification reviewer)
+
+Per-document reviewer surfaced in the Data view, the project tree (right-click),
+and right-panel attachments. Auth required, NOT admin-gated. Disk files are never
+modified — anonymisation is stored + applied in-flight only at the read seam that
+already anonymises (see 05-internals).
+
+- `POST /v1/data-review/analyze` — body is multipart upload (one file) OR
+  `{agent_id, project, path}` (path validated against the project's input
+  folders) OR `{agent_id, project, source_hash}` (resolves an ingested doc's
+  local source). Returns `{review_id, filename, status, text, violations:
+  [{id, kind: pii|classification, start, end, label, why, excerpt, ...}],
+  overrules, anonymised}`. Reuses a prior review when the content hash matches.
+- `POST /v1/data-review/overrule` — `{review_id, violation_id, explanation}`
+  (or `{..., remove: true}`) — accept a violation with a written reason.
+- `POST /v1/data-review/anonymise` — `{review_id}` → builds the reversible
+  shape-preserving anonymisation, stores `anon_text` + the encrypted de-anon
+  index, sets status `anonymised`.
+- `POST /v1/data-review/revert` — `{review_id}` → clears the anonymisation
+  (original is used again; overrule history kept unless `drop_overrules`).
+- `GET /v1/data-review/<id>` — full review; `GET /v1/data-review/list`;
+  `DELETE /v1/data-review/<id>`.
+- `GET /v1/data-review/<id>/export` — download a self-contained anonymised copy
+  with the review metadata + de-anon index embedded (round-trips back in).
+- `POST /v1/data-review/state` — `{refs:[{kind,ref}]}` → batch badge states
+  (`none|checked|violations|anonymised`) for tree/attachment badges.
+
 ## Translation
 
 - `POST /v1/translate/text` — `{text, target, source?, glossary?}` (Mistral)

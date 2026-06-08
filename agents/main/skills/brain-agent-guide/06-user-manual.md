@@ -385,6 +385,50 @@ Tool-Einstellungen aktiviert ist (sonst ist der Tab mit Hinweis deaktiviert).
 
 ---
 
+## Dokument-Prüfung (DSGVO + Klassifizierung)
+
+Mit dem **Prüfen**-Dialog kannst du ein einzelnes Dokument im Detail auf
+DSGVO-Verstöße (personenbezogene Daten) **und** Vertraulichkeits-Klassifizierung
+untersuchen — mit Hervorhebungen direkt im Text.
+
+**Wo du ihn öffnest:**
+- **Daten-Ansicht** — nach einem Klassifizierungs-Scan: Knopf **Prüfen** in jeder
+  Ergebniszeile.
+- **Projekt-Dateibaum** — **Rechtsklick** auf eine Datei oder einen Ordner →
+  „GDPR/Klassifizierung prüfen". Bei einem Ordner werden alle enthaltenen
+  Dateien geprüft.
+- **Rechtes Panel → Anhänge** — das ⚖-Symbol bzw. Rechtsklick auf eine auf der
+  Festplatte liegende Anhang-Datei.
+
+**Im Dialog:**
+- Der Dokumenttext wird angezeigt; jeder Treffer ist **farbig hervorgehoben**
+  (rot = DSGVO/PII, orange = Klassifizierungs-Markierung).
+- Oben ein **Navigator** (‹ n / N ›, auch mit ←/→) springt von Treffer zu
+  Treffer; Filter Alle / GDPR / Klassifizierung.
+- Ein **Tooltip** an jedem Treffer erklärt, *warum* es ein Verstoß ist.
+- **Übersteuern** — einen Treffer mit kurzer Begründung akzeptieren; die
+  Begründung wird gespeichert.
+- **Anonymisieren** — ersetzt die (nicht übersteuerten) personenbezogenen Daten
+  durch realistische, **umkehrbare** Platzhalter. Wichtig: die Datei auf der
+  Festplatte bleibt unverändert — anonymisiert wird nur die Version, die an ein
+  **externes LLM** geht. Alles, was nur lokal läuft (deine Ansicht, der
+  Download), sieht weiterhin das Original.
+- **Zurücksetzen** — hebt die Anonymisierung wieder auf (das Original wird
+  verwendet); die Übersteuerungs-Begründungen bleiben erhalten.
+- **Anon. Kopie exportieren** — lädt eine eigenständige, anonymisierte Kopie
+  herunter, in deren Metadaten die Prüfung + der (verschlüsselte)
+  Rück-Index eingebettet sind. Lädst du diese Datei später wieder in einen Chat
+  oder ein Projekt, erkennt die Prüfung sie als bereits geprüft.
+
+**Automatisch beim Hinzufügen:** Wenn du Dateien oder Ordner zu einem Projekt
+hinzufügst, läuft die Prüfung sofort — die **Symbole** im Dateibaum zeigen den
+Status: 🛡️ anonymisiert · ⚠️ offene Verstöße · ✓ geprüft/sauber. Beim erneuten
+Einlesen einer **unveränderten** Datei wird die Prüfung nicht wiederholt — deine
+Übersteuerungen und die Anonymisierung werden wiederverwendet, du wirst nicht
+erneut gefragt.
+
+---
+
 ## Übersetzung
 
 Seitenleiste → **Übersetzung**. Vier Tabs:

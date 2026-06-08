@@ -214,11 +214,35 @@ function clsRenderResults() {
     if (lvl && r.final_level !== lvl) return false;
     return true;
   });
-  tbody.innerHTML = rows.map(clsRowHtml).join('') || `
-    <tr><td colspan="6" style="text-align:center;color:var(--text-400);padding:24px">Keine passenden Ergebnisse.</td></tr>`;
+  tbody.innerHTML = rows.map((r) => clsRowHtml(r, clsState.lastResults.indexOf(r))).join('') || `
+    <tr><td colspan="7" style="text-align:center;color:var(--text-400);padding:24px">Keine passenden Ergebnisse.</td></tr>`;
 }
 
-function clsRowHtml(r) {
+// Open the rich GDPR + classification reviewer for a scan-result row.
+function clsReview(idx) {
+  const r = (clsState.lastResults || [])[idx];
+  if (!r) return;
+  if (clsState.mode === 'upload') {
+    // Match the stored File by basename.
+    const base = (r.filename || '').split('/').pop();
+    const file = (clsState.pickedFiles || []).find(f => f.name === base);
+    if (file) { drOpenFile(file); return; }
+  } else if (clsState.mode === 'folder') {
+    const root = document.getElementById('cls-folder-path').value.trim();
+    drOpenProjectFile({ path: root.replace(/\/$/, '') + '/' + (r.filename || '') });
+    return;
+  } else if (clsState.mode === 'project') {
+    drOpenProjectFile({
+      agentId: document.getElementById('cls-project-agent').value,
+      project: document.getElementById('cls-project-name').value,
+      path: r.filename,
+    });
+    return;
+  }
+  drOpenFile && alert('Prüfen für diese Quelle nicht verfügbar.');
+}
+
+function clsRowHtml(r, idx) {
   const markerPill = r.marker_level
     ? `<span class="cls-pill cls-pill-${r.marker_level}">${CLS_LEVEL_LABEL[r.marker_level]}</span>`
     : `<span class="cls-pill cls-pill-none">—</span>`;
@@ -247,6 +271,8 @@ function clsRowHtml(r) {
         ? `<div class="cls-evidence">über Dateiname</div>`
         : '');
   const errCell = r.error ? `<div class="cls-evidence" style="color:var(--error,#d33)">${clsEsc(r.error)}</div>` : '';
+  const reviewBtn = r.error ? '' :
+    `<button class="dr-abtn" onclick="clsReview(${idx})" title="GDPR + Klassifizierung im Detail prüfen">Prüfen</button>`;
   return `<tr>
     <td><div>${clsEsc(r.filename || '')}</div>${errCell}</td>
     <td>${markerPill}${ev}</td>
@@ -254,6 +280,7 @@ function clsRowHtml(r) {
     <td>${heurPill}</td>
     <td>${mmCell}</td>
     <td>${pii}${kwHtml || (pii ? '' : '<span class="cls-mm-none">—</span>')}</td>
+    <td>${reviewBtn}</td>
   </tr>`;
 }
 

@@ -90,6 +90,20 @@ function _ptKgBadge(node) {
   return `<span class="pt-kgbadge" title="${esc(tip)}" style="font-size:9px;padding:1px 4px;margin-left:4px;border-radius:3px;border:1px solid ${info.c};color:${info.c};white-space:nowrap">${esc(info.t)}</span>`;
 }
 
+// GDPR/classification review badge for a file node. `rev` ∈
+// {anonymised, violations, checked} or falsy. Badge-only (does NOT change the
+// mined/KG status dot), per the design decision.
+const _PT_REVIEW = {
+  anonymised: { icon: '🛡️', cls: 'review-badge-anonymised', tip: 'Anonymisiert — das LLM erhält die anonymisierte Version. Rechtsklick zum Verwalten.' },
+  violations: { icon: '⚠️', cls: 'review-badge-violations', tip: 'GDPR/Klassifizierungs-Verstöße gefunden. Rechtsklick zum Prüfen.' },
+  checked:    { icon: '✓', cls: 'review-badge-checked', tip: 'Geprüft — keine offenen Verstöße.' },
+};
+function _ptReviewBadge(rev) {
+  const info = _PT_REVIEW[rev];
+  if (!info) return '';
+  return `<span class="review-badge ${info.cls}" title="${esc(info.tip)}">${info.icon}</span>`;
+}
+
 function _ptCaret(open) {
   return `<span class="pt-caret ${open ? 'open' : ''}">
     <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
@@ -182,8 +196,9 @@ function _ptRenderGrouped(type, itemIds, itemsHtmlById) {
 function _ptItemRow(type, id, label, iconSvg, stateName, delCall, opts) {
   opts = opts || {};
   const sel = (state._ptSelected && state._ptSelected.has(`${type}:${id}`)) ? ' pt-selected' : '';
+  const ctxAttr = opts.ctx ? ` oncontextmenu="${opts.ctx}"` : '';
   return `<div class="pt-row pt-item${sel}" draggable="true" data-type="${type}" data-id="${esc(id)}" title="${esc(opts.title || label)}"
-       onclick="ptItemClick(event,'${type}','${esc(id)}')"
+       onclick="ptItemClick(event,'${type}','${esc(id)}')"${ctxAttr}
        ondragstart="ptDragStart(event,'${type}','${esc(id)}')" ondragend="ptDragEnd(event)">
       ${opts.caret || ''}
       ${stateName ? _ptDot(stateName) : ''}
@@ -316,7 +331,11 @@ async function _ptFillFiles(agentId, projectName) {
       const st = _ptItemState('attachment', id);
       ids.push(id);
       byId[id] = _ptItemRow('files', id, d.source || d.name || 'Dokument', _PT_ICON.file, st,
-        `deleteProjectFile('${esc(agentId)}','${esc(projectName)}','${esc(id)}')`);
+        `deleteProjectFile('${esc(agentId)}','${esc(projectName)}','${esc(id)}')`,
+        {
+          actions: _ptReviewBadge(d.review),
+          ctx: `ptReviewMenu(event, {agentId:'${esc(agentId)}',project:'${esc(projectName)}',sourceHash:'${esc(id)}'})`,
+        });
     }
     host.innerHTML = _ptRenderGrouped('files', ids, byId) || '<div class="pt-empty">Noch keine Dateien.</div>';
   } catch (_) { host.innerHTML = '<div class="pt-empty">Dateien konnten nicht geladen werden.</div>'; }
@@ -342,6 +361,7 @@ async function _ptFillFolders(agentId, projectName) {
         <div class="pt-row pt-item pt-folderrow${(state._ptSelected && state._ptSelected.has('folders:' + path)) ? ' pt-selected' : ''}" draggable="true"
              data-type="folders" data-id="${esc(path)}" title="${esc(path)}"
              onclick="ptFolderRowClick(event, this,'${esc(agentId)}','${esc(projectName)}','${esc(path)}')"
+             oncontextmenu="ptReviewMenu(event, {agentId:'${esc(agentId)}',project:'${esc(projectName)}',folder:'${esc(path)}'})"
              ondragstart="ptDragStart(event,'folders','${esc(path)}')" ondragend="ptDragEnd(event)">
           ${_ptCaret(false)}
           ${_ptDot(st)}
@@ -420,11 +440,13 @@ function _ptRenderFolderTree(nodes) {
         <div class="pt-children" style="display:none">${_ptRenderFolderTree(n.children || [])}</div>
       </div>`;
     }
-    return `<div class="pt-row pt-realfile" title="${esc(n.path || n.name)}">
+    return `<div class="pt-row pt-realfile" title="${esc(n.path || n.name)}"
+         oncontextmenu="ptReviewMenu(event, {path:'${esc(n.path || '')}'})">
       ${_ptDot(n.state || 'pending')}
       <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
       <span class="pt-label">${esc(n.name)}</span>
       ${_ptKgBadge(n)}
+      ${_ptReviewBadge(n.review)}
     </div>`;
   }).join('');
 }
@@ -625,4 +647,57 @@ async function ptDrop(ev) {
   if (state._ptSelected) state._ptSelected.clear();
   await _ptSaveGroups();
   _ptRefreshType(d.type);
+}
+
+// ─── GDPR/Classification review context menu (right-click a tree node) ───────
+// target ∈ {path} | {agentId,project,sourceHash} | {agentId,project,folder}.
+function ptReviewMenu(event, target) {
+  event.preventDefault();
+  event.stopPropagation();
+  _ptCloseReviewMenu();
+  const agentId = target.agentId || state._projectDetailAgent || state.activeAgentId || 'main';
+  const project = target.project || state._projectDetailName || state._researchProject || '';
+  const menu = document.createElement('div');
+  menu.className = 'dr-ctxmenu';
+  menu.id = 'pt-review-ctxmenu';
+  let buttons = '';
+  if (target.folder) {
+    buttons = `<button onclick="ptReviewFolder('${esc(agentId)}','${esc(project)}','${esc(target.folder)}')">Ordner: GDPR/Klassifizierung prüfen</button>`;
+  } else {
+    const open = target.path
+      ? `drOpenProjectFile({agentId:'${esc(agentId)}',project:'${esc(project)}',path:${JSON.stringify(target.path)}})`
+      : `drOpenProjectFile({agentId:'${esc(agentId)}',project:'${esc(project)}',sourceHash:'${esc(target.sourceHash || '')}'})`;
+    buttons = `<button onclick="(${open});_ptCloseReviewMenu()">GDPR/Klassifizierung prüfen…</button>`;
+  }
+  menu.innerHTML = buttons;
+  document.body.appendChild(menu);
+  menu.style.left = Math.min(event.clientX, window.innerWidth - 230) + 'px';
+  menu.style.top = Math.min(event.clientY, window.innerHeight - 80) + 'px';
+  setTimeout(() => document.addEventListener('click', _ptCloseReviewMenu, { once: true }), 0);
+}
+
+function _ptCloseReviewMenu() {
+  const m = document.getElementById('pt-review-ctxmenu');
+  if (m) m.remove();
+}
+
+// Folder review: trigger a synchronous review of every file, then refresh badges.
+async function ptReviewFolder(agentId, project, folder) {
+  _ptCloseReviewMenu();
+  try {
+    // The folder-tree endpoint lists files with their absolute paths; review
+    // each via the analyze endpoint (cheap no-op if unchanged + already reviewed).
+    const data = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(project)}/folder-tree?path=${encodeURIComponent(folder)}`);
+    const files = [];
+    (function walk(ns) { (ns || []).forEach(n => { if (n.type === 'dir') walk(n.children); else files.push(n.path); }); })(data.tree || []);
+    let done = 0;
+    for (const p of files.slice(0, 200)) {
+      try { await API.post('/v1/data-review/analyze', { agent_id: agentId, project, path: p }); done++; } catch (_) {}
+    }
+    // Refresh the tree so new badges show.
+    if (typeof renderProjectSourceTree === 'function') renderProjectSourceTree();
+    showToast(`${done} Datei(en) geprüft.`);
+  } catch (e) {
+    showToast('Ordner-Prüfung fehlgeschlagen: ' + e.message, true);
+  }
 }

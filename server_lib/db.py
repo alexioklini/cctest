@@ -643,6 +643,51 @@ class ChatDB:
                 "CREATE INDEX IF NOT EXISTS idx_classification_scans_user "
                 "ON classification_scans(user_id, created_at DESC)"
             )
+            # ── Per-document GDPR/classification review records ──
+            # One row per reviewed document (Data view, project tree, or
+            # right-panel attachment). Keyed by review_id; looked up by
+            # content_hash so a re-opened / re-uploaded file finds its prior
+            # review (overrules + anonymisation state). `source_kind` ∈
+            # {upload, project_path, project_doc, attachment}; `source_ref`
+            # is the disk path / source_hash / attachment ident. `overrules_json`
+            # is [{id, kind, label, explanation, by, at}]. `anon_mapping_id`
+            # references the encrypted de-anon index in pseudonym_maps. `text`
+            # is capped (the reviewer re-fetches large docs by path).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS data_reviews (
+                    review_id       TEXT PRIMARY KEY,
+                    user_id         TEXT NOT NULL DEFAULT '',
+                    created_at      REAL NOT NULL DEFAULT (strftime('%s','now')),
+                    updated_at      REAL NOT NULL DEFAULT (strftime('%s','now')),
+                    content_hash    TEXT NOT NULL DEFAULT '',
+                    source_kind     TEXT NOT NULL DEFAULT '',
+                    source_ref      TEXT NOT NULL DEFAULT '',
+                    filename        TEXT NOT NULL DEFAULT '',
+                    status          TEXT NOT NULL DEFAULT 'reviewed',
+                    text            TEXT NOT NULL DEFAULT '',
+                    anon_text       TEXT NOT NULL DEFAULT '',
+                    violations_json TEXT NOT NULL DEFAULT '[]',
+                    overrules_json  TEXT NOT NULL DEFAULT '[]',
+                    anon_mapping_id TEXT NOT NULL DEFAULT ''
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_data_reviews_user "
+                "ON data_reviews(user_id, created_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_data_reviews_hash "
+                "ON data_reviews(content_hash)"
+            )
+            # Migration: add anon_text to a data_reviews table created before
+            # the stored-anonymised-text design (the CREATE above only applies
+            # to a brand-new table).
+            try:
+                conn.execute(
+                    "ALTER TABLE data_reviews ADD COLUMN anon_text "
+                    "TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             # ── Helpdesk ("Brainy") conversation history ──
             # PER-USER personal assistant: one continuous conversation per user,
             # carried across all views/sessions (keyed by user_id, NOT session).
@@ -2695,5 +2740,132 @@ class ClassificationDB:
                     "DELETE FROM classification_scans "
                     "WHERE scan_id = ? AND user_id = ?",
                     (scan_id, user_id or ""),
+                )
+            conn.commit()
+
+
+class DataReviewDB:
+    """Persist per-document GDPR/classification review records to chats.db.
+
+    Schema in CHAT_DB → data_reviews. The review is produced by
+    engine.doc_review and surfaced/managed by handlers/data_review.py. The
+    encrypted de-anonymisation index lives in pseudonym_maps (referenced by
+    `anon_mapping_id`); this table holds the human review state (overrules,
+    status) + a capped copy of the text for re-rendering.
+    """
+
+    # Cap stored text at 512 KB — large docs are re-fetched by path/hash.
+    _MAX_TEXT = 512 * 1024
+
+    @staticmethod
+    @_db_safe(default=None)
+    def upsert(*, review_id: str, user_id: str, content_hash: str,
+               source_kind: str, source_ref: str, filename: str,
+               status: str, text: str, violations_json: str,
+               overrules_json: str, anon_mapping_id: str = "",
+               anon_text: str = "") -> None:
+        text = (text or "")[:DataReviewDB._MAX_TEXT]
+        anon_text = (anon_text or "")[:DataReviewDB._MAX_TEXT]
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO data_reviews "
+                "(review_id, user_id, content_hash, source_kind, source_ref, "
+                " filename, status, text, anon_text, violations_json, "
+                " overrules_json, anon_mapping_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(review_id) DO UPDATE SET "
+                "  content_hash=excluded.content_hash, "
+                "  source_kind=excluded.source_kind, "
+                "  source_ref=excluded.source_ref, "
+                "  filename=excluded.filename, "
+                "  status=excluded.status, "
+                "  text=excluded.text, "
+                "  anon_text=excluded.anon_text, "
+                "  violations_json=excluded.violations_json, "
+                "  overrules_json=excluded.overrules_json, "
+                "  anon_mapping_id=excluded.anon_mapping_id, "
+                "  updated_at=strftime('%s','now')",
+                (review_id, user_id or "", content_hash or "", source_kind or "",
+                 source_ref or "", filename or "", status or "reviewed", text,
+                 anon_text, violations_json, overrules_json, anon_mapping_id or ""),
+            )
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get(review_id: str, user_id: str, *, admin: bool = False):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            if admin:
+                row = conn.execute(
+                    "SELECT * FROM data_reviews WHERE review_id = ?",
+                    (review_id,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM data_reviews "
+                    "WHERE review_id = ? AND user_id = ?",
+                    (review_id, user_id or ""),
+                ).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_by_hash(content_hash: str, user_id: str, *, admin: bool = False):
+        """Find the most recent review for a document's content hash — the
+        reuse-detection lookup. Scoped to the user unless admin."""
+        if not content_hash:
+            return None
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            if admin:
+                row = conn.execute(
+                    "SELECT * FROM data_reviews WHERE content_hash = ? "
+                    "ORDER BY updated_at DESC LIMIT 1",
+                    (content_hash,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM data_reviews "
+                    "WHERE content_hash = ? AND user_id = ? "
+                    "ORDER BY updated_at DESC LIMIT 1",
+                    (content_hash, user_id or ""),
+                ).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_for_user(user_id: str, *, admin: bool = False,
+                      limit: int = 100) -> list:
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cols = ("review_id, user_id, created_at, updated_at, content_hash, "
+                    "source_kind, source_ref, filename, status, anon_mapping_id")
+            if admin:
+                rows = conn.execute(
+                    f"SELECT {cols} FROM data_reviews "
+                    "ORDER BY updated_at DESC LIMIT ?",
+                    (int(limit),),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"SELECT {cols} FROM data_reviews WHERE user_id = ? "
+                    "ORDER BY updated_at DESC LIMIT ?",
+                    (user_id or "", int(limit)),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def delete(review_id: str, user_id: str, *, admin: bool = False) -> None:
+        with _db_conn() as conn:
+            if admin:
+                conn.execute("DELETE FROM data_reviews WHERE review_id = ?",
+                             (review_id,))
+            else:
+                conn.execute(
+                    "DELETE FROM data_reviews "
+                    "WHERE review_id = ? AND user_id = ?",
+                    (review_id, user_id or ""),
                 )
             conn.commit()

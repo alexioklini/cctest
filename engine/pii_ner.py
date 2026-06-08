@@ -381,6 +381,72 @@ PII_DEFAULT_MIN_OCCURRENCES: dict[str, int] = {
 }
 
 
+# Per-CATEGORY plain-language rationale (German) — why a finding in this
+# category is a GDPR concern. Surfaced in the Data-view document reviewer as
+# the tooltip text on each highlighted violation. Keyed by the category names
+# in PII_RULE_CATEGORIES. A per-rule override (below) wins when present.
+PII_CATEGORY_WHY: dict[str, str] = {
+    "secrets":
+        "Zugangsdaten / Geheimnis. Schlüssel, Token oder Passwörter dürfen "
+        "niemals an externe Dienste übermittelt werden — Offenlegung ermöglicht "
+        "unmittelbaren Missbrauch.",
+    "national_id":
+        "Staatliche Personenkennziffer (z. B. Steuer-ID, Sozialversicherungs-"
+        "nummer). Eindeutig einer natürlichen Person zuordenbar — besonders "
+        "schützenswertes personenbezogenes Datum nach Art. 9 / 87 DSGVO.",
+    "national_id_ctx":
+        "Mögliche staatliche Kennziffer (über Schlüsselwort + Form erkannt, "
+        "ohne Prüfziffer). Wenn echt, eindeutig personenbeziehbar.",
+    "financial":
+        "Finanzdatum (IBAN, Kreditkarte, Kontonummer). Erlaubt Zahlungs- und "
+        "Identitätsmissbrauch und ist personenbeziehbar.",
+    "contact":
+        "Kontaktdatum (E-Mail, Telefon, Name). Personenbezogenes Datum nach "
+        "Art. 4 DSGVO — auch wenn häufig bewusst geteilt.",
+    "personal":
+        "Personenbezogenes Datum (Adresse, Geburts-/Lebensdatum, Ausweis). "
+        "Einer natürlichen Person zuordenbar.",
+    "network":
+        "Netzwerk-Identifikator (IP-Adresse). Kann nach DSGVO als "
+        "personenbeziehbar gelten, häufig jedoch Infrastruktur.",
+    "business_id":
+        "Identifikator einer juristischen Person (Firma/Behörde). KEIN "
+        "personenbezogenes Datum nach DSGVO — nur informativ erfasst.",
+    "bare_id":
+        "Unstrukturierte ID-förmige Zahlenfolge. Heuristisch erkannt; "
+        "möglicherweise eine Kennziffer.",
+}
+
+# Per-RULE rationale override (German) — for rules whose category text is too
+# generic. Keyed by rule_id. Falls through to PII_CATEGORY_WHY when absent.
+PII_RULE_WHY: dict[str, str] = {
+    "email":   "E-Mail-Adresse — personenbezogenes Kontaktdatum (Art. 4 DSGVO).",
+    "phone":   "Telefonnummer — personenbezogenes Kontaktdatum.",
+    "iban":    "IBAN — Bankverbindung, erlaubt Zahlungs-/Identitätsmissbrauch.",
+    "credit_card": "Kreditkartennummer (Luhn-geprüft) — Zahlungsdatum.",
+    "de_steuerid": "Deutsche Steuer-Identifikationsnummer — eindeutige "
+                   "staatliche Personenkennziffer.",
+    "name":    "Personenname (NER erkannt) — personenbezogenes Datum.",
+    "address": "Anschrift, einer Person zugeordnet — personenbezogenes Datum.",
+    "dob":     "Geburtsdatum — besonders schützenswertes personenbezogenes Datum.",
+    "ipv4":    "IPv4-Adresse — möglicher Netzwerk-/Personenbezug.",
+    "ipv6":    "IPv6-Adresse — möglicher Netzwerk-/Personenbezug.",
+}
+
+
+def pii_finding_why(rule_id: str, category: str = "") -> str:
+    """Plain-language (German) explanation of why a finding is a GDPR concern.
+
+    Per-rule override wins; otherwise category text; otherwise a generic line.
+    Used by engine.doc_review to annotate each violation for the UI tooltip.
+    """
+    if rule_id in PII_RULE_WHY:
+        return PII_RULE_WHY[rule_id]
+    cat = category or PII_RULE_CATEGORIES.get(rule_id, "personal")
+    return PII_CATEGORY_WHY.get(
+        cat, "Mögliches personenbezogenes Datum nach DSGVO.")
+
+
 _PII_RULES: list[dict] = []
 
 

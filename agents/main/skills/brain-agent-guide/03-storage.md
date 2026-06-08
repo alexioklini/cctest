@@ -198,6 +198,24 @@ Used for Brain-restart turn recovery.
 ### chats.db → pseudonym_maps
 Encrypted GDPR pseudonym maps. Decrypt with `pseudonym.key`.
 Admin only — see `/v1/sessions/<sid>/gdpr-maps[/<id>]`.
+Also holds the de-anon index for a `data_reviews` anonymisation (session id
+`review:<review_id>`).
+
+### chats.db → data_reviews (GDPR + classification document reviews)
+```
+review_id TEXT PK, user_id TEXT, created_at/updated_at REAL,
+content_hash TEXT (reuse key — re-open/re-upload finds the prior review),
+source_kind TEXT (upload|project_path|project_doc|attachment),
+source_ref TEXT (path | source_hash), filename TEXT,
+status TEXT (reviewed|anonymised), text TEXT (capped 512KB, the ORIGINAL),
+anon_text TEXT (the stored anonymised version shipped to the LLM),
+violations_json TEXT, overrules_json TEXT, anon_mapping_id TEXT (→ pseudonym_maps)
+```
+Per-document review state for the reviewer (Data view / project tree /
+attachments). `review_id` is derived deterministically from
+(source_kind, source_ref, user_id) for on-disk files, so a re-mine resolves to
+the same row. Badges (`engine/review_state.py`) read state from here. The disk
+file is never modified.
 
 ### chats.db → helpdesk_history (Brainy conversation)
 ```

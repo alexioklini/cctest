@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.95.0"
+VERSION = "9.96.0"
 VERSION_DATE = "2026-06-08"
 CHANGELOG = [
+    ("9.96.0", "2026-06-08", "feat(data-review): per-document GDPR + classification reviewer with inline highlights, violation navigator, per-violation overrule, reversible anonymisation, and a metadata round-trip — surfaced in the Data view, the project ingest tree (right-click), and right-panel attachments. NEW shared core engine/doc_review.py (analyze → unified `violations` list with char spans + per-finding plain-language `why`, both scanners merged: _pii_scan_text + classification.detect_with_pii; anonymise() reuses the shape-preserving reversible pseudonymizer; content_hash() for reuse-detection; review_file_to_db() the idempotent extract→analyze→persist helper shared by add-handlers + the sync daemon). NEW engine/review_state.py (cheap DB-backed badge state: none|checked|violations|anonymised). NEW engine/review_metadata.py (embed/extract a review payload incl. the encrypted de-anon index INLINE so an exported file is self-contained: docx/pptx/xlsx custom-property, PDF embedded-file stream, sidecar .brain-meta.json fallback). `why` text added to engine/pii_ner.py (PII_CATEGORY_WHY/PII_RULE_WHY + pii_finding_why) and engine/classification.py (LEVEL_WHY_DE + level_why). STORAGE: new data_reviews table (DataReviewDB, keyed by review_id, looked up by content_hash for reuse; stores text + anon_text + violations + overrules + anon_mapping_id; +anon_text migration) + the encrypted de-anon index reuses pseudonym_maps. ENDPOINTS (handlers/data_review.py, auth-not-admin): POST analyze (upload | project path | source_hash), overrule, anonymise, revert, state(batch); GET <id>, list, <id>/export; DELETE <id>. AUTO-REVIEW ON ADD: project folder-add + file-ingest run the review SYNCHRONOUSLY (bounded ≤200 files) so tree badges are correct on the add response; the project-sync daemon RE-RUNS the review per file on its re-mine pass — an UNCHANGED file is a cheap hash-compare no-op that reuses the user's prior overrules/anonymisation (never re-prompts), a content change re-scans carrying surviving overrules forward and dropping the now-stale anonymisation. INVARIANT (load-bearing): this feature NEVER changes what any path sees today. The disk file is ALWAYS the original; anonymisation is applied in-flight only at the ONE seam that already anonymises to the LLM — brain._gdpr_anon_tool_text now consults _review_anon_override (returns the user's stored anon_text ONLY when a saved 'anonymised' review matches the exact content hash for the current user, else None → today's fresh-scan behaviour verbatim) and merges the review's saved de-anon mapping into the active per-turn mapping so the reply de-anonymiser still reverses tokens. KG extraction left UNCHANGED (already anonymises per-chunk via gdpr_pick_model_for_background). MemPalace drawers + mempalace_query retrieval left UNCHANGED (verified raw today → stay raw; storing anonymised drawers would change retrieval and was explicitly declined). No saved review anywhere ⇒ byte-identical to today. FRONT-END: new web/js/data_review.js full-screen reviewer (color-coded inline highlights GDPR vs classification, prev/next/jump navigator with n/N counter + ←/→ keys, tooltips with the `why`, per-violation overrule with required explanation, Anonymisieren/Zurücksetzen/Export-anon-Kopie); 'Prüfen' action per Data-view scan row (classification.js); right-click context menu + badge-only review icons (🛡️/⚠️/✓, NO status-dot change) in the project tree (panels_project_tree.js) and on right-panel attachment cards (panels_artifacts.js, batch /state fetch). Revert = restore original + clear anonymisation (disk untouched, so just drops the saved index; overrule history kept). js_gate green (net-globals 1235→1271 — new data_review.js + tree/attachment helpers, baseline updated; eslint clean; smoke 5/5). py compile + runtime-import OK + full backend round-trip verified (analyze→overrule→anonymise→override-reuse→export, per-user isolation). Migration: data_reviews table + anon_text column (additive). config.json untouched. Backend restart required."),
     ("9.95.0", "2026-06-08", "fix(gdpr): config.json is now the SINGLE source of truth for the PII rule set + ipv4 false-positive fix + uniform GUI save. CONTEXT: a review of the KG-policy corpus surfaced a split-brain — the rule set lived in TWO layers (engine/pii_ner.py code defaults AND a partial config.json snapshot) that disagreed. config.json carried categories.contact=warn and categories.network=warn (frozen since the April v8.12.0 settings snapshot, NOT a recent override — verified across all config.json.bak-* backups), while the code default for both is 'ignore'; and the v9.93 min_occurrences table existed ONLY in code (absent from config). Net effect on the 58-doc policy corpus: 27 docs spuriously flagged warn (47 email + 8 phone + 34 ipv4), where every ipv4 'hit' was a document section/clause number (20.2.4.3, 20.2.2.0 …), byte-identical to a real IP. FIXES: (1) RECONCILE config→code: config.json gdpr_scanner now explicitly carries the FULL rule set equal to the code defaults — categories.contact/network set to 'ignore', categories.business_id added ('ignore'), and all 27 min_occurrences materialised into config. Result: corpus scans 58/58 clean. (2) IPV4 CONTEXT-GATED (engine/pii_ner.py): a bare octet-valid dotted quad is indistinguishable from a clause number, so ipv4 now fires ONLY when an IP-context keyword (IP/Adresse/Gateway/Subnet/Netmask/DNS/Host/Server/Router/Firewall) precedes the address; _ipv4_ok extracts+validates the captured quad (still rejects 0./127./255./169.254.). Verified: section refs + numbered lists no longer match; 'Gateway 192.168.1.1' / 'DNS 8.8.8.8' still match; '127.0.0.1' still rejected. _pii_rules ORDER unchanged (rule body edited in place). (3) GUI SAVE UNIFORM (web/js/nav.js collectGdprFormConfig + settings_general_tabs.js): min_occurrences now writes EVERY rule (full snapshot like categories, blank/invalid → floor 1) and each input renders its effective value (never blank), so editing a field can no longer silently revert to a hidden code default. rule_overrides stays deltas by design (empty = 'use category', a real state). Server validator already accepts the full map (clamps ≥1, rejects unknown rule_ids; client/server rule sets verified identical). NOTE: this commit ALSO carries the prior uncommitted v9.94.0 work (interactive GDPR feedback modal — opt-in post-turn retry/abort). js_gate green (smoke 5/5). py compile + runtime-import OK. config.json is gitignored — the reconciliation is a live-box change, documented here. Backend restart required."),
     ("9.94.0", "2026-06-08", "feat(gdpr): opt-in interactive GDPR feedback loop — post-turn modal to retry with a different method or abort (HANDOVER thread 2). The user opts in once, then after each turn that took a GDPR action a modal asks whether it worked and lets them re-run the SAME turn in a different mode; the decision is remembered for subsequent turns. Covers BOTH occasions per the user's directive (anonymise AND local-fallback). NO passive badges — feedback is a modal, surfaced only when the user opted in. (1) OPT-IN: the pre-send PII/classification modal (web/js/panels_gdpr.js gdprActionModal) gains a checkbox 'Frag mich nachher wies gelaufen ist' (off by default); ticking it sets a sticky per-session flag gdpr_feedback_ask (new sessions.gdpr_feedback_ask INTEGER column + ChatDB.update_session_gdpr_feedback_ask + Session field + load + manage action 'gdpr_feedback_ask' + GET /messages echo + API.updateGdprFeedbackAsk — mirrors allow_further_web end-to-end). (2) POST-TURN MODAL (gdprFeedbackModal): when opted in AND the turn ACTIVELY anonymised/swapped the user's OWN input this turn (done SSE has metadata.gdpr.active=true), maybeRunGdprFeedback (chat_send.js) opens 'Hat es gepasst?' with an honest per-mode summary + retry buttons for the two methods NOT just used (Anonymisieren / Lokales Modell / Unverändert senden) + 'Passt so' + a checked 'Frag mich weiter wies gelaufen ist' checkbox. Unchecking clears gdpr_feedback_ask (no more prompts); the chosen method is still reused via the sticky gdpr_action_pref. (3) RETRY-CLEAN: redoTurnAsGdprMode (chat_render.js) re-runs the turn forcing a mode via one-shot state._gdprActionOverride that sendMessage consumes BEFORE the scan/modal — and FIRST DELETEs the discarded turn server-side (delete_messages by id) so the failed attempt can't pollute the retry (the server's session.messages is the wire source of truth; client-only slicing would leave it behind). (4) metadata.gdpr per assistant turn (set in the chat worker at the anonymise / anonymise_failed_local / local_model decision points; RequestContext._gdpr_turn_outcome + session._gdpr_local_swap signals; rides on the done SSE + persisted metadata) is the modal's data source — wire-stripped, audit/display-only. Carries `active`: true only when THIS turn's own input was anonymised (typed PII or an attachment submitted now) or the model was swapped — NOT when anonymise merely re-pseudonymised prior chat history for the wire (which happens every turn of a sticky-anonymise session). The modal fires only on active turns, so the user isn't asked 'did it work?' about untouched history. German UI per house style. js_gate green (net-globals 1232→1235: redoTurnAsGdprMode + gdprFeedbackModal + maybeRunGdprFeedback; eslint clean; smoke 5/5). py compile + runtime-import OK. Migration: sessions.gdpr_feedback_ask (additive). Backend restart required."),
     ("9.93.0", "2026-06-07", "feat(gdpr-precision): minimize PII false positives via per-rule min_occurrences + context gates + a business_id category — outcome of a full one-by-one review of all ~70 detectors. (1) NEW MECHANISM min_occurrences (engine/pii_ner.PII_DEFAULT_MIN_OCCURRENCES + brain._pii_min_occurrences + config gdpr_scanner.min_occurrences): a rule contributes ZERO findings unless ≥N DISTINCT matched values appear; counted per WHOLE DOCUMENT (gates the whole rule per doc), GUI-editable per rule, default 1 (= prior behaviour, so untouched rules unchanged). Applied as a post-pass in _pii_scan_text. Seeded values: date=10, jp_mynumber=10; pl_pesel/no_fnr/gr_amka/bg_egn/ro_cnp/be_national/se_personnummer/ca_sin/uk_nhs/cz_rc/es_dni_nie/dk_cpr=5; at_svnr/us_ssn/credit_card/phone/generic_secret_assignment/svnr_ctx/ssn_ctx_loose/insurance_number_ctx/id_card_ctx/drivers_license_ctx/passport_ctx_loose/bank_account_ctx/health_insurance_ctx=3. (2) CONTEXT GATES: `date` is no longer PII on its own — fires only when a birth/life-event keyword OR a spaCy PERSON name is within ~120 chars (the old `dob` rule is merged in); `address` (spaCy LOC) moved contact→personal/warn and fires only when person-name-adjacent (~120 chars). Both implemented via _name_within + _date_has_birth_context using NER name-spans collected in the same pass. This directly kills the 2026-06 incident (215× date-as-personal → anonymise gutted policy chunks). (3) dk_cpr: added a keyword anchor (CPR|CPR-nr|CPR-nummer|personnummer within ~20 chars) — was the weakest gate (date-prefix only, no checksum). (4) generic_secret_assignment entropy bar raised: value length≥24 AND ≥10 distinct chars (was 20/6). (5) NEW CATEGORY business_id (default action ignore) for company/legal-entity IDs — recategorized br_cnpj, tax_id_ctx (whole rule), and spaCy organisation OUT of personal-data handling (an org/company number isn't personal data). (6) KG mining: whole-document GDPR decision moved into _process_source (scans full file_text once → correct per-doc min_occurrences counting), POLICY-DRIVEN (obeys background_pii_action incl. the v9.92.0 'skip'), replacing the v9.91.0 hardwired pre-check. (7) GDPR settings UI: per-rule min_occurrences number input + the business_id category + client ruleCategories/categoryLabels mirrored; config save/validate accept min_occurrences (reject unknown rule_ids, clamp ≥1). INVARIANT preserved: _pii_rules ordering unchanged (only rule bodies edited in place). js_gate green (net-globals unchanged; smoke 5/5). py compile OK. Backend restart required. NOTE: tuned by rule semantics, NOT against the dev corpus (not production-representative, per user)."),
@@ -1811,6 +1812,42 @@ def extract_attachment_text(path: str) -> tuple[str, str]:
 # near `_classification_action_level`). brain.X / engine.X still resolve.
 
 
+def _review_anon_override(text: str, source: str) -> str | None:
+    """Return a user-reviewed, pre-anonymised version of `text` if one exists.
+
+    INVARIANT-CRITICAL (see handlers/data_review): this only ever returns a
+    stored `anon_text` when ALL hold — a saved review exists for the current
+    user, its status is 'anonymised', and its content hash matches `text`. In
+    every other case it returns None and the caller falls back to today's
+    behaviour exactly. It NEVER introduces anonymisation where the caller wasn't
+    already going to anonymise; callers guard their own "should I anonymise at
+    all" decision and only consult this for WHICH anonymised text to use.
+
+    Matching is by content hash so a renamed/copied file still reuses its
+    review. Best-effort; never raises.
+    """
+    if not text:
+        return None
+    try:
+        uid = get_request_context().current_user_id or ""
+    except Exception:
+        uid = ""
+    if not uid:
+        return None
+    try:
+        from engine import doc_review
+        from server_lib.db import DataReviewDB
+        chash = doc_review.content_hash(text)
+        row = DataReviewDB.get_by_hash(chash, uid, admin=False)
+        if (row and row.get("status") == "anonymised"
+                and row.get("anon_text")
+                and row.get("content_hash") == chash):
+            return row["anon_text"]
+    except Exception as e:
+        print(f"[data_review] anon override lookup failed: {e}", flush=True)
+    return None
+
+
 def _gdpr_anon_tool_text(text: str, source: str) -> str:
     """Pseudonymise text returned from a read-style tool, if the active
     session has a transparent-anonymisation mapping.
@@ -1851,6 +1888,33 @@ def _gdpr_anon_tool_text(text: str, source: str) -> str:
         mapping = _ps.get_mapping(mapping_id)
         if mapping is None:
             return text
+        # Reviewed-anonymisation reuse: if the user has already reviewed +
+        # anonymised THIS exact content (matched by hash), ship their approved
+        # `anon_text` verbatim instead of a fresh scan. We merge the review's
+        # saved de-anon entries into the active per-turn mapping so the reply
+        # de-anonymiser can still reverse the tokens. Guarded so a non-reviewed
+        # file behaves exactly as before (override returns None → fall through).
+        _override = _review_anon_override(text, source)
+        if _override is not None and _override != text:
+            try:
+                _row = None
+                from server_lib.db import DataReviewDB as _DRB
+                from engine import doc_review as _dr
+                _uid = get_request_context().current_user_id or ""
+                _row = _DRB.get_by_hash(_dr.content_hash(text), _uid, admin=False)
+                _rmid = (_row or {}).get("anon_mapping_id") or ""
+                if _rmid:
+                    _rm = _ps.load_mapping(_rmid)
+                    if _rm:
+                        for _orig, _fake in _rm.forward.items():
+                            if _fake not in mapping.reverse:
+                                mapping.forward.setdefault(_orig, _fake)
+                                mapping.reverse[_fake] = _orig
+                                mapping.categories.setdefault(
+                                    _orig, _rm.categories.get(_orig, "unknown"))
+            except Exception as _e:
+                print(f"[data_review] reuse merge failed: {_e}", flush=True)
+            return _override
         cfg = _get_gdpr_scanner_config()
         findings = _pii_scan_text(text, cfg=cfg)
         if not findings:

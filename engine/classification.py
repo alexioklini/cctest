@@ -33,6 +33,31 @@ LEVEL_LABEL_DE = {
 }
 LEVEL_RANK = {"public": 0, "internal": 1, "confidential": 2, "strict": 3}
 
+# Plain-language (German) rationale per classification level — surfaced as the
+# tooltip on a classification marker / mismatch in the document reviewer.
+LEVEL_WHY_DE = {
+    "public":
+        "Als »Öffentlich« eingestuft — keine Vertraulichkeitsbeschränkung.",
+    "internal":
+        "Als »Intern« eingestuft — nur für den internen Gebrauch bestimmt, "
+        "nicht für externe Weitergabe.",
+    "confidential":
+        "Als »Vertraulich« eingestuft — Weitergabe nur an autorisierte "
+        "Empfänger; Übermittlung an externe Dienste vermeiden.",
+    "strict":
+        "Als »Streng Vertraulich« eingestuft — höchste Schutzstufe; darf "
+        "externe Systeme nicht erreichen (WPB ARL 20.02.02.06).",
+    "unmarked":
+        "Keine Klassifizierungs-Kennzeichnung im Dokument gefunden.",
+}
+
+
+def level_why(level: str) -> str:
+    """German explanation for a classification level. Used by engine.doc_review
+    to annotate classification violations for the reviewer tooltip."""
+    return LEVEL_WHY_DE.get(level or "unmarked",
+                            LEVEL_WHY_DE["unmarked"])
+
 
 # ── Marker patterns ───────────────────────────────────────────────────────
 # Each entry: (level, compiled regex, pattern_id). First-match-wins per text;

@@ -967,6 +967,7 @@ from handlers.favourites import FavouritesHandlerMixin
 from handlers.translate import TranslateHandlerMixin
 from handlers.share import ShareHandlerMixin
 from handlers.classification import ClassificationHandlerMixin
+from handlers.data_review import DataReviewHandlerMixin
 from handlers.helpdesk import HelpdeskHandlerMixin
 from handlers.feedback import FeedbackHandlerMixin
 from handlers.background import BackgroundTasksHandlerMixin
@@ -1009,6 +1010,7 @@ def _inject_server_globals():
         TranslateHandlerMixin.__module__,
         ShareHandlerMixin.__module__,
         ClassificationHandlerMixin.__module__,
+        DataReviewHandlerMixin.__module__,
         FeedbackHandlerMixin.__module__,
         BackgroundTasksHandlerMixin.__module__,
     ]
@@ -1038,6 +1040,7 @@ class BrainAgentHandler(
     TranslateHandlerMixin,
     ShareHandlerMixin,
     ClassificationHandlerMixin,
+    DataReviewHandlerMixin,
     HelpdeskHandlerMixin,
     FeedbackHandlerMixin,
     BackgroundTasksHandlerMixin,
@@ -1577,6 +1580,12 @@ class BrainAgentHandler(
             self._handle_classification_scans_list()
         elif path.startswith("/v1/classification/scans/"):
             self._handle_classification_scan_detail(path)
+        elif path == "/v1/data-review/list":
+            self._handle_data_review_list()
+        elif path.startswith("/v1/data-review/") and path.endswith("/export"):
+            self._handle_data_review_export(path)
+        elif path.startswith("/v1/data-review/"):
+            self._handle_data_review_get(path)
         elif path == "/v1/research-mode/disciplines":
             self._handle_research_mode_disciplines_get()
         elif path == "/v1/gdpr/ner-models":
@@ -1928,6 +1937,16 @@ class BrainAgentHandler(
             self._handle_classification_scan_folder()
         elif path == "/v1/classification/scan-project":
             self._handle_classification_scan_project()
+        elif path == "/v1/data-review/analyze":
+            self._handle_data_review_analyze()
+        elif path == "/v1/data-review/overrule":
+            self._handle_data_review_overrule()
+        elif path == "/v1/data-review/anonymise":
+            self._handle_data_review_anonymise()
+        elif path == "/v1/data-review/revert":
+            self._handle_data_review_revert()
+        elif path == "/v1/data-review/state":
+            self._handle_data_review_state()
         elif path == "/v1/research-mode/disciplines":
             self._handle_research_mode_disciplines_save()
         elif path == "/v1/gdpr/ner-models":
@@ -2153,6 +2172,8 @@ class BrainAgentHandler(
             self._handle_translate_history_delete(entry_id)
         elif path.startswith("/v1/classification/scans/"):
             self._handle_classification_scan_delete(path)
+        elif path.startswith("/v1/data-review/"):
+            self._handle_data_review_delete(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 

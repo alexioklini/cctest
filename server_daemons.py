@@ -2260,6 +2260,44 @@ def _project_sync_loop(srv):
                             continue
                         folder_filed = 0
                         folder_err = ""
+                        # GDPR/classification review refresh — re-run the review
+                        # for each file in this folder so badges stay current
+                        # after a content change. UNCHANGED files are a cheap
+                        # hash-compare no-op (review_file_to_db skips), so the
+                        # user's prior overrules/anonymisation are reused, never
+                        # re-prompted. Owner = project creator (badges are
+                        # per-user; this refreshes the owner's view). Best-effort.
+                        try:
+                            _rev_owner = (project.get("created_by") or "").strip()
+                            if _rev_owner:
+                                from engine import doc_review as _dr
+                                from engine.doc_convert import SUPPORTED_EXTS as _SE
+                                _accept = set(_SE) | {".md", ".markdown", ".txt",
+                                                      ".html", ".htm", ".csv"}
+                                _rev_n = 0
+                                with engine.request_context(current_user_id=_rev_owner):
+                                    for _rroot, _rdirs, _rnames in os.walk(fpath):
+                                        _rdirs[:] = [d for d in _rdirs
+                                                     if not d.startswith(".")]
+                                        for _rn in _rnames:
+                                            if _rn.startswith("."):
+                                                continue
+                                            if os.path.splitext(_rn)[1].lower() not in _accept:
+                                                continue
+                                            _rp = os.path.join(_rroot, _rn)
+                                            _dr.review_file_to_db(
+                                                _rp, user_id=_rev_owner,
+                                                source_kind="project_path",
+                                                source_ref=os.path.realpath(_rp),
+                                                filename=_rn)
+                                            _rev_n += 1
+                                            if _rev_n >= 500:
+                                                break
+                                        if _rev_n >= 500:
+                                            break
+                        except Exception as _re:
+                            print(f"[project-sync] review refresh {fpath}: "
+                                  f"{_re}", flush=True)
                         # PDF/DOCX → .md pre-mine pass. Without this the
                         # MemPalace miner silently skips binary documents
                         # (its READABLE_EXTENSIONS list is text-only).

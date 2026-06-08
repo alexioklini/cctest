@@ -477,7 +477,18 @@ class ProjectsHandlerMixin:
             _srv()._project_sync_wakeup.set()
         except Exception:
             pass
-        self._send_json({"status": "added", "folders": folders})
+        # Auto-run the GDPR/classification review synchronously so the tree
+        # badges are correct on first render (bounded; the daemon refreshes the
+        # remainder on its re-mine pass). Best-effort — never fails the add.
+        reviewed = 0
+        try:
+            reviewed = self._auto_review_folder(
+                user=getattr(self, "_auth_user", None) or {},
+                folder=resolved, recursive=recursive)
+        except Exception as _e:
+            print(f"[data_review] folder auto-review failed: {_e}", flush=True)
+        self._send_json({"status": "added", "folders": folders,
+                         "reviewed": reviewed})
 
     def _handle_project_input_folders_delete(self, path: str):
         """DELETE /v1/agents/{id}/projects/{name}/input-folders/{idx}"""
@@ -1110,6 +1121,24 @@ class ProjectsHandlerMixin:
                 agent_id, tmp_path, project_name=project_name,
                 tags=tags, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
             )
+            # Auto-review the uploaded file synchronously BEFORE the temp file
+            # is deleted, keyed by the resulting source_hash so the ingested
+            # node's badge resolves. Best-effort. Project-uploaded files have
+            # no persisted original on disk, so the review's source_ref is the
+            # source_hash (reviewer re-fetches its text from the review row).
+            try:
+                shash = (result or {}).get("source_hash") or ""
+                user = getattr(self, "_auth_user", None) or {}
+                uid = (user.get("id") or user.get("user_id")
+                       or user.get("username") or "")
+                if shash and uid and "error" not in (result or {}):
+                    from engine import doc_review as _dr
+                    _dr.review_file_to_db(
+                        tmp_path, user_id=uid, source_kind="project_doc",
+                        source_ref=shash, filename=filename)
+            except Exception as _e:
+                print(f"[data_review] ingest auto-review failed: {_e}",
+                      flush=True)
             return result
         finally:
             try:
@@ -1137,6 +1166,23 @@ class ProjectsHandlerMixin:
         if self._project_access_check(agent_id, proj_name) is None:
             return
         docs = engine.IngestManager.list_ingested(agent_id, project_name=proj_name)
+        # Annotate each ingested doc with its review badge state (keyed by
+        # source_hash for project_doc-kind reviews). Cheap DB reads.
+        _ruser = getattr(self, "_auth_user", None) or {}
+        _ruid = (_ruser.get("id") or _ruser.get("user_id")
+                 or _ruser.get("username") or "")
+        if _ruid:
+            try:
+                from engine import review_state as _rs
+                for d in docs or []:
+                    sh = d.get("source_hash") or ""
+                    if not sh:
+                        continue
+                    st = _rs.review_state(source_kind="project_doc",
+                                          source_ref=sh, user_id=_ruid)
+                    d["review"] = st.get("state") if st.get("state") != "none" else None
+            except Exception:
+                pass
         self._send_json({"agent": agent_id, "project": proj_name, "documents": docs})
 
     def _handle_project_folder_tree(self, path: str):
@@ -1193,6 +1239,24 @@ class ProjectsHandlerMixin:
         # Walk the folder (depth-bounded) → nested {name,type,children|state}.
         _SKIP = {".brain-extracted", ".git", "__pycache__", ".DS_Store"}
 
+        # Review badge state per file (GDPR/classification reviewer). Keyed by
+        # the file's real path for project_path-kind reviews. Cheap DB reads.
+        _ruser = getattr(self, "_auth_user", None) or {}
+        _ruid = (_ruser.get("id") or _ruser.get("user_id")
+                 or _ruser.get("username") or "")
+
+        def _review_for(fp):
+            if not _ruid:
+                return None
+            try:
+                from engine import review_state as _rs
+                st = _rs.review_state(source_kind="project_path",
+                                      source_ref=os.path.realpath(fp),
+                                      user_id=_ruid)
+                return st.get("state") if st.get("state") != "none" else None
+            except Exception:
+                return None
+
         def _state_for(fp):
             """Return {mined, kg, skip_reason} for one file.
             mined: 'indexed' (drawers present) | 'pending' (not yet mined).
@@ -1226,7 +1290,8 @@ class ProjectsHandlerMixin:
                     # are the new per-doc fields the project view reads.
                     kids.append({"name": name, "type": "file", "path": fp,
                                  "state": st["mined"], "mined": st["mined"],
-                                 "kg": st["kg"], "skip_reason": st["skip_reason"]})
+                                 "kg": st["kg"], "skip_reason": st["skip_reason"],
+                                 "review": _review_for(fp)})
             return kids
 
         self._send_json({"path": real, "tree": _walk(real),

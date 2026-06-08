@@ -65,6 +65,36 @@ function collectChatAttachments() {
   return attachments;
 }
 
+// GDPR review state for attachment files (keyed by disk path). Populated by a
+// batch /v1/data-review/state fetch; drives the badge on each card.
+let _attachReviewStates = {};
+const _ATTACH_REVIEW_BADGE = {
+  anonymised: { icon: '🛡️', cls: 'review-badge-anonymised', tip: 'Anonymisiert — das LLM erhält die anonymisierte Version.' },
+  violations: { icon: '⚠️', cls: 'review-badge-violations', tip: 'GDPR/Klassifizierungs-Verstöße gefunden.' },
+  checked:    { icon: '✓', cls: 'review-badge-checked', tip: 'Geprüft — keine offenen Verstöße.' },
+};
+function _attachReviewBadge(rev) {
+  const info = _ATTACH_REVIEW_BADGE[rev];
+  if (!info) return '';
+  return ` <span class="review-badge ${info.cls}" title="${esc(info.tip)}">${info.icon}</span>`;
+}
+async function _fetchAttachReviewStates(paths) {
+  const want = (paths || []).filter(p => p && !(p in _attachReviewStates));
+  if (!want.length) return;
+  try {
+    const resp = await API.post('/v1/data-review/state', {
+      refs: want.map(p => ({ kind: 'project_path', ref: p })),
+    });
+    const st = resp.states || {};
+    let changed = false;
+    for (const p of want) {
+      const s = (st[p] && st[p].state && st[p].state !== 'none') ? st[p].state : null;
+      if (_attachReviewStates[p] !== s) { _attachReviewStates[p] = s; changed = true; }
+    }
+    if (changed) renderAttachmentsPane();
+  } catch (_) {}
+}
+
 function renderAttachmentsPane() {
   const attachments = collectChatAttachments();
   const grid = document.getElementById('attachments-grid');
@@ -79,6 +109,9 @@ function renderAttachmentsPane() {
   }
   empty.style.display = 'none';
   grid.style.display = '';
+  // Fire-and-forget: fetch review badge states for on-disk attachments. The
+  // in-flight guard (path already in the map) prevents a render→fetch loop.
+  _fetchAttachReviewStates(attachments.map(a => a.path).filter(Boolean));
   // Card-list layout — same shape as the Artifacts list (`.artifact-list` +
   // `.artifact-list-card`) so the panes feel consistent. Grouped into
   // collapsible per-turn sections via the global attachment-index `i`
@@ -96,13 +129,19 @@ function renderAttachmentsPane() {
     const ext = (a.name?.split('.').pop() || '').toUpperCase();
     const meta = [a.type || (ext ? ext.toLowerCase() : ''), a.path ? 'on disk' : 'inline']
       .filter(Boolean).join(' · ');
+    const rev = a.path ? (_attachReviewStates[a.path] || null) : null;
+    const revBadge = _attachReviewBadge(rev);
+    const reviewBtn = a.path
+      ? `<button class="pt-act" title="GDPR/Klassifizierung prüfen" onclick="event.stopPropagation(); drOpenProjectFile({path:${JSON.stringify(a.path)}})">⚖</button>`
+      : '';
     return `
       <div class="artifact-list-card" onclick="showAttachmentFullview(${i})">
         <span class="alc-icon">${iconHtml}</span>
         <div class="alc-info">
-          <div class="alc-name">${esc(a.name || 'Untitled')}</div>
+          <div class="alc-name">${esc(a.name || 'Untitled')}${revBadge}</div>
           <div class="alc-meta">${esc(meta)}</div>
         </div>
+        <span class="alc-actions">${reviewBtn}</span>
       </div>`;
   };
   // Bucket attachment indices by turn.
