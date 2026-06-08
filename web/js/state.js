@@ -57,6 +57,9 @@ const state = {
   // auto-open on new references/artifacts for the rest of the page session
   // (reset only on reload). User-initiated opens still work.
   userClosedRightPanel: false,
+  // One-shot GDPR mode override for "redo this turn as <mode>" (chat_render.js
+  // → consumed by sendMessage). Empty = normal scan/modal flow.
+  _gdprActionOverride: '',
   get artifactPanelOpen() { return this.rightPanelOpen && this.rightPanelTab === 'artifacts'; },
   get referencesPanelOpen() { return this.rightPanelOpen && this.rightPanelTab === 'references'; },
   chatReferences: {},  // sessionId -> [{title, link, snippet, domain, favicon}]

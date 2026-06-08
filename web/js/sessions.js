@@ -107,6 +107,7 @@ async function openSession(sessionId, agentId) {
   chat.chatSummary = '';
   chat.chatTitle = '';
   chat.gdprActionPref = '';
+  chat.gdprFeedbackAsk = false;
   chat.hasGdprMapping = false;
   chat.streamingText = '';
   chat.thinkingText = '';
@@ -154,6 +155,8 @@ async function openSession(sessionId, agentId) {
       : !!data.research_mode_override;
     // Sticky 'allow further web search/fetch' escape hatch (Websuche tab).
     chat.allowFurtherWeb = !!data.allow_further_web;
+    // Sticky opt-in for the post-turn GDPR feedback modal.
+    chat.gdprFeedbackAsk = !!data.gdpr_feedback_ask;
     // Per-session Websuche basket — load THIS session's own curated sources.
     // Never inherit the basket of the chat we just left.
     if (typeof webBasketLoadFromJson === 'function') webBasketLoadFromJson(data.web_basket || '');
@@ -470,6 +473,7 @@ function newChat() {
   // Sticky PII consent ("auto-continue past warnings") is per-session — a
   // fresh chat must re-prompt, never inherit the prior chat's consent.
   chat.gdprActionPref = '';
+  chat.gdprFeedbackAsk = false;
   chat.hasGdprMapping = false;
   chat.messages = [];
   chat.totalTokens = 0;

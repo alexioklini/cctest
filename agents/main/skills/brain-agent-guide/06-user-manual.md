@@ -837,6 +837,20 @@ A: Das Modal vor dem Senden bietet:
   Admin-Decrypt-Map wird für späteres Audit gespeichert)
 - **Whitelist** — einmaliges Erlauben (z. B. die eigene E-Mail-Adresse)
 
+**F: Kann ich nachträglich prüfen, ob die GDPR-Aktion funktioniert hat?**
+A: Ja — im Modal vor dem Senden (anonymisieren / lokales Modell / weiter) gibt
+es die Option **„Frag mich nachher wies gelaufen ist"**. Ist sie angehakt,
+erscheint nach jeder Anfrage mit Datenschutz-Aktion ein **Rückmeldungs-Dialog**
+(„Hat es gepasst?"). Dort kannst du:
+- **Passt so** wählen — das Ergebnis bleibt; oder
+- dieselbe Anfrage **mit einer anderen Methode erneut senden** (Anonymisieren /
+  Lokales Modell / Unverändert senden). Der vorherige Versuch wird dabei
+  verworfen, damit er das neue Ergebnis nicht beeinflusst.
+
+Die gewählte Methode wird für die Folge-Anfragen gemerkt. Der Dialog hat eine
+Checkbox **„Frag mich weiter wies gelaufen ist"** (standardmäßig an) — hakst du
+sie ab, kommt der Rückmeldungs-Dialog nicht mehr.
+
 **F: Kann der Agent sehen, was ich hochgeladen habe?**
 A: Ja — Uploads landen im Sitzungsordner. Erreichbar über `read_document`
 (reiche Formate) oder `read_file` (Klartext). Der **Anhänge**-Tab im

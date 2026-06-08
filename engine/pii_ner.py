@@ -429,7 +429,13 @@ def _pii_rules() -> list[dict]:
         return 8 <= len(d) <= 15
 
     def _ipv4_ok(m: str) -> bool:
-        return not any(m.startswith(p) for p in ("0.", "127.", "255.", "169.254."))
+        # The match string may carry a leading context keyword (e.g.
+        # "Gateway 192.168.1.1"), so extract the dotted-quad before validating.
+        g = _re.search(r"(?:\d{1,3}\.){3}\d{1,3}", m)
+        if not g:
+            return False
+        quad = g.group(0)
+        return not any(quad.startswith(p) for p in ("0.", "127.", "255.", "169.254."))
 
     def _us_ssn_dashed_ok(m: str) -> bool:
         a, b, c = m.split("-")
@@ -785,8 +791,22 @@ def _pii_rules() -> list[dict]:
          # mapping dict as e.g. `'DE89…000 '` and confuses the audit view).
          "re": _re.compile(r"\b[A-Z]{2}\d{2}[ ]?[A-Z0-9](?:[ ]?[A-Z0-9]){10,29}\b"),
          "ok": _iban_ok},
+        # IPv4 — CONTEXT-REQUIRED. A bare dotted quad like 20.2.4.3 is
+        # byte-identical to a document clause/section number (e.g. "Formular
+        # 20.2.4.3S", numbered criteria lists "20.2.2.0 20.2.2.1 …"), so the
+        # octet-validated shape alone is NOT sufficient — it produced pure
+        # false positives across the policy corpus. Fire only when an IP-ish
+        # keyword sits immediately before the address. The capture group holds
+        # the address; _ipv4_ok validates the captured quad (group 1).
         {"id": "ipv4", "label": "IPv4 address",
-         "re": _re.compile(r"(?<!\d)(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?!\d)"),
+         "re": _re.compile(
+             r"(?:\bIP(?:v4)?(?:[- ]?Adresse|[- ]?address)?\b|\bAdresse\b|"
+             r"\bGateway\b|\bSubnet(?:z)?\b|\bNetmask\b|\bNetzmaske\b|"
+             r"\bDNS\b|\bHost\b|\bServer\b|\bRouter\b|\bFirewall\b)"
+             r"[^\d\n]{0,20}"
+             r"((?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}"
+             r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))(?!\d)",
+             _re.IGNORECASE),
          "ok": _ipv4_ok},
         {"id": "ipv6", "label": "IPv6 address",
          "re": _re.compile(r"\b(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}\b")},

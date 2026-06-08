@@ -183,6 +183,12 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
           flex-wrap:wrap;
         }
         .pii-actions-spacer { flex:1; }
+        .pii-ask-after {
+          display:flex; align-items:center; gap:7px;
+          font-size:12px; color:var(--text-200); cursor:pointer;
+          user-select:none;
+        }
+        .pii-ask-after input { cursor:pointer; }
         .pii-suppress-note {
           margin:0; font-size:11px; color:var(--text-300);
           line-height:1.4;
@@ -432,6 +438,11 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
               localBtn +
               anonBtn +
             '</div>' +
+            // Opt-in: ask the user afterwards whether the chosen method worked.
+            // Off by default — only when ticked does the post-turn GDPR feedback
+            // modal (gdprFeedbackModal) fire on subsequent turns.
+            '<label class="pii-ask-after"><input type="checkbox" id="pii-ask-after"> ' +
+            'Frag mich nachher wies gelaufen ist</label>' +
             '<p class="pii-suppress-note">Die Auswahl gilt für den Rest dieses Chats. ' +
             'Über das Schild-Symbol unter dem Eingabefeld lässt sich die Wahl jederzeit zurücksetzen.</p>' +
           '</div>' +
@@ -443,8 +454,12 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
     document.body.appendChild(overlay);
     const cleanup = (verdict) => {
       document.removeEventListener('keydown', onKey);
+      // Capture the "ask me afterwards" opt-in before tearing down. Only
+      // meaningful when the user actually proceeds (not on cancel).
+      const askAfter = !!document.getElementById('pii-ask-after')?.checked
+                       && verdict !== 'cancel';
       overlay.remove();
-      resolve({ verdict });
+      resolve({ verdict, askAfter });
     };
     const onKey = (e) => { if (e.key === 'Escape') cleanup('cancel'); };
     document.addEventListener('keydown', onKey);
@@ -528,6 +543,118 @@ function gdprRecoveryModal(detail, chat) {
     document.getElementById('pii-rec-cancel').onclick = () => cleanup('cancel');
     document.getElementById('pii-rec-local').onclick = () => cleanup('local_model');
     setTimeout(() => document.getElementById('pii-rec-local')?.focus(), 50);
+  });
+}
+
+/** Post-turn GDPR feedback modal. Fires after a turn that took a GDPR action
+ *  (anonymise / local swap) when the session opted in via "Frag mich nachher".
+ *  Asks the user whether it worked and lets them retry the SAME turn with a
+ *  different method or abort. The "Frag mich weiter wies gelaufen ist" checkbox
+ *  (default checked) keeps the opt-in alive — unchecking it stops future
+ *  prompts (the chosen method is reused on subsequent turns either way).
+ *
+ *  `gdpr` is the turn's metadata.gdpr (mode + counts). Resolves with
+ *  { action: 'redo'|'dismiss', mode?, keepAsking:bool }. 'redo' carries the
+ *  chosen mode ∈ {anonymise, local_model, continue}; 'dismiss' = keep result.
+ *
+ *  Reuses the gdprActionModal stylesheet (`pii-modal-styles-v3`). */
+function gdprFeedbackModal(gdpr) {
+  return new Promise((resolve) => {
+    gdpr = gdpr || {};
+    // Inject the shared modal styles if no GDPR modal ran yet this page life
+    // (sticky-pref turns skip the pre-send modal, so they may be first).
+    if (!document.getElementById('pii-modal-styles-v3')) {
+      const st = document.createElement('style');
+      st.id = 'pii-modal-styles-v3';
+      st.textContent =
+        '@keyframes pii-fade-in{from{opacity:0}to{opacity:1}}' +
+        '@keyframes pii-pop-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}' +
+        '.pii-overlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(20,18,16,.52);backdrop-filter:blur(4px);padding:20px;animation:pii-fade-in .15s ease-out}' +
+        '.pii-card{width:min(560px,100%);background:var(--bg-000,#faf9f7);border-radius:14px;box-shadow:0 20px 50px -16px rgba(31,30,29,.32);overflow:hidden;animation:pii-pop-in .18s ease-out}' +
+        '.pii-header{display:flex;gap:14px;padding:18px 22px 14px;border-bottom:1px solid var(--border-100)}' +
+        '.pii-shield{flex:none;width:36px;height:36px;border-radius:9px;background:#dcfce7;color:#166534;display:flex;align-items:center;justify-content:center}' +
+        '.pii-title{font-size:15px;font-weight:600;margin:0;color:var(--text-000)}' +
+        '.pii-subtitle{font-size:12.5px;margin:4px 0 0;color:var(--text-300);line-height:1.45}' +
+        '.pii-body{padding:14px 22px 16px}' +
+        '.pii-footer{padding:14px 22px 16px;border-top:1px solid var(--border-100);display:flex;flex-direction:column;gap:10px}' +
+        '.pii-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}' +
+        '.pii-actions-spacer{flex:1}' +
+        '.pii-btn{padding:7px 13px;font-size:12.5px;font-weight:500;border-radius:8px;cursor:pointer;font-family:inherit;border:1px solid transparent}' +
+        '.pii-btn-text{background:transparent;color:var(--text-200);border:1px solid var(--border-200)}' +
+        '.pii-btn-secondary{background:var(--bg-200);color:var(--text-100);border:1px solid var(--border-200)}' +
+        '.pii-btn-primary{background:#0d6efd;color:#fff}' +
+        '.pii-ask-after{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-200);cursor:pointer;user-select:none}';
+      document.head.appendChild(st);
+    }
+    // Honest one-line summary of what happened this turn.
+    let summary;
+    if (gdpr.mode === 'anonymise') {
+      const n = Number(gdpr.tokens_minted || gdpr.findings || 0);
+      const r = Number(gdpr.restored || 0);
+      summary = `${n} personenbezogene${n === 1 ? 's Datum' : ' Daten'} anonymisiert`
+        + (r ? `, ${r} in der Antwort wiederhergestellt.` : '.');
+    } else if (gdpr.mode === 'local_model') {
+      summary = `Die Anfrage wurde lokal beantwortet${gdpr.model ? ` (${esc(gdpr.model)})` : ''} — die Daten verließen das Gerät nicht.`;
+    } else if (gdpr.mode === 'anonymise_failed_local') {
+      summary = `Die Anonymisierung schlug fehl, daher wurde lokal beantwortet${gdpr.model ? ` (${esc(gdpr.model)})` : ''}.`;
+    } else {
+      summary = 'Für diese Anfrage wurde eine Datenschutz-Aktion angewendet.';
+    }
+    // Offer the two methods NOT just used as retry options.
+    const usedMode = (gdpr.mode === 'anonymise_failed_local') ? 'local_model' : gdpr.mode;
+    const MODE_LABELS = { anonymise: 'Anonymisieren', local_model: 'Lokales Modell', continue: 'Unverändert senden' };
+    const altBtns = ['anonymise', 'local_model', 'continue']
+      .filter(m => m !== usedMode)
+      .map(m => `<button class="pii-btn pii-btn-secondary" data-redo-mode="${m}">${MODE_LABELS[m]}</button>`)
+      .join('');
+    const shieldSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/><path d="M9 12l2 2 4-4"/></svg>';
+    const modalId = 'pii-feedback-modal';
+    document.getElementById(modalId)?.remove();
+    const html =
+      '<div class="pii-overlay" id="' + modalId + '">' +
+        '<div class="pii-card" role="dialog" aria-modal="true" aria-labelledby="pii-fb-title">' +
+          '<div class="pii-header">' +
+            '<div class="pii-shield" aria-hidden="true">' + shieldSvg + '</div>' +
+            '<div class="pii-header-text">' +
+              '<h2 id="pii-fb-title" class="pii-title">Hat es gepasst?</h2>' +
+              '<p class="pii-subtitle">' + summary + '</p>' +
+            '</div>' +
+          '</div>' +
+          '<div class="pii-body">' +
+            '<p style="margin:0;font-size:12.5px;color:var(--text-300);line-height:1.5;">' +
+            'Wenn die gewählte Methode nicht gepasst hat, kannst du dieselbe Anfrage ' +
+            'mit einer anderen Methode erneut senden. Der vorherige Versuch wird dabei verworfen.' +
+            '</p>' +
+          '</div>' +
+          '<div class="pii-footer">' +
+            '<div class="pii-actions">' +
+              '<button class="pii-btn pii-btn-text" id="pii-fb-dismiss">Passt so</button>' +
+              '<div class="pii-actions-spacer"></div>' +
+              altBtns +
+            '</div>' +
+            '<label class="pii-ask-after"><input type="checkbox" id="pii-fb-keep" checked> ' +
+            'Frag mich weiter wies gelaufen ist</label>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    const overlay = wrap.firstElementChild;
+    document.body.appendChild(overlay);
+    const cleanup = (action, mode) => {
+      const keepAsking = !!document.getElementById('pii-fb-keep')?.checked;
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      resolve({ action, mode: mode || null, keepAsking });
+    };
+    const onKey = (e) => { if (e.key === 'Escape') cleanup('dismiss'); };
+    document.addEventListener('keydown', onKey);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup('dismiss'); });
+    document.getElementById('pii-fb-dismiss').onclick = () => cleanup('dismiss');
+    overlay.querySelectorAll('[data-redo-mode]').forEach(btn => {
+      btn.onclick = () => cleanup('redo', btn.getAttribute('data-redo-mode'));
+    });
+    setTimeout(() => document.getElementById('pii-fb-dismiss')?.focus(), 50);
   });
 }
 

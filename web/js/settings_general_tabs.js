@@ -1419,7 +1419,7 @@ async function _genTab_gdpr(C) {
           return `<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border-100)">
             <code style="font-size:10px;color:var(--text-400);min-width:160px">${esc(rid)}</code>
             <span style="flex:1;font-size:11px;color:var(--text-200)">${esc(ruleLabel(rid))}</span>
-            <input type="number" min="1" class="form-input gdpr-rule-minocc" data-rule="${esc(rid)}" value="${mo!=null?esc(String(mo)):''}" placeholder="1" title="Mindestanzahl UNTERSCHIEDLICHER Treffer im Dokument, bevor diese Regel auslöst (Standard 1)" style="width:64px;font-size:11px">
+            <input type="number" min="1" class="form-input gdpr-rule-minocc" data-rule="${esc(rid)}" value="${mo!=null?esc(String(mo)):'1'}" title="Mindestanzahl UNTERSCHIEDLICHER Treffer im Dokument, bevor diese Regel auslöst (1 = bei jedem Treffer)" style="width:64px;font-size:11px">
             <select class="form-select gdpr-rule-override" data-rule="${esc(rid)}" style="width:150px;font-size:11px">
               <option value="">Kategorie verwenden (${catAction})</option>
               <option value="ignore" ${ovr==='ignore'?'selected':''}>Ignorieren</option>

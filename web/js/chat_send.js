@@ -121,7 +121,20 @@ async function sendMessage() {
   // resolved this turn. Used by the classification fallback gate below
   // to avoid a second modal when the user just chose in the unified one.
   let unifiedModalRan = false;
-  if (state.piiScannerEnabled !== false) {
+  // Per-turn "redo as <mode>" override (set by redoTurnAsGdprMode in
+  // chat_render.js). The user already saw the previous turn's GDPR outcome
+  // and explicitly chose a different mode — honour it directly, skipping the
+  // scan + modal. One-shot: consumed here so the next normal send re-scans.
+  const _gdprOverride = (state._gdprActionOverride || '').trim();
+  state._gdprActionOverride = '';
+  if (_gdprOverride && ['anonymise', 'local_model', 'continue'].includes(_gdprOverride)) {
+    gdprAction = _gdprOverride;
+    // Persist as the sticky session pref so subsequent turns keep the chosen
+    // mode (matches the modal's own consent-gate behaviour).
+    chat.gdprActionPref = _gdprOverride;
+    if (_gdprOverride === 'anonymise') chat.hasGdprMapping = true;
+    if (chat.sessionId) API.updateGdprActionPref(chat.sessionId, _gdprOverride).catch(() => {});
+  } else if (state.piiScannerEnabled !== false) {
     // Sticky session preference: if the user previously made a choice in
     // this chat OR the session already has an anonymisation mapping (which
     // implies the user picked Anonymise earlier), skip the modal and reuse
@@ -222,8 +235,15 @@ async function sendMessage() {
       if (scan.findings.length || classifiedFiles.length) {
         const localActive = isModelLocal(chat.model || '');
         unifiedModalRan = true;
-        const { verdict } = await gdprActionModal(scan, chat, localActive, classifiedFiles);
+        const { verdict, askAfter } = await gdprActionModal(scan, chat, localActive, classifiedFiles);
         if (verdict === 'cancel') return;
+        // "Frag mich nachher wies gelaufen ist" — opt into the post-turn
+        // feedback modal for this session. Persist + cache locally so the
+        // done-handler knows to fire it without a round-trip.
+        if (askAfter && chat.sessionId) {
+          chat.gdprFeedbackAsk = true;
+          API.updateGdprFeedbackAsk(chat.sessionId, true).catch(() => {});
+        }
         if (verdict === 'local') {
           // Server-side swap: chat worker handles model switching when it sees
           // gdpr_action='local_model'. We forward the choice rather than
@@ -941,6 +961,12 @@ function buildStreamCallbacks(chat, isActive) {
         if (Array.isArray(d.gdpr_restored_spans) && d.gdpr_restored_spans.length) {
           assistantMsg.metadata.gdpr_restored_spans = d.gdpr_restored_spans;
         }
+        // Per-turn GDPR outcome (anonymise / local-fallback). Kept on the turn
+        // metadata as the data source for the post-turn feedback modal below
+        // (fired only when the session opted into "Frag mich nachher").
+        if (d.gdpr && typeof d.gdpr === 'object') {
+          assistantMsg.metadata.gdpr = d.gdpr;
+        }
         // Persist the auto-route classification + routing/tool-gating decision
         // onto the turn metadata so the per-turn classification chip + modal
         // work on the live turn identically to a reloaded one.
@@ -1026,6 +1052,18 @@ function buildStreamCallbacks(chat, isActive) {
         if (isActive()) {
           NextPrompt.fetchFor(chat.sessionId);
         }
+
+        // ── Post-turn GDPR feedback modal ──
+        // Only when: the session opted in ("Frag mich nachher") AND this turn
+        // ACTIVELY took a GDPR action on the user's OWN input (d.gdpr.active).
+        // d.gdpr is present on every turn of a sticky-anonymise session — even
+        // when the user typed clean text and anonymise merely re-pseudonymised
+        // prior chat history — so we gate on `active` to avoid asking "did it
+        // work?" about untouched history. Fire-and-forget; never blocks done.
+        if (isActive() && chat.gdprFeedbackAsk && d.gdpr && d.gdpr.active
+            && typeof gdprFeedbackModal === 'function') {
+          maybeRunGdprFeedback(chat, d.gdpr);
+        }
       },
       error: (d) => {
         chat.streaming = false;
@@ -1051,6 +1089,36 @@ function buildStreamCallbacks(chat, isActive) {
       },
   };
 }
+
+/** Open the post-turn GDPR feedback modal and act on the user's choice.
+ *  - "Passt so" (dismiss): nothing changes; result stands.
+ *  - retry method: re-run THIS turn in the chosen mode (redoTurnAsGdprMode,
+ *    which deletes the discarded attempt server-side first).
+ *  - "Frag mich weiter" unchecked: clear the session opt-in (no more prompts);
+ *    the chosen method is still reused on later turns via the sticky pref.
+ *  Async + isolated — a failure here must never disturb the finished turn. */
+async function maybeRunGdprFeedback(chat, gdpr) {
+  let res;
+  try {
+    res = await gdprFeedbackModal(gdpr);
+  } catch (e) {
+    return;
+  }
+  if (!res) return;
+  // Persist the keep-asking choice. Unchecking stops future feedback modals.
+  if (!res.keepAsking) {
+    chat.gdprFeedbackAsk = false;
+    if (chat.sessionId) API.updateGdprFeedbackAsk(chat.sessionId, false).catch(() => {});
+  }
+  if (res.action === 'redo' && res.mode) {
+    // The assistant reply for this turn is the last message in chat.messages.
+    const lastIdx = (chat.messages?.length || 0) - 1;
+    if (lastIdx >= 0 && typeof redoTurnAsGdprMode === 'function') {
+      redoTurnAsGdprMode(lastIdx, res.mode);
+    }
+  }
+}
+
 /** Stream ended without a 'done' event — flush any partial text and reset UI.
  *  Guarded by streamGen so a stale safety-net can't kill a newer stream. */
 function _streamSafetyNet(chat, isActive, streamGen) {

@@ -498,15 +498,16 @@ function collectGdprFormConfig() {
     if (rid && sel.value) rule_overrides[rid] = sel.value;
   }
 
-  // Per-rule min_occurrences — only send explicit values (blank = use default).
+  // Per-rule min_occurrences — write EVERY rule (full snapshot, like
+  // categories), so config.json is the single source of truth and blanking a
+  // field never silently reverts to a hidden code default. A blank/invalid
+  // input means the universal floor 1 (fire on any single match).
   const min_occurrences = {};
   for (const inp of document.querySelectorAll('.gdpr-rule-minocc')) {
     const rid = inp.dataset.rule;
-    const v = (inp.value || '').trim();
-    if (rid && v) {
-      const n = parseInt(v, 10);
-      if (Number.isFinite(n) && n >= 1) min_occurrences[rid] = n;
-    }
+    if (!rid) continue;
+    const n = parseInt((inp.value || '').trim(), 10);
+    min_occurrences[rid] = (Number.isFinite(n) && n >= 1) ? n : 1;
   }
 
   const allowlistRaw = document.getElementById('gdpr-email-allowlist')?.value || '';

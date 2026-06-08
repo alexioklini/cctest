@@ -475,6 +475,16 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN allow_further_web INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+            # Sticky per-session opt-in: when 1, the post-turn GDPR feedback
+            # modal (gdprFeedbackModal) fires after every turn that took a GDPR
+            # action, so the user can retry with a different method or abort.
+            # Set when the user ticks "Frag mich nachher" in the pre-send modal;
+            # cleared when they untick "Frag mich weiter" in the feedback modal.
+            # Default 0 (no feedback prompts).
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN gdpr_feedback_ask INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             # Per-session Websuche basket: the user-curated set of web sources
             # (JSON list of {url,title,snippet,query,enabled}). Stored per
             # session so it never leaks between chats — a fresh chat starts
@@ -1698,6 +1708,16 @@ class ChatDB:
         escape hatch). value: truthy -> 1 (allow), falsy -> 0 (locked)."""
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET allow_further_web = ? WHERE id = ?",
+                        (1 if value else 0, session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_gdpr_feedback_ask(session_id, value):
+        """Per-session 'ask me afterwards how the GDPR action went' flag.
+        value: truthy -> 1 (show the post-turn feedback modal), falsy -> 0."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET gdpr_feedback_ask = ? WHERE id = ?",
                         (1 if value else 0, session_id))
             conn.commit()
 

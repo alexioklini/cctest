@@ -135,6 +135,7 @@ class SessionsHandlerMixin:
             _rmo = getattr(session, "research_mode_override", None)
             resp["research_mode_override"] = (None if _rmo is None else bool(_rmo))
             resp["allow_further_web"] = bool(getattr(session, "allow_further_web", False))
+            resp["gdpr_feedback_ask"] = bool(getattr(session, "gdpr_feedback_ask", False))
             resp["web_basket"] = getattr(session, "web_basket", "") or ""
             resp["gdpr_action_pref"] = getattr(session, "gdpr_action_pref", "") or ""
             resp["has_gdpr_mapping"] = bool(
@@ -159,6 +160,7 @@ class SessionsHandlerMixin:
                 resp["research_mode_override"] = (None if _rmo_db is None
                                                    else bool(_rmo_db))
                 resp["allow_further_web"] = bool(info.get("allow_further_web", 0))
+                resp["gdpr_feedback_ask"] = bool(info.get("gdpr_feedback_ask", 0))
                 resp["web_basket"] = info.get("web_basket", "") or ""
                 _pref_db = info.get("gdpr_action_pref", "") or ""
                 resp["gdpr_action_pref"] = (_pref_db if _pref_db in
@@ -1121,6 +1123,16 @@ class SessionsHandlerMixin:
             if s:
                 s.allow_further_web = allow
             self._send_json({"status": "ok", "allow_further_web": allow, "session_id": sid})
+        elif action == "gdpr_feedback_ask":
+            # Sticky opt-in for the post-turn GDPR feedback modal. Set on by the
+            # pre-send modal checkbox; off when the user unticks "Frag mich
+            # weiter" in the feedback modal.
+            ask = bool(body.get("value"))
+            ChatDB.update_session_gdpr_feedback_ask(sid, ask)
+            s = sessions.get(sid)
+            if s:
+                s.gdpr_feedback_ask = ask
+            self._send_json({"status": "ok", "gdpr_feedback_ask": ask, "session_id": sid})
         elif action == "web_basket":
             # Persist the per-session Websuche basket. value is the basket list
             # (array of {url,title,snippet,query,enabled}); we store it as JSON.

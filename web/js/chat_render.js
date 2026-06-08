@@ -762,6 +762,57 @@ function renderUserMessage(msg, idx) {
     </div>
   `;
 }
+// Re-run the turn that produced assistant message `idx` using a different GDPR
+// mode. Forces the mode via a one-shot override sendMessage consumes (skipping
+// the scan + modal). Called from the post-turn GDPR feedback modal
+// (gdprFeedbackModal, chat_send.js).
+//
+// CRITICAL: the failed/unsatisfactory turn must NOT pollute the retry. The
+// server's session.messages is the wire source of truth — slicing only the
+// client's chat.messages would leave the old user+assistant pair on the
+// server, and the re-send would append AFTER it (model sees the discarded
+// attempt). So we DELETE the whole turn (user msg + everything after) on the
+// server FIRST, then re-send the same user text in the new mode.
+async function redoTurnAsGdprMode(idx, mode) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  const messages = chat.messages;
+  let userMsgIdx = -1;
+  for (let i = idx - 1; i >= 0; i--) {
+    if (messages[i].role === 'human' || messages[i].role === 'user') { userMsgIdx = i; break; }
+  }
+  if (userMsgIdx < 0) return;
+  const userText = messages[userMsgIdx].content;
+  if (typeof userText !== 'string') {
+    showToast('Erneutes Senden mit Anhängen wird hier nicht unterstützt', true);
+    return;
+  }
+  // Delete the failed turn server-side (user msg + every later message) so the
+  // discarded attempt can't reach the model on the retry. Real DB rows only —
+  // synthetic tool_call/tool_result entries carry no id.
+  const idsToDelete = [];
+  for (let i = userMsgIdx; i < messages.length; i++) {
+    if (messages[i].id) idsToDelete.push(messages[i].id);
+  }
+  if (idsToDelete.length && chat.sessionId) {
+    try {
+      await fetch(`${BASE_URL}/v1/sessions/manage`, {
+        method: 'POST',
+        headers: API._headers(),
+        body: JSON.stringify({ action: 'delete_messages', session_id: chat.sessionId, message_ids: idsToDelete }),
+      });
+    } catch (e) {
+      showToast('Konnte den vorherigen Versuch nicht entfernen — Neuversuch abgebrochen', true);
+      return;
+    }
+  }
+  chat.messages = messages.slice(0, userMsgIdx);
+  renderMessages();
+  state._gdprActionOverride = mode;
+  const input = document.getElementById('chat-input');
+  if (input) { input.value = userText; sendMessage(); }
+}
+
 function renderAssistantMessage(msg, idx) {
   const content = typeof msg.content === 'string' ? msg.content : '';
   // GDPR highlight overlay is gated by the composer toggle. When off

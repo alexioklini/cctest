@@ -76,6 +76,10 @@ class RequestContext:
     _gdpr_mapping_id: str = ""
     _gdpr_anonymising: bool = False
     _gdpr_after_file_write_cb: object = None
+    # Per-turn GDPR outcome, surfaced to the user as a chat badge + redo control
+    # (set in the chat worker at the anonymise / local-fallback decision points,
+    # read when assembling the assistant turn's metadata.gdpr). Dict or None.
+    _gdpr_turn_outcome: object = None
     # --- tracing / audit ---
     trace_id: object = None
     current_trace_span: object = None

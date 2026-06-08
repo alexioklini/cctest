@@ -1882,6 +1882,24 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             "mapping": "reused" if _mapping_reused else "new",
                             "mapping_id": _mapping.mapping_id,
                         }
+                        # Stash the per-turn outcome so the worker can surface
+                        # the feedback modal on the assistant turn. `restored`
+                        # is filled in later (after the reply is de-anonymised).
+                        #
+                        # `active` = this turn ACTIVELY anonymised the user's
+                        # OWN input (typed PII or an attachment submitted now),
+                        # vs. merely re-pseudonymising prior chat history for the
+                        # wire (which happens on every turn of a sticky-anonymise
+                        # session even when the user typed clean text). The
+                        # feedback modal fires only on active turns — asking "did
+                        # it work?" about untouched history would be noise.
+                        engine.get_request_context()._gdpr_turn_outcome = {
+                            "mode": "anonymise",
+                            "findings": len(_findings),
+                            "tokens_minted": len(_mapping.forward),
+                            "mapping_reused": _mapping_reused,
+                            "active": bool(_findings) or bool(_pending_attachments),
+                        }
                         if _live_user_spans:
                             # Side-channel: the chat client pulls these
                             # off the synthetic anonymise_done event and
@@ -2011,6 +2029,15 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 )
                             except Exception:
                                 pass
+                        # Per-turn outcome: anonymise failed, recovered by
+                        # sending the ORIGINAL text to the local fallback model.
+                        # Always active — an explicit per-turn recovery happened.
+                        engine.get_request_context()._gdpr_turn_outcome = {
+                            "mode": "anonymise_failed_local",
+                            "model": _fallback,
+                            "error": _err_summary,
+                            "active": True,
+                        }
                         # Fall through with ORIGINAL content + new local model.
                     # User message wasn't added pre-worker for the anonymise
                     # path. Add it now — anonymised on success, original on
@@ -2573,6 +2600,47 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     _spans = []
                                 if _spans:
                                     msg_metadata["gdpr_restored_spans"] = _spans
+                    # ── Per-turn GDPR outcome (metadata.gdpr) ──
+                    # Data source for the post-turn feedback modal, for BOTH
+                    # occasions:
+                    #   anonymise            → N PII anonymised, M restored in reply
+                    #   anonymise_failed_local → anonymise failed, answered on local
+                    #   local_model          → PII found, answered on the local model
+                    # The `active` flag (set at the decision points) tells the
+                    # client whether to actually OFFER the feedback modal — only
+                    # when THIS turn's own input was anonymised/swapped, not when
+                    # anonymise merely re-pseudonymised prior history. Built here
+                    # so the de-anonymise `_restored` count (above) is known.
+                    _gdpr_outcome = getattr(
+                        engine.get_request_context(), "_gdpr_turn_outcome", None)
+                    if isinstance(_gdpr_outcome, dict):
+                        _gdpr_meta = dict(_gdpr_outcome)
+                        if _gdpr_meta.get("mode") == "anonymise":
+                            _gdpr_meta["restored"] = int(
+                                msg_metadata.get("gdpr_restored", 0) or 0)
+                            # Recompute tokens_minted from the LIVE mapping —
+                            # the early stash captured only the typed-text slice;
+                            # read-side tools (read_document/read_file) may have
+                            # added attachment PII to the same mapping mid-turn.
+                            try:
+                                _gmid = getattr(session, "_gdpr_mapping_id", None)
+                                _m_live = (pseudonymizer.get_mapping(_gmid)
+                                           if _gmid else None)
+                                if _m_live is not None:
+                                    _gdpr_meta["tokens_minted"] = len(_m_live.forward)
+                            except Exception:
+                                pass
+                        msg_metadata["gdpr"] = _gdpr_meta
+                    else:
+                        _local_swap = getattr(session, "_gdpr_local_swap", "") or ""
+                        if _local_swap:
+                            # Always active — the user explicitly picked the
+                            # local model for this turn (pre-worker swap).
+                            msg_metadata["gdpr"] = {
+                                "mode": "local_model",
+                                "model": _local_swap,
+                                "active": True,
+                            }
                     session.add_message("assistant", reply, metadata=msg_metadata or None)
                     done_data = {
                         "text": reply,
@@ -2593,6 +2661,11 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     _gdpr_spans = msg_metadata.get("gdpr_restored_spans") if msg_metadata else None
                     if _gdpr_spans:
                         done_data["gdpr_restored_spans"] = _gdpr_spans
+                    # Per-turn GDPR outcome badge — live path picks it up here,
+                    # reload reads the same dict from msg_metadata["gdpr"].
+                    _gdpr_outcome_meta = msg_metadata.get("gdpr") if msg_metadata else None
+                    if _gdpr_outcome_meta:
+                        done_data["gdpr"] = _gdpr_outcome_meta
                     # Include fallback model info if a fallback was used
                     fb_model = engine.get_request_context()._fallback_model_used
                     if fb_model:
@@ -3650,6 +3723,13 @@ class ChatHandlerMixin:
                     )
             except Exception:
                 pass
+            # Per-turn outcome badge: PII found, answered on the local model.
+            # Read by the worker when assembling the assistant turn's
+            # metadata.gdpr (the worker runs in a separate thread, so this
+            # rides on the session like `_gdpr_pending_action` does).
+            session._gdpr_local_swap = _fallback
+        else:
+            session._gdpr_local_swap = ""
 
         # gdpr_action="anonymise" runs INSIDE the worker thread (below) so the
         # SSE response is already open + the client is listening when we emit

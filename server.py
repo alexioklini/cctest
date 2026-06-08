@@ -350,6 +350,12 @@ class Session:
         # them. True = also permit autonomous web access on top. Only bites
         # when the turn carries enabled curated URLs. Persists in sessions DB.
         self.allow_further_web: bool = False
+        # Sticky opt-in: when True, the post-turn GDPR feedback modal fires
+        # after every turn that took a GDPR action (anonymise / local swap), so
+        # the user can retry with a different method or abort. Set when the user
+        # ticks "Frag mich nachher" in the pre-send modal; cleared when they
+        # untick "Frag mich weiter" in the feedback modal. Persists in sessions DB.
+        self.gdpr_feedback_ask: bool = False
         # Per-session Websuche basket (curated web sources). JSON string of a
         # list of {url,title,snippet,query,enabled}. Persists in sessions DB so
         # it never bleeds across chats. Empty string = no basket.
@@ -439,6 +445,7 @@ class Session:
                 self.research_mode_override = (None if _rmo is None
                                                 else bool(_rmo))
                 self.allow_further_web = bool(info.get("allow_further_web", 0))
+                self.gdpr_feedback_ask = bool(info.get("gdpr_feedback_ask", 0))
                 self.web_basket = info.get("web_basket", "") or ""
                 _pref = info.get("gdpr_action_pref", "") or ""
                 self.gdpr_action_pref = (_pref if _pref in

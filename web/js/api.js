@@ -151,6 +151,16 @@ class API {
     });
   }
 
+  // Sticky opt-in for the post-turn GDPR feedback modal. true → the modal
+  // fires after every GDPR-action turn; false → no feedback prompts.
+  static updateGdprFeedbackAsk(sessionId, value) {
+    return this.post('/v1/sessions/manage', {
+      action: 'gdpr_feedback_ask',
+      session_id: sessionId,
+      value: !!value,
+    });
+  }
+
   // Projects
   static getProjects(agent) { return this.get(`/v1/agents/${agent}/projects`); }
   static createProject(agent, body) {
