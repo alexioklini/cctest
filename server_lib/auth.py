@@ -922,6 +922,12 @@ def verify_token(token: str) -> dict | None:
                                 options={"verify_exp": False})
         if payload.get("exp", 0) < time.time():
             return None
+        # A validly-signed token whose payload lacks the identity claim (an
+        # older/foreign token shape signed with the same secret) is unusable —
+        # reject it as unauthenticated rather than letting callers KeyError on
+        # payload["user_id"].
+        if not payload.get("user_id"):
+            return None
         return payload
     except pyjwt.InvalidTokenError:
         return None
@@ -929,7 +935,7 @@ def verify_token(token: str) -> dict | None:
 
 def refresh_token(token: str) -> str | None:
     payload = verify_token(token)
-    if not payload:
+    if not payload or not payload.get("user_id"):
         return None
     user = AuthDB.get_user(payload["user_id"])
     if not user or user.get("disabled"):

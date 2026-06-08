@@ -1090,7 +1090,7 @@ class BrainAgentHandler(
             return None
         token = auth_header[7:]
         payload = _auth_mod.verify_token(token)
-        if not payload:
+        if not payload or not payload.get("user_id"):
             return None
         user = _auth_mod.AuthDB.get_user(payload["user_id"])
         if not user or user.get("disabled"):
