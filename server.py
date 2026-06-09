@@ -1646,6 +1646,8 @@ class BrainAgentHandler(
             self._handle_kg_config_get()
         elif path == "/v1/doctor":
             self._handle_doctor()
+        elif path == "/v1/lib-versions":
+            self._handle_lib_versions()
         elif path == "/v1/services/models":
             self._handle_service_models_get()
         elif path == "/v1/mcp/connections":

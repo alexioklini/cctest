@@ -456,6 +456,13 @@ Once a feedback row exists, user and admin exchange short one-line messages
   integrity, provider gaps, MemPalace + KG health, **GDPR/classification
   scanner-disabled warnings**). `POST /v1/doctor/live` adds live probes (test
   embedding, provider credential resolution). Returns `{findings[], summary}`.
+- `GET /v1/lib-versions` — admin: installed versions + local install dates of
+  the external libraries Brain depends on, probed across all four Python envs
+  (server-python, MemPalace-venv, `.venv_sdk`, `.venv_crawl4ai` — shells the
+  venv interpreters for theirs). Returns `{python, platform, groups[]}` (each
+  group = component → libs with `version`/`installed`/`status`). Read-only;
+  `installed` is the pip-install date (dist-info RECORD mtime), NOT a live PyPI
+  check. Powers Settings → Allgemein → **Bibliotheken**.
 - `GET /v1/services/models` — admin: every service-model slot (default,
   chat-summary, fan-out, KG-extraction, TTS, transcribe) + OCR, each with a
   resolve status (`ok`/`unset`/`missing`/`disabled`) + the dropdown option

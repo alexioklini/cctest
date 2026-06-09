@@ -1,0 +1,187 @@
+"""engine/lib_versions.py — installed versions of the external libraries Brain
+depends on, surfaced read-only in General Settings → "Bibliotheken".
+
+The libraries live across FOUR Python environments:
+  - server homebrew python (markitdown, mlx-*, spacy, tree-sitter, …) — in-process
+  - the mempalace venv (`mempalace`) — sys.path-injected lazily by mempalace_glue
+  - the SDK / sidecar venv `.venv_sdk` (`anthropic`) — separate subprocess
+  - the crawl4ai render venv `.venv_crawl4ai` (`crawl4ai`, `playwright`) — separate
+
+So a single in-process `importlib.metadata` sweep can't see them all. We probe
+the in-process ones directly and shell the venv interpreters for theirs. The
+"installed" date is the dist-info RECORD mtime (≈ pip install time) — a local,
+network-free signal of when each lib was last updated on this machine. No live
+PyPI lookup (that would be slow + flaky and isn't what the page is for).
+"""
+from __future__ import annotations
+
+import datetime
+import importlib.metadata as _md
+import json
+import os
+import subprocess
+import sys
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _installed_date(dist: "_md.Distribution") -> str:
+    """Best-effort install date = mtime of the dist-info RECORD (or its dir)."""
+    try:
+        target = None
+        for f in dist.files or []:
+            if str(f).endswith("RECORD"):
+                target = dist.locate_file(f)
+                break
+        if target is None:
+            target = dist.locate_file("")
+        return datetime.date.fromtimestamp(os.path.getmtime(target)).isoformat()
+    except Exception:
+        return ""
+
+
+def _probe_in_process(name: str) -> dict:
+    """Version + install date for a package importable in the server process."""
+    try:
+        dist = _md.distribution(name)
+        return {"version": dist.version, "installed": _installed_date(dist),
+                "status": "ok"}
+    except _md.PackageNotFoundError:
+        return {"version": None, "installed": "", "status": "missing"}
+    except Exception as e:  # pragma: no cover — defensive
+        return {"version": None, "installed": "", "status": f"error: {e}"}
+
+
+# Tiny script run inside a venv interpreter: emit {name: {version, installed}}
+# for the requested packages. Mirrors _installed_date / _probe_in_process so the
+# venv answers carry the same RECORD-mtime install date.
+_VENV_PROBE = r"""
+import importlib.metadata as m, os, datetime, json, sys
+def date(d):
+    try:
+        t=None
+        for f in (d.files or []):
+            if str(f).endswith('RECORD'): t=d.locate_file(f); break
+        if t is None: t=d.locate_file('')
+        return datetime.date.fromtimestamp(os.path.getmtime(t)).isoformat()
+    except Exception: return ''
+out={}
+for n in sys.argv[1:]:
+    try:
+        d=m.distribution(n); out[n]={'version':d.version,'installed':date(d),'status':'ok'}
+    except m.PackageNotFoundError:
+        out[n]={'version':None,'installed':'','status':'missing'}
+    except Exception as e:
+        out[n]={'version':None,'installed':'','status':f'error: {e}'}
+print(json.dumps(out))
+"""
+
+
+def _probe_in_venv(py: str, names: list[str]) -> dict:
+    """Run the probe inside another venv interpreter. Missing interpreter →
+    every requested name marked unreachable (status carries the reason)."""
+    if not (py and os.path.isfile(py)):
+        why = f"interpreter not found: {py}"
+        return {n: {"version": None, "installed": "", "status": why} for n in names}
+    try:
+        r = subprocess.run([py, "-c", _VENV_PROBE, *names],
+                           capture_output=True, text=True, timeout=20)
+        if r.returncode != 0:
+            why = f"probe failed: {(r.stderr or '').strip()[:120]}"
+            return {n: {"version": None, "installed": "", "status": why} for n in names}
+        return json.loads(r.stdout)
+    except Exception as e:
+        why = f"probe error: {e}"
+        return {n: {"version": None, "installed": "", "status": why} for n in names}
+
+
+def _mempalace_version() -> dict:
+    """Make mempalace importable (sys.path inject) then probe it in-process."""
+    try:
+        from engine.mempalace_glue import _ensure_mempalace_importable
+        ok, err = _ensure_mempalace_importable()
+        if not ok:
+            return {"version": None, "installed": "", "status": err or "unavailable"}
+    except Exception as e:
+        return {"version": None, "installed": "", "status": f"error: {e}"}
+    return _probe_in_process("mempalace")
+
+
+# Registry: ordered groups → list of (dist-name, friendly label). Edit here when
+# a dependency is added/retired. Grouped by the component each lib serves, NOT by
+# venv (that's an implementation detail; `source` below names the venv).
+_GROUPS = [
+    ("Dokument-Konvertierung", "in_process", [
+        ("markitdown", "markitdown"),
+        ("pdfminer.six", "pdfminer.six"),
+        ("beautifulsoup4", "BeautifulSoup4"),
+    ]),
+    ("Lokale Inferenz (MLX)", "in_process", [
+        ("mlx", "mlx"),
+        ("mlx-metal", "mlx-metal"),
+        ("mlx-lm", "mlx-lm"),
+        ("mlx-vlm", "mlx-vlm"),
+    ]),
+    ("NLP / Code-Graph", "in_process", [
+        ("spacy", "spaCy (NER)"),
+        ("tree-sitter", "tree-sitter"),
+        ("onnxruntime", "onnxruntime"),
+        ("numpy", "NumPy"),
+        ("requests", "requests"),
+    ]),
+    ("Gedächtnis (MemPalace)", "mempalace", [
+        ("mempalace", "mempalace"),
+    ]),
+    ("Anthropic SDK (Sidecar)", "venv_sdk", [
+        ("anthropic", "anthropic"),
+    ]),
+    ("Web-Rendering (crawl4ai)", "venv_crawl4ai", [
+        ("crawl4ai", "crawl4ai"),
+        ("playwright", "playwright"),
+    ]),
+]
+
+_SOURCE_LABELS = {
+    "in_process": "Server-Python",
+    "mempalace": "MemPalace-venv",
+    "venv_sdk": ".venv_sdk",
+    "venv_crawl4ai": ".venv_crawl4ai",
+}
+
+
+def collect() -> dict:
+    """Build the full library-versions report for the settings page."""
+    sdk_py = os.path.join(_ROOT, ".venv_sdk", "bin", "python")
+    c4_py = os.path.join(_ROOT, ".venv_crawl4ai", "bin", "python")
+
+    # One subprocess per venv, batching all that venv's packages.
+    sdk_names = [n for _, src, libs in _GROUPS if src == "venv_sdk" for n, _ in libs]
+    c4_names = [n for _, src, libs in _GROUPS if src == "venv_crawl4ai" for n, _ in libs]
+    sdk_probe = _probe_in_venv(sdk_py, sdk_names) if sdk_names else {}
+    c4_probe = _probe_in_venv(c4_py, c4_names) if c4_names else {}
+
+    groups = []
+    for title, src, libs in _GROUPS:
+        rows = []
+        for dist_name, label in libs:
+            if src == "in_process":
+                info = _probe_in_process(dist_name)
+            elif src == "mempalace":
+                info = _mempalace_version()
+            elif src == "venv_sdk":
+                info = sdk_probe.get(dist_name, {"version": None, "installed": "",
+                                                 "status": "unprobed"})
+            elif src == "venv_crawl4ai":
+                info = c4_probe.get(dist_name, {"version": None, "installed": "",
+                                                "status": "unprobed"})
+            else:  # pragma: no cover
+                info = {"version": None, "installed": "", "status": "unknown source"}
+            rows.append({"name": label, "dist": dist_name, **info})
+        groups.append({"title": title, "source": _SOURCE_LABELS.get(src, src),
+                       "libs": rows})
+
+    return {
+        "python": sys.version.split()[0],
+        "platform": sys.platform,
+        "groups": groups,
+    }

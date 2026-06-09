@@ -780,6 +780,12 @@ Zahnrad, unten links. Je nach Rolle zwei Bereiche:
   KG-Extraktion und **deaktivierte DSGVO-/Klassifizierungs-Scanner** (Warnung,
   damit der Aus-Zustand sichtbar bleibt). „Live-Prüfungen" testet zusätzlich
   Embedding + Provider-Zugangsdaten.
+- **Bibliotheken** — schreibgeschützte Übersicht der installierten Versionen
+  aller externen Bibliotheken (markitdown, MLX, spaCy, MemPalace, anthropic-SDK,
+  crawl4ai/playwright …), gruppiert nach Komponente. Pro Eintrag Version und
+  lokales Installationsdatum. Die Werte werden über alle vier Python-Umgebungen
+  ermittelt (Server-Python, MemPalace-venv, `.venv_sdk`, `.venv_crawl4ai`).
+  „Aktualisiert" ist das pip-Installationsdatum, kein Live-Abgleich mit PyPI.
 - **Recherche-Modus** — Disziplintexte (Verweigerung / Präzision / Zitat)
 
 Im **Quellbaum eines Projekts** zeigt jede Datei neben dem Mining-Punkt ein

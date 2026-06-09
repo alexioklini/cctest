@@ -841,6 +841,18 @@ class AdminObservabilityHandlers:
         except Exception as e:
             self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
 
+    def _handle_lib_versions(self):
+        """GET /v1/lib-versions — installed versions + install dates of the
+        external libraries Brain depends on, across all four venvs (admin,
+        read-only). Shells the SDK/crawl4ai venv interpreters for theirs."""
+        if self._require_role("admin") is None:
+            return
+        try:
+            from engine import lib_versions
+            self._send_json(lib_versions.collect())
+        except Exception as e:
+            self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
+
     def _handle_doctor_live(self):
         """POST /v1/doctor/live — static checks PLUS on-demand live probes
         (test embedding, provider credential resolution). Slower (admin)."""

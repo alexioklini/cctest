@@ -2097,6 +2097,70 @@ async function _doctorRun(live) {
   }
 }
 
+// ─── Bibliotheken — installed versions of the external libs Brain depends on ──
+// Read-only. Backend probes four venvs (server-python + mempalace + .venv_sdk +
+// .venv_crawl4ai); "Aktualisiert" = local pip-install date (RECORD mtime), not a
+// live PyPI lookup.
+async function _genTab_libraries(C) {
+  C.innerHTML = `<div style="padding:16px;max-width:820px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <h3 style="margin:0">Bibliotheken</h3>
+      <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="_libVersionsRun()">Neu laden</button>
+    </div>
+    <p style="font-size:12px;color:var(--text-400);margin:0 0 14px">
+      Installierte Versionen der externen Bibliotheken über alle vier Python-Umgebungen
+      (Server-Python, MemPalace-venv, <span style="${MONO}">.venv_sdk</span>,
+      <span style="${MONO}">.venv_crawl4ai</span>). „Aktualisiert“ ist das lokale
+      Installationsdatum (kein Live-Abgleich mit PyPI).</p>
+    <div id="lib-versions-results"><div style="color:var(--text-400)">Lädt…</div></div>
+  </div>`;
+  await _libVersionsRun();
+}
+
+async function _libVersionsRun() {
+  const box = document.getElementById('lib-versions-results');
+  if (!box) return;
+  box.innerHTML = `<div style="color:var(--text-400)">Prüfe…</div>`;
+  try {
+    const d = await API.get('/v1/lib-versions');
+    box.innerHTML = _libVersionsRender(d);
+  } catch (e) {
+    box.innerHTML = `<div style="color:var(--error)">Versionsabfrage fehlgeschlagen: ${esc(e.message || String(e))}</div>`;
+  }
+}
+
+function _libVersionsRender(d) {
+  const head = `<div style="font-size:11px;color:var(--text-500);margin-bottom:12px">
+    Server-Python ${esc(d.python || '?')} · ${esc(d.platform || '')}</div>`;
+  const groups = (d.groups || []).map(g => {
+    const rows = (g.libs || []).map(l => {
+      const ok = l.status === 'ok' && l.version;
+      const ver = ok
+        ? `<span style="${MONO};color:var(--text-200)">${esc(l.version)}</span>`
+        : `<span style="font-size:11px;color:var(--error)" title="${esc(l.status || '')}">${esc(l.status === 'missing' ? 'nicht installiert' : (l.status || 'unbekannt'))}</span>`;
+      const when = l.installed
+        ? `<span style="font-size:11px;color:var(--text-400)">${esc(l.installed)}</span>`
+        : `<span style="font-size:11px;color:var(--text-500)">—</span>`;
+      return `<div style="display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:6px 12px;border-top:1px solid var(--border-100)">
+        <span style="font-size:13px;color:var(--text-100)">${esc(l.name)}</span>
+        ${ver}
+        ${when}
+      </div>`;
+    }).join('');
+    return `<div style="border:1px solid var(--border-100);border-radius:8px;margin-bottom:12px;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-200)">
+        <span style="font-size:13px;font-weight:600;color:var(--text-100);flex:1">${esc(g.title)}</span>
+        ${BADGE(g.source)}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr auto auto;gap:12px;padding:4px 12px 2px;font-size:10px;color:var(--text-500);text-transform:uppercase;letter-spacing:.04em">
+        <span>Bibliothek</span><span>Version</span><span>Aktualisiert</span>
+      </div>
+      ${rows}
+    </div>`;
+  }).join('');
+  return head + groups;
+}
+
 // ─── Service Models — one editable home for every service-model slot ───
 // Slots live across config.json + tools_config.json; this tab is the unified
 // editor. Fail-loud: an unset slot shows a red 'nicht konfiguriert' pill (the
