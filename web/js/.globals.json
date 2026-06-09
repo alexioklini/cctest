@@ -645,6 +645,7 @@
     "initTurnScrollSync": "writable",
     "installCCPlugin": "writable",
     "invalidateChatReferences": "writable",
+    "isAutoModel": "writable",
     "isDocumentRef": "writable",
     "isMobileViewport": "writable",
     "isModelLocal": "writable",

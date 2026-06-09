@@ -123,7 +123,16 @@ mit `read_document` gelesen.
 
 **Modelle**: über das Modell-Badge in der Statusleiste oder im Eingabefeld
 wechseln. Lokale Modelle bleiben auf dem Gerät; Cloud-Modelle gehen an den
-konfigurierten Provider.
+konfigurierten Provider. Ganz oben in der Liste stehen zwei automatische
+Modi: **✨ Smart (Cloud)** und **✨ Smart (Lokal)** — sie wählen pro Nachricht
+automatisch das am besten passende Modell, wobei **Cloud** nur unter den
+Cloud-Modellen und **Lokal** nur unter den lokalen Modellen sucht (die
+Klassifizierung der Anfrage ist identisch, nur der Kandidatenpool ist
+eingeschränkt). Wie die Absicht erkannt wird, steuert Einstellungen → Server →
+Auto-Routing. Wird beim Senden eine DSGVO-Sperre ausgelöst, verschwindet
+**Smart (Cloud)** aus der Liste, **Smart (Lokal)** bleibt (es trifft ohnehin
+nur lokale Modelle). Der Verfasser zeigt weiter „✨ Smart (…)"; welches Modell
+gerade arbeitet, steht im Spinner und im Tooltip.
 
 **Abbrechen / Wieder-Anhängen**: Stopp drücken bricht den Turn ab.
 Schließt man den Browser-Tab mitten im Turn, einfach den Chat wieder
@@ -696,7 +705,14 @@ Zahnrad, unten links. Je nach Rolle zwei Bereiche:
 - **Skills** — Zip installieren / Claude-Code-Plugins durchsuchen /
   pro Agent aktivieren
 - **MCP** — MCP-Server verbinden
-- **Tokens** — Pro-Tool-Overrides + Pro-Agent-Compact-Schwelle
+- **Tokens** (Token-Optimierung) — Pro-Tool-Overrides + Pro-Agent-Compact-Schwelle
+  + **Werkzeug-Optimierung pro Anfrage** (Schalter, Standard **an**): klassifiziert
+  jede Anfrage und stellt nicht benötigte Werkzeuge zurück (per `tool_search`
+  weiter erreichbar) — schlankerer Prompt, bessere Treffsicherheit bei schwächeren
+  Modellen. Unabhängig von der Modellwahl. Bei **lokalen Modellen mit aktiviertem
+  Warmup** wird die Optimierung übersprungen (der warme KV-Prefix muss stabil
+  bleiben — Werkzeuge sind Teil davon); lokale Modelle **ohne** Warmup werden wie
+  Cloud-Modelle optimiert.
 - **Hooks** — Event-Hooks (pre/post Tool, pre/post Turn)
 - **Zeitplan** — der eigene memory_summary-Daemon des Agenten
 
@@ -706,12 +722,15 @@ Zahnrad, unten links. Je nach Rolle zwei Bereiche:
   (Status/PID/Uptime/Health/Breaker + Neustart; SearXNG zusätzlich mit
   Pro-Engine-Tabelle und „Jetzt testen"). Beim Standardmodell zeigt das
   Auswahlfeld „— nicht gesetzt —", wenn keins gesetzt ist (seit 9.21.4).
-  **Auto-Routing** legt fest, wie das „✨ Auto"-Modell im Verfasser (und
-  `Fan-out-Modell = Auto`) die Absicht einer Anfrage erkennt, um das passende
+  **Auto-Routing** legt fest, wie die „✨ Smart"-Modi im Verfasser (Cloud/Lokal)
+  und `Fan-out-Modell = Auto` die Absicht einer Anfrage erkennen, um das passende
   Modell zu wählen: **Schlüsselwörter** (Standard, ohne Kosten), **LLM**
   (klassifiziert per günstigem/lokalem Modell) oder **Hybrid** (erst
   Schlüsselwörter, LLM nur bei Bedarf). LLM/Hybrid fallen bei Fehler oder
   Timeout still auf Schlüsselwörter zurück — eine Anfrage hängt nie daran.
+  Diese Einstellung steuert nur die **Modellwahl**; die **Werkzeug-Optimierung**
+  ist davon getrennt und wird pro Agent geschaltet (siehe Agent-Einstellungen →
+  Token-Optimierung).
 - **Provider** — OpenAI-kompatible Provider hinzufügen/bearbeiten/testen
 - **Nodes** — verteilte Compute-Peers
 - **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost). Pro

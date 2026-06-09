@@ -499,7 +499,8 @@ async function _genTab_agents(C) {
         </div>
         <div><label class="form-label">Beschreibung</label><input class="form-input" id="new-agent-desc" placeholder="Was macht dieser Agent?"></div>
         <div><label class="form-label">Modell</label><select class="form-select" id="new-agent-model" style="width:100%">
-          <option value="auto" title="Wählt für jede Nachricht automatisch das am besten passende Modell">✨ Auto</option>
+          <option value="auto-cloud" title="Wählt pro Nachricht automatisch das beste Cloud-Modell">✨ Smart (Cloud)</option>
+          <option value="auto-local" title="Wählt pro Nachricht automatisch das beste lokale Modell">✨ Smart (Lokal)</option>
           ${enabledModelsWithCapability('chat').map(([mid])=>modelOption(mid)).join('')}
         </select></div>
         <div><label class="form-label">Soul (System-Prompt)</label><textarea class="form-input" id="new-agent-soul" rows="3" placeholder="Optionaler anfänglicher soul.md-Inhalt" style="resize:vertical"></textarea></div>

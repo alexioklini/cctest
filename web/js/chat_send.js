@@ -849,7 +849,10 @@ function buildStreamCallbacks(chat, isActive) {
         if (isActive()) {
           const sm = document.getElementById('spinner-model');
           if (sm) sm.textContent = modelShortName(d.model);
-          if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay('auto');
+          // Keep the composer on whichever Smart mode is active (Cloud/Lokal),
+          // not a bare 'auto' — the label + tooltip stay correct per mode.
+          if (typeof updateModelSelectorDisplay === 'function')
+            updateModelSelectorDisplay(isAutoModel(chat.model) ? chat.model : 'auto-cloud');
         }
       },
       warmup: (d) => {
@@ -929,10 +932,10 @@ function buildStreamCallbacks(chat, isActive) {
         // Auto routing: keep the composer on "Auto" (the user re-routes every
         // turn) but remember which model was picked + why, for the label and
         // tooltip. Otherwise adopt the server's resolved model as usual.
-        if (d.auto_route && chat.model === 'auto') {
+        if (d.auto_route && isAutoModel(chat.model)) {
           chat.autoPicked = d.auto_route.model;
           chat.autoReason = d.auto_route.reason || '';
-          if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay('auto');
+          if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay(chat.model);
         } else if (d.model) {
           chat.model = d.model;
         }
@@ -1773,7 +1776,7 @@ async function stopGeneration() {
 // The spinner always shows the model actually doing the work. On "Auto" that
 // is the per-turn picked model (chat.autoPicked), not the literal "auto".
 function spinnerModelName(chat) {
-  if (chat?.model === 'auto' && chat?.autoPicked) return modelShortName(chat.autoPicked);
+  if (isAutoModel(chat?.model) && chat?.autoPicked) return modelShortName(chat.autoPicked);
   return modelShortName(chat?.model);
 }
 function updateStreamingUI(isStreaming, chat) {

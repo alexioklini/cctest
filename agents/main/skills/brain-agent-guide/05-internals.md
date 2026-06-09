@@ -71,12 +71,22 @@ Provider-scoped ids exist when multiple providers serve the same model
 
 ### Auto model routing
 
-When the composer model is `✨ Auto` (or an agent has `model: "auto"`), the
-turn's model is picked per-message by `resolve_auto_model_for_task` (brain.py):
-classify the message into one of 5 purposes (coding / analysis / creative /
-agentic / fast), then `_resolve_auto_model_tiered` maps the purpose to a tier
+When the composer model is `✨ Smart (Cloud)` / `✨ Smart (Lokal)` (or an agent
+has `model: "auto-cloud"` / `"auto-local"`; legacy `"auto"` = Cloud), the turn's
+model is picked per-message by `resolve_auto_model_for_task` (brain.py): classify
+the message into one of 5 purposes (coding / analysis / creative / agentic /
+fast), then `_resolve_auto_model_tiered` maps the purpose to a tier
 (coding/analysis → first reasoning model, fast → cheapest/local, else
 highest-priority) within the caller's ACL + attachment-capability set.
+
+**Cloud vs Lokal** is the ONLY difference between the two Smart modes: a `pool`
+argument (`"cloud"`/`"local"`) constrains the candidate set to cloud-only or
+local-only models — classification and tiering are identical. Empty intersection
+falls back to the full enabled set (same never-starve rule as the ACL filter), so
+a box with no local model still routes. The composer directive is persisted as
+`auto-cloud`/`auto-local` (restored after each turn so a reopened Smart (Lokal)
+session comes back as Lokal). Under a GDPR local-only lock the dropdown hides
+Smart (Cloud) but keeps Smart (Lokal) (its pool already guarantees a local pick).
 
 **Classifier mode** (`config.json → auto_route.classifier_mode`, default
 `keywords`; Settings → Server → Auto-Routing) selects how intent is classified
@@ -154,23 +164,37 @@ benchmark run (which only rewrites `measured`). Endpoints: `POST
 + `GET /v1/models/benchmark/status` (live progress). No benchmark for a task →
 the tier heuristic (step 5) applies, so the feature ships dark.
 
-**Classifier-driven tool DEFERRAL** (every turn — tool-only, never the model):
-classification runs on **every** turn, not just ✨ Auto. On concrete-model turns
-the worker calls `resolve_task_analysis` purely to populate the needed tool
-groups; `session.model`/provider are NOT touched (model routing stays gated to
-Auto/first-turn). For models that do **not** keep a warm KV prefix
-(`model_maintains_warm_prefix` = local OR warmup), `classifier_tool_deferral(model,
-tool_groups)` returns `(defer_extra, undefer)` which `resolve_active_tools` folds
-into its defer set: un-needed groups are **deferred OUT** of the initial prompt
-but stay **`tool_search`-discoverable** (a misclassification is recoverable
-mid-turn — NOT excluded), and the analysis's **needed** groups are **UN-DEFERRED**
-into the prompt even if statically deferred. A never-strip floor
-(`_TOOL_GATING_NEVER_STRIP` = core + workflows) keeps read/write/run +
-`tool_search` + ask tools in-prompt. **Warm/local models are NEVER optimized** —
-`classifier_tool_deferral` returns `([],[])` AND the every-turn classification is
-skipped entirely for them (no classifier cost), so their static deferral + KV
-prefix are byte-stable across all turns including follow-ups. No-signal → static
-deferral stands (fail-open).
+**Classifier-driven tool DEFERRAL** (a SEPARATE axis from model selection):
+tool optimization runs whenever the per-agent flag `token_config.optimize_tools`
+(default **ON**, edited in the agent's **Token-Optimierung** tab) is on AND the
+model is safe to reshape — INDEPENDENT of whether the turn auto-routed. On
+concrete-model turns the worker calls `resolve_task_analysis` purely to populate
+the needed tool groups; `session.model`/provider are NOT touched (model routing
+stays gated to Smart/first-turn).
+
+The reshape gate is `model_should_optimize_tools(model)` (NOT the old
+`model_maintains_warm_prefix`): optimize iff there is **no warm KV prefix to
+protect** — i.e. a **cloud** model, OR a **local model with warmup DISABLED**
+(it is never warmed, so nothing to lose; this is the case the old gate wrongly
+skipped). A **warmup-ENABLED** model (local or cloud) is left untouched — keyed
+on warmup *config*, not transient warm state, so a momentarily-cold warmup model
+isn't optimized into a trimmed prefix that the next warm turn diverges from.
+Tools are part of the warm KV prefix (the tool schemas serialize into the prompt
+before the first message), so varying them per turn would invalidate it → full
+prefill (~20 s) — that is *why* warmup-protected models are exempt, not an
+arbitrary rule.
+
+When the gate passes, `classifier_tool_deferral(model, tool_groups)` returns
+`(defer_extra, undefer)` which `resolve_active_tools` folds into its defer set:
+un-needed groups are **deferred OUT** of the initial prompt but stay
+**`tool_search`-discoverable** (a misclassification is recoverable mid-turn — NOT
+excluded), and the analysis's **needed** groups are **UN-DEFERRED** into the
+prompt even if statically deferred. The never-strip floor
+(`_TOOL_GATING_NEVER_STRIP_TOOLS` = `tool_search` + `ask_user`) keeps only those
+two structural tools always in-prompt; everything else (incl. the file/shell
+cluster) is classifier-gated. When the flag is OFF, or the model is
+warmup-protected, `_auto_tool_groups` is left `None` (no classifier cost, static
+deferral stands). No-signal → static deferral stands (fail-open).
 
 **Per-turn classification modal**: a turn with a classification persists its
 decision on the assistant turn's `metadata.auto_route` (analysis + chosen model +

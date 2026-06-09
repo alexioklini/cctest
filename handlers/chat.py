@@ -26,6 +26,24 @@ _AUTO_PURPOSE_LABEL = {
 }
 
 
+def _parse_auto_directive(model: str | None) -> tuple[bool, str | None]:
+    """Normalize a composer model value into (want_auto, pool).
+
+    The composer offers two auto modes that differ only by candidate pool:
+      - "auto-cloud" → (True, "cloud")  — pick the best-fitting CLOUD model
+      - "auto-local" → (True, "local")  — pick the best-fitting LOCAL model
+      - "auto"       → (True, "cloud")  — LEGACY: pre-split single Auto, and any
+                       agent still pinned to model="auto"; treated as cloud so
+                       stored sessions / agent.json keep working unchanged.
+    Anything else → (False, None) (a concrete model pick).
+    """
+    if model == "auto-local":
+        return True, "local"
+    if model in ("auto-cloud", "auto"):
+        return True, "cloud"
+    return False, None
+
+
 def _auto_route_reason(purpose, attachment_mimes, model: str, analysis=None) -> str:
     """Build a short 'why this model' explanation for the Auto picker tooltip.
 
@@ -281,20 +299,25 @@ def _resolve_session_auto_model(session) -> bool:
     _handle_chat) so an auto_route=None delivery turn runs — and cost-logs —
     under a real model id, not "auto" (which has no rate → bills $0).
 
-    Returns True if a swap happened (caller restores "auto" afterwards so the
-    composer keeps showing Auto), False otherwise."""
-    if session.model != "auto":
-        return False
-    resolved = engine.resolve_model("auto")
+    Returns the prior directive ("auto"/"auto-cloud"/"auto-local") if a swap
+    happened — the caller restores THAT afterwards so the composer keeps showing
+    the right Smart mode — or "" (falsy) otherwise. Handles all auto forms.
+    The local pool is honored on a delivery turn too: "auto-local" resolves to a
+    local model."""
+    _directive = session.model
+    if _directive not in ("auto", "auto-cloud", "auto-local"):
+        return ""
+    _pool = "local" if _directive == "auto-local" else "cloud"
+    resolved = engine._resolve_auto_model_tiered(None, pool=_pool) or engine.resolve_model("auto")
     if not resolved or resolved == "auto":
-        return False  # nothing enabled to resolve to — leave as-is
+        return ""  # nothing enabled to resolve to — leave as-is
     provider = engine.resolve_provider_for_model(resolved)
     with session.lock:
         session.model = resolved
         session.api_key = provider["api_key"]
         session.base_url = provider["base_url"]
         session.max_context = engine.get_model_max_context(resolved)
-    return True
+    return _directive
 
 
 def deliver_background_results(session_id: str) -> bool:
@@ -393,7 +416,7 @@ def deliver_background_results(session_id: str) -> bool:
             t.join()  # run synchronously on this delivery thread
         if _restore_auto:
             with session.lock:
-                session.model = "auto"
+                session.model = _restore_auto
         return True
     except Exception as e:  # never let a delivery failure kill the runner thread
         print(f"[bg-delivery] failed for {session_id[:8]}: {e}", flush=True)
@@ -510,7 +533,7 @@ def deliver_background_group(session_id: str, group_id: str, members: list) -> b
             t.join()
         if _restore_auto:
             with session.lock:
-                session.model = "auto"
+                session.model = _restore_auto
         return True
     except Exception as e:
         print(f"[bg-group-delivery] failed for {session_id[:8]} grp {group_id}: {e}", flush=True)
@@ -2795,16 +2818,18 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     if session.live_stream is live:
                         session.live_stream = None
                 # Auto mode: the per-turn router swapped session.model to the
-                # concrete pick (load-bearing during the turn). Restore "auto"
-                # as the persisted session model so reopening the chat shows
-                # Auto in the composer, not the last working model. The model
-                # that actually answered is recorded in the assistant message
-                # metadata, so nothing is lost.
+                # concrete pick (load-bearing during the turn). Restore the
+                # composer's auto DIRECTIVE as the persisted session model so
+                # reopening the chat shows the right Smart mode (Cloud/Lokal),
+                # not the last working model. The model that actually answered
+                # is recorded in the assistant message metadata, so nothing is
+                # lost. Falls back to "auto-cloud" if the stash is missing.
                 if auto_route:
+                    _directive = getattr(session, "_composer_auto_model", "") or "auto-cloud"
                     with session.lock:
-                        session.model = "auto"
+                        session.model = _directive
                     try:
-                        ChatDB.save_session(session.id, session.agent_id, "auto",
+                        ChatDB.save_session(session.id, session.agent_id, _directive,
                                             session.title, session.status,
                                             session.created_at, session.last_active,
                                             session.project or "", user_id=session.user_id)
@@ -3099,7 +3124,7 @@ class ChatHandlerMixin:
         # re-routes, but resolve a concrete model for the initial provider
         # creds + warm-pool/context lookups below. ACL on 'auto' itself is a
         # no-op; the per-turn router only ever picks ACL-allowed models.
-        want_auto = (model == "auto")
+        want_auto, _auto_pool = _parse_auto_directive(model)
         resolved_model = engine.resolve_model("auto") if want_auto else model
         # ACL gate: caller must have access to both the agent and the model
         user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
@@ -3339,7 +3364,7 @@ class ChatHandlerMixin:
         # picks (and ACL-filters) the real model later. Treat it as a per-turn
         # auto request and drop it from the override path so we don't try to
         # resolve a provider for the literal string "auto".
-        want_auto = (model_override == "auto")
+        want_auto, auto_pool = _parse_auto_directive(model_override)
         if want_auto:
             model_override = None
 
@@ -3469,7 +3494,7 @@ class ChatHandlerMixin:
             # even when the agent is pinned to a concrete model.
             auto_model, auto_purpose, auto_analysis = engine.resolve_auto_model_for_task(
                 {"model": "auto"}, message,
-                attachment_mimes=attach_mimes, allowed_models=allowed)
+                attachment_mimes=attach_mimes, allowed_models=allowed, pool=auto_pool)
             if auto_model:
                 auto_route = {
                     "model": auto_model,
@@ -3492,13 +3517,26 @@ class ChatHandlerMixin:
                     session.base_url = provider["base_url"]
                     session.max_context = engine.get_model_max_context(auto_model)
             # Stash the classifier's needed tool groups on the session so the
-            # worker can reshape the per-turn tool deferral (non-warmup models
-            # only — see brain.classifier_tool_deferral). Cleared each turn (set
-            # to None when no analysis ran) so a stale shape never carries over.
+            # worker can reshape the per-turn tool deferral. TOOL OPTIMIZATION is
+            # a SEPARATE axis from model selection: it happens iff the per-agent
+            # `optimize_tools` flag is on AND the picked model is safe to reshape
+            # (cloud or warmup-disabled local — model_should_optimize_tools). So
+            # an Auto turn picks a model regardless, but only gates tools when
+            # enabled. Cleared each turn (None when off / no analysis) so no
+            # stale shape carries over.
+            _opt_on = engine.agent_optimize_tools_enabled(agent_cfg)
+            _opt_ok = _opt_on and engine.model_should_optimize_tools(auto_model)
             with session.lock:
                 session._auto_tool_groups = (
-                    auto_analysis.get("tool_groups") if auto_analysis else None)
+                    auto_analysis.get("tool_groups")
+                    if (auto_analysis and _opt_ok) else None)
                 session._auto_route_model = auto_model or ""
+                # Remember the composer's auto DIRECTIVE (which Smart mode) so
+                # the post-turn restore re-persists "auto-cloud"/"auto-local"
+                # rather than flattening both to legacy "auto" — a reopened
+                # Smart (Lokal) session must come back as Lokal, not Cloud.
+                session._composer_auto_model = (
+                    "auto-local" if auto_pool == "local" else "auto-cloud")
             # Emit the pick at turn start so the spinner shows the model that's
             # actually doing the work (the composer label stays "Auto").
             if auto_route:
@@ -3507,14 +3545,19 @@ class ChatHandlerMixin:
             # EVERY-TURN tool optimization for concrete-model turns: the model is
             # NOT chosen here (no auto-route), but we still classify the prompt so
             # the worker can reshape this turn's tool DEFERRAL toward the needed
-            # groups. Skipped for warm/local models — their KV prefix must stay
-            # stable across turns (tool optimization is never performed for them),
-            # and classifier_tool_deferral would no-op anyway, so don't pay the
-            # classifier cost. Model/provider/session.model are left untouched.
+            # groups. This is INDEPENDENT of auto-routing — it runs whenever the
+            # per-agent `optimize_tools` flag is on AND the model is safe to
+            # reshape (model_should_optimize_tools: cloud, or a warmup-DISABLED
+            # local model — warmup-enabled models keep a stable KV prefix and are
+            # left untouched, classifier_tool_deferral would no-op anyway, so
+            # don't pay the classifier cost). Model/provider/session.model are
+            # left untouched.
             with session.lock:
                 session._auto_tool_groups = None
                 session._auto_route_model = session.model or ""
-            if session.model and not engine.model_maintains_warm_prefix(session.model):
+            if (session.model
+                    and engine.agent_optimize_tools_enabled(agent_cfg)
+                    and engine.model_should_optimize_tools(session.model)):
                 try:
                     _ta = engine.resolve_task_analysis(message)
                     _tg = (_ta or {}).get("tool_groups")

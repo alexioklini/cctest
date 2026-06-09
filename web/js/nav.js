@@ -316,9 +316,9 @@ async function loadAgentProjects(agentId) {
 function updateModelSelectorDisplay(modelId) {
   const name = modelShortName(modelId);
   let tip = modelDescription(modelId);
-  // On Auto, the composer label stays "✨ Auto"; the per-turn pick + the
+  // On Auto, the composer label stays "✨ Smart (…)"; the per-turn pick + the
   // reason behind it surface only in the tooltip.
-  if (modelId === 'auto') {
+  if (isAutoModel(modelId)) {
     const chat = state.activeChat;
     if (chat?.autoReason) tip = chat.autoReason;
   }
@@ -858,19 +858,25 @@ function toggleModelDropdown(event) {
     dd.appendChild(hdr);
   }
 
-  // "Auto" — let the server pick the best-fitting model for each turn.
-  // Hidden under a GDPR local-only block (auto can't guarantee a local pick).
-  if (!localOnly) {
-    const autoItem = document.createElement('div');
-    autoItem.className = 'dropdown-item' + (currentModel === 'auto' ? ' active' : '');
-    autoItem.title = 'Für jede Nachricht automatisch das am besten passende Modell wählen';
-    autoItem.innerHTML = `
-      <span class="dd-check">${currentModel === 'auto' ? '&#10003;' : ''}</span>
-      <span class="dd-label">&#10024; Auto</span>
+  // "Smart" auto-routing — the server picks the best-fitting model per turn.
+  // Two modes that differ only by candidate pool. "Smart (Cloud)" is hidden
+  // under a GDPR local-only block (it can't guarantee a local pick); "Smart
+  // (Lokal)" is always shown since its pool is local-only — safe even under
+  // the GDPR lock (legacy "auto" still maps to Cloud server-side).
+  const _addAutoItem = (val, label) => {
+    const it = document.createElement('div');
+    const isActive = (currentModel === val) || (val === 'auto-cloud' && currentModel === 'auto');
+    it.className = 'dropdown-item' + (isActive ? ' active' : '');
+    it.title = modelDescription(val);
+    it.innerHTML = `
+      <span class="dd-check">${isActive ? '&#10003;' : ''}</span>
+      <span class="dd-label">${esc(label)}</span>
     `;
-    autoItem.onclick = () => { selectModel('auto'); closeAllDropdowns(); };
-    dd.appendChild(autoItem);
-  }
+    it.onclick = () => { selectModel(val); closeAllDropdowns(); };
+    dd.appendChild(it);
+  };
+  if (!localOnly) _addAutoItem('auto-cloud', '✨ Smart (Cloud)');
+  _addAutoItem('auto-local', '✨ Smart (Lokal)');
 
   for (const [mid, cfg] of enabledModels) {
     const item = document.createElement('div');
@@ -898,7 +904,7 @@ function selectModel(mid) {
   const oldModel = chat.model;
   chat.model = mid;
   // Drop any stale Auto pick when leaving Auto (or re-selecting it fresh).
-  if (mid !== 'auto') { chat.autoPicked = null; chat.autoReason = ''; }
+  if (!isAutoModel(mid)) { chat.autoPicked = null; chat.autoReason = ''; }
   updateModelSelectorDisplay(mid);
   // New model may have a different thinking_format — demote the composer's
   // saved thinking_level when it's no longer valid and refresh the icon.
@@ -912,7 +918,7 @@ function selectModel(mid) {
     // Drop stale session-id; let the next send create one. No pre-create —
     // orphans stack up otherwise.
     chat.sessionId = null;
-  } else if (chat.sessionId && mid !== 'auto') {
+  } else if (chat.sessionId && !isAutoModel(mid)) {
     // Trigger warmup on existing session with new concrete model.
     API.post(`/v1/sessions/${chat.sessionId}/warmup`, {model: mid}).then(data => {
       if (data.warmup) startWarmupPoll(chat);

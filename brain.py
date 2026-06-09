@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.98.1"
+VERSION = "9.99.0"
 VERSION_DATE = "2026-06-09"
 CHANGELOG = [
+    ("9.99.0", "2026-06-09", "feat(auto-route): split auto into two Smart modes (Cloud/Lokal) + decouple tool optimization from model selection onto a per-agent flag, and FIX the local-model tool-gating gate. THREE coupled changes. (1) TWO SMART MODES: the single composer '✨ Auto' becomes '✨ Smart (Cloud)' and '✨ Smart (Lokal)' (model values auto-cloud/auto-local; legacy 'auto' aliases to Cloud server-side so old agent.json + stored sessions round-trip). They differ ONLY by candidate pool — a new `pool` arg ('cloud'/'local') on _resolve_auto_model_tiered + resolve_auto_model_for_task filters the enabled set to cloud- or local-only before benchmark/tier ranking (empty intersection => full set, same never-starve rule as the ACL filter). Classification + tiering are byte-identical between modes. The composer directive is persisted per-turn (session._composer_auto_model) and restored after each turn so a reopened Smart (Lokal) session comes back as Lokal not Cloud; _resolve_session_auto_model (bg-delivery) honors the pool too and returns the directive to restore. Under a GDPR local-only lock the dropdown hides Smart (Cloud) but KEEPS Smart (Lokal) (its pool already guarantees a local pick). (2) TOOL-OPT IS A SEPARATE AXIS: new per-agent flag token_config.optimize_tools (default ON, edited in the Token-Optimierung tab) gates classifier-driven per-turn tool DEFERRAL independently of whether the turn auto-routed. brain.agent_optimize_tools_enabled(cfg) reads it (`!== false`); the chat worker stashes _auto_tool_groups (both the auto-route branch AND the concrete-model every-turn branch) only when the flag is ON and the model passes the gate, so model SELECTION and tool OPTIMIZATION no longer ride together. (3) GATE FIX: the reshape gate is now brain.model_should_optimize_tools(model) instead of the inverted model_maintains_warm_prefix. Tools are part of the warm KV prefix (schemas serialize into the prompt before msg 1 — varying them per turn = full prefill, the warmup-byte-stability invariant), so optimize ONLY when there is no warm prefix to protect: a CLOUD model, OR a LOCAL model with warmup DISABLED (never warmed => nothing to lose — the case the old gate WRONGLY skipped, treating ALL local models as protected). A warmup-ENABLED model (local or cloud) stays exempt, keyed on warmup CONFIG not transient warm state (a momentarily-cold warmup model must not be optimized into a trimmed prefix that the next warm turn diverges from). classifier_tool_deferral + classifier_gating_decision swapped to the new gate so the per-turn modal explanation matches. No config schema migration (optimize_tools defaults ON = prior behavior for non-warm models; warmup-disabled local models now ALSO get optimization, which is the intended fix). js_gate GREEN (net-globals 1271->1272 [+1 isAutoModel, feature-add not split, baseline bumped]; smoke 5/5). py_compile brain.py + handlers/chat.py OK. brain-agent-guide 05-internals + 06-user-manual + SKILL.md (1.41.0/9.99.0) updated."),
     ("9.98.1", "2026-06-09", "fix(prompt): stop the system prompt advertising tools the gating floor strips. After v9.98.0 trimmed the per-turn toolset for non-warm models, two UNCONDITIONAL prose blocks still asserted file/shell affordances the model no longer has on a retrieval turn — a false-affordance that invites a weak model (mistral-small) to hallucinate a write_file/execute_command call (→ InputValidationError + wasted round) or get confused. TWO fixes: (1) agents/main/soul.md `## Capabilities` no longer hard-claims 'Full file system access' + 'Shell command execution' as always-on — it now says the toolset ADAPTS per turn and to call tool_search to load a capability that isn't in the current set (reinforces the one tool guaranteed present); the 'no restrictions beyond the OS' line reframed to 'your reach is whatever your loaded tools allow'. (2) engine/prompt_build.py working-directory paragraph: the sentence NAMING python_exec/execute_command/write_file is now gated on those tools being in active_tool_names — a gated retrieval turn gets a short 'save outputs with a relative filename' line instead (load-bearing relative-path rule kept unconditional). KV-prefix SAFE: active_tool_names is already in the prompt cache key (_atn_key) and warm/local models are never tool-gated (they get the full set → full paragraph, byte-identical); check_warmup_prefix_stable.py baseline re-saved. Verified: full-toolset turn keeps the exec-naming paragraph; retrieval turn (no exec tools) gets the short line, 1042→736 chars, no execute_command mention. Audit also confirmed CLEAN: per-tool prose is correctly gated (deferred tools don't ship their prose), no-narration rule stated once, no stale ChromaDB refs reach the prompt. soul.md is agent config (git-tracked)."),
     ("9.98.0", "2026-06-09", "feat(auto-route): minimal tool-gating floor — stop confusing weak models with a bloated toolset. The classifier-driven per-turn tool gating (non-warm models only) used a WHOLE-GROUP never-strip floor of {core, workflows} = 18 tools always in-prompt, including the agentic file/shell cluster (execute_command/write_file/edit_file/search_files/list_directory/read_file) — pure noise on a retrieval/Q&A turn that needs only mempalace_query. Handing mistral-small ~18 tools for a one-tool policy lookup measurably caused synthesis collapses. THE FIX: the never-strip floor is now the minimal STRUCTURAL set by tool NAME (_TOOL_GATING_NEVER_STRIP_TOOLS = {tool_search, ask_user} — reach deferred tools + clarify), and the whole-group floor (_TOOL_GATING_NEVER_STRIP) is now EMPTY. The file/shell cluster + everything else is classifier-gated like any group: deferred OUT on a turn the classifier doesn't flag as needing it, pulled back IN when it flags files/bash (→ core) or python (→ code_exec). Deferred tools stay tool_search-discoverable, so nothing dead-ends — verified: trimmed-floor retrieval turns still call read_document 7-10× via a tool_search hop and score well. A/B (KG-Real-Policies, gold reused, mistral-medium judge, auto routing): a SINGLE trimmed run scored 0.84 vs 0.80 baseline — but a follow-up 3-rep measurement (0.76/0.85/0.77 = mean 0.79 ±0.04) showed that 0.84 was the TOP of the mistral-small variance band, NOT a real lift: the change is eval-NEUTRAL on mean (0.79 ≈ 0.80 baseline). It is kept on CORRECTNESS grounds — handing a weak model 18 tools incl. execute_command/write_file for a one-tool lookup is wrong regardless of the mean — and it does not regress. classifier_tool_deferral + classifier_gating_decision updated together (modal 'floor' now reports the tool-name floor). Only affects non-warm (cloud) models under the LLM/hybrid classifier; warm/local models still get ([],[]) so their KV prefix is untouched. No config/schema change."),
     ("9.97.1", "2026-06-09", "feat(doctor): Qdrant service health is now a doctor check. With the vector backend out-of-process (v9.97.0), 'backend=qdrant + palace dir present + config valid' can ALL be true while every retrieval silently returns nothing because the Qdrant service is down — exactly the silent-failure class doctor exists to catch. engine/doctor.check_mempalace_health gains a `mempalace_qdrant` finding (only when resolved backend == 'qdrant'): _check_qdrant_service() probes GET /healthz (FAIL + actionable fix if unreachable/non-200) then GET /collections (WARN if no *_mempalace_drawers collection, WARN if any collection not 'green', else OK). URL resolved like the backend: MEMPALACE_QDRANT_URL env > ~/.mempalace/config.json qdrant_url > localhost:6333. Tight 2s timeout, degrades to one finding, never throws (safe inside the otherwise-no-network static check set — surfaces via GET /v1/doctor). Verified both paths: live service => OK (1 collection green, 16888 drawers); dead port => FAIL 'Qdrant service unreachable' with start/rollback fix. No migration."),
@@ -11111,6 +11112,61 @@ def model_maintains_warm_prefix(model: str) -> bool:
         return True
 
 
+def model_should_optimize_tools(model: str) -> bool:
+    """True iff per-turn classifier tool optimization is SAFE for this model.
+
+    The gate that decides whether the per-turn tool list may be reshaped. Tools
+    are part of the warm KV prefix (the tool schemas serialize into the prompt
+    before the first message), so varying them per turn invalidates a warm
+    prefix → full prefill. We therefore optimize ONLY when there is no warm
+    prefix to protect:
+
+      - Cloud model            → optimize (no reusable prefix; varying is free).
+      - Local, warmup DISABLED  → optimize (it is never warmed, so nothing to
+                                  lose — this is the case the old gate wrongly
+                                  skipped: `model_maintains_warm_prefix` treated
+                                  ALL local models as protected).
+      - Local/cloud, warmup ENABLED → do NOT optimize. Keyed on CONFIG, not the
+                                  transient warm state: a warmup-enabled model is
+                                  *meant* to be warm, and the keeper primes it
+                                  with the full (static) tool set; optimizing it
+                                  during a cold window would prime a TRIMMED
+                                  prefix that the next (warm) turn's static set
+                                  diverges from → thrash. Treat it as protected
+                                  whether warm or momentarily cold.
+
+    This is intentionally the near-inverse of `model_maintains_warm_prefix`,
+    differing only for warmup-DISABLED local models (protect=True there, but
+    optimize=True here). Kept as a separate, tool-opt-specific predicate so the
+    warmup-protection semantics elsewhere stay untouched.
+    """
+    if not model or model == "auto":
+        return False  # unknown -> conservative: don't reshape
+    try:
+        cfg = (_models_config or {}).get(model) or {}
+        if cfg.get("warmup"):
+            return False  # warmup enabled → protected (warm or cold)
+        # No warmup: cloud OR a local model that never warms → safe to optimize.
+        return True
+    except Exception:
+        return False
+
+
+def agent_optimize_tools_enabled(agent_config: dict | None) -> bool:
+    """Per-agent toggle for classifier-driven per-turn tool optimization.
+
+    Reads `token_config.optimize_tools` (default True — preserves the prior
+    always-on-for-non-warm behavior). When False, the classifier never reshapes
+    the turn's tool set (static deferral stands) regardless of model; model
+    SELECTION (auto-routing) is unaffected — the two axes are independent.
+    """
+    try:
+        tc = (agent_config or {}).get("token_config") or {}
+        return tc.get("optimize_tools", True) is not False
+    except Exception:
+        return True
+
+
 def classifier_tool_deferral(model: str, tool_groups: list[str] | None) -> tuple[list[str], list[str]]:
     """Per-turn tool DEFERRAL adjustment from the classifier's needed groups.
 
@@ -11124,14 +11180,17 @@ def classifier_tool_deferral(model: str, tool_groups: list[str] | None) -> tuple
         forced INTO the prompt even if they're normally deferred (the classifier
         has positive evidence the task needs them, so don't make the model hunt).
 
-    ONLY for non-warmup models — a warm/local model keeps its static KV prefix
-    untouched (varying the tool list invalidates it). Empty/empty when there's
-    no signal or the model warms up, so the caller leaves deferral as-is.
+    Gated by `model_should_optimize_tools`: a warmup-ENABLED model (local or
+    cloud) keeps its static KV prefix untouched (varying the tool list
+    invalidates it). A warmup-DISABLED local model is never warmed, so it IS
+    reshaped now (the old `model_maintains_warm_prefix` gate wrongly skipped
+    it). Empty/empty when there's no signal or the model is warmup-protected,
+    so the caller leaves deferral as-is.
     """
     if not tool_groups:
         return [], []
-    if model_maintains_warm_prefix(model):
-        return [], []  # preserve KV prefix — never reshape a warming model
+    if not model_should_optimize_tools(model):
+        return [], []  # preserve KV prefix — never reshape a warmup-protected model
     keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP
     defer_extra: list[str] = []
     undefer: list[str] = []
@@ -11163,14 +11222,14 @@ def classifier_gating_decision(model: str, tool_groups: list[str] | None) -> dic
     The keys are kept stable for the existing modal: `kept_groups` = groups
     pulled in-prompt (needed + floor), `excluded_groups` = groups DEFERRED out
     (still tool_search-discoverable — not removed). `applied=False` means the
-    static deferral config stood (warm model, or no signal).
+    static deferral config stood (warmup-protected model, or no signal).
     """
     needed = sorted(set(tool_groups or []))
     if not tool_groups:
         return {"applied": False, "reason": "no classification signal (keyword mode miss or fail-open)",
                 "kept_groups": [], "excluded_groups": [], "needed_groups": needed}
-    if model_maintains_warm_prefix(model):
-        why = ("local model" if is_model_local(model) else "warmup enabled")
+    if not model_should_optimize_tools(model):
+        why = ("local model, warmup enabled" if is_model_local(model) else "warmup enabled")
         return {"applied": False,
                 "reason": f"model keeps a warm KV prefix ({why}) — deferral left static to preserve it",
                 "kept_groups": sorted(TOOL_GROUPS.keys()),
@@ -11508,7 +11567,8 @@ def _resolve_auto_model_tiered(purpose: str | None,
                                *, attachment_mimes: list[str] | None = None,
                                allowed_models: set[str] | None = None,
                                complexity: str | None = None,
-                               task_types: list[str] | None = None) -> str:
+                               task_types: list[str] | None = None,
+                               pool: str | None = None) -> str:
     """Pick the best enabled model for a task.
 
     Precedence (highest first):
@@ -11529,10 +11589,22 @@ def _resolve_auto_model_tiered(purpose: str | None,
     `allowed_models`, when set, restricts the candidate pool to models the
     caller may use (ACL). Empty intersection falls back to the full enabled
     set so an unrestricted/admin caller is never starved.
+
+    `pool` ("cloud" | "local" | None) constrains the candidate set to cloud-only
+    or local-only models — this is the sole difference between the composer's
+    "Smart (Cloud)" and "Smart (Lokal)" auto modes (the classification + tiering
+    are identical; only the pool changes). Empty intersection falls back to the
+    full set (same never-starve rule as the ACL filter), so a box with no local
+    model still routes rather than failing.
     """
     enabled = get_enabled_models()  # priority-desc
     if allowed_models:
         scoped = [m for m in enabled if m in allowed_models]
+        if scoped:
+            enabled = scoped
+    if pool in ("cloud", "local"):
+        want_local = (pool == "local")
+        scoped = [m for m in enabled if is_model_local(m) == want_local]
         if scoped:
             enabled = scoped
     if not enabled:
@@ -11592,7 +11664,8 @@ def _resolve_auto_model_tiered(purpose: str | None,
 
 def resolve_auto_model_for_task(agent_config: dict, message: str,
                                 attachment_mimes: list[str] | None = None,
-                                allowed_models: set[str] | None = None
+                                allowed_models: set[str] | None = None,
+                                pool: str | None = None
                                 ) -> tuple[str, str | None, dict | None]:
     """For agents with model="auto", analyze the task and pick the best model.
 
@@ -11604,6 +11677,8 @@ def resolve_auto_model_for_task(agent_config: dict, message: str,
     `attachment_mimes` (when the turn carries files) constrains the pick to a
     model that can natively handle those MIME types.
     `allowed_models` (when set) restricts the pick to the caller's ACL set.
+    `pool` ("cloud" | "local" | None) constrains the pick to cloud- or local-only
+    models — the "Smart (Cloud)" vs "Smart (Lokal)" composer modes.
     """
     raw_model = agent_config.get("model", "")
     if raw_model != "auto":
@@ -11612,7 +11687,7 @@ def resolve_auto_model_for_task(agent_config: dict, message: str,
     fixed_purpose = agent_config.get("model_purpose")
     if fixed_purpose:
         return (_resolve_auto_model_tiered(fixed_purpose, attachment_mimes=attachment_mimes,
-                                           allowed_models=allowed_models), fixed_purpose, None)
+                                           allowed_models=allowed_models, pool=pool), fixed_purpose, None)
 
     # Classify task from message (keyword / LLM / hybrid per config).
     analysis = resolve_task_analysis(message)
@@ -11622,7 +11697,7 @@ def resolve_auto_model_for_task(agent_config: dict, message: str,
     resolved = _resolve_auto_model_tiered(
         detected, attachment_mimes=attachment_mimes, allowed_models=allowed_models,
         complexity=(analysis or {}).get("complexity"),
-        task_types=(analysis or {}).get("task_types"))
+        task_types=(analysis or {}).get("task_types"), pool=pool)
     # Only hand back analysis with actionable richer fields (LLM source).
     rich = analysis if (analysis and analysis.get("source") == "llm") else None
     return resolved, detected, rich

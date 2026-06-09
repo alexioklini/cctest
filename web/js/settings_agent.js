@@ -216,7 +216,13 @@ async function switchAgentTab(agentId, tab, btn) {
       const data = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
       const cfg = JSON.parse(data.content || '{}');
       const enabledModels = enabledModelsWithCapability('chat');
-      const autoOption = `<option value="auto" title="Wählt für jede Nachricht automatisch das am besten passende Modell"${cfg.model==='auto'?' selected':''}>✨ Auto</option>`;
+      // Legacy "auto" maps to Cloud — preselect Smart (Cloud) for it so an
+      // old agent.json round-trips without surprise (server treats both alike).
+      const _autoCloudSel = (cfg.model==='auto-cloud' || cfg.model==='auto') ? ' selected' : '';
+      const _autoLocalSel = cfg.model==='auto-local' ? ' selected' : '';
+      const autoOption =
+        `<option value="auto-cloud" title="Wählt pro Nachricht automatisch das beste Cloud-Modell"${_autoCloudSel}>✨ Smart (Cloud)</option>` +
+        `<option value="auto-local" title="Wählt pro Nachricht automatisch das beste lokale Modell"${_autoLocalSel}>✨ Smart (Lokal)</option>`;
       const modelOptions = autoOption + enabledModels.map(([mid]) =>
         modelOption(mid, {selected: mid===cfg.model})
       ).join('');
@@ -775,6 +781,19 @@ async function switchAgentTab(agentId, tab, btn) {
           </div>
 
           <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
+            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Werkzeug-Optimierung pro Anfrage</div>
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+              <input type="checkbox" id="tok-optimize-tools" ${tcfg.optimize_tools === false ? '' : 'checked'} style="margin-top:2px">
+              <span style="font-size:12px;color:var(--text-300)">
+                Klassifiziert jede Anfrage und stellt nicht benötigte Werkzeuge zurück (bleiben per <code>tool_search</code> erreichbar) — schlankerer Prompt, bessere Treffsicherheit bei schwächeren Modellen.
+                <span style="display:block;color:var(--text-400);margin-top:3px">
+                  Unabhängig von der Modellwahl (✨ Smart). Bei <b>lokalen Modellen mit aktiviertem Warmup</b> wird die Optimierung übersprungen, um den warmen KV-Prefix stabil zu halten; lokale Modelle <b>ohne</b> Warmup werden optimiert wie Cloud-Modelle.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
             <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Kontext-Komprimierung</div>
             <div style="display:flex;align-items:center;gap:8px">
               <span style="font-size:12px;color:var(--text-300)">Komprimierungsschwelle:</span>
@@ -819,9 +838,13 @@ window._saveTokenConfig = async function(agentId) {
   });
 
   const threshVal = document.getElementById('tok-compact-threshold')?.value;
+  // optimize_tools defaults ON; persist the explicit boolean so a saved-OFF
+  // value sticks (resolver reads `!== false`).
+  const optTools = document.getElementById('tok-optimize-tools');
   const tcfg = {
     tool_overrides: overrides,
     compact_threshold: threshVal ? parseInt(threshVal) / 100 : null,
+    optimize_tools: optTools ? !!optTools.checked : true,
   };
 
   try {

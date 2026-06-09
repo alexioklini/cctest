@@ -143,7 +143,8 @@ function relativeTime(ts) {
 
 function modelShortName(modelId, withProvider = true) {
   if (!modelId) return '';
-  if (modelId === 'auto') return '✨ Auto';  // 'Auto' kept — product term
+  if (modelId === 'auto-cloud' || modelId === 'auto') return '✨ Smart (Cloud)';  // 'auto' = legacy alias
+  if (modelId === 'auto-local') return '✨ Smart (Lokal)';
   const cfg = state.modelsConfig?.models?.[modelId];
   let name = '';
   // Check display_name first (user-configurable), then shortname
@@ -178,9 +179,18 @@ function modelShortName(modelId, withProvider = true) {
 
 // User-editable description for a model — shown as tooltip in dropdowns.
 // Falls back to provider-qualified short name when empty.
+// True for any of the auto-routing directives: the two Smart modes plus the
+// legacy 'auto' alias (pre-split / agent.json model:"auto"). Behavioral gates
+// (spinner, warmup-skip, "keep composer on Smart") key off this, not a bare
+// === 'auto', so both Cloud/Lokal modes are handled uniformly.
+function isAutoModel(modelId) {
+  return modelId === 'auto' || modelId === 'auto-cloud' || modelId === 'auto-local';
+}
+
 function modelDescription(modelId) {
   if (!modelId) return '';
-  if (modelId === 'auto') return 'Wählt für jede Nachricht automatisch das am besten passende Modell';
+  if (modelId === 'auto-local') return 'Wählt für jede Nachricht automatisch das am besten passende LOKALE Modell';
+  if (modelId === 'auto-cloud' || modelId === 'auto') return 'Wählt für jede Nachricht automatisch das am besten passende CLOUD-Modell';
   const cfg = state.modelsConfig?.models?.[modelId];
   const desc = (cfg?.description || '').trim();
   if (desc) return desc;
