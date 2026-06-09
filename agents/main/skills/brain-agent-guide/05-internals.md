@@ -621,12 +621,22 @@ Imported as a Python package — no MCP, no subprocess.
 
 - **Wing scheme** (ID-only): `user__<uid>`, `team__<tid>`,
   `project__<pid>`, bare names = shared.
-- **SINGLE SHARED COLLECTION**: all wings share ONE ChromaDB collection
+- **Vector backend = Qdrant** (pluggable via `MEMPALACE_BACKEND` env; native
+  service on `localhost:6333`, WAL-backed transactional ANN, scalar int8
+  quantization for 4× RAM with rescore-preserved recall). Embeddings are computed
+  Brain-side via MLX (`embeddinggemma-300m`) — Qdrant needs no GPU. Quant + on_disk
+  knobs are a `# BRAIN-PATCH` on the vendored `backends/qdrant.py` (gitignored
+  venv — re-apply after any mempalace upgrade).
+- **SINGLE SHARED COLLECTION**: all wings share ONE collection
   `mempalace_drawers` (+ `mempalace_closets`), filtered by a `wing` metadata field;
-  `mempalace_query`/`_query_wings` does one `col.query` over it with a wing filter.
+  `mempalace_query`/`_query_wings` does one query over it with a wing filter.
   (Per-wing collections were tried in v9.62.0 and REVERTED 2026-06-03 — they added
   dead complexity and did not fix the corruption below.)
-- **The recurring "HNSW corruption on restart" — ROOT CAUSE (fixed v9.70.0).**
+- **The recurring "HNSW corruption on restart" — HISTORICAL (ChromaDB-only; gone on Qdrant).**
+  Superseded by the Qdrant migration: the embedded-Chroma in-process HNSW segment
+  files that raced the writer daemons no longer exist, so this whole failure mode is
+  structurally impossible now. Kept here because it explains *why* the backend moved.
+  Original ROOT CAUSE (mitigated v9.70.0 on Chroma, before the move):
   Symptom: after a restart a query raises `InternalError: Error finding id` and a
   broad query returns only a fraction of the drawers. It was NOT chromadb failing
   to persist, NOT per-wing, NOT embeddings. The bug is in the vendored MemPalace

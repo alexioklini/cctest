@@ -328,9 +328,14 @@ Tree-sitter AST snapshots. `files(path, sha256, lang, …)`,
 ### MemPalace storage
 - Palace root: from `mempalace.yaml → palace_path`
   (typically `~/.mempalace/<palace_name>/`).
-- ONE shared ChromaDB collection (`mempalace_drawers` / `mempalace_closets`) for
-  all wings, filtered by a `wing` metadata field; SQLite at
-  `<palace>/knowledge_graph.sqlite3` for triples.
+- Vector store: a **Qdrant** service (native process on `localhost:6333`,
+  WAL-backed ANN, scalar int8 quantization) — selected via the `MEMPALACE_BACKEND`
+  env. ONE shared collection per type (`mempalace_drawers` / `mempalace_closets`)
+  for all wings, filtered by a `wing` metadata field. Embeddings are computed
+  Brain-side (MLX, `embeddinggemma-300m`); Qdrant stores only the vectors.
+  SQLite at `<palace>/knowledge_graph.sqlite3` for triples. (Earlier backends —
+  embedded ChromaDB, then a brute-force `sqlite_exact` interim — were retired to
+  escape ChromaDB HNSW corruption.)
 - Wing naming: `user__<uid>` / `team__<tid>` / `project__<pid>` / bare
   shared names (e.g. `brain_code`).
 - Rooms: `chat | chat_summary | chat_attachment | reference | general |
