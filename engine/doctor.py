@@ -28,6 +28,100 @@ def _finding(check, status, title, detail="", fix=""):
             "detail": detail, "fix": fix}
 
 
+def _qdrant_base_url():
+    """Resolve the Qdrant REST base URL the same way the backend does:
+    MEMPALACE_QDRANT_URL env > ~/.mempalace/config.json > default localhost."""
+    url = os.environ.get("MEMPALACE_QDRANT_URL")
+    if not url:
+        try:
+            import json
+            mp_cfg = os.path.expanduser("~/.mempalace/config.json")
+            with open(mp_cfg) as fh:
+                url = (json.load(fh) or {}).get("qdrant_url")
+        except Exception:
+            url = None
+    return (url or "http://localhost:6333").rstrip("/")
+
+
+def _check_qdrant_service():
+    """Probe the Qdrant service: reachable + collections green.
+
+    The vector store is an OUT-OF-PROCESS service now, so 'backend=qdrant +
+    palace dir present + config valid' can all be true while every retrieval
+    silently fails because the service is down. This is the exact silent-failure
+    class doctor exists to catch. NOTE: this is a localhost network call inside an
+    otherwise no-network static check — justified because it's the single
+    dependency the whole backend rests on and the timeout is tight (fails to one
+    WARN, never throws). See project_qdrant_live_int8.
+    """
+    import json
+    import urllib.request
+    base = _qdrant_base_url()
+    findings = []
+
+    def _get(path, timeout=2.0):
+        req = urllib.request.Request(base + path, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read().decode("utf-8", "replace")
+
+    # 1. service reachable
+    try:
+        status, _ = _get("/healthz")
+        if status != 200:
+            return [_finding(
+                "mempalace_qdrant", _FAIL,
+                f"Qdrant service unhealthy (HTTP {status})",
+                f"GET {base}/healthz returned {status}.",
+                "Check the Qdrant process (~/.qdrant/qdrant, log "
+                "~/.qdrant/qdrant.log) — retrieval fails while it's down.")]
+    except Exception as e:
+        return [_finding(
+            "mempalace_qdrant", _FAIL, "Qdrant service unreachable",
+            f"GET {base}/healthz failed: {type(e).__name__}: {e}",
+            "Start Qdrant (~/.qdrant/qdrant) — the vector backend is qdrant but "
+            "the service is down, so ALL mempalace retrieval returns nothing. "
+            "(Rollback: drop the MEMPALACE_QDRANT_* plist env keys + restart.)")]
+
+    # 2. collections present + status green
+    try:
+        _, body = _get("/collections")
+        names = [c["name"] for c in
+                 (json.loads(body).get("result", {}) or {}).get("collections", [])]
+        drawer_cols = [n for n in names if n.endswith("_mempalace_drawers")]
+        if not drawer_cols:
+            findings.append(_finding(
+                "mempalace_qdrant", _WARN, "Qdrant up but no drawer collection",
+                f"Reachable at {base}, but no *_mempalace_drawers collection "
+                "exists yet — palace not mined into Qdrant.",
+                "Let the miner run (or re-mine: clear chat-sync cursors + restart)."))
+        else:
+            bad = []
+            for col in drawer_cols:
+                try:
+                    _, cb = _get(f"/collections/{col}")
+                    st = (json.loads(cb).get("result", {}) or {}).get("status")
+                    if st and st != "green":
+                        bad.append(f"{col}={st}")
+                except Exception:
+                    bad.append(f"{col}=unknown")
+            if bad:
+                findings.append(_finding(
+                    "mempalace_qdrant", _WARN, "Qdrant collection not green",
+                    "Collection status: " + ", ".join(bad) + " (yellow/red = "
+                    "indexing or degraded).",
+                    "Usually transient during a mine; persistent red = inspect "
+                    "the Qdrant log."))
+            else:
+                findings.append(_finding(
+                    "mempalace_qdrant", _OK,
+                    f"Qdrant reachable at {base}, {len(drawer_cols)} collection(s) green"))
+    except Exception as e:
+        findings.append(_finding(
+            "mempalace_qdrant", _WARN, "Qdrant reachable but collection check failed",
+            f"{type(e).__name__}: {e}"))
+    return findings
+
+
 def _cfg():
     """Return a config dict for the checks. IMPORTANT: the live models dict is
     `brain._models_config`, NOT `server_config['models']` (server_config holds
@@ -215,6 +309,7 @@ def check_mempalace_health(cfg):
                                  f"Embedding device = {dev}"))
 
     # 3b. backend resolves + dir holds matching artifacts (no mismatch).
+    backend = None
     try:
         from mempalace.palace import resolve_backend_name
         backend = resolve_backend_name(palace_path)
@@ -227,6 +322,13 @@ def check_mempalace_health(cfg):
             f"{type(e).__name__}: {e}",
             "Check MEMPALACE_BACKEND + that the palace dir holds exactly one "
             "backend's artifacts (BackendMismatchError otherwise)."))
+
+    # 3b'. Qdrant service reachable (only when the backend is qdrant).
+    # The vector store is now an out-of-process service; if it's down, every
+    # retrieval fails even though the palace dir + config look fine. Doctor must
+    # surface that. See project_qdrant_live_int8.
+    if backend == "qdrant":
+        findings.extend(_check_qdrant_service())
 
     # 3c. drawer count > 0.
     try:
