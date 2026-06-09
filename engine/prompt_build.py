@@ -233,17 +233,35 @@ def _build_system_prompt(include_memory_summary: bool = True,
     #     (admin-editable Topic B section, gated on research_mode).
     # Brain.py only emits the agent's identity preamble and date/cwd/OS
     # facts here; everything posture-related lives in editable config.
+    # The working-directory facts only matter when a file-writing/exec tool is
+    # actually loaded this turn. Naming python_exec/execute_command/write_file
+    # while they're deferred (e.g. a gated retrieval turn) is a false affordance
+    # that invites a weak model to call a tool it doesn't have. So gate the
+    # tool-naming detail on tool presence; keep the load-bearing relative-path
+    # rule unconditional. `active_tool_names` is in the cache key (_atn_key) and
+    # warm/local models are never tool-gated, so the warm-pool prefix is
+    # unaffected (check_warmup_prefix_stable.py --check still gates this).
+    _exec_tools = {"python_exec", "execute_command", "write_file"}
+    _has_exec = active_tool_names is None or bool(_exec_tools & set(active_tool_names))
+    if _has_exec:
+        _cwd_line = (
+            "Working directory: your session's artifact folder. This is where "
+            "`python_exec` and `execute_command` run, and where relative-path "
+            "file writes (`write_file`, or any file your code/commands create) "
+            "land and auto-promote to the Artifacts panel. Always save output "
+            "files there using a RELATIVE filename (e.g. `report.docx`, not an "
+            "absolute path). Never write to an absolute path unless the user "
+            "explicitly gave you one — the exact folder path is in the first "
+            "message of this chat.\n")
+    else:
+        _cwd_line = (
+            "Any files you produce go to your session's artifact folder — save "
+            "them with a RELATIVE filename (e.g. `report.docx`), never an "
+            "absolute path unless the user gave you one.\n")
     system_instruction += (
         f"You are agent '{agent_id}' in the Brain Agent system. "
         f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:00 %Z').strip()}\n"
-        f"Working directory: your session's artifact folder. This is where "
-        f"`python_exec` and `execute_command` run, and where relative-path "
-        f"file writes (`write_file`, or any file your code/commands create) "
-        f"land and auto-promote to the Artifacts panel. Always save output "
-        f"files there using a RELATIVE filename (e.g. `report.docx`, not an "
-        f"absolute path). Never write to an absolute path unless the user "
-        f"explicitly gave you one — the exact folder path is in the first "
-        f"message of this chat.\n"
+        f"{_cwd_line}"
         f"Operating system: {os_name}\n"
         )
     # NOTE 1: we deliberately do NOT print `os.getcwd()` here. The Brain server's
