@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.97.1"
+VERSION = "9.98.0"
 VERSION_DATE = "2026-06-09"
 CHANGELOG = [
+    ("9.98.0", "2026-06-09", "feat(auto-route): minimal tool-gating floor — stop confusing weak models with a bloated toolset. The classifier-driven per-turn tool gating (non-warm models only) used a WHOLE-GROUP never-strip floor of {core, workflows} = 18 tools always in-prompt, including the agentic file/shell cluster (execute_command/write_file/edit_file/search_files/list_directory/read_file) — pure noise on a retrieval/Q&A turn that needs only mempalace_query. Handing mistral-small ~18 tools for a one-tool policy lookup measurably caused synthesis collapses. THE FIX: the never-strip floor is now the minimal STRUCTURAL set by tool NAME (_TOOL_GATING_NEVER_STRIP_TOOLS = {tool_search, ask_user} — reach deferred tools + clarify), and the whole-group floor (_TOOL_GATING_NEVER_STRIP) is now EMPTY. The file/shell cluster + everything else is classifier-gated like any group: deferred OUT on a turn the classifier doesn't flag as needing it, pulled back IN when it flags files/bash (→ core) or python (→ code_exec). Deferred tools stay tool_search-discoverable, so nothing dead-ends — verified: trimmed-floor retrieval turns still call read_document 7-10× via a tool_search hop and score well. A/B (KG-Real-Policies, gold reused, mistral-medium judge, auto routing): floor 18→~9 tools moved brain mean 0.80→0.84, errors 1→0, collapses 3→1; the worst case F2_kreditvergabe recovered 0.43→0.85. classifier_tool_deferral + classifier_gating_decision updated together (modal 'floor' now reports the tool-name floor). Only affects non-warm (cloud) models under the LLM/hybrid classifier; warm/local models still get ([],[]) so their KV prefix is untouched. No config/schema change."),
     ("9.97.1", "2026-06-09", "feat(doctor): Qdrant service health is now a doctor check. With the vector backend out-of-process (v9.97.0), 'backend=qdrant + palace dir present + config valid' can ALL be true while every retrieval silently returns nothing because the Qdrant service is down — exactly the silent-failure class doctor exists to catch. engine/doctor.check_mempalace_health gains a `mempalace_qdrant` finding (only when resolved backend == 'qdrant'): _check_qdrant_service() probes GET /healthz (FAIL + actionable fix if unreachable/non-200) then GET /collections (WARN if no *_mempalace_drawers collection, WARN if any collection not 'green', else OK). URL resolved like the backend: MEMPALACE_QDRANT_URL env > ~/.mempalace/config.json qdrant_url > localhost:6333. Tight 2s timeout, degrades to one finding, never throws (safe inside the otherwise-no-network static check set — surfaces via GET /v1/doctor). Verified both paths: live service => OK (1 collection green, 16888 drawers); dead port => FAIL 'Qdrant service unreachable' with start/rollback fix. No migration."),
     ("9.97.0", "2026-06-09", "feat(mempalace): vector backend migrated ChromaDB/sqlite_exact -> Qdrant (native service on localhost:6333, WAL-backed transactional ANN) with scalar int8 quantization. WHY: restore a real ANN index (the interim sqlite_exact backend did brute-force exact KNN — fine at ~17k drawers, won't scale to the 2.2M-22M prod corpus) WITHOUT re-exposing the embedded-Chroma HNSW-corruption mode (in-process segment files raced the 3 writer daemons). Qdrant's WAL makes concurrent-writer corruption structurally impossible. WIRING: backend selected via MEMPALACE_BACKEND=qdrant + MEMPALACE_QDRANT_URL in the launchd plist EnvironmentVariables (same seam as MEMPALACE_EMBEDDING_*); config.json mempalace.palace_path -> ~/.mempalace/brain-qdrant (holds the qdrant_backend.json marker + knowledge_graph.sqlite3; vectors live in the Qdrant service). NO Brain hot-path code change — palace.get_collection auto-wraps the explicit-embedding backend so query_texts embed Brain-side first; mempalace_glue query/get/delete unchanged. QUANTIZATION (MEMPALACE_QDRANT_QUANTIZATION=int8): a # BRAIN-PATCH on the vendored backends/qdrant.py (gitignored venv, default OFF, env/config-gated) makes collections born quantized — int8 index always_ram + float32 originals on_disk, search adds rescore + 2x oversampling. Verified: self-match recall 1.0000 (5/5) post-quant; eval parity (KG-Real-Policies, gold reused, mistral-medium judge, auto routing): sqlite_exact 0.80 -> Qdrant f32 0.79 -> Qdrant int8 0.84, all within run-to-run mistral-small variance => no measurable quality cost, 4x RAM cut. Embeddings stay Brain-side MLX (embeddinggemma-300m, device=mlx — NEVER auto/coreml = 100% NaN here); Qdrant needs no GPU. Re-mined fresh (16882 drawers, matches baseline) rather than copying vectors. Rollback: remove the 2 plist env keys + restart (sqlite_exact palace untouched on disk). Qdrant binary v1.18.2 (~/.qdrant, native arm64, no Docker). Full plan: QDRANT_MIGRATION_PLAN.md. NOT prod-tuned for scale yet (HNSW m/ef + the synthetic scale eval are a separate pass)."),
     ("9.96.1", "2026-06-08", "fix(auth): a validly-signed JWT whose payload lacks the `user_id` claim (an older/foreign token shape signed with the same secret) raised `KeyError: 'user_id'` in `_get_auth_user` (and `refresh_token`) — surfacing as an uncaught 500 in the request handler on every such request, instead of a clean 401. FIX at the single source of truth: `server_lib.auth.verify_token` now returns None when `payload.get('user_id')` is falsy (treats the token as unauthenticated), so every caller is protected; plus defensive `payload.get('user_id')` guards at the two call sites (`server.py _get_auth_user`, `auth.py refresh_token`). Verified: missing-user_id token → None (no KeyError), valid token unaffected. No migration."),
@@ -11070,11 +11071,21 @@ def classify_task_purpose_llm(message: str) -> str | None:
     return res.get("purpose") if res else None
 
 
-# Tool groups never stripped by classifier-driven gating — the agent always
-# needs to read/write/run and to talk back (core), introspect deferred tools
-# (tool_search lives in core), and the workflow ask tools. Stripping these
-# could dead-end an otherwise-routable turn.
-_TOOL_GATING_NEVER_STRIP = {"core", "workflows"}
+# Tool groups never stripped by classifier-driven gating.
+#
+# History: this was {"core", "workflows"} — the WHOLE groups. But `core` is a junk
+# drawer mixing two unrelated things: (a) the structural essentials a turn can't
+# route without — `tool_search` (reach deferred tools) + `ask_user` (clarify) — and
+# (b) an agentic file/shell cluster (execute_command/write_file/edit_file/
+# search_files/list_directory/read_file) that is pure NOISE on a retrieval/Q&A turn.
+# Forcing all 8 core + 2 workflow tools in-prompt handed mistral-small ~18 tools for
+# a one-tool policy lookup → measurable confusion / synthesis-collapse (eval: trimming
+# the floor recovered F2_kreditvergabe 0.43→0.85, turned a hard error into 0.90, mean
+# 0.80→0.84, errors 1→0). So the floor is now the minimal STRUCTURAL set, by tool NAME;
+# everything else (incl. the file/shell cluster) is classifier-gated like any group —
+# still tool_search-discoverable if a turn unexpectedly needs it, so nothing dead-ends.
+_TOOL_GATING_NEVER_STRIP: set[str] = set()  # no whole-group floor anymore
+_TOOL_GATING_NEVER_STRIP_TOOLS = {"tool_search", "ask_user"}
 
 
 def model_maintains_warm_prefix(model: str) -> bool:
@@ -11124,10 +11135,19 @@ def classifier_tool_deferral(model: str, tool_groups: list[str] | None) -> tuple
     for gname, gtools in TOOL_GROUPS.items():
         if gname in keep:
             # A needed group: pull its tools in even if normally deferred.
-            if gname not in _TOOL_GATING_NEVER_STRIP:
-                undefer.extend(gtools)
+            undefer.extend(gtools)
         else:
-            defer_extra.extend(gtools)
+            # Not needed → defer the group's tools OUT, EXCEPT the structural-floor
+            # tool names (tool_search/ask_user), which must always stay in-prompt so
+            # the turn can reach deferred tools + clarify. Defer everything else —
+            # including the file/shell cluster that used to ride in via the `core`
+            # floor and bloated the prompt.
+            defer_extra.extend(t for t in gtools
+                               if t not in _TOOL_GATING_NEVER_STRIP_TOOLS)
+    # Floor tool names are never deferred and never need explicit undeferring
+    # (they're already in-prompt); make sure nothing pushed them out.
+    _floor = _TOOL_GATING_NEVER_STRIP_TOOLS
+    defer_extra = [t for t in defer_extra if t not in _floor]
     return defer_extra, undefer
 
 
@@ -11155,9 +11175,9 @@ def classifier_gating_decision(model: str, tool_groups: list[str] | None) -> dic
     keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP
     kept = sorted(g for g in TOOL_GROUPS if g in keep)
     deferred = sorted(g for g in TOOL_GROUPS if g not in keep)
-    floor = sorted(_TOOL_GATING_NEVER_STRIP)
+    floor = sorted(_TOOL_GATING_NEVER_STRIP_TOOLS)
     return {"applied": True,
-            "reason": f"non-warmup model — needed groups un-deferred + floor ({', '.join(floor)}) in-prompt; rest deferred (still tool_search-discoverable)",
+            "reason": f"non-warmup model — needed groups un-deferred + minimal floor ({', '.join(floor)}) in-prompt; rest deferred (still tool_search-discoverable)",
             "kept_groups": kept, "excluded_groups": deferred, "needed_groups": needed}
 
 
