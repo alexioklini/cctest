@@ -18,6 +18,23 @@ resolved tool names are also enforced at dispatch: `tool_mcp` rejects any
 
 Deferred tools are hidden from the initial list and surfaced via `tool_search`.
 
+**Schema vs. admin prose — additive, never a replacement.** Each tool's wire
+schema (the `description` + `input_schema` the LLM actually receives on the
+`tools` array) lives in code (`engine/tool_schemas.py → TOOL_DEFINITIONS`).
+`resolve_active_tools` builds the wire array straight from `TOOL_DEFINITIONS`
+— it only filters + sorts; it never rewrites a tool's schema `description`.
+The admin "Prompt-Text" fields in **General Settings → Tools**
+(`config.json → tool_settings`: description / when_to_use / warnings /
+examples) do NOT touch the wire schema at all. They are rendered as a
+**separate `## <tool>` block appended to the system prompt** by
+`_render_tool_descriptions` (gated by `applies_with`). So an admin
+"description" override is *additional* guidance layered on top of the
+unchanged wire description — additive, not a substitute. The `input_schema`
+(parameters/types/required) is never editable from the UI — it's bound to the
+tool's Python signature. Each tool panel shows a read-only **"Wire-Schema"**
+block (the verbatim code description + param table + raw `input_schema` JSON)
+so an operator can confirm exactly what the model is given on the wire.
+
 ## Core file ops
 
 - `read_file(path, start_line?, end_line?)` — read text file, optional line range

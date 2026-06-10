@@ -50,9 +50,20 @@ class AdminConfigHandlers:
             for m in members:
                 tool_to_group.setdefault(m, grp_name)
         ts = engine._tool_settings or {}
+        # Live in-memory schema index (engine._TOOL_DEF_INDEX, re-exported from
+        # engine/tool_schemas.TOOL_DEFINITIONS). This is the EXACT description +
+        # input_schema the sidecar serialises onto the wire for the LLM — not the
+        # admin prose overlay above. Surfaced read-only so an operator can verify
+        # what the model actually receives, independent of whether anyone wrote
+        # an override. Empty for MCP/integration-only entries with no schema.
+        try:
+            def_index = engine._TOOL_DEF_INDEX or {}
+        except Exception:
+            def_index = {}
         tools = []
         for name in all_tools:
             rec = ts.get(name) or {}
+            sdef = def_index.get(name) or {}
             tools.append({
                 "name": name,
                 "group": tool_to_group.get(name, ""),
@@ -64,6 +75,9 @@ class AdminConfigHandlers:
                 "warnings": rec.get("warnings", "") or "",
                 "examples": rec.get("examples", "") or "",
                 "applies_with": list(rec.get("applies_with") or []),
+                # Read-only verbatim wire schema (what the LLM is given).
+                "wire_description": sdef.get("description", "") or "",
+                "wire_input_schema": sdef.get("input_schema") or None,
             })
         # Surface integration-only pseudo-tools (entries in tool_config that
         # have no matching TOOL_DISPATCH function — e.g. refinement, translation,

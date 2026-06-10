@@ -39,6 +39,12 @@ function renderToolPanelBody(toolName) {
       <textarea id="${id}" rows="${rows}" class="form-input" style="width:100%;font-family:var(--font-mono);font-size:11px;resize:vertical">${esc(val||'')}</textarea>
     </div>`;
 
+  // Verbatim wire schema (read-only): the exact description + input_schema the
+  // sidecar serialises onto the wire for the LLM, straight from the live
+  // TOOL_DEFINITIONS index — NOT the admin prose overlay below. Lets an
+  // operator confirm what the model actually receives. Collapsed by default.
+  const wireSchemaHTML = renderWireSchemaBlock(toolName, t);
+
   // applies_with multi-select
   const aw = new Set(t.applies_with || []);
   const awOptions = allTools.map(n =>
@@ -104,6 +110,8 @@ function renderToolPanelBody(toolName) {
 
     ${integHTML}
 
+    ${wireSchemaHTML}
+
     <div style="font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px">Prompt-Text</div>
     ${txt('ts-' + toolName + '-description', 'Beschreibung', t.description, 6)}
     ${txt('ts-' + toolName + '-when_to_use', 'Wann zu verwenden', t.when_to_use, 3)}
@@ -130,6 +138,59 @@ function renderToolPanelBody(toolName) {
       <button class="btn-secondary" onclick="resetToolPromptSettings('${esc(toolName)}')" style="padding:6px 14px;font-size:12px" title="Alle Text-Felder und „Gilt mit" leeren (Aktiviert/Aufgeschoben bleiben unberührt)">Text leeren</button>
       <button class="btn-primary" onclick="saveTool('${esc(toolName)}')" style="padding:6px 14px;font-size:12px">Speichern</button>
     </div>`;
+}
+
+// Read-only block showing the verbatim wire schema (description + input_schema)
+// that the LLM is given for this tool. Source = engine._TOOL_DEF_INDEX (the live
+// TOOL_DEFINITIONS), surfaced on the /v1/tools/settings GET as wire_description /
+// wire_input_schema. This is what the model actually receives on the wire — the
+// admin "Prompt-Text" fields below are an OVERLAY, not the schema itself. The
+// input_schema is NOT editable (it's a code contract bound to the tool's Python
+// signature); this is purely a verification window. Empty for MCP / integration-
+// only entries that have no TOOL_DEFINITIONS schema.
+function renderWireSchemaBlock(toolName, t) {
+  const desc = t.wire_description || '';
+  const schema = t.wire_input_schema || null;
+  if (!desc && !schema) {
+    return `<div style="margin-bottom:14px;padding:8px 10px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100);font-size:11px;color:var(--text-400)">
+      Kein Wire-Schema hinterlegt — dieses Tool hat keinen Eintrag in <code>TOOL_DEFINITIONS</code> (z. B. MCP- oder reines Integrations-Tool).
+    </div>`;
+  }
+  const params = (schema && schema.properties) ? Object.entries(schema.properties) : [];
+  const required = new Set((schema && schema.required) || []);
+  const paramRows = params.map(([pname, p]) => {
+    const ptype = (p && p.type) ? p.type : '';
+    const pdesc = (p && p.description) ? p.description : '';
+    const req = required.has(pname);
+    return `<div style="display:flex;gap:8px;align-items:flex-start;padding:4px 0;border-bottom:1px dotted var(--border-100);font-size:11px">
+      <span style="font-family:var(--font-mono);color:var(--text-100);min-width:130px">${esc(pname)}${req?'<span style="color:var(--error)" title="erforderlich"> *</span>':''}</span>
+      <span style="font-family:var(--font-mono);color:var(--accent-brand);min-width:64px">${esc(ptype)}</span>
+      <span style="flex:1;color:var(--text-300)">${esc(pdesc)}</span>
+    </div>`;
+  }).join('') || '<div style="font-size:11px;color:var(--text-400)">Keine Parameter.</div>';
+
+  const rawJson = schema ? JSON.stringify(schema, null, 2) : '';
+
+  return `
+    <details style="margin-bottom:14px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)">
+      <summary style="cursor:pointer;padding:8px 10px;font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">
+        Wire-Schema (was das LLM erhält · schreibgeschützt)
+      </summary>
+      <div style="padding:0 10px 10px">
+        <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:6px 0 3px">Beschreibung (Wire)</div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-200);white-space:pre-wrap;background:var(--bg-200);border-radius:4px;padding:8px;max-height:240px;overflow:auto">${esc(desc) || '<span style="color:var(--text-400)">(keine)</span>'}</div>
+
+        <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:10px 0 3px">Parameter</div>
+        <div>${paramRows}</div>
+
+        ${rawJson ? `<details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Roh-JSON (input_schema)</summary>
+          <pre style="font-family:var(--font-mono);font-size:10px;color:var(--text-300);background:var(--bg-200);border-radius:4px;padding:8px;max-height:300px;overflow:auto;white-space:pre">${esc(rawJson)}</pre>
+        </details>` : ''}
+
+        <div style="font-size:10px;color:var(--text-400);margin-top:8px">Quelle: <code>TOOL_DEFINITIONS</code> (Live, im Speicher). Das <code>input_schema</code> ist an die Python-Signatur des Tools gebunden und hier bewusst nicht editierbar — die Felder unter „Prompt-Text" sind ein Overlay, kein Ersatz für dieses Schema.</div>
+      </div>
+    </details>`;
 }
 
 // Renders the integration-knob form for the ~10 tools that have entries in
