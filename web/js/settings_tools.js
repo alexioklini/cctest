@@ -140,27 +140,16 @@ function renderToolPanelBody(toolName) {
     </div>`;
 }
 
-// Collapse a tool's (enabled, deferred) flag pair into the single 3-state
-// model the UI exposes: active (in prompt) · inactive (off entirely) ·
-// deferred (hidden, tool_search-only). enabled=false wins → inactive
-// regardless of deferred. Inverse of the active/inactive/deferred → flags
-// mapping in saveTool. Used by both the global Tools panel and the per-agent
-// override resolver (legacy combos collapse to whatever the code resolves).
+// A tool's single canonical status: 'active' (in prompt) · 'inactive' (off
+// entirely) · 'deferred' (hidden, tool_search-only). The server now sends a
+// canonical `state` field; this helper prefers it and falls back to the legacy
+// (enabled, deferred) booleans only for an old payload. enabled=false wins →
+// inactive. Used by the global Tools panel and the per-agent override resolver.
+const TOOL_STATES = ['active', 'inactive', 'deferred'];
 function toolGlobalState(t) {
+  if (t && TOOL_STATES.includes(t.state)) return t.state;
   if (!t || t.enabled === false) return 'inactive';
   return t.deferred ? 'deferred' : 'active';
-}
-
-// active/inactive/deferred → the {enabled, deferred} pair persisted to
-// config.json (global) or agent.json tool_overrides (per-agent). Single
-// source for the forward mapping so the global save and the agent save agree.
-function toolStateToFlags(state) {
-  switch (state) {
-    case 'inactive': return { enabled: false, deferred: false };
-    case 'deferred': return { enabled: true, deferred: true };
-    case 'active':
-    default:         return { enabled: true, deferred: false };
-  }
 }
 
 // Read-only block showing the verbatim wire schema (description + input_schema)
@@ -346,11 +335,9 @@ async function saveTool(toolName) {
     const purposes = purposesWrap
       ? [...purposesWrap.querySelectorAll('.ts-purpose:checked')].map(cb => cb.dataset.purpose)
       : (t.purposes || []);
-    const flags = toolStateToFlags(get('state')?.value || 'active');
     body = {
       name: toolName,
-      enabled: flags.enabled,
-      deferred: flags.deferred,
+      state: get('state')?.value || 'active',
       description: get('description')?.value || '',
       when_to_use: get('when_to_use')?.value || '',
       warnings: get('warnings')?.value || '',
@@ -371,7 +358,7 @@ async function saveTool(toolName) {
       }
       // Refresh deferred badge inline
       const badge = document.getElementById('defer-badge-' + toolName);
-      if (badge) badge.style.display = body.deferred ? 'inline' : 'none';
+      if (badge) badge.style.display = body.state === 'deferred' ? 'inline' : 'none';
       // Refresh prose badge inline (★ in the collapsed row header)
       const row = document.querySelector('.tool-row[data-tool="' + toolName + '"]');
       if (row) {

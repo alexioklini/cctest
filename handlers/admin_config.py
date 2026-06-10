@@ -64,11 +64,18 @@ class AdminConfigHandlers:
         for name in all_tools:
             rec = ts.get(name) or {}
             sdef = def_index.get(name) or {}
+            # Canonical status: prefer `state`, fall back to legacy booleans for
+            # any un-migrated record (boot migration normalises these). enabled /
+            # deferred are derived from state and kept in the payload only so old
+            # clients don't break; the new UI reads `state`.
+            state = engine._rec_tool_state(rec, default="active")
+            flags = engine._tool_state_to_flags(state)
             tools.append({
                 "name": name,
                 "group": tool_to_group.get(name, ""),
-                "enabled": bool(rec.get("enabled", True)),
-                "deferred": bool(rec.get("deferred", False)),
+                "state": state,
+                "enabled": flags["enabled"],
+                "deferred": flags["deferred"],
                 "purposes": list(rec.get("purposes") or []),
                 "description": rec.get("description", "") or "",
                 "when_to_use": rec.get("when_to_use", "") or "",
@@ -111,12 +118,14 @@ class AdminConfigHandlers:
     def _handle_tool_settings_save(self):
         """POST /v1/tools/settings — admin-only. Save one tool's settings record.
 
-        Body: {name, enabled?, deferred?, description?, when_to_use?, warnings?,
+        Body: {name, state?, description?, when_to_use?, warnings?,
                examples?, applies_with?}.
-        Empty strings clear that prose section. enabled defaults to True
-        (don't accidentally hide a tool by editing prose), deferred defaults
-        to False. applies_with is the list of OTHER tool names that must
-        also be present for this tool's prose to render (all-of gate).
+        `state` ∈ {active, inactive, deferred} is the canonical status (one
+        field, never two flags). Old clients may still POST enabled/deferred
+        booleans — they're collapsed to a state for back-compat — but the
+        persisted record carries ONLY `state`. Default = active. Empty strings
+        clear a prose section. applies_with is the list of OTHER tool names that
+        must also be present for this tool's prose to render (all-of gate).
         """
         user = self._require_role("admin")
         if not user:
@@ -142,19 +151,22 @@ class AdminConfigHandlers:
             if req not in engine.TOOL_DISPATCH:
                 self._send_json({"error": f"applies_with references unknown tool: {req}"}, 400)
                 return
-        # enabled / deferred — accept missing keys as defaults (true / false).
-        # Bools only — reject non-bool to avoid silent misconfig.
-        def _coerce_bool(val, default):
-            if val is None:
-                return default
-            if isinstance(val, bool):
-                return val
-            raise ValueError(f"expected bool")
-        try:
-            enabled = _coerce_bool(body.get("enabled"), True)
-            deferred = _coerce_bool(body.get("deferred"), False)
-        except ValueError as e:
-            self._send_json({"error": f"enabled/deferred must be boolean: {e}"}, 400)
+        # Canonical status field: `state` ∈ {active, inactive, deferred}.
+        # Back-compat: an old client may still POST enabled/deferred booleans
+        # instead — collapse them to a state via the same engine helper. The
+        # persisted record carries ONLY `state` (the legacy pair is gone on disk).
+        state = body.get("state")
+        if state is None:
+            # Legacy client path: derive from enabled/deferred if present,
+            # else default to active.
+            legacy = {}
+            if isinstance(body.get("enabled"), bool):
+                legacy["enabled"] = body["enabled"]
+            if isinstance(body.get("deferred"), bool):
+                legacy["deferred"] = body["deferred"]
+            state = engine._rec_tool_state(legacy or None, default="active")
+        if state not in engine.TOOL_STATES:
+            self._send_json({"error": f"state must be one of {list(engine.TOOL_STATES)}"}, 400)
             return
         # purposes: list of canonical purpose names. Empty = all purposes.
         purposes_raw = body.get("purposes") or []
@@ -172,8 +184,7 @@ class AdminConfigHandlers:
             "warnings": str(body.get("warnings", "") or ""),
             "examples": str(body.get("examples", "") or ""),
             "applies_with": applies_with,
-            "enabled": enabled,
-            "deferred": deferred,
+            "state": state,
             "purposes": purposes,
         }
         # Mutate in place so the dict referenced by both server_config and
@@ -206,8 +217,8 @@ class AdminConfigHandlers:
                     agent="main",
                     action_type="tool_settings_save",
                     tool_name=name,
-                    args_summary=(f"by={user.get('username','')} enabled={enabled} "
-                                  f"deferred={deferred} cleared={_all_empty} "
+                    args_summary=(f"by={user.get('username','')} state={state} "
+                                  f"cleared={_all_empty} "
                                   f"applies_with={applies_with}"),
                     result_status="ok",
                 )

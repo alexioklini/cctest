@@ -39,124 +39,124 @@
     "compact_threshold": null,
     "tool_overrides": {
       "memory_delete": {
-        "deferred": true
+        "state": "deferred"
       },
       "memory_recall": {
-        "deferred": true
+        "state": "deferred"
       },
       "memory_shared": {
-        "deferred": true
+        "state": "deferred"
       },
       "memory_store": {
-        "deferred": true
+        "state": "deferred"
       },
       "transcribe_audio": {
-        "enabled": false,
-        "deferred": true
+        "state": "deferred"
       },
       "code_graph_build": {
-        "deferred": true
+        "state": "deferred"
       },
       "code_graph_enhance": {
-        "deferred": true
+        "state": "deferred"
       },
       "code_graph_impact": {
-        "deferred": true
+        "state": "deferred"
       },
       "code_graph_query": {
-        "deferred": true
+        "state": "deferred"
       },
       "delegate_task": {
-        "deferred": true
+        "state": "deferred"
       },
       "task_cancel": {
-        "deferred": true
+        "state": "deferred"
       },
       "task_status": {
-        "deferred": true
+        "state": "deferred"
       },
       "gmail_inbox": {
-        "deferred": true
+        "state": "deferred"
       },
       "gmail_read": {
-        "deferred": true
+        "state": "deferred"
       },
       "gmail_reply": {
-        "deferred": true
+        "state": "deferred"
       },
       "gmail_search": {
-        "deferred": true
+        "state": "deferred"
       },
       "gmail_send": {
-        "deferred": true
+        "state": "deferred"
       },
       "git_command": {
-        "deferred": true
+        "state": "deferred"
       },
       "github_command": {
-        "deferred": true
+        "state": "deferred"
       },
       "mcp_connect": {
-        "enabled": false
+        "state": "inactive"
       },
       "mcp_disconnect": {
-        "enabled": false
+        "state": "inactive"
       },
       "mcp_servers": {
-        "enabled": false
+        "state": "inactive"
       },
       "list_nodes": {
-        "deferred": true
+        "state": "deferred"
       },
       "schedule_history": {
-        "deferred": true
+        "state": "deferred"
       },
       "schedule_list": {
-        "deferred": true
+        "state": "deferred"
       },
       "detect_language": {
-        "enabled": false
+        "state": "inactive"
       },
       "get_glossary": {
-        "enabled": false
+        "state": "inactive"
       },
       "list_glossaries": {
-        "enabled": false
+        "state": "inactive"
       },
       "translate_document": {
-        "enabled": false
+        "state": "inactive"
       },
       "translate_text": {
-        "enabled": false
+        "state": "inactive"
       },
       "get_artifact_detail": {
-        "enabled": false
+        "state": "inactive"
       },
       "worker_abort": {
-        "enabled": false
+        "state": "inactive"
       },
       "worker_ask_user": {
-        "enabled": false
+        "state": "inactive"
       },
       "worker_pause": {
-        "enabled": false
+        "state": "inactive"
       },
       "worker_resume": {
-        "enabled": false
+        "state": "inactive"
       },
       "worker_send": {
-        "enabled": false
+        "state": "inactive"
       },
       "worker_status": {
-        "enabled": false
+        "state": "inactive"
       },
       "ask_llm": {
-        "enabled": false
+        "state": "inactive"
       },
       "ask_user_for_file": {
-        "enabled": false
+        "state": "inactive"
       }
-    }
+    },
+    "optimize_tools": true
   },
   "paused": false,
   "agent_sdk": {

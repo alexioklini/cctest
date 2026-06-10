@@ -705,6 +705,10 @@ async function switchAgentTab(agentId, tab, btn) {
       // whatever the code actually resolves live: compute effective enabled/
       // deferred (override field wins, else global) and map that pair.
       const agentToolState = (t, ovr) => {
+        // Canonical override: a `state` key wins. Legacy {enabled,deferred}
+        // override is still read for un-migrated agent.json. No status key at
+        // all = inherit global ('default').
+        if (TOOL_STATES.includes(ovr.state)) return ovr.state;
         const hasOvr = ('enabled' in ovr) || ('deferred' in ovr);
         if (!hasOvr) return 'default';
         const effEnabled = 'enabled' in ovr ? ovr.enabled : t.enabled;
@@ -840,8 +844,10 @@ window._saveTokenConfig = async function(agentId) {
   document.querySelectorAll('.tok-override').forEach(sel => {
     const tool = sel.dataset.tool;
     const state = sel.value;
-    if (state === 'default') return;  // inherit — no override
-    overrides[tool] = toolStateToFlags(state);
+    if (state === 'default') return;  // inherit — no override (no entry written)
+    // Canonical per-agent override shape: a single {state} field (matches the
+    // global tool_settings shape + the resolver's resolve_tool_state).
+    overrides[tool] = { state };
   });
 
   const threshVal = document.getElementById('tok-compact-threshold')?.value;

@@ -3446,6 +3446,13 @@ def main():
     # writes records that lack a populated purposes list. Runs every boot
     # so newly-added tools get their default purposes without admin action.
     engine.seed_tool_settings_purposes(server_config["tool_settings"])
+    # Forward-migration: collapse legacy {enabled, deferred} booleans into the
+    # canonical single `state` field ('active'|'inactive'|'deferred') and drop
+    # the old keys. Idempotent. Removes the impossible enabled=false+deferred=true
+    # combination from disk entirely (it's now unrepresentable).
+    _state_migrated = engine.migrate_tool_settings_to_state(server_config["tool_settings"])
+    if _state_migrated:
+        print(f"Tool settings: migrated {_state_migrated} record(s) to canonical state")
     _ts_after = json.dumps(server_config["tool_settings"], sort_keys=True)
     if _ts_before != _ts_after or persisted_during_init:
         try:
@@ -3471,6 +3478,11 @@ def main():
         for agent_id in engine.list_agents():
             if engine.migrate_agent_tool_overrides(agent_id):
                 print(f"Tool settings: migrated agent '{agent_id}' to tool_overrides")
+            # Then collapse any legacy {enabled, deferred} override booleans into
+            # the canonical `state` field (idempotent; runs after the group→
+            # overrides migration above so newly-created override dicts get it too).
+            if engine.migrate_agent_tool_overrides_to_state(agent_id):
+                print(f"Tool settings: migrated agent '{agent_id}' overrides to canonical state")
     except Exception as e:
         print(f"Tool settings: agent migration failed: {e}")
 

@@ -877,28 +877,36 @@ validator. TWO mutually-exclusive modes, chosen by the auto-route classifier mod
 
 ## Tool resolution (3-layer)
 
+A tool has ONE canonical status, `state ∈ {active, inactive, deferred}` —
+not two independent booleans. `enabled`/`deferred` are DERIVED from it
+(`_tool_state_to_flags`): active→(on, not-deferred) · inactive→(off) ·
+deferred→(on, deferred). The impossible `enabled:false + deferred:true`
+combination is unrepresentable.
+
 ```
-effective_enabled  = global.enabled
-effective_deferred = global.deferred
+state = global.state                       # tool_settings.<name>.state, default 'active'
 if agent_id:
     o = token_config.tool_overrides.<name>
-    if 'enabled'  in o: effective_enabled  = o.enabled
-    if 'deferred' in o: effective_deferred = o.deferred
-if not effective_enabled: drop
+    if o has a status key (state | legacy enabled/deferred):
+        state = collapse(o)                # override REPLACES global state
+enabled  = state != 'inactive'
+deferred = state == 'deferred'
+if not enabled: drop
 if call.purpose not in global.purposes (when set): drop
-if effective_deferred and tool not in discovered_tools: drop (surface via tool_search)
+if deferred and tool not in discovered_tools: drop (surface via tool_search)
 ```
 
-The on-disk shape is unchanged, but the **UI collapses the (enabled, deferred)
-pair into one status dropdown** so operators don't juggle two flags with
-nonsensical combinations:
-- **General Settings → Tools** (global): 3 states — **Aktiv** (`enabled:true,
-  deferred:false`) · **Inaktiv** (`enabled:false`) · **Aufgeschoben**
-  (`enabled:true, deferred:true`).
-- **Agent Settings → Tokens** (per-agent override): the same 3 plus
-  **Standard (erben)** = no `tool_overrides` entry → inherits global. A legacy
-  partial override (e.g. only `{deferred:true}`) is shown as whichever state it
-  actually resolves to live and normalized to the clean 2-field pair on save.
+(`resolve_tool_state` is the seam; `_global_tool_enabled` / `resolve_tool_*`
+derive from it.) On disk, records carry only `state` — the legacy
+`{enabled, deferred}` pair was forward-migrated away at boot
+(`migrate_tool_settings_to_state` + `migrate_agent_tool_overrides_to_state`,
+idempotent; both read the old booleans as a fallback so an un-migrated record
+still resolves correctly). UI:
+- **General Settings → Tools** (global): one **Status** dropdown —
+  Aktiv · Inaktiv · Aufgeschoben.
+- **Agent Settings → Tokens** (per-agent override): the same 3 + **Standard
+  (erben)** = no `tool_overrides` entry → inherits global. A legacy partial
+  override is shown as the state it resolves to live and saved as `{state}`.
 
 `tool_search` tracks discovered tools on `RequestContext._discovered_tools`.
 That field defaults to None and is only initialized by the chat worker — so

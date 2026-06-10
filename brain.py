@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.99.11"
+VERSION = "9.100.0"
 VERSION_DATE = "2026-06-10"
 CHANGELOG = [
+    ("9.100.0", "2026-06-10", "refactor(tool-status): collapse the two-boolean {enabled, deferred} tool-status model to ONE canonical `state` field — active | inactive | deferred — both on disk and in the UI. MOTIVATION: enabled+deferred could represent the impossible/meaningless combination enabled=false+deferred=true; storing two orthogonal-looking flags for what is really a single tri-state invited future corruption. Now a tool has exactly one status, never two flags at once, and the bad combination is structurally unrepresentable on disk. CANONICAL SEAM (brain.py): new TOOL_STATES + _tool_state_to_flags(state)->{enabled,deferred} (the ONLY forward derivation) + _rec_tool_state(rec) (prefers `state`, falls back to legacy booleans, enabled=false wins -> inactive). _global_tool_enabled/_global_tool_deferred + resolve_tool_enabled/resolve_tool_deferred now DERIVE from state via the new resolve_tool_state(); every downstream reader (_get_agent_tool_names, resolve_active_tools deferral set, _render_tool_descriptions, get_tool_status, deep_research backends) is unchanged because they call those seams. empty_tool_setting() emits {state:'active'} not the boolean pair. FORWARD-MIGRATION (idempotent, boot): migrate_tool_settings_to_state() rewrites every global tool_settings record to {state} and DROPS enabled/deferred (verified on live config: 69 records, exa_search disabled->inactive, idempotent 2nd run=0); migrate_agent_tool_overrides_to_state() does the same for each agent's token_config.tool_overrides (main: 22 deferred + 17 inactive, behaviour-identical). Both wired into server.py apply_config next to the existing migrations + persist gate. API (handlers/admin_config.py): GET /v1/tools/settings now returns `state` (+ derived enabled/deferred for old clients); POST accepts `state` (collapses a legacy enabled/deferred body for back-compat) and persists ONLY `state`. UI: General Settings -> Tools shows one Status dropdown (Aktiv/Inaktiv/Aufgeschoben); Agent Settings -> Tokens shows the same + Standard (erben) = inherit; both POST {state}. Pure representation change — no tool's effective resolution changes. py_compile OK; live migration dry-run clean; js_gate PASS (net-globals unchanged, smoke 5/5)."),
     ("9.99.11", "2026-06-10", "test+fix(disciplines): make the research-discipline CODE DEFAULTS tool-agnostic (they were still the old mempalace/read_document text) + add regression tests for the memory-first→web escalation behaviour. CONTEXT: the 2026-06-10 web-escalation fix (memory note project_websearch_skip_root_cause) edited config.json's research_mode_disciplines + tool descriptions to be tool-agnostic, but the SEED DEFAULTS in brain.py (_RESEARCH_MODE_DISCIPLINE_{REFUSAL,PRECISION,CITATION}_DEFAULT) were left as the old tool-specific versions — they still said 'if mempalace_query returns 0 drawers → refuse' and quoted 'the read_document output'. Those defaults resurface whenever the config section is missing/reset or an admin clicks 'restore defaults', which would silently bring the bug back. Rewrote all three defaults to match the corrected config byte-for-intent: refusal forbids FABRICATION (no 'give up after empty memory'), precision/citation say 'the retrieved source' not 'read_document'. NEW tests/test_websearch_escalation_gating.py (unittest, in-process, no LLM): guards (a) classifier_tool_deferral invariants — floor tools never deferred, a flagged group is un-deferred so no tool_search detour, warmup-protected models get ([],[]); (b) render_research_mode_disciplines() is tool-agnostic + the refusal never says 'give up'; (c) no ALWAYS-PRESENT tool's prose references a deferred/disabled tool (read_document must not reference mempalace). It injects config.json into the brain globals in setUpModule (the server does the same at boot) so the prose audits run against the real text, not empty defaults. NEW eval/websearch_escalation_eval.py (live Brain, N reps, mistral-small+medium): measures the actual BEHAVIOUR — web-available+memory-empty must escalate to a web tool; web-locked+memory-empty must refuse cleanly without fabricating. 11/11 unit tests green (1 skip: mempalace not globally deferred, it's per-agent). py_compile OK."),
     ("9.99.10", "2026-06-10", "revert: roll the codebase back to the v9.99.3 (scheduler-block-removal) baseline — drop v9.99.4 through v9.99.9 entirely. Those six versions chased a 'web search not used' symptom (mistral-small/medium answering 'not in my knowledge' and stopping instead of escalating to web) through the WRONG layer: DEFERRED/MCP prompt trimming, documents↔memory classifier coupling, and the never-strip floor ({} → {core,workflows} → {core,memory,workflows}). NONE touched the real cause. PROOF (chat 5e1c36a2): mistral-MEDIUM-3.5, LLM classification OFF (full static toolset, web tools present, no gating at all) STILL only ran mempalace_query ×4 and gave up — so it is neither model strength, nor tool_search, nor the floor. The real driver is the mempalace_query TOOL DESCRIPTION (config.json → tool_settings.mempalace_query.description): a strong memory-FIRST discipline ('query first, answer second … at most 2-3 rephrasings before giving up — do not spin') with NO web-escalation clause, so the model satisfies the discipline and stops. v9.99.9 made it worse by forcing memory into the floor, activating that discipline on every turn incl. pure-web ones. Reverted brain.py + engine/prompt_build.py verbatim to v9.99.3 (floor back to the minimal {tool_search, ask_user}; scheduler block stays removed). The actual fix — a web-escalation clause in the mempalace_query description, ideally context-gated so a closed-corpus project chat still refuses — is a SEPARATE change to make deliberately after discussion, not bundled into this rollback. py_compile OK."),
     ("9.99.3", "2026-06-10", "fix(prompt): drop the 'SCHEDULER — active scheduled tasks' block from the system prompt — it anchored the model off-task and silently broke the warm KV prefix. ROOT CAUSE (chat 38647ef5, 'was ist das Qwopus Modell'): _build_system_prompt (engine/prompt_build.py) unconditionally dumped every active scheduled task's name + 80-char description + next_run into the context. The user had a 'Mistral AI News' task; the answering model (mistral-small) latched onto it and made its VERY FIRST search 'Qwopus Modell Mistral AI' — the Mistral framing came from the prompt, not any search result, for a question that had nothing to do with Mistral. Classic context contamination from an unrelated standing task. SECONDARY: the block carries per-task next_run timestamps that drift on every fire, and warmup builds this exact same prompt (build_first_turn_prefix → _build_system_prompt purpose=interactive), so the block was a latent warm-pool KV-prefix breaker too — removing it makes the prefix MORE stable, not less. FIX: the block is gone; the model pulls live scheduler state on demand via the schedule_list / schedule_history tools (both real, in the scheduler group) exactly as the removed block's own last line already instructed. No schema/config/endpoint change. py_compile engine/prompt_build.py OK."),
@@ -970,14 +971,14 @@ def _get_agent_tool_names(agent_id: str | None = None) -> set[str] | None:
     # are ignored (they can't be called anyway).
     names: set[str] = set()
     for name in TOOL_DISPATCH.keys():
-        # Global layer
-        global_rec = (_tool_settings or {}).get(name) or {}
-        enabled = bool(global_rec.get("enabled", True))
-        # Agent override layer (tristate: field present = override)
+        # Resolve canonical state: global record, then agent override (status
+        # opinion replaces global). Derive enabled from the collapsed state so
+        # the impossible enabled/deferred combo can never sneak a tool in/out.
+        state = _rec_tool_state((_tool_settings or {}).get(name), default="active")
         override = agent_overrides.get(name) or {}
-        if "enabled" in override:
-            enabled = bool(override["enabled"])
-        if enabled:
+        if "state" in override or "enabled" in override or "deferred" in override:
+            state = _rec_tool_state(override, default=state)
+        if _tool_state_to_flags(state)["enabled"]:
             names.add(name)
     return names
 
@@ -1367,14 +1368,16 @@ def resolve_active_tools(
                 except (OSError, json.JSONDecodeError):
                     agent_overrides = {}
         deferred_names: set[str] = set()
-        # Global per-tool defer
+        # Global per-tool defer — derived from canonical state (state=='deferred').
         for _n, _rec in (_tool_settings or {}).items():
-            if _rec and _rec.get("deferred"):
+            if _rec and _rec_tool_state(_rec) == "deferred":
                 deferred_names.add(_n)
-        # Agent overrides — tristate: present field wins, may override either way
+        # Agent overrides — a status opinion (state / legacy enabled / deferred)
+        # REPLACES the global state for that tool, so recompute deferred from the
+        # collapsed override state (may add OR remove from the set).
         for _n, _ovr in agent_overrides.items():
-            if "deferred" in _ovr:
-                if _ovr["deferred"]:
+            if "state" in _ovr or "enabled" in _ovr or "deferred" in _ovr:
+                if _rec_tool_state(_ovr, default="active") == "deferred":
                     deferred_names.add(_n)
                 else:
                     deferred_names.discard(_n)
@@ -1480,30 +1483,139 @@ _TOOL_SETTING_FIELD_TITLES = {
 def empty_tool_setting() -> dict:
     """Default empty tool settings record.
 
-    Defaults: enabled=True, deferred=False, purposes=[] (= "all purposes").
-    `purposes` is the list of purposes (`interactive`, `research_minimal`,
+    Defaults: state='active' (the canonical single status field — never the
+    legacy enabled/deferred pair), purposes=[] (= "all purposes"). `purposes`
+    is the list of purposes (`interactive`, `research_minimal`,
     `memory_summary`, `transform`) where this tool is allowed; empty list
     means no purpose filter applies.
     """
     return ({field: "" for field in _TOOL_SETTING_FIELDS}
-            | {"applies_with": [], "enabled": True, "deferred": False,
-               "purposes": []})
+            | {"applies_with": [], "state": "active", "purposes": []})
+
+
+# --- Tool status: single canonical state ('active' | 'inactive' | 'deferred')
+# ---
+# A tool has exactly ONE status, never two flags at once. On disk the canonical
+# field is `state`; the legacy `{enabled, deferred}` boolean pair is read only as
+# a fallback for un-migrated records (boot migration rewrites them to `state`).
+# enabled/deferred are DERIVED from state everywhere — these two functions are
+# the single derivation seam:
+#   active   → enabled=True,  deferred=False
+#   inactive → enabled=False  (deferred irrelevant)
+#   deferred → enabled=True,  deferred=True
+TOOL_STATES = ("active", "inactive", "deferred")
+
+
+def _tool_state_to_flags(state: str) -> dict:
+    """Canonical state → the (enabled, deferred) pair it represents."""
+    if state == "inactive":
+        return {"enabled": False, "deferred": False}
+    if state == "deferred":
+        return {"enabled": True, "deferred": True}
+    return {"enabled": True, "deferred": False}  # active (default)
+
+
+def _rec_tool_state(rec: dict | None, *, default: str = "active") -> str | None:
+    """Resolve a record's status to one of TOOL_STATES.
+
+    Prefers the canonical `state` field. Falls back to the legacy
+    (enabled, deferred) booleans for un-migrated records. Returns None only
+    when `rec` is None AND no default is wanted (callers pass default to get
+    the no-record behaviour). A record that is `{}` (present but empty) is
+    treated as the default state, matching the historical enabled-default-True.
+    """
+    if rec is None:
+        return default
+    st = rec.get("state")
+    if st in TOOL_STATES:
+        return st
+    # Legacy fallback: derive from the old boolean pair. enabled=False wins →
+    # inactive regardless of deferred (the impossible-combo collapse).
+    if rec.get("enabled", True) is False:
+        return "inactive"
+    return "deferred" if rec.get("deferred", False) else "active"
+
+
+def migrate_tool_settings_to_state(settings: dict) -> int:
+    """Forward-migration: collapse legacy {enabled, deferred} booleans on every
+    tool_settings record into the canonical `state` field, dropping the old
+    keys. Idempotent — a record already carrying a valid `state` (and no legacy
+    keys) is left untouched. Mutates `settings` in place; returns the number of
+    records rewritten (for the boot persist gate). Integration-only entries (no
+    TOOL_DISPATCH) are left alone — their `enabled` is their own integration gate.
+    """
+    changed = 0
+    for name, rec in list((settings or {}).items()):
+        if not isinstance(rec, dict):
+            continue
+        if name not in TOOL_DISPATCH:
+            continue  # integration-only pseudo-tool — not part of the state model
+        has_legacy = ("enabled" in rec) or ("deferred" in rec)
+        has_state = rec.get("state") in TOOL_STATES
+        if has_state and not has_legacy:
+            continue  # already migrated
+        state = _rec_tool_state(rec, default="active")
+        rec["state"] = state
+        rec.pop("enabled", None)
+        rec.pop("deferred", None)
+        changed += 1
+    return changed
+
+
+def migrate_agent_tool_overrides_to_state(agent_id: str) -> bool:
+    """Forward-migration for one agent's token_config.tool_overrides: collapse
+    legacy {enabled, deferred} per-tool override booleans into `state`, dropping
+    the old keys. An override with NO status keys (e.g. MCP-filter-only) is left
+    as-is. Writes agent.json only when something changed. Returns True if written.
+    """
+    try:
+        cfg_path = os.path.join(AGENTS_DIR, agent_id, "agent.json")
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    overrides = ((cfg.get("token_config") or {}).get("tool_overrides")) or {}
+    changed = False
+    for name, ovr in list(overrides.items()):
+        if not isinstance(ovr, dict):
+            continue
+        has_legacy = ("enabled" in ovr) or ("deferred" in ovr)
+        if not has_legacy:
+            continue  # nothing status-y to migrate (or already state-only)
+        state = _rec_tool_state(ovr, default="active")
+        ovr["state"] = state
+        ovr.pop("enabled", None)
+        ovr.pop("deferred", None)
+        # An override that is now empty would be dead weight — but keep it; the
+        # save path drops empties, and a {state} entry is meaningful.
+        changed = True
+    if not changed:
+        return False
+    try:
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+        return True
+    except OSError:
+        return False
 
 
 def _global_tool_enabled(name: str) -> bool:
-    """Bare global enable flag. Default True when no record exists."""
-    rec = (_tool_settings or {}).get(name)
-    if rec is None:
-        return True
-    return bool(rec.get("enabled", True))
+    """Bare global enable flag, derived from the tool's canonical state.
+    Default (no record) = active = enabled."""
+    state = _rec_tool_state((_tool_settings or {}).get(name), default="active")
+    return _tool_state_to_flags(state)["enabled"]
 
 
 def _global_tool_deferred(name: str) -> bool:
-    """Bare global defer flag. Default False when no record exists."""
-    rec = (_tool_settings or {}).get(name)
-    if rec is None:
-        return False
-    return bool(rec.get("deferred", False))
+    """Bare global defer flag, derived from the tool's canonical state.
+    Default (no record) = active = not deferred."""
+    state = _rec_tool_state((_tool_settings or {}).get(name), default="active")
+    return _tool_state_to_flags(state)["deferred"]
+
+
+def _global_tool_state(name: str) -> str:
+    """The tool's global canonical state. Default 'active' when no record."""
+    return _rec_tool_state((_tool_settings or {}).get(name), default="active")
 
 
 def _global_tool_purposes(name: str) -> list[str]:
@@ -1552,20 +1664,33 @@ def resolve_tool_enabled(name: str, agent_id: str | None = None) -> bool:
     Returns the bottom-most layer that has an opinion. Used by both
     `_get_agent_tool_names` (filtering) and the prompt builder.
     """
-    enabled = _global_tool_enabled(name)
-    override = _agent_tool_override(agent_id, name)
-    if "enabled" in override:
-        enabled = bool(override["enabled"])
-    return enabled
+    return _tool_state_to_flags(resolve_tool_state(name, agent_id))["enabled"]
 
 
 def resolve_tool_deferred(name: str, agent_id: str | None = None) -> bool:
     """Resolve a tool's effective defer flag (same hierarchy as enabled)."""
-    deferred = _global_tool_deferred(name)
+    return _tool_state_to_flags(resolve_tool_state(name, agent_id))["deferred"]
+
+
+def resolve_tool_state(name: str, agent_id: str | None = None) -> str:
+    """Resolve a tool's effective canonical state through the layer hierarchy:
+
+      1. Global  (tool_settings.<name>.state, default 'active')
+      2. Agent override (token_config.tool_overrides.<name>.state) — when the
+         override record carries a status opinion (canonical `state`, or a
+         legacy `enabled`/`deferred` key), it REPLACES the global state.
+         An override with no status keys = inherit (e.g. an MCP-filter-only
+         record). Returns one of TOOL_STATES.
+    """
+    state = _global_tool_state(name)
     override = _agent_tool_override(agent_id, name)
-    if "deferred" in override:
-        deferred = bool(override["deferred"])
-    return deferred
+    if isinstance(override, dict) and (
+        "state" in override or "enabled" in override or "deferred" in override
+    ):
+        # The override has a status opinion — collapse it the same way the
+        # global record is collapsed (canonical state wins, else legacy pair).
+        state = _rec_tool_state(override, default=state)
+    return state
 
 
 # tool_passes_purpose / tool_is_enabled / tool_is_deferred (the tool
@@ -1734,8 +1859,8 @@ def _render_tool_descriptions(active_tool_names: set[str]) -> str:
         rec = _tool_settings[name] or {}
         # Defensive: a disabled tool should never reach the renderer because
         # _get_agent_tool_names filters it out; double-check here so a stale
-        # active-set still doesn't leak its prose.
-        if not rec.get("enabled", True):
+        # active-set still doesn't leak its prose. Derived from canonical state.
+        if _rec_tool_state(rec) == "inactive":
             continue
         applies_with = rec.get("applies_with") or []
         if applies_with and not all(req in active_tool_names for req in applies_with):

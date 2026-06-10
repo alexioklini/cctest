@@ -6,8 +6,11 @@ Every tool the LLM can call in a chat turn. Names match the actual
 dispatches via `engine.TOOL_DISPATCH` (or MCP fallback) → result returned.
 
 Tools are gated per-call by a 3-layer resolver:
-1. Global enable/deferred/purposes (admin-edited `config.json → tool_settings`).
-2. Per-agent override (`agent.json → token_config.tool_overrides.<name>`).
+1. Global status + purposes (admin-edited `config.json → tool_settings`).
+   Each tool has ONE status, `state ∈ {active, inactive, deferred}` —
+   active = in prompt · inactive = off · deferred = tool_search-only.
+2. Per-agent override (`agent.json → token_config.tool_overrides.<name>` →
+   `{state}`): a status here REPLACES the global state; absent = inherit.
 3. Call purpose: `interactive | transform | memory_summary |
    research_minimal | helpdesk`.
 
