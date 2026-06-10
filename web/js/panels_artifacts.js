@@ -856,7 +856,7 @@ function _renderKnowledgeGraphSvg(drawers, triples, opts) {
 function openUsedMemoryGraph(idx) {
   const { drawers, triples } = _collectKnowledgeForMessage(idx);
   if (!drawers.length && !triples.length) {
-    showToast('Diese Antwort hat nicht auf den Projektspeicher zugegriffen');
+    showToast('Diese Antwort hat nicht auf den Wissensspeicher zugegriffen');
     return;
   }
   const overlay = document.createElement('div');
