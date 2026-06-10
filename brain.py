@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.99.8"
+VERSION = "9.99.9"
 VERSION_DATE = "2026-06-10"
 CHANGELOG = [
+    ("9.99.9", "2026-06-10", "fix(auto-route): add `memory` to the never-strip floor ({core, workflows} -> {core, memory, workflows}) so mempalace_query is always in-prompt — stops mistral-small skipping web search. After v9.99.8 restored the core/workflows floor, a deeper failure remained (chat b6502d44, 'was ist das Qwopus model'): the classifier flagged ONLY {web}, so mempalace_query wasn't in the set, but mistral-small has a strong memory-FIRST reflex on any 'what is X' question — it tool_search'd for mempalace, ran it, found nothing, then GAVE UP without ever calling the searxng_search / web_fetch tools that WERE in the set. The same empty non-answer as 79dfacfb. ROOT: in the pre-9.98.0 'good week' the LLM classifier co-flagged {memory} on ~94% of turns, so mempalace was simply always present and the model's memory-first urge was satisfied in one direct call — masking the reflex; only when the classifier flagged web-WITHOUT-memory did it surface. Making memory part of the floor restores that property structurally: the model does its one memory lookup, gets empty, and the web tools are right there to escalate to — no tool_search detour, no dead-end. Cost: ~5 memory/KG tool schemas always in-prompt on gated cloud turns. Only affects non-warm (cloud) models under llm/hybrid classifier; warm/local unchanged. py_compile brain.py OK."),
     ("9.99.8", "2026-06-10", "revert(auto-route): restore the {core, workflows} whole-group never-strip floor — undo v9.98.0's minimal-floor trim, which caused the tool_search behaviour the user noticed. ROOT CAUSE (traced from chats bf569aee + 6f25aa84, mistral-small): v9.98.0 (2026-06-09) emptied _TOOL_GATING_NEVER_STRIP (was {core, workflows}) down to a 2-tool name floor {tool_search, ask_user}, on the theory that handing a weak model the file/shell cluster on a pure lookup is confusing noise. MEASURED IMPACT: mistral-small went from 0/230 tool_search turns BEFORE v9.98.0 to 19/136 (14%) AFTER. With `core` no longer guaranteed in-prompt, a typical lookup the classifier flagged {memory} (or {web}) arrived WITHOUT read_file / search_files / read_document — the exact follow-up tools the model reaches for after mempalace_query — so it burned extra rounds (sometimes a 6× loop) calling tool_search to fetch them, and weak models even fed the content question INTO tool_search ('Qwopus model mem0palace') and never reached a real web tool → empty non-answers. The eval claim that motivated v9.98.0 ('bloated toolset confuses weak models', 0.80→0.84) was itself shown to be within mistral-small run-to-run variance (3-rep 0.79 ±0.04 = eval-neutral) per its own corrected changelog — so the trim had no measured benefit and a real production cost. FIX: _TOOL_GATING_NEVER_STRIP = {core, workflows} again; classifier_tool_deferral + classifier_gating_decision already read that var so they pick it up; the modal 'floor' text now reports the group floor. _TOOL_GATING_NEVER_STRIP_TOOLS (tool_search/ask_user) kept as a redundant structural guarantee. v9.98.1 (gating the cwd exec-tool prose on active_tool_names) is COMPATIBLE and stays — core is back in the active set so _has_exec is true again, restoring the full cwd line correctly. Only affects non-warm (cloud) models under llm/hybrid classifier; warm/local unchanged. py_compile brain.py OK."),
     ("9.99.7", "2026-06-10", "revert: roll back v9.99.4/9.99.5/9.99.6 entirely — back to the v9.99.3 (scheduler-block-removal) state. WHY: after v9.99.4 trimmed the DEFERRED TOOLS system-prompt block to GROUP NAMES ONLY (dropping each group's member tool names), a weak model (mistral-small) lost the cue for WHICH tools tool_search can pull. Chat 6f25aa84 ('was ist das Qwopus model'): the model fed the content question INTO tool_search ('Qwopus model mem0palace', 'Qwopus' …) as if it were a web/memory search, looped 6× on slightly-varied queries (so the exact-match dedup never fired), and NEVER called a real web tool though `web` was in the toolset — an empty non-answer. The member-name listing in the deferred block was load-bearing for weak models: it told them read_document/mempalace_query exist and are tool_search-reachable. Restored engine/prompt_build.py verbatim to v9.99.3 (verbose DEFERRED + MCP blocks back; scheduler block STILL removed — that fix stays). v9.99.5 (documents→memory classifier coupling) and its v9.99.6 revert cancel out and are both dropped. _TASK_TOOL_GROUPS['memory'] = (memory, context), unchanged from v9.99.3. NOTE: the underlying weakness (mistral-small misusing tool_search / looping) is a separate, still-open issue to discuss — this revert just returns to the last-known-good baseline. py_compile OK."),
     ("9.99.3", "2026-06-10", "fix(prompt): drop the 'SCHEDULER — active scheduled tasks' block from the system prompt — it anchored the model off-task and silently broke the warm KV prefix. ROOT CAUSE (chat 38647ef5, 'was ist das Qwopus Modell'): _build_system_prompt (engine/prompt_build.py) unconditionally dumped every active scheduled task's name + 80-char description + next_run into the context. The user had a 'Mistral AI News' task; the answering model (mistral-small) latched onto it and made its VERY FIRST search 'Qwopus Modell Mistral AI' — the Mistral framing came from the prompt, not any search result, for a question that had nothing to do with Mistral. Classic context contamination from an unrelated standing task. SECONDARY: the block carries per-task next_run timestamps that drift on every fire, and warmup builds this exact same prompt (build_first_turn_prefix → _build_system_prompt purpose=interactive), so the block was a latent warm-pool KV-prefix breaker too — removing it makes the prefix MORE stable, not less. FIX: the block is gone; the model pulls live scheduler state on demand via the schedule_list / schedule_history tools (both real, in the scheduler group) exactly as the removed block's own last line already instructed. No schema/config/endpoint change. py_compile engine/prompt_build.py OK."),
@@ -11079,23 +11080,28 @@ def classify_task_purpose_llm(message: str) -> str | None:
 
 
 # Tool groups never stripped by classifier-driven gating — the agent always
-# keeps the `core` (file/shell + tool_search/ask_user) and `workflows`
-# (ask_user_for_file/ask_llm) groups in-prompt regardless of what the classifier
-# flagged.
+# keeps `core` (file/shell + tool_search/ask_user), `memory` (mempalace_query +
+# KG) and `workflows` (ask_user_for_file/ask_llm) in-prompt regardless of what
+# the classifier flagged.
 #
 # v9.98.0 trimmed this to {} + a 2-tool name floor (tool_search/ask_user), on the
 # theory that handing a weak model the file/shell cluster on a pure lookup is
 # noise. In production that BACKFIRED (chats bf569aee / 6f25aa84, mistral-small):
-# with `core` no longer guaranteed, a typical "look something up" turn that the
-# classifier flagged {memory} (or only {web}) arrived WITHOUT read_file /
-# search_files / read_document — exactly the follow-up tools the model reaches for
-# after mempalace_query — so it spent extra rounds (sometimes a 6× loop) calling
-# tool_search to pull them back, and weak models even fed the content question
-# INTO tool_search. Measured: mistral-small went from 0/230 tool_search turns
-# pre-9.98.0 to 19/136 (14%) post. The "bloated toolset confuses weak models"
-# eval claim was itself within mistral-small variance (eval-neutral). Restored the
-# whole-group floor — the grounded behaviour beats the unproven trim.
-_TOOL_GATING_NEVER_STRIP = {"core", "workflows"}
+# with `core` no longer guaranteed, a lookup the classifier flagged {memory} (or
+# only {web}) arrived WITHOUT read_file / search_files / read_document — exactly
+# the follow-up tools the model reaches for after mempalace_query — so it spent
+# extra rounds (sometimes a 6× loop) on tool_search. v9.99.8 restored {core,
+# workflows}, but a DEEPER failure remained (chat b6502d44): on a turn the
+# classifier flagged ONLY {web}, mempalace_query wasn't in the set, yet
+# mistral-small has a strong memory-FIRST reflex on any "what is X" question —
+# it tool_search'd for mempalace, ran it, found nothing, and gave up WITHOUT ever
+# calling the web tools that WERE present. In the pre-9.98.0 'good week' the
+# classifier co-flagged {memory} ~94% of the time, so mempalace was simply always
+# there and the model never had to hunt — masking the reflex. FIX: add `memory`
+# to the floor so mempalace_query is ALWAYS in-prompt. The model satisfies its
+# memory-first urge in one direct call, gets an empty result, and the web tools
+# are right there to escalate to — no tool_search detour, no dead-end.
+_TOOL_GATING_NEVER_STRIP = {"core", "memory", "workflows"}
 # Kept for the structural guarantee inside the gating loop (these names stay
 # in-prompt even if their group were ever dropped from the floor above).
 _TOOL_GATING_NEVER_STRIP_TOOLS = {"tool_search", "ask_user"}
