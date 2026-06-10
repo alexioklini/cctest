@@ -97,13 +97,13 @@ function renderToolPanelBody(toolName) {
         <div style="font-size:12px;font-family:var(--font-mono);color:var(--text-100);padding:6px 8px;background:var(--bg-100);border-radius:4px">${esc(t.group || '(ungrouped)')}</div>
       </div>
       <div style="display:flex;gap:14px;align-items:end">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-          <input type="checkbox" id="ts-${esc(toolName)}-enabled" ${t.enabled?'checked':''}>
-          <span style="font-size:12px;color:var(--text-100)">Aktiviert</span>
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-          <input type="checkbox" id="ts-${esc(toolName)}-deferred" ${t.deferred?'checked':''}>
-          <span style="font-size:12px;color:var(--text-100)" title="Aus der anfänglichen Tool-Liste ausblenden; nur über tool_search verfügbar machen">Aufgeschoben</span>
+        <label style="display:flex;flex-direction:column;gap:3px">
+          <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Status</span>
+          <select id="ts-${esc(toolName)}-state" class="form-select" style="font-size:12px;width:150px" title="Aktiv: im Prompt verfügbar · Inaktiv: ganz aus · Aufgeschoben: nur über tool_search">
+            <option value="active" ${toolGlobalState(t)==='active'?'selected':''}>Aktiv</option>
+            <option value="inactive" ${toolGlobalState(t)==='inactive'?'selected':''}>Inaktiv</option>
+            <option value="deferred" ${toolGlobalState(t)==='deferred'?'selected':''}>Aufgeschoben</option>
+          </select>
         </label>
       </div>
     </div>
@@ -138,6 +138,29 @@ function renderToolPanelBody(toolName) {
       <button class="btn-secondary" onclick="resetToolPromptSettings('${esc(toolName)}')" style="padding:6px 14px;font-size:12px" title="Alle Text-Felder und „Gilt mit" leeren (Aktiviert/Aufgeschoben bleiben unberührt)">Text leeren</button>
       <button class="btn-primary" onclick="saveTool('${esc(toolName)}')" style="padding:6px 14px;font-size:12px">Speichern</button>
     </div>`;
+}
+
+// Collapse a tool's (enabled, deferred) flag pair into the single 3-state
+// model the UI exposes: active (in prompt) · inactive (off entirely) ·
+// deferred (hidden, tool_search-only). enabled=false wins → inactive
+// regardless of deferred. Inverse of the active/inactive/deferred → flags
+// mapping in saveTool. Used by both the global Tools panel and the per-agent
+// override resolver (legacy combos collapse to whatever the code resolves).
+function toolGlobalState(t) {
+  if (!t || t.enabled === false) return 'inactive';
+  return t.deferred ? 'deferred' : 'active';
+}
+
+// active/inactive/deferred → the {enabled, deferred} pair persisted to
+// config.json (global) or agent.json tool_overrides (per-agent). Single
+// source for the forward mapping so the global save and the agent save agree.
+function toolStateToFlags(state) {
+  switch (state) {
+    case 'inactive': return { enabled: false, deferred: false };
+    case 'deferred': return { enabled: true, deferred: true };
+    case 'active':
+    default:         return { enabled: true, deferred: false };
+  }
 }
 
 // Read-only block showing the verbatim wire schema (description + input_schema)
@@ -323,10 +346,11 @@ async function saveTool(toolName) {
     const purposes = purposesWrap
       ? [...purposesWrap.querySelectorAll('.ts-purpose:checked')].map(cb => cb.dataset.purpose)
       : (t.purposes || []);
+    const flags = toolStateToFlags(get('state')?.value || 'active');
     body = {
       name: toolName,
-      enabled: !!get('enabled')?.checked,
-      deferred: !!get('deferred')?.checked,
+      enabled: flags.enabled,
+      deferred: flags.deferred,
       description: get('description')?.value || '',
       when_to_use: get('when_to_use')?.value || '',
       warnings: get('warnings')?.value || '',

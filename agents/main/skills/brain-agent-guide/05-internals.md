@@ -889,6 +889,17 @@ if call.purpose not in global.purposes (when set): drop
 if effective_deferred and tool not in discovered_tools: drop (surface via tool_search)
 ```
 
+The on-disk shape is unchanged, but the **UI collapses the (enabled, deferred)
+pair into one status dropdown** so operators don't juggle two flags with
+nonsensical combinations:
+- **General Settings → Tools** (global): 3 states — **Aktiv** (`enabled:true,
+  deferred:false`) · **Inaktiv** (`enabled:false`) · **Aufgeschoben**
+  (`enabled:true, deferred:true`).
+- **Agent Settings → Tokens** (per-agent override): the same 3 plus
+  **Standard (erben)** = no `tool_overrides` entry → inherits global. A legacy
+  partial override (e.g. only `{deferred:true}`) is shown as whichever state it
+  actually resolves to live and normalized to the clean 2-field pair on save.
+
 `tool_search` tracks discovered tools on `RequestContext._discovered_tools`.
 That field defaults to None and is only initialized by the chat worker — so
 non-interactive callers (scheduler, background) had it None, and `tool_search`

@@ -697,45 +697,54 @@ async function switchAgentTab(agentId, tab, btn) {
       const otherGroups = Object.keys(byGroup).filter(g => !PRIMARY_GROUPS.includes(g)).sort();
       const groupOrder = PRIMARY_GROUPS.filter(g => byGroup[g]).concat(otherGroups);
 
-      // Tristate selector — value: '' (inherit), 'true' (force on), 'false' (force off)
-      const tristate = (toolName, field, current) => {
-        const sel = current === undefined ? '' : (current ? 'true' : 'false');
-        return `<select class="tok-override" data-tool="${esc(toolName)}" data-field="${esc(field)}"
-                       style="font-size:11px;padding:2px 4px;font-family:var(--font-mono);background:var(--bg-100);border:1px solid var(--border-100);border-radius:3px;width:90px">
-          <option value="" ${sel===''?'selected':''}>erben</option>
-          <option value="true" ${sel==='true'?'selected':''}>erzwingen an</option>
-          <option value="false" ${sel==='false'?'selected':''}>erzwingen aus</option>
-        </select>`;
+      // Effective state of a tool for THIS agent, collapsing the global
+      // (enabled, deferred) pair + any per-agent override into one of:
+      //   default  — no override at all (inherits global)
+      //   active   — in prompt · inactive — off · deferred — tool_search-only
+      // Legacy/partial overrides ({deferred:true} alone, etc.) collapse to
+      // whatever the code actually resolves live: compute effective enabled/
+      // deferred (override field wins, else global) and map that pair.
+      const agentToolState = (t, ovr) => {
+        const hasOvr = ('enabled' in ovr) || ('deferred' in ovr);
+        if (!hasOvr) return 'default';
+        const effEnabled = 'enabled' in ovr ? ovr.enabled : t.enabled;
+        const effDeferred = 'deferred' in ovr ? ovr.deferred : t.deferred;
+        if (effEnabled === false) return 'inactive';
+        return effDeferred ? 'deferred' : 'active';
       };
+
+      // One dropdown per tool — default (inherit) + the 3 concrete states.
+      const stateSelect = (toolName, cur) => `
+        <select class="tok-override" data-tool="${esc(toolName)}"
+                style="font-size:11px;padding:2px 4px;font-family:var(--font-mono);background:var(--bg-100);border:1px solid var(--border-100);border-radius:3px;width:130px"
+                title="Standard: globalen Wert erben · Aktiv: im Prompt · Inaktiv: ganz aus · Aufgeschoben: nur über tool_search">
+          <option value="default"  ${cur==='default'?'selected':''}>Standard (erben)</option>
+          <option value="active"   ${cur==='active'?'selected':''}>Aktiv</option>
+          <option value="inactive" ${cur==='inactive'?'selected':''}>Inaktiv</option>
+          <option value="deferred" ${cur==='deferred'?'selected':''}>Aufgeschoben</option>
+        </select>`;
 
       const toolRow = (t) => {
         const ovr = overrides[t.name] || {};
-        const effEnabled = 'enabled' in ovr ? ovr.enabled : t.enabled;
-        const effDeferred = 'deferred' in ovr ? ovr.deferred : t.deferred;
-        // Hint badges show what global says vs what the override does
-        const enabledBadge = (() => {
-          const baseColor = t.enabled ? 'var(--success)' : 'var(--text-400)';
-          const baseLabel = t.enabled ? 'global: an' : 'global: aus';
-          return `<span style="font-size:9px;color:${baseColor}">${baseLabel}</span>`;
-        })();
-        const deferredBadge = (() => {
-          const baseColor = t.deferred ? 'var(--warning,#d97706)' : 'var(--text-400)';
-          const baseLabel = t.deferred ? 'global: aufgeschoben' : 'global: live';
-          return `<span style="font-size:9px;color:${baseColor}">${baseLabel}</span>`;
-        })();
-        const effColor = effEnabled ? 'var(--success)' : 'var(--text-400)';
+        const state = agentToolState(t, ovr);
+        // Badge: what global resolves to, so the operator sees what "Standard"
+        // would inherit. Reuses the global 3-state collapse.
+        const gState = toolGlobalState(t);
+        const gLabel = gState === 'active' ? 'global: aktiv'
+          : gState === 'inactive' ? 'global: inaktiv' : 'global: aufgeschoben';
+        const gColor = gState === 'active' ? 'var(--success)'
+          : gState === 'inactive' ? 'var(--text-400)' : 'var(--warning,#d97706)';
+        // Effective colour of the tool name = how it resolves for this agent.
+        const effState = state === 'default' ? gState : state;
+        const effColor = effState === 'inactive' ? 'var(--text-400)' : 'var(--text-100)';
         return `
-          <div style="display:grid;grid-template-columns:1fr 110px 110px;gap:8px;align-items:center;padding:5px 8px;border-bottom:1px solid var(--border-100)">
+          <div style="display:grid;grid-template-columns:1fr 150px;gap:8px;align-items:center;padding:5px 8px;border-bottom:1px solid var(--border-100)">
             <div style="display:flex;flex-direction:column;gap:1px">
               <span style="font-family:var(--font-mono);font-size:11px;color:${effColor}">${esc(t.name)}</span>
+              <span style="font-size:9px;color:${gColor}">${gLabel}</span>
             </div>
-            <div style="display:flex;flex-direction:column;gap:2px;align-items:flex-end">
-              ${tristate(t.name, 'enabled', ovr.enabled)}
-              ${enabledBadge}
-            </div>
-            <div style="display:flex;flex-direction:column;gap:2px;align-items:flex-end">
-              ${tristate(t.name, 'deferred', ovr.deferred)}
-              ${deferredBadge}
+            <div style="display:flex;justify-content:flex-end">
+              ${stateSelect(t.name, state)}
             </div>
           </div>`;
       };
@@ -752,10 +761,9 @@ async function switchAgentTab(agentId, tab, btn) {
               ${hasOverride ? `<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(245,158,11,0.12);color:var(--warning,#d97706)">Überschreibung</span>` : ''}
             </div>
             <div id="tok-group-body-${esc(gName)}" style="display:${hasOverride?'block':'none'};padding:6px 0 0 12px">
-              <div style="display:grid;grid-template-columns:1fr 110px 110px;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border-100)">
+              <div style="display:grid;grid-template-columns:1fr 150px;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border-100)">
                 <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Tool</span>
-                <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;text-align:right">Aktiviert</span>
-                <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;text-align:right">Aufgeschoben</span>
+                <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;text-align:right">Status</span>
               </div>
               ${tools.map(toolRow).join('')}
             </div>
@@ -768,7 +776,7 @@ async function switchAgentTab(agentId, tab, btn) {
           <div style="font-size:11px;color:var(--text-400)">
             Pro-Tool-Überschreibungen für diesen Agent. Jedes Tool wird aufgelöst über:
             <b>global</b> (Einstellungen → Tools) → <b>Agent-Überschreibung</b> → <b>Zweck-Filter</b>.
-            „erben" übernimmt den globalen Wert; „erzwingen an"/„erzwingen aus" überschreibt nur für diesen Agent.
+            <b>Standard</b> erbt den globalen Wert; <b>Aktiv</b> / <b>Inaktiv</b> / <b>Aufgeschoben</b> überschreiben nur für diesen Agent.
             Tool-Definitionskosten und Pro-Tool-Text finden Sie unter <b>Allgemeine Einstellungen → Tools</b>.
           </div>
 
@@ -825,16 +833,15 @@ function toggleTokGroup(groupName) {
 }
 
 window._saveTokenConfig = async function(agentId) {
-  // Collect every tristate <select>; only build an override entry when at
-  // least one field is non-empty.
+  // Collect every per-tool state <select>; 'default' = inherit (no override
+  // entry), the 3 concrete states write the {enabled, deferred} pair via the
+  // shared toolStateToFlags mapping (settings_tools.js).
   const overrides = {};
   document.querySelectorAll('.tok-override').forEach(sel => {
     const tool = sel.dataset.tool;
-    const field = sel.dataset.field;
-    const v = sel.value;
-    if (v === '') return;  // inherit — no override
-    overrides[tool] = overrides[tool] || {};
-    overrides[tool][field] = (v === 'true');
+    const state = sel.value;
+    if (state === 'default') return;  // inherit — no override
+    overrides[tool] = toolStateToFlags(state);
   });
 
   const threshVal = document.getElementById('tok-compact-threshold')?.value;
@@ -868,7 +875,7 @@ window._saveTokenConfig = async function(agentId) {
 
 window._clearTokenOverrides = async function(agentId) {
   if (!confirm('ALLE Pro-Tool-Überschreibungen für diesen Agent löschen? Komprimierungsschwelle und Einstellungen für geplante Aufgaben bleiben erhalten.')) return;
-  document.querySelectorAll('.tok-override').forEach(sel => sel.value = '');
+  document.querySelectorAll('.tok-override').forEach(sel => sel.value = 'default');
   showToast('Überschreibungen gelöscht (nicht gespeichert — zum Übernehmen auf Speichern klicken)');
 };
 

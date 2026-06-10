@@ -1070,6 +1070,8 @@
     "TOOL_RESULT_INITIAL_CHARS": "writable",
     "TOOL_RESULT_MAX_RENDER": "writable",
     "toolDescribe": "writable",
+    "toolGlobalState": "writable",
+    "toolStateToFlags": "writable",
     "TR_DOC_EXTS": "writable",
     "TR_DOC_MAX_BYTES": "writable",
     "TR_LANG_NAMES": "writable",
