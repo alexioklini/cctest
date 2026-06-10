@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.99.7"
+VERSION = "9.99.8"
 VERSION_DATE = "2026-06-10"
 CHANGELOG = [
+    ("9.99.8", "2026-06-10", "revert(auto-route): restore the {core, workflows} whole-group never-strip floor — undo v9.98.0's minimal-floor trim, which caused the tool_search behaviour the user noticed. ROOT CAUSE (traced from chats bf569aee + 6f25aa84, mistral-small): v9.98.0 (2026-06-09) emptied _TOOL_GATING_NEVER_STRIP (was {core, workflows}) down to a 2-tool name floor {tool_search, ask_user}, on the theory that handing a weak model the file/shell cluster on a pure lookup is confusing noise. MEASURED IMPACT: mistral-small went from 0/230 tool_search turns BEFORE v9.98.0 to 19/136 (14%) AFTER. With `core` no longer guaranteed in-prompt, a typical lookup the classifier flagged {memory} (or {web}) arrived WITHOUT read_file / search_files / read_document — the exact follow-up tools the model reaches for after mempalace_query — so it burned extra rounds (sometimes a 6× loop) calling tool_search to fetch them, and weak models even fed the content question INTO tool_search ('Qwopus model mem0palace') and never reached a real web tool → empty non-answers. The eval claim that motivated v9.98.0 ('bloated toolset confuses weak models', 0.80→0.84) was itself shown to be within mistral-small run-to-run variance (3-rep 0.79 ±0.04 = eval-neutral) per its own corrected changelog — so the trim had no measured benefit and a real production cost. FIX: _TOOL_GATING_NEVER_STRIP = {core, workflows} again; classifier_tool_deferral + classifier_gating_decision already read that var so they pick it up; the modal 'floor' text now reports the group floor. _TOOL_GATING_NEVER_STRIP_TOOLS (tool_search/ask_user) kept as a redundant structural guarantee. v9.98.1 (gating the cwd exec-tool prose on active_tool_names) is COMPATIBLE and stays — core is back in the active set so _has_exec is true again, restoring the full cwd line correctly. Only affects non-warm (cloud) models under llm/hybrid classifier; warm/local unchanged. py_compile brain.py OK."),
     ("9.99.7", "2026-06-10", "revert: roll back v9.99.4/9.99.5/9.99.6 entirely — back to the v9.99.3 (scheduler-block-removal) state. WHY: after v9.99.4 trimmed the DEFERRED TOOLS system-prompt block to GROUP NAMES ONLY (dropping each group's member tool names), a weak model (mistral-small) lost the cue for WHICH tools tool_search can pull. Chat 6f25aa84 ('was ist das Qwopus model'): the model fed the content question INTO tool_search ('Qwopus model mem0palace', 'Qwopus' …) as if it were a web/memory search, looped 6× on slightly-varied queries (so the exact-match dedup never fired), and NEVER called a real web tool though `web` was in the toolset — an empty non-answer. The member-name listing in the deferred block was load-bearing for weak models: it told them read_document/mempalace_query exist and are tool_search-reachable. Restored engine/prompt_build.py verbatim to v9.99.3 (verbose DEFERRED + MCP blocks back; scheduler block STILL removed — that fix stays). v9.99.5 (documents→memory classifier coupling) and its v9.99.6 revert cancel out and are both dropped. _TASK_TOOL_GROUPS['memory'] = (memory, context), unchanged from v9.99.3. NOTE: the underlying weakness (mistral-small misusing tool_search / looping) is a separate, still-open issue to discuss — this revert just returns to the last-known-good baseline. py_compile OK."),
     ("9.99.3", "2026-06-10", "fix(prompt): drop the 'SCHEDULER — active scheduled tasks' block from the system prompt — it anchored the model off-task and silently broke the warm KV prefix. ROOT CAUSE (chat 38647ef5, 'was ist das Qwopus Modell'): _build_system_prompt (engine/prompt_build.py) unconditionally dumped every active scheduled task's name + 80-char description + next_run into the context. The user had a 'Mistral AI News' task; the answering model (mistral-small) latched onto it and made its VERY FIRST search 'Qwopus Modell Mistral AI' — the Mistral framing came from the prompt, not any search result, for a question that had nothing to do with Mistral. Classic context contamination from an unrelated standing task. SECONDARY: the block carries per-task next_run timestamps that drift on every fire, and warmup builds this exact same prompt (build_first_turn_prefix → _build_system_prompt purpose=interactive), so the block was a latent warm-pool KV-prefix breaker too — removing it makes the prefix MORE stable, not less. FIX: the block is gone; the model pulls live scheduler state on demand via the schedule_list / schedule_history tools (both real, in the scheduler group) exactly as the removed block's own last line already instructed. No schema/config/endpoint change. py_compile engine/prompt_build.py OK."),
     ("9.99.2", "2026-06-10", "fix(web-search): stop searxng_search snippets steering the model's fetch choice + make web_fetch survive consent walls. ROOT CAUSE (chat 766e3575, 'Wetter Wien nächste Woche'): the model searched with category='news' (→ news ARTICLES about the weather instead of weather PAGES), then fetched derstandard.at (#2) and msn.com (#5) — NOT vienna.at/wetter (#1, score 1.0). It picked the worse URLs because the SERP snippets biased it: vienna.at's snippet was a bare stale date ('Aug 30, 2018') while the news hits carried tempting weather prose. derstandard then redirected to a /consent/tcf/ cookie wall — markitdown converted only the 1351-char teaser, the <30-char crawl4ai gate didn't fire, and the model quoted the teaser as if it were the full forecast (4 unverified citations). THREE fixes. (1) searxng_search no longer returns snippets to the LLM — bare title+link+score only (engine/tools/misc_tools.py: new include_snippets arg, default False; cache key includes it). Snippets bias fetch selection toward whoever had the better blurb, not the most on-topic URL; the model should rank by title/domain and fetch the real page. The human Websuche curation panel KEEPS snippets — POST /v1/web/search sets include_snippets=True (handlers/chat.py) so the user can still eyeball each result. (2) Tool description rewritten (engine/tool_schemas.py): states results are URLs-only with NO snippets, the model MUST web_fetch the top URLs (up to 5, in parallel) and answer from page text never from titles, and to prefer the source that directly answers the user's intent (primary/authoritative pages for facts/live data) over one that merely mentions the topic — kept principle-level, NOT a hardcoded site/use-case example, to avoid anchoring the model to a single domain or steering it away from news when news IS what's wanted. category='news' now explicitly scoped to 'user explicitly wants news articles' — NOT general current-info queries (weather/prices/schedules), which it was burying authoritative pages under. (3) web_fetch crawl4ai fallback hardened (engine/tools/misc_tools.py): the headless render now also fires on THIN content (<600 chars, was <30 — caught the empty shell but missed the consent-wall teaser) and on consent/cookie interstitial URLs (/consent, /tcf/, cookie, datenschutz/zustimmung in the final redirected URL), and only takes the render when it's strictly longer than the HTTP result (guards against a render that itself hits the wall). py_compile brain.py + the 3 edited modules OK. crawl4ai render service confirmed running (:8422). Backend restart required."),
@@ -11077,22 +11078,26 @@ def classify_task_purpose_llm(message: str) -> str | None:
     return res.get("purpose") if res else None
 
 
-# Tool groups never stripped by classifier-driven gating.
+# Tool groups never stripped by classifier-driven gating — the agent always
+# keeps the `core` (file/shell + tool_search/ask_user) and `workflows`
+# (ask_user_for_file/ask_llm) groups in-prompt regardless of what the classifier
+# flagged.
 #
-# History: this was {"core", "workflows"} — the WHOLE groups. But `core` is a junk
-# drawer mixing two unrelated things: (a) the structural essentials a turn can't
-# route without — `tool_search` (reach deferred tools) + `ask_user` (clarify) — and
-# (b) an agentic file/shell cluster (execute_command/write_file/edit_file/
-# search_files/list_directory/read_file) that is pure NOISE on a retrieval/Q&A turn.
-# Forcing all 8 core + 2 workflow tools in-prompt handed mistral-small ~18 tools for
-# a one-tool policy lookup — a CORRECTNESS problem (a weak model shouldn't be offered
-# execute_command/write_file on a pure lookup). NOTE on eval: a single trimmed run hit
-# 0.84 vs 0.80, but a 3-rep follow-up (0.76/0.85/0.77 = 0.79 ±0.04) showed that was
-# within mistral-small variance — the change is eval-NEUTRAL on mean, kept on principle,
-# does not regress. So the floor is now the minimal STRUCTURAL set, by tool NAME;
-# everything else (incl. the file/shell cluster) is classifier-gated like any group —
-# still tool_search-discoverable if a turn unexpectedly needs it, so nothing dead-ends.
-_TOOL_GATING_NEVER_STRIP: set[str] = set()  # no whole-group floor anymore
+# v9.98.0 trimmed this to {} + a 2-tool name floor (tool_search/ask_user), on the
+# theory that handing a weak model the file/shell cluster on a pure lookup is
+# noise. In production that BACKFIRED (chats bf569aee / 6f25aa84, mistral-small):
+# with `core` no longer guaranteed, a typical "look something up" turn that the
+# classifier flagged {memory} (or only {web}) arrived WITHOUT read_file /
+# search_files / read_document — exactly the follow-up tools the model reaches for
+# after mempalace_query — so it spent extra rounds (sometimes a 6× loop) calling
+# tool_search to pull them back, and weak models even fed the content question
+# INTO tool_search. Measured: mistral-small went from 0/230 tool_search turns
+# pre-9.98.0 to 19/136 (14%) post. The "bloated toolset confuses weak models"
+# eval claim was itself within mistral-small variance (eval-neutral). Restored the
+# whole-group floor — the grounded behaviour beats the unproven trim.
+_TOOL_GATING_NEVER_STRIP = {"core", "workflows"}
+# Kept for the structural guarantee inside the gating loop (these names stay
+# in-prompt even if their group were ever dropped from the floor above).
 _TOOL_GATING_NEVER_STRIP_TOOLS = {"tool_search", "ask_user"}
 
 
@@ -11241,9 +11246,9 @@ def classifier_gating_decision(model: str, tool_groups: list[str] | None) -> dic
     keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP
     kept = sorted(g for g in TOOL_GROUPS if g in keep)
     deferred = sorted(g for g in TOOL_GROUPS if g not in keep)
-    floor = sorted(_TOOL_GATING_NEVER_STRIP_TOOLS)
+    floor = sorted(_TOOL_GATING_NEVER_STRIP)
     return {"applied": True,
-            "reason": f"non-warmup model — needed groups un-deferred + minimal floor ({', '.join(floor)}) in-prompt; rest deferred (still tool_search-discoverable)",
+            "reason": f"non-warmup model — needed groups un-deferred + always-on floor ({', '.join(floor)}) in-prompt; rest deferred (still tool_search-discoverable)",
             "kept_groups": kept, "excluded_groups": deferred, "needed_groups": needed}
 
 
