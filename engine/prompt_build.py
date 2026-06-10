@@ -498,16 +498,14 @@ def _build_system_prompt(include_memory_summary: bool = True,
                 system_instruction += f"  - {label}: {s['description']}{source_tag}\n"
             system_instruction += "\n"
 
-    # Scheduler status
-    if _brain._scheduler:
-        schedules = [s for s in _brain._scheduler.list_all() if not s["name"].startswith("_memory_summary_")]
-        if schedules:
-            system_instruction += "\nSCHEDULER — active scheduled tasks:\n"
-            for s in schedules:
-                status = "active" if s["enabled"] else "paused"
-                next_r = s.get("next_run", "")[:16] if s.get("next_run") else "—"
-                system_instruction += f"  - {s['name']} [{status}]: {s['task'][:80]} (next: {next_r})\n"
-            system_instruction += "Use schedule_list and schedule_history tools to query scheduler state.\n\n"
+    # Scheduler status — deliberately NOT listed in the system prompt. Dumping
+    # every active task's name + description into the context (a) leaks
+    # unrelated topics that anchor the model off-task (chat 38647ef5: a
+    # "Mistral AI News" task made mistral-small search "Qwopus Mistral AI" for a
+    # question that had nothing to do with Mistral), and (b) the per-task
+    # next_run timestamps drift, silently breaking the warm-pool KV prefix
+    # (warmup builds this same prompt). The model can pull live scheduler state
+    # on demand via the schedule_list / schedule_history tools instead.
 
     # MCP servers (prefer thread-local for concurrent requests)
     mcp_mgr = get_request_context().mcp_manager or _brain._mcp_manager
