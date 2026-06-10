@@ -1730,11 +1730,17 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             # on every turn). This does NOT change the model — only deferral.
             _auto_groups = getattr(session, "_auto_tool_groups", None)
             _auto_rm = getattr(session, "_auto_route_model", "") or session.model
+            # `_auto_groups` is a LIST when the classifier ran (possibly EMPTY =
+            # "no tool groups needed" → defer everything to the floor), or None
+            # when there was no signal (keyword fallback / down classifier →
+            # leave static deferral). Gate on `is not None`, NOT truthiness, so
+            # an empty list still trims (the 11k-"hi" fix).
+            _has_signal = _auto_groups is not None
             # Capture the decision (applied or not) so the per-turn
             # classification modal can show what was done with tools.
             _gating_decision = (engine.classifier_gating_decision(_auto_rm, _auto_groups)
-                                if _auto_groups else None)
-            if _auto_groups:
+                                if _has_signal else None)
+            if _has_signal:
                 _defer_extra, _undefer = engine.classifier_tool_deferral(_auto_rm, _auto_groups)
                 if _defer_extra or _undefer:
                     _ctx = engine.get_request_context()
@@ -3563,10 +3569,17 @@ class ChatHandlerMixin:
                     and engine.model_should_optimize_tools(session.model)):
                 try:
                     _ta = engine.resolve_task_analysis(message)
-                    _tg = (_ta or {}).get("tool_groups")
-                    if _tg:
+                    # Trim whenever the LLM classifier RAN — keyed on the
+                    # presence of `tool_groups`, NOT its truthiness. An EMPTY
+                    # list is a valid, strong signal ("this turn needs no tool
+                    # groups", e.g. a greeting) and must defer everything down
+                    # to the floor — the previous `if _tg:` guard treated [] as
+                    # "no signal" and kept the full 65-tool prompt (the 11k-"hi"
+                    # bug). A None / keyword-only result (no tool_groups key) is
+                    # genuine no-signal → fail-open, static deferral stands.
+                    if isinstance(_ta, dict) and "tool_groups" in _ta:
                         with session.lock:
-                            session._auto_tool_groups = _tg
+                            session._auto_tool_groups = _ta.get("tool_groups") or []
                 except Exception:
                     pass  # fail-open: no reshape, static deferral stands
 

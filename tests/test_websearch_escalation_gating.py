@@ -154,12 +154,28 @@ class TestClassifierDeferralInvariants(unittest.TestCase):
             if saved is not None:
                 brain._models_config = saved
 
-    def test_empty_tool_groups_is_noop(self):
-        # No classifier signal → leave deferral as-is.
+    def test_none_tool_groups_is_noop(self):
+        # `None` = NO classifier signal (keyword fallback / down classifier) →
+        # leave the static deferral as-is (fail-open).
         self.assertEqual(
             brain.classifier_tool_deferral(
-                model="CLIProxyAPI/mistral-small-latest", tool_groups=[]),
+                model="CLIProxyAPI/mistral-small-latest", tool_groups=None),
             ([], []))
+
+    def test_empty_tool_groups_trims_to_floor(self):
+        # `[]` = the classifier RAN and found NO needed groups (e.g. a greeting).
+        # That is a strong "trim everything" signal, NOT no-signal: every group's
+        # tools are deferred OUT except the structural floor (tool_search,
+        # ask_user), and nothing is un-deferred. This is the 11k-"hi" fix — the
+        # old behaviour treated [] as a no-op and kept the full tool prompt.
+        defer_extra, undefer = brain.classifier_tool_deferral(
+            model="CLIProxyAPI/mistral-small-latest", tool_groups=[])
+        self.assertEqual(undefer, [], "empty groups un-defer nothing")
+        self.assertTrue(defer_extra, "empty groups must defer the non-floor tools OUT")
+        # The structural floor must never be deferred.
+        for floor_tool in brain._TOOL_GATING_NEVER_STRIP_TOOLS:
+            self.assertNotIn(floor_tool, defer_extra,
+                             f"floor tool {floor_tool} must stay in-prompt")
 
 
 class TestResearchDisciplinesAreToolAgnostic(unittest.TestCase):
