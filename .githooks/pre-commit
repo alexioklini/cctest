@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+#
+# Keep the tracked, scrubbed config.example.json in sync with the per-machine
+# (gitignored) config.json on EVERY commit.
+#
+# config.json carries live secrets and is gitignored; config.example.json is
+# its redacted mirror that documents the canonical config shape in the repo.
+# Without this hook the mirror drifts (it did — the v9.100.0 tool-status
+# migration changed config.json's shape but the example kept the old one).
+#
+# This hook regenerates the example from config.json and stages it, so the
+# scrub is always part of the commit. No-ops cleanly when:
+#   - config.json is absent (fresh clone / CI) — nothing to mirror;
+#   - the example is already in sync — no change, nothing staged.
+#
+# Skip for one commit with:  SKIP_CONFIG_SCRUB=1 git commit ...
+# (or git commit --no-verify).
+#
+# Installed via:  git config core.hooksPath .githooks  (run once per clone).
+
+set -euo pipefail
+
+if [[ "${SKIP_CONFIG_SCRUB:-}" == "1" ]]; then
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+SCRUB="$REPO_ROOT/scripts/scrub_config.py"
+EXAMPLE="config.example.json"
+
+# Nothing to do if the scrubber or the source config isn't here.
+[[ -f "$SCRUB" ]] || exit 0
+[[ -f "$REPO_ROOT/config.json" ]] || exit 0
+
+# Regenerate (idempotent — byte-stable output, so a no-op leaves the file and
+# the index untouched).
+python3 "$SCRUB" >/dev/null
+
+# Stage it only if it actually changed, so a clean commit stays clean.
+if ! git diff --quiet -- "$EXAMPLE" 2>/dev/null; then
+  git add -- "$EXAMPLE"
+  echo "pre-commit: refreshed + staged $EXAMPLE from config.json"
+fi
+
+exit 0

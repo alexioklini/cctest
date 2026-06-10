@@ -6,7 +6,7 @@
   "providers": {
     "local-mlx-whisper": {
       "base_url": "",
-      "api_key": "",
+      "api_key": "YOUR_API_KEY",
       "default_model": "",
       "type": "in_process",
       "is_local": true
@@ -59,7 +59,7 @@
   },
   "ocr": {
     "engine": "mistral_ocr",
-    "provider": "mistral-experimental",
+    "provider": "mistral-direct",
     "model": "mistral-ocr-latest",
     "max_pages_per_cycle": 1000,
     "trigger_chars_per_page": 50,
@@ -198,7 +198,82 @@
       "description": "Groß (Mistral) — komplexe Analysen, lange Dokumente, 256k Kontext.",
       "parallel_tool_calls": false,
       "cost_input": 1.5,
-      "cost_output": 7.5
+      "cost_output": 7.5,
+      "background_task_model": "CLIProxyAPI/mistral-small-latest",
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 81.5,
+            "n": 4,
+            "ts": "2026-06-03T15:04:58Z"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 108.8,
+            "n": 5,
+            "ts": "2026-06-03T15:05:10Z"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 97,
+            "tps": 68.4,
+            "n": 3,
+            "ts": "2026-06-03T15:05:57Z"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 96,
+            "tps": 49.3,
+            "n": 3,
+            "ts": "2026-06-03T15:06:55Z"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 97,
+            "tps": 49.0,
+            "n": 3,
+            "ts": "2026-06-03T15:07:02Z"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 97,
+            "tps": 34.2,
+            "n": 3,
+            "ts": "2026-06-03T15:07:09Z"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 98,
+            "tps": 82.4,
+            "n": 3,
+            "ts": "2026-06-03T15:07:41Z"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 87,
+            "tps": 65.4,
+            "n": 3,
+            "ts": "2026-06-03T15:07:59Z"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 9.9,
+            "n": 4,
+            "ts": "2026-06-03T15:08:00Z"
+          }
+        }
+      }
     },
     "gemini-3.1-flash-lite-preview": {
       "enabled": false,
@@ -250,7 +325,81 @@
       "is_local": false,
       "warmup": false,
       "cost_input": 0.1,
-      "cost_output": 0.3
+      "cost_output": 0.3,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 131.6,
+            "n": 4,
+            "ts": "2026-06-03T15:03:13Z"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 171.6,
+            "n": 5,
+            "ts": "2026-06-03T15:03:19Z"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 97,
+            "tps": 149.1,
+            "n": 3,
+            "ts": "2026-06-03T15:03:41Z"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 95,
+            "tps": 151.7,
+            "n": 3,
+            "ts": "2026-06-03T15:04:02Z"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 99,
+            "tps": 86.1,
+            "n": 3,
+            "ts": "2026-06-03T15:04:06Z"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 97,
+            "tps": 55.4,
+            "n": 3,
+            "ts": "2026-06-03T15:04:09Z"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 97,
+            "tps": 152.3,
+            "n": 3,
+            "ts": "2026-06-03T15:04:23Z"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 68,
+            "tps": 100.1,
+            "n": 3,
+            "ts": "2026-06-03T15:04:31Z"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 12.0,
+            "n": 4,
+            "ts": "2026-06-03T15:04:33Z"
+          }
+        }
+      }
     },
     "gemini-2.5-flash": {
       "enabled": false,
@@ -562,7 +711,81 @@
       "profile": "speed",
       "_caps_canonical": true,
       "is_local": true,
-      "warmup": true
+      "warmup": true,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 44.7,
+            "n": 4,
+            "ts": "2026-06-04T09:38:58Z"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 60.1,
+            "n": 5,
+            "ts": "2026-06-04T09:39:16Z"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 97,
+            "tps": 62.1,
+            "n": 3,
+            "ts": "2026-06-04T09:40:07Z"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 97,
+            "tps": 61.7,
+            "n": 3,
+            "ts": "2026-06-04T09:40:52Z"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 97,
+            "tps": 40.4,
+            "n": 3,
+            "ts": "2026-06-04T09:40:57Z"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 97,
+            "tps": 41.4,
+            "n": 3,
+            "ts": "2026-06-04T09:41:00Z"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 98,
+            "tps": 59.4,
+            "n": 3,
+            "ts": "2026-06-04T09:41:32Z"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 83,
+            "tps": 48.2,
+            "n": 3,
+            "ts": "2026-06-04T09:41:38Z"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 10.8,
+            "n": 4,
+            "ts": "2026-06-04T09:41:39Z"
+          }
+        }
+      }
     },
     "gemma-4-e2b-it-4bit": {
       "enabled": true,
@@ -589,7 +812,81 @@
       "_caps_canonical": true,
       "is_local": true,
       "warmup": false,
-      "warmup_allow_cloud": true
+      "warmup_allow_cloud": true,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 128.5,
+            "n": 4,
+            "ts": "2026-06-04T09:33:24Z"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 166.9,
+            "n": 5,
+            "ts": "2026-06-04T09:33:41Z"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 96,
+            "tps": 160.6,
+            "n": 3,
+            "ts": "2026-06-04T09:34:14Z"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 96,
+            "tps": 163.6,
+            "n": 3,
+            "ts": "2026-06-04T09:34:39Z"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 96,
+            "tps": 122.1,
+            "n": 3,
+            "ts": "2026-06-04T09:34:43Z"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 98,
+            "tps": 123.5,
+            "n": 3,
+            "ts": "2026-06-04T09:34:46Z"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 95,
+            "tps": 164.2,
+            "n": 3,
+            "ts": "2026-06-04T09:35:08Z"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 80,
+            "tps": 121.7,
+            "n": 3,
+            "ts": "2026-06-04T09:35:17Z"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 42.1,
+            "n": 4,
+            "ts": "2026-06-04T09:35:17Z"
+          }
+        }
+      }
     },
     "gemma-4-e4b-it-4bit": {
       "enabled": true,
@@ -615,7 +912,81 @@
       "profile": "speed",
       "_caps_canonical": true,
       "is_local": true,
-      "warmup": false
+      "warmup": false,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 75,
+            "tps": 98.3,
+            "n": 4,
+            "ts": "2026-06-04T09:35:41Z"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 107.3,
+            "n": 5,
+            "ts": "2026-06-04T09:36:04Z"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 96,
+            "tps": 106.8,
+            "n": 3,
+            "ts": "2026-06-04T09:36:51Z"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 96,
+            "tps": 106.5,
+            "n": 3,
+            "ts": "2026-06-04T09:37:31Z"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 95,
+            "tps": 78.8,
+            "n": 3,
+            "ts": "2026-06-04T09:37:34Z"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 97,
+            "tps": 74.0,
+            "n": 3,
+            "ts": "2026-06-04T09:37:39Z"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 98,
+            "tps": 105.7,
+            "n": 3,
+            "ts": "2026-06-04T09:38:13Z"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 72,
+            "tps": 83.1,
+            "n": 3,
+            "ts": "2026-06-04T09:38:20Z"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 24.9,
+            "n": 4,
+            "ts": "2026-06-04T09:38:20Z"
+          }
+        }
+      }
     },
     "mistral-medium-2505": {
       "enabled": false,
@@ -1053,7 +1424,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "_audio_backfilled": true
     },
     "voxtral-small-latest": {
       "enabled": true,
@@ -1072,7 +1444,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "_audio_backfilled": true
     },
     "labs-leanstral-2603": {
       "enabled": false,
@@ -1304,28 +1677,6 @@
       "is_local": false,
       "warmup": false
     },
-    "mistral-medium-c21211-r0-75": {
-      "enabled": false,
-      "shortname": "mistral-medium-c21211-r0-75",
-      "display_name": "mistral-medium-c21211-r0-75",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
     "mistral-vibe-cli-latest": {
       "enabled": false,
       "shortname": "mistral-vibe-cli-latest",
@@ -1341,163 +1692,6 @@
       "inference": {
         "temperature": 0.7
       },
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "mistral-large-2411": {
-      "enabled": false,
-      "shortname": "mistral-large-2411",
-      "display_name": "mistral-large-2411",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "pixtral-large-2411": {
-      "enabled": false,
-      "shortname": "pixtral-large-2411",
-      "display_name": "pixtral-large-2411",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [
-        "image/*"
-      ],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "pixtral-large-latest": {
-      "enabled": false,
-      "shortname": "pixtral-large-latest",
-      "display_name": "pixtral-large-latest",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [
-        "image/*"
-      ],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "mistral-large-pixtral-2411": {
-      "enabled": false,
-      "shortname": "mistral-large-pixtral-2411",
-      "display_name": "mistral-large-pixtral-2411",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "devstral-small-2507": {
-      "enabled": false,
-      "shortname": "devstral-small-2507",
-      "display_name": "devstral-small-2507",
-      "icon": "🌬️",
-      "priority": 50,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 256000,
-      "max_output": 65536,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "devstral-medium-2507": {
-      "enabled": false,
-      "shortname": "devstral-medium-2507",
-      "display_name": "devstral-medium-2507",
-      "icon": "🌬️",
-      "priority": 50,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 256000,
-      "max_output": 65536,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "voxtral-mini-2507": {
-      "enabled": true,
-      "shortname": "voxtral-mini-2507",
-      "display_name": "voxtral-mini-2507",
-      "icon": "🎤",
-      "priority": 45,
-      "capabilities": [
-        "audio"
-      ],
-      "thinking_format": "none",
-      "max_context": 32768,
-      "max_output": 4096,
       "raw_formats": [],
       "provider": "mistral-direct",
       "profile": "balanced",
@@ -1522,7 +1716,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "_audio_backfilled": true
     },
     "magistral-small-2509": {
       "enabled": false,
@@ -1751,28 +1946,6 @@
       "is_local": false,
       "warmup": false
     },
-    "mistral-ocr-2505": {
-      "enabled": false,
-      "shortname": "mistral-ocr-2505",
-      "display_name": "mistral-ocr-2505",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
     "voxtral-mini-2602": {
       "enabled": true,
       "shortname": "voxtral-mini-2602",
@@ -1790,7 +1963,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "_audio_backfilled": true
     },
     "voxtral-mini-transcribe-realtime-2602": {
       "enabled": true,
@@ -1809,7 +1983,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "_audio_backfilled": true
     },
     "voxtral-mini-realtime-2602": {
       "enabled": true,
@@ -1828,7 +2003,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "_audio_backfilled": true
     },
     "voxtral-mini-realtime-latest": {
       "enabled": true,
@@ -1847,15 +2023,17 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "_audio_backfilled": true
     },
-    "voxtral-mini-transcribe-2507": {
+    "voxtral-mini-tts-2603": {
       "enabled": true,
-      "shortname": "voxtral-mini-transcribe-2507",
-      "display_name": "voxtral-mini-transcribe-2507",
+      "shortname": "voxtral-mini-tts-2603",
+      "display_name": "voxtral-mini-tts-2603",
       "icon": "🎤",
       "priority": 45,
       "capabilities": [
+        "tts",
         "audio"
       ],
       "thinking_format": "none",
@@ -1866,26 +2044,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
-    },
-    "voxtral-mini-tts-2603": {
-      "enabled": true,
-      "shortname": "voxtral-mini-tts-2603",
-      "display_name": "voxtral-mini-tts-2603",
-      "icon": "🎤",
-      "priority": 45,
-      "capabilities": [
-        "tts"
-      ],
-      "thinking_format": "none",
-      "max_context": 32768,
-      "max_output": 4096,
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "_audio_backfilled": true
     },
     "voxtral-mini-tts-latest": {
       "enabled": true,
@@ -1894,7 +2054,8 @@
       "icon": "🎤",
       "priority": 45,
       "capabilities": [
-        "tts"
+        "tts",
+        "audio"
       ],
       "thinking_format": "none",
       "max_context": 32768,
@@ -1904,33 +2065,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
-    },
-    "gemma-4-26B-A4B-it-DFlash": {
-      "enabled": false,
-      "shortname": "gemma-4-26B-A4B-it-DFlash",
-      "display_name": "gemma-4-26B-A4B-it-DFlash",
-      "icon": "💎",
-      "priority": 35,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 32768,
-      "max_output": 8192,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [
-        "image/*"
-      ],
-      "provider": "Lokal",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": true,
-      "warmup": false
+      "warmup": false,
+      "_audio_backfilled": true
     },
     "gemma-4-26B-A4B-it-assistant": {
       "enabled": false,
@@ -2009,6 +2145,142 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false
+    },
+    "deepseek-v4-pro": {
+      "enabled": true,
+      "shortname": "deepseek-v4-pro",
+      "display_name": "deepseek-v4-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "CLIProxyAPI",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false,
+      "max_context": 1048576,
+      "max_output": 131072,
+      "cost_input": 0.435,
+      "cost_output": 0.87
+    },
+    "deepseek-v4-flash": {
+      "enabled": true,
+      "shortname": "deepseek-v4-flash",
+      "display_name": "deepseek-v4-flash",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "CLIProxyAPI",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "max_context": 1048576,
+      "warmup": false,
+      "max_output": 131072,
+      "cost_input": 0.14,
+      "cost_output": 0.28
+    },
+    "voxtral-mini-2507": {
+      "enabled": true,
+      "shortname": "voxtral-mini-2507",
+      "display_name": "voxtral-mini-2507",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "_audio_backfilled": true
+    },
+    "mistral-code-latest": {
+      "enabled": true,
+      "shortname": "mistral-code-latest",
+      "display_name": "mistral-code-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistral-code-fim-latest": {
+      "enabled": true,
+      "shortname": "mistral-code-fim-latest",
+      "display_name": "mistral-code-fim-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistral-code-agent-latest": {
+      "enabled": true,
+      "shortname": "mistral-code-agent-latest",
+      "display_name": "mistral-code-agent-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "MarkItDown": {
+      "enabled": true,
+      "shortname": "MarkItDown",
+      "display_name": "MarkItDown",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true
     }
   },
   "nodes": {},
@@ -2024,7 +2296,7 @@
   },
   "mempalace": {
     "enabled": true,
-    "palace_path": "/Users/alexander/.mempalace/brain",
+    "palace_path": "/Users/alexander/.mempalace/brain-qdrant",
     "venv_site_packages": "/Users/alexander/.mempalace/venv/lib/python3.14/site-packages",
     "mine": {
       "enabled": true,
@@ -2072,7 +2344,7 @@
     },
     "kg": {
       "enabled": true,
-      "extraction_model": "mistral-experimental/mistral-small-2603",
+      "extraction_model": "CLIProxyAPI/mistral-small-latest",
       "scopes": [
         "projects"
       ],
@@ -2101,7 +2373,9 @@
     },
     "chunk_substitute": {
       "enabled": false
-    }
+    },
+    "_qdrant_migration_note": "Qdrant backend config (url/api_key/quantization) lives in ~/.mempalace/config.json + env (MEMPALACE_BACKEND / MEMPALACE_QDRANT_* / MEMPALACE_QDRANT_QUANTIZATION), NOT here — see QDRANT_MIGRATION_PLAN.md. Currently on chroma backend.",
+    "_chroma_rollback_path": "/Users/alexander/.mempalace/brain"
   },
   "deleted_models": [
     "Qwen3.6-35B-A3B-oQ2",
@@ -2112,7 +2386,7 @@
     "Qwen3.6-35B-A3B-4bit"
   ],
   "gdpr_scanner": {
-    "enabled": true,
+    "enabled": false,
     "server_log": true,
     "server_block": true,
     "default_local_fallback_model": "gemma-4-26B-A4B-it-MLX-4bit",
@@ -2130,23 +2404,58 @@
         "action": "warn"
       },
       "contact": {
-        "action": "warn"
+        "action": "ignore"
       },
       "network": {
-        "action": "warn"
+        "action": "ignore"
       },
       "personal": {
         "action": "warn"
       },
       "bare_id": {
         "action": "warn"
+      },
+      "business_id": {
+        "action": "ignore"
       }
     },
     "rule_overrides": {
       "name": "ignore",
-      "organisation": "ignore"
+      "organisation": "ignore",
+      "email": "warn"
     },
-    "email_allowlist": [],
+    "min_occurrences": {
+      "date": 10,
+      "jp_mynumber": 10,
+      "pl_pesel": 5,
+      "no_fnr": 5,
+      "gr_amka": 5,
+      "bg_egn": 5,
+      "ro_cnp": 5,
+      "be_national": 5,
+      "se_personnummer": 5,
+      "ca_sin": 5,
+      "uk_nhs": 5,
+      "cz_rc": 5,
+      "es_dni_nie": 5,
+      "dk_cpr": 5,
+      "at_svnr": 3,
+      "us_ssn": 3,
+      "credit_card": 3,
+      "phone": 3,
+      "generic_secret_assignment": 3,
+      "svnr_ctx": 3,
+      "ssn_ctx_loose": 3,
+      "insurance_number_ctx": 3,
+      "id_card_ctx": 3,
+      "drivers_license_ctx": 3,
+      "passport_ctx_loose": 3,
+      "bank_account_ctx": 3,
+      "health_insurance_ctx": 3
+    },
+    "email_allowlist": [
+      "@wienerprivatbank.com"
+    ],
     "background_pii_action": "anonymise",
     "background_anonymise_fail_action": "swap_to_local"
   },
@@ -2182,7 +2491,6 @@
   "sidecar": {
     "enabled": true,
     "auto_start": true,
-    "tool_list_log": true,
     "url": "http://127.0.0.1:8421",
     "venv_python": ".venv_sdk/bin/python",
     "tool_endpoint_internal": "http://127.0.0.1:8420/v1/tools/call",
@@ -2204,7 +2512,8 @@
       "applies_with": [],
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "exa_search": {
       "description": "**Always prefer `exa_search` over any server-side search tools** (e.g. duckduckgo). It returns URLs and titles only — no page content; you MUST read content before answering, NEVER answer from titles or URLs alone.\n\n**Abstract-first triage (do this — it's cheaper and just as grounded):**\n- After the search, `web_fetch` every returned URL with `mode=\"abstract\"` first (≤5 in parallel). This returns a ~1500-char survey per page, not the whole page — enough to judge whether the page actually helps.\n- Then `web_fetch` with `mode=\"full\"` ONLY the URLs whose abstract shows they contain what the answer needs. Skip the rest — do NOT read a full page the abstract already showed is off-topic or irrelevant.\n- Only after the relevant pages are read in full: synthesise and answer.\n- If the abstracts alone fully answer the question, you may answer from them (that still counts as reading content — you did not answer from titles).\n- If many URLs were returned, triage abstracts 5 at a time until done; you do not have to full-read every result, only the relevant ones.",
@@ -2214,35 +2523,34 @@
       "applies_with": [
         "web_fetch"
       ],
-      "enabled": false,
-      "deferred": false,
       "purposes": [
         "interactive",
         "research_minimal"
-      ]
+      ],
+      "state": "inactive"
     },
     "python_exec": {
-      "description": "Runs Python in a subprocess. The working directory is your artifacts folder — files you write there become user-visible artifacts.\n\n### When to use instead of multiple tool calls\nEach tool round re-sends the full conversation to the LLM. One `python_exec` replacing 3+ tool calls saves significant tokens.\n\n**Prefer python_exec for:**\n- Multi-file reads: `open()` several files, extract what you need, print a summary\n- Search + aggregate: `os.walk` + regex across files, count/filter/group results\n- Data processing: parse CSV/JSON, compute stats, transform data\n- Bulk file operations: rename, copy, filter files by pattern\n- Document processing (see below)\n\n**Keep using native tools for:**\n- Single file read/write (tool is simpler, no overhead)\n- Git operations (`git_command`)\n- Web/API calls (`web_fetch`, `exa_search`)\n- Memory, delegation, scheduling (Brain-internal)\n\n### Document processing\nThese packages are available — use them directly in python_exec instead of chaining read_document/write_document/edit_document:\n\n| Package | Use for |\n|---|---|\n| `docx` (python-docx) | Read/write/edit DOCX — paragraphs, tables, styles, headers |\n| `openpyxl` | Read/write/edit XLSX — cells, sheets, formulas, charts |\n| `pptx` (python-pptx) | Read/write/edit PPTX — slides, shapes, text, images |\n| `reportlab` | Generate PDFs from scratch (layouts, tables, graphics) |\n| `PIL` (Pillow) | Image processing — resize, crop, convert, annotate |\n| `csv` | CSV read/write (stdlib) |\n\nExample — read a DOCX table and create a summary CSV:\n```python\nfrom docx import Document\nimport csv\ndoc = Document('/path/to/report.docx')\nwith open('summary.csv', 'w', newline='') as f:\n    w = csv.writer(f)\n    for table in doc.tables:\n        for row in table.rows:\n            w.writerow([cell.text for cell in row.cells])\nprint(f\"Extracted {len(doc.tables)} tables to summary.csv\")\n```\n\n### Output rules\n- **Large results**: write to a file (becomes an artifact), print only a short summary\n- **Small results** (<20 lines): print directly to stdout\n- The system auto-saves stdout >1K chars as an artifact, but writing files yourself gives you control over filename and format",
+      "description": "Runs Python in a subprocess. The working directory is your artifacts folder — files you write there become user-visible artifacts.\n\n### When to use instead of multiple tool calls\nEach tool round re-sends the full conversation to the LLM. One `python_exec` replacing 3+ tool calls saves significant tokens.\n\n**Prefer python_exec for:**\n- Multi-file reads: `open()` several files, extract what you need, print a summary\n- Search + aggregate: `os.walk` + regex across files, count/filter/group results\n- Data processing: parse CSV/JSON, compute stats, transform data\n- Bulk file operations: rename, copy, filter files by pattern\n- Document processing (see below)\n\n**Keep using native tools for:**\n- Single file read/write (the dedicated tool is simpler, no overhead)\n- Web/API calls (use the dedicated web-fetch/search tools, not raw `urllib`/`curl`)\n- Anything a Brain-internal tool already does (memory, delegation, scheduling) — call that tool\n\n### Document processing\nThese packages are available — use them directly in python_exec instead of chaining read_document/write_document/edit_document:\n\n| Package | Use for |\n|---|---|\n| `docx` (python-docx) | Read/write/edit DOCX — paragraphs, tables, styles, headers |\n| `openpyxl` | Read/write/edit XLSX — cells, sheets, formulas, charts |\n| `pptx` (python-pptx) | Read/write/edit PPTX — slides, shapes, text, images |\n| `reportlab` | Generate PDFs from scratch (layouts, tables, graphics) |\n| `PIL` (Pillow) | Image processing — resize, crop, convert, annotate |\n| `csv` | CSV read/write (stdlib) |\n\nExample — read a DOCX table and create a summary CSV:\n```python\nfrom docx import Document\nimport csv\ndoc = Document('/path/to/report.docx')\nwith open('summary.csv', 'w', newline='') as f:\n    w = csv.writer(f)\n    for table in doc.tables:\n        for row in table.rows:\n            w.writerow([cell.text for cell in row.cells])\nprint(f\"Extracted {len(doc.tables)} tables to summary.csv\")\n```\n\n### Output rules\n- **Large results**: write to a file (becomes an artifact), print only a short summary\n- **Small results** (<20 lines): print directly to stdout\n- The system auto-saves stdout >1K chars as an artifact, but writing files yourself gives you control over filename and format",
       "when_to_use": "",
       "warnings": "",
       "examples": "",
       "applies_with": [],
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "mempalace_query": {
-      "description": "Long-term memory: searches the user's stored facts, past chats, project documents, and indexed knowledge. The memory is private to the user — searching it is not a privacy decision, it IS the answer. Never ask permission to search; just search.\n\n**When to search**:\n- Any 'do you remember', 'what did we discuss', or reference to the past.\n- Direct personal-info questions about the user (family, preferences, past decisions, anything you couldn't know without prior context).\n- Any question whose answer plausibly lives in indexed project documents — policies, specs, references the user has loaded.\n- When in doubt: query first, answer second. Don't refuse on grounds of 'I don't have access to personal information' — the memory IS that information.\n\n**Query discipline — keep queries short and content-bearing**:\nQueries are matched by vector similarity. Long verbose queries with filler tokens drag the embedding toward generic chunks and HIDE the documents that match perfectly on filename or topic. Use 2–4 content-bearing keywords (the actual subject of the question) and drop everything else. Do NOT write the user's full question into the query.\n\n- Drop filler/generic tokens like: 'policy', 'rule', 'regulation', 'guideline', 'process', 'overview', 'definition', 'general', 'company', 'how', 'what', 'which', and their equivalents in the user's language.\n- Keep the rare, specific subject keywords — those discriminate between documents.\n- If the first short query returns nothing matching, try a different rare keyword pair, NOT a longer version of the same query. At most 2–3 query rephrasings before giving up — do not spin on retrieval forever.\n\n**Read for precision, not by default (every caller — chat or project)**:\nEach drawer carries the matched chunk plus its neighbours in `text` — a ~2-2.5 KB window of the source that matched your query. For most questions this window is enough to answer. A drawer backed by a real document on disk has `content_via:\"snippet+optional_read\"` and a `read_path`: call `read_document(path=<drawer.read_path>)` when EITHER (a) you need an exact verbatim quote, a precise figure/number, or table content, OR (b) the answer to the question is NOT fully contained in the window — the window is an excerpt, so if it cuts off mid-topic or the relevant detail clearly continues beyond it, read the source rather than answering from a partial chunk. If the window DOES fully answer the question, answer from it directly — do NOT read just to be thorough (that wastes tokens). Never quote the chunk as if it were the whole document. Drawers with `content_via:\"snippet\"` (chat history, profile, artifacts) carry their full verbatim content inline — there is no file to read. If you do read and `read_document` errors, re-issue with the corrected path or refuse cleanly — NEVER fall back to training data. Documented hallucination causes on indexed corpora: (a) treating an excerpt chunk as the complete passage, (b) answering from training data after a read_document error.\n\n**Saving**: when the user says 'remember this' or wants to persist a fact / decision / preference, call `save_chat_to_memory`.\n\n---\n\n**Project memory layer (when invoked inside a project chat)**:\nThis project has a dedicated, isolated memory store. By default `mempalace_query` searches ONLY this knowledge layer (mined documents) — it does NOT include past chat turns or chat summaries. This is deliberate: a wrong answer in an earlier turn must never outrank the underlying source document. If the user explicitly asks about something said earlier in this project's chats ('what did we discuss', 'remember when I said'), call `mempalace_query` again with `include_chat_history=true` to search the chat layer.\n\n**Don't pass these arguments**:\n- `wing` — set automatically by Brain\n- `room` — unless you have verified the exact room name from a previous successful result. Brain's project miner uses `room='general'` for all policy/document content; invented values like 'document' or 'documentation' silently return zero drawers and lead to fabricated 'not in the documents' answers. The default (no room filter) searches everything in the wing — that is what you want.\n- `include_chat_history=true` for 'how is X calculated' / 'what does the policy say' questions — that flag switches the search to the PROJECT CHAT wing (past conversations) instead of the PROJECT KNOWLEDGE wing (the actual indexed documents). Use it ONLY when the user explicitly references prior chat ('what did we discuss about X', 'remember when I said Y').",
+      "description": "Long-term memory: searches the user's stored facts, past chats, project documents, and indexed knowledge. The memory is private to the user — searching it is not a privacy decision, it IS the answer. Never ask permission to search; just search.\n\n**When to search**:\n- Any 'do you remember', 'what did we discuss', or reference to the past.\n- Direct personal-info questions about the user (family, preferences, past decisions, anything you couldn't know without prior context).\n- Any question whose answer plausibly lives in indexed project documents — policies, specs, references the user has loaded.\n- When in doubt: query first, answer second. Don't refuse on grounds of 'I don't have access to personal information' — the memory IS that information.\n\n**Query discipline — keep queries short and content-bearing**:\nQueries are matched by vector similarity. Long verbose queries with filler tokens drag the embedding toward generic chunks and HIDE the documents that match perfectly on filename or topic. Use 2–4 content-bearing keywords (the actual subject of the question) and drop everything else. Do NOT write the user's full question into the query.\n\n- Drop filler/generic tokens like: 'policy', 'rule', 'regulation', 'guideline', 'process', 'overview', 'definition', 'general', 'company', 'how', 'what', 'which', and their equivalents in the user's language.\n- Keep the rare, specific subject keywords — those discriminate between documents.\n- If the first short query returns nothing matching, try a different rare keyword pair, NOT a longer version of the same query. At most 2–3 query rephrasings before giving up — do not spin on retrieval forever.\n\n**Read for precision, not by default (every caller — chat or project)**:\nEach drawer carries the matched chunk plus its neighbours in `text` — a ~2-2.5 KB window of the source that matched your query. For most questions this window is enough to answer. A drawer backed by a real document on disk has `content_via:\"snippet+optional_read\"` and a `read_path`: call `read_document(path=<drawer.read_path>)` when EITHER (a) you need an exact verbatim quote, a precise figure/number, or table content, OR (b) the answer to the question is NOT fully contained in the window — the window is an excerpt, so if it cuts off mid-topic or the relevant detail clearly continues beyond it, read the source rather than answering from a partial chunk. If the window DOES fully answer the question, answer from it directly — do NOT read just to be thorough (that wastes tokens). Never quote the chunk as if it were the whole document. Drawers with `content_via:\"snippet\"` (chat history, profile, artifacts) carry their full verbatim content inline — there is no file to read. If you do read and `read_document` errors, re-issue with the corrected path or refuse cleanly — NEVER fall back to training data. Documented hallucination causes on indexed corpora: (a) treating an excerpt chunk as the complete passage, (b) answering from training data after a read_document error.\n\n**Saving**: when the user says 'remember this' or wants to persist a fact / decision / preference, call `save_chat_to_memory`.\n\n---\n\n**Project memory layer (when invoked inside a project chat)**:\nThis project has a dedicated, isolated memory store. By default `mempalace_query` searches ONLY this knowledge layer (mined documents) — it does NOT include past chat turns or chat summaries. This is deliberate: a wrong answer in an earlier turn must never outrank the underlying source document. If the user explicitly asks about something said earlier in this project's chats ('what did we discuss', 'remember when I said'), call `mempalace_query` again with `include_chat_history=true` to search the chat layer.\n\n**Don't pass these arguments**:\n- `wing` — set automatically by Brain\n- `room` — unless you have verified the exact room name from a previous successful result. Brain's project miner uses `room='general'` for all policy/document content; invented values like 'document' or 'documentation' silently return zero drawers and lead to fabricated 'not in the documents' answers. The default (no room filter) searches everything in the wing — that is what you want.\n- `include_chat_history=true` for 'how is X calculated' / 'what does the policy say' questions — that flag switches the search to the PROJECT CHAT wing (past conversations) instead of the PROJECT KNOWLEDGE wing (the actual indexed documents). Use it ONLY when the user explicitly references prior chat ('what did we discuss about X', 'remember when I said Y').\n\n**Opening a drawer's source document**: every drawer that is backed by a file on disk carries a `read_path` (an absolute path to the curated `.brain-extracted/<name>.<ext>.md` companion) and sometimes a `read_path_original` (the original binary). To read the full source, call `read_document(path=<drawer.read_path>)` verbatim — prefer `read_path` (the curated `.md`: better tables/headings/OCR, and it's the exact text the search ranked) over `read_path_original`. Do NOT pass `source_file=...` (wrong parameter) and do NOT construct paths from basenames. Use `read_path_original` only when `read_path` errors or is empty.\n\n**When you cite a drawer's source**: name the ORIGINAL file, not the extracted companion — if `source_file` ends in `.brain-extracted/<name>.<ext>.md`, cite `<name>.<ext>` (e.g. `policy.pdf`, never `policy.pdf.md`), basename only, no path. Do NOT invent paragraph/section numbers (`§3.2`); the `.md` companions do not preserve original numbering, so any `§N` would be fabricated. Add a locator only if the read text genuinely shows one (`Page N`, `Slide N`, `Sheet \"Name\"`).",
       "when_to_use": "",
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive",
         "memory_summary"
-      ]
+      ],
+      "state": "active"
     },
     "write_file": {
       "description": "",
@@ -2250,12 +2558,11 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive",
         "research_minimal"
-      ]
+      ],
+      "state": "active"
     },
     "web_fetch": {
       "description": "",
@@ -2263,12 +2570,11 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive",
         "research_minimal"
-      ]
+      ],
+      "state": "active"
     },
     "read_file": {
       "description": "**Plain-text files only** — `.txt`, `.md`, `.py`, `.json`, `.log`, `.csv`, `.yaml`, source code. For binary documents (PDF, DOCX, XLSX, PPTX, EML, MSG) use `read_document` instead — `read_file` will return raw bytes which are not useful to you.",
@@ -2276,11 +2582,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "edit_file": {
       "description": "",
@@ -2288,11 +2593,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "transcribe_audio": {
       "description": "",
@@ -2300,11 +2604,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "translate_text": {
       "description": "",
@@ -2312,11 +2615,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "translate_document": {
       "description": "",
@@ -2324,11 +2626,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "detect_language": {
       "description": "",
@@ -2336,11 +2637,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "list_glossaries": {
       "description": "",
@@ -2348,11 +2648,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "get_glossary": {
       "description": "",
@@ -2360,11 +2659,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "ask_user_for_file": {
       "description": "",
@@ -2372,11 +2670,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "ask_llm": {
       "description": "",
@@ -2384,11 +2681,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "list_directory": {
       "description": "",
@@ -2396,11 +2692,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "search_files": {
       "description": "",
@@ -2408,11 +2703,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "mempalace_kg_query": {
       "description": "**Entity neighbourhood search** — useful for 'what do we say about <specific entity>'. Returns triples where the given entity appears as subject OR object, plus a short context window around each.\n\nKG triples carry subject/predicate/object + `source_file` + confidence, plus a short verbatim `span` quoting the source when available. The span answers or quotes a short fact directly. `read_document(path=<source_file>)` when EITHER (a) you need surrounding context, an exact figure, or text beyond the span, OR (b) the span does NOT itself contain what the question asks — the span is a brief excerpt, so if it only hints at the answer or is cut off, read the source rather than guessing. If the span fully answers the question, answer from it directly; never build an answer on a span that doesn't support the claim. Use the KG to FIND the right document(s) and quote short facts; read the source for anything more.\n\nDo NOT pass a `wing` argument — set automatically.",
@@ -2422,11 +2716,10 @@
       "applies_with": [
         "mempalace_query"
       ],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "mempalace_kg_search": {
       "description": "**Structured triple search by predicate** — useful for: 'which laws are cited' (predicate=cites), 'who is responsible for X' (predicate=responsible_party), 'what does X require' (predicate=requires), contradiction-detection ('all requires-triples about retention'), coverage analysis, responsibility matrices.\n\nKG triples carry subject/predicate/object + `source_file` + confidence, plus a short verbatim `span` quoting the source when available. The span answers or quotes a short fact directly. `read_document(path=<source_file>)` when EITHER (a) you need surrounding context, an exact figure, or text beyond the span, OR (b) the span does NOT itself contain what the question asks — the span is a brief excerpt, so if it only hints at the answer or is cut off, read the source rather than guessing. If the span fully answers the question, answer from it directly; never build an answer on a span that doesn't support the claim. Use the KG to FIND the right document(s) and quote short facts; read the source for anything more.\n\n\n**Preferred flow for factual policy questions**:\n  1. `mempalace_kg_search(predicate=requires/forbids/etc.)` — the span often answers directly; read_document the source_file when you need exact figures or more context\n  2. `mempalace_query` — the matched chunk often answers; read_document the source for exact quotes/full context\n\n**Examples**:\n  • 'Was muss X tun?' → `kg_search(predicate=requires, subject_contains=X)` first, then read_document the source_file to cite\n  • 'Was ist verboten?' → `kg_search(predicate=forbids)`, then read_document the source_file to cite\n  • 'Welche Gesetze werden zitiert?' → `kg_search(predicate=cites)`\n  • 'Wie wird X berechnet?' → 3-step flow (formula lives in document, not in triples)\n  • 'Wer ist verantwortlich für IT-Security?' → `kg_search(predicate=responsible_party)`\n\nDo NOT pass a `wing` argument — it is set automatically.",
@@ -2436,11 +2729,10 @@
       "applies_with": [
         "mempalace_query"
       ],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "mempalace_kg_neighbors": {
       "description": "",
@@ -2448,11 +2740,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "save_chat_to_memory": {
       "description": "",
@@ -2460,12 +2751,11 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive",
         "memory_summary"
-      ]
+      ],
+      "state": "active"
     },
     "memory_store": {
       "description": "",
@@ -2473,11 +2763,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "memory_recall": {
       "description": "",
@@ -2485,11 +2774,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "memory_delete": {
       "description": "",
@@ -2497,11 +2785,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "memory_shared": {
       "description": "",
@@ -2509,11 +2796,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "gmail_inbox": {
       "description": "",
@@ -2521,11 +2807,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "gmail_read": {
       "description": "",
@@ -2533,11 +2818,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "gmail_search": {
       "description": "",
@@ -2545,11 +2829,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "gmail_send": {
       "description": "",
@@ -2557,11 +2840,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "gmail_reply": {
       "description": "",
@@ -2569,11 +2851,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "delegate_task": {
       "description": "",
@@ -2581,11 +2862,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "task_status": {
       "description": "",
@@ -2593,11 +2873,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "task_cancel": {
       "description": "",
@@ -2605,11 +2884,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "use_skill": {
       "description": "",
@@ -2617,11 +2895,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "list_nodes": {
       "description": "",
@@ -2629,11 +2906,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "context_search": {
       "description": "",
@@ -2641,11 +2917,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "context_detail": {
       "description": "",
@@ -2653,11 +2928,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "context_recall": {
       "description": "",
@@ -2665,11 +2939,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "schedule_list": {
       "description": "",
@@ -2677,11 +2950,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "schedule_history": {
       "description": "",
@@ -2689,23 +2961,21 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "read_document": {
-      "description": "**USE THIS TOOL for every binary document the user attached** — PDF, DOCX, XLSX, PPTX, CSV, EML, MSG. It parses the format server-side and returns clean extracted text. **Do NOT call `read_file` on binary documents** — `read_file` returns raw bytes (ZIP/PDF headers etc.) which are useless. **Do NOT call `python_exec` or `execute_command` to manually unzip / open / cat a binary attachment** — `read_document` already handles every common format with the right parser.\n\n**Step 2 of the project memory flow** (see `mempalace_query` for the full 3-step flow context).\n\n**HOW TO CALL READ_DOCUMENT for project drawers**: every drawer returned by `mempalace_query` carries a `read_path` field — absolute path to the curated `.brain-extracted/<name>.<ext>.md` companion. Pass it verbatim as `path`. Do NOT pass `source_file=...` (wrong parameter name; call silently fails). Do NOT construct paths from basenames + input-folder roots (the file may live in a subfolder you don't know about).\n\n**Always prefer `read_path` (the .md)** over `read_path_original` (the binary). The .md is what Microsoft markitdown produced from the binary — better table structure, heading hierarchy, OCR — and it's the exact text the drawer search ranked. Reading the original PDF re-extracts with a different (worse) extractor; you'd lose the curation. Use `read_path_original` only as a fallback when `read_path` errors or is empty.\n\nWorked example: drawer returns `read_path=\"/private/tmp/kg-real-policies/.../.brain-extracted/20_2 Informationssicherheit/20_2_1_2_ARL_ISMS Risikomanagement Handbuch.pdf.md\"`. Call: `read_document(path=\"<that read_path>\")` verbatim. The result is the full curated markdown, ready to read end-to-end for formulas, tables, full sections.\n\n**BINARY DOCUMENTS** (PDF, DOCX, PPTX, XLSX, EML, MSG) in project input folders are auto-converted into companion `.md` files under the hidden `.brain-extracted/` subdirectory before mining. So a drawer with `source_file` like `.brain-extracted/policy.pdf.md` actually came from `policy.pdf` in the same folder — open the ORIGINAL binary with read_document for full fidelity (tables, page layout, complete spreadsheet rows beyond the preview). The `.md` is a text preview optimised for retrieval and triple extraction; use it only when you don't need the original layout.",
+      "description": "**USE THIS TOOL for every binary document the user attached** — PDF, DOCX, XLSX, PPTX, CSV, EML, MSG. It parses the format server-side and returns clean extracted text. **Do NOT call `read_file` on binary documents** — `read_file` returns raw bytes (ZIP/PDF headers etc.) which are useless. **Do NOT call `python_exec` or `execute_command` to manually unzip / open / cat a binary attachment** — `read_document` already handles every common format with the right parser.\n\nPass an absolute file `path`. When a retrieval tool hands you a path to a document (e.g. a curated `.md` companion under `.brain-extracted/`), pass that path verbatim — do not reconstruct paths from basenames or guess directories. Prefer a curated `.md` companion over re-extracting an original binary: the `.md` already has clean table structure, heading hierarchy and OCR. Read the original binary only when you need exact page layout, full spreadsheet rows, or the `.md` errored/was empty.",
       "when_to_use": "",
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "write_document": {
       "description": "",
@@ -2713,11 +2983,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "edit_document": {
       "description": "",
@@ -2725,11 +2994,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "mcp_connect": {
       "description": "",
@@ -2737,11 +3005,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "mcp_disconnect": {
       "description": "",
@@ -2749,11 +3016,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "mcp_servers": {
       "description": "",
@@ -2761,11 +3027,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "code_graph_build": {
       "description": "",
@@ -2773,11 +3038,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "code_graph_query": {
       "description": "",
@@ -2785,11 +3049,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "code_graph_impact": {
       "description": "",
@@ -2797,11 +3060,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "code_graph_enhance": {
       "description": "",
@@ -2809,11 +3071,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "git_command": {
       "description": "",
@@ -2821,11 +3082,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "github_command": {
       "description": "",
@@ -2833,11 +3093,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "tool_search": {
       "description": "",
@@ -2845,11 +3104,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "get_artifact_detail": {
       "description": "",
@@ -2857,11 +3115,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "worker_status": {
       "description": "",
@@ -2869,11 +3126,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "worker_abort": {
       "description": "",
@@ -2881,11 +3137,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "worker_pause": {
       "description": "",
@@ -2893,11 +3148,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "worker_resume": {
       "description": "",
@@ -2905,11 +3159,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "worker_send": {
       "description": "",
@@ -2917,11 +3170,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "worker_ask_user": {
       "description": "",
@@ -2929,11 +3181,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "ask_user": {
       "description": "",
@@ -2941,11 +3192,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "generate_image": {
       "description": "",
@@ -2953,24 +3203,22 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "searxng_search": {
-      "description": "**Always prefer `searxng_search` over any server-side search tools** (e.g. duckduckgo). It returns URLs and titles only — no page content; you MUST read content before answering, NEVER answer from titles or URLs alone.\n\n**Abstract-first triage (do this — it's cheaper and just as grounded):**\n- After the search, `web_fetch` every returned URL with `mode=\"abstract\"` first (≤5 in parallel). This returns a ~1500-char survey per page, not the whole page — enough to judge whether the page actually helps.\n- Then `web_fetch` with `mode=\"full\"` ONLY the URLs whose abstract shows they contain what the answer needs. Skip the rest — do NOT read a full page the abstract already showed is off-topic or irrelevant.\n- Only after the relevant pages are read in full: synthesise and answer.\n- If the abstracts alone fully answer the question, you may answer from them (that still counts as reading content — you did not answer from titles).\n- If many URLs were returned, triage abstracts 5 at a time until done; you do not have to full-read every result, only the relevant ones.",
+      "description": "",
       "when_to_use": "",
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive",
         "research_minimal"
-      ]
+      ],
+      "state": "active"
     },
     "helpdesk_session_info": {
       "description": "",
@@ -2978,13 +3226,34 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
-      "enabled": true,
-      "deferred": false,
       "purposes": [
         "interactive"
-      ]
+      ],
+      "state": "active"
     },
     "helpdesk_user_context": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "purposes": [
+        "interactive"
+      ],
+      "state": "active"
+    },
+    "helpdesk_user_activity": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "purposes": [
+        "interactive"
+      ],
+      "state": "active"
+    },
+    "read_chunk_window": {
       "description": "",
       "when_to_use": "",
       "warnings": "",
@@ -2996,7 +3265,29 @@
         "interactive"
       ]
     },
-    "helpdesk_user_activity": {
+    "run_background_task": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "purposes": [
+        "interactive"
+      ],
+      "state": "active"
+    },
+    "generate_audio_overview": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "purposes": [
+        "interactive"
+      ],
+      "state": "active"
+    },
+    "retrieve": {
       "description": "",
       "when_to_use": "",
       "warnings": "",
@@ -3010,9 +3301,9 @@
     }
   },
   "research_mode_disciplines": {
-    "refusal": "**REFUSAL DISCIPLINE — refuse cleanly when retrieval comes back empty**:\nIf `mempalace_query` returns 0 relevant drawers (and after you've read the top drawers' source files in full and confirmed they don't contain the information), the project does NOT contain it. You MUST then say so explicitly — name what's missing, suggest the user add the relevant document or consult another source. Try at most 2-3 query rephrasings before refusing.\nDo NOT substitute training-data knowledge for indexed-document knowledge in this project. Even if you know the topic well from training data, for compliance / policy / audit work, an answer that doesn't match an actual document on file is a fabrication hazard. Refuse cleanly and say what's missing.",
-    "precision": "**PRECISION DISCIPLINE — no plausible-sounding filler**:\nWhen the source does not give a concrete value (interval, frequency, threshold, count, deadline, length, duration), write `nicht spezifiziert` — never substitute a plausible default like 'regelmäßig', 'häufig', 'sofort', 'kürzer', 'mindestens X Zeichen', 'alle 12 Monate', 'mindestens jährlich'. If you use any qualifying adverb or comparative ('regelmäßig', 'häufiger', 'kürzer', 'sofort', 'zeitnah', 'angemessen'), the very next characters must be a wörtliches Zitat (`> \"...\"`) from the read_document output proving the source actually says that. No quote → drop the qualifier. ISO-27001-typical phrasing from training data is NOT a source.",
-    "citation": "**CITATION DISCIPLINE — per-claim, not per-block**:\nEVERY factual sentence and EVERY bullet point that came from the project must carry its OWN [Quelle: <basename> — \"<wörtliches Zitat 10-25 Wörter>\"] reference right after the claim. One citation at the end of a 5-bullet list is INSUFFICIENT — the reader cannot tell which bullet came from which source, and bullets without an explicit citation are where paraphrase drift and fabrication slip in. Treat each bullet as an independent claim that must stand on its own with its own claim and quote. A bulltet without a claim and just a citation is not correct. A claim consists of the claim itself and a citation.\nIf you cannot find a verbatim quote in the read_document output that supports a specific bullet — DELETE that bullet. Do not write claims you cannot cite. A shorter, fully-cited answer is always preferable to a longer answer with uncited bullets.\nThe verbatim quote (10-25 words, copied EXACTLY from the read_document output) is mandatory — it lets the user search the original PDF with Cmd+F and verify the claim. Without a quote, the citation is unverifiable.\nTwo correct examples:\n  • Single-sentence claim:\n    'Multilogin-Berechtigungen müssen vom Datenowner genehmigt werden [Quelle: 4_1_0_ARL_Systemberechtigungen.pdf — \"Berechtigungen können ferner angeben, ob es sich um eine Berechtigung handelt, wo die Zugangsdaten nicht einer einzelnen Person zugewiesen werden kann\"].'\n  • Bullet list (each bullet has its own quote):\n    - Multilogin = nicht zuordenbar [Quelle: 4_1_0_ARL_Systemberechtigungen.pdf — \"Zugangsdaten nicht einer einzelnen Person zugewiesen werden\"].\n    - Genehmigung durch Datenowner [Quelle: 4_1_0_ARL_Systemberechtigungen.pdf — \"Vor Veränderungen ist eine Zustimmung des jeweiligen Datenowners einzuholen\"].\n    - (kein dritter Bullet, weil keine weitere Aussage im read_document gefunden — lieber weglassen als raten.)\nUse the basename only (e.g. `4_0_0_ARL_IKT Strategie.pdf` — not the full path). **STRIP THE `.md` COMPANION SUFFIX**: when a drawer's `source_file` ends in `.brain-extracted/<name>.<ext>.md`, cite the ORIGINAL binary's name (e.g. `policy.pdf`, NOT `policy.pdf.md`). **DO NOT invent paragraph numbers like `§164` or `§3.2`** — the `.md` companions do NOT preserve the original document's paragraph numbering; any `§N` you write will be fabricated. Only add a locator if it is genuinely present in the read_document text: `Page N` for PDFs (markitdown marks page boundaries), `Slide N` for PPTX, `Sheet \"Name\"` for XLSX. If no clean locator exists, the verbatim quote alone is sufficient.\nMultiple sources for one claim → repeat the bracket: [Quelle: A.pdf — \"...\"] [Quelle: B.docx — \"...\"]."
+    "refusal": "**REFUSAL DISCIPLINE — never assert unproven facts**:\nState a fact only when it is backed by evidence you actually retrieved this turn (a source you read, a result you got back). Do NOT fill gaps with training-data knowledge, plausible guesses, or assumptions — for compliance, policy, factual or audit questions an unsupported claim is a fabrication hazard. If, after a genuine attempt to retrieve it, the information is not available, say so plainly — name what is missing and, where useful, suggest how the user could provide or locate it. A clear 'this could not be found' is always better than an invented answer.",
+    "precision": "**PRECISION DISCIPLINE — no plausible-sounding filler**:\nWhen the retrieved source does not give a concrete value (interval, frequency, threshold, count, deadline, length, duration), write `nicht spezifiziert` — never substitute a plausible default like 'regelmäßig', 'häufig', 'sofort', 'kürzer', 'mindestens X Zeichen', 'alle 12 Monate', 'mindestens jährlich'. If you use any qualifying adverb or comparative ('regelmäßig', 'häufiger', 'kürzer', 'sofort', 'zeitnah', 'angemessen'), the very next characters must be a wörtliches Zitat (`> \"...\"`) from the retrieved text proving the source actually says that. No quote → drop the qualifier. Typical phrasing remembered from training data is NOT a source.",
+    "citation": "**CITATION DISCIPLINE — per-claim, not per-block**:\nEVERY factual sentence and EVERY bullet point that came from a retrieved source must carry its OWN reference right after the claim, in the form [Quelle: <kurzer Quellenname> — \"<wörtliches Zitat 10-25 Wörter>\"]. One citation at the end of a 5-bullet list is INSUFFICIENT — the reader cannot tell which bullet came from which source, and uncited bullets are where paraphrase drift and fabrication slip in. Treat each bullet as an independent claim that must stand on its own with its own quote. A bullet with only a citation and no claim, or a claim with no citation, is not correct.\nIf you cannot find a verbatim quote in the retrieved source that supports a specific claim — DELETE that claim. Do not write claims you cannot cite. A shorter, fully-cited answer is always preferable to a longer answer with uncited statements.\nThe verbatim quote (10-25 words, copied EXACTLY from the retrieved text) is mandatory — it lets the user find and verify the statement in the original. Without a quote the citation is unverifiable.\nSource naming: use a short, recognisable source name — a document's filename (without any path or extracted-companion suffix) or, for a web source, its title or domain. Add a locator only when it is genuinely present in the retrieved text (e.g. `Page N`, `Slide N`, `Sheet \"Name\"`, or a section number the source itself prints). NEVER invent paragraph or section numbers — a locator you did not see in the text is a fabrication. If no clean locator exists, the verbatim quote alone is sufficient.\nMultiple sources for one claim → repeat the bracket: [Quelle: A — \"...\"] [Quelle: B — \"...\"]."
   },
   "chat_summary_model": "CLIProxyAPI/mistral-small-latest",
   "classification": {
@@ -3055,7 +3346,7 @@
     "extra_patterns": []
   },
   "classification_scanner": {
-    "enabled": true,
+    "enabled": false,
     "server_block": false,
     "server_log": true,
     "default_local_fallback_model": "gemma-4-26B-A4B-it-MLX-4bit",
@@ -3081,5 +3372,8 @@
   "default_model": "CLIProxyAPI/mistral-medium-3.5",
   "warmup": {
     "pool_depth": 10
+  },
+  "auto_route": {
+    "classifier_mode": "llm"
   }
 }

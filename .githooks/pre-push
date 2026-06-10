@@ -27,6 +27,27 @@ if [[ "${SKILL_DOC_OK:-}" == "1" ]]; then
   exit 0
 fi
 
+# ── Backstop: scrubbed config.example.json in sync with config.json ──
+# The pre-commit hook regenerates + stages it on every commit, but commits can
+# be made with --no-verify; this catches a stale mirror before it reaches the
+# remote. Only runs when this machine has a config.json to compare against
+# (a fresh clone / CI has none → nothing to check). Non-mutating (--check).
+if [[ -f scripts/scrub_config.py && -f config.json ]]; then
+  if ! python3 scripts/scrub_config.py --check; then
+    cat >&2 <<'EOF'
+
+──────────────────────────────────────────────────────────────────────
+  config.example.json is STALE vs config.json.
+
+  Regenerate + commit it:
+    python3 scripts/scrub_config.py && git add config.example.json && git commit --amend --no-edit
+  (or just re-commit normally — the pre-commit hook stages it for you).
+──────────────────────────────────────────────────────────────────────
+EOF
+    exit 1
+  fi
+fi
+
 # stdin: <local ref> <local sha> <remote ref> <remote sha> per pushed ref.
 needs_check=0
 drifted=0
