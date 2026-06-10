@@ -442,10 +442,18 @@ TOOL_DEFINITIONS = [
     {
         "name": "searxng_search",
         "description": (
-            "Search the web via a self-hosted SearXNG metasearch instance for "
-            "current, relevant information. Use this tool whenever the user asks "
-            "to search the web, look something up, find recent news, or get "
-            "current information about any topic."
+            "Search the web via a self-hosted SearXNG metasearch instance. "
+            "Use whenever the user asks to search the web, look something up, "
+            "or get current information about any topic.\n"
+            "Returns a ranked list of URLs (title + link + score) and NOTHING "
+            "ELSE — there are no result snippets. You MUST then call web_fetch "
+            "on the most relevant URLs (up to 5, in parallel) and answer from "
+            "the fetched page text. NEVER answer from the result titles alone — "
+            "a title is not evidence. When choosing which URLs to fetch, prefer "
+            "the source that directly answers the user's intent over one that "
+            "merely mentions the topic — favour primary/authoritative pages for "
+            "factual or live data, and reserve news outlets for when the user "
+            "actually wants reporting or recent events."
         ),
         "input_schema": {
             "type": "object",
@@ -462,7 +470,13 @@ TOOL_DEFINITIONS = [
                 },
                 "category": {
                     "type": "string",
-                    "description": "Optional category. Only 'news' is supported.",
+                    "description": (
+                        "Optional. Set to 'news' ONLY when the user explicitly "
+                        "wants recent news articles/press coverage. Do NOT use "
+                        "it for general current-info queries (weather, prices, "
+                        "schedules, facts) — 'news' restricts results to news "
+                        "outlets and buries the authoritative source pages."
+                    ),
                     "enum": ["news"],
                 },
             },

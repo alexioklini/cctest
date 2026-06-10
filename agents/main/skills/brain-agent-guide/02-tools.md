@@ -119,10 +119,19 @@ Deferred tools are hidden from the initial list and surfaced via `tool_search`.
   `web_fetch(mode="full")` ONLY the results whose abstract shows they help —
   skip full-reading off-topic pages. Never answer from titles/URLs alone.
 - `searxng_search(query, num_results?, category?)` — self-hosted SearXNG
-  search (no API key). Returns `score` + ~300-char `snippet` per result,
-  plus an `infobox` when available. `category` accepts `news`. This is a
-  **standalone tool**, not an exa_search backend. Default-disabled at the
-  global gate — admin enables it in Settings → Tools.
+  search (no API key). Returns a ranked list of `title` + `link` + `score`
+  ONLY — **no snippets** to the model (v9.99.2: snippets were biasing the
+  model's fetch choice toward whoever had a tempting blurb instead of the
+  source that best answers the intent). The model must then `web_fetch` the
+  top URLs (up to 5, in parallel) and answer from page text — never from
+  titles — preferring primary/authoritative pages over outlets that merely
+  mention the topic. An `infobox` is still surfaced when available. `category` accepts `news` but should be
+  used ONLY for explicit news-article queries, not general current-info
+  (weather/prices/schedules — `news` buries the authoritative source pages).
+  The human Websuche curation panel still shows ~300-char snippets (server
+  passes `include_snippets=True` on that path). This is a **standalone
+  tool**, not an exa_search backend. Default-disabled at the global gate —
+  admin enables it in Settings → Tools.
 - `gmail_inbox` / `gmail_read(id)` / `gmail_search(q)` / `gmail_send` /
   `gmail_reply` — requires `gmail.json` configured
 

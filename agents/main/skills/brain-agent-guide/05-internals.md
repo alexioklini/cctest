@@ -255,10 +255,14 @@ probe), admin status/restart endpoints:
   `config.json → crawl4ai.auto_start`. `brain._crawl4ai_render()` degrades
   gracefully when down. Admin: `/v1/crawl4ai/{status,restart}`.
 
-`web_fetch` fallback chain: markitdown HTML→md first; crawl4ai render only
-when the converted text is near-empty (<30 chars) on an HTML GET. Every
-result is tagged `fetch_method` (raw/markitdown/crawl4ai), surfaced as a
-chat-view badge.
+`web_fetch` fallback chain: markitdown HTML→md first; crawl4ai render fires
+on an HTML GET when the converted text is THIN (<600 chars — v9.99.2 raised
+this from <30 so a consent-wall teaser triggers it, not just an empty shell)
+OR when the final URL is a consent/cookie interstitial (`/consent`, `/tcf/`,
+`cookie`, `datenschutz/zustimmung`). The render is only taken when it's
+strictly longer than the HTTP result (guards against a render that itself
+hits the wall). Every result is tagged `fetch_method`
+(raw/markitdown/crawl4ai), surfaced as a chat-view badge.
 
 ## Manual web search (Websuche) + tool lockout
 

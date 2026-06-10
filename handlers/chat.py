@@ -3341,6 +3341,9 @@ class ChatHandlerMixin:
             "query": query,
             "num_results": num_results,
             "force_fresh": bool(body.get("force_fresh")),
+            # Human-curation panel: keep snippets so the user can eyeball each
+            # result before marking it. The LLM-facing tool path omits them.
+            "include_snippets": True,
         })
         try:
             self._send_json(json.loads(raw))

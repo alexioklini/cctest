@@ -661,17 +661,28 @@ def tool_web_fetch(args: dict) -> str:
             else:
                 usable = ""  # conversion produced nothing — raw HTML isn't usable
 
-        # JS-rendered fallback: when an HTML page yields essentially NO usable
-        # text (client-rendered SvelteKit/React shells — markitdown returns
-        # empty/whitespace), re-fetch through the crawl4ai headless render
-        # service. Gated on markitdown having failed (empty `usable`), NOT a
-        # length threshold — a page that converts to even a short real snippet
-        # is fine and shouldn't pay the browser cost. Graceful: if the service
-        # is down/unconfigured, we keep the HTTP result.
-        if is_html and len(usable.strip()) < 30 and method == "GET" and not body:
+        # JS-rendered / consent-wall fallback: re-fetch through the crawl4ai
+        # headless render service when the plain HTTP+markitdown result is not
+        # the real article. Two triggers (both GET, no body):
+        #   1. Thin content — markitdown yielded essentially nothing (empty
+        #      shell) OR only a stub (< 600 chars). The old < 30 gate missed
+        #      consent-walled pages that convert to a ~1–2 KB teaser: the model
+        #      then quoted the teaser as if it were the full piece (chat
+        #      766e3575 — derstandard.at /consent/tcf/ gave 1351 chars).
+        #   2. Consent / cookie interstitial — the final URL was redirected to a
+        #      consent path (/consent/, /tcf/, cookie-wall). The page is real
+        #      but gated; a headless render clicks past it / loads the article.
+        _consent_wall = any(seg in (final_url or "").lower()
+                            for seg in ("/consent", "/tcf/", "cookie", "/datenschutz/zustimmung"))
+        _thin = len(usable.strip()) < 600
+        if is_html and method == "GET" and not body and (_thin or _consent_wall):
             rendered = _brain._crawl4ai_render(final_url)
-            if rendered.get("success") and rendered.get("markdown", "").strip():
-                text = rendered["markdown"]
+            _md = (rendered.get("markdown") or "").strip()
+            # Only take the render if it's an improvement — a longer body than
+            # what HTTP gave us. Guards against a render that itself hits the
+            # wall and returns even less.
+            if rendered.get("success") and len(_md) > len(usable.strip()):
+                text = _md
                 fetch_method = "crawl4ai"
 
         if mode == "abstract":
@@ -741,6 +752,13 @@ def tool_searxng_search(args: dict) -> str:
     num_results = args.get("num_results", 5)
     category = args.get("category")
     force_fresh = args.get("force_fresh", False)
+    # Snippets are surfaced ONLY to the human-curation Websuche panel
+    # (POST /v1/web/search sets include_snippets=True). The LLM-facing path
+    # gets bare title+link+score: SERP snippets are short, stale, and biased
+    # the model's fetch choice toward whichever result had a tempting blurb
+    # instead of the most on-topic URL (chat 766e3575 — it fetched two news
+    # articles over the #1 weather page because their snippets read better).
+    include_snippets = args.get("include_snippets", False)
 
     _tcfg = _brain.get_tool_config().get("searxng_search", {})
     base = _brain._searxng_base_url()
@@ -752,7 +770,7 @@ def tool_searxng_search(args: dict) -> str:
                      "tools_config.searxng_search.url for an external instance)",
         })
 
-    cache_key = f"searxng:{base}:{query}:{num_results}:{category or ''}"
+    cache_key = f"searxng:{base}:{query}:{num_results}:{category or ''}:{int(include_snippets)}"
     if not force_fresh:
         cached = _brain._web_cache.get(cache_key)
         if cached is not None:
@@ -781,18 +799,21 @@ def tool_searxng_search(args: dict) -> str:
         # (consensus across engines). Drop near-zero-score noise — single weak
         # engine, no agreement — so the top num_results stay dense with real
         # matches; keep at least the best one if everything scored low. Expose
-        # score + snippet so the model can triage which URLs are worth fetching
-        # (it gets bare title+link otherwise and fetches blindly).
+        # score so the model can rank which URLs are worth fetching. Snippets are
+        # included ONLY for the human Websuche panel (include_snippets) — for the
+        # LLM we deliberately omit them (see include_snippets note above).
         raw = response_data.get("results", [])
         ranked = [r for r in raw if r.get("score", 0) >= 0.3] or raw[:1]
         results = []
         for r in ranked[:num_results]:
-            results.append({
+            entry = {
                 "title": r.get("title", ""),
                 "link": r.get("url", ""),
                 "score": round(r.get("score", 0), 2),
-                "snippet": (r.get("content") or "")[:300],
-            })
+            }
+            if include_snippets:
+                entry["snippet"] = (r.get("content") or "")[:300]
+            results.append(entry)
 
         search_info = {"query": query, "results": results, "result_count": len(results)}
         if category:
