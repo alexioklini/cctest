@@ -5192,10 +5192,17 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 
 @media (max-width: 768px) {
-  /* Sidebar becomes a slide-in drawer reachable via #mobile-hamburger. */
+  /* Sidebar becomes a slide-in drawer reachable via #mobile-hamburger.
+     Height must be 100svh, NOT 100vh: on iOS Safari 100vh includes the area
+     behind the bottom toolbar, so the bottom-pinned .sb-user-section (avatar →
+     openUserSettings, theme toggle, dropdown) rendered UNDER the toolbar and
+     was unreachable on iPhone. svh = the small (toolbar-shown) viewport, so the
+     user section is guaranteed on-screen regardless of toolbar state. */
   #sidebar {
     position: fixed;
+    top: 0;
     left: -288px;
+    height: 100svh;
     z-index: 100;
     transition: left 0.2s ease;
   }
