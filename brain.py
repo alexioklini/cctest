@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.99.10"
+VERSION = "9.99.11"
 VERSION_DATE = "2026-06-10"
 CHANGELOG = [
+    ("9.99.11", "2026-06-10", "test+fix(disciplines): make the research-discipline CODE DEFAULTS tool-agnostic (they were still the old mempalace/read_document text) + add regression tests for the memory-first→web escalation behaviour. CONTEXT: the 2026-06-10 web-escalation fix (memory note project_websearch_skip_root_cause) edited config.json's research_mode_disciplines + tool descriptions to be tool-agnostic, but the SEED DEFAULTS in brain.py (_RESEARCH_MODE_DISCIPLINE_{REFUSAL,PRECISION,CITATION}_DEFAULT) were left as the old tool-specific versions — they still said 'if mempalace_query returns 0 drawers → refuse' and quoted 'the read_document output'. Those defaults resurface whenever the config section is missing/reset or an admin clicks 'restore defaults', which would silently bring the bug back. Rewrote all three defaults to match the corrected config byte-for-intent: refusal forbids FABRICATION (no 'give up after empty memory'), precision/citation say 'the retrieved source' not 'read_document'. NEW tests/test_websearch_escalation_gating.py (unittest, in-process, no LLM): guards (a) classifier_tool_deferral invariants — floor tools never deferred, a flagged group is un-deferred so no tool_search detour, warmup-protected models get ([],[]); (b) render_research_mode_disciplines() is tool-agnostic + the refusal never says 'give up'; (c) no ALWAYS-PRESENT tool's prose references a deferred/disabled tool (read_document must not reference mempalace). It injects config.json into the brain globals in setUpModule (the server does the same at boot) so the prose audits run against the real text, not empty defaults. NEW eval/websearch_escalation_eval.py (live Brain, N reps, mistral-small+medium): measures the actual BEHAVIOUR — web-available+memory-empty must escalate to a web tool; web-locked+memory-empty must refuse cleanly without fabricating. 11/11 unit tests green (1 skip: mempalace not globally deferred, it's per-agent). py_compile OK."),
     ("9.99.10", "2026-06-10", "revert: roll the codebase back to the v9.99.3 (scheduler-block-removal) baseline — drop v9.99.4 through v9.99.9 entirely. Those six versions chased a 'web search not used' symptom (mistral-small/medium answering 'not in my knowledge' and stopping instead of escalating to web) through the WRONG layer: DEFERRED/MCP prompt trimming, documents↔memory classifier coupling, and the never-strip floor ({} → {core,workflows} → {core,memory,workflows}). NONE touched the real cause. PROOF (chat 5e1c36a2): mistral-MEDIUM-3.5, LLM classification OFF (full static toolset, web tools present, no gating at all) STILL only ran mempalace_query ×4 and gave up — so it is neither model strength, nor tool_search, nor the floor. The real driver is the mempalace_query TOOL DESCRIPTION (config.json → tool_settings.mempalace_query.description): a strong memory-FIRST discipline ('query first, answer second … at most 2-3 rephrasings before giving up — do not spin') with NO web-escalation clause, so the model satisfies the discipline and stops. v9.99.9 made it worse by forcing memory into the floor, activating that discipline on every turn incl. pure-web ones. Reverted brain.py + engine/prompt_build.py verbatim to v9.99.3 (floor back to the minimal {tool_search, ask_user}; scheduler block stays removed). The actual fix — a web-escalation clause in the mempalace_query description, ideally context-gated so a closed-corpus project chat still refuses — is a SEPARATE change to make deliberately after discussion, not bundled into this rollback. py_compile OK."),
     ("9.99.3", "2026-06-10", "fix(prompt): drop the 'SCHEDULER — active scheduled tasks' block from the system prompt — it anchored the model off-task and silently broke the warm KV prefix. ROOT CAUSE (chat 38647ef5, 'was ist das Qwopus Modell'): _build_system_prompt (engine/prompt_build.py) unconditionally dumped every active scheduled task's name + 80-char description + next_run into the context. The user had a 'Mistral AI News' task; the answering model (mistral-small) latched onto it and made its VERY FIRST search 'Qwopus Modell Mistral AI' — the Mistral framing came from the prompt, not any search result, for a question that had nothing to do with Mistral. Classic context contamination from an unrelated standing task. SECONDARY: the block carries per-task next_run timestamps that drift on every fire, and warmup builds this exact same prompt (build_first_turn_prefix → _build_system_prompt purpose=interactive), so the block was a latent warm-pool KV-prefix breaker too — removing it makes the prefix MORE stable, not less. FIX: the block is gone; the model pulls live scheduler state on demand via the schedule_list / schedule_history tools (both real, in the scheduler group) exactly as the removed block's own last line already instructed. No schema/config/endpoint change. py_compile engine/prompt_build.py OK."),
     ("9.99.2", "2026-06-10", "fix(web-search): stop searxng_search snippets steering the model's fetch choice + make web_fetch survive consent walls. ROOT CAUSE (chat 766e3575, 'Wetter Wien nächste Woche'): the model searched with category='news' (→ news ARTICLES about the weather instead of weather PAGES), then fetched derstandard.at (#2) and msn.com (#5) — NOT vienna.at/wetter (#1, score 1.0). It picked the worse URLs because the SERP snippets biased it: vienna.at's snippet was a bare stale date ('Aug 30, 2018') while the news hits carried tempting weather prose. derstandard then redirected to a /consent/tcf/ cookie wall — markitdown converted only the 1351-char teaser, the <30-char crawl4ai gate didn't fire, and the model quoted the teaser as if it were the full forecast (4 unverified citations). THREE fixes. (1) searxng_search no longer returns snippets to the LLM — bare title+link+score only (engine/tools/misc_tools.py: new include_snippets arg, default False; cache key includes it). Snippets bias fetch selection toward whoever had the better blurb, not the most on-topic URL; the model should rank by title/domain and fetch the real page. The human Websuche curation panel KEEPS snippets — POST /v1/web/search sets include_snippets=True (handlers/chat.py) so the user can still eyeball each result. (2) Tool description rewritten (engine/tool_schemas.py): states results are URLs-only with NO snippets, the model MUST web_fetch the top URLs (up to 5, in parallel) and answer from page text never from titles, and to prefer the source that directly answers the user's intent (primary/authoritative pages for facts/live data) over one that merely mentions the topic — kept principle-level, NOT a hardcoded site/use-case example, to avoid anchoring the model to a single domain or steering it away from news when news IS what's wanted. category='news' now explicitly scoped to 'user explicitly wants news articles' — NOT general current-info queries (weather/prices/schedules), which it was burying authoritative pages under. (3) web_fetch crawl4ai fallback hardened (engine/tools/misc_tools.py): the headless render now also fires on THIN content (<600 chars, was <30 — caught the empty shell but missed the consent-wall teaser) and on consent/cookie interstitial URLs (/consent, /tcf/, cookie, datenschutz/zustimmung in the final redirected URL), and only takes the render when it's strictly longer than the HTTP result (guards against a render that itself hits the wall). py_compile brain.py + the 3 edited modules OK. crawl4ai render service confirmed running (:8422). Backend restart required."),
@@ -538,81 +539,67 @@ PLAN_MODE_PROMPT = (
 # startup, refreshed on POST /v1/research-mode/disciplines). The seeds
 # stay as factory defaults for the UI's reset-per-section button.
 
+# TOOL-AGNOSTIC by design: these disciplines are injected on EVERY grounding
+# turn (memory, web, documents, context) — including a pure-web turn. They must
+# NOT name a specific tool or its mechanics (mempalace/read_document/drawer/…),
+# or the prose becomes a dangling anchor on a turn that doesn't use that tool —
+# the root cause of the 2026-06 "model digs only in memory then gives up, never
+# escalates to web" bug (memory note project_websearch_skip_root_cause). The
+# refusal forbids FABRICATION, it does NOT tell the model to give up after empty
+# retrieval. Keep these byte-identical to config.json → research_mode_disciplines;
+# tests/test_websearch_escalation_gating.py guards the tool-agnostic property.
 _RESEARCH_MODE_DISCIPLINE_REFUSAL_DEFAULT = (
-    "**REFUSAL DISCIPLINE — refuse cleanly when retrieval comes back empty**:\n"
-    "If `mempalace_query` returns 0 relevant drawers (and after you've read "
-    "the top drawers' source files in full and confirmed they don't contain "
-    "the information), the project does NOT contain it. You MUST then say "
-    "so explicitly — name what's missing, suggest the user add the relevant "
-    "document or consult another source. Try at most 2-3 query rephrasings "
-    "before refusing.\n"
-    "Do NOT substitute training-data knowledge for indexed-document knowledge "
-    "in this project. Even if you know the topic well from training data, "
-    "for compliance / policy / audit work, an answer that doesn't match an "
-    "actual document on file is a fabrication hazard. Refuse cleanly and "
-    "say what's missing."
+    "**REFUSAL DISCIPLINE — never assert unproven facts**:\n"
+    "State a fact only when it is backed by evidence you actually retrieved this "
+    "turn (a source you read, a result you got back). Do NOT fill gaps with "
+    "training-data knowledge, plausible guesses, or assumptions — for compliance, "
+    "policy, factual or audit questions an unsupported claim is a fabrication "
+    "hazard. If, after a genuine attempt to retrieve it, the information is not "
+    "available, say so plainly — name what is missing and, where useful, suggest "
+    "how the user could provide or locate it. A clear 'this could not be found' is "
+    "always better than an invented answer."
 )
 
 _RESEARCH_MODE_DISCIPLINE_PRECISION_DEFAULT = (
     "**PRECISION DISCIPLINE — no plausible-sounding filler**:\n"
-    "When the source does not give a concrete value (interval, frequency, "
-    "threshold, count, deadline, length, duration), write `nicht "
-    "spezifiziert` — never substitute a plausible default like "
-    "'regelmäßig', 'häufig', 'sofort', 'kürzer', 'mindestens X Zeichen', "
-    "'alle 12 Monate', 'mindestens jährlich'. If you use any qualifying "
-    "adverb or comparative ('regelmäßig', 'häufiger', 'kürzer', 'sofort', "
-    "'zeitnah', 'angemessen'), the very next characters must be a "
-    "wörtliches Zitat (`> \"...\"`) from the read_document output proving "
-    "the source actually says that. No quote → drop the qualifier. "
-    "ISO-27001-typical phrasing from training data is NOT a source."
+    "When the retrieved source does not give a concrete value (interval, "
+    "frequency, threshold, count, deadline, length, duration), write `nicht "
+    "spezifiziert` — never substitute a plausible default like 'regelmäßig', "
+    "'häufig', 'sofort', 'kürzer', 'mindestens X Zeichen', 'alle 12 Monate', "
+    "'mindestens jährlich'. If you use any qualifying adverb or comparative "
+    "('regelmäßig', 'häufiger', 'kürzer', 'sofort', 'zeitnah', 'angemessen'), "
+    "the very next characters must be a wörtliches Zitat (`> \"...\"`) from the "
+    "retrieved text proving the source actually says that. No quote → drop the "
+    "qualifier. Typical phrasing remembered from training data is NOT a source."
 )
 
 _RESEARCH_MODE_DISCIPLINE_CITATION_DEFAULT = (
     "**CITATION DISCIPLINE — per-claim, not per-block**:\n"
-    "EVERY factual sentence and EVERY bullet point that came from the "
-    "project must carry its OWN [Quelle: <basename> — \"<wörtliches Zitat "
-    "10-25 Wörter>\"] reference right after the claim. One citation at "
-    "the end of a 5-bullet list is INSUFFICIENT — the reader cannot tell "
-    "which bullet came from which source, and bullets without an explicit "
-    "citation are where paraphrase drift and fabrication slip in. Treat "
-    "each bullet as an independent claim that must stand on its own with "
-    "its own quote.\n"
-    "If you cannot find a verbatim quote in the read_document output that "
-    "supports a specific bullet — DELETE that bullet. Do not write claims "
-    "you cannot cite. A shorter, fully-cited answer is always preferable "
-    "to a longer answer with uncited bullets.\n"
-    "The verbatim quote (10-25 words, copied EXACTLY from the read_document "
-    "output) is mandatory — it lets the user search the original PDF with "
-    "Cmd+F and verify the claim. Without a quote, the citation is "
-    "unverifiable.\n"
-    "Two correct examples:\n"
-    "  • Single-sentence claim:\n"
-    "    'Multilogin-Berechtigungen müssen vom Datenowner genehmigt werden "
-    "[Quelle: 4_1_0_ARL_Systemberechtigungen.pdf — \"Berechtigungen können "
-    "ferner angeben, ob es sich um eine Berechtigung handelt, wo die "
-    "Zugangsdaten nicht einer einzelnen Person zugewiesen werden kann\"].'\n"
-    "  • Bullet list (each bullet has its own quote):\n"
-    "    - Multilogin = nicht zuordenbar [Quelle: "
-    "4_1_0_ARL_Systemberechtigungen.pdf — \"Zugangsdaten nicht einer "
-    "einzelnen Person zugewiesen werden\"].\n"
-    "    - Genehmigung durch Datenowner [Quelle: "
-    "4_1_0_ARL_Systemberechtigungen.pdf — \"Vor Veränderungen ist eine "
-    "Zustimmung des jeweiligen Datenowners einzuholen\"].\n"
-    "    - (kein dritter Bullet, weil keine weitere Aussage im "
-    "read_document gefunden — lieber weglassen als raten.)\n"
-    "Use the basename only (e.g. `4_0_0_ARL_IKT Strategie.pdf` — not the "
-    "full path). **STRIP THE `.md` COMPANION SUFFIX**: when a drawer's "
-    "`source_file` ends in `.brain-extracted/<name>.<ext>.md`, cite the "
-    "ORIGINAL binary's name (e.g. `policy.pdf`, NOT `policy.pdf.md`). "
-    "**DO NOT invent paragraph numbers like `§164` or `§3.2`** — the `.md` "
-    "companions do NOT preserve the original document's paragraph "
-    "numbering; any `§N` you write will be fabricated. Only add a locator "
-    "if it is genuinely present in the read_document text: `Page N` for "
-    "PDFs (markitdown marks page boundaries), `Slide N` for PPTX, "
-    "`Sheet \"Name\"` for XLSX. If no clean locator exists, the verbatim "
-    "quote alone is sufficient.\n"
-    "Multiple sources for one claim → repeat the bracket: [Quelle: "
-    "A.pdf — \"...\"] [Quelle: B.docx — \"...\"]."
+    "EVERY factual sentence and EVERY bullet point that came from a retrieved "
+    "source must carry its OWN reference right after the claim, in the form "
+    "[Quelle: <kurzer Quellenname> — \"<wörtliches Zitat 10-25 Wörter>\"]. One "
+    "citation at the end of a 5-bullet list is INSUFFICIENT — the reader cannot "
+    "tell which bullet came from which source, and uncited bullets are where "
+    "paraphrase drift and fabrication slip in. Treat each bullet as an "
+    "independent claim that must stand on its own with its own quote. A bullet "
+    "with only a citation and no claim, or a claim with no citation, is not "
+    "correct.\n"
+    "If you cannot find a verbatim quote in the retrieved source that supports a "
+    "specific claim — DELETE that claim. Do not write claims you cannot cite. A "
+    "shorter, fully-cited answer is always preferable to a longer answer with "
+    "uncited statements.\n"
+    "The verbatim quote (10-25 words, copied EXACTLY from the retrieved text) is "
+    "mandatory — it lets the user find and verify the statement in the original. "
+    "Without a quote the citation is unverifiable.\n"
+    "Source naming: use a short, recognisable source name — a document's "
+    "filename (without any path or extracted-companion suffix) or, for a web "
+    "source, its title or domain. Add a locator only when it is genuinely "
+    "present in the retrieved text (e.g. `Page N`, `Slide N`, `Sheet \"Name\"`, "
+    "or a section number the source itself prints). NEVER invent paragraph or "
+    "section numbers — a locator you did not see in the text is a fabrication. "
+    "If no clean locator exists, the verbatim quote alone is sufficient.\n"
+    "Multiple sources for one claim → repeat the bracket: "
+    "[Quelle: A — \"...\"] [Quelle: B — \"...\"]."
 )
 
 # Section keys + their factory defaults. Iteration order is the
