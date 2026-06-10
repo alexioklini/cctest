@@ -507,23 +507,34 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # (warmup builds this same prompt). The model can pull live scheduler state
     # on demand via the schedule_list / schedule_history tools instead.
 
-    # MCP servers (prefer thread-local for concurrent requests)
+    # MCP servers (prefer thread-local for concurrent requests). List the
+    # connected SERVER NAMES only — their individual tools are already in this
+    # turn's tool schema (the model can see + call them directly), so repeating
+    # each tool name here is redundant context. Keeping just the server names
+    # tells the model which external integrations exist; the per-server tool
+    # counts/names drifted on every connect/tool-change and aren't needed.
     mcp_mgr = get_request_context().mcp_manager or _brain._mcp_manager
     if mcp_mgr and mcp_mgr.clients:
-        system_instruction += "\nMCP SERVERS — external tools available via connected servers:\n"
-        for srv in mcp_mgr.list_servers():
-            tools_list = ", ".join(srv["tools"][:5])
-            more = f" +{srv['tool_count']-5}" if srv["tool_count"] > 5 else ""
-            system_instruction += f"  - {srv['name']} ({srv['transport']}): {tools_list}{more}\n"
-        system_instruction += "MCP tools are prefixed with mcp_<server>_ — use them like any other tool.\n\n"
+        _srv_names = ", ".join(sorted(srv["name"] for srv in mcp_mgr.list_servers()))
+        system_instruction += (
+            f"\nMCP SERVERS connected: {_srv_names}. Their tools are in your "
+            "tool list, prefixed mcp_<server>_ — use them like any other tool.\n\n"
+        )
 
-    # Note about deferred built-in tool groups
+    # Note about deferred built-in tool groups. We list the GROUP NAMES only,
+    # not every tool name inside them — the names are enough for the model to
+    # know the capability exists and call tool_search to pull the actual tools
+    # (which carry their own descriptions). Dumping all member tool names just
+    # fills the context with strings the model rarely needs verbatim. Group
+    # names are stable + sorted, so this stays KV-prefix-safe.
     _deferred_groups = [g for g in (tcfg.get("deferred_tool_groups") or []) if g in _brain.TOOL_GROUPS]
     if _deferred_groups:
-        system_instruction += "DEFERRED TOOLS: These tool groups are available but not loaded. Use tool_search to discover and activate them when needed:\n"
-        for _dg in _deferred_groups:
-            system_instruction += f"  - {_dg}: {', '.join(sorted(_brain.TOOL_GROUPS[_dg]))}\n"
-        system_instruction += "\n"
+        _names = ", ".join(sorted(_deferred_groups))
+        system_instruction += (
+            "DEFERRED TOOLS: more tool groups are available but not loaded "
+            f"({_names}). Call tool_search to discover and activate a group's "
+            "tools when you need them.\n\n"
+        )
 
     if tcfg.get("include_tools_guide", True) and active_tool_names is not None:
         # Per-tool prompt prose for the active tool set, sourced from admin
