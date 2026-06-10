@@ -948,11 +948,11 @@ function renderAssistantMessage(msg, idx) {
         </div>`;
     }
     if (searchedMsgRefs.length > 0) {
-      // Animated div (was <details>); open by default only when no cited refs.
-      // Self-contained class toggle (per-message, no persistence needed).
-      const openCls = citedMsgRefs.length === 0 ? ' is-open' : '';
+      // Animated div (was <details>); collapsed by default (also on reload —
+      // render is always fresh, no persisted open state). Self-contained class
+      // toggle, like the citation legend.
       refsHtml += `
-        <div class="msg-references-row msg-references-searched${openCls}" onclick="this.classList.toggle('is-open')">
+        <div class="msg-references-row msg-references-searched" onclick="this.classList.toggle('is-open')">
           <div class="msg-references-summary">
             <svg class="msg-references-disclosure" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
             <span class="msg-references-label">Durchsucht</span>
