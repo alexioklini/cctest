@@ -145,25 +145,10 @@ function renderMessages() {
       blocks.push({ key: 'lcm-' + t.turnNum, html: lcmHtml, hash: lcmHtml });
     } else {
       let body = renderTurnBody(chat.messages, t.memberIdxs, t.turnNum, chat);
-      // Chat summary block: rendered once, under the first turn's badge.
-      // Default collapsed; the open/closed state lives on `chat._summaryOpen`
-      // so it survives re-renders and summary refreshes never force-expand
-      // a closed block. When the user has it open and the server pushes a
-      // new summary, the content updates in place.
-      let summaryBlock = '';
-      if (t.turnNum === 1 && chat.chatSummary) {
-        // Animated div (not <details>) so it shares the grid-rows collapse.
-        // Open state lives on chat._summaryOpen + is applied post-render
-        // (_applyChatCollapseStates) so it stays out of the block hash.
-        // data-summary marks it for that pass; open class is NOT in this HTML.
-        summaryBlock = `<div class="chat-summary-block" data-summary="1">
-          <div class="chat-summary-header" onclick="toggleChatSummary()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>
-            <span>Zusammenfassung</span>
-          </div>
-          <div class="chat-summary-body collapsible-body"><div class="collapsible-inner"><div class="chat-summary-body-text">${esc(chat.chatSummary)}</div></div></div>
-        </div>`;
-      }
+      // Chat summary block removed from the chat view (user request). The
+      // synopsis still runs in the background (sidebar list + title); it's just
+      // no longer surfaced as an in-conversation block.
+      const summaryBlock = '';
       // The round-0 preamble (artifact-folder note) is intentionally NOT shown
       // in chat view — it's plumbing, surfaced in the session inspector as its
       // own card. turnQuestionFull already strips it from the header hint.
@@ -969,7 +954,7 @@ function renderAssistantMessage(msg, idx) {
       refsHtml += `
         <div class="msg-references-row msg-references-searched${openCls}" onclick="this.classList.toggle('is-open')">
           <div class="msg-references-summary">
-            <span class="msg-references-disclosure">▸</span>
+            <svg class="msg-references-disclosure" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
             <span class="msg-references-label">Durchsucht</span>
             <span class="msg-references-count">${searchedMsgRefs.length}</span>
           </div>
@@ -1474,10 +1459,19 @@ function _buildCitationLegend(content, validation) {
     const loc = c.locator ? ` · ${esc(c.locator)}` : '';
     return `<li class="citation-legend-item"><span class="citation-legend-n">[${n}]</span> ${badge}<span class="citation-legend-file">${esc(c.file || '')}</span>${esc(loc)}${q}</li>`;
   }).join('');
+  // Collapsible, collapsed by default (no .is-open). Render is always fresh
+  // (no persisted per-message open state), so it comes back collapsed on
+  // reload too. Same .collapsible-body + .is-open mechanism as msg-web-sources.
   return `
-    <div class="msg-citation-legend">
-      <div class="msg-citation-legend-head">Quellen</div>
-      <ol class="msg-citation-legend-list">${rows}</ol>
+    <div class="msg-citation-legend" onclick="this.classList.toggle('is-open')">
+      <div class="msg-citation-legend-head">
+        <svg class="msg-citation-legend-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        <span>Quellen</span>
+        <span class="msg-citation-legend-count">${citations.length}</span>
+      </div>
+      <div class="msg-citation-legend-body collapsible-body"><div class="collapsible-inner" onclick="event.stopPropagation()">
+        <ol class="msg-citation-legend-list">${rows}</ol>
+      </div></div>
     </div>`;
 }
 

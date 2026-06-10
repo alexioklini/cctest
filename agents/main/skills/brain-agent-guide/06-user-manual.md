@@ -144,8 +144,8 @@ Ein Klick klappt diese eine Anfrage auf oder zu. **Lange gedrückt halten**
 sich nach der gehaltenen Anfrage (eine offene gehalten → alle zu; eine
 zugeklappte gehalten → alle auf); danach wird die gehaltene Anfrage wieder
 in den Blick gescrollt. Alle Auf-/Zuklapp-Bereiche im Chat — Anfragen, die
-**Zusammenfassung**, die **Aktivität**-Box (Tool-Aufrufe/Denken),
-verdichteter Kontext, Webquellen — animieren weich. Die **Aktivität**-Box
+**Aktivität**-Box (Tool-Aufrufe/Denken), verdichteter Kontext, Webquellen,
+Quellen-Legende, durchsuchte Quellen — animieren weich. Die **Aktivität**-Box
 bleibt während der gesamten Anfrage offen (man sieht die Tools live laufen)
 und klappt erst zu, sobald die Antwort fertig ist; sie lässt sich jederzeit
 wieder öffnen, und sobald man sie selbst umschaltet, klappt sie nicht mehr
@@ -153,9 +153,10 @@ automatisch zu. Tool-Aufrufe zeigen ihre Ausführungsdauer.
 
 **Quellenangaben (Zitat-Chips)**: Belegt die Antwort eine Aussage mit einer
 Quelle, erscheint an der Stelle eine kleine nummerierte Hochzahl **[1] [2] …**.
-Unter der Antwort listet **Quellen** jede Nummer mit Datei + wörtlichem Zitat;
-ein **⚠** markiert ein Zitat, das der Validator nicht in der Quelle verifizieren
-konnte. Mit der Maus über einen Chip → Datei + Zitat als Tooltip. **Klick** auf
+Unter der Antwort fasst der **Quellen**-Block (aufklappbar, standardmäßig
+zugeklappt — auch nach dem Neuladen) jede Nummer mit Datei + wörtlichem Zitat
+zusammen; ein **⚠** markiert ein Zitat, das der Validator nicht in der Quelle
+verifizieren konnte. Mit der Maus über einen Chip → Datei + Zitat als Tooltip. **Klick** auf
 einen Chip öffnet ein kleines Fenster mit **Im Dokument öffnen →** (öffnet die
 Quelldatei rechts und hebt die zitierte Stelle hervor) bzw. **Quelle öffnen ↗**
 bei Web-Quellen (öffnet die URL). Die Zitier-Disziplin wird automatisch
