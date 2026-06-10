@@ -1184,8 +1184,8 @@ textarea { resize: none; }
 /* Assistant message */
 .msg-assistant {
   font-family: var(--font-ui);
-  font-size: 16px;
-  line-height: 1.5;
+  font-size: var(--font-body);
+  line-height: 1.65;
   color: var(--text-100);
 }
 
@@ -1280,11 +1280,11 @@ textarea { resize: none; }
 .msg-actions-bar { position: relative; }
 
 /* Markdown content styles */
-.msg-content p { margin: 0.4em 0; }
+.msg-content p { margin: 0.7em 0; }
 .msg-content p:first-child { margin-top: 0; }
 .msg-content p:last-child { margin-bottom: 0; }
-.msg-content ul, .msg-content ol { margin: 0.5em 0; padding-left: 1.5em; }
-.msg-content li { margin: 0.25em 0; }
+.msg-content ul, .msg-content ol { margin: 0.7em 0; padding-left: 1.5em; }
+.msg-content li { margin: 0.4em 0; }
 .msg-content li > p { margin: 0; }
 .msg-content h1, .msg-content h2, .msg-content h3, .msg-content h4 {
   margin: 1em 0 0.5em;
@@ -1383,23 +1383,20 @@ textarea { resize: none; }
 
 /* Tool call blocks */
 .tool-block {
-  margin: 8px 0;
-  border-radius: 8px;
-  border: 1px solid var(--border-100);
-  background: var(--bg-100);
+  margin: 2px 0;
   overflow: hidden;
 }
 .tool-block-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 2px 0;
   cursor: pointer;
-  font-size: 13px;
-  color: var(--text-300);
-  transition: background 0.1s;
+  font-size: var(--font-body);
+  color: var(--text-400);
+  transition: color 0.1s;
 }
-.tool-block-header:hover { background: var(--bg-200); }
+.tool-block-header:hover { color: var(--text-300); }
 .tool-block-header .tool-icon { color: var(--accent-brand); font-size: 14px; }
 .tool-block-header .tool-icon-spin { animation: tool-spin 1.5s linear infinite; }
 @keyframes tool-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -1410,12 +1407,11 @@ textarea { resize: none; }
 .tool-block-header .tool-badge-backend { font-size: 9px; font-weight: 600; background: #475569; color: #fff; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.5px; }
 /* Capped, non-expandable tool line in the chat (full view lives in the panel) */
 .tool-line {
-  display: flex; align-items: center; gap: 8px; margin: 4px 0; padding: 5px 10px;
-  border-radius: 6px; border: 1px solid var(--border-100); background: var(--bg-100);
-  font-size: 12px; color: var(--text-300); cursor: pointer; transition: background 0.1s;
+  display: flex; align-items: center; gap: 8px; margin: 2px 0; padding: 2px 0;
+  font-size: var(--font-body); color: var(--text-400); cursor: pointer; transition: color 0.1s;
   overflow: hidden;
 }
-.tool-line:hover { background: var(--bg-200); }
+.tool-line:hover { color: var(--text-300); }
 .tool-line .tool-icon { color: var(--accent-brand); font-size: 13px; flex: 0 0 auto; }
 .tool-line .tool-icon-spin { animation: tool-spin 1.5s linear infinite; }
 .tool-line .tool-name { font-weight: 500; flex: 0 0 auto; }
@@ -1819,8 +1815,6 @@ textarea { resize: none; }
 /* Reference badges in messages */
 .msg-references-wrap {
   margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-100);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1836,9 +1830,6 @@ textarea { resize: none; }
    color, chevron at the start, count at the right. */
 .msg-references-row.msg-references-searched {
   display: block;
-  border: 1px solid var(--border-200);
-  border-radius: 8px;
-  background: var(--bg-100);
 }
 .msg-references-summary {
   display: flex;
@@ -1848,10 +1839,12 @@ textarea { resize: none; }
   user-select: none;
   font-size: var(--font-body);
   font-weight: 400;
-  color: var(--text-100);
+  color: var(--text-400);
   list-style: none;
-  padding: 8px 12px;
+  padding: 2px 0;
+  width: auto;
 }
+.msg-references-searched:hover > .msg-references-summary { color: var(--text-300); }
 .msg-references-disclosure {
   flex: 0 0 auto;
   transition: transform 0.15s ease;
@@ -1867,13 +1860,13 @@ textarea { resize: none; }
   flex-shrink: 0;
   padding-top: 5px;
 }
-/* Inside the box header the label is body-size, normal case, chat text color
+/* In the disclosure header the label is body-size, normal case, quiet grey
    (the uppercase pill styling only applies to the standalone "Zitiert" row). */
 .msg-references-searched .msg-references-label {
   padding-top: 0;
   font-size: var(--font-body);
   font-weight: 400;
-  color: var(--text-100);
+  color: inherit;
   text-transform: none;
   letter-spacing: 0;
 }
@@ -1892,10 +1885,9 @@ textarea { resize: none; }
   gap: 6px;
   flex: 1;
 }
-/* Badges inside the "Durchsucht" box are indented to match the bordered
-   header (citation-legend look). */
+/* Borderless: badges sit flush under the disclosure header, small top gap. */
 .msg-references-searched .msg-references-detail .msg-references {
-  padding: 0 12px 8px;
+  padding: 4px 0 0;
 }
 details.msg-references-row[open] .msg-references {
   margin-top: 6px;
@@ -1904,17 +1896,17 @@ details.msg-references-row[open] .msg-references {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid var(--border-100);
-  border-radius: 8px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 6px;
   font-size: var(--font-body);
-  color: var(--text-100);
+  color: var(--text-300);
   cursor: pointer;
-  transition: background 0.1s, border-color 0.15s;
-  background: var(--bg-100);
+  transition: background 0.1s, color 0.1s;
+  background: var(--bg-200);
   max-width: 260px;
 }
-.ref-badge:hover { background: var(--bg-200); border-color: var(--accent-brand); }
+.ref-badge:hover { background: var(--bg-300); color: var(--text-100); }
 .ref-badge img { width: 14px; height: 14px; border-radius: 3px; }
 .ref-badge-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -2052,20 +2044,19 @@ mark.citation-span {
 }
 /* Per-message citation legend (footer) */
 .msg-citation-legend {
-  margin-top: 10px;
-  padding: 8px 12px;
-  border: 1px solid var(--border-200);
-  border-radius: 8px;
-  background: var(--bg-100);
+  margin-top: 8px;
+  padding: 0;
   cursor: pointer;
 }
 .msg-citation-legend-head {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 2px 0;
   font-weight: 400;
-  color: var(--text-100);
+  color: var(--text-400);
 }
+.msg-citation-legend:hover .msg-citation-legend-head { color: var(--text-300); }
 .msg-citation-legend-chevron { flex: 0 0 auto; transition: transform 0.15s; }
 .msg-citation-legend.is-open .msg-citation-legend-chevron { transform: rotate(180deg); }
 .msg-citation-legend-count {
@@ -2452,13 +2443,10 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   .collapsible-body { transition: none; }
 }
 
-/* Styled to match the citation legend block (.msg-citation-legend): a bordered
-   box, body-size header in the chat text color, chevron at the start. */
+/* Borderless, Claude-Code-desktop style: no box, a quiet grey disclosure
+   header that brightens on hover. */
 .activity-summary {
-  margin: 10px 0 0;
-  border: 1px solid var(--border-200);
-  border-radius: 8px;
-  background: var(--bg-100);
+  margin: 8px 0 0;
 }
 /* Header (was a <summary>; now a plain div toggled via JS so the body can be
    height-animated — native <details> drops its body from layout when closed,
@@ -2468,16 +2456,17 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 12px;
+  padding: 2px 0;
   cursor: pointer;
   font-size: var(--font-body);
   font-weight: 400;
-  color: var(--text-100);
-  border-radius: 8px;
+  color: var(--text-400);
   user-select: none;
   width: auto;
 }
-.activity-summary > .activity-summary-header:hover { background: var(--bg-200); }
+.activity-summary > .activity-summary-header:hover { color: var(--text-300); }
+.activity-summary-count { margin-left: auto; font-weight: 600; color: var(--text-400); }
+.activity-summary-header-static { width: auto; }
 .activity-summary .activity-chevron { transition: transform 0.2s ease; flex-shrink: 0; transform: rotate(-90deg); }
 .activity-summary.open .activity-chevron { transform: rotate(0); }
 /* Smooth collapse: the body is always in the DOM; grid-template-rows animates
@@ -2509,12 +2498,11 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
-  font-size: 12px;
+  padding: 2px 0;
+  font-size: var(--font-body);
   color: var(--text-400);
-  border-radius: 6px;
   user-select: none;
-  width: fit-content;
+  width: auto;
   cursor: default;
 }
 /* Padding lives on the inner wrapper, NOT the grid container. CRITICAL: only
@@ -2524,10 +2512,10 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
    block too tall). The bottom padding is therefore applied ONLY in the open
    state, so a closed block has zero body height. */
 .activity-summary-body-inner {
-  padding: 0 12px;
+  padding: 0;
 }
 .activity-summary.open > .activity-summary-body > .activity-summary-body-inner {
-  padding-bottom: 8px;
+  padding: 2px 0 4px;
 }
 .activity-summary-body .msg-turn { margin: 0; padding: 2px 0; }
 .activity-summary-body .thinking-block { margin: 2px 0; }
@@ -7772,18 +7760,18 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   cursor: pointer; font-size: 13px; padding: 2px 4px; }
 .websuche-basket-remove:hover { color: var(--error, #d33); }
 
-/* Per-turn "Webquellen dieser Anfrage" block in the chat view */
-.msg-web-sources { margin: 6px 0 2px; border: 1px solid var(--border-100);
-  border-radius: 8px; overflow: hidden; background: var(--bg-100); }
+/* Per-turn "Webquellen dieser Anfrage" block in the chat view — borderless,
+   quiet grey disclosure header (Claude-Code-desktop style). */
+.msg-web-sources { margin: 6px 0 2px; overflow: hidden; }
 .msg-web-sources-summary { display: flex; align-items: center; gap: 7px;
-  padding: 7px 11px; cursor: pointer; font-size: 12px; font-weight: 500;
-  color: #1d4ed8; list-style: none; }
+  padding: 2px 0; cursor: pointer; font-size: var(--font-body); font-weight: 400;
+  color: var(--text-400); list-style: none; }
+.msg-web-sources:hover > .msg-web-sources-summary { color: var(--text-300); }
 .msg-web-sources-summary svg { flex: 0 0 auto; transition: transform 0.2s ease; }
 .msg-web-sources.is-open > .msg-web-sources-summary svg { transform: rotate(90deg); }
-.msg-web-sources-count { margin-left: auto; font-size: 11px; font-weight: 600;
-  color: var(--text-400); background: var(--bg-300); border-radius: 9px; padding: 1px 7px; }
-/* body border-top moves to inner (grid container can't carry it at 0fr) */
-.msg-web-sources-body > .collapsible-inner { border-top: 1px solid var(--border-100); }
+.msg-web-sources-count { margin-left: auto; font-size: var(--font-body); font-weight: 600;
+  color: var(--text-400); }
+.msg-web-sources-body > .collapsible-inner { padding-top: 2px; }
 .msg-web-source { border-bottom: 1px solid var(--border-100); }
 .msg-web-source:last-child { border-bottom: none; }
 .msg-web-source-summary { display: flex; align-items: baseline; gap: 8px;
@@ -8394,7 +8382,7 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 
 /* (2) Single body size. Applied to the readable-text roots; everything inside
    inherits. Small functional bits are re-pinned in (4) so they keep fitting. */
-:root { --font-body: 15px; }
+:root { --font-body: 16px; }
 body,
 .msg-content, .msg-content p, .msg-content li,
 .modal-body, .settings-body,

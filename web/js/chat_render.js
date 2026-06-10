@@ -560,11 +560,14 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   }
 
   // Header label per user spec: N Tools · M Anon · K De-Anon. Hide zeros.
+  // "Aktivität" is the label (left); the parts render as a right-aligned count
+  // (margin-left:auto), matching the citation-legend / web-sources / Durchsucht
+  // header layout instead of being inlined into the label text.
   const parts = [];
   if (toolCount > 0) parts.push(toolCount === 1 ? '1 Tool' : `${toolCount} Tools`);
   if (anonReal > 0) parts.push(anonReal === 1 ? '1 Anon' : `${anonReal} Anon`);
   if (deanonReal > 0) parts.push(deanonReal === 1 ? '1 De-Anon' : `${deanonReal} De-Anon`);
-  const label = parts.length ? `Aktivität · ${parts.join(' · ')}` : 'Aktivität';
+  const countHtml = parts.length ? `<span class="activity-summary-count">${esc(parts.join(' · '))}</span>` : '';
 
   // Open/closed state is NOT decided here — renderTurnBody emits state-agnostic
   // markup (stable hash) and _applyChatCollapseStates stamps the .open class
@@ -576,7 +579,7 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   // Render a static header without the chevron/<details> so the user isn't
   // offered an expander that reveals nothing.
   if (!bodyHtml.trim()) {
-    const staticHeader = `<div class="activity-summary-header-static">${esc(label)}</div>`;
+    const staticHeader = `<div class="activity-summary-header-static"><span>Aktivität</span>${countHtml}</div>`;
     return lastResponseMemberPos === -1
       ? staticHeader
       : `${staticHeader}${responseHtml}`;
@@ -591,7 +594,7 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   // transition actually runs.
   const headerEl = `<div class="activity-summary-header" onclick="toggleActivitySummary(${turnNum})">
         <svg class="activity-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        ${esc(label)}
+        <span>Aktivität</span>${countHtml}
       </div>`;
 
   // NOTE: the `open` class is intentionally NOT baked into this HTML, and the
