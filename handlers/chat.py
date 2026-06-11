@@ -2359,6 +2359,14 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 #    (and renders the discipline in the SYSTEM PROMPT, prompt_build).
                 # Injected as a WIRE-ONLY preamble (not the system prompt) so the
                 # warm-pool KV prefix stays byte-stable (fires for warm/local too).
+                # Per-turn discipline record for the classification inspector:
+                # whether the research-mode discipline was injected this turn,
+                # HOW (wire preamble in LLM mode vs system prompt in keyword
+                # mode), and exactly WHICH sections (refusal/precision/citation,
+                # honouring admin per-section opt-out). Ground truth, not the
+                # static default set. Stashed on the request context; the
+                # metadata-build block folds it into auto_route.
+                _discipline_meta = None
                 if engine.classifier_is_llm():
                     _grounding = engine.turn_has_retrieval_tools(_active_tool_names)
                     session._citation_discipline_active = bool(_grounding)
@@ -2368,6 +2376,14 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             _disc_pre = ("GROUNDED-ANSWER DISCIPLINE (this answer draws on "
                                          "retrieved sources — cite + refuse per below):\n" + _disc)
                             _wire_messages = _inject_web_preamble_into_wire(_wire_messages, _disc_pre)
+                            _discipline_meta = {
+                                "active": True,
+                                "source": "wire_preamble",
+                                "trigger": "retrieval_tool_active",
+                                "sections": engine.active_research_discipline_sections(),
+                            }
+                    if _discipline_meta is None:
+                        _discipline_meta = {"active": False, "trigger": "no_retrieval_tool"}
                 else:
                     # Keyword mode: the system-prompt path (prompt_build, gated on
                     # research_mode) already injected the discipline when the flag
@@ -2377,6 +2393,19 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         _pc = engine.ProjectManager.get_project(session.agent_id, engine.get_request_context().project)
                         _rm_on = bool((_pc or {}).get("research_mode", False))
                     session._citation_discipline_active = bool(_rm_on)
+                    if _rm_on:
+                        _discipline_meta = {
+                            "active": True,
+                            "source": "system_prompt",
+                            "trigger": "research_mode",
+                            "sections": engine.active_research_discipline_sections(),
+                        }
+                    else:
+                        _discipline_meta = {"active": False, "trigger": "research_mode_off"}
+                try:
+                    engine.get_request_context()._discipline_meta = _discipline_meta
+                except Exception:
+                    pass
                 _result = sidecar_proxy.run_turn(
                     messages=_wire_messages,
                     model=session.model,
@@ -2496,6 +2525,14 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         try:
                             if _tool_breakdown:
                                 _ar_meta["tool_resolution"] = _tool_breakdown
+                        except NameError:
+                            pass
+                        # Per-turn research-discipline record (active? which
+                        # sections? injected via wire-preamble or system prompt?)
+                        # for the inspector's discipline section.
+                        try:
+                            if _discipline_meta is not None:
+                                _ar_meta["discipline"] = _discipline_meta
                         except NameError:
                             pass
                         msg_metadata["auto_route"] = _ar_meta
@@ -2786,6 +2823,11 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         try:
                             if _tool_breakdown:
                                 _ar_done["tool_resolution"] = _tool_breakdown
+                        except NameError:
+                            pass
+                        try:
+                            if _discipline_meta is not None:
+                                _ar_done["discipline"] = _discipline_meta
                         except NameError:
                             pass
                         done_data["auto_route"] = _ar_done

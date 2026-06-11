@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.101.9"
+VERSION = "9.101.10"
 VERSION_DATE = "2026-06-11"
 CHANGELOG = [
+    ("9.101.10", "2026-06-11", "feat(classifier-modal): show the per-turn RESEARCH-DISCIPLINE decision in the classification inspector. New brain.active_research_discipline_sections() returns the section keys (refusal/precision/citation, in order) that render_research_mode_disciplines() would actually emit right now — honouring the per-section admin opt-out (a section saved as '' is skipped) — so the modal reports what was truly injected, not the static default set. The chat worker records a per-turn _discipline_meta {active, source (wire_preamble|system_prompt), trigger (retrieval_tool_active|no_retrieval_tool|research_mode|research_mode_off), sections[]} at the exact point the discipline decision is made (handlers/chat.py, both the LLM-classifier branch and the keyword/research_mode branch) and folds it into auto_route.discipline on both the persisted metadata and the live done event. The modal (web/js/chat_render.js openClassificationModal) renders a new 'Research-Disziplin' section: Status (aktiv/nicht eingefügt), Grund (trigger), Eingefügt via (Wire-Präambel dynamisch / System-Prompt Recherche-Modus), and the active discipline chips. NB: all three disciplines are injected together as ONE block — there is no per-turn 'which one' selection; the only subsetting is the global admin per-section opt-out, which the chips now reflect. No new globals. js_gate PASS, py_compile OK."),
     ("9.101.9", "2026-06-11", "fix(ui): the chat tok/s figure is now TOTAL throughput — (tokens_in + tokens_out) / duration — instead of output-only (tokens_out / duration). Prefill of a large prompt is real work the wall-clock already includes, so out-only understated the rate (badly on retrieval/tool turns with big prompts + short replies). Updated all four display sites consistently: the per-turn stats line (web/js/chat_render.js), the live done-event handler + the session-inspector 'Interaktionen' speed (web/js/chat_send.js), the reload path (web/js/sessions.js), and the status-bar fallback (web/js/panels_chats.js). The model-BENCHMARK tps in Settings is a separately-measured metric and is unchanged. Frontend-only (hard refresh). js_gate PASS."),
     ("9.101.8", "2026-06-11", "fix(artifacts): the chat-view file badge on an assistant turn now survives reload. A created/edited artifact showed its 'neu'/'bearbeitet' badge live but the badge vanished on reload (only the right panel kept it). ROOT CAUSE: file-write events fire in brain._after_file_write on the tool-DISPATCH thread, whose event_callback is make_artifact_event_callback (handlers/chat.py) — a minimal cb that only live.emit()s to the LiveStream (→ client chat.files → live badge) and explicitly did NOT touch the chat worker's `created_files` accumulator. So the worker persisted no metadata.files, and on reload the renderer (msg._files ← meta.files) found nothing. The artifact STORE persists via _register_artifact_version (right panel), but per-message metadata.files did not. FIX: a per-turn session._turn_created_files list shared across the two threads — reset under session.lock at worker turn start, appended by make_artifact_event_callback on each file_created/artifact_updated, merged (dedup by path) into the worker's created_files just before msg_metadata['files'] is built (so both the persisted metadata and the done event get it). No client change — sessions.js / chat_send.js already read meta.files into msg._files. py_compile OK."),
     ("9.101.7", "2026-06-11", "fix(ui)+refactor(preamble): four follow-ups to the classifier-inspector work. (1) GROUND-TRUTH tools in the modal: resolve_active_tools gained an optional `breakdown` out-param filled in place with {in_prompt, deferred, excluded} read off its OWN final wire computation (not reconstructed from TOOL_GROUPS); build_first_turn_prefix threads it; the chat worker captures it EVERY turn (build_first_turn_prefix runs per turn; the per-turn classifier's defer_extra_tools/undefer_tools are installed into the request context BEFORE the prefix build) and attaches auto_route.tool_resolution to both persisted metadata + the live done event. The modal renders a new 'Tatsächlich übergebene Tools (Wire dieser Anfrage)' section with exact tool NAMES + counts (Im Prompt / Zurückgestellt / Hart ausgeschlossen); the group-level tool_gating is demoted to 'Gruppen-Einordnung (Classifier, abgeleitet)'. Verified live across 2 sequential gemma turns: web turn → 4 tools in-prompt [ask_user, searxng_search, tool_search, web_fetch], write turn → 11 [+core+documents]. (2) Dropped the 'Grund' prose row from the group section (unnecessary). (3) thinking-block collapse fix: the collapsed block leaked ~25px (first line of reasoning) because `.thinking-block-body > .collapsible-inner` carries 12px padding + 1px border-top, and overflow:hidden does NOT clip an element's own padding/border, so the 0fr grid track couldn't reach 0. Added `.thinking-block:not(.open) > .thinking-block-body > .collapsible-inner { padding-top/bottom:0; border-top-width:0 }` (higher specificity, no !important). Playwright-probed: collapsed 25px→0, open 25px. (4) artifact-folder preamble SPLIT + gated: the generic 'write relative filenames → Artifacts panel' guidance moved into the file-writing tool descriptions (write_file/execute_command/write_document; python_exec already had it), so it only appears when the classifier keeps a file group. _artifact_folder_preamble_text now carries ONLY the per-session absolute path (can't be static / in a schema — would break the warm KV prefix), and handlers/chat.py gates the prepend on _auto_tool_groups intersecting {core, documents, code_exec} (None = no signal = show, fail-open). Stops the path pointer being unconditional noise on greeting/lookup turns that have no file tools. NB: tool-description edits invalidate the warm-pool KV prefix until the next warmup re-prime (expected). js_gate PASS, py_compile OK."),
@@ -643,6 +644,26 @@ def get_research_mode_disciplines() -> dict[str, str]:
             out[k] = v
         else:
             out[k] = RESEARCH_MODE_DISCIPLINE_DEFAULTS[k]
+    return out
+
+
+def active_research_discipline_sections() -> list[str]:
+    """The section KEYS (subset of refusal/precision/citation, in order) that
+    render_research_mode_disciplines() would actually emit right now, honouring
+    the per-section admin opt-out (a section explicitly saved as "" is skipped).
+    Single source of truth shared with the renderer so the per-turn
+    classification inspector can report exactly which disciplines were injected,
+    not the static default set."""
+    cfg = _research_mode_disciplines or {}
+    out: list[str] = []
+    for k in RESEARCH_MODE_DISCIPLINE_SECTIONS:
+        if k in cfg:
+            v = cfg[k]
+            if not (isinstance(v, str) and v.strip()):
+                continue  # admin opt-out
+            out.append(k)
+        else:
+            out.append(k)  # missing → default text
     return out
 
 

@@ -143,6 +143,11 @@ dieser Anfrage**: exakt, welche Tools im Prompt standen, welche zurückgestellt
 wurden (per `tool_search` weiterhin erreichbar) und welche hart ausgeschlossen
 waren. Der Inspektor erscheint **pro Anfrage** (der Classifier läuft in jedem
 Turn) — auch wenn ein Modell manuell gewählt wurde, nicht nur bei ✨ Smart.
+Zusätzlich zeigt er die **Research-Disziplin** dieser Anfrage: ob sie eingefügt
+wurde, warum (Retrieval-Tool aktiv bzw. Recherche-Modus an), wie (Wire-Präambel
+dynamisch oder System-Prompt) und welche der drei Sektionen (Refusal / Precision
+/ Citation) dabei waren. Die drei werden immer zusammen als ein Block eingefügt;
+einzelne fehlen nur, wenn ein Admin sie global abgeschaltet hat.
 
 **Abbrechen / Wieder-Anhängen**: Stopp drücken bricht den Turn ab.
 Schließt man den Browser-Tab mitten im Turn, einfach den Chat wieder

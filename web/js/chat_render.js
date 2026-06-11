@@ -1844,6 +1844,35 @@ function openClassificationModal(idx) {
     </div>`;
   }
 
+  // Section: research/grounded-answer discipline — was it injected this turn,
+  // which of the three sections (refusal/precision/citation), and how
+  // (wire-preamble vs system prompt). Reads ar.discipline (server ground truth).
+  const disc = ar.discipline || null;
+  if (disc) {
+    const secLabel = { refusal: 'Refusal', precision: 'Precision', citation: 'Citation' };
+    const secList = (disc.sections || []).map(s => secLabel[s] || s);
+    const srcLabel = disc.source === 'wire_preamble' ? 'Wire-Präambel (dynamisch)'
+      : disc.source === 'system_prompt' ? 'System-Prompt (Recherche-Modus)' : '—';
+    const trigLabel = {
+      retrieval_tool_active: 'Retrieval-Tool aktiv',
+      no_retrieval_tool: 'kein Retrieval-Tool aktiv',
+      research_mode: 'Recherche-Modus an',
+      research_mode_off: 'Recherche-Modus aus',
+    }[disc.trigger] || (disc.trigger || '—');
+    const statusBadge = disc.active
+      ? '<span style="color:var(--accent-000, #8b5cf6);font-weight:600">aktiv</span>'
+      : '<span style="color:var(--text-300);font-weight:600">nicht eingefügt</span>';
+    body += `<div style="margin-top:18px">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-400);margin-bottom:6px">Research-Disziplin</div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:start;font-size:13px">
+        <div style="color:var(--text-400)">Status</div><div>${statusBadge}</div>
+        <div style="color:var(--text-400)">Grund</div><div style="color:var(--text-200)">${esc(trigLabel)}</div>
+        ${disc.active ? `<div style="color:var(--text-400)">Eingefügt via</div><div style="color:var(--text-200)">${esc(srcLabel)}</div>
+        <div style="color:var(--text-400)">Disziplinen</div><div>${secList.length ? chips(secList, 'cls-keep') : '<span style="color:var(--text-400);font-size:12px">—</span>'}</div>` : ''}
+      </div>
+    </div>`;
+  }
+
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
