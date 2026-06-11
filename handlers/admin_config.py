@@ -74,6 +74,10 @@ class AdminConfigHandlers:
                 "name": name,
                 "group": tool_to_group.get(name, ""),
                 "state": state,
+                # Per-use-case status map (purpose -> state). Only purposes the
+                # admin set explicitly are present; everything else inherits the
+                # scalar `state` above. Empty when no per-purpose cell was set.
+                "states": dict(rec.get("states") or {}),
                 "enabled": flags["enabled"],
                 "deferred": flags["deferred"],
                 "purposes": list(rec.get("purposes") or []),
@@ -82,8 +86,15 @@ class AdminConfigHandlers:
                 "warnings": rec.get("warnings", "") or "",
                 "examples": rec.get("examples", "") or "",
                 "applies_with": list(rec.get("applies_with") or []),
-                # Read-only verbatim wire schema (what the LLM is given).
-                "wire_description": sdef.get("description", "") or "",
+                # Wire schema. `wire_description_code` = the verbatim code default
+                # (TOOL_DEFINITIONS). `wire_description_override` = the admin edit
+                # (empty = none). `wire_description` = the EFFECTIVE description the
+                # model receives (override if set, else code). input_schema stays a
+                # read-only code contract.
+                "wire_description_code": sdef.get("description", "") or "",
+                "wire_description_override": str(rec.get("wire_description") or ""),
+                "wire_description": (str(rec.get("wire_description") or "").strip()
+                                     or (sdef.get("description", "") or "")),
                 "wire_input_schema": sdef.get("input_schema") or None,
             })
         # Surface integration-only pseudo-tools (entries in tool_config that
@@ -111,9 +122,24 @@ class AdminConfigHandlers:
                 "applies_with": [],
                 "integration_only": True,
             })
+        # Per-use-case status matrix (purpose × tool → {state, tokens} + a
+        # per-purpose summary with active/inactive/deferred counts and realized
+        # token total). `?agent=<id>` folds that agent's tool_overrides in so the
+        # per-agent UI shows effective states + sizing; omitted = global matrix.
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        agent_id = (qs.get("agent", [None])[0] or None)
+        try:
+            matrix = engine.tool_purpose_matrix(agent_id)
+        except Exception as e:
+            matrix = {"error": str(e)[:200]}
         # Also surface the canonical purpose list so the UI doesn't have to
         # hardcode it.
-        self._send_json({"tools": tools, "purposes": list(engine._VALID_PURPOSES)})
+        self._send_json({
+            "tools": tools,
+            "purposes": list(engine._VALID_PURPOSES),
+            "matrix": matrix,
+        })
 
     def _handle_tool_settings_save(self):
         """POST /v1/tools/settings — admin-only. Save one tool's settings record.
@@ -178,6 +204,41 @@ class AdminConfigHandlers:
             if p not in engine._VALID_PURPOSES:
                 self._send_json({"error": f"unknown purpose: {p} (valid: {list(engine._VALID_PURPOSES)})"}, 400)
                 return
+        # Per-use-case status map: {purpose: state}. Optional + additive — keys
+        # must be canonical purposes, values canonical states. The scalar `state`
+        # above stays the catch-all default for any purpose NOT listed here. An
+        # empty/absent map keeps the record scalar-clean (KV-prefix stable).
+        states_raw = body.get("states") or {}
+        if not isinstance(states_raw, dict):
+            self._send_json({"error": "states must be an object"}, 400)
+            return
+        states: dict[str, str] = {}
+        for k, v in states_raw.items():
+            kp = str(k).strip()
+            if kp not in engine._VALID_PURPOSES:
+                self._send_json({"error": f"states: unknown purpose: {kp} (valid: {list(engine._VALID_PURPOSES)})"}, 400)
+                return
+            if v not in engine.TOOL_STATES:
+                self._send_json({"error": f"states[{kp}] must be one of {list(engine.TOOL_STATES)}"}, 400)
+                return
+            states[kp] = v
+        # MERGE the posted per-purpose states into the EXISTING map rather than
+        # replacing it — a single-cell edit (saveToolPurposeCell posts only the
+        # changed purposes) must not wipe the other purposes' states. The table
+        # is the source of truth for membership, so losing a cell silently drops
+        # a tool from / adds it to a channel. The full map is preserved; only the
+        # posted keys are overwritten.
+        _existing = engine._tool_settings or {}
+        _prev_states = dict(((_existing.get(name) or {}).get("states")) or {})
+        _prev_states.update(states)
+        # Wire-description override (the editable schema description the model
+        # receives). Present in body → use it (empty string clears the override
+        # → fall back to the code default); absent from body → preserve the
+        # existing override (a prose-only save must not wipe a schema edit).
+        if "wire_description" in body:
+            _wire_desc = str(body.get("wire_description") or "").strip()
+        else:
+            _wire_desc = str((_existing.get(name) or {}).get("wire_description") or "").strip()
         rec = {
             "description": str(body.get("description", "") or ""),
             "when_to_use": str(body.get("when_to_use", "") or ""),
@@ -187,6 +248,10 @@ class AdminConfigHandlers:
             "state": state,
             "purposes": purposes,
         }
+        if _prev_states:
+            rec["states"] = _prev_states
+        if _wire_desc:
+            rec["wire_description"] = _wire_desc
         # Mutate in place so the dict referenced by both server_config and
         # engine._tool_settings stays in sync without re-pointing.
         ts = engine._tool_settings if engine._tool_settings is not None else {}

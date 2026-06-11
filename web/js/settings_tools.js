@@ -11,6 +11,9 @@ function toggleToolGroup(groupName) {
   if (chev) chev.textContent = open ? '▸' : '▾';
 }
 
+// Legacy inline expand/collapse of a tool panel div (used by older layouts).
+// The current Tools matrix opens the config in a modal (openToolDetailModal)
+// instead, so this is kept only for any remaining inline-panel caller.
 function toggleToolPanel(toolName) {
   const panel = document.getElementById('tool-panel-' + toolName);
   const chev = document.getElementById('chevron-' + toolName);
@@ -24,6 +27,30 @@ function toggleToolPanel(toolName) {
     panel.style.display = 'block';
     if (chev) chev.style.transform = 'rotate(90deg)';
   }
+}
+
+// Open the per-tool CONFIG in a modal — kept SEPARATE from the status matrix
+// table (which is purely per-purpose status). Hosts the full prose / purposes /
+// applies_with / wire-schema / integration form (renderToolPanelBody). The
+// form's own Save buttons (saveTool) persist via /v1/tools/settings.
+function openToolDetailModal(toolName) {
+  const modalId = '__toolDetailModal';
+  let m = document.getElementById(modalId);
+  if (m) m.remove();
+  m = document.createElement('div');
+  m.id = modalId;
+  m.className = 'modal-overlay';
+  m.style.zIndex = '12001';
+  m.innerHTML = `<div class="modal-content" style="max-width:820px;width:86vw;max-height:88vh;display:flex;flex-direction:column">
+    <div class="modal-header" style="display:flex;align-items:center;gap:10px">
+      <span style="font-weight:600;font-family:var(--font-mono)">${esc(toolName)}</span>
+      <span style="font-size:11px;color:var(--text-400)">Tool-Konfiguration</span>
+      <button class="btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 10px" onclick="document.getElementById('${modalId}').remove()">Schließen</button>
+    </div>
+    <div class="modal-body" style="overflow:auto;flex:1;padding:14px">${renderToolPanelBody(toolName)}</div>
+  </div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click', (ev) => { if (ev.target === m) m.remove(); });
 }
 
 function renderToolPanelBody(toolName) {
@@ -161,9 +188,10 @@ function toolGlobalState(t) {
 // signature); this is purely a verification window. Empty for MCP / integration-
 // only entries that have no TOOL_DEFINITIONS schema.
 function renderWireSchemaBlock(toolName, t) {
-  const desc = t.wire_description || '';
+  const codeDesc = t.wire_description_code || t.wire_description || '';
+  const override = t.wire_description_override || '';
   const schema = t.wire_input_schema || null;
-  if (!desc && !schema) {
+  if (!codeDesc && !schema) {
     return `<div style="margin-bottom:14px;padding:8px 10px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100);font-size:11px;color:var(--text-400)">
       Kein Wire-Schema hinterlegt — dieses Tool hat keinen Eintrag in <code>TOOL_DEFINITIONS</code> (z. B. MCP- oder reines Integrations-Tool).
     </div>`;
@@ -182,27 +210,48 @@ function renderWireSchemaBlock(toolName, t) {
   }).join('') || '<div style="font-size:11px;color:var(--text-400)">Keine Parameter.</div>';
 
   const rawJson = schema ? JSON.stringify(schema, null, 2) : '';
+  const overridden = !!override;
 
   return `
-    <details style="margin-bottom:14px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)">
+    <details style="margin-bottom:14px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)" open>
       <summary style="cursor:pointer;padding:8px 10px;font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">
-        Wire-Schema (was das LLM erhält · schreibgeschützt)
+        Wire-Schema (was das LLM erhält) ${overridden?'<span style="color:var(--warning,#d97706);text-transform:none">· überschrieben</span>':''}
       </summary>
       <div style="padding:0 10px 10px">
-        <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:6px 0 3px">Beschreibung (Wire)</div>
-        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-200);white-space:pre-wrap;background:var(--bg-200);border-radius:4px;padding:8px;max-height:240px;overflow:auto">${esc(desc) || '<span style="color:var(--text-400)">(keine)</span>'}</div>
+        <div style="display:flex;align-items:center;gap:8px;margin:6px 0 3px">
+          <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Beschreibung (Wire — editierbar)</span>
+          <button class="btn-secondary" style="font-size:10px;padding:2px 8px;margin-left:auto" title="Auf Code-Standard zurücksetzen (Überschreibung entfernen)"
+                  onclick="resetWireDescription('${esc(toolName)}')">Auf Code-Standard zurücksetzen</button>
+        </div>
+        <textarea id="ts-${esc(toolName)}-wire_description" rows="6" class="form-input"
+          placeholder="(leer = Code-Standard verwenden)"
+          style="width:100%;font-family:var(--font-mono);font-size:11px;resize:vertical">${esc(override)}</textarea>
+        <div style="font-size:9px;color:var(--text-400);margin-top:2px">Leer lassen, um den unveränderten Code-Standard zu senden. Ein Wert hier ERSETZT die Wire-Beschreibung, die das Modell erhält (das <code>input_schema</code> bleibt unverändert).</div>
+
+        <details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Code-Standard (TOOL_DEFINITIONS · schreibgeschützt)</summary>
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-300);white-space:pre-wrap;background:var(--bg-200);border-radius:4px;padding:8px;max-height:200px;overflow:auto;margin-top:4px">${esc(codeDesc) || '<span style="color:var(--text-400)">(keine)</span>'}</div>
+        </details>
 
         <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:10px 0 3px">Parameter</div>
         <div>${paramRows}</div>
 
         ${rawJson ? `<details style="margin-top:8px">
-          <summary style="cursor:pointer;font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Roh-JSON (input_schema)</summary>
+          <summary style="cursor:pointer;font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Roh-JSON (input_schema · schreibgeschützt)</summary>
           <pre style="font-family:var(--font-mono);font-size:10px;color:var(--text-300);background:var(--bg-200);border-radius:4px;padding:8px;max-height:300px;overflow:auto;white-space:pre">${esc(rawJson)}</pre>
         </details>` : ''}
 
-        <div style="font-size:10px;color:var(--text-400);margin-top:8px">Quelle: <code>TOOL_DEFINITIONS</code> (Live, im Speicher). Das <code>input_schema</code> ist an die Python-Signatur des Tools gebunden und hier bewusst nicht editierbar — die Felder unter „Prompt-Text" sind ein Overlay, kein Ersatz für dieses Schema.</div>
+        <div style="font-size:10px;color:var(--text-400);margin-top:8px">Das <code>input_schema</code> ist an die Python-Signatur des Tools gebunden und bleibt nicht editierbar. Die <b>Wire-Beschreibung</b> ist editierbar (Override in <code>tool_settings</code>); die Felder unter „Prompt-Text" sind ZUSÄTZLICHE Anweisungen im System-Prompt, kein Ersatz für die Wire-Beschreibung.</div>
       </div>
     </details>`;
+}
+
+// Reset the wire-description override back to the code default (clears the
+// textarea; persisted on the next Save).
+function resetWireDescription(toolName) {
+  const ta = document.getElementById('ts-' + toolName + '-wire_description');
+  if (ta) ta.value = '';
+  showToast('Wire-Beschreibung geleert (Code-Standard) — zum Übernehmen auf Speichern klicken');
 }
 
 // Renders the integration-knob form for the ~10 tools that have entries in
@@ -344,6 +393,13 @@ async function saveTool(toolName) {
       examples: get('examples')?.value || '',
       applies_with: aw,
       purposes: purposes,
+      // Editable wire-description override (empty = clear → code default). Only
+      // sent when the textarea exists (integration-only tools have no schema).
+      ...(get('wire_description') ? { wire_description: get('wire_description').value || '' } : {}),
+      // Preserve any per-use-case cells set via the row strip — the panel form
+      // edits the scalar default + prose, not the per-purpose map, so we must
+      // round-trip the cached `states` or saving prose would wipe them.
+      states: t.states || {},
     };
   }
 
@@ -384,6 +440,44 @@ async function saveTool(toolName) {
       if (window._toolConfigCache) window._toolConfigCache[toolName] = rec;
     }
     showToast(toolName + ' gespeichert');
+  } catch(e) {
+    showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
+  }
+}
+
+// Save the per-use-case status row for one tool. The table is the source of
+// truth for purpose membership, so every cell's value is sent EXPLICITLY (not
+// "omit if it matches the scalar") — the server merges them into the tool's
+// states map. Prose / purposes / applies_with / scalar state preserved from cache.
+async function saveToolPurposeCell(toolName) {
+  const t = (window._toolSettingsCache || {})[toolName];
+  if (!t) { showToast('Kein zwischengespeicherter Datensatz für ' + toolName, true); return; }
+  const scalar = toolGlobalState(t);
+  const cells = [...document.querySelectorAll('.tsx-cell')].filter(s => s.dataset.tool === toolName);
+  const states = {};
+  cells.forEach(sel => {
+    const p = sel.dataset.purpose;
+    const v = sel.value;
+    if (!v || v === '__na') return;          // skip any placeholder
+    states[p] = v;                            // explicit per-purpose value
+  });
+  const body = {
+    name: toolName,
+    state: scalar,
+    description: t.description || '',
+    when_to_use: t.when_to_use || '',
+    warnings: t.warnings || '',
+    examples: t.examples || '',
+    applies_with: t.applies_with || [],
+    purposes: t.purposes || [],
+    states: states,
+  };
+  try {
+    const resp = await API.post('/v1/tools/settings', body);
+    if (window._toolSettingsCache && resp.tool) {
+      window._toolSettingsCache[toolName] = { ...window._toolSettingsCache[toolName], ...resp.tool };
+    }
+    showToast(toolName + ': Status pro Anwendungsfall gespeichert');
   } catch(e) {
     showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
   }

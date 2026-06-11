@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.100.1"
-VERSION_DATE = "2026-06-10"
+VERSION = "9.101.4"
+VERSION_DATE = "2026-06-11"
 CHANGELOG = [
+    ("9.101.4", "2026-06-11", "feat(tools): the per-tool config panel (⚙ on each matrix row → modal, kept SEPARATE from the status table) is restored to full richness AND the tool's WIRE description is now editable. Previously the wire schema was a read-only verification window; now the modal shows an editable 'Beschreibung (Wire)' textarea + a 'reset to code default' button, alongside the still-read-only code default / parameter table / raw input_schema, with the admin Prompt-Text overlay below. STORAGE: a new tool_settings.<tool>.wire_description override (config.json) — empty/absent = use the code default. APPLIED ON THE WIRE via _filter_tools (the single seam every purpose + warmup path goes through): _apply_wire_description_override swaps the override onto the wire dict, SHALLOW-copying only overridden tools so TOOL_DEFINITIONS is never mutated and non-overridden tools stay object-identical (KV-prefix byte-stable — verified: read_file stays the same object, list_directory override is a copy carrying the new text). API: GET /v1/tools/settings now returns wire_description_code (verbatim code), wire_description_override (the edit), wire_description (effective = override||code); POST accepts wire_description (empty clears it) and PRESERVES an existing override across a prose-only save. input_schema stays a code contract (not editable). IMPLICATION (documented, not auto-handled): like a prose edit, a wire-description edit changes the system-prompt tool array → the warm pool's KV prefix desyncs until the next warmup rebuild (no explicit invalidation wired). js_gate PASS (net-globals 1280→1281 for resetWireDescription). py_compile OK."),
+    ("9.101.3", "2026-06-11", "fix(tools): register the 4 structured memory tools that were in TOOL_DISPATCH but missing from TOOL_DEFINITIONS + TOOL_GROUPS — memory_store / memory_recall / memory_delete / memory_shared. They had working impls (engine/mempalace_glue.py) + dispatch entries, but _filter_tools drops any tool without a TOOL_DEFINITIONS schema, so the model was NEVER actually offered them (they surfaced only as the '(ungrouped)' artifact in the settings UI). Added Anthropic-shape schemas (params derived from each impl's args.get usage) + put all 4 in the `memory` group. They are the agent's named key/value memory: memory_store (save a discrete fact by name, project-aware), memory_recall (semantic search + graph expansion over stored items), memory_delete (forget by name), memory_shared (read/write global or team-scoped shared memory) — distinct from mempalace_query (vector palace) + save_chat_to_memory (whole-conversation). OpenAI mirror auto-derives. Boot seed gives them states {interactive:active, rest:inactive} (Chat-only default, matching the other memory tools). Verified live: all 4 now dispatch=defs=grouped=True, '(ungrouped)' set empty, in matrix with interactive=active, every Σ column still sums to total (74). memory_persist (referenced in old CLAUDE.md) is NOT a real tool — no dispatch. py_compile OK."),
+    ("9.101.2", "2026-06-11", "fix(tools): POST /v1/tools/settings now MERGES the posted per-purpose `states` into the existing map instead of REPLACING it — a single-cell edit (saveToolPurposeCell posts only the changed purposes) was silently wiping the other four purposes' states, which (since the table is now the membership source of truth) dropped a tool from / added it to whole channels. Verified live: a partial post of {memory_summary:active} preserves interactive/transform/research_minimal/helpdesk. saveToolPurposeCell now sends every cell's explicit value (no 'omit if matches scalar'). Also audited that every purpose resolves membership from the table (resolve_tool_state_for), not hardcoded sets: live realized counts interactive 63 / transform 0 / memory_summary 2 / research_minimal 3 / helpdesk 15, and a live flip (add read_file→memory_summary → 3, revert → 2) confirms table-driven; tool_passes_purpose + _get_agent_tool_names no longer gate purpose membership (only delegation still uses the latter). Stale resolve_active_tools docstring rewritten to match. NOTE: a bare `import brain` probe shows all-65 for every purpose because it has no server_config → _tool_settings lacks the seeded states (the dual-module footgun); always verify via the running server."),
+    ("9.101.1", "2026-06-11", "refactor(tools): the per-use-case matrix is now the SOLE source of truth for which tools belong to a purpose — the code base sets (_HELPDESK_TOOLS / _MEMORY_SUMMARY_TOOLS / minimal-flagged / agent.json-allowed) are no longer consulted at runtime. resolve_active_tools builds each purpose's surface purely from resolve_tool_state_for(name, agent, purpose) ∈ {active, deferred}; transform stays [] by contract. New ONE-TIME boot seed seed_tool_purpose_states() materialises every tool×purpose `states` cell from the legacy base sets (members → the tool's scalar state, non-members → inactive) so the switch is behaviour-identical (verified: interactive 65, memory_summary 2, research_minimal 4, helpdesk 16 — byte-identical to pre-change); idempotent + skips records that already carry a states map. Dropped the now-redundant tool_passes_purpose() membership filter and the _any_purpose_overrides fast-path (membership IS the table now). UI: the matrix table dropped the Standard + per-tool Tokens columns (Tokens lives in the Σ row); not-in-channel cells now read 'Inaktiv' (editable — set Aktiv/Aufgeschoben to add the tool to that channel) instead of a special 'n.v.' placeholder; integration-only pseudo-tools (gmail/refinement/translation/text_to_speech/code_graph — service configs, not agent-callable) are EXCLUDED from the matrix (they were wrongly showing as active in Transform) and listed separately as ⚙ config buttons. py_compile OK."),
+    ("9.101.0", "2026-06-11", "feat(tools): per-use-case (per-purpose) tool status. A tool's status (active/inactive/deferred) can now be set independently per delivery channel — interactive (Chat), transform, memory_summary (Memory), research_minimal (Research), helpdesk (Brainy) — instead of a single global value. STORAGE (additive, KV-stable): the scalar `state` stays the catch-all default for every purpose; an optional `states:{<purpose>:state}` map on both the global record (config.json → tool_settings.<name>) and the agent override (agent.json → token_config.tool_overrides.<name>) overrides per channel. A record with no `states` key behaves EXACTLY as before → the interactive warm-pool KV prefix is byte-identical when nobody set a per-channel cell. RESOLVER (brain.py): new resolve_tool_state_for(name, agent_id, purpose) (agent-purpose → agent-scalar → global-purpose → global-scalar → 'active') + _any_purpose_overrides() fast-path guard. resolve_active_tools now treats the per-purpose base sets (interactive=agent allowed; memory_summary/research_minimal/helpdesk=their fixed sets) as DEFAULTS: a tool active/deferred for a purpose it isn't in is ADDED, one inactive is REMOVED — applied uniformly across ALL purposes (incl. the previously-fixed helpdesk/research_minimal/memory_summary channels), but ONLY when _any_purpose_overrides(purpose) is true so the no-override surface is unchanged. Per-purpose deferral likewise driven by resolve_tool_state_for==deferred. FLOOR POLICY = soft default (user-chosen 'full control'): an admin CAN add a write/exec tool to the Brainy/helpdesk column — Brainy then loses read-only at dispatch too (tool_mcp binds to the RESOLVED set); the global matrix warns ⚠ on this. NEW brain.tool_purpose_matrix(agent_id) → per-purpose×tool {state,tokens} + summary (active=full schema tokens, deferred=name-only, inactive=0; summary counts only resolve_active_tools-realized tools). API (handlers/admin_config.py): GET /v1/tools/settings now returns per-tool `states` + a `matrix` block, accepts ?agent= to fold agent overrides in; POST accepts+validates an optional `states` map (purposes × TOOL_STATES), persisted only when non-empty. UI: General Settings → Tools = global matrix (per-row status dropdown per use-case + per-channel status/token summary header; scalar default stays in the expanded panel as 'Standard (alle Zwecke)'); Agent → Tokens = per-agent override matrix (Chat/interactive column today, resolver supports the rest). Verified in-process: extend (write_file→helpdesk) + restrict (use_skill→helpdesk off) + per-purpose defer + discovered-pullback all work; interactive/research_minimal/memory_summary surfaces byte-identical when only helpdesk cells set. py_compile brain.py + admin_config.py OK; js_gate PASS (net-globals 1278→1279 for saveToolPurposeCell, smoke 5/5)."),
     ("9.100.1", "2026-06-10", "fix(auto-route): empty classifier tool_groups now TRIMS to the floor instead of being treated as no-signal — the '11k-token hi' bug (chat 3fcaf483). DIAGNOSIS: a trivial 'hi' to mistral-small (llm classifier mode, optimize_tools ON, cloud model → model_should_optimize_tools True) sent the FULL static tool array (~12.5k tool tokens, 11291 tokens_in total). The classifier-driven per-turn deferral works (measured: it drops 'hi' to 2 floor tools / ~585 tok), but it never RAN for that turn. ROOT CAUSE: a falsy-guard inversion. The structured classifier returns tool_groups:[] for a greeting (the strongest possible 'needs no tools' signal), but three sites used `if tool_groups:` / `if _tg:` / `if _auto_groups:` which treat [] as 'no signal → keep the full prompt'. Exactly backwards: empty should defer everything to the floor. FIX: distinguish None (genuine no-signal: keyword fallback / down classifier → fail-open, static deferral stands) from [] (classifier ran, no groups needed → trim). (a) handlers/chat.py every-turn branch: gate on `isinstance(_ta,dict) and 'tool_groups' in _ta`, store `_ta.get('tool_groups') or []`; (b) chat.py worker: `_has_signal = _auto_groups is not None` instead of `if _auto_groups:`; (c) brain.classifier_tool_deferral + classifier_gating_decision: `if tool_groups is None` not `if not tool_groups`. Only affects NON-warm models (the gate still returns ([],[]) for warm/local → warm KV prefix byte-stable, invariant untouched). Net effect for a trivial 'hi' in llm mode: ~585 tool tokens not ~12.5k (~4.4k total incl. system prompt vs 11k). Deferred tools stay tool_search-discoverable. Test intent corrected: test_empty_tool_groups_is_noop (asserted the OLD buggy []→noop) split into test_none_tool_groups_is_noop (None→noop, fail-open) + test_empty_tool_groups_trims_to_floor (the fix). 12/12 green (1 skip). py_compile OK."),
     ("9.100.0", "2026-06-10", "refactor(tool-status): collapse the two-boolean {enabled, deferred} tool-status model to ONE canonical `state` field — active | inactive | deferred — both on disk and in the UI. MOTIVATION: enabled+deferred could represent the impossible/meaningless combination enabled=false+deferred=true; storing two orthogonal-looking flags for what is really a single tri-state invited future corruption. Now a tool has exactly one status, never two flags at once, and the bad combination is structurally unrepresentable on disk. CANONICAL SEAM (brain.py): new TOOL_STATES + _tool_state_to_flags(state)->{enabled,deferred} (the ONLY forward derivation) + _rec_tool_state(rec) (prefers `state`, falls back to legacy booleans, enabled=false wins -> inactive). _global_tool_enabled/_global_tool_deferred + resolve_tool_enabled/resolve_tool_deferred now DERIVE from state via the new resolve_tool_state(); every downstream reader (_get_agent_tool_names, resolve_active_tools deferral set, _render_tool_descriptions, get_tool_status, deep_research backends) is unchanged because they call those seams. empty_tool_setting() emits {state:'active'} not the boolean pair. FORWARD-MIGRATION (idempotent, boot): migrate_tool_settings_to_state() rewrites every global tool_settings record to {state} and DROPS enabled/deferred (verified on live config: 69 records, exa_search disabled->inactive, idempotent 2nd run=0); migrate_agent_tool_overrides_to_state() does the same for each agent's token_config.tool_overrides (main: 22 deferred + 17 inactive, behaviour-identical). Both wired into server.py apply_config next to the existing migrations + persist gate. API (handlers/admin_config.py): GET /v1/tools/settings now returns `state` (+ derived enabled/deferred for old clients); POST accepts `state` (collapses a legacy enabled/deferred body for back-compat) and persists ONLY `state`. UI: General Settings -> Tools shows one Status dropdown (Aktiv/Inaktiv/Aufgeschoben); Agent Settings -> Tokens shows the same + Standard (erben) = inherit; both POST {state}. Pure representation change — no tool's effective resolution changes. py_compile OK; live migration dry-run clean; js_gate PASS (net-globals unchanged, smoke 5/5)."),
     ("9.99.11", "2026-06-10", "test+fix(disciplines): make the research-discipline CODE DEFAULTS tool-agnostic (they were still the old mempalace/read_document text) + add regression tests for the memory-first→web escalation behaviour. CONTEXT: the 2026-06-10 web-escalation fix (memory note project_websearch_skip_root_cause) edited config.json's research_mode_disciplines + tool descriptions to be tool-agnostic, but the SEED DEFAULTS in brain.py (_RESEARCH_MODE_DISCIPLINE_{REFUSAL,PRECISION,CITATION}_DEFAULT) were left as the old tool-specific versions — they still said 'if mempalace_query returns 0 drawers → refuse' and quoted 'the read_document output'. Those defaults resurface whenever the config section is missing/reset or an admin clicks 'restore defaults', which would silently bring the bug back. Rewrote all three defaults to match the corrected config byte-for-intent: refusal forbids FABRICATION (no 'give up after empty memory'), precision/citation say 'the retrieved source' not 'read_document'. NEW tests/test_websearch_escalation_gating.py (unittest, in-process, no LLM): guards (a) classifier_tool_deferral invariants — floor tools never deferred, a flagged group is un-deferred so no tool_search detour, warmup-protected models get ([],[]); (b) render_research_mode_disciplines() is tool-agnostic + the refusal never says 'give up'; (c) no ALWAYS-PRESENT tool's prose references a deferred/disabled tool (read_document must not reference mempalace). It injects config.json into the brain globals in setUpModule (the server does the same at boot) so the prose audits run against the real text, not empty defaults. NEW eval/websearch_escalation_eval.py (live Brain, N reps, mistral-small+medium): measures the actual BEHAVIOUR — web-available+memory-empty must escalate to a web tool; web-locked+memory-empty must refuse cleanly without fabricating. 11/11 unit tests green (1 skip: mempalace not globally deferred, it's per-agent). py_compile OK."),
@@ -765,7 +770,8 @@ TOOL_GROUPS = {
              "execute_command", "tool_search", "ask_user"},
     "memory": {"mempalace_query", "save_chat_to_memory",
                "mempalace_kg_query", "mempalace_kg_search",
-               "mempalace_kg_neighbors"},
+               "mempalace_kg_neighbors",
+               "memory_store", "memory_recall", "memory_delete", "memory_shared"},
     "context": {"context_search", "context_detail", "context_recall"},
     "web": {"web_fetch", "exa_search", "searxng_search"},
     "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
@@ -1179,10 +1185,190 @@ def get_tool_breakdown(agent_id: str | None = None) -> dict:
     }
 
 
+def tool_purpose_matrix(agent_id: str | None = None) -> dict:
+    """Per-use-case tool-status matrix for the admin UI.
+
+    For every purpose in _VALID_PURPOSES and every TOOL_DISPATCH tool, the
+    effective state (resolve_tool_state_for) plus its token cost in that channel:
+      - active   → full schema tokens (name + wire description + input_schema)
+      - deferred → name-only stub tokens (the tool_search stub the model sees)
+      - inactive → 0
+    The per-purpose `summary.tokens` counts ONLY the tools actually realized by
+    resolve_active_tools for that purpose (so it matches what the model
+    receives, not every globally-active tool). `transform` yields [] by design.
+
+    agent_id=None → global matrix (no agent layer). A concrete agent_id folds
+    the agent's tool_overrides in.
+    """
+    def _tok(obj) -> int:
+        if obj is None:
+            return 0
+        if isinstance(obj, str):
+            return len(obj) // 4
+        try:
+            return len(json.dumps(obj)) // 4
+        except (TypeError, ValueError):
+            return 0
+
+    def _full_tokens(td: dict) -> int:
+        name = td.get("name") or (td.get("function", {}) or {}).get("name", "")
+        desc = td.get("description") or (td.get("function", {}) or {}).get("description", "")
+        if isinstance(desc, (list, tuple)):
+            desc = " ".join(str(x) for x in desc)
+        schema = td.get("input_schema")
+        if schema is None:
+            schema = (td.get("function", {}) or {}).get("parameters", {})
+        return _tok(name) + _tok(desc) + _tok(schema)
+
+    idx = _TOOL_DEF_INDEX or {}
+    # EVERY tool counts. The matrix spans all dispatchable tools PLUS the
+    # integration-only pseudo-tools (gmail/refinement/translation/text_to_speech/
+    # code_graph — service configs, not agent-callable). Integration-only tools
+    # are never part of any agent channel's surface, so they resolve to inactive
+    # for every purpose — but they're still counted, so the invariant
+    # total == active + inactive + deferred holds for every column.
+    try:
+        integ_only = sorted(set((get_tool_config() or {}).keys()) - set(TOOL_DISPATCH.keys()))
+    except Exception:
+        integ_only = []
+    all_tools = sorted(TOOL_DISPATCH.keys()) + integ_only
+    integ_set = set(integ_only)
+    matrix: dict[str, dict] = {}
+    summary: dict[str, dict] = {}
+    for purpose in _VALID_PURPOSES:
+        # Realized name set the model actually receives for this purpose (no MCP
+        # — the matrix scores built-in tools only). Swallow resolver errors so a
+        # bad config can't blank the whole view.
+        try:
+            realized = {t.get("name", "") for t in resolve_active_tools(
+                purpose=purpose, agent_id=agent_id,
+                discovered_tools=set(), mcp_manager=None, is_openai_shape=False,
+            )}
+        except Exception:
+            realized = set()
+        cells: dict[str, dict] = {}
+        s_active = s_inactive = s_deferred = s_tokens = 0
+        for name in all_tools:
+            td = idx.get(name) or {}
+            # A tool not in this channel's surface is reported as INACTIVE for
+            # this purpose (it isn't shipped on this channel). A tool IS in the
+            # surface → its resolved per-purpose state (active/deferred). The cell
+            # stays editable client-side: setting a not-in-surface tool to
+            # active/deferred pulls it into the channel (the extend pass).
+            if name in realized:
+                state = resolve_tool_state_for(name, agent_id, purpose)
+            else:
+                state = "inactive"
+            if state == "active":
+                tokens = _full_tokens(td)
+                s_active += 1
+            elif state == "deferred":
+                tokens = _tok(name)
+                s_deferred += 1
+            else:  # inactive — off, or not part of this channel's tool set
+                tokens = 0
+                s_inactive += 1
+            cells[name] = {"state": state, "tokens": tokens}
+            s_tokens += tokens
+        matrix[purpose] = cells
+        summary[purpose] = {
+            "active": s_active, "inactive": s_inactive, "deferred": s_deferred,
+            "tokens": s_tokens, "realized_count": len(realized),
+        }
+    return {"purposes": list(_VALID_PURPOSES), "tools": all_tools,
+            "matrix": matrix, "summary": summary}
+
+
+def seed_tool_purpose_states(settings: dict) -> int:
+    """ONE-TIME seed of per-purpose `states` from the legacy code base sets, so
+    the table becomes the source of truth for purpose membership WITHOUT changing
+    observed behaviour on the switch-over (PER_USE_CASE_TOOL_MATRIX).
+
+    For each TOOL_DISPATCH tool and each purpose, write states[purpose]:
+      - member of that purpose's OLD base set  → the tool's scalar state
+        (active/deferred/inactive — preserves a globally-disabled/deferred tool)
+      - NOT a member                            → 'inactive' (not in that channel)
+    transform → all inactive (it never carries tools).
+
+    Idempotent + guarded: a record that ALREADY has a `states` dict is left
+    untouched (so admin edits are never clobbered). Mutates `settings` in place;
+    returns the number of records seeded (for the boot persist gate). The legacy
+    base-set helpers (_HELPDESK_TOOLS, _MEMORY_SUMMARY_TOOLS, _minimal_tool_names)
+    are read HERE and nowhere else at runtime after seeding.
+    """
+    # Old base-set membership per purpose, for an unrestricted (global) agent —
+    # mirrors the pre-matrix resolve_active_tools branches.
+    minimal = _minimal_tool_names()
+    membership = {
+        "interactive": set(TOOL_DISPATCH.keys()),     # agent_allowed=None → all
+        "transform": set(),                            # contract: no tools
+        "memory_summary": set(_MEMORY_SUMMARY_TOOLS),
+        "research_minimal": set(minimal),
+        "helpdesk": set(_HELPDESK_TOOLS),
+    }
+    changed = 0
+    for name in TOOL_DISPATCH:
+        rec = settings.get(name)
+        if not isinstance(rec, dict):
+            rec = empty_tool_setting()
+            settings[name] = rec
+        if isinstance(rec.get("states"), dict) and rec["states"]:
+            continue  # already has a per-purpose map — don't clobber
+        scalar = _rec_tool_state(rec, default="active")
+        states = {}
+        for purpose, members in membership.items():
+            if name in members:
+                # Preserve the tool's scalar status within its channel (a
+                # globally-inactive tool like exa_search stays inactive even
+                # where it's a channel member; deferred stays deferred).
+                states[purpose] = scalar
+            else:
+                states[purpose] = "inactive"
+        rec["states"] = states
+        changed += 1
+    return changed
+
+
+def _global_tool_wire_description_override(name: str) -> str:
+    """Admin override for a tool's WIRE description (the schema `description` the
+    model actually receives), stored at tool_settings.<name>.wire_description.
+    Empty/absent → no override (the code TOOL_DEFINITIONS description stands).
+    This is the ONLY editable path to the wire schema; input_schema stays a code
+    contract."""
+    rec = (_tool_settings or {}).get(name)
+    if not isinstance(rec, dict):
+        return ""
+    return str(rec.get("wire_description") or "").strip()
+
+
+def _apply_wire_description_override(td: dict, is_openai: bool) -> dict:
+    """Return `td` unchanged, or a SHALLOW COPY with its wire description replaced
+    by the admin override when one is set. Copying only the overridden dicts keeps
+    every other tool dict object-identical to TOOL_DEFINITIONS (KV-prefix stable —
+    a tool with no override produces a byte-identical wire entry)."""
+    if is_openai:
+        name = (td.get("function", {}) or {}).get("name", "")
+    else:
+        name = td.get("name", "")
+    override = _global_tool_wire_description_override(name)
+    if not override:
+        return td
+    if is_openai:
+        fn = dict(td.get("function", {}) or {})
+        fn["description"] = override
+        return {**td, "function": fn}
+    return {**td, "description": override}
+
+
 def _filter_tools(tool_list: list[dict], allowed: set[str] | None,
                   is_openai: bool = False) -> list[dict]:
     """Filter a tool definition list to only include allowed tools.
-    Returns tools sorted by name for prompt cache stability."""
+    Returns tools sorted by name for prompt cache stability.
+
+    Applies any admin wire-description override (tool_settings.<name>.
+    wire_description) — the single seam every purpose + warmup path goes through,
+    so an override reaches the model identically everywhere. Only overridden
+    dicts are copied; the rest stay object-identical to TOOL_DEFINITIONS."""
     if allowed is None:
         filtered = list(tool_list)
     elif is_openai:
@@ -1195,7 +1381,7 @@ def _filter_tools(tool_list: list[dict], allowed: set[str] | None,
         filtered.sort(key=lambda t: t.get("function", {}).get("name", ""))
     else:
         filtered.sort(key=lambda t: t.get("name", ""))
-    return filtered
+    return [_apply_wire_description_override(t, is_openai) for t in filtered]
 
 
 # --- Unified tool-list resolver (PROMPT_TOOLS_UNIFICATION_PLAN.md) ---
@@ -1290,47 +1476,35 @@ def resolve_active_tools(
     sidecar background_call, settings UI tool-breakdown — goes through this
     function.
 
-    Logic:
-      1. purpose=='transform'        → []
-      2. purpose=='interactive'      → agent's _get_agent_tool_names()
-      3. purpose=='memory_summary'   → _MEMORY_SUMMARY_TOOLS ∩ agent's set
-      4. purpose=='research_minimal' → TOOL_DEFINITIONS entries flagged
-                                       `minimal: True`
-      5. Filter TOOL_DEFINITIONS (or _OPENAI) to the base set.
-      6. Subtract deferred-group tools (from agent's token_config.deferred_tool_groups),
-         except those already in discovered_tools. ALWAYS applied across all
-         callers — every sidecar background_call must see the same tool set
-         the chat handler would.
-      7. Add MCP tools (when mcp_manager is passed and not deferred per
-         token_config.defer_mcp_tools).
-      8. Re-sort by name for KV-cache stability.
+    Logic (membership is the PER-USE-CASE TABLE, not hardcoded sets):
+      1. purpose=='transform' → [] (contract: transform carries no tools).
+      2. Otherwise base_set = every TOOL_DISPATCH tool whose EFFECTIVE
+         per-purpose state (resolve_tool_state_for: agent cell → agent scalar →
+         global cell → global scalar) is 'active' or 'deferred'. This is the
+         single source of truth for which tools a channel sees — the legacy code
+         base sets (_HELPDESK_TOOLS / _MEMORY_SUMMARY_TOOLS / minimal-flagged /
+         agent.json allowed) only SEED the table once and are NOT read here.
+      3. Filter TOOL_DEFINITIONS (or _OPENAI) to the base set.
+      4. Subtract 'deferred'-state tools (tool_search-only) unless already in
+         discovered_tools; apply per-turn defer_extra/undefer + exclude_tools.
+      5. Add MCP tools (interactive only, when mcp_manager passed + not deferred).
+      6. Re-sort by name for KV-cache stability.
     """
     if purpose not in _VALID_PURPOSES:
         raise ValueError(f"resolve_active_tools: unknown purpose {purpose!r}")
     if purpose == "transform":
-        return []
+        return []  # contract: transform calls carry no tools, table-independent
 
-    agent_allowed = _get_agent_tool_names(agent_id)  # None = all
-    if purpose == "interactive":
-        base_set = agent_allowed  # None means unrestricted
-    elif purpose == "memory_summary":
-        base_set = set(_MEMORY_SUMMARY_TOOLS)
-        if agent_allowed is not None:
-            base_set &= agent_allowed
-    elif purpose == "research_minimal":
-        # Dynamic — TOOL_DEFINITIONS entries flagged `minimal: True`.
-        # Skips deferral + MCP merging below (the harness has neither;
-        # MCP is gated by `purpose == 'interactive'` already).
-        base_set = _minimal_tool_names()
-        if agent_allowed is not None:
-            base_set &= agent_allowed
-    elif purpose == "helpdesk":
-        # The Brainy bot forces a fixed read-only set, independent of the
-        # agent's own tool config. Skips deferral + purpose filter + MCP
-        # (handled like research_minimal — every tool is in-prompt from round 0).
-        base_set = set(_HELPDESK_TOOLS)
-    else:  # pragma: no cover — guarded above
-        base_set = set()
+    # MEMBERSHIP IS THE TABLE (PER_USE_CASE_TOOL_MATRIX). A tool belongs to this
+    # purpose's surface iff its EFFECTIVE per-purpose state (agent cell → agent
+    # scalar → global cell → global scalar) is active or deferred. The legacy
+    # code base sets (_HELPDESK_TOOLS, _MEMORY_SUMMARY_TOOLS, minimal-flagged,
+    # agent.json allowed) are NO LONGER consulted at runtime — they only SEED the
+    # initial global `states` once (seed_tool_purpose_states), after which the
+    # table fully owns membership. `deferred` tools are in the set but subtracted
+    # below (tool_search-only) unless already discovered this turn.
+    base_set = {n for n in TOOL_DISPATCH
+                if resolve_tool_state_for(n, agent_id, purpose) in ("active", "deferred")}
 
     defs = TOOL_DEFINITIONS_OPENAI if is_openai_shape else TOOL_DEFINITIONS
     tools = _filter_tools(defs, base_set, is_openai=is_openai_shape)
@@ -1338,67 +1512,32 @@ def resolve_active_tools(
     def _name_of(t: dict) -> str:
         return (t.get("function", {}) or {}).get("name", "") if is_openai_shape else t.get("name", "")
 
-    # Purpose filter: tools whose global `purposes` list doesn't include
-    # the current call purpose drop here (not even discoverable via
-    # tool_search). Empty/missing purposes list = "all purposes" so tools
-    # without an opinion stay live for every purpose. Skipped for
-    # research_minimal because base_set is already minimal-flagged tools
-    # only — no further filter needed.
-    if purpose not in ("research_minimal", "helpdesk"):
-        tools = [t for t in tools if tool_passes_purpose(_name_of(t), purpose)]
-
-    # Defer subtraction. A tool is deferred when its EFFECTIVE deferred flag
-    # (global tool_settings.<name>.deferred, possibly overridden by the
-    # agent's tool_overrides.<name>.deferred) is true. Same hierarchy as
-    # enabled. Deferred tools are still routable via tool_search and stay
-    # live once the model has discovered them this turn (discovered_tools
-    # set). Skipped for research_minimal (the lean harness path doesn't
-    # use defer — every minimal tool is in-prompt from round 0).
-    if purpose not in ("research_minimal", "helpdesk"):
-        # Pre-compute agent overrides once
-        agent_overrides: dict = {}
-        if agent_id:
-            agent_ctx = get_request_context().current_agent
-            if agent_ctx and getattr(agent_ctx, 'agent_id', None) == agent_id:
-                agent_overrides = (agent_ctx.config.get("token_config", {}) or {}).get("tool_overrides") or {}
-            else:
-                try:
-                    cfg_path = os.path.join(AGENTS_DIR, agent_id, "agent.json")
-                    with open(cfg_path, "r", encoding="utf-8") as f:
-                        agent_overrides = (json.load(f).get("token_config", {}) or {}).get("tool_overrides") or {}
-                except (OSError, json.JSONDecodeError):
-                    agent_overrides = {}
-        deferred_names: set[str] = set()
-        # Global per-tool defer — derived from canonical state (state=='deferred').
-        for _n, _rec in (_tool_settings or {}).items():
-            if _rec and _rec_tool_state(_rec) == "deferred":
-                deferred_names.add(_n)
-        # Agent overrides — a status opinion (state / legacy enabled / deferred)
-        # REPLACES the global state for that tool, so recompute deferred from the
-        # collapsed override state (may add OR remove from the set).
-        for _n, _ovr in agent_overrides.items():
-            if "state" in _ovr or "enabled" in _ovr or "deferred" in _ovr:
-                if _rec_tool_state(_ovr, default="active") == "deferred":
-                    deferred_names.add(_n)
-                else:
-                    deferred_names.discard(_n)
-        # Per-turn classifier deferral adjustment (non-warmup models only; the
-        # worker leaves these unset for warm/local models so their KV prefix is
-        # untouched). `defer_extra_tools` pushes un-needed groups out (still
-        # tool_search-discoverable — NOT excluded); `undefer_tools` pulls the
-        # classifier's needed groups in even if statically deferred. undefer
-        # wins over defer_extra so a needed tool is never re-deferred.
-        _rc = get_request_context()
-        _defer_extra = _rc.defer_extra_tools
-        _undefer = _rc.undefer_tools
-        if _defer_extra:
-            deferred_names |= set(_defer_extra)
-        if _undefer:
-            deferred_names -= set(_undefer)
-        if deferred_names:
-            discovered = discovered_tools or set()
-            tools = [t for t in tools
-                     if _name_of(t) not in deferred_names or _name_of(t) in discovered]
+    # Defer subtraction. Membership came from the table (state ∈ active|deferred);
+    # here we pull the `deferred` ones out of the initial prompt (they remain
+    # tool_search-discoverable and stay live once discovered this turn). Driven by
+    # the same per-purpose state seam, so it matches the matrix UI exactly. Runs
+    # uniformly for every purpose — there is no longer a special-cased channel.
+    deferred_names: set[str] = set()
+    for _n in TOOL_DISPATCH:
+        if resolve_tool_state_for(_n, agent_id, purpose) == "deferred":
+            deferred_names.add(_n)
+    # Per-turn classifier deferral adjustment (non-warmup models only; the
+    # worker leaves these unset for warm/local models so their KV prefix is
+    # untouched). `defer_extra_tools` pushes un-needed groups out (still
+    # tool_search-discoverable — NOT excluded); `undefer_tools` pulls the
+    # classifier's needed groups in even if statically deferred. undefer
+    # wins over defer_extra so a needed tool is never re-deferred.
+    _rc = get_request_context()
+    _defer_extra = _rc.defer_extra_tools
+    _undefer = _rc.undefer_tools
+    if _defer_extra:
+        deferred_names |= set(_defer_extra)
+    if _undefer:
+        deferred_names -= set(_undefer)
+    if deferred_names:
+        discovered = discovered_tools or set()
+        tools = [t for t in tools
+                 if _name_of(t) not in deferred_names or _name_of(t) in discovered]
 
     # Per-turn exclusion. Names on the request context's `exclude_tools` are
     # dropped unconditionally for this turn (even if enabled/discovered). Set
@@ -1692,6 +1831,94 @@ def resolve_tool_state(name: str, agent_id: str | None = None) -> str:
         # global record is collapsed (canonical state wins, else legacy pair).
         state = _rec_tool_state(override, default=state)
     return state
+
+
+# --- Per-use-case (purpose-aware) tool status -----------------------------
+#
+# A tool's status can be set independently per delivery channel (purpose).
+# Storage is additive on top of the scalar `state`:
+#   tool_settings.<name>.states         = {<purpose>: state, ...}   (global)
+#   tool_overrides.<name>.states        = {<purpose>: state, ...}   (agent)
+# The scalar `state` (and the legacy enabled/deferred pair) stays the
+# CATCH-ALL DEFAULT for any purpose NOT listed in `states`. A record with no
+# `states` key therefore behaves exactly as before — "that scalar state for
+# every purpose" — which keeps the interactive warm-pool KV prefix byte-stable
+# when nobody has set a per-purpose cell. `states.<purpose>` is consulted only
+# when the key is present.
+
+def _rec_state_for_purpose(rec: dict | None, purpose: str, *, default: str = "active") -> str | None:
+    """A record's status for one purpose: prefer states[purpose], else the
+    record's scalar state (canonical `state` / legacy pair), else `default`.
+    Returns None only when rec is None and default is None."""
+    if rec is None:
+        return default
+    states = rec.get("states")
+    if isinstance(states, dict) and states.get(purpose) in TOOL_STATES:
+        return states[purpose]
+    return _rec_tool_state(rec, default=default)
+
+
+def _rec_has_purpose_opinion(rec: dict | None, purpose: str) -> bool:
+    """True iff `rec` carries an explicit per-purpose status for `purpose`
+    (a states[purpose] entry). A bare scalar `state` is NOT a purpose opinion —
+    it's the catch-all default. Used to gate the extend/restrict pass so the
+    no-override path stays byte-identical."""
+    if not isinstance(rec, dict):
+        return False
+    states = rec.get("states")
+    return isinstance(states, dict) and states.get(purpose) in TOOL_STATES
+
+
+def _global_tool_state_for(name: str, purpose: str) -> str:
+    """Global per-purpose state: states[purpose] else scalar state (default 'active')."""
+    return _rec_state_for_purpose((_tool_settings or {}).get(name), purpose, default="active")
+
+
+def resolve_tool_state_for(name: str, agent_id: str | None, purpose: str) -> str:
+    """Effective canonical state for (tool, agent, purpose) through the full
+    hierarchy, top wins:
+      1. agent  tool_overrides.<name>.states[purpose]
+      2. agent  tool_overrides.<name>.state / legacy pair  (scalar opinion)
+      3. global tool_settings.<name>.states[purpose]
+      4. global tool_settings.<name>.state / legacy pair    (default 'active')
+
+    The agent layer REPLACES the global state only when it carries a status
+    opinion for this purpose (per-purpose entry, or any scalar status key).
+    """
+    state = _global_tool_state_for(name, purpose)
+    override = _agent_tool_override(agent_id, name)
+    if isinstance(override, dict):
+        if _rec_has_purpose_opinion(override, purpose):
+            state = override["states"][purpose]
+        elif "state" in override or "enabled" in override or "deferred" in override:
+            state = _rec_tool_state(override, default=state)
+    return state
+
+
+def _any_purpose_overrides(agent_id: str | None, purpose: str) -> bool:
+    """True iff ANY tool carries an explicit per-purpose status for `purpose`
+    at the global OR the agent layer. When False, the per-purpose
+    extend/restrict + defer passes in resolve_active_tools are a no-op — the
+    fast path that keeps the interactive base array byte-identical for warm KV
+    prefix stability."""
+    for _rec in (_tool_settings or {}).values():
+        if _rec_has_purpose_opinion(_rec, purpose):
+            return True
+    if agent_id:
+        agent = get_request_context().current_agent
+        if agent and getattr(agent, 'agent_id', None) == agent_id:
+            overrides = (agent.config.get("token_config", {}) or {}).get("tool_overrides") or {}
+        else:
+            try:
+                cfg_path = os.path.join(AGENTS_DIR, agent_id, "agent.json")
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    overrides = (json.load(f).get("token_config", {}) or {}).get("tool_overrides") or {}
+            except (OSError, json.JSONDecodeError):
+                overrides = {}
+        for _ovr in overrides.values():
+            if _rec_has_purpose_opinion(_ovr, purpose):
+                return True
+    return False
 
 
 # tool_passes_purpose / tool_is_enabled / tool_is_deferred (the tool
@@ -6559,8 +6786,6 @@ mempalace_activity = _MempalaceActivity()
 
 MAX_DELEGATE_TOOL_ROUNDS = 10  # Limit for delegated/scheduled tasks (timeout is the real safety net)
 
-
-_MEMORY_TOOL_NAMES = {"memory_store", "memory_recall", "memory_delete", "memory_shared"}
 
 # Tool sets for non-interactive purposes live next to `resolve_active_tools`:
 # `_MEMORY_SUMMARY_TOOLS`. The historical `_SCHEDULED_TASK_TOOLS` 3-tool hack

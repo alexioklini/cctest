@@ -709,6 +709,77 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "memory_store",
+        "description": (
+            "Store a single named memory (a discrete fact, preference, or note) in the "
+            "agent's structured key/value memory. Use for an atomic item you want to "
+            "recall by name later — distinct from save_chat_to_memory (which persists "
+            "the whole conversation). When a project is active, the memory is written to "
+            "the project's directory."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Unique name/key for this memory"},
+                "content": {"type": "string", "description": "The memory content to store"},
+                "description": {"type": "string", "description": "Optional short description"},
+                "type": {"type": "string", "description": "Category: general | user | feedback | project (default: general)"},
+            },
+            "required": ["name", "content"],
+        },
+    },
+    {
+        "name": "memory_recall",
+        "description": (
+            "Recall stored memories by semantic search over the agent's structured "
+            "memory (related items are expanded via graph links). With no query, lists "
+            "all memories. When a project is active, searches the project's memory first, "
+            "then the agent-level memory."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query; empty lists all memories"},
+                "limit": {"type": "integer", "description": "Max results (default: 10)"},
+                "type": {"type": "string", "description": "Optional category filter (general | user | feedback | project)"},
+                "mode": {"type": "string", "description": "'graph' for 2-hop relationship expansion (default: 1 hop)"},
+            },
+        },
+    },
+    {
+        "name": "memory_delete",
+        "description": "Delete a stored memory by its exact name. Use to forget a fact the user asked you to remove or that is no longer correct.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Exact name of the memory to delete"},
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "memory_shared",
+        "description": (
+            "Read or write SHARED memory visible beyond this agent: scope='global' "
+            "(the main agent's shared store, visible to all) or scope='team' (the team "
+            "head's store, visible to teammates). Use to store/recall facts that should "
+            "be shared rather than kept in this agent's private memory."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "description": "'recall' (default) or 'store'"},
+                "scope": {"type": "string", "description": "'global' (default) or 'team'"},
+                "query": {"type": "string", "description": "For recall: search query; empty lists all"},
+                "name": {"type": "string", "description": "For store: the memory name/key"},
+                "content": {"type": "string", "description": "For store: the memory content"},
+                "description": {"type": "string", "description": "For store: optional short description"},
+                "type": {"type": "string", "description": "Optional category (general | user | feedback | project)"},
+                "limit": {"type": "integer", "description": "For recall: max results (default: 10)"},
+            },
+        },
+    },
+    {
         "name": "context_search",
         "description": "Search through compacted conversation history by keyword. Returns matching message excerpts from earlier in the conversation that have been summarized away.",
         "input_schema": {

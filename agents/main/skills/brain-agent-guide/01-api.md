@@ -292,9 +292,15 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 ## Tools (admin)
 
 - `GET /v1/tools/list` — active tool set for caller
-- `GET /v1/tools/settings` — every tool + its global record
+- `GET /v1/tools/settings[?agent=<id>]` — every tool + its global record
+  (incl. `state` + per-use-case `states` map), plus a `matrix` block:
+  per-purpose × tool `{state, tokens}` cells + a per-purpose `summary`
+  (active/inactive/deferred counts + realized injection token size). `?agent=`
+  folds that agent's `tool_overrides` into the matrix (effective states/sizing).
 - `POST /v1/tools/settings` — save one tool's record (per-tool prose,
-  enabled, deferred, purposes, applies_with)
+  scalar `state`, `purposes`, `applies_with`, and optional `states`
+  `{<purpose>: state}` per-use-case map — validated against `_VALID_PURPOSES` ×
+  `TOOL_STATES`; an empty/absent map keeps the record scalar-only)
 - `GET /v1/tools/config` / `POST` — integration knobs (API keys, etc.)
 - `GET /v1/tools/status` — per-tool diagnostic
 - `GET /v1/tools/breakdown?agent=` — token cost per tool

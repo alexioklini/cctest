@@ -39,121 +39,199 @@
     "compact_threshold": null,
     "tool_overrides": {
       "memory_delete": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "memory_recall": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "memory_shared": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "memory_store": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "transcribe_audio": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "code_graph_build": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "code_graph_enhance": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "code_graph_impact": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "code_graph_query": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "delegate_task": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "task_cancel": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "task_status": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "gmail_inbox": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "gmail_read": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "gmail_reply": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "gmail_search": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "gmail_send": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "git_command": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "github_command": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "mcp_connect": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "mcp_disconnect": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "mcp_servers": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "list_nodes": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "schedule_history": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "schedule_list": {
-        "state": "deferred"
+        "states": {
+          "interactive": "deferred"
+        }
       },
       "detect_language": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "get_glossary": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "list_glossaries": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "translate_document": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "translate_text": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "get_artifact_detail": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "worker_abort": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "worker_ask_user": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "worker_pause": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "worker_resume": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "worker_send": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "worker_status": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "ask_llm": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       },
       "ask_user_for_file": {
-        "state": "inactive"
+        "states": {
+          "interactive": "inactive"
+        }
       }
     },
     "optimize_tools": true

@@ -1795,6 +1795,32 @@ async function _genTab_tools(C) {
       window._toolPurposesCanonical = settingsResp.purposes || null;
       window._toolConfigCache = cfg || {};
       window._toolStatusCache = status || {};
+      // Per-use-case status matrix (purpose × tool → {state, tokens} + summary).
+      // Drives the per-purpose dropdown strip on each tool row + the status
+      // summary header. Stashed for saveTool to read the canonical purpose list.
+      window._toolMatrix = settingsResp.matrix || null;
+      const MATRIX = window._toolMatrix || {};
+      const MX_PURPOSES = (MATRIX.purposes || settingsResp.purposes || []);
+      const MX_CELLS = MATRIX.matrix || {};
+      const MX_SUMMARY = MATRIX.summary || {};
+      // Short labels for the compact column headers.
+      const PURPOSE_LABELS = {
+        interactive: 'Chat', transform: 'Transform',
+        memory_summary: 'Memory', research_minimal: 'Research', helpdesk: 'Brainy',
+      };
+      // Compact Excel-style cell <select>. Colour-coded by state so the grid
+      // reads at a glance (green=active, grey=inactive, amber=deferred).
+      const CELL_BG = { active: 'rgba(34,197,94,0.10)', inactive: 'var(--bg-100)', deferred: 'rgba(245,158,11,0.12)' };
+      const CELL_FG = { active: 'var(--success)', inactive: 'var(--text-400)', deferred: 'var(--warning,#d97706)' };
+      const stCellSelect = (toolName, purpose, cur) =>
+        `<select class="tsx-cell" data-tool="${esc(toolName)}" data-purpose="${esc(purpose)}"
+           title="${esc(PURPOSE_LABELS[purpose]||purpose)}: Aktiv (im Prompt) · Inaktiv (nicht in diesem Kanal / aus) · Aufgeschoben (nur über tool_search)."
+           style="font-size:10px;padding:1px 1px;font-family:var(--font-mono);background:${CELL_BG[cur]||'var(--bg-100)'};color:${CELL_FG[cur]||'var(--text-100)'};border:none;border-radius:0;width:100%;text-align:center"
+           onchange="saveToolPurposeCell('${esc(toolName)}')">
+          <option value="active"   ${cur==='active'?'selected':''}>Aktiv</option>
+          <option value="inactive" ${cur==='inactive'?'selected':''}>Inaktiv</option>
+          <option value="deferred" ${cur==='deferred'?'selected':''}>Aufgesch.</option>
+        </select>`;
 
       // Build name → tokens map from breakdown response. Each group entry
       // has a `builtin_tools` list of {name, total_tokens, ...} records.
@@ -1807,9 +1833,13 @@ async function _genTab_tools(C) {
 
       // Group → tools (sorted by name within group). '(ungrouped)' bucket
       // surfaces tools missing from TOOL_GROUPS — server returns group=''
-      // for those.
+      // for those. EVERY tool is in the matrix, including integration-only
+      // pseudo-tools (gmail/refinement/…): they count toward the Σ totals
+      // (total == active+inactive+deferred for every column) and show their
+      // status per purpose like any tool. The ⚙ opens their integration config.
+      const matrixTools = allTools;
       const byGroup = {};
-      for (const t of allTools) {
+      for (const t of matrixTools) {
         const g = t.group || '(ungrouped)';
         (byGroup[g] = byGroup[g] || []).push(t);
       }
@@ -1831,55 +1861,45 @@ async function _genTab_tools(C) {
         return `<span style="font-size:10px;color:${c};font-weight:500">${i} ${esc(s)}</span>`;
       };
 
-      // Per-tool row (collapsed). Click → toggles expanded panel below.
-      const toolRow = (t) => {
+      const WRITE_EXEC = new Set(['write_file','edit_file','execute_command','python_exec','git_command','github_command','gmail_send','gmail_reply','write_document','edit_document','delegate_task','run_background_task']);
+      const NCOL = 1 + MX_PURPOSES.length + 1;  // name + purposes + tokens
+
+      // One <tr> per tool in the single flat matrix table. The matrix table is
+      // PURELY status (per-purpose cells + tokens) — the per-tool config (prose /
+      // purposes / applies_with / wire schema / integration) is SEPARATE, opened
+      // in a modal via the ⚙ button so the two concerns don't interleave.
+      const toolTr = (t) => {
         const integ = INTEGRATION_TOOLS.has(t.name) ? sBadge(t.name) : '';
         const proseFlag = (t.description || t.when_to_use || t.warnings || t.examples)
-          ? `<span title="Benutzerdefinierter Prompt-Text konfiguriert" style="font-size:10px;color:var(--accent)">★ Text</span>`
-          : '';
+          ? `<span title="Prompt-Text konfiguriert" style="font-size:9px;color:var(--accent)">★</span>` : '';
         const appliesFlag = (t.applies_with && t.applies_with.length)
-          ? `<span title="Wird nur angezeigt, wenn ${esc(t.applies_with.join(', '))} ebenfalls aktiv sind" style="font-size:10px;color:var(--text-400)">+${t.applies_with.length}</span>`
-          : '';
+          ? `<span title="${esc(t.applies_with.join(', '))}" style="font-size:9px;color:var(--text-400)">+${t.applies_with.length}</span>` : '';
         const tokens = toolTokens[t.name] || 0;
-        const tokensFlag = tokens > 0
-          ? `<span title="Die Tool-Definition trägt ~${tokens} Tokens zu jeder Anfrage bei" style="font-size:10px;color:var(--text-400);font-family:var(--font-mono)">${tokens}t</span>`
-          : '';
-        const enabledColor = t.enabled ? 'var(--success)' : 'var(--text-400)';
-        const deferredColor = t.deferred ? 'var(--warning)' : 'var(--text-400)';
+        const purposeCells = MX_PURPOSES.map(p => {
+          const cell = (MX_CELLS[p] || {})[t.name] || {};
+          const cur = cell.state || 'inactive';
+          // Every cell is an editable dropdown. A tool that isn't part of this
+          // channel's tool set reports as Inaktiv; setting it Aktiv/Aufgeschoben
+          // pulls it into the channel (the resolver's extend pass).
+          const warn = (p === 'helpdesk' && cur === 'active' && WRITE_EXEC.has(t.name))
+            ? `<span title="Brainy ist read-only — dieses Schreib/Ausführen-Tool hebt das auf" style="color:var(--warning);font-size:9px;position:absolute;right:1px;top:0">⚠</span>` : '';
+          return `<td style="padding:0;border:1px solid var(--border-100);position:relative">${warn}${stCellSelect(t.name, p, cur)}</td>`;
+        }).join('');
         return `
-          <div class="tool-row" data-tool="${esc(t.name)}" style="border:1px solid var(--border-100);border-radius:6px;margin-bottom:6px;overflow:hidden">
-            <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;background:var(--bg-100)" onclick="toggleToolPanel('${esc(t.name)}')">
-              <span style="font-family:var(--font-mono);font-size:12px;color:${enabledColor};font-weight:500;flex:1">${esc(t.name)}${t.enabled ? '' : ' <span style="color:var(--text-400);font-weight:400">(deaktiviert)</span>'}</span>
-              ${proseFlag}
-              ${appliesFlag}
-              ${tokensFlag}
-              ${integ}
-              <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(245,158,11,0.12);color:${deferredColor};display:${t.deferred?'inline':'none'}" id="defer-badge-${esc(t.name)}">aufgeschoben</span>
-              <span style="font-size:14px;color:var(--text-400);transition:transform 0.1s" id="chevron-${esc(t.name)}">▸</span>
-            </div>
-            <div class="tool-panel" id="tool-panel-${esc(t.name)}" style="display:none;padding:12px 14px;background:var(--bg-50);border-top:1px solid var(--border-100)"></div>
-          </div>`;
+          <tr class="tsx-tool-row" data-tool="${esc(t.name)}">
+            <td style="padding:3px 8px;border:1px solid var(--border-100);white-space:nowrap;background:var(--bg-100)">
+              <span style="font-family:var(--font-mono);font-size:11px;color:${t.enabled?'var(--text-100)':'var(--text-400)'}">${esc(t.name)}</span>
+              ${proseFlag}${appliesFlag}${integ}
+              <span style="float:right;cursor:pointer;font-size:11px;color:var(--text-400)" title="Tool-Konfiguration (Prompt-Text, Zwecke, Integration, Wire-Schema)" onclick="openToolDetailModal('${esc(t.name)}')">⚙</span>
+            </td>
+            ${purposeCells}
+            <td style="padding:3px 8px;border:1px solid var(--border-100);text-align:right;font-family:var(--font-mono);font-size:10px;color:var(--text-400)">${tokens||''}</td>
+          </tr>`;
       };
 
-      // Group section (collapsible header + tool rows).
-      const groupSection = (gName, tools) => {
-        // Default-expanded if any tool in the group has non-default state
-        const hasNonDefault = tools.some(t =>
-          !t.enabled || t.deferred || t.description || t.when_to_use ||
-          t.warnings || t.examples || INTEGRATION_TOOLS.has(t.name));
-        const expanded = hasNonDefault;
-        return `
-          <div style="margin-bottom:14px">
-            <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:4px;background:var(--bg-100)" onclick="toggleToolGroup('${esc(gName)}')">
-              <span style="font-size:14px;color:var(--text-400);transition:transform 0.1s" id="group-chevron-${esc(gName)}">${expanded?'▾':'▸'}</span>
-              <span style="font-size:13px;font-weight:600;color:var(--text-100);text-transform:uppercase;letter-spacing:0.04em">${esc(gName)}</span>
-              <span style="font-size:11px;color:var(--text-400)">${tools.length} Tool${tools.length===1?'':'s'}</span>
-            </div>
-            <div id="group-body-${esc(gName)}" style="display:${expanded?'block':'none'};padding:8px 0 0 16px">
-              ${tools.map(toolRow).join('')}
-            </div>
-          </div>`;
-      };
+      // Thin non-collapsible group separator row spanning the whole table.
+      const groupSepTr = (gName, count) => `
+        <tr><td colspan="${NCOL}" style="padding:3px 8px;background:var(--bg-200);border:1px solid var(--border-100);font-size:10px;font-weight:600;color:var(--text-300);text-transform:uppercase;letter-spacing:0.05em">${esc(gName)} <span style="color:var(--text-400);font-weight:400">· ${count}</span></td></tr>`;
 
       // Cost totals header — sums by group + grand total
       const tokensByGroup = {};
@@ -1947,28 +1967,61 @@ async function _genTab_tools(C) {
           </div>`;
       }
 
+      // Header row: Tool · one column per use-case.
+      const headTh = (label, extra) =>
+        `<th style="padding:4px 8px;border:1px solid var(--border-100);background:var(--bg-200);font-size:10px;font-weight:600;color:var(--text-300);text-transform:uppercase;letter-spacing:0.04em;position:sticky;top:0;z-index:2;${extra||''}">${label}</th>`;
+      const headerRow = `<tr>
+        ${headTh('Tool', 'text-align:left')}
+        ${MX_PURPOSES.map(p => headTh(esc(PURPOSE_LABELS[p]||p))).join('')}
+      </tr>`;
+
+      // Summary LAST ROWS: per-purpose active/inactive/deferred counts + the
+      // realized token size of the tool injection on that channel (the Σ row is
+      // where the per-channel token total lives — not a per-tool column).
+      const sumCell = (p) => {
+        const s = MX_SUMMARY[p] || {};
+        return `<td style="padding:3px 4px;border:1px solid var(--border-100);text-align:center;font-family:var(--font-mono);font-size:10px;background:var(--bg-100)">
+          <div><span style="color:var(--success)">${s.active||0}</span>·<span style="color:var(--text-400)">${s.inactive||0}</span>·<span style="color:var(--warning,#d97706)">${s.deferred||0}</span></div>
+          <div style="color:var(--text-100);font-weight:600">${(s.tokens||0).toLocaleString()} Tok</div>
+        </td>`;
+      };
+      const summaryRows = `
+        <tr>
+          <td style="padding:4px 8px;border:1px solid var(--border-100);background:var(--bg-200);font-size:10px;font-weight:600;color:var(--text-300);text-transform:uppercase;letter-spacing:0.04em">Σ aktiv·inaktiv·aufg. / Token</td>
+          ${MX_PURPOSES.map(sumCell).join('')}
+        </tr>
+        <tr>
+          <td colspan="${NCOL}" style="padding:3px 8px;border:1px solid var(--border-100);background:var(--bg-100);font-size:9px;color:var(--text-400)">
+            Σ-Zeile: <span style="color:var(--success)">aktiv</span>·<span style="color:var(--text-400)">inaktiv</span>·<span style="color:var(--warning,#d97706)">aufgeschoben</span> je Kanal — die Summe ergibt IMMER die Gesamtzahl aller ${matrixTools.length} Tools. Dahinter die realisierte Token-Größe der Tool-Injektion (aktiv = volles Schema, aufgeschoben = nur Name, inaktiv = 0).
+          </td>
+        </tr>`;
+
+      // Body: all tools in ONE table, with a thin non-collapsible separator row
+      // before each group. Single flat grid (Excel-style).
+      const bodyRows = groupOrder.map(g =>
+        groupSepTr(g, byGroup[g].length) + byGroup[g].map(toolTr).join('')
+      ).join('');
+
+      const matrixTable = `
+        <div style="overflow:auto;border:1px solid var(--border-100);border-radius:6px;max-height:64vh">
+          <table style="border-collapse:collapse;width:100%;table-layout:fixed">
+            <colgroup>
+              <col style="width:240px">
+              ${MX_PURPOSES.map(()=>'<col>').join('')}
+            </colgroup>
+            <thead>${headerRow}</thead>
+            <tbody>${bodyRows}${summaryRows}</tbody>
+          </table>
+        </div>`;
+
       C.innerHTML = P(`<div>
-        <div style="font-size:11px;color:var(--text-400);margin-bottom:12px">
-          ${allTools.length} Tools in ${groupOrder.length} Gruppen. Klicken Sie auf ein Tool, um es aufzuklappen und seine Aktiviert-/Aufschub-Flags, Zwecke, Integrationsregler (sofern zutreffend) und den Prompt-Text zu bearbeiten. Das „<span style="font-family:var(--font-mono)">Nt</span>"-Abzeichen in jeder Zeile zeigt die Token-Kosten des Tools bei jeder Anfrage.
+        <div style="font-size:11px;color:var(--text-400);margin-bottom:10px">
+          ${matrixTools.length} Tools, Status je Anwendungsfall (Chat · Transform · Memory · Research · Brainy). Klicken Sie auf das <b>⚙</b> eines Tools, um Zwecke, Integration und Prompt-Text zu bearbeiten. Setzen Sie eine Zelle auf <b>Aktiv</b>/<b>Aufgeschoben</b>, um das Tool diesem Kanal hinzuzufügen, oder <b>Inaktiv</b>, um es zu entfernen — die Tabelle ist die alleinige Quelle dafür, welche Tools ein Kanal sieht. Letzte Zeile = Σ je Kanal: <b>aktiv·inaktiv·aufgeschoben</b> (Summe = ${matrixTools.length}) + realisierte Token-Größe. Änderungen werden beim Auswählen sofort gespeichert.
         </div>
 
         ${rmdHTML}
 
-        <div style="border:1px solid var(--border-100);border-radius:8px;padding:12px;margin-bottom:14px;background:var(--bg-100)">
-          <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
-            <div style="font-size:12px;font-weight:600;color:var(--text-100)">Tool-Definitionskosten</div>
-            <div style="font-size:11px;color:var(--text-400)">gemessen gegen Agent <span style="font-family:var(--font-mono)">main</span></div>
-          </div>
-          <div style="display:flex;gap:18px;font-size:11px;margin-bottom:8px">
-            <div><span style="color:var(--text-400)">Integrierte Tools:</span> <b style="font-family:var(--font-mono);color:var(--text-100)">${builtinTotal} Tok</b></div>
-            <div><span style="color:var(--text-400)">MCP-Tools:</span> <b style="font-family:var(--font-mono);color:var(--text-100)">${mcpTotal} Tok</b></div>
-            <div><span style="color:var(--text-400)">Gesamt pro Anfrage:</span> <b style="font-family:var(--font-mono);color:var(--text-100)">${grandTotal} Tok</b></div>
-          </div>
-          <div style="font-size:10px;color:var(--text-400);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.04em">Top-Gruppen nach Kosten</div>
-          ${sortedGroupCosts.map(([g, n]) => costRow(g, n, sortedGroupCosts[0]?.[1] || 1)).join('')}
-        </div>
-
-        ${groupOrder.map(g => groupSection(g, byGroup[g])).join('')}
+        ${matrixTable}
       </div>`);
       return;
     } catch(e) {

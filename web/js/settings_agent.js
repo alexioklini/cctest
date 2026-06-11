@@ -673,14 +673,32 @@ async function switchAgentTab(agentId, tab, btn) {
 
   if (tab === 'tokens') {
     try {
-      const [agentFile, settingsResp] = await Promise.all([
+      const [agentFile, settingsResp, globalResp] = await Promise.all([
         API.get(`/v1/agents/${agentId}/file?name=agent.json`),
+        // Agent-scoped matrix: effective per-purpose states + token sizing WITH
+        // this agent's tool_overrides folded in (drives the status last-row).
+        API.get(`/v1/tools/settings?agent=${encodeURIComponent(agentId)}`),
+        // GLOBAL matrix (no agent overrides) — the per-purpose value that a
+        // "Standard (erben)" cell actually inherits. The "Global" column must
+        // show THIS (per purpose), not the purpose-agnostic scalar state.
         API.get('/v1/tools/settings'),
       ]);
       const agentCfg = JSON.parse(agentFile.content || '{}');
       const tcfg = agentCfg.token_config || {};
       const overrides = tcfg.tool_overrides || {};
       const allTools = settingsResp.tools || [];
+      // Global per-purpose cells: GLOBAL_CELLS[purpose][tool].state = what an
+      // inheriting agent cell resolves to for that channel.
+      const GLOBAL_CELLS = (globalResp.matrix || {}).matrix || {};
+      // Purposes the per-agent override matrix exposes. Today only `interactive`
+      // (Chat) consults agent overrides in a way the user wants surfaced; the
+      // storage + resolver already support every purpose, so widening this is a
+      // one-line change. transform yields no tools, the others have fixed-set
+      // defaults — left to the GLOBAL matrix.
+      const AGENT_PURPOSES = ['interactive'];
+      const AGENT_PURPOSE_LABELS = { interactive: 'Chat' };
+      const agentMatrix = settingsResp.matrix || {};
+      const AM_SUMMARY = agentMatrix.summary || {};
       // Stash on window so per-tool save handlers can read the latest fetched
       // record without refetching (gets clobbered on next tab switch).
       window._tokTools = allTools;
@@ -704,10 +722,13 @@ async function switchAgentTab(agentId, tab, btn) {
       // Legacy/partial overrides ({deferred:true} alone, etc.) collapse to
       // whatever the code actually resolves live: compute effective enabled/
       // deferred (override field wins, else global) and map that pair.
-      const agentToolState = (t, ovr) => {
-        // Canonical override: a `state` key wins. Legacy {enabled,deferred}
-        // override is still read for un-migrated agent.json. No status key at
-        // all = inherit global ('default').
+      // Per-agent per-purpose override state for one tool+purpose, collapsing
+      // the override record. Order: states[purpose] → scalar state → legacy
+      // {enabled,deferred} → 'default' (inherit global). A bare scalar override
+      // (no per-purpose map) still applies to every purpose, for back-compat.
+      const agentToolState = (t, ovr, purpose) => {
+        const states = ovr.states || {};
+        if (TOOL_STATES.includes(states[purpose])) return states[purpose];
         if (TOOL_STATES.includes(ovr.state)) return ovr.state;
         const hasOvr = ('enabled' in ovr) || ('deferred' in ovr);
         if (!hasOvr) return 'default';
@@ -717,62 +738,45 @@ async function switchAgentTab(agentId, tab, btn) {
         return effDeferred ? 'deferred' : 'active';
       };
 
-      // One dropdown per tool — default (inherit) + the 3 concrete states.
-      const stateSelect = (toolName, cur) => `
-        <select class="tok-override" data-tool="${esc(toolName)}"
-                style="font-size:11px;padding:2px 4px;font-family:var(--font-mono);background:var(--bg-100);border:1px solid var(--border-100);border-radius:3px;width:130px"
-                title="Standard: globalen Wert erben · Aktiv: im Prompt · Inaktiv: ganz aus · Aufgeschoben: nur über tool_search">
-          <option value="default"  ${cur==='default'?'selected':''}>Standard (erben)</option>
+      // Compact Excel-style cell <select> — colour-coded by resolved state.
+      const A_CELL_BG = { active: 'rgba(34,197,94,0.10)', inactive: 'var(--bg-100)', deferred: 'rgba(245,158,11,0.12)', default: 'transparent' };
+      const A_CELL_FG = { active: 'var(--success)', inactive: 'var(--text-400)', deferred: 'var(--warning,#d97706)', default: 'var(--text-300)' };
+      // Global per-purpose state for a tool (what an inheriting cell resolves to).
+      const globalStateFor = (toolName, purpose) =>
+        ((GLOBAL_CELLS[purpose] || {})[toolName] || {}).state || 'inactive';
+      const stTxt = (s) => s === 'active' ? 'Aktiv' : s === 'inactive' ? 'Inaktiv' : 'Aufgesch.';
+      const stateSelect = (toolName, purpose, cur) => {
+        // "Standard (erben)" shows the inherited GLOBAL per-purpose value inline,
+        // so an admin sees what default actually resolves to for THIS channel.
+        const inh = globalStateFor(toolName, purpose);
+        const eff = cur === 'default' ? inh : cur;  // colour by effective state
+        return `
+        <select class="tok-override" data-tool="${esc(toolName)}" data-purpose="${esc(purpose)}"
+                style="font-size:10px;padding:1px;font-family:var(--font-mono);background:${A_CELL_BG[eff]||'var(--bg-100)'};color:${A_CELL_FG[eff]||'var(--text-100)'};border:none;width:100%;text-align:center"
+                title="Standard: globalen Wert dieses Kanals erben (aktuell: ${stTxt(inh)}) · Aktiv: im Prompt · Inaktiv: ganz aus · Aufgeschoben: nur über tool_search">
+          <option value="default"  ${cur==='default'?'selected':''}>Standard (${stTxt(inh)})</option>
           <option value="active"   ${cur==='active'?'selected':''}>Aktiv</option>
           <option value="inactive" ${cur==='inactive'?'selected':''}>Inaktiv</option>
-          <option value="deferred" ${cur==='deferred'?'selected':''}>Aufgeschoben</option>
+          <option value="deferred" ${cur==='deferred'?'selected':''}>Aufgesch.</option>
         </select>`;
+      };
+      const A_NCOL = 1 + AGENT_PURPOSES.length;  // tool + purposes (no Global col)
 
-      const toolRow = (t) => {
+      const toolTr = (t) => {
         const ovr = overrides[t.name] || {};
-        const state = agentToolState(t, ovr);
-        // Badge: what global resolves to, so the operator sees what "Standard"
-        // would inherit. Reuses the global 3-state collapse.
-        const gState = toolGlobalState(t);
-        const gLabel = gState === 'active' ? 'global: aktiv'
-          : gState === 'inactive' ? 'global: inaktiv' : 'global: aufgeschoben';
-        const gColor = gState === 'active' ? 'var(--success)'
-          : gState === 'inactive' ? 'var(--text-400)' : 'var(--warning,#d97706)';
-        // Effective colour of the tool name = how it resolves for this agent.
-        const effState = state === 'default' ? gState : state;
-        const effColor = effState === 'inactive' ? 'var(--text-400)' : 'var(--text-100)';
-        return `
-          <div style="display:grid;grid-template-columns:1fr 150px;gap:8px;align-items:center;padding:5px 8px;border-bottom:1px solid var(--border-100)">
-            <div style="display:flex;flex-direction:column;gap:1px">
-              <span style="font-family:var(--font-mono);font-size:11px;color:${effColor}">${esc(t.name)}</span>
-              <span style="font-size:9px;color:${gColor}">${gLabel}</span>
-            </div>
-            <div style="display:flex;justify-content:flex-end">
-              ${stateSelect(t.name, state)}
-            </div>
-          </div>`;
+        const cells = AGENT_PURPOSES.map(p =>
+          `<td style="padding:0;border:1px solid var(--border-100)">${stateSelect(t.name, p, agentToolState(t, ovr, p))}</td>`
+        ).join('');
+        return `<tr>
+          <td style="padding:3px 8px;border:1px solid var(--border-100);white-space:nowrap;background:var(--bg-100)">
+            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-100)">${esc(t.name)}</span>
+          </td>
+          ${cells}
+        </tr>`;
       };
 
-      const groupSection = (gName, tools) => {
-        // Auto-expand groups that have any agent override
-        const hasOverride = tools.some(t => overrides[t.name]);
-        return `
-          <div style="margin-bottom:14px">
-            <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:4px;background:var(--bg-100)" onclick="toggleTokGroup('${esc(gName)}')">
-              <span style="font-size:14px;color:var(--text-400)" id="tok-group-chevron-${esc(gName)}">${hasOverride?'▾':'▸'}</span>
-              <span style="font-size:13px;font-weight:600;color:var(--text-100);text-transform:uppercase;letter-spacing:0.04em">${esc(gName)}</span>
-              <span style="font-size:11px;color:var(--text-400)">${tools.length} Tool${tools.length===1?'':'s'}</span>
-              ${hasOverride ? `<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(245,158,11,0.12);color:var(--warning,#d97706)">Überschreibung</span>` : ''}
-            </div>
-            <div id="tok-group-body-${esc(gName)}" style="display:${hasOverride?'block':'none'};padding:6px 0 0 12px">
-              <div style="display:grid;grid-template-columns:1fr 150px;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border-100)">
-                <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Tool</span>
-                <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;text-align:right">Status</span>
-              </div>
-              ${tools.map(toolRow).join('')}
-            </div>
-          </div>`;
-      };
+      const groupSepTr = (gName, count) => `
+        <tr><td colspan="${A_NCOL}" style="padding:3px 8px;background:var(--bg-200);border:1px solid var(--border-100);font-size:10px;font-weight:600;color:var(--text-300);text-transform:uppercase;letter-spacing:0.05em">${esc(gName)} <span style="color:var(--text-400);font-weight:400">· ${count}</span></td></tr>`;
 
       container.innerHTML = `
         <div style="padding:16px;display:grid;gap:14px">
@@ -789,7 +793,34 @@ async function switchAgentTab(agentId, tab, btn) {
               Tool-Überschreibungen
               <span style="font-size:11px;color:var(--text-400);font-weight:400">— ${Object.keys(overrides).length} Tool${Object.keys(overrides).length===1?'':'s'} derzeit überschrieben</span>
             </div>
-            ${groupOrder.map(g => groupSection(g, byGroup[g])).join('')}
+            <div style="overflow:auto;border:1px solid var(--border-100);border-radius:6px;max-height:56vh">
+              <table style="border-collapse:collapse;width:100%;table-layout:fixed">
+                <colgroup>
+                  <col style="width:240px">
+                  ${AGENT_PURPOSES.map(()=>'<col style="width:160px">').join('')}
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th style="padding:4px 8px;border:1px solid var(--border-100);background:var(--bg-200);font-size:10px;font-weight:600;color:var(--text-300);text-transform:uppercase;letter-spacing:0.04em;text-align:left;position:sticky;top:0">Tool</th>
+                    ${AGENT_PURPOSES.map(p => `<th style="padding:4px 6px;border:1px solid var(--border-100);background:var(--bg-200);font-size:10px;font-weight:600;color:var(--text-300);text-transform:uppercase;position:sticky;top:0">${esc(AGENT_PURPOSE_LABELS[p]||p)} (Agent)</th>`).join('')}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${groupOrder.map(g => groupSepTr(g, byGroup[g].length) + byGroup[g].map(toolTr).join('')).join('')}
+                  <tr>
+                    <td style="padding:4px 8px;border:1px solid var(--border-100);background:var(--bg-200);font-size:10px;font-weight:600;color:var(--text-300);text-transform:uppercase">Σ / Token</td>
+                    ${AGENT_PURPOSES.map(p => {
+                      const s = AM_SUMMARY[p] || {};
+                      return `<td style="padding:3px 4px;border:1px solid var(--border-100);text-align:center;font-family:var(--font-mono);font-size:10px;background:var(--bg-100)">
+                        <div><span style="color:var(--success)">${s.active||0}</span>·<span style="color:var(--text-400)">${s.inactive||0}</span>·<span style="color:var(--warning,#d97706)">${s.deferred||0}</span></div>
+                        <div style="color:var(--text-100);font-weight:600">${(s.tokens||0).toLocaleString()}</div>
+                        <div style="font-size:8px;color:var(--text-400)">${s.realized_count||0} im Prompt</div>
+                      </td>`;
+                    }).join('')}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
@@ -840,14 +871,18 @@ window._saveTokenConfig = async function(agentId) {
   // Collect every per-tool state <select>; 'default' = inherit (no override
   // entry), the 3 concrete states write the {enabled, deferred} pair via the
   // shared toolStateToFlags mapping (settings_tools.js).
+  // Per-agent override shape: {states: {<purpose>: state}}. Each .tok-override
+  // select carries data-tool + data-purpose; 'default' = inherit (no entry).
+  // A tool with no non-default cell writes no override at all (keeps agent.json
+  // clean + the warm KV prefix stable when nothing diverges).
   const overrides = {};
   document.querySelectorAll('.tok-override').forEach(sel => {
     const tool = sel.dataset.tool;
+    const purpose = sel.dataset.purpose;
     const state = sel.value;
-    if (state === 'default') return;  // inherit — no override (no entry written)
-    // Canonical per-agent override shape: a single {state} field (matches the
-    // global tool_settings shape + the resolver's resolve_tool_state).
-    overrides[tool] = { state };
+    if (state === 'default') return;  // inherit — no entry for this purpose
+    const rec = (overrides[tool] = overrides[tool] || { states: {} });
+    rec.states[purpose] = state;
   });
 
   const threshVal = document.getElementById('tok-compact-threshold')?.value;

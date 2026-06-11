@@ -5,38 +5,70 @@ Every tool the LLM can call in a chat turn. Names match the actual
 `/v1/tools/call` to Brain → `server_lib/tool_mcp.handle_tools_call`
 dispatches via `engine.TOOL_DISPATCH` (or MCP fallback) → result returned.
 
-Tools are gated per-call by a 3-layer resolver:
+Tools are gated per-call by a 3-layer resolver, and the status is now
+settable **per use-case** (purpose):
 1. Global status + purposes (admin-edited `config.json → tool_settings`).
-   Each tool has ONE status, `state ∈ {active, inactive, deferred}` —
+   Each tool has ONE scalar status, `state ∈ {active, inactive, deferred}` —
    active = in prompt · inactive = off · deferred = tool_search-only.
-2. Per-agent override (`agent.json → token_config.tool_overrides.<name>` →
-   `{state}`): a status here REPLACES the global state; absent = inherit.
-3. Call purpose: `interactive | transform | memory_summary |
+   The scalar `state` is the **catch-all default for every purpose**.
+   An optional `states: {<purpose>: state}` map sets the status independently
+   per channel; any purpose NOT in the map inherits the scalar default.
+2. Per-agent override (`agent.json → token_config.tool_overrides.<name>`):
+   `{states: {<purpose>: state}}` (or a legacy scalar `{state}`). A purpose
+   entry here REPLACES the global state for that purpose; absent = inherit.
+3. Call purpose / use-case: `interactive | transform | memory_summary |
    research_minimal | helpdesk`.
 
-Brainy (the helpdesk bot) runs with `purpose='helpdesk'` and a fixed
-read-only tool set — see "Helpdesk tools" below. Since 9.22.0, the
-resolved tool names are also enforced at dispatch: `tool_mcp` rejects any
-`tool_use` not in the turn's allowed list before it runs.
+Per-purpose resolution is `resolve_tool_state_for(name, agent_id, purpose)`
+(agent purpose → agent scalar → global purpose → global scalar → 'active').
+`resolve_active_tools` applies it uniformly across ALL purposes: the per-purpose
+base sets (interactive = agent's allowed set; memory_summary / research_minimal /
+helpdesk = their fixed sets) are now **defaults** — a tool set `active`/`deferred`
+for a purpose it isn't in is ADDED; one set `inactive` is REMOVED. This is
+guarded by a no-op fast path: when no tool carries a `states.<purpose>` entry,
+the channel's surface is byte-identical to before (preserving the warm-pool KV
+prefix for `interactive`).
+
+**Two editing surfaces.** General Settings → Tools shows a GLOBAL matrix: every
+tool row carries a status dropdown per use-case (Chat · Transform · Memory ·
+Research · Brainy) plus a per-channel status summary (active/inactive/deferred
+counts + realized token size of the tool injection). The expanded tool panel's
+single "Standard (alle Zwecke)" dropdown edits the scalar default. Agent
+Settings → Tokens shows the per-agent override matrix (currently the Chat /
+`interactive` column only — the resolver supports the rest, the UI exposes one).
+
+Brainy (the helpdesk bot) runs with `purpose='helpdesk'` and a fixed read-only
+tool set BY DEFAULT — see "Helpdesk tools" below. That set is now a default an
+admin can extend/restrict via the helpdesk column: adding a write/exec tool there
+makes Brainy able to write/run (the global matrix warns ⚠ on this). Since 9.22.0
+the resolved tool names are enforced at dispatch: `tool_mcp` rejects any
+`tool_use` not in the turn's allowed list before it runs — and that allowed list
+is the resolved (post-override) set, so an added write tool IS dispatchable.
 
 Deferred tools are hidden from the initial list and surfaced via `tool_search`.
 
-**Schema vs. admin prose — additive, never a replacement.** Each tool's wire
-schema (the `description` + `input_schema` the LLM actually receives on the
-`tools` array) lives in code (`engine/tool_schemas.py → TOOL_DEFINITIONS`).
-`resolve_active_tools` builds the wire array straight from `TOOL_DEFINITIONS`
-— it only filters + sorts; it never rewrites a tool's schema `description`.
-The admin "Prompt-Text" fields in **General Settings → Tools**
-(`config.json → tool_settings`: description / when_to_use / warnings /
-examples) do NOT touch the wire schema at all. They are rendered as a
-**separate `## <tool>` block appended to the system prompt** by
-`_render_tool_descriptions` (gated by `applies_with`). So an admin
-"description" override is *additional* guidance layered on top of the
-unchanged wire description — additive, not a substitute. The `input_schema`
-(parameters/types/required) is never editable from the UI — it's bound to the
-tool's Python signature. Each tool panel shows a read-only **"Wire-Schema"**
-block (the verbatim code description + param table + raw `input_schema` JSON)
-so an operator can confirm exactly what the model is given on the wire.
+**Two layers reach the model: the wire schema and the admin prose overlay.**
+Each tool's wire schema (the `description` + `input_schema` on the `tools` array)
+defaults to code (`engine/tool_schemas.py → TOOL_DEFINITIONS`).
+- **Wire description — now editable** (v9.101.4): `config.json →
+  tool_settings.<tool>.wire_description` overrides the code description. When set,
+  `_filter_tools` (the single seam every purpose + warmup path uses) swaps it onto
+  the wire dict the model receives (shallow-copying only overridden tools, so
+  TOOL_DEFINITIONS is never mutated and non-overridden tools stay KV-stable).
+  Empty = code default. Edited in the per-tool ⚙ config modal ("Beschreibung
+  (Wire — editierbar)" + reset-to-default). GET /v1/tools/settings exposes
+  `wire_description_code` / `wire_description_override` / effective
+  `wire_description`.
+- **`input_schema` stays read-only** — bound to the tool's Python signature; the
+  modal shows it (param table + raw JSON) for verification only.
+- **Admin "Prompt-Text" overlay** (description / when_to_use / warnings / examples
+  in tool_settings) is SEPARATE from the wire schema: rendered as a `## <tool>`
+  block appended to the system prompt by `_render_tool_descriptions` (gated by
+  `applies_with`) — additional guidance layered on top, not the wire schema.
+
+Editing the wire description (like a prose edit) changes the system-prompt tool
+array, so the warm-pool KV prefix desyncs until the next warmup rebuild (no
+explicit invalidation is wired — a one-off latency cost on the first turn after).
 
 ## Core file ops
 
@@ -108,6 +140,22 @@ so an operator can confirm exactly what the model is given on the wire.
 
 (`mempalace_get_drawer`, `mempalace_list_drawers` are admin-side; see
 `03-storage.md` for direct SQLite if you need to inspect MemPalace.)
+
+### Structured key/value memory (separate from MemPalace)
+
+The agent's named-item memory — discrete facts retrievable by name, not the
+vector palace. Project-aware (writes to the active project's dir). In the
+`memory` group; registered with schemas as of v9.101.3 (they were dispatchable
+but schema-less before, so the model never actually received them).
+
+- `memory_store(name, content, description?, type?)` — save one named memory
+  (`type`: general | user | feedback | project).
+- `memory_recall(query?, limit?, type?, mode?)` — semantic search over stored
+  memories (graph-link expansion; `mode='graph'` = 2 hops). Empty query lists all.
+- `memory_delete(name)` — forget a memory by exact name.
+- `memory_shared(action?, scope?, …)` — read/write SHARED memory: `scope='global'`
+  (main agent's store, visible to all) or `scope='team'` (team head's store).
+  `action`: 'recall' (default) or 'store'.
 
 ## Context manager
 
@@ -282,6 +330,7 @@ core          read_file write_file edit_file list_directory search_files
 documents     read_document write_document edit_document
 memory        mempalace_query save_chat_to_memory
               mempalace_kg_query mempalace_kg_search mempalace_kg_neighbors
+              memory_store memory_recall memory_delete memory_shared
 context       context_search context_detail context_recall
 web           web_fetch exa_search searxng_search
 email         gmail_inbox gmail_read gmail_search gmail_send gmail_reply

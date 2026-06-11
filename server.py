@@ -3453,6 +3453,13 @@ def main():
     _state_migrated = engine.migrate_tool_settings_to_state(server_config["tool_settings"])
     if _state_migrated:
         print(f"Tool settings: migrated {_state_migrated} record(s) to canonical state")
+    # ONE-TIME: seed per-use-case `states` from the legacy code base sets so the
+    # table becomes the source of truth for purpose membership without changing
+    # behaviour. Runs AFTER state migration (needs scalar `state`); idempotent —
+    # skips any record that already has a `states` map (admin edits preserved).
+    _seeded = engine.seed_tool_purpose_states(server_config["tool_settings"])
+    if _seeded:
+        print(f"Tool settings: seeded per-use-case states for {_seeded} tool(s)")
     _ts_after = json.dumps(server_config["tool_settings"], sort_keys=True)
     if _ts_before != _ts_after or persisted_during_init:
         try:
