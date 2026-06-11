@@ -37,7 +37,11 @@ TOOL_DEFINITIONS = [
         "name": "write_file",
         "description": (
             "Create a new file or overwrite an existing file with the given content. "
-            "Creates parent directories automatically if they don't exist."
+            "Creates parent directories automatically if they don't exist. "
+            "Use a RELATIVE filename (e.g. `report.docx`) so the file lands in the "
+            "session's artifact folder and auto-promotes to the Artifacts panel; "
+            "do NOT write to an absolute path (it won't appear there) unless the "
+            "user explicitly gave you one."
         ),
         "input_schema": {
             "type": "object",
@@ -283,7 +287,10 @@ TOOL_DEFINITIONS = [
             "IMPORTANT: Only use non-interactive commands. For example use 'top -l 1' (not 'top'), "
             "'ps aux' (not 'htop'), 'cat' (not 'less'). "
             "Use this for: running scripts, git commands, package managers, compiling, testing, "
-            "system administration, or any shell operation."
+            "system administration, or any shell operation. "
+            "The working directory is the session's artifact folder — write output files with a "
+            "RELATIVE filename so they auto-promote to the Artifacts panel; avoid absolute paths "
+            "unless the user gave you one."
         ),
         "input_schema": {
             "type": "object",
@@ -840,7 +847,10 @@ TOOL_DEFINITIONS = [
         "description": (
             "Create a new document from markdown content. Dispatches by file extension: "
             ".docx (headings, tables, bold/italic), .xlsx (markdown tables to sheets), "
-            ".pptx (# sections to slides), .pdf (basic formatted PDF via reportlab)."
+            ".pptx (# sections to slides), .pdf (basic formatted PDF via reportlab). "
+            "Use a RELATIVE filename (e.g. `report.docx`) so it lands in the session's "
+            "artifact folder and auto-promotes to the Artifacts panel; avoid absolute "
+            "paths unless the user gave you one."
         ),
         "input_schema": {
             "type": "object",

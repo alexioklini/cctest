@@ -1046,7 +1046,7 @@ function renderAssistantMessage(msg, idx) {
       ${refsHtml}
       <div class="msg-actions-bar">
         ${turnStatsHtml}
-        ${meta && meta.auto_route ? `<button class="msg-action-btn" onclick="openClassificationModal(${idx})" title="Promptklassifikation & Routing-Entscheidung anzeigen">
+        ${meta && meta.auto_route ? `<button class="msg-action-btn" onclick="openClassificationModal(${idx})" title="${meta.auto_route.classifier_only ? 'Promptklassifikation & Tool-Auswahl anzeigen' : 'Promptklassifikation & Routing-Entscheidung anzeigen'}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><polygon points="12 7 14.5 13 12 11.5 9.5 13"/></svg>
         </button>` : ''}
         ${msg.id != null ? renderFeedbackControl('chat', msg.id, state.activeChat?.sessionId || '', content) : ''}
@@ -1785,27 +1785,59 @@ function openClassificationModal(idx) {
     </div>
   </div>`;
 
-  // Section: model decision
-  body += `<div style="margin-bottom:18px">
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-400);margin-bottom:6px">Modellentscheidung</div>
-    <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:start;font-size:13px">
-      <div style="color:var(--text-400)">Gewähltes Modell</div><div style="color:var(--text-000);font-weight:600">${esc(modelName)}</div>
-      <div style="color:var(--text-400)">Warum</div><div style="color:var(--text-200)">${esc(ar.reason || '—')}</div>
-    </div>
-  </div>`;
+  // Section: model decision. On a classifier-only turn (concrete model picked
+  // by the user, NO auto-routing) there is no model decision — the classifier
+  // only reshaped the tool surface. Show the active model as context, not as a
+  // "decision", and skip the routing reason.
+  if (ar.classifier_only) {
+    body += `<div style="margin-bottom:18px">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-400);margin-bottom:6px">Modell</div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:start;font-size:13px">
+        <div style="color:var(--text-400)">Aktives Modell</div><div style="color:var(--text-000);font-weight:600">${esc(modelName)}</div>
+        <div style="color:var(--text-400)">Hinweis</div><div style="color:var(--text-200);font-style:italic">Kein Auto-Routing — das Modell wurde manuell gewählt; der Classifier hat nur die Tool-Auswahl bestimmt.</div>
+      </div>
+    </div>`;
+  } else {
+    body += `<div style="margin-bottom:18px">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-400);margin-bottom:6px">Modellentscheidung</div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:start;font-size:13px">
+        <div style="color:var(--text-400)">Gewähltes Modell</div><div style="color:var(--text-000);font-weight:600">${esc(modelName)}</div>
+        <div style="color:var(--text-400)">Warum</div><div style="color:var(--text-200)">${esc(ar.reason || '—')}</div>
+      </div>
+    </div>`;
+  }
 
-  // Section: tool-gating decision
+  // Section: GROUND-TRUTH tool resolution — the exact tool NAMES that
+  // resolve_active_tools put on the wire this turn vs. deferred/excluded.
+  // Captured from build_first_turn_prefix (server), NOT reconstructed from
+  // group tables — this is what was actually handed to the model.
+  const tr = ar.tool_resolution || null;
+  if (tr && (tr.in_prompt || tr.deferred || tr.excluded)) {
+    const inP = tr.in_prompt || [];
+    const def = tr.deferred || [];
+    const exc = tr.excluded || [];
+    body += `<div style="margin-bottom:18px">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-400);margin-bottom:6px">Tatsächlich übergebene Tools <span style="font-weight:400;text-transform:none;letter-spacing:0">(Wire dieser Anfrage)</span></div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:start;font-size:13px">
+        <div style="color:var(--text-400)">Im Prompt <span style="color:var(--text-300)">(${inP.length})</span></div><div>${chips(inP, 'cls-keep')}</div>
+        <div style="color:var(--text-400)">Zurückgestellt <span style="color:var(--text-300)">(${def.length}, per tool_search abrufbar)</span></div><div>${chips(def, 'cls-drop')}</div>
+        ${exc.length ? `<div style="color:var(--text-400)">Hart ausgeschlossen <span style="color:var(--text-300)">(${exc.length})</span></div><div>${chips(exc, 'cls-drop')}</div>` : ''}
+      </div>
+    </div>`;
+  }
+
+  // Section: tool-gating decision (GROUP-level, derived — secondary context to
+  // the exact tool list above).
   if (tg) {
     const gateBadge = tg.applied
       ? '<span style="color:var(--accent-000, #8b5cf6);font-weight:600">aktiv — Tools optimiert (Deferral)</span>'
       : '<span style="color:var(--text-300);font-weight:600">nicht angewendet — statische Deferral-Konfiguration</span>';
     body += `<div>
-      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-400);margin-bottom:6px">Tool-Auswahl</div>
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-400);margin-bottom:6px">Gruppen-Einordnung <span style="font-weight:400;text-transform:none;letter-spacing:0">(Classifier, abgeleitet)</span></div>
       <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:start;font-size:13px">
         <div style="color:var(--text-400)">Status</div><div>${gateBadge}</div>
-        <div style="color:var(--text-400)">Grund</div><div style="color:var(--text-200)">${esc(tg.reason || '—')}</div>
-        ${tg.applied ? `<div style="color:var(--text-400)">Im Prompt</div><div>${chips(tg.kept_groups, 'cls-keep')}</div>
-        <div style="color:var(--text-400)">Zurückgestellt (per tool_search abrufbar)</div><div>${chips(tg.excluded_groups, 'cls-drop')}</div>` : ''}
+        ${tg.applied ? `<div style="color:var(--text-400)">Benötigte Gruppen</div><div>${chips(tg.kept_groups, 'cls-keep')}</div>
+        <div style="color:var(--text-400)">Nicht benötigte Gruppen</div><div>${chips(tg.excluded_groups, 'cls-drop')}</div>` : ''}
       </div>
     </div>`;
   }
@@ -1815,7 +1847,7 @@ function openClassificationModal(idx) {
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
   overlay.innerHTML = `<div class="modal-content" style="max-width:560px;max-height:88vh;display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;padding:20px 24px 12px;gap:12px;border-bottom:1px solid var(--border-100)">
-      <h2 style="margin:0;font-size:17px;font-weight:600;color:var(--text-000)">Promptklassifikation & Routing</h2>
+      <h2 style="margin:0;font-size:17px;font-weight:600;color:var(--text-000)">${ar.classifier_only ? 'Promptklassifikation & Tool-Auswahl' : 'Promptklassifikation & Routing'}</h2>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()" style="margin-left:auto">&times;</button>
     </div>
     <div style="flex:1;overflow-y:auto;padding:18px 24px 24px">${body}</div>

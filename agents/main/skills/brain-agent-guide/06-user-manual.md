@@ -134,6 +134,16 @@ Auto-Routing. Wird beim Senden eine DSGVO-Sperre ausgelöst, verschwindet
 nur lokale Modelle). Der Verfasser zeigt weiter „✨ Smart (…)"; welches Modell
 gerade arbeitet, steht im Spinner und im Tooltip.
 
+**Klassifikations-Inspektor (Lupe am Turn-Ende)**: Lief für eine Anfrage der
+LLM-Classifier (Einstellungen → Server → Auto-Routing = LLM/Hybrid), erscheint
+unter der Antwort eine kleine Lupe. Ein Klick öffnet ein Fenster mit der
+Klassifikation (Aufgabentypen, Komplexität), bei ✨ Smart zusätzlich der
+Modellentscheidung — und vor allem mit den **tatsächlich übergebenen Tools
+dieser Anfrage**: exakt, welche Tools im Prompt standen, welche zurückgestellt
+wurden (per `tool_search` weiterhin erreichbar) und welche hart ausgeschlossen
+waren. Der Inspektor erscheint **pro Anfrage** (der Classifier läuft in jedem
+Turn) — auch wenn ein Modell manuell gewählt wurde, nicht nur bei ✨ Smart.
+
 **Abbrechen / Wieder-Anhängen**: Stopp drücken bricht den Turn ab.
 Schließt man den Browser-Tab mitten im Turn, einfach den Chat wieder
 öffnen — der Worker läuft weiter und der Verlauf holt auf.

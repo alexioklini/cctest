@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.101.5"
+VERSION = "9.101.7"
 VERSION_DATE = "2026-06-11"
 CHANGELOG = [
+    ("9.101.7", "2026-06-11", "fix(ui)+refactor(preamble): four follow-ups to the classifier-inspector work. (1) GROUND-TRUTH tools in the modal: resolve_active_tools gained an optional `breakdown` out-param filled in place with {in_prompt, deferred, excluded} read off its OWN final wire computation (not reconstructed from TOOL_GROUPS); build_first_turn_prefix threads it; the chat worker captures it EVERY turn (build_first_turn_prefix runs per turn; the per-turn classifier's defer_extra_tools/undefer_tools are installed into the request context BEFORE the prefix build) and attaches auto_route.tool_resolution to both persisted metadata + the live done event. The modal renders a new 'Tatsächlich übergebene Tools (Wire dieser Anfrage)' section with exact tool NAMES + counts (Im Prompt / Zurückgestellt / Hart ausgeschlossen); the group-level tool_gating is demoted to 'Gruppen-Einordnung (Classifier, abgeleitet)'. Verified live across 2 sequential gemma turns: web turn → 4 tools in-prompt [ask_user, searxng_search, tool_search, web_fetch], write turn → 11 [+core+documents]. (2) Dropped the 'Grund' prose row from the group section (unnecessary). (3) thinking-block collapse fix: the collapsed block leaked ~25px (first line of reasoning) because `.thinking-block-body > .collapsible-inner` carries 12px padding + 1px border-top, and overflow:hidden does NOT clip an element's own padding/border, so the 0fr grid track couldn't reach 0. Added `.thinking-block:not(.open) > .thinking-block-body > .collapsible-inner { padding-top/bottom:0; border-top-width:0 }` (higher specificity, no !important). Playwright-probed: collapsed 25px→0, open 25px. (4) artifact-folder preamble SPLIT + gated: the generic 'write relative filenames → Artifacts panel' guidance moved into the file-writing tool descriptions (write_file/execute_command/write_document; python_exec already had it), so it only appears when the classifier keeps a file group. _artifact_folder_preamble_text now carries ONLY the per-session absolute path (can't be static / in a schema — would break the warm KV prefix), and handlers/chat.py gates the prepend on _auto_tool_groups intersecting {core, documents, code_exec} (None = no signal = show, fail-open). Stops the path pointer being unconditional noise on greeting/lookup turns that have no file tools. NB: tool-description edits invalidate the warm-pool KV prefix until the next warmup re-prime (expected). js_gate PASS, py_compile OK."),
+    ("9.101.6", "2026-06-11", "feat(classifier): the per-turn Promptklassifikation inspector button now also appears on CONCRETE-MODEL turns when only the LLM classifier ran (auto_route.classifier_mode=llm/hybrid), not just in ✨ Auto mode. Previously handlers/chat.py only built metadata.auto_route in the want_auto/auto-by-agent branch; the concrete-model branch ran resolve_task_analysis() to reshape tool deferral but discarded the analysis → no button, the classifier's tool decision was invisible (exactly the gap hit while debugging chat 62d97bd1, where gemma-4-26b got a classifier-trimmed tool set — tokens_in 1577/2909, NOT the full 28-tool surface — but you couldn't see what it picked). Now: when _ta.source=='llm', the else-branch builds an auto_route-shaped dict {classifier_only:true, model:session.model, analysis:{task_types,tools,complexity,reasoning}} which flows through the existing worker path (msg_metadata['auto_route'] + tool_gating decision from session._auto_tool_groups). The modal (web/js/chat_render.js openClassificationModal) detects classifier_only and swaps the 'Modellentscheidung' section for a 'Modell' section (active model + 'kein Auto-Routing, Classifier bestimmte nur die Tool-Auswahl' note); title + button tooltip adapt too. No live auto_route SSE event is emitted on this path (no model switch), so no spurious model-switch toast — the metadata reaches the client via the done event. PLUS: the modal now shows the GROUND-TRUTH tool list — exactly what resolve_active_tools put on the wire THIS turn — not a reconstruction from group tables. resolve_active_tools gained an optional `breakdown` out-param (filled in place with {in_prompt, deferred, excluded} read off its own final computation); build_first_turn_prefix threads it through; the chat worker captures it per turn (build_first_turn_prefix runs EVERY turn — the classifier re-runs every turn, defer_extra_tools/undefer_tools are installed into the request context before the prefix build so the breakdown reflects this turn's classifier) and attaches it as auto_route.tool_resolution on both the persisted metadata and the live done event. The modal renders a new 'Tatsächlich übergebene Tools (Wire dieser Anfrage)' section with exact tool NAMES (Im Prompt / Zurückgestellt / Hart ausgeschlossen, with counts); the old group-level tool_gating is demoted to 'Gruppen-Einordnung (Classifier, abgeleitet)' as secondary context. Verified live across 2 sequential turns on a concrete gemma model. No new globals (edited existing fns). js_gate PASS, py_compile OK."),
     ("9.101.5", "2026-06-11", "ui(citations): the Quellentreue notice is now a compact badge instead of an inline markdown paragraph. Previously handlers/chat.py appended a multi-line warning block (`> Hinweis zur Quellentreue: N von M Behauptungen ohne Quellenangabe ...`) into the assistant reply content when citation_reround_needed fired. Now the server stops baking that prose into `reply` and instead stores the pieces in metadata.citation_validation: warning_appended (the existing flag) + warning_text (the full notice). The frontend (_buildCitationWarnBadge in web/js/chat_render.js) renders a small amber chip 'x von y ohne Quellenangabe' under the message, with the full notice as the native title tooltip; numbers come from uncited_claims / claim_total. Survives reload (metadata is not wire-stripped client-side). Old messages already have the paragraph baked into content and keep showing it until re-sent. ALSO: the badge now only appears when a retrieval tool was ACTUALLY CALLED this turn (any tool in _RETRIEVAL_TOOLS = {mempalace_query, searxng_search, exa_search, web_fetch, read_document, read_file} present in _partial_tools), checked via turn_has_retrieval_tools(called_tool_names) — previously the validator/warning fired on any grounding-classified turn even when the model answered from its own knowledge without retrieving anything, producing a misleading 'N von N ohne Quellenangabe'. No sources called → no badge. New global _buildCitationWarnBadge (net-globals 1281->1282, baseline bumped). js_gate PASS, py_compile OK."),
     ("9.101.4", "2026-06-11", "feat(tools): the per-tool config panel (⚙ on each matrix row → modal, kept SEPARATE from the status table) is restored to full richness AND the tool's WIRE description is now editable. Previously the wire schema was a read-only verification window; now the modal shows an editable 'Beschreibung (Wire)' textarea + a 'reset to code default' button, alongside the still-read-only code default / parameter table / raw input_schema, with the admin Prompt-Text overlay below. STORAGE: a new tool_settings.<tool>.wire_description override (config.json) — empty/absent = use the code default. APPLIED ON THE WIRE via _filter_tools (the single seam every purpose + warmup path goes through): _apply_wire_description_override swaps the override onto the wire dict, SHALLOW-copying only overridden tools so TOOL_DEFINITIONS is never mutated and non-overridden tools stay object-identical (KV-prefix byte-stable — verified: read_file stays the same object, list_directory override is a copy carrying the new text). API: GET /v1/tools/settings now returns wire_description_code (verbatim code), wire_description_override (the edit), wire_description (effective = override||code); POST accepts wire_description (empty clears it) and PRESERVES an existing override across a prose-only save. input_schema stays a code contract (not editable). IMPLICATION (documented, not auto-handled): like a prose edit, a wire-description edit changes the system-prompt tool array → the warm pool's KV prefix desyncs until the next warmup rebuild (no explicit invalidation wired). js_gate PASS (net-globals 1280→1281 for resetWireDescription). py_compile OK."),
     ("9.101.3", "2026-06-11", "fix(tools): register the 4 structured memory tools that were in TOOL_DISPATCH but missing from TOOL_DEFINITIONS + TOOL_GROUPS — memory_store / memory_recall / memory_delete / memory_shared. They had working impls (engine/mempalace_glue.py) + dispatch entries, but _filter_tools drops any tool without a TOOL_DEFINITIONS schema, so the model was NEVER actually offered them (they surfaced only as the '(ungrouped)' artifact in the settings UI). Added Anthropic-shape schemas (params derived from each impl's args.get usage) + put all 4 in the `memory` group. They are the agent's named key/value memory: memory_store (save a discrete fact by name, project-aware), memory_recall (semantic search + graph expansion over stored items), memory_delete (forget by name), memory_shared (read/write global or team-scoped shared memory) — distinct from mempalace_query (vector palace) + save_chat_to_memory (whole-conversation). OpenAI mirror auto-derives. Boot seed gives them states {interactive:active, rest:inactive} (Chat-only default, matching the other memory tools). Verified live: all 4 now dispatch=defs=grouped=True, '(ungrouped)' set empty, in matrix with interactive=active, every Σ column still sums to total (74). memory_persist (referenced in old CLAUDE.md) is NOT a real tool — no dispatch. py_compile OK."),
@@ -1469,8 +1471,17 @@ def resolve_active_tools(
     discovered_tools: set[str] | None = None,
     mcp_manager=None,
     is_openai_shape: bool = False,
+    breakdown: dict | None = None,
 ) -> list[dict]:
     """Single source of truth for what tools the model sees on a given turn.
+
+    If `breakdown` (a dict) is passed, it is filled IN PLACE with the GROUND
+    TRUTH of this resolution — no reconstruction from group tables: it records
+    `in_prompt` (sorted names actually in the wire array), `deferred` (built-in
+    names this turn pushed to tool_search-only), and `excluded` (names hard-
+    dropped via exclude_tools). The chat worker passes this through
+    build_first_turn_prefix so the per-turn classification modal shows exactly
+    what was handed to the model vs. deferred — not a derived guess.
 
     Returns the wire payload (Anthropic shape by default; OpenAI shape via
     `is_openai_shape=True`). Every caller — chat handler, scheduler, warmup,
@@ -1585,6 +1596,20 @@ def resolve_active_tools(
             tools.sort(key=lambda t: (t.get("function", {}) or {}).get("name", ""))
         else:
             tools.sort(key=lambda t: t.get("name", ""))
+
+    if breakdown is not None:
+        # GROUND TRUTH for the inspector. in_prompt = the final wire names.
+        # deferred = the names resolution pushed to tool_search-only this turn
+        # (built-in deferred_names that did NOT end up in-prompt, i.e. weren't
+        # discovered/un-deferred). excluded = hard-dropped names. All read off
+        # the actual computation above, never re-derived from group tables.
+        _in_prompt = {_name_of(t) for t in tools}
+        _discovered = discovered_tools or set()
+        breakdown["in_prompt"] = sorted(n for n in _in_prompt if n)
+        breakdown["deferred"] = sorted(
+            n for n in deferred_names
+            if n not in _in_prompt and n not in _discovered)
+        breakdown["excluded"] = sorted(_excluded) if _excluded else []
 
     return tools
 
@@ -7429,7 +7454,8 @@ def build_first_turn_prefix(model: str, agent_id: str, *,
                             discovered_tools: set | None = None,
                             is_openai_shape: bool = False,
                             purpose: str = "interactive",
-                            system_prompt_override: str | None = None):
+                            system_prompt_override: str | None = None,
+                            breakdown: dict | None = None):
     """SINGLE source of truth for the first-turn KV prefix (system prompt +
     active tools). Both the warm-pool prime (`run_model_warmup`) and the live
     chat worker call this so their prefixes are byte-identical — the entire
@@ -7456,6 +7482,7 @@ def build_first_turn_prefix(model: str, agent_id: str, *,
         discovered_tools=discovered_tools if discovered_tools is not None else set(),
         mcp_manager=mcp_manager,
         is_openai_shape=is_openai_shape,
+        breakdown=breakdown,
     )
     active_tool_names = {
         (t.get("function", {}) or {}).get("name", "") or t.get("name", "")

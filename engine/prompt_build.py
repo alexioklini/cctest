@@ -762,12 +762,16 @@ def _artifact_folder_preamble_text(agent_id: str, session_id: str) -> str:
     _folder = os.path.join(
         _brain.AGENTS_DIR, agent_id, "artifacts",
         _brain._get_artifact_session_folder(session_id))
-    return (f"[Session artifact folder (your working directory): {_folder} — "
-            f"this is where `python_exec` and `execute_command` run. Write every "
-            f"output file with a RELATIVE filename (e.g. `report.docx`) so it "
-            f"lands here and auto-promotes to the Artifacts panel. Do NOT write "
-            f"to an absolute path (it won't appear in the Artifacts panel) unless "
-            f"the user explicitly gave you one.]")
+    # Only the per-session ABSOLUTE PATH lives here — the generic "write
+    # relative filenames so they auto-promote to the Artifacts panel" guidance
+    # moved into the file-writing tool descriptions (python_exec/
+    # execute_command/write_file/write_document), which only appear when the
+    # classifier keeps a file group, so the advice rides with the tools instead
+    # of being unconditional noise. This line is per-session (can't be static /
+    # in a tool schema without breaking the warm-pool KV prefix) and is gated by
+    # the caller on a file-write tool being in this turn's prompt.
+    return (f"[Session artifact folder (your working directory): {_folder}. "
+            f"Write output files with a RELATIVE filename so they land here.]")
 
 
 def _files_in_chat_preamble_text(session_id: str) -> str:

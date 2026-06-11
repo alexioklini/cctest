@@ -2216,6 +2216,16 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   line-height: 1.5;
   color: var(--text-300);
 }
+/* Collapsed: zero the inner's padding + border so the 0fr grid track clips to
+   a true 0 height. overflow:hidden does NOT clip an element's own padding/
+   border, so 12px padding + 1px border-top leaked ~25px of the first line
+   through the collapsed block. Higher specificity than the rule above, so no
+   !important needed. */
+.thinking-block:not(.open) > .thinking-block-body > .collapsible-inner {
+  padding-top: 0;
+  padding-bottom: 0;
+  border-top-width: 0;
+}
 
 /* Guided execution task panel */
 .guided-tasks-block {

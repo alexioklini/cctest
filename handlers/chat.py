@@ -2199,12 +2199,22 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 # On turn 0 _discovered_tools is empty (matches warmup); the
                 # anthropic wire-shape (is_openai_shape=False) only changes tool
                 # serialization, not the KV-relevant prompt/name set.
+                _tool_breakdown = {}
                 _system_prompt, _active_tools, _active_tool_names = engine.build_first_turn_prefix(
                     session.model, session.agent_id,
                     mcp_manager=getattr(engine, "_mcp_manager", None),
                     discovered_tools=engine.get_request_context()._discovered_tools or set(),
                     is_openai_shape=False,
+                    breakdown=_tool_breakdown,
                 )
+                # Stash the GROUND-TRUTH per-turn tool resolution (in_prompt /
+                # deferred / excluded — exactly what resolve_active_tools handed
+                # the wire this turn) for the classification inspector. Runs on
+                # EVERY turn (the classifier re-runs every turn), not just turn 0.
+                try:
+                    engine.get_request_context()._tool_breakdown = _tool_breakdown
+                except Exception:
+                    pass
                 # Persist for the session inspector — overwritten per turn,
                 # no history. Best-effort; persist failure must not block
                 # the chat call.
@@ -2438,6 +2448,17 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         _ar_meta = dict(auto_route)
                         if _gating_decision is not None:
                             _ar_meta["tool_gating"] = _gating_decision
+                        # GROUND TRUTH: the exact tools resolve_active_tools put
+                        # on the wire this turn vs. deferred/excluded — captured
+                        # from build_first_turn_prefix, NOT reconstructed from
+                        # group tables. Computed per turn (classifier re-runs
+                        # every turn). May be unset if the turn errored before
+                        # the prefix build.
+                        try:
+                            if _tool_breakdown:
+                                _ar_meta["tool_resolution"] = _tool_breakdown
+                        except NameError:
+                            pass
                         msg_metadata["auto_route"] = _ar_meta
                     if _partial_tools:
                         msg_metadata["tools"] = _sanitize_partial_tools(_partial_tools)
@@ -2723,6 +2744,11 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         _ar_done = dict(auto_route)
                         if _gating_decision is not None:
                             _ar_done["tool_gating"] = _gating_decision
+                        try:
+                            if _tool_breakdown:
+                                _ar_done["tool_resolution"] = _tool_breakdown
+                        except NameError:
+                            pass
                         done_data["auto_route"] = _ar_done
                     # Include file attachments
                     if created_files:
@@ -3593,6 +3619,24 @@ class ChatHandlerMixin:
                     if isinstance(_ta, dict) and "tool_groups" in _ta:
                         with session.lock:
                             session._auto_tool_groups = _ta.get("tool_groups") or []
+                    # Surface the classifier decision even on concrete-model
+                    # turns (NO auto-routing), so the chat-view inspector button
+                    # appears whenever the LLM classifier ran — not only in Auto
+                    # mode. We reuse the auto_route metadata shape (so the same
+                    # button + modal work unchanged) but mark classifier_only so
+                    # the modal can drop the "model decision" section: no model
+                    # was chosen here, only the tool surface was reshaped.
+                    if isinstance(_ta, dict) and _ta.get("source") == "llm":
+                        auto_route = {
+                            "classifier_only": True,
+                            "model": session.model or "",
+                            "analysis": {
+                                "task_types": _ta.get("task_types", []),
+                                "tools": _ta.get("tools", []),
+                                "complexity": _ta.get("complexity", ""),
+                                "reasoning": _ta.get("reasoning", ""),
+                            },
+                        }
                 except Exception:
                     pass  # fail-open: no reshape, static deferral stands
 
@@ -3657,8 +3701,23 @@ class ChatHandlerMixin:
         # session → no line; the real turn has one → full prefill, ~20s on the
         # 26B). Prepended here to the first user message instead, so the system
         # prompt stays session-agnostic and the warm prefix is reused.
+        # Gate the artifact-folder pointer on whether a file-WRITING tool is
+        # actually in this turn's prompt. The generic "write relative filenames
+        # → Artifacts panel" guidance now lives in the tool descriptions
+        # (python_exec/execute_command/write_file/write_document); the preamble
+        # carries ONLY the per-session absolute path (which can't be static —
+        # it's session-specific and would break the warm-pool KV prefix if put
+        # in the system prompt or a tool schema). So: no file-write tool this
+        # turn → no path pointer (it was pure noise on a greeting / lookup turn,
+        # see the per-turn classifier trimming). _auto_tool_groups is the
+        # classifier's needed groups (set just above for both the auto and
+        # concrete-model branches): a LIST → show only if it flags a file group;
+        # None → no signal (static deferral, file tools present) → show.
+        _FILE_WRITE_GROUPS = {"core", "documents", "code_exec"}
+        _ctg = getattr(session, "_auto_tool_groups", None)
+        _has_file_tools = (_ctg is None) or bool(set(_ctg) & _FILE_WRITE_GROUPS)
         preamble_text = ""
-        if len(session.messages) == 0:
+        if len(session.messages) == 0 and _has_file_tools:
             _art_pre = engine._artifact_folder_preamble_text(session.agent_id, session.id)
             if _art_pre:
                 preamble_text = _art_pre
