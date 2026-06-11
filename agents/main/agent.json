@@ -40,22 +40,22 @@
     "tool_overrides": {
       "memory_delete": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "memory_recall": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "memory_shared": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "memory_store": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "transcribe_audio": {
@@ -65,22 +65,22 @@
       },
       "code_graph_build": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "code_graph_enhance": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "code_graph_impact": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "code_graph_query": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "delegate_task": {
@@ -100,37 +100,52 @@
       },
       "gmail_inbox": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "gmail_read": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "gmail_reply": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "gmail_search": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "gmail_send": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "git_command": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
         }
       },
       "github_command": {
         "states": {
-          "interactive": "deferred"
+          "interactive": "inactive"
+        }
+      },
+      "helpdesk_session_info": {
+        "states": {
+          "interactive": "inactive"
+        }
+      },
+      "helpdesk_user_activity": {
+        "states": {
+          "interactive": "inactive"
+        }
+      },
+      "helpdesk_user_context": {
+        "states": {
+          "interactive": "inactive"
         }
       },
       "mcp_connect": {
