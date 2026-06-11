@@ -114,7 +114,7 @@ async function searchCCMarketplace(query) {
     return;
   }
   results.innerHTML = `<div style="padding:20px;text-align:center">
-    <div style="display:inline-block;width:18px;height:18px;border:2px solid #e8e7e0;border-top-color:#d97757;border-radius:50%;animation:spin 0.6s linear infinite"></div>
+    <div style="display:inline-block;width:18px;height:18px;border:2px solid #e8e7e0;border-top-color:#1e3a8a;border-radius:50%;animation:spin 0.6s linear infinite"></div>
     <div style="margin-top:8px;color:#73726c;font-size:12px">Marketplace wird nach „${esc(query)}" durchsucht…</div>
   </div>`;
   if (searchBtn) { searchBtn.textContent = '...'; searchBtn.disabled = true; }
@@ -300,7 +300,7 @@ async function switchAgentTab(agentId, tab, btn) {
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
             <div style="display:flex;align-items:center;gap:8px">
               <span style="font-size:14px;font-weight:700;color:#141413">Agent-Skills</span>
-              <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(217,119,87,0.12);color:#d97757">${agentSkills.length} installiert</span>
+              <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(30,58,138,0.12);color:#1e3a8a">${agentSkills.length} installiert</span>
             </div>
           </div>`;
       if (!agentSkills.length) {
@@ -349,7 +349,7 @@ async function switchAgentTab(agentId, tab, btn) {
                 <input type="checkbox" ${checked}
                   onchange="toggleCCSkill('${esc(agentId)}','${esc(s.slug)}',this.checked)"
                   style="opacity:0;width:0;height:0;position:absolute">
-                <span style="position:absolute;inset:0;border-radius:10px;background:${s.agent_enabled ? '#d97757' : '#e8e7e0'};transition:background .2s;cursor:pointer"></span>
+                <span style="position:absolute;inset:0;border-radius:10px;background:${s.agent_enabled ? '#1e3a8a' : '#e8e7e0'};transition:background .2s;cursor:pointer"></span>
                 <span style="position:absolute;top:2px;left:${s.agent_enabled ? '18px' : '2px'};width:16px;height:16px;border-radius:50%;background:white;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)"></span>
               </label>
               <div style="flex:1;min-width:0;overflow:hidden">
@@ -374,8 +374,8 @@ async function switchAgentTab(agentId, tab, btn) {
             <span style="font-size:10px;color:#a1a09a">Claude Code Plugins</span>
           </div>
           <div style="position:relative;margin-bottom:10px">
-            <input id="cc-marketplace-search" style="width:100%;box-sizing:border-box;background:#f5f4ed;border:1px solid rgba(31,30,29,0.08);border-radius:8px;padding:9px 80px 9px 12px;font-size:13px;color:#141413;outline:none;transition:border-color 0.15s" placeholder="Claude Code Plugins durchsuchen…" onfocus="this.style.borderColor='#d97757'" onblur="this.style.borderColor='rgba(31,30,29,0.08)'" onkeydown="if(event.key==='Enter'){event.preventDefault();searchCCMarketplace(this.value)}" oninput="clearTimeout(window._ccMktDebounce);window._ccMktDebounce=setTimeout(()=>searchCCMarketplace(this.value),400)">
-            <button id="cc-marketplace-search-btn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:11px;padding:5px 14px;border-radius:6px;background:#d97757;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="searchCCMarketplace(document.getElementById('cc-marketplace-search').value)">Suchen</button>
+            <input id="cc-marketplace-search" style="width:100%;box-sizing:border-box;background:#f5f4ed;border:1px solid rgba(31,30,29,0.08);border-radius:8px;padding:9px 80px 9px 12px;font-size:13px;color:#141413;outline:none;transition:border-color 0.15s" placeholder="Claude Code Plugins durchsuchen…" onfocus="this.style.borderColor='#1e3a8a'" onblur="this.style.borderColor='rgba(31,30,29,0.08)'" onkeydown="if(event.key==='Enter'){event.preventDefault();searchCCMarketplace(this.value)}" oninput="clearTimeout(window._ccMktDebounce);window._ccMktDebounce=setTimeout(()=>searchCCMarketplace(this.value),400)">
+            <button id="cc-marketplace-search-btn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:11px;padding:5px 14px;border-radius:6px;background:#1e3a8a;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#152c6b'" onmouseout="this.style.background='#1e3a8a'" onclick="searchCCMarketplace(document.getElementById('cc-marketplace-search').value)">Suchen</button>
           </div>
           <div id="cc-marketplace-results" style="display:grid;gap:6px">
             <div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Tippen, um den Claude Code Plugin-Marketplace zu durchsuchen</div>
@@ -649,7 +649,7 @@ async function switchAgentTab(agentId, tab, btn) {
       <div style="padding:16px;display:grid;gap:14px">
         <div style="display:flex;align-items:center;justify-content:space-between">
           <span style="font-size:14px;font-weight:700;color:#141413">MCP-Server</span>
-          <button style="font-size:11px;padding:5px 14px;border-radius:6px;background:#d97757;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="_showAgentMcpAdd('${esc(agentId)}')">+ Manuell hinzufügen</button>
+          <button style="font-size:11px;padding:5px 14px;border-radius:6px;background:#1e3a8a;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#152c6b'" onmouseout="this.style.background='#1e3a8a'" onclick="_showAgentMcpAdd('${esc(agentId)}')">+ Manuell hinzufügen</button>
         </div>
         ${agentId !== 'main' ? '<div style="font-size:11px;color:#73726c;margin-top:-6px">Erbt Server von main. Fügen Sie unten agent-spezifische Server hinzu.</div>' : ''}
         <div id="agent-mcp-list" style="display:grid;gap:6px">${serverCards}</div>
@@ -661,8 +661,8 @@ async function switchAgentTab(agentId, tab, btn) {
             <span style="font-size:10px;color:#a1a09a">registry.modelcontextprotocol.io</span>
           </div>
           <div style="position:relative;margin-bottom:10px">
-            <input id="mcp-registry-search" style="width:100%;box-sizing:border-box;background:#f5f4ed;border:1px solid rgba(31,30,29,0.08);border-radius:8px;padding:9px 80px 9px 12px;font-size:13px;color:#141413;outline:none;transition:border-color 0.15s" placeholder="Server suchen (z. B. github, slack, postgres)…" onfocus="this.style.borderColor='#d97757'" onblur="this.style.borderColor='rgba(31,30,29,0.08)'" onkeydown="if(event.key==='Enter'){event.preventDefault();_searchMcpRegistry('${esc(agentId)}')}" oninput="clearTimeout(window._mcpSearchDebounce);window._mcpSearchDebounce=setTimeout(()=>_searchMcpRegistry('${esc(agentId)}'),400)">
-            <button id="mcp-registry-search-btn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:11px;padding:5px 14px;border-radius:6px;background:#d97757;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="_searchMcpRegistry('${esc(agentId)}')">Suchen</button>
+            <input id="mcp-registry-search" style="width:100%;box-sizing:border-box;background:#f5f4ed;border:1px solid rgba(31,30,29,0.08);border-radius:8px;padding:9px 80px 9px 12px;font-size:13px;color:#141413;outline:none;transition:border-color 0.15s" placeholder="Server suchen (z. B. github, slack, postgres)…" onfocus="this.style.borderColor='#1e3a8a'" onblur="this.style.borderColor='rgba(31,30,29,0.08)'" onkeydown="if(event.key==='Enter'){event.preventDefault();_searchMcpRegistry('${esc(agentId)}')}" oninput="clearTimeout(window._mcpSearchDebounce);window._mcpSearchDebounce=setTimeout(()=>_searchMcpRegistry('${esc(agentId)}'),400)">
+            <button id="mcp-registry-search-btn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:11px;padding:5px 14px;border-radius:6px;background:#1e3a8a;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#152c6b'" onmouseout="this.style.background='#1e3a8a'" onclick="_searchMcpRegistry('${esc(agentId)}')">Suchen</button>
           </div>
           <div id="mcp-registry-results" style="display:grid;gap:6px">
             <div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Tippen, um die offizielle MCP-Server-Registry zu durchsuchen</div>
@@ -1100,9 +1100,9 @@ window._clearMcpFilter = async function(agentId) {
 };
 
 // --- MCP management helpers ---
-// Shared inline styles (accent = #d97757 brand orange)
+// Shared inline styles (accent = #1e3a8a brand navy)
 const _mcpInput = 'width:100%;box-sizing:border-box;background:#f5f4ed;border:1px solid rgba(31,30,29,0.08);border-radius:6px;padding:7px 10px;font-size:12px;color:#141413;outline:none';
-const _mcpBtn = 'font-size:11px;padding:5px 14px;border-radius:6px;background:#d97757;color:#fff;border:none;cursor:pointer;font-weight:500;white-space:nowrap';
+const _mcpBtn = 'font-size:11px;padding:5px 14px;border-radius:6px;background:#1e3a8a;color:#fff;border:none;cursor:pointer;font-weight:500;white-space:nowrap';
 const _mcpBtnSec = 'font-size:11px;padding:5px 14px;border-radius:6px;background:#e8e7e0;color:#73726c;border:none;cursor:pointer';
 const _mcpBadge = 'font-size:9px;padding:2px 6px;border-radius:4px;display:inline-block;';
 
@@ -1207,7 +1207,7 @@ window._searchMcpRegistry = async function(agentId) {
 
   // Show loading state
   container.innerHTML = `<div style="padding:20px;text-align:center">
-    <div style="display:inline-block;width:18px;height:18px;border:2px solid #e8e7e0;border-top-color:#d97757;border-radius:50%;animation:spin 0.6s linear infinite"></div>
+    <div style="display:inline-block;width:18px;height:18px;border:2px solid #e8e7e0;border-top-color:#1e3a8a;border-radius:50%;animation:spin 0.6s linear infinite"></div>
     <div style="margin-top:8px;color:#73726c;font-size:12px">Registry wird nach „${esc(query)}" durchsucht…</div>
   </div>`;
   if (searchBtn) { searchBtn.textContent = '...'; searchBtn.disabled = true; }
@@ -1248,7 +1248,7 @@ window._searchMcpRegistry = async function(agentId) {
       const envBadge = s.env_vars?.length ? `<span style="${_mcpBadge}background:rgba(239,68,68,0.1);color:#dc2626">${s.env_vars.length} env</span>` : '';
       const installBtn = alreadyInstalled
         ? `<span style="font-size:10px;color:#16a34a;padding:3px 10px;background:rgba(22,163,74,0.08);border-radius:5px;white-space:nowrap">Hinzugefügt</span>`
-        : `<button style="${_mcpBtn};padding:4px 12px;font-size:11px" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="_installFromRegistry('${esc(agentId)}',${idx},this)">Hinzufügen</button>`;
+        : `<button style="${_mcpBtn};padding:4px 12px;font-size:11px" onmouseover="this.style.background='#152c6b'" onmouseout="this.style.background='#1e3a8a'" onclick="_installFromRegistry('${esc(agentId)}',${idx},this)">Hinzufügen</button>`;
       return `
         <div class="mcp-result-card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid rgba(31,30,29,0.08);border-radius:8px;transition:background 0.15s" onmouseover="this.style.background='rgba(0,0,0,0.02)'" onmouseout="this.style.background='transparent'">
           <div style="flex:1;min-width:0">
@@ -1299,7 +1299,7 @@ window._installFromRegistry = async function(agentId, idx, btn) {
       `).join('');
     }
     const formHtml = `
-      <div id="${formId}" style="margin-top:8px;padding:12px;border:1px solid rgba(217,119,87,0.3);border-radius:8px;display:grid;gap:8px;background:rgba(217,119,87,0.03)">
+      <div id="${formId}" style="margin-top:8px;padding:12px;border:1px solid rgba(30,58,138,0.3);border-radius:8px;display:grid;gap:8px;background:rgba(30,58,138,0.03)">
         <div style="font-size:12px;font-weight:600;color:#141413">Vor dem Hinzufügen konfigurieren</div>
         ${fields}
         <button style="${_mcpBtn};justify-self:start" onclick="window._doRegistryInstall('${esc(agentId)}',${idx},'${formId}')">Server hinzufügen</button>

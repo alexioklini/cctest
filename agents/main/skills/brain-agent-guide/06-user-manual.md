@@ -163,6 +163,16 @@ bei Web-Quellen (öffnet die URL). Die Zitier-Disziplin wird automatisch
 angewandt, wenn eine Antwort auf abgerufenen Inhalten beruht (Gedächtnis-,
 Web- oder Dokument-Abfrage) — in jedem Chat, ohne manuelle Einstellung.
 
+**Quellentreue-Hinweis (Badge)**: Hat die Antwort bei einer Recherche-Anfrage
+Aussagen ohne Beleg, erscheint unter der Antwort ein kleines bernsteinfarbenes
+Badge **„⚠ x von y ohne Quellenangabe"**. Mit der Maus darüber zeigt ein
+Tooltip den vollständigen Hinweis (inkl. der Möglichkeit, dass zur Frage
+schlicht keine passenden Quellen vorlagen — bitte einzelne Aussagen vor
+Weiterverwendung gegen die Originalquellen prüfen). Das Badge erscheint **nur**,
+wenn in der Anfrage tatsächlich eine Quelle abgerufen wurde (Datei gelesen,
+gesucht, Web abgerufen oder Gedächtnis abgefragt) — eine reine Wissensantwort
+ohne Abruf zeigt es nicht.
+
 ---
 
 ## Chats

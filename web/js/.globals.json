@@ -51,6 +51,7 @@
     "_buddy": "writable",
     "_buddySpeciesOpts": "writable",
     "_buildCitationLegend": "writable",
+    "_buildCitationWarnBadge": "writable",
     "_chatAudioBtn": "writable",
     "_chatAudioBtnState": "writable",
     "_chatAudioEl": "writable",

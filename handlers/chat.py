@@ -2493,29 +2493,44 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
 
                             # Citation-Warning: instead of re-rounding (which
                             # turned correct refusals into hallucinated
-                            # citations on refusal-bucket questions), append
-                            # a persistent warning to the reply itself so it
-                            # survives reload. Same threshold the re-round
-                            # used (>30% uncited OR ≥2 unverified quotes).
-                            if engine.citation_reround_needed(_val):
+                            # citations on refusal-bucket questions), we flag
+                            # the message in metadata so the frontend can render
+                            # a compact "x von y" badge (full text in tooltip)
+                            # that survives reload. Same threshold the re-round
+                            # used (>30% uncited OR ≥2 unverified quotes). The
+                            # prose is no longer baked into `reply` — the badge
+                            # is built client-side from these fields.
+                            #
+                            # Only flag the message when a retrieval tool was
+                            # ACTUALLY CALLED this turn (not merely live): if the
+                            # model answered from its own knowledge without ever
+                            # reading a file / searching / fetching, there were
+                            # no sources to cite and "N von N ohne Quellenangabe"
+                            # would be misleading. _RETRIEVAL_TOOLS is the same
+                            # set turn_has_retrieval_tools uses.
+                            _called_tool_names = [
+                                (t or {}).get("name") for t in (_partial_tools or [])
+                            ]
+                            _retrieval_called = engine.turn_has_retrieval_tools(_called_tool_names)
+                            if _retrieval_called and engine.citation_reround_needed(_val):
                                 _uncited = int(_val.get("uncited_claims", 0) or 0)
                                 _ctotal = int(_val.get("claim_total", 0) or 0)
                                 _unver = len(_val.get("unverified", []) or [])
                                 _parts = []
                                 if _ctotal > 0 and _uncited > 0:
                                     _parts.append(
-                                        f"**{_uncited} von {_ctotal} Behauptungen** "
+                                        f"{_uncited} von {_ctotal} Behauptungen "
                                         f"ohne Quellenangabe"
                                     )
                                 if _unver >= 2:
                                     _parts.append(
-                                        f"**{_unver} Zitat(e)** konnten nicht "
+                                        f"{_unver} Zitat(e) konnten nicht "
                                         f"in den Quelldateien verifiziert werden"
                                     )
                                 if _parts:
-                                    _warning = (
-                                        "\n\n---\n\n"
-                                        "> ⚠️ **Hinweis zur Quellentreue**: "
+                                    _cv_meta["warning_appended"] = True
+                                    _cv_meta["warning_text"] = (
+                                        "Hinweis zur Quellentreue: "
                                         + "; ".join(_parts)
                                         + ". Möglich ist auch, dass zu dieser "
                                           "Frage keine passenden Informationen "
@@ -2525,8 +2540,6 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                           "Weiterverwendung gegen die "
                                           "Originalquellen prüfen."
                                     )
-                                    reply = reply + _warning
-                                    _cv_meta["warning_appended"] = True
 
                             msg_metadata["citation_validation"] = _cv_meta
                         except Exception as _e:

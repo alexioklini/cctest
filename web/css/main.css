@@ -81,9 +81,9 @@
   --border-200: rgba(20,20,21,0.11);
   --border-300: rgba(20,20,21,0.14);
 
-  --accent-brand: #d97757;
-  --accent-brand-hover: #c66140;
-  --brand-text: #c5613f;
+  --accent-brand: #1e3a8a;
+  --accent-brand-hover: #152c6b;
+  --brand-text: #1e3a8a;
 
   --accent-blue: #2c84db;
   --accent-blue-bg: #d3e5f8;
@@ -158,9 +158,9 @@
   --border-200: rgba(255,255,255,0.1);
   --border-300: rgba(255,255,255,0.14);
 
-  --accent-brand: #d97757;
-  --accent-brand-hover: #e08a6e;
-  --brand-text: #e08a6e;
+  --accent-brand: #1e3a8a;
+  --accent-brand-hover: #4a6fc4;
+  --brand-text: #7da0e8;
 
   --accent-blue: #4a9ef5;
   --accent-blue-bg: #1a3a5c;
@@ -694,7 +694,7 @@ textarea { resize: none; }
   color: var(--accent-brand);
   transition: all 0.15s;
 }
-.agent-selector-btn:hover { background: rgba(217,119,87,0.08); }
+.agent-selector-btn:hover { background: rgba(30,58,138,0.08); }
 
 /* Send button */
 .composer-send-btn {
@@ -2082,6 +2082,24 @@ mark.citation-span {
 .citation-legend-file { font-weight: 500; }
 .citation-legend-quote { color: var(--text-400); font-style: italic; }
 .citation-legend-warn { color: #b45309; }
+
+/* Quellentreue warning badge — compact "x von y" chip; full notice in the
+   native title tooltip. Replaces the old inline markdown paragraph. */
+.msg-citation-warn { margin-top: 8px; }
+.msg-citation-warn-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 11px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  color: #b45309;
+  background: color-mix(in srgb, #b45309 12%, transparent);
+  border: 1px solid color-mix(in srgb, #b45309 28%, transparent);
+  cursor: help;
+}
 
 /* Reference panel sections (right pane) */
 .refs-section {
@@ -4559,7 +4577,7 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 .dialog-input:focus {
   border-color: var(--accent-brand);
-  box-shadow: 0 0 0 2px rgba(217,119,87,0.15);
+  box-shadow: 0 0 0 2px rgba(30,58,138,0.15);
 }
 .dialog-footer {
   display: flex;
@@ -8494,7 +8512,7 @@ code, pre, .tool-result-pre, .wf-card-fname, .font-mono {
 .dr-side { width: 340px; overflow: auto; padding: 12px; background: var(--bg-200); }
 .dr-hl { border-radius: 3px; padding: 0 1px; cursor: pointer; }
 .dr-hl-pii { background: rgba(220,38,38,0.18); box-shadow: inset 0 -2px 0 rgba(220,38,38,0.5); }
-.dr-hl-cls { background: rgba(217,119,87,0.18); box-shadow: inset 0 -2px 0 rgba(217,119,87,0.55); }
+.dr-hl-cls { background: rgba(30,58,138,0.18); box-shadow: inset 0 -2px 0 rgba(30,58,138,0.55); }
 .dr-hl-over { opacity: 0.45; text-decoration: line-through; }
 .dr-hl-dim { opacity: 0.28; }
 .dr-hl.dr-active { outline: 2px solid var(--accent-brand); outline-offset: 1px; }
@@ -8505,7 +8523,7 @@ code, pre, .tool-result-pre, .wf-card-fname, .font-mono {
 .dr-item-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .dr-chip { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.04em; }
 .dr-chip-pii { background: rgba(220,38,38,0.15); color: #dc2626; }
-.dr-chip-cls { background: rgba(217,119,87,0.15); color: var(--accent-brand); }
+.dr-chip-cls { background: rgba(30,58,138,0.15); color: var(--accent-brand); }
 .dr-chip-over { background: rgba(120,120,128,0.2); color: var(--text-400); }
 .dr-item-label { font-weight: 600; font-size: 13px; }
 .dr-item-ex { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-400); margin: 2px 0; }

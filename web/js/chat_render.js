@@ -817,6 +817,9 @@ function renderAssistantMessage(msg, idx) {
   // verified/unverified badge from the validator metadata (matched by basename
   // + quote excerpt). Same parse the chips used, so numbering aligns.
   const citationLegendHtml = _buildCitationLegend(content, msg.metadata?.citation_validation);
+  // Quellentreue badge: "x von y" with the full notice in the tooltip. Built
+  // from validator metadata (server no longer bakes the prose into content).
+  const citationWarnHtml = _buildCitationWarnBadge(msg.metadata?.citation_validation);
 
   let thinkingHtml = '';
   if (msg._thinking) {
@@ -1036,6 +1039,7 @@ function renderAssistantMessage(msg, idx) {
     <div class="msg-turn msg-turn-assistant"${msg.id != null ? ` data-msg-id="${msg.id}"` : ''}>
       ${thinkingHtml}
       <div class="msg-assistant msg-content">${rendered}</div>
+      ${citationWarnHtml}
       ${citationLegendHtml}
       ${filesHtml}
       ${webSourcesHtml}
@@ -1438,6 +1442,23 @@ function renderCitationPin({ file, locator, quote }, n) {
 }
 // Footer legend: [n] → file — "quote", with a verified/⚠ badge from the
 // validator metadata. Returns '' when the message has no citations.
+// Quellentreue warning badge: a compact "⚠ x von y" chip whose tooltip carries
+// the full notice. Replaces the old inline markdown paragraph the server used
+// to append to the reply. Built only when the validator flagged the message
+// (warning_appended) and we have the uncited/total counts to show "x von y".
+function _buildCitationWarnBadge(validation) {
+  if (!validation || !validation.warning_appended) return '';
+  const uncited = Number(validation.uncited_claims || 0);
+  const total = Number(validation.claim_total || 0);
+  if (!(total > 0 && uncited > 0)) return '';
+  const tip = validation.warning_text
+    || `${uncited} von ${total} Behauptungen ohne Quellenangabe.`;
+  return `
+    <div class="msg-citation-warn">
+      <span class="msg-citation-warn-badge" title="${esc(tip)}">⚠ ${uncited} von ${total} ohne Quellenangabe</span>
+    </div>`;
+}
+
 function _buildCitationLegend(content, validation) {
   let citations = [];
   try { citations = (extractCitationsFromRaw(content) || {}).citations || []; } catch (e) { return ''; }
