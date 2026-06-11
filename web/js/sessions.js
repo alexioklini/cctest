@@ -270,7 +270,7 @@ async function openSession(sessionId, agentId) {
         // Accumulate token in/out for status bar
         if (meta.tokens_in) chat._tokensIn = (chat._tokensIn || 0) + meta.tokens_in;
         if (meta.tokens_out) chat._tokensOut = (chat._tokensOut || 0) + meta.tokens_out;
-        if (meta.duration > 0 && meta.tokens_out > 0) chat._lastSpeed = Math.round(meta.tokens_out / meta.duration);
+        if (meta.duration > 0 && ((meta.tokens_in || 0) + (meta.tokens_out || 0)) > 0) chat._lastSpeed = Math.round(((meta.tokens_in || 0) + (meta.tokens_out || 0)) / meta.duration);
       } else {
         // Any non-thinking, non-assistant row (user, system, etc.) — flush any
         // pending thinking rows verbatim first, then the row itself. Normally

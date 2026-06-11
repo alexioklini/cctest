@@ -990,7 +990,9 @@ function renderAssistantMessage(msg, idx) {
     const dur = meta.duration || 0;
     const tokIn = meta.tokens_in || 0;
     const tokOut = meta.tokens_out || 0;
-    const speed = (dur > 0 && tokOut > 0) ? Math.round(tokOut / dur) : null;
+    // Throughput = TOTAL tokens (prompt in + generated out) over the turn's
+    // wall-clock, not just output tokens — prefill of a big prompt is real work.
+    const speed = (dur > 0 && (tokIn + tokOut) > 0) ? Math.round((tokIn + tokOut) / dur) : null;
     const parts = [];
     // Turn start = the timestamp of the user message that opened this turn (the
     // nearest preceding user row). created_at is Unix seconds from the server;

@@ -699,8 +699,8 @@
         "audio"
       ],
       "thinking_format": "reasoning_field",
-      "max_context": 256000,
-      "max_output": 16000,
+      "max_context": 96000,
+      "max_output": 8192,
       "inference": {
         "temperature": 0.7,
         "top_p": 0.9
@@ -2286,6 +2286,33 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
+    },
+    "gemma-4-12B-it-qat-4bit": {
+      "enabled": true,
+      "shortname": "gemma-4-12B-it-qat-4bit",
+      "display_name": "gemma-4-12B-it-qat-4bit",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image",
+        "audio"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131000,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
       "provider": "Lokal",
       "profile": "speed",
       "_caps_canonical": true,

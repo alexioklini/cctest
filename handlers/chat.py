@@ -867,10 +867,14 @@ def make_artifact_event_callback(session_id: str):
     so `write_file` / `edit_file` / `python_exec` produce a file on disk
     but no `artifacts` row and no live `artifact_updated` SSE.
 
-    This callback's job is narrow: forward `file_created` / `artifact_updated`
-    events to the session's LiveStream so the UI's artifact panel updates
-    live. Persistence happens inside `_register_artifact_version` already,
-    so we don't need to mirror the chat-worker's accumulator state.
+    This callback forwards `file_created` / `artifact_updated` events to the
+    session's LiveStream so the UI's artifact panel updates live, AND records
+    each file on `session._turn_created_files` so the chat worker can persist
+    it into the assistant turn's `metadata.files`. The artifact STORE is
+    persisted by `_register_artifact_version` (right panel), but the per-message
+    `metadata.files` the chat-view badge reads on RELOAD is not — without this
+    the badge showed live (via the LiveStream → client `chat.files`) but
+    vanished on reload (metadata.files was never written).
     """
     def _cb(event_type, data):
         if event_type not in ("file_created", "artifact_updated"):
@@ -879,7 +883,17 @@ def make_artifact_event_callback(session_id: str):
             sess = sessions.peek(session_id)  # noqa: F821 — injected by server
         except Exception:
             sess = None
-        live = getattr(sess, "live_stream", None) if sess else None
+        if sess is None:
+            return
+        # Record for the worker's metadata.files persist (reload-stable badge).
+        try:
+            with sess.lock:
+                if getattr(sess, "_turn_created_files", None) is None:
+                    sess._turn_created_files = []
+                sess._turn_created_files.append(data)
+        except Exception:
+            pass
+        live = getattr(sess, "live_stream", None)
         if live is None:
             return
         try:
@@ -1695,6 +1709,15 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
 
             # Reset per-request state (prevents cross-session leaks in pooled threads)
             engine.reset_tool_dedup()
+            # Per-turn artifact accumulator shared with the tool-DISPATCH thread.
+            # File-write events fire in brain._after_file_write on that separate
+            # thread (its event_callback is make_artifact_event_callback), so the
+            # worker's own `created_files` list never sees them — which is why the
+            # chat-view file badge showed live (via the LiveStream) but vanished
+            # on reload (metadata.files was never persisted). The dispatch
+            # callback appends here; the worker merges it at persist time.
+            with session.lock:
+                session._turn_created_files = []
 
             # Use shared MCP manager (singleton from main())
             engine.get_request_context().mcp_manager = engine._mcp_manager
@@ -2431,6 +2454,22 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     msg_metadata["tokens"] = engine._estimate_conversation_tokens(session.messages)
                     if session_cost is not None:
                         msg_metadata["cost"] = session_cost
+                    # Merge files recorded on the tool-DISPATCH thread (they fire
+                    # in _after_file_write off-worker, so the worker's own
+                    # `created_files` never saw them — the reload-badge bug).
+                    # Dedup by path; keep first occurrence. Mutates `created_files`
+                    # in place so the done-event persist (below) picks it up too.
+                    try:
+                        with session.lock:
+                            _dispatch_files = list(getattr(session, "_turn_created_files", None) or [])
+                        if _dispatch_files:
+                            _seen_paths = {f.get("path") for f in created_files if isinstance(f, dict)}
+                            for _f in _dispatch_files:
+                                if isinstance(_f, dict) and _f.get("path") not in _seen_paths:
+                                    created_files.append(_f)
+                                    _seen_paths.add(_f.get("path"))
+                    except Exception:
+                        pass
                     if created_files:
                         msg_metadata["files"] = created_files
                     # Manual web-search: record the exact fetched source text

@@ -152,8 +152,9 @@ function updateStatusBar() {
     if (m.role === 'assistant' && m.metadata) {
       totalIn += m.metadata.tokens_in || 0;
       totalOut += m.metadata.tokens_out || 0;
-      if (m.metadata.duration > 0 && m.metadata.tokens_out > 0) {
-        lastSpeed = Math.round(m.metadata.tokens_out / m.metadata.duration);
+      const _mTot = (m.metadata.tokens_in || 0) + (m.metadata.tokens_out || 0);
+      if (m.metadata.duration > 0 && _mTot > 0) {
+        lastSpeed = Math.round(_mTot / m.metadata.duration);  // total in+out / wall-clock
       }
     }
   }

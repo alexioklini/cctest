@@ -976,8 +976,9 @@ function buildStreamCallbacks(chat, isActive) {
         if (d.auto_route) {
           assistantMsg.metadata.auto_route = d.auto_route;
         }
-        if (dur > 0 && estOut > 0) {
-          chat._lastSpeed = Math.round(estOut / dur);
+        if (dur > 0 && (tokIn + estOut) > 0) {
+          // Total throughput (prompt-in + generated-out) over wall-clock.
+          chat._lastSpeed = Math.round((tokIn + estOut) / dur);
         }
         if (lastTokIn > 0) chat._lastApiIn = lastTokIn;
         if (d.cost !== undefined) { assistantMsg._cost = d.cost || 0; chat._sessionCost = d.cost || 0; }
@@ -1393,8 +1394,9 @@ async function openInspectModal() {
     for (const ix of (data.interactions || [])) {
       const a = ix.assistant || {};
 
-      // Speed calculation
-      const speed = a.duration > 0 && a.tokens_out > 0 ? Math.round(a.tokens_out / a.duration) : null;
+      // Speed calculation — total tokens (in + out) over wall-clock.
+      const _aTot = (a.tokens_in || 0) + (a.tokens_out || 0);
+      const speed = a.duration > 0 && _aTot > 0 ? Math.round(_aTot / a.duration) : null;
 
       html += `<div style="border:1px solid var(--border-100);border-radius:10px;margin-bottom:12px;overflow:hidden">`;
 

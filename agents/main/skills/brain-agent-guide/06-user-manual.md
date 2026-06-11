@@ -1098,8 +1098,11 @@ eingespeist hat (Projekt → **Dateien**-Tab listet sie).
   LCM-Warnung; bei 80 % droht Abschneiden. Früh verdichten.
 - **Kostenvorschau**: über das Modell-Badge im Eingabefeld schweben — zeigt
   Kosten pro 1K Tokens. Nützlich vor langem Kontext an ein teures Modell.
-- **Geschwindigkeits-Badge**: Tokens/Sek. Ist ein lokales Modell langsam,
-  den Warmup-Status prüfen — der erste Turn nach Kaltstart ist langsamer.
+- **Geschwindigkeits-Badge**: Tokens/Sek. — als **Gesamtdurchsatz** gerechnet
+  (Eingabe- + Ausgabe-Tokens geteilt durch die Dauer), nicht nur die generierten
+  Tokens; das Verarbeiten eines großen Prompts (Prefill) zählt mit. Ist ein
+  lokales Modell langsam, den Warmup-Status prüfen — der erste Turn nach
+  Kaltstart ist langsamer.
 - **Wieder anhängen**: Browser-Tab mitten im Stream schließen bricht nicht
   ab. Chat wieder öffnen, der Live-Stream wird fortgesetzt.
 - **Übersetzungs-Glossare** gelten über alle vier Übersetzungs-Tabs.
