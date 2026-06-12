@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.101.10"
+VERSION = "9.101.11"
 VERSION_DATE = "2026-06-11"
 CHANGELOG = [
+    ("9.101.11", "2026-06-12", "feat(warmup+classifier): per-turn classifier tool optimization now ALSO runs for models warmed in warmup_mode='minimal' — previously the gate model_should_optimize_tools() keyed only on the warmup boolean and protected ALL warmup-enabled models, blocking tool reshaping on a minimal-mode model that has no tool-bearing KV prefix to protect. A minimal-mode prime sends NO system prompt + NO tools (1-token user msg) so it keeps the model WEIGHTS hot but primes no prefix; reshaping the tool list per turn costs nothing there, so the gate now returns True for {warmup:true, warmup_mode:'minimal'} while full-mode stays protected (its prime bakes the static tool set into the prefix → reshaping would thrash it). warmup_mode resolves exactly as the keeper does (default 'full'; any non-'minimal' → 'full'), so gate + keeper stay in lockstep. ALSO fixed a latent UnboundLocalError in run_model_warmup(mode='minimal'): all_tools was referenced in the shared payload-build but only assigned inside the mode=='full' branch — never hit before because no model used minimal mode (now all_tools=[] in the minimal branch). CONFIG: gemma-4-12B-it-qat-4bit set to {warmup:true, warmup_mode:'minimal'} — the one local model kept warm (weights-only, ~1.5s prime verified live), all other local models stay cold. Goal: warm weights + classifier-trimmed prompt → ~10-15s first response instead of 40s cold. Tests: tests/test_tool_optimize_gate.py (8 cases pinning minimal→optimize, full/default/bogus→protect, cloud/no-warmup→optimize). Skill 05-internals.md updated. py_compile OK, gate test PASS, warm (minimal, 1481ms) confirmed in keeper log."),
     ("9.101.10", "2026-06-11", "feat(classifier-modal): show the per-turn RESEARCH-DISCIPLINE decision in the classification inspector. New brain.active_research_discipline_sections() returns the section keys (refusal/precision/citation, in order) that render_research_mode_disciplines() would actually emit right now — honouring the per-section admin opt-out (a section saved as '' is skipped) — so the modal reports what was truly injected, not the static default set. The chat worker records a per-turn _discipline_meta {active, source (wire_preamble|system_prompt), trigger (retrieval_tool_active|no_retrieval_tool|research_mode|research_mode_off), sections[]} at the exact point the discipline decision is made (handlers/chat.py, both the LLM-classifier branch and the keyword/research_mode branch) and folds it into auto_route.discipline on both the persisted metadata and the live done event. The modal (web/js/chat_render.js openClassificationModal) renders a new 'Research-Disziplin' section: Status (aktiv/nicht eingefügt), Grund (trigger), Eingefügt via (Wire-Präambel dynamisch / System-Prompt Recherche-Modus), and the active discipline chips. NB: all three disciplines are injected together as ONE block — there is no per-turn 'which one' selection; the only subsetting is the global admin per-section opt-out, which the chips now reflect. No new globals. js_gate PASS, py_compile OK."),
     ("9.101.9", "2026-06-11", "fix(ui): the chat tok/s figure is now TOTAL throughput — (tokens_in + tokens_out) / duration — instead of output-only (tokens_out / duration). Prefill of a large prompt is real work the wall-clock already includes, so out-only understated the rate (badly on retrieval/tool turns with big prompts + short replies). Updated all four display sites consistently: the per-turn stats line (web/js/chat_render.js), the live done-event handler + the session-inspector 'Interaktionen' speed (web/js/chat_send.js), the reload path (web/js/sessions.js), and the status-bar fallback (web/js/panels_chats.js). The model-BENCHMARK tps in Settings is a separately-measured metric and is unchanged. Frontend-only (hard refresh). js_gate PASS."),
     ("9.101.8", "2026-06-11", "fix(artifacts): the chat-view file badge on an assistant turn now survives reload. A created/edited artifact showed its 'neu'/'bearbeitet' badge live but the badge vanished on reload (only the right panel kept it). ROOT CAUSE: file-write events fire in brain._after_file_write on the tool-DISPATCH thread, whose event_callback is make_artifact_event_callback (handlers/chat.py) — a minimal cb that only live.emit()s to the LiveStream (→ client chat.files → live badge) and explicitly did NOT touch the chat worker's `created_files` accumulator. So the worker persisted no metadata.files, and on reload the renderer (msg._files ← meta.files) found nothing. The artifact STORE persists via _register_artifact_version (right panel), but per-message metadata.files did not. FIX: a per-turn session._turn_created_files list shared across the two threads — reset under session.lock at worker turn start, appended by make_artifact_event_callback on each file_created/artifact_updated, merged (dedup by path) into the worker's created_files just before msg_metadata['files'] is built (so both the persisted metadata and the done event get it). No client change — sessions.js / chat_send.js already read meta.files into msg._files. py_compile OK."),
@@ -7631,7 +7632,11 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
                     {"role": "user", "content": "."},
                 ]
             else:  # "minimal"
+                # Weights-only prime: no system prompt, no tools. all_tools must
+                # still be bound (the shared payload-build below reads it) — empty
+                # so no `tools` key is added.
                 messages = [{"role": "user", "content": "."}]
+                all_tools = []
 
             endpoint = f"{base_url}/chat/completions"
             # Match send_message: stream=True + stream_options so the tokenised
@@ -11519,26 +11524,42 @@ def model_should_optimize_tools(model: str) -> bool:
                                   lose — this is the case the old gate wrongly
                                   skipped: `model_maintains_warm_prefix` treated
                                   ALL local models as protected).
-      - Local/cloud, warmup ENABLED → do NOT optimize. Keyed on CONFIG, not the
-                                  transient warm state: a warmup-enabled model is
-                                  *meant* to be warm, and the keeper primes it
+      - warmup ENABLED, mode="full" → do NOT optimize. Keyed on CONFIG, not the
+                                  transient warm state: a full-mode warmup model
+                                  is *meant* to be warm, and the keeper primes it
                                   with the full (static) tool set; optimizing it
                                   during a cold window would prime a TRIMMED
                                   prefix that the next (warm) turn's static set
                                   diverges from → thrash. Treat it as protected
                                   whether warm or momentarily cold.
+      - warmup ENABLED, mode="minimal" → optimize. A minimal-mode prime sends
+                                  NO system prompt and NO tools (just a 1-token
+                                  user msg) — it keeps the weights hot but primes
+                                  no tool-bearing KV prefix. There is therefore
+                                  nothing for per-turn reshaping to invalidate,
+                                  and the full-mode thrash argument above does not
+                                  apply (no primed prefix to diverge from). This
+                                  is the case that gives a warm minimal model BOTH
+                                  fast weights AND a lean classifier-trimmed
+                                  prompt. `warmup_mode` is resolved exactly as the
+                                  keeper does (server_daemons `_warmup_keeper_loop`),
+                                  so gate + keeper stay in lockstep.
 
     This is intentionally the near-inverse of `model_maintains_warm_prefix`,
-    differing only for warmup-DISABLED local models (protect=True there, but
-    optimize=True here). Kept as a separate, tool-opt-specific predicate so the
-    warmup-protection semantics elsewhere stay untouched.
+    differing for warmup-DISABLED local models AND minimal-mode warmup models
+    (protect=True there, but optimize=True here). Kept as a separate,
+    tool-opt-specific predicate so the warmup-protection semantics elsewhere
+    stay untouched.
     """
     if not model or model == "auto":
         return False  # unknown -> conservative: don't reshape
     try:
         cfg = (_models_config or {}).get(model) or {}
         if cfg.get("warmup"):
-            return False  # warmup enabled → protected (warm or cold)
+            # Only a FULL-mode prime builds a tool-bearing KV prefix to protect.
+            # A minimal-mode prime is weights-only → safe to reshape per turn.
+            mode = (cfg.get("warmup_mode") or "full").lower()
+            return mode == "minimal"
         # No warmup: cloud OR a local model that never warms → safe to optimize.
         return True
     except Exception:

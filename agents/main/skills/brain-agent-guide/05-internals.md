@@ -176,13 +176,25 @@ The reshape gate is `model_should_optimize_tools(model)` (NOT the old
 `model_maintains_warm_prefix`): optimize iff there is **no warm KV prefix to
 protect** — i.e. a **cloud** model, OR a **local model with warmup DISABLED**
 (it is never warmed, so nothing to lose; this is the case the old gate wrongly
-skipped). A **warmup-ENABLED** model (local or cloud) is left untouched — keyed
-on warmup *config*, not transient warm state, so a momentarily-cold warmup model
+skipped), OR a model warmed in **`warmup_mode: "minimal"`**. A **full-mode**
+warmup-ENABLED model (local or cloud) is left untouched — keyed on warmup
+*config*, not transient warm state, so a momentarily-cold full-mode warmup model
 isn't optimized into a trimmed prefix that the next warm turn diverges from.
 Tools are part of the warm KV prefix (the tool schemas serialize into the prompt
 before the first message), so varying them per turn would invalidate it → full
-prefill (~20 s) — that is *why* warmup-protected models are exempt, not an
+prefill (~20 s) — that is *why* full-mode warmup models are exempt, not an
 arbitrary rule.
+
+**`minimal`-mode is the exception that gives you both:** a minimal-mode prime
+(`run_model_warmup` mode="minimal") sends NO system prompt and NO tools — just a
+1-token user message — so it keeps the model **weights** hot but primes no
+tool-bearing prefix. There is nothing for per-turn reshaping to invalidate, so
+the gate returns **True** (optimize) even though `warmup: true`. This is the
+config for a single local model you want kept warm (~weights-load latency, not
+full prefill) AND classifier-trimmed per turn — e.g. `gemma-4-12B-it-qat-4bit`
+with `{warmup: true, warmup_mode: "minimal"}`. The gate resolves `warmup_mode`
+exactly as the keeper does (default `"full"`; any non-`minimal` value → `full`),
+so gate and keeper stay in lockstep.
 
 When the gate passes, `classifier_tool_deferral(model, tool_groups)` returns
 `(defer_extra, undefer)` which `resolve_active_tools` folds into its defer set:

@@ -2317,7 +2317,8 @@
       "profile": "speed",
       "_caps_canonical": true,
       "is_local": true,
-      "warmup": false
+      "warmup": true,
+      "warmup_mode": "minimal"
     }
   },
   "nodes": {},
