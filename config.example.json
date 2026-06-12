@@ -2318,7 +2318,82 @@
       "_caps_canonical": true,
       "is_local": true,
       "warmup": true,
-      "warmup_mode": "minimal"
+      "warmup_mode": "minimal",
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 31.3,
+            "n": 4,
+            "ts": "2026-06-12T19:18:56Z"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 100,
+            "tps": 38.1,
+            "n": 5,
+            "ts": "2026-06-12T19:19:42Z"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 95,
+            "tps": 36.9,
+            "n": 2,
+            "ts": "2026-06-12T19:22:08Z",
+            "error": "sidecar transport TimeoutError: timed out"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 95,
+            "tps": 34.3,
+            "n": 3,
+            "ts": "2026-06-12T19:23:59Z"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 93,
+            "tps": 28.3,
+            "n": 3,
+            "ts": "2026-06-12T19:24:07Z"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 92,
+            "tps": 23.8,
+            "n": 3,
+            "ts": "2026-06-12T19:24:13Z"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 95,
+            "tps": 26.1,
+            "n": 3,
+            "ts": "2026-06-12T19:26:13Z"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 77,
+            "tps": 33.8,
+            "n": 3,
+            "ts": "2026-06-12T19:26:29Z"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 7.0,
+            "n": 4,
+            "ts": "2026-06-12T19:26:31Z"
+          }
+        }
+      }
     }
   },
   "nodes": {},
@@ -3896,5 +3971,6 @@
   },
   "auto_route": {
     "classifier_mode": "llm"
-  }
+  },
+  "background_task_model": "CLIProxyAPI/mistral-small-latest"
 }

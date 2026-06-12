@@ -876,8 +876,21 @@ def make_artifact_event_callback(session_id: str):
     the badge showed live (via the LiveStream → client `chat.files`) but
     vanished on reload (metadata.files was never written).
     """
+    # Events this minimal callback forwards into the session LiveStream. The
+    # artifact pair updates the file panel; the user-input events are how the
+    # BLOCKING tools (ask_user / ask_user_for_file) reach the client — they fire
+    # cb("user_input_needed"/"user_input_received"/"file_upload_needed") and then
+    # block on an answer Event. Tool dispatch runs on this thread (not the chat
+    # worker's), so this callback is the ONLY event_callback those tools see; if
+    # it drops their event the questions never render and the tool blocks until
+    # its 300s timeout, killing the turn with no assistant message (the
+    # e783c08a regression). Forward them through too.
+    _ARTIFACT_EVENTS = ("file_created", "artifact_updated")
+    _PASSTHROUGH_EVENTS = ("user_input_needed", "user_input_received",
+                           "file_upload_needed")
+
     def _cb(event_type, data):
-        if event_type not in ("file_created", "artifact_updated"):
+        if event_type not in _ARTIFACT_EVENTS and event_type not in _PASSTHROUGH_EVENTS:
             return
         try:
             sess = sessions.peek(session_id)  # noqa: F821 — injected by server
@@ -885,14 +898,16 @@ def make_artifact_event_callback(session_id: str):
             sess = None
         if sess is None:
             return
-        # Record for the worker's metadata.files persist (reload-stable badge).
-        try:
-            with sess.lock:
-                if getattr(sess, "_turn_created_files", None) is None:
-                    sess._turn_created_files = []
-                sess._turn_created_files.append(data)
-        except Exception:
-            pass
+        # Record artifact writes for the worker's metadata.files persist
+        # (reload-stable badge). Passthrough events carry no file payload.
+        if event_type in _ARTIFACT_EVENTS:
+            try:
+                with sess.lock:
+                    if getattr(sess, "_turn_created_files", None) is None:
+                        sess._turn_created_files = []
+                    sess._turn_created_files.append(data)
+            except Exception:
+                pass
         live = getattr(sess, "live_stream", None)
         if live is None:
             return
