@@ -138,6 +138,7 @@ class WikiHandlerMixin:
                 body_md=body.get("body_md"),
                 project_id=body.get("project_id"),
                 archived=body.get("archived"),
+                tags=body.get("tags"),
             )
             if not page:
                 self._send_json({"error": "Page not found"}, 404)

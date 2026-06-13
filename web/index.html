@@ -1181,6 +1181,15 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             <button class="wiki-filter-tab" data-filter="team" onclick="wikiSetFilter('team')" style="flex:1;padding:5px 6px;border:none;border-radius:5px;background:transparent;color:var(--text-300);cursor:pointer;font-size:11px">Team</button>
             <button class="wiki-filter-tab" data-filter="global" onclick="wikiSetFilter('global')" style="flex:1;padding:5px 6px;border:none;border-radius:5px;background:transparent;color:var(--text-300);cursor:pointer;font-size:11px">Alle&nbsp;sichtbar</button>
           </div>
+          <select id="wiki-group-select" class="wiki-group-select" onchange="wikiSetGrouping(this.value)">
+            <option value="manual">Gruppieren: Manuell (Baum)</option>
+            <option value="topic">Gruppieren: Thema</option>
+            <option value="project">Gruppieren: Projekt</option>
+            <option value="source">Gruppieren: Quelle</option>
+            <option value="created_by">Gruppieren: Erstellt von</option>
+            <option value="updated_by">Gruppieren: Geändert von</option>
+          </select>
+          <div class="wiki-tag-row" id="wiki-tag-filter"><!-- tag chips --></div>
         </div>
         <div class="wiki-tree" id="wiki-tree" style="flex:1;overflow-y:auto;padding:6px">
           <!-- Page tree populated by panels_wiki.js -->

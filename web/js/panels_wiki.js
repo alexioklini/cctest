@@ -5,12 +5,37 @@
 
 window._wiki = window._wiki || {
   filter: 'all',
+  grouping: 'manual', // manual | topic | project | source | created_by | updated_by
+  tagFilter: '',      // active tag chip ('' = none)
   pages: [],          // flat rows from the tree endpoint
   current: null,      // currently open page object
   mode: 'render',     // 'render' | 'raw'
   cm: null,           // CodeMirror instance
   dirty: false,
+  dragId: null,       // page id being dragged
 };
+
+// Inline SVG icons (brain-agent style: currentColor stroke, no emoji).
+const WIKI_ICONS = {
+  page:    '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  global:  '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20"/></svg>',
+  team:    '<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  source:  '<svg viewBox="0 0 24 24"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+};
+const WIKI_ICONS_EDIT = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>';
+const WIKI_ICONS_TRASH = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+
+const WIKI_SOURCE_LABELS = {
+  manual: 'Manuell', agent: 'Vom Agent', chat: 'Aus Chat', studio: 'Aus Studio',
+  generated: 'Erzeugt', migrated: 'Migriert', activity: 'Profil/Aktivität',
+  translation: 'Übersetzung', scheduled: 'Geplante Aufgabe', workflow: 'Workflow',
+};
+
+function wikiScopeIcon(scope) {
+  if (scope === 'global') return WIKI_ICONS.global;
+  if (scope === 'team') return WIKI_ICONS.team;
+  return WIKI_ICONS.page;
+}
 
 function loadWikiView() {
   wikiRefreshTree();
@@ -39,41 +64,168 @@ function wikiSetFilter(f) {
   wikiRefreshTree();
 }
 
-// Build a parent→children map and render the tree recursively.
+function wikiSetGrouping(mode) {
+  window._wiki.grouping = mode;
+  wikiRenderTree();
+}
+
+// One tree row. `manual` mode is draggable + indented; grouped modes are flat.
+function wikiRowHtml(page, depth, draggable) {
+  const active = window._wiki.current?.id === page.id;
+  const tags = (page.tags || []).map(t =>
+    `<span class="wiki-tag" onclick="event.stopPropagation();wikiToggleTag('${esc(t)}')">${esc(t)}</span>`).join('');
+  const srcLabel = WIKI_SOURCE_LABELS[page.source] || page.source || '';
+  const dot = `<span class="wiki-mp-dot ${page.mirrored ? 'on' : ''}" title="${page.mirrored ? 'In MemPalace durchsuchbar' : 'Nicht gespiegelt'}"></span>`;
+  return `<div class="wiki-tree-item${active ? ' active' : ''}"
+      ${draggable ? `draggable="true" ondragstart="wikiDragStart(event,'${page.id}')" ondragend="wikiDragEnd(event)" ondragover="wikiDragOver(event)" ondragleave="wikiDragLeave(event)" ondrop="wikiDrop(event,'${page.id}')"` : ''}
+      onclick="wikiOpenPage('${page.id}')" style="padding-left:${8 + depth * 14}px"
+      title="${esc(srcLabel)}">
+      ${dot}
+      <span class="wiki-row-icon">${wikiScopeIcon(page.scope)}</span>
+      <span class="wiki-row-title">${esc(page.title || 'Ohne Titel')}${tags ? ' ' + tags : ''}</span>
+      <span class="wiki-row-actions">
+        <button title="Umbenennen" onclick="event.stopPropagation();wikiRenamePage('${page.id}')">${WIKI_ICONS_EDIT}</button>
+        <button title="Löschen" onclick="event.stopPropagation();wikiDeletePage('${page.id}')">${WIKI_ICONS_TRASH}</button>
+      </span>
+    </div>`;
+}
+
+function wikiVisiblePages() {
+  let pages = window._wiki.pages;
+  if (window._wiki.tagFilter) {
+    const tf = window._wiki.tagFilter.toLowerCase();
+    pages = pages.filter(p => (p.tags || []).some(t => t.toLowerCase() === tf));
+  }
+  return pages;
+}
+
 function wikiRenderTree() {
   const tree = document.getElementById('wiki-tree');
-  const pages = window._wiki.pages;
+  if (!tree) return;
+  wikiRenderTagFilter();
+  const pages = wikiVisiblePages();
   if (!pages.length) {
-    tree.innerHTML = `<div style="padding:12px;color:var(--text-400);font-size:13px">Noch keine Seiten.</div>`;
+    tree.innerHTML = `<div style="padding:12px;color:var(--text-400);font-size:13px">Keine Seiten.</div>`;
     return;
   }
-  const byParent = {};
-  pages.forEach(p => {
-    const k = p.parent_id || '';
-    (byParent[k] = byParent[k] || []).push(p);
-  });
-  // Pages whose parent isn't in this filtered set render at top level too.
-  const ids = new Set(pages.map(p => p.id));
-  const roots = pages.filter(p => !p.parent_id || !ids.has(p.parent_id));
-  const seen = new Set();
-  const render = (page, depth) => {
-    if (seen.has(page.id)) return '';   // guard against cycles
-    seen.add(page.id);
-    const kids = (byParent[page.id] || []).filter(k => k.id !== page.id);
-    const active = window._wiki.current?.id === page.id;
-    const scopeBadge = page.scope === 'global' ? '🌐' : page.scope === 'team' ? '👥' : '';
-    const srcBadge = (page.source && page.source !== 'manual' && page.source !== 'agent')
-      ? `<span title="${esc(page.source)}" style="opacity:.6">↩</span>` : '';
-    let html = `<div class="wiki-tree-item${active ? ' active' : ''}" onclick="wikiOpenPage('${page.id}')"
-        style="display:flex;align-items:center;gap:6px;padding:5px 8px;padding-left:${8 + depth * 14}px;
-        border-radius:5px;cursor:pointer;font-size:13px;color:var(--text-100);
-        background:${active ? 'var(--bg-300)' : 'transparent'}">
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${scopeBadge} ${esc(page.title || 'Ohne Titel')}</span>
-        ${srcBadge}</div>`;
-    kids.forEach(k => { html += render(k, depth + 1); });
-    return html;
+  const mode = window._wiki.grouping;
+  if (mode === 'manual' && !window._wiki.tagFilter) {
+    // Editable nested tree (parent_id/position), drag-and-drop enabled.
+    const byParent = {};
+    pages.forEach(p => { (byParent[p.parent_id || ''] = byParent[p.parent_id || ''] || []).push(p); });
+    Object.values(byParent).forEach(arr => arr.sort((a, b) => (a.position || 0) - (b.position || 0)));
+    const ids = new Set(pages.map(p => p.id));
+    const roots = pages.filter(p => !p.parent_id || !ids.has(p.parent_id));
+    const seen = new Set();
+    const render = (page, depth) => {
+      if (seen.has(page.id)) return '';
+      seen.add(page.id);
+      let html = wikiRowHtml(page, depth, true);
+      (byParent[page.id] || []).filter(k => k.id !== page.id).forEach(k => { html += render(k, depth + 1); });
+      return html;
+    };
+    tree.innerHTML = roots.map(r => render(r, 0)).join('');
+    return;
+  }
+  // Computed grouping (read-only flat groups).
+  const keyOf = (p) => {
+    if (mode === 'project') return p.project_id || '(kein Projekt)';
+    if (mode === 'source') return WIKI_SOURCE_LABELS[p.source] || p.source || '(unbekannt)';
+    if (mode === 'created_by') return p.created_by || '(unbekannt)';
+    if (mode === 'updated_by') return p.updated_by || '(unbekannt)';
+    if (mode === 'topic') return (p.tags && p.tags[0]) || '(ohne Tag)';
+    return '(alle)';
   };
-  tree.innerHTML = roots.map(r => render(r, 0)).join('');
+  const groups = {};
+  pages.forEach(p => { (groups[keyOf(p)] = groups[keyOf(p)] || []).push(p); });
+  const keys = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+  tree.innerHTML = keys.map(k => {
+    const rows = groups[k].sort((a, b) => (a.title || '').localeCompare(b.title || ''))
+      .map(p => wikiRowHtml(p, 0, false)).join('');
+    return `<div class="wiki-group-header">${esc(k)} <span style="opacity:.6">· ${groups[k].length}</span></div>${rows}`;
+  }).join('');
+}
+
+// Tag filter chip row — every distinct tag across the visible scope.
+function wikiRenderTagFilter() {
+  const host = document.getElementById('wiki-tag-filter');
+  if (!host) return;
+  const counts = {};
+  window._wiki.pages.forEach(p => (p.tags || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
+  const tags = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 24);
+  if (!tags.length) { host.innerHTML = ''; return; }
+  const active = window._wiki.tagFilter;
+  host.innerHTML = (active ? `<span class="wiki-tag active" onclick="wikiToggleTag('${esc(active)}')">${esc(active)} ✕</span>` : '') +
+    tags.filter(t => t !== active).map(t =>
+      `<span class="wiki-tag" onclick="wikiToggleTag('${esc(t)}')">${esc(t)}</span>`).join('');
+}
+
+function wikiToggleTag(tag) {
+  window._wiki.tagFilter = (window._wiki.tagFilter === tag) ? '' : tag;
+  wikiRenderTree();
+}
+
+// ── Drag-and-drop re-parenting (Manuell mode) ──
+function wikiDragStart(e, id) {
+  window._wiki.dragId = id;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', id);
+  e.currentTarget.classList.add('dragging');
+  e.stopPropagation();
+}
+function wikiDragEnd(e) { e.currentTarget.classList.remove('dragging'); window._wiki.dragId = null; }
+function wikiDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('drag-over'); }
+function wikiDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+async function wikiDrop(e, targetId) {
+  e.preventDefault(); e.stopPropagation();
+  e.currentTarget.classList.remove('drag-over');
+  const src = window._wiki.dragId;
+  window._wiki.dragId = null;
+  if (!src || src === targetId) return;
+  // Guard: don't drop a page onto its own descendant (would orphan the subtree).
+  if (wikiIsDescendant(targetId, src)) { return; }
+  try {
+    await API.wikiMove(src, { parent_id: targetId });   // becomes a child of target
+    await wikiRefreshTree();
+  } catch (err) { alert('Verschieben fehlgeschlagen: ' + err.message); }
+}
+function wikiIsDescendant(maybeChildId, ancestorId) {
+  const byId = {}; window._wiki.pages.forEach(p => { byId[p.id] = p; });
+  let cur = byId[maybeChildId];
+  let guard = 0;
+  while (cur && cur.parent_id && guard++ < 100) {
+    if (cur.parent_id === ancestorId) return true;
+    cur = byId[cur.parent_id];
+  }
+  return false;
+}
+
+async function wikiRenamePage(id) {
+  const p = window._wiki.pages.find(x => x.id === id);
+  const title = prompt('Neuer Titel:', p?.title || '');
+  if (title == null || !title.trim()) return;
+  try {
+    await API.wikiUpdate(id, { title: title.trim() });
+    await wikiRefreshTree();
+    if (window._wiki.current?.id === id) {
+      document.getElementById('wiki-title-input').value = title.trim();
+      window._wiki.current.title = title.trim();
+    }
+  } catch (e) { alert('Umbenennen fehlgeschlagen: ' + e.message); }
+}
+
+async function wikiDeletePage(id) {
+  const p = window._wiki.pages.find(x => x.id === id);
+  if (!confirm(`Seite "${p?.title || ''}" löschen? Unterseiten rücken eine Ebene hoch.`)) return;
+  try {
+    await API.wikiDelete(id);
+    if (window._wiki.current?.id === id) {
+      window._wiki.current = null;
+      document.getElementById('wiki-page').style.display = 'none';
+      document.getElementById('wiki-empty').style.display = 'flex';
+    }
+    await wikiRefreshTree();
+  } catch (e) { alert('Löschen fehlgeschlagen: ' + e.message); }
 }
 
 async function wikiOpenPage(id) {
@@ -98,12 +250,58 @@ function wikiRenderMeta(page) {
   const meta = document.getElementById('wiki-page-meta');
   if (!meta) return;
   const bits = [];
-  bits.push(`Bereich: ${page.scope}`);
+  bits.push(`Bereich: ${esc(page.scope)}`);
   bits.push(`Version: ${page.current_version || 1}`);
   if (page.manually_edited) bits.push('manuell bearbeitet');
-  if (page.source && page.source !== 'manual') bits.push(`Quelle: ${esc(page.source)}`);
-  if (page.source_ref) bits.push(`↩ ${esc(page.source_ref)}`);
-  meta.textContent = bits.join('  ·  ');
+  if (page.source && page.source !== 'manual') {
+    bits.push('Quelle: ' + esc(WIKI_SOURCE_LABELS[page.source] || page.source));
+  }
+  if (page.source_ref) {
+    const label = wikiSourceJumpLabel(page.source_ref);
+    if (label) bits.push(`<a class="wiki-jump" onclick="wikiJumpToSource('${esc(page.source_ref)}')" style="color:var(--accent-blue);cursor:pointer;text-decoration:underline">↪ ${esc(label)}</a>`);
+  }
+  // Tag pills (click to filter the tree by that tag).
+  const tags = (page.tags || []).map(t =>
+    `<span class="wiki-tag" onclick="wikiToggleTag('${esc(t)}')">${esc(t)}</span>`).join(' ');
+  meta.innerHTML = bits.join('  ·  ') + (tags ? '<br>' + tags : '');
+}
+
+// A friendly label for a source_ref jump link, or '' if not navigable.
+function wikiSourceJumpLabel(ref) {
+  const type = (ref || '').split('/')[0];
+  return ({
+    session: 'Zum Chat', output: 'Zum Studio-Ergebnis', translation: 'Zur Übersetzung',
+    schedule: 'Zur geplanten Aufgabe', 'workflow-run': 'Zum Workflow-Lauf',
+    'user-profile': 'Zu Profil/Aktivität',
+  })[type] || '';
+}
+
+// Open the originating object for a wiki page's source_ref.
+function wikiJumpToSource(ref) {
+  const i = (ref || '').indexOf('/');
+  const type = i < 0 ? ref : ref.slice(0, i);
+  const id = i < 0 ? '' : ref.slice(i + 1);
+  switch (type) {
+    case 'session':
+      if (typeof openSession === 'function') return openSession(id, (state && state.activeAgentId) || 'main');
+      break;
+    case 'output':
+      if (typeof studioOpenOutput === 'function') return studioOpenOutput(id);
+      break;
+    case 'translation':
+      navigateTo('translation'); break;
+    case 'schedule':
+      navigateTo('scheduled'); break;
+    case 'workflow-run':
+      navigateTo('workflows'); break;
+    case 'user-profile':
+      if (typeof openUserSettings === 'function') return openUserSettings();
+      break;
+  }
+  // Fallback: no specific opener available.
+  if (!['translation', 'schedule', 'workflow-run'].includes(type)) {
+    alert('Quelle: ' + ref);
+  }
 }
 
 function wikiSetMode(mode) {

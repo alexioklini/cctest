@@ -572,10 +572,21 @@ zugleich das Langzeit-Gedächtnis des Agenten: jede gespeicherte Seite wird in
 MemPalace gespiegelt, sodass der Agent sie bei der Suche findet.
 
 **Aufbau:**
-- **Links** der Seitenbaum. Seiten lassen sich verschachteln (Unterseiten).
-  Symbole: 🌐 = global (für alle), 👥 = Team. Der Filter oben schaltet zwischen
-  **Alle** (alles, was du sehen darfst), **Meine** (deine privaten Seiten),
-  **Team** und **Alle sichtbar** (globale Seiten) um.
+- **Links** der Seitenbaum. Der obere Filter schaltet den Sichtbarkeitsbereich
+  (**Alle** / **Meine** / **Team** / **Alle sichtbar**). Das **Gruppieren nach**-
+  Menü ordnet die Seiten: **Manuell** (der editierbare Baum mit Unterseiten +
+  Drag&Drop), **Thema**, **Projekt**, **Quelle** (Chat / Studio / …), **Erstellt
+  von**, **Geändert von**. Jede Zeile zeigt ein Bereichs-Symbol, einen kleinen
+  grünen Punkt (in MemPalace durchsuchbar) und ihre Tags.
+- **Tags & Filter:** Seiten bekommen beim Erstellen/Aktualisieren automatisch
+  Themen-Tags (KI-vorgeschlagen); du kannst eigene Tags ergänzen oder entfernen
+  (deine Tags bleiben erhalten). Die Tag-Leiste oben filtert den Baum; ein Klick
+  auf ein Tag filtert ebenfalls.
+- **Bearbeiten im Baum:** Beim Überfahren einer Zeile erscheinen **Umbenennen**
+  und **Löschen**. Im Modus *Manuell* lassen sich Seiten per **Drag&Drop** unter
+  eine andere Seite ziehen (verschachteln/umordnen).
+- **Zur Quelle springen:** Aus einem Chat/Studio/… erzeugte Seiten zeigen unter
+  dem Titel einen Link (z. B. „Zum Chat"), der das Ursprungsobjekt öffnet.
 - **Rechts** der Editor mit zwei Ansichten, umschaltbar oben rechts:
   **Ansicht** (gerendertes Markdown) ↔ **Markdown** (Roh-Editor mit
   Zeilennummern). Titel oben ist direkt editierbar.

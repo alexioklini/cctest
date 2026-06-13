@@ -957,6 +957,12 @@ class ChatDB:
                 ("wiki_pages", "source_ref", "TEXT NOT NULL DEFAULT ''"),
                 ("wiki_pages", "manually_edited", "INTEGER NOT NULL DEFAULT 0"),
                 ("wiki_pages", "current_version", "INTEGER NOT NULL DEFAULT 0"),
+                # tags: JSON array of strings. auto_tags: JSON array the
+                # auto-tagger owns (regenerated on update); user can add/remove
+                # entries in `tags` and those are never auto-removed. The UI shows
+                # the union; the filter matches `tags`.
+                ("wiki_pages", "tags", "TEXT NOT NULL DEFAULT '[]'"),
+                ("wiki_pages", "auto_tags", "TEXT NOT NULL DEFAULT '[]'"),
                 ("wiki_page_versions", "note", "TEXT NOT NULL DEFAULT ''"),
             ):
                 try:
@@ -1325,7 +1331,7 @@ class ChatDB:
         allowed = ("title", "body_md", "parent_id", "slug", "position",
                    "scope", "owner_id", "team_id", "project_id", "archived",
                    "source", "source_ref", "manually_edited", "current_version",
-                   "updated_by")
+                   "tags", "auto_tags", "updated_by")
         sets, vals = [], []
         for k in allowed:
             if k in fields:

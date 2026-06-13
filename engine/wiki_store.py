@@ -51,6 +51,117 @@ def _slugify(title: str) -> str:
     return safe[:60] or "page"
 
 
+def _parse_tags(raw) -> list:
+    """Parse a tags JSON column into a clean list of short string tags."""
+    import json as _json
+    if isinstance(raw, list):
+        vals = raw
+    else:
+        try:
+            vals = _json.loads(raw or "[]")
+        except Exception:
+            vals = []
+    out, seen = [], set()
+    for v in vals:
+        t = str(v or "").strip()[:40]
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t)
+    return out[:20]
+
+
+def _suggest_tags(title: str, body_md: str) -> list:
+    """LLM-suggest 1-5 lowercase topic tags from a page's title+body. Best-effort
+    — returns [] on any failure or when no background model is available."""
+    import json as _json
+    import brain as _brain
+    from handlers import sidecar_proxy
+    text = f"{title}\n\n{body_md}".strip()
+    if len(text) < 40:
+        return []
+    model = ""
+    try:
+        sc = _brain._server_config() or {}
+        m = (sc.get("chat_summary_model") or "").strip()
+        if m and _brain._is_model_available(m):
+            model = m
+    except Exception:
+        pass
+    if not model:
+        model = _brain._background_model_default()
+    if not model:
+        return []
+    rc = get_request_context()
+    sys_p = (
+        "Extract 1-5 short topic TAGS for this wiki page. Tags are single "
+        "lowercase words or short kebab-case phrases naming the page's topics "
+        "(e.g. 'gardening', 'project-x', 'tax-2026'). Keep the page's language. "
+        "Return ONLY a JSON array of strings, nothing else.")
+    try:
+        out = sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": text[:8000]}],
+            model=model, system_prompt=sys_p, purpose="transform",
+            cost_purpose="wiki", max_rounds=1,
+            user_id=rc.current_user_id or None, session_id="wiki-tags")
+        if not isinstance(out, dict) or out.get("error"):
+            return []
+        reply = (out.get("reply") or "").strip()
+        # Tolerate a code-fence wrap or leading prose; grab the first JSON array.
+        m = re.search(r"\[.*\]", reply, re.S)
+        if not m:
+            return []
+        return _parse_tags(_json.loads(m.group(0)))
+    except Exception:
+        return []
+
+
+def _apply_auto_tags(page_id: str):
+    """Recompute auto-tags for a page and merge them into its tags, preserving
+    any user-added tags (auto never deletes a manual tag). Best-effort."""
+    ChatDB = _chatdb()
+    page = ChatDB.get_wiki_page(page_id)
+    if not page:
+        return
+    import json as _json
+    prev_auto = _parse_tags(page.get("auto_tags"))
+    cur_tags = _parse_tags(page.get("tags"))
+    # Manual tags = current tags minus the previous auto set.
+    manual = [t for t in cur_tags if t.lower() not in {a.lower() for a in prev_auto}]
+    new_auto = _suggest_tags(page.get("title", ""), page.get("body_md", ""))
+    if not new_auto and not prev_auto:
+        return  # nothing to do
+    # Merged tags = manual ∪ new_auto (manual order first).
+    merged, seen = [], set()
+    for t in manual + new_auto:
+        if t.lower() not in seen:
+            seen.add(t.lower())
+            merged.append(t)
+    ChatDB.update_wiki_page(page_id, tags=_json.dumps(merged),
+                            auto_tags=_json.dumps(new_auto))
+
+
+def _auto_tag_async(page_id: str):
+    """Recompute auto-tags off the request path. Captures the caller's identity
+    so the background thread's request_context can access the page."""
+    import threading
+    import brain as _brain
+    rc = get_request_context()
+    uid = rc.current_user_id or ""
+    tids = list(rc.current_team_ids or [])
+
+    def _run():
+        try:
+            with _brain.request_context():
+                r = get_request_context()
+                r.current_user_id = uid
+                r.current_team_ids = tids
+                _apply_auto_tags(page_id)
+        except Exception as e:
+            print(f"[wiki] auto-tag failed for {page_id[:8]}: "
+                  f"{type(e).__name__}: {e}", flush=True)
+    threading.Thread(target=_run, daemon=True, name=f"wiki-tag-{page_id[:8]}").start()
+
+
 def _caller():
     """(user_id, set-of-team-ids) from the current request context."""
     rc = get_request_context()
@@ -215,7 +326,20 @@ def create_page(scope, title, body_md="", parent_id="", project_id="",
         note = "initial" if source == "manual" else f"created from {source}"
         ChatDB.add_wiki_version(page_id, title, body_md, uid, note=note)
         _mirror_page(page)
-        page = ChatDB.get_wiki_page(page_id)  # refresh current_version
+        if (body_md or "").strip():
+            _auto_tag_async(page_id)   # suggest topic tags in the background
+        page = _decorate(ChatDB.get_wiki_page(page_id))  # refresh + normalize
+    return page
+
+
+def _decorate(page: dict) -> dict:
+    """Normalize a raw DB page row for the client: parse tags JSON into a list
+    and add `mirrored` (a non-empty current body means it has a MemPalace drawer)."""
+    if not page:
+        return page
+    page["tags"] = _parse_tags(page.get("tags"))
+    page["auto_tags"] = _parse_tags(page.get("auto_tags"))
+    page["mirrored"] = bool((page.get("body_md") or "").strip())
     return page
 
 
@@ -224,7 +348,7 @@ def get_page(page_id):
     if not page:
         return None
     _require_access(page)
-    return page
+    return _decorate(page)
 
 
 def list_tree(filter_mode="all", project_id=None, team_id=None):
@@ -260,7 +384,14 @@ def list_tree(filter_mode="all", project_id=None, team_id=None):
         rows = ChatDB.list_wiki_pages_for_user(uid, list(tids))
         if project_id is not None:
             rows = [r for r in rows if (r.get("project_id") or "") == project_id]
-    return rows
+    # Decorate (parse tags, mirrored flag) and drop the heavy body from tree rows
+    # — the client fetches body on open. Keeps all grouping/filter fields.
+    out = []
+    for r in rows:
+        _decorate(r)
+        r.pop("body_md", None)
+        out.append(r)
+    return out
 
 
 def update_page(page_id, title=None, body_md=None, _by_human=True, _note="",
@@ -284,8 +415,12 @@ def update_page(page_id, title=None, body_md=None, _by_human=True, _note="",
     for k in ("parent_id", "position", "project_id", "archived", "source"):
         if k in fields and fields[k] is not None:
             patch[k] = fields[k]
+    # Explicit user tag edit (replaces the tags list; auto_tags untouched).
+    if fields.get("tags") is not None:
+        import json as _json
+        patch["tags"] = _json.dumps(_parse_tags(fields["tags"]))
     if not patch:
-        return page
+        return _decorate(page)
     content_changed = title is not None or body_md is not None
     if content_changed and _by_human:
         patch["manually_edited"] = 1
@@ -297,8 +432,10 @@ def update_page(page_id, title=None, body_md=None, _by_human=True, _note="",
                                 fresh.get("body_md", ""), uid,
                                 note=_note or ("manual edit" if _by_human else "auto update"))
         _mirror_page(fresh)
+        # Recompute auto-tags in the background — never block the save on an LLM.
+        _auto_tag_async(page_id)
         fresh = ChatDB.get_wiki_page(page_id)
-    return fresh
+    return _decorate(fresh)
 
 
 def move_page(page_id, parent_id="", position=None):

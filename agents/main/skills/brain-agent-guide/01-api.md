@@ -508,7 +508,7 @@ User-visible, editable markdown wiki with user/team/global scoping (a page may a
 - `GET /v1/wiki/pages/<id>/versions` — immutable per-edit snapshots (newest first; each has `version, title, note, created_at/by`).
 - `GET /v1/wiki/pages/<id>/versions/<n>` — one historical version (read-only). Only the current version is editable / in MemPalace.
 - `POST /v1/wiki/pages` — `{scope, title, body_md?, parent_id?, project_id?, team_id?, source?, source_ref?}` → 201 with the created page.
-- `PUT /v1/wiki/pages/<id>` — `{title?, body_md?, project_id?, archived?}` (a human text change → new version, sets `manually_edited`, re-mirrors).
+- `PUT /v1/wiki/pages/<id>` — `{title?, body_md?, project_id?, archived?, tags?}` (a human text change → new version, sets `manually_edited`, re-mirrors; `tags` is an explicit string array — user tags are preserved across auto-tagging). Tree rows + page GET return `tags` (list) + `auto_tags` + `mirrored` (has a MemPalace drawer); tree rows omit `body_md`.
 - `POST /v1/wiki/pages/<id>/promote/<n>` — make version `n` current (copied to a new version; re-mirrors). Append-only history.
 - `POST /v1/wiki/pages/<id>/move` — `{parent_id?, position?}` restructure (`parent_id:""` = top level).
 - `POST /v1/wiki/pages/<id>/generate` — `{kind: summary|podcast, include_children?}` → generates a summary (LLM) or podcast (LLM script + TTS MP3) from the page (+ optional subtree) and saves it as a new CHILD page (synchronous). Podcast links the MP3 artifact via an `[[audio:<artifact_id>]]` token.
