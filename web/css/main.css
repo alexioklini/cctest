@@ -8564,6 +8564,12 @@ code, pre, .tool-result-pre, .wf-card-fname, .font-mono {
    Tree + page render use the SAME typography as chat (--font-ui, --text-100,
    chat sizes). No emoji — scope/source icons are inline SVG (currentColor,
    matching the sidebar nav icon style). */
+/* View visibility — hidden by default, shown only when nav adds .active. Every
+   other top-level view has this; its absence left #wiki-view (which sits after
+   #chat-view in the DOM) permanently rendered at the bottom of the chat view. */
+#wiki-view { display: none; height: 100%; }
+#wiki-view.active { display: block; }
+
 #wiki-view .wiki-tree-item {
   display: flex; align-items: center; gap: 6px;
   padding: 5px 8px; border-radius: 6px; cursor: pointer;
