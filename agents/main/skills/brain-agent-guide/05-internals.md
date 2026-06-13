@@ -444,7 +444,10 @@ feeder** for chat-derived wings (the old `mempalace-chat-sync` daemon is retired
 - **Auto-feeders** (all via `upsert_from_source` → diff-merge preserves manual
   edits, no-op merge skips a version):
   - **chat memorize** (`wiki_from_chat`): the 'merken' action LLM-organizes the
-    selected turns into one topic-titled page, `source_ref=session/<sid>`.
+    selected turns into one topic-titled page, `source_ref=session/<sid>`. ALSO
+    automatic — when a session has `save_to_memory>0`, the chat worker re-wikifies
+    it in the background after each turn (debounced ≥90s, first turn always
+    fires). This is the replacement for the retired mempalace-chat-sync daemon.
   - **Studio/Research outputs** (`wiki_from_artifact` from `output_gen.save_report_output`):
     files every generated report, `source_ref=output/<id>`.
   - **profile/activity** (`wiki_from_artifact` from `_write_user_profile_atomic`):

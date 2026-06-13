@@ -2846,12 +2846,38 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         done_data["files"] = created_files
                     live.emit("done", done_data)
 
-                    # Continuous session summarization: refresh memory summary at token thresholds
-                    # (Retired v9.107.0: per-turn Memory-Summary refresh +
-                    # auto-memory extraction. Both wrote MemoryStore .md files
-                    # that no longer surface anywhere — the user-visible LLM Wiki
-                    # is the agent's memory now. Chats reach the wiki via the
-                    # 'merken' action → wiki_from_chat, not an auto-extract daemon.)
+                    # Auto chat→wiki: when this session has memory ON/auto
+                    # (save_to_memory > 0), re-wikify it in the background so the
+                    # conversation lands in the user-visible wiki (and thus
+                    # MemPalace) WITHOUT the user having to press 'merken'. This
+                    # replaces the retired mempalace-chat-sync daemon as the
+                    # automatic feeder. upsert_from_source keys on
+                    # source_ref=session/<sid>, so repeated turns re-version the
+                    # SAME page (diff-merge, no fork). Debounced per session so a
+                    # multi-turn chat doesn't LLM-rebuild the page every round.
+                    try:
+                        if int(getattr(session, "save_to_memory", 0) or 0) > 0 \
+                                and len([m for m in session.messages if m.get("role") == "user"]) >= 1:
+                            import time as _t
+                            _last = getattr(session, "_last_wiki_sync_at", 0)
+                            now = _t.time()
+                            # At most once per ~90s of wall-clock per session
+                            # (the LLM reorganization is the cost). The final
+                            # state is captured on session delete/idle too.
+                            if now - _last >= 90:
+                                session._last_wiki_sync_at = now
+                                _wsid = sid
+
+                                def _auto_wiki(_s=_wsid):
+                                    try:
+                                        from engine import wiki_store as _wiki
+                                        _wiki.wiki_from_chat(_s)
+                                    except Exception as _e:
+                                        print(f"[auto-wiki] {_s[:8]} failed: {_e}", flush=True)
+                                threading.Thread(target=_auto_wiki, daemon=True,
+                                                 name=f"auto-wiki-{sid[:8]}").start()
+                    except Exception:
+                        pass
 
                     # Generate chat summary (background, for sidebar display).
                     # Regenerated every turn so the synopsis tracks the latest
