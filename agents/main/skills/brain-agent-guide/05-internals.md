@@ -455,6 +455,14 @@ feeder** for chat-derived wings (the old `mempalace-chat-sync` daemon is retired
     `source_ref=user-profile/<uid>`.
 - `wiki_read(query)` searches across ALL the caller's accessible wings (user +
   teams + global) and merges — `mempalace_query` alone defaults to the user wing.
+- **Opt-in KG** (`mempalace.kg.wiki`, default OFF): when on, a PROJECT-tagged
+  wiki page also gets KG triples extracted into the project's
+  `knowledge_graph.sqlite3` after each save (`_kg_for_wiki_page_async` →
+  `run_kg_post_pass`, adapter `brain-wiki-kg`, `source_file=wiki/<id>`, prior
+  triples invalidated first so a re-save replaces). user/team/global wiki KG not
+  built (no project KG scope). The scheduled-results→wiki feeder (`schedules.wiki_file`)
+  files each run as a fresh VERSION of one page (`source_ref=schedule/<id>`,
+  `replace=True` — no diff-merge).
 
 ## Deep Research (the bounded agentic loop)
 

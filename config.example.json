@@ -2468,7 +2468,8 @@
       "chunking_mode": "source_file",
       "source_chunk_chars": 3500,
       "regenerate_closets": true,
-      "profile": "normative"
+      "profile": "normative",
+      "wiki": false
     },
     "reranker": {
       "enabled": true,

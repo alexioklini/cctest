@@ -288,6 +288,68 @@ def _mirror_page(page: dict):
     except Exception as e:
         print(f"[wiki] mirror failed for {page_id[:8]} in {wing}: "
               f"{type(e).__name__}: {e}", flush=True)
+        return
+    # Opt-in KG: for PROJECT-TAGGED pages, also extract triples into the project
+    # KG (additive to the project-sync KG). Off unless config.json →
+    # mempalace.kg.wiki is true. Background (one LLM call), best-effort.
+    if page.get("project_id"):
+        _kg_for_wiki_page_async(page, wing, pp)
+
+
+def _kg_for_wiki_page_async(page: dict, wing: str, palace_path: str):
+    """Run KG extraction for ONE project-tagged wiki page in the background.
+    Gated on mempalace.kg.enabled AND mempalace.kg.wiki (opt-in, default off).
+    Invalidates the page's prior triples first (the drawer id changed on save,
+    so old triples would orphan), then runs the post-pass scoped to this page's
+    synthetic source_file (wiki/<id>) in per_drawer mode (no file on disk)."""
+    import threading
+    import brain as _brain
+    kg_cfg = (_brain._load_mempalace_config().get("kg") or {})
+    if not kg_cfg.get("enabled", True) or not kg_cfg.get("wiki", False):
+        return
+    page_id = page["id"]
+    rc = get_request_context()
+    uid = rc.current_user_id or ""
+    tids = list(rc.current_team_ids or [])
+
+    def _run():
+        try:
+            import os as _os
+            from engine import kg_extract as _kg
+            chats_db = _os.path.join(_brain.AGENTS_DIR, "main", "chats.db")
+            src = f"wiki/{page_id}"
+            adapter = "brain-wiki-kg"
+            # 1. Drop the page's prior triples (exact source_file match) so a
+            #    re-saved page replaces — never accumulates — its triples.
+            try:
+                _kg._invalidate_source_in_kg(palace_path, chats_db, wing, src, adapter)
+            except Exception:
+                pass
+            # 2. Extract from the current drawer. per_drawer mode: the wiki page
+            #    is synthetic (no file on disk), so source_file chunking can't
+            #    read it — feed the drawer content directly.
+            with _brain.request_context():
+                r = get_request_context()
+                r.current_user_id = uid
+                r.current_team_ids = tids
+                _kg.run_kg_post_pass(
+                    palace_path=palace_path,
+                    wing=wing,
+                    source_prefix=src,
+                    adapter_name=adapter,
+                    profile_name=kg_cfg.get("profile", "normative") or "normative",
+                    model=kg_cfg.get("extraction_model", "") or "",
+                    chats_db_path=chats_db,
+                    max_triples_per_drawer=int(kg_cfg.get("max_triples_per_drawer", 12)),
+                    max_drawer_chars=int(kg_cfg.get("max_drawer_chars", 6000)),
+                    min_confidence=float(kg_cfg.get("min_confidence", 0.5)),
+                    chunking_mode="per_drawer",
+                    skip_code=True,
+                    log_prefix="[wiki.kg]",
+                )
+        except Exception as e:
+            print(f"[wiki.kg] {page_id[:8]} failed: {type(e).__name__}: {e}", flush=True)
+    threading.Thread(target=_run, daemon=True, name=f"wiki-kg-{page_id[:8]}").start()
 
 
 # ── CRUD (access-checked) ────────────────────────────────────────────────────

@@ -1278,7 +1278,11 @@ def run_kg_post_pass(
                 if did in already:
                     result.drawers_skipped += 1
                     continue
-                if sf and not os.path.isfile(sf):
+                # Only treat a source_file as a deleted FILE (purge + skip) when
+                # it's an absolute path that no longer exists. Synthetic sources
+                # (wiki/<id>, session/...#turn/..., user/...#profile/...) are not
+                # files on disk — extract from the drawer content directly.
+                if sf and sf.startswith("/") and not os.path.isfile(sf):
                     try:
                         _invalidate_source_in_kg(
                             palace_path, chats_db_path, wing, sf, adapter_name)
