@@ -206,6 +206,11 @@ class Scheduler:
                 # inside that project's context (instructions, MemPalace
                 # project__<id> wing, research_mode).
                 "ALTER TABLE schedules ADD COLUMN project_id TEXT DEFAULT ''",
+                # Opt-in: when 1, each successful run's result is auto-filed into
+                # the LLM Wiki (one page per schedule, re-versioned each run via
+                # source_ref=schedule/<id>). Default 0 = off; the user can still
+                # file a run manually from the scheduled-chat view.
+                "ALTER TABLE schedules ADD COLUMN wiki_file INTEGER DEFAULT 0",
             ):
                 try:
                     conn.execute(_ddl)
@@ -258,7 +263,8 @@ class Scheduler:
             thinking_level: str = "",
             caveman_chat: int = 0,
             tool_profile: str = "",
-            project_id: str = "") -> dict:
+            project_id: str = "",
+            wiki_file: int = 0) -> dict:
         """Add a scheduled task. timeout in seconds (default: 300 = 5 min).
 
         attachments: list of {name, path, mime, size} dicts. Files must already
@@ -301,15 +307,19 @@ class Scheduler:
         if tool_profile not in _brain._VALID_TOOL_PROFILES:
             return {"error": f"Invalid tool_profile: {tool_profile!r}. Valid: {', '.join(repr(p) for p in _brain._VALID_TOOL_PROFILES)}"}
         project_id = (project_id or "").strip()
+        try:
+            wiki_file = 1 if int(wiki_file or 0) else 0
+        except (TypeError, ValueError):
+            wiki_file = 0
         atts_json = json.dumps(attachments or [])
         try:
             with _sched_conn() as conn:
                 conn.execute("""
-                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir, user_id, thinking_level, caveman_chat, tool_profile, project_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir, user_id, thinking_level, caveman_chat, tool_profile, project_id, wiki_file)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (name, task, schedule, agent, model, next_run.isoformat(),
                       timeout, atts_json, working_dir, user_id or "",
-                      thinking_level, caveman_chat, tool_profile, project_id))
+                      thinking_level, caveman_chat, tool_profile, project_id, wiki_file))
                 conn.commit()
             return {"name": name, "schedule": schedule, "agent": agent,
                     "next_run": next_run.isoformat(), "timeout": timeout,
@@ -319,6 +329,7 @@ class Scheduler:
                     "caveman_chat": caveman_chat,
                     "tool_profile": tool_profile,
                     "project_id": project_id,
+                    "wiki_file": wiki_file,
                     "status": "created"}
         except sqlite3.IntegrityError:
             return {"error": f"Schedule '{name}' already exists"}
@@ -566,7 +577,7 @@ class Scheduler:
         allowed = {"task", "schedule", "model", "timeout", "agent",
                    "attachments", "working_dir",
                    "thinking_level", "caveman_chat", "tool_profile",
-                   "project_id"}
+                   "project_id", "wiki_file"}
         updates: dict = {}
         for k in allowed:
             if k not in fields:
@@ -599,6 +610,8 @@ class Scheduler:
                 if tp not in _brain._VALID_TOOL_PROFILES:
                     return {"error": f"Invalid tool_profile: {v!r}. Valid: {', '.join(repr(p) for p in _brain._VALID_TOOL_PROFILES)}"}
                 updates[k] = tp
+            elif k == "wiki_file":
+                updates[k] = 1 if (int(v) if str(v).strip().lstrip("-").isdigit() else bool(v)) else 0
             else:
                 updates[k] = v
         new_name = fields.get("new_name")
@@ -1503,6 +1516,34 @@ class Scheduler:
                                trace_id=run_info.get("trace_id"),
                                artifact_folder=_folder_for_row,
                                model=model)
+
+        # Opt-in: file the successful run's result into the LLM Wiki. One page
+        # per SCHEDULE (source_ref=schedule/<id>) so repeated runs re-version the
+        # same page instead of spawning one per run. Off by default — the user
+        # can always file a run manually from the scheduled-chat view. Verbatim
+        # body (no LLM); auto-tagging + MemPalace mirror happen inside the wiki.
+        try:
+            if status == "success" and int(task_row.get("wiki_file") or 0) \
+                    and (result_text or "").strip():
+                from engine import wiki_store as _wiki
+
+                def _file_sched_wiki():
+                    try:
+                        _wiki.wiki_from_artifact(
+                            title=f"Geplante Aufgabe: {name}",
+                            body_md=result_text,
+                            source="scheduled",
+                            source_ref=f"schedule/{schedule_id}",
+                            user_id=(task_row.get("user_id") or ""),
+                            project_id=_task_project_id,
+                            scope="user", agent_id=agent_id,
+                            replace=True)  # every run = a fresh version of the same page
+                    except Exception as _e:
+                        print(f"[sched-wiki] {name}: {type(_e).__name__}: {_e}", flush=True)
+                threading.Thread(target=_file_sched_wiki, daemon=True,
+                                 name=f"sched-wiki-{schedule_id}").start()
+        except Exception:
+            pass
 
         # Fire notification hook for task completion/failure
         if _brain._notification_hook:

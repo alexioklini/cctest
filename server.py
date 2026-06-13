@@ -2428,6 +2428,7 @@ class BrainAgentHandler(
                 caveman_chat=body.get("caveman_chat", 0) or 0,
                 tool_profile=body.get("tool_profile", "") or "",
                 project_id=project_id,
+                wiki_file=body.get("wiki_file", 0) or 0,
             )
             self._send_json(result)
         elif action == "pause":
@@ -2516,7 +2517,7 @@ class BrainAgentHandler(
                       ("task", "schedule", "model", "timeout", "agent",
                        "new_name", "attachments", "working_dir",
                        "thinking_level", "caveman_chat", "tool_profile",
-                       "project_id")
+                       "project_id", "wiki_file")
                       if k in body}
             # Validate project access on (re)binding. Empty string is allowed
             # (clears the binding back to agent-global).

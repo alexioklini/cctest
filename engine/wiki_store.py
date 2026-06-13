@@ -544,25 +544,35 @@ def _diff_merge(existing_body: str, source_text: str, title: str) -> str:
 
 
 def upsert_from_source(scope, title, source_text, source, source_ref,
-                       project_id="", team_id="", parent_id="", agent_id="main"):
+                       project_id="", team_id="", parent_id="", agent_id="main",
+                       replace=False):
     """The auto-feeder entry point. If a page already exists for `source_ref`,
-    diff-merge the new source into it and save as a new version (current). Else
-    create a fresh page from the source. Returns the (current) page.
+    update it and save as a new version (current); else create a fresh page.
+    Returns the (current) page. Only the current version lands in MemPalace.
 
-    Respects manual edits: the merge prompt is told to preserve them, and the
-    new version is tagged so history shows where it came from. Only the current
-    version lands in MemPalace (via update_page/create_page → _mirror_page)."""
+    Two update modes:
+      - replace=False (default): LLM diff-MERGE the new source into the existing
+        body (preserving manual edits); a no-op merge skips the version. Right
+        for an evolving chat that gets re-wikified.
+      - replace=True: set the new source AS the body directly (no LLM, no merge),
+        ALWAYS appending a new version. Right for a recurring producer — e.g. a
+        scheduled run — where every run should be a fresh version of the same
+        page, not accumulated into the old one."""
     ChatDB = _chatdb()
     existing = ChatDB.find_wiki_page_by_source(source_ref) if source_ref else None
     if existing:
         _require_access(existing)
+        if replace:
+            # Fresh version every time — no diff-merge, no no-op skip.
+            return update_page(existing["id"], body_md=source_text, _by_human=False,
+                               _note=f"new run from {source}")
         merged = _diff_merge(existing.get("body_md", ""), source_text,
                              existing.get("title", title))
         if merged == existing.get("body_md", ""):
             return existing  # nothing new — skip a no-op version
         return update_page(existing["id"], body_md=merged, _by_human=False,
                            _note=f"merged from {source}")
-    # First time: the source text IS the initial body (no existing page to merge).
+    # First time: the source text IS the initial body.
     return create_page(scope, title, body_md=source_text, parent_id=parent_id,
                        project_id=project_id, team_id=team_id, source=source,
                        source_ref=source_ref, agent_id=agent_id)
@@ -670,11 +680,16 @@ def wiki_from_chat(session_id, turn_ids=None, scope=None):
 
 
 def wiki_from_artifact(*, title, body_md, source, source_ref, user_id="",
-                       project_id="", scope="user", agent_id="main"):
+                       project_id="", scope="user", agent_id="main",
+                       replace=False):
     """File a generated artifact (Studio output, scheduled-task result, workflow
     result) into the wiki as a page, upserted by source_ref so a regenerated
     artifact re-versions the same page. Body is taken as-is (already a report);
     no LLM call. Runs as `user_id`. Best-effort — returns the page or None.
+
+    replace=True → every call appends a fresh version of the SAME page (no
+    diff-merge, no no-op skip). Use for recurring producers like scheduled runs
+    so each run is a new version of one page. Default False = diff-merge.
 
     A project_id routes the page to the project_chat wing (consistent with the
     rest of the wiki); pass it for project-scoped outputs."""
@@ -693,7 +708,7 @@ def wiki_from_artifact(*, title, body_md, source, source_ref, user_id="",
             return upsert_from_source(
                 scope=scope, title=title, source_text=body_md,
                 source=source, source_ref=source_ref,
-                project_id=project_id, agent_id=agent_id)
+                project_id=project_id, agent_id=agent_id, replace=replace)
         except WikiAccessError as e:
             print(f"[wiki] from-artifact refused ({source_ref}): {e}", flush=True)
             return None

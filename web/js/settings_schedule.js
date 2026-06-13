@@ -751,6 +751,13 @@ async function _schedViewEdit(name) {
       </select>
     </div>
     <div class="sched-form-group">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="sched-edit-wiki-file" ${Number(task.wiki_file || 0) ? 'checked' : ''}>
+        Ergebnisse ins Wiki übernehmen
+        <span style="color:var(--text-400);font-weight:normal;font-size:11px">(jeder Lauf erzeugt eine neue Version derselben Wiki-Seite)</span>
+      </label>
+    </div>
+    <div class="sched-form-group">
       <label>Arbeitsverzeichnis <span style="color:var(--text-400);font-weight:normal;font-size:11px">(optional)</span></label>
       <div style="display:flex;gap:6px">
         <input id="sched-edit-workdir" value="${esc(task.working_dir || '')}" placeholder="(keines)" readonly style="font-family:var(--font-mono);flex:1;background:var(--bg-100)">
@@ -794,6 +801,7 @@ async function _saveScheduledEdit(originalName) {
   const caveman_chat = parseInt(document.getElementById('sched-edit-caveman')?.value) || 0;
   const tool_profile = document.getElementById('sched-edit-tool-profile')?.value || '';
   const working_dir = document.getElementById('sched-edit-workdir')?.value?.trim() || '';
+  const wiki_file = document.getElementById('sched-edit-wiki-file')?.checked ? 1 : 0;
   const attachments = window._schedEditAttachments || [];
 
   if (!newName) { showToast('Name ist erforderlich', true); return; }
@@ -811,6 +819,7 @@ async function _saveScheduledEdit(originalName) {
     caveman_chat,
     tool_profile,
     working_dir,
+    wiki_file,
     attachments,
     // Empty string signals "clear back to Default" so the scheduler falls
     // back to the target agent's preferred_model at dispatch time. null
