@@ -972,6 +972,18 @@ class ChatDB:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_wiki_source "
                 "ON wiki_pages(source_ref)")
+            # Wiki tag palette — GLOBAL (one shared set for all users). A tag is
+            # an object {name (unique key, lowercased), color}. Pages reference
+            # tags by name (wiki_pages.tags JSON); the color comes from here so
+            # one tag is one color everywhere. Auto-tagging inserts missing names
+            # with a random color.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS wiki_tags (
+                    name        TEXT PRIMARY KEY,
+                    color       TEXT NOT NULL DEFAULT '#888888',
+                    created_at  REAL DEFAULT (strftime('%s','now'))
+                )
+            """)
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -1462,6 +1474,49 @@ class ChatDB:
                 "SELECT * FROM wiki_page_versions WHERE page_id = ? AND version = ?",
                 (page_id, int(version))).fetchone()
             return dict(row) if row else None
+
+    # ── Wiki tag palette (global) ──
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_wiki_tags():
+        """The global tag palette: [{name, color}], alphabetical."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT name, color FROM wiki_tags ORDER BY name").fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def upsert_wiki_tag(name, color):
+        """Create or recolor a tag. name is lowercased; idempotent."""
+        n = (name or "").strip().lower()[:40]
+        if not n:
+            return
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO wiki_tags (name, color) VALUES (?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET color=excluded.color",
+                (n, color or "#888888"))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=False)
+    def wiki_tag_exists(name):
+        with _db_conn() as conn:
+            return conn.execute("SELECT 1 FROM wiki_tags WHERE name=?",
+                                ((name or "").strip().lower(),)).fetchone() is not None
+
+    @staticmethod
+    @_db_safe(default=None)
+    def delete_wiki_tag(name):
+        """Remove a tag from the palette. Does NOT strip it from pages (pages
+        keep the name; it just loses its palette color → renders neutral)."""
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM wiki_tags WHERE name=?",
+                         ((name or "").strip().lower(),))
+            conn.commit()
 
     @staticmethod
     @_db_safe(default=None)

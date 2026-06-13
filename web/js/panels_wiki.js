@@ -13,7 +13,31 @@ window._wiki = window._wiki || {
   cm: null,           // CodeMirror instance
   dirty: false,
   dragId: null,       // page id being dragged
+  palette: {},        // tag name (lowercase) → color, from the global palette
 };
+
+// A tag's color from the global palette (neutral grey if undefined).
+function wikiTagColor(name) {
+  return window._wiki.palette[(name || '').toLowerCase()] || '#888888';
+}
+// Render one colored tag pill. `onRemove` (a JS expr string) adds a × button.
+function wikiTagPill(name, opts) {
+  opts = opts || {};
+  const c = wikiTagColor(name);
+  const rm = opts.onRemove
+    ? `<span onclick="event.stopPropagation();${opts.onRemove}" style="cursor:pointer;margin-left:4px;opacity:.7" title="Entfernen">×</span>` : '';
+  const click = opts.onClick ? `onclick="${opts.onClick}"` : '';
+  return `<span class="wiki-tag" ${click} style="background:${c}22;color:${c};border-color:${c}55;cursor:${opts.onClick ? 'pointer' : 'default'}">${esc(name)}${rm}</span>`;
+}
+
+async function wikiLoadPalette() {
+  try {
+    const res = await API.wikiTags();
+    const map = {};
+    (res.tags || []).forEach(t => { map[t.name] = t.color; });
+    window._wiki.palette = map;
+  } catch (_) { /* keep prior palette */ }
+}
 
 // Inline SVG icons (brain-agent style: currentColor stroke, no emoji).
 const WIKI_ICONS = {
@@ -45,6 +69,7 @@ async function wikiRefreshTree() {
   const tree = document.getElementById('wiki-tree');
   if (!tree) return;
   try {
+    await wikiLoadPalette();   // colors for the pills/filter
     const res = await API.wikiTree(window._wiki.filter);
     window._wiki.pages = res.pages || [];
     wikiRenderTree();
@@ -73,7 +98,7 @@ function wikiSetGrouping(mode) {
 function wikiRowHtml(page, depth, draggable) {
   const active = window._wiki.current?.id === page.id;
   const tags = (page.tags || []).map(t =>
-    `<span class="wiki-tag" onclick="event.stopPropagation();wikiToggleTag('${esc(t)}')">${esc(t)}</span>`).join('');
+    wikiTagPill(t, { onClick: `event.stopPropagation();wikiToggleTag('${esc(t)}')` })).join('');
   const srcLabel = WIKI_SOURCE_LABELS[page.source] || page.source || '';
   const dot = `<span class="wiki-mp-dot ${page.mirrored ? 'on' : ''}" title="${page.mirrored ? 'In MemPalace durchsuchbar' : 'Nicht gespiegelt'}"></span>`;
   return `<div class="wiki-tree-item${active ? ' active' : ''}"
@@ -146,23 +171,108 @@ function wikiRenderTree() {
   }).join('');
 }
 
-// Tag filter chip row — every distinct tag across the visible scope.
+// Tag filter row: colored chips for the tags in view + a 'Tags verwalten' button
+// that opens the palette-management modal.
 function wikiRenderTagFilter() {
   const host = document.getElementById('wiki-tag-filter');
   if (!host) return;
   const counts = {};
   window._wiki.pages.forEach(p => (p.tags || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
-  const tags = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 24);
-  if (!tags.length) { host.innerHTML = ''; return; }
+  const tags = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 30);
   const active = window._wiki.tagFilter;
-  host.innerHTML = (active ? `<span class="wiki-tag active" onclick="wikiToggleTag('${esc(active)}')">${esc(active)} ✕</span>` : '') +
-    tags.filter(t => t !== active).map(t =>
-      `<span class="wiki-tag" onclick="wikiToggleTag('${esc(t)}')">${esc(t)}</span>`).join('');
+  const manageBtn = `<span class="wiki-tag" onclick="wikiOpenTagManager()" title="Tags verwalten (Namen + Farben)"
+      style="background:transparent;color:var(--text-400);border-style:dashed;cursor:pointer">⚙ Tags</span>`;
+  const chips = tags.map(t => {
+    const on = (t.toLowerCase() === (active || '').toLowerCase());
+    const c = wikiTagColor(t);
+    const style = on
+      ? `background:${c};color:#fff;border-color:${c}`
+      : `background:${c}22;color:${c};border-color:${c}55`;
+    return `<span class="wiki-tag" onclick="wikiToggleTag('${esc(t)}')" style="${style};cursor:pointer">${esc(t)}${on ? ' ✕' : ''}</span>`;
+  }).join('');
+  host.innerHTML = manageBtn + chips;
 }
 
 function wikiToggleTag(tag) {
   window._wiki.tagFilter = (window._wiki.tagFilter === tag) ? '' : tag;
   wikiRenderTree();
+}
+
+// ── Tag palette manager (modal) ──
+async function wikiOpenTagManager() {
+  await wikiLoadPalette();
+  let modal = document.getElementById('wiki-tag-modal');
+  if (modal) modal.remove();
+  modal = document.createElement('div');
+  modal.id = 'wiki-tag-modal';
+  modal.className = 'modal-overlay';
+  modal.style.cssText = 'display:flex;position:fixed;inset:0;z-index:9000;background:var(--modal-overlay);align-items:center;justify-content:center';
+  modal.innerHTML = `<div class="modal" style="max-width:520px;width:90%;background:var(--bg-100);border-radius:10px;overflow:hidden">
+      <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border-100)">
+        <h3 style="margin:0">Tags verwalten</h3>
+        <button class="modal-close" onclick="wikiCloseTagManager()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-300)">×</button>
+      </div>
+      <div class="modal-body" style="padding:14px 18px;max-height:60vh;overflow-y:auto">
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <input id="wiki-newtag-name" placeholder="Neuer Tag…" style="flex:1;padding:6px 8px;border-radius:6px;border:1px solid var(--border-100);background:var(--bg-100);color:var(--text-100)">
+          <input id="wiki-newtag-color" type="color" value="#2563eb" style="width:40px;height:34px;border:none;background:none;cursor:pointer">
+          <button onclick="wikiCreateTag()" style="padding:6px 12px;border-radius:6px;border:none;background:var(--accent-main-100,#2563eb);color:#fff;cursor:pointer">Anlegen</button>
+        </div>
+        <div id="wiki-tag-list"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  wikiRenderTagList();
+}
+
+function wikiRenderTagList() {
+  const host = document.getElementById('wiki-tag-list');
+  if (!host) return;
+  const entries = Object.entries(window._wiki.palette).sort((a, b) => a[0].localeCompare(b[0]));
+  if (!entries.length) { host.innerHTML = '<div style="color:var(--text-400);font-size:13px">Noch keine Tags.</div>'; return; }
+  host.innerHTML = entries.map(([name, color]) => `
+    <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border-100)">
+      <input type="color" value="${esc(color)}" onchange="wikiSetTagColor('${esc(name)}',this.value)" style="width:32px;height:28px;border:none;background:none;cursor:pointer">
+      <span class="wiki-tag" style="background:${color}22;color:${color};border-color:${color}55;flex:1">${esc(name)}</span>
+      <button onclick="wikiDeleteTagDef('${esc(name)}')" title="Tag löschen" style="background:none;border:none;color:var(--error,#dc2626);cursor:pointer;font-size:13px">${WIKI_ICONS_TRASH}</button>
+    </div>`).join('');
+}
+
+function wikiCloseTagManager() {
+  const m = document.getElementById('wiki-tag-modal');
+  if (m) m.remove();
+  wikiRenderTagFilter();   // refresh chip colors after edits
+  if (window._wiki.current) wikiRenderMeta(window._wiki.current);
+}
+
+async function wikiCreateTag() {
+  const name = (document.getElementById('wiki-newtag-name')?.value || '').trim().toLowerCase();
+  const color = document.getElementById('wiki-newtag-color')?.value || '#2563eb';
+  if (!name) return;
+  if (window._wiki.palette[name]) { alert('Tag existiert bereits.'); return; }  // no duplicate
+  try {
+    await API.wikiSaveTag(name, color);
+    await wikiLoadPalette();
+    document.getElementById('wiki-newtag-name').value = '';
+    wikiRenderTagList();
+  } catch (e) { alert('Anlegen fehlgeschlagen: ' + e.message); }
+}
+
+async function wikiSetTagColor(name, color) {
+  try {
+    await API.wikiSaveTag(name, color);
+    window._wiki.palette[name.toLowerCase()] = color;
+    wikiRenderTagList();
+  } catch (e) { alert('Farbe ändern fehlgeschlagen: ' + e.message); }
+}
+
+async function wikiDeleteTagDef(name) {
+  if (!confirm(`Tag "${name}" aus der Palette löschen? (Seiten behalten das Tag, es wird nur farblos.)`)) return;
+  try {
+    await API.wikiDeleteTag(name);
+    delete window._wiki.palette[name.toLowerCase()];
+    wikiRenderTagList();
+  } catch (e) { alert('Löschen fehlgeschlagen: ' + e.message); }
 }
 
 // ── Drag-and-drop re-parenting (Manuell mode) ──
@@ -260,10 +370,52 @@ function wikiRenderMeta(page) {
     const label = wikiSourceJumpLabel(page.source_ref);
     if (label) bits.push(`<a class="wiki-jump" onclick="wikiJumpToSource('${esc(page.source_ref)}')" style="color:var(--accent-blue);cursor:pointer;text-decoration:underline">↪ ${esc(label)}</a>`);
   }
-  // Tag pills (click to filter the tree by that tag).
+  // Per-page tag manager: colored pills (× removes from THIS page) + an add control.
   const tags = (page.tags || []).map(t =>
-    `<span class="wiki-tag" onclick="wikiToggleTag('${esc(t)}')">${esc(t)}</span>`).join(' ');
-  meta.innerHTML = bits.join('  ·  ') + (tags ? '<br>' + tags : '');
+    wikiTagPill(t, { onClick: `wikiToggleTag('${esc(t)}')`, onRemove: `wikiRemoveTagFromPage('${esc(t)}')` })).join(' ');
+  const addBtn = `<span class="wiki-tag" onclick="wikiAddTagToPage()" title="Tag hinzufügen"
+      style="background:transparent;color:var(--text-400);border-style:dashed;cursor:pointer">+ Tag</span>`;
+  meta.innerHTML = bits.join('  ·  ') + '<br><span style="display:inline-flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center">' + tags + ' ' + addBtn + '</span>';
+}
+
+// Add a tag to the current page — pick from palette or type a new one.
+async function wikiAddTagToPage() {
+  const page = window._wiki.current;
+  if (!page) return;
+  await wikiLoadPalette();
+  const known = Object.keys(window._wiki.palette).sort();
+  const hint = known.length ? `\n\nVorhandene Tags: ${known.join(', ')}` : '';
+  const name = (prompt('Tag hinzufügen (vorhandenen wählen oder neuen eingeben):' + hint) || '').trim().toLowerCase();
+  if (!name) return;
+  const cur = (page.tags || []).map(t => t.toLowerCase());
+  if (cur.includes(name)) return;   // already on the page — no duplicate
+  const next = [...(page.tags || []), name];
+  try {
+    // If it's a brand-new tag name, register it in the palette first (color).
+    if (!window._wiki.palette[name]) {
+      const color = '#' + Math.floor(0x40 + Math.random() * 0xbf).toString(16).padStart(2, '0')
+        + Math.floor(0x40 + Math.random() * 0xbf).toString(16).padStart(2, '0')
+        + Math.floor(0x40 + Math.random() * 0xbf).toString(16).padStart(2, '0');
+      await API.wikiSaveTag(name, color);
+    }
+    const updated = await API.wikiUpdate(page.id, { tags: next });
+    window._wiki.current = updated;
+    await wikiLoadPalette();
+    wikiRenderMeta(updated);
+    wikiRefreshTree();
+  } catch (e) { alert('Tag hinzufügen fehlgeschlagen: ' + e.message); }
+}
+
+async function wikiRemoveTagFromPage(tag) {
+  const page = window._wiki.current;
+  if (!page) return;
+  const next = (page.tags || []).filter(t => t.toLowerCase() !== tag.toLowerCase());
+  try {
+    const updated = await API.wikiUpdate(page.id, { tags: next });
+    window._wiki.current = updated;
+    wikiRenderMeta(updated);
+    wikiRefreshTree();
+  } catch (e) { alert('Tag entfernen fehlgeschlagen: ' + e.message); }
 }
 
 // A friendly label for a source_ref jump link, or '' if not navigable.

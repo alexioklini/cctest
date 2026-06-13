@@ -1442,6 +1442,8 @@ class BrainAgentHandler(
 
         if path == "/v1/wiki/config":
             self._handle_wiki_config_get()
+        elif path == "/v1/wiki/tags":
+            self._handle_wiki_tags_get()
         elif path == "/v1/wiki/tree":
             self._handle_wiki_tree(path)
         elif path.startswith("/v1/wiki/pages/"):
@@ -1809,6 +1811,8 @@ class BrainAgentHandler(
             self._handle_mcp_jsonrpc()
         elif path == "/v1/wiki/config":
             self._handle_wiki_config_save()
+        elif path == "/v1/wiki/tags":
+            self._handle_wiki_tags_save()
         elif path == "/v1/wiki/pages":
             self._handle_wiki_create(path)
         elif path.startswith("/v1/wiki/pages/") and "/promote/" in path:
@@ -2132,6 +2136,9 @@ class BrainAgentHandler(
             if not user:
                 return
             self._auth_user = user
+        if path.startswith("/v1/wiki/tags/"):
+            self._handle_wiki_tag_delete(path)
+            return
         if path.startswith("/v1/wiki/pages/"):
             self._handle_wiki_delete(path)
             return

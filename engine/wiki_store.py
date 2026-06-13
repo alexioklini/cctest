@@ -92,11 +92,22 @@ def _suggest_tags(title: str, body_md: str) -> list:
     if not model:
         return []
     rc = get_request_context()
+    # Give the model the existing palette so it REUSES a matching tag rather than
+    # inventing a near-duplicate (e.g. don't add 'gardening' if 'garden' exists).
+    existing = []
+    try:
+        existing = [t["name"] for t in _chatdb().list_wiki_tags()][:120]
+    except Exception:
+        existing = []
+    reuse_hint = (f" PREFER reusing an existing tag from this list when it fits "
+                  f"(do not invent a near-synonym): {', '.join(existing)}."
+                  if existing else "")
     sys_p = (
         "Extract 1-5 short topic TAGS for this wiki page. Tags are single "
         "lowercase words or short kebab-case phrases naming the page's topics "
-        "(e.g. 'gardening', 'project-x', 'tax-2026'). Keep the page's language. "
-        "Return ONLY a JSON array of strings, nothing else.")
+        "(e.g. 'gardening', 'project-x', 'tax-2026'). Keep the page's language."
+        + reuse_hint +
+        " Return ONLY a JSON array of strings, nothing else.")
     try:
         out = sidecar_proxy.background_call(
             messages=[{"role": "user", "content": text[:8000]}],
@@ -138,6 +149,34 @@ def _apply_auto_tags(page_id: str):
             merged.append(t)
     ChatDB.update_wiki_page(page_id, tags=_json.dumps(merged),
                             auto_tags=_json.dumps(new_auto))
+    _register_tags_in_palette(merged)
+
+
+def _random_tag_color() -> str:
+    """A pleasant, deterministic-ish color for a new auto-tag. Date.now/random
+    are fine here (server-side, not warmup-prefix). Picks from a fixed palette."""
+    import random
+    PALETTE = ["#2563eb", "#16a34a", "#db2777", "#ea580c", "#7c3aed",
+               "#0891b2", "#ca8a04", "#dc2626", "#059669", "#9333ea",
+               "#0d9488", "#c026d3", "#65a30d", "#e11d48", "#4f46e5"]
+    return random.choice(PALETTE)
+
+
+def _register_tags_in_palette(tags: list):
+    """Ensure every tag name has a palette entry (global). New names get a random
+    color; existing names are left untouched. Best-effort."""
+    if not tags:
+        return
+    ChatDB = _chatdb()
+    for t in tags:
+        n = (t or "").strip().lower()
+        if not n:
+            continue
+        try:
+            if not ChatDB.wiki_tag_exists(n):
+                ChatDB.upsert_wiki_tag(n, _random_tag_color())
+        except Exception:
+            pass
 
 
 def _auto_tag_async(page_id: str):
@@ -480,7 +519,9 @@ def update_page(page_id, title=None, body_md=None, _by_human=True, _note="",
     # Explicit user tag edit (replaces the tags list; auto_tags untouched).
     if fields.get("tags") is not None:
         import json as _json
-        patch["tags"] = _json.dumps(_parse_tags(fields["tags"]))
+        _new_tags = _parse_tags(fields["tags"])
+        patch["tags"] = _json.dumps(_new_tags)
+        _register_tags_in_palette(_new_tags)   # ensure palette has these names
     if not patch:
         return _decorate(page)
     content_changed = title is not None or body_md is not None

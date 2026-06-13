@@ -35,6 +35,40 @@ class WikiHandlerMixin:
 
     # ── list / tree ──
 
+    # ── Tag palette (global) ──
+
+    def _handle_wiki_tags_get(self):
+        """GET /v1/wiki/tags — the global tag palette [{name,color}]."""
+        from server_lib.db import ChatDB
+        self._send_json({"tags": ChatDB.list_wiki_tags()})
+
+    def _handle_wiki_tags_save(self):
+        """POST /v1/wiki/tags {name, color} — create or recolor a tag.
+        No-op-friendly: an existing name just gets its color updated (never a
+        duplicate). Any logged-in user may manage the shared palette."""
+        if self._require_auth() is None:
+            return
+        from server_lib.db import ChatDB
+        body = self._read_json() or {}
+        name = (body.get("name") or "").strip().lower()
+        color = (body.get("color") or "").strip() or "#888888"
+        if not name:
+            self._send_json({"error": "name required"}, 400)
+            return
+        ChatDB.upsert_wiki_tag(name, color)
+        self._send_json({"status": "saved", "name": name, "color": color})
+
+    def _handle_wiki_tag_delete(self, path: str):
+        """DELETE /v1/wiki/tags/<name> — remove a tag from the palette (pages keep
+        the name; it just renders neutral until re-added)."""
+        if self._require_auth() is None:
+            return
+        from urllib.parse import unquote
+        from server_lib.db import ChatDB
+        name = unquote(path.rstrip("/").split("/")[-1])
+        ChatDB.delete_wiki_tag(name)
+        self._send_json({"deleted": True, "name": name.strip().lower()})
+
     def _handle_wiki_tree(self, path: str):
         """GET /v1/wiki/tree?filter=mine|team|global|all&project_id=&team_id=
 
