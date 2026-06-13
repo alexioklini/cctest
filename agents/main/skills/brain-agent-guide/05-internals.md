@@ -428,6 +428,31 @@ a second generation/storage path.
   `panels_background.js`), stopping when nothing generates or the tab is left.
   Rename = `…/outputs/<id>/rename`; delete = `DELETE …/outputs/<id>` (row + file).
 
+## LLM Wiki (the agent's memory + a user-visible knowledge base)
+
+`engine/wiki_store.py` over `wiki_pages`/`wiki_page_versions` (see `03-storage.md`).
+A user-visible, editable markdown page tree (UI: `panels_wiki.js`, tools: `wiki_*`,
+API: `/v1/wiki/*`). Every saved CURRENT version is mirrored into the page's
+MemPalace wing (`user__`/`team__`/`wiki_global`, or `project_chat__<id>` if
+project-tagged) as one drawer `source_file=wiki/<id>` — so the wiki is the **sole
+feeder** for chat-derived wings (the old `mempalace-chat-sync` daemon is retired).
+
+- **Versioning**: every edit appends an immutable version; `current_version`=MAX is
+  the only editable + searchable one. `promote_version` copies an old version to a
+  new current (append-only). `source_ref` ties an auto-generated page to its origin
+  so a changed source re-versions the SAME page (no forking).
+- **Auto-feeders** (all via `upsert_from_source` → diff-merge preserves manual
+  edits, no-op merge skips a version):
+  - **chat memorize** (`wiki_from_chat`): the 'merken' action LLM-organizes the
+    selected turns into one topic-titled page, `source_ref=session/<sid>`.
+  - **Studio/Research outputs** (`wiki_from_artifact` from `output_gen.save_report_output`):
+    files every generated report, `source_ref=output/<id>`.
+  - **profile/activity** (`wiki_from_artifact` from `_write_user_profile_atomic`):
+    the auto-maintained user profile as a 'Profil & Aktivität' page,
+    `source_ref=user-profile/<uid>`.
+- `wiki_read(query)` searches across ALL the caller's accessible wings (user +
+  teams + global) and merges — `mempalace_query` alone defaults to the user wing.
+
 ## Deep Research (the bounded agentic loop)
 
 The marquee feature (`engine/deep_research.py`). Two modes on the project's

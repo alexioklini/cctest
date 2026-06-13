@@ -431,6 +431,137 @@ def upsert_from_source(scope, title, source_text, source, source_ref,
                        source_ref=source_ref, agent_id=agent_id)
 
 
+def wiki_from_chat(session_id, turn_ids=None, scope=None):
+    """Memorize a chat into the wiki: gather the selected turns (or all), LLM-
+    organize them into a clean topic-titled page, and upsert by source_ref=
+    'session/<sid>' so re-memorizing the same chat re-versions the SAME page
+    (diff-merge preserves manual edits). Returns the page, or None if nothing to
+    do. Runs as the session's owner (sets the request context).
+
+    This is the wiki-model replacement for the old _memorize_mempalace_turns
+    direct-to-wing write: the page is the source of truth, its mirror is the
+    searchable projection."""
+    import brain as _brain
+    from server_lib.db import ChatDB, _project_id_for_name
+    from handlers import sidecar_proxy
+
+    info = ChatDB.get_session_info(session_id)
+    if not info:
+        return None
+    user_id = info.get("user_id", "") or ""
+    agent_id = info.get("agent_id", "main") or "main"
+    project = info.get("project", "") or ""
+    project_id = _project_id_for_name(agent_id, project) if project else ""
+    # Scope: a project chat tags the page to the project (→ project_chat wing);
+    # otherwise the user's own wiki (team chats could pass scope='team').
+    page_scope = scope or ("user")
+
+    # Gather the selected turns' text.
+    msgs = ChatDB.mempalace_load_new_messages(session_id, 0) or []
+    want = set(int(t) for t in (turn_ids or []))
+    cur_turn = 0
+    parts = []
+    for m in msgs:
+        mid = int(m.get("id") or 0)
+        role = (m.get("role") or "").strip()
+        if role == "user":
+            cur_turn = mid
+        if want and cur_turn not in want:
+            continue
+        if role not in ("user", "assistant"):
+            continue
+        content = m.get("content")
+        text = content if isinstance(content, str) else str(content)
+        if text.strip():
+            parts.append(f"{role.upper()}: {text.strip()[:4000]}")
+    if not parts:
+        return None
+    convo = "\n\n".join(parts)[:24000]
+
+    # Title from the session, body via LLM organization.
+    title = (info.get("title") or "Chat-Notiz").strip()[:120]
+    model = ""
+    try:
+        _sc = _brain._server_config() or {}
+        _csm = (_sc.get("chat_summary_model") or "").strip()
+        if _csm and _brain._is_model_available(_csm):
+            model = _csm
+    except Exception:
+        pass
+    if not model:
+        model = _brain._background_model_default()
+
+    organized = convo
+    if model:
+        sys_p = (
+            "You curate a personal knowledge wiki. Turn the following conversation "
+            "into ONE clean, well-structured markdown wiki page that captures the "
+            "durable knowledge, decisions, facts and conclusions — NOT the back-and-"
+            "forth. Use headings and bullet points, organized by topic. Drop "
+            "pleasantries, dead ends, and meta-chatter. Keep the user's language. "
+            "Return ONLY the markdown body (no title line, no code fences).")
+        try:
+            out = sidecar_proxy.background_call(
+                messages=[{"role": "user", "content": f"Conversation:\n\n{convo}"}],
+                model=model, system_prompt=sys_p, purpose="transform",
+                cost_purpose="wiki", max_rounds=1,
+                user_id=user_id or None, session_id=f"wiki-from-chat-{session_id[:8]}")
+            if isinstance(out, dict) and not out.get("error"):
+                body = (out.get("reply") or "").strip()
+                if body.startswith("```"):
+                    body = body.split("\n", 1)[-1]
+                    if body.rstrip().endswith("```"):
+                        body = body.rstrip()[:-3].rstrip()
+                if body:
+                    organized = body
+        except Exception as e:
+            print(f"[wiki] from-chat organize failed: {type(e).__name__}: {e}", flush=True)
+
+    # Run as the session owner so the access gate + wing routing are correct.
+    with _brain.request_context():
+        rc = get_request_context()
+        rc.current_user_id = user_id
+        try:
+            from server_lib import auth as _auth_mod
+            rc.current_team_ids = [t["id"] for t in _auth_mod.AuthDB.get_user_teams(user_id)] if user_id else []
+        except Exception:
+            rc.current_team_ids = []
+        return upsert_from_source(
+            scope=page_scope, title=title, source_text=organized,
+            source="chat", source_ref=f"session/{session_id}",
+            project_id=project_id, agent_id=agent_id)
+
+
+def wiki_from_artifact(*, title, body_md, source, source_ref, user_id="",
+                       project_id="", scope="user", agent_id="main"):
+    """File a generated artifact (Studio output, scheduled-task result, workflow
+    result) into the wiki as a page, upserted by source_ref so a regenerated
+    artifact re-versions the same page. Body is taken as-is (already a report);
+    no LLM call. Runs as `user_id`. Best-effort — returns the page or None.
+
+    A project_id routes the page to the project_chat wing (consistent with the
+    rest of the wiki); pass it for project-scoped outputs."""
+    if not (body_md or "").strip():
+        return None
+    import brain as _brain
+    with _brain.request_context():
+        rc = get_request_context()
+        rc.current_user_id = user_id or ""
+        try:
+            from server_lib import auth as _auth_mod
+            rc.current_team_ids = [t["id"] for t in _auth_mod.AuthDB.get_user_teams(user_id)] if user_id else []
+        except Exception:
+            rc.current_team_ids = []
+        try:
+            return upsert_from_source(
+                scope=scope, title=title, source_text=body_md,
+                source=source, source_ref=source_ref,
+                project_id=project_id, agent_id=agent_id)
+        except WikiAccessError as e:
+            print(f"[wiki] from-artifact refused ({source_ref}): {e}", flush=True)
+            return None
+
+
 def delete_page(page_id):
     """Delete a page. Children are re-parented to the deleted page's parent so
     the subtree survives. Purges the page's drawer from its wing."""

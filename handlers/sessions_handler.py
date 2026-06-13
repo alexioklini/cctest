@@ -1097,14 +1097,22 @@ class SessionsHandlerMixin:
                 self._send_json({"status": "ok", "purged": len(resolved),
                                  "turn_ids": resolved, "session_id": sid})
             else:
-                # memorize — run in background since add_drawer can take a moment
+                # memorize — build (or re-version) a WIKI PAGE from the selected
+                # turns in the background. The page mirrors to MemPalace, so the
+                # chat becomes searchable via the wiki (the wiki-model replacement
+                # for the old direct-to-wing _memorize_mempalace_turns write).
                 def _do_mem():
                     try:
-                        _memorize_mempalace_turns(sid, resolved)
+                        from engine import wiki_store as _wiki
+                        page = _wiki.wiki_from_chat(sid, resolved)
+                        if page:
+                            print(f"[wiki-from-chat] {sid[:8]} → page {page['id']} "
+                                  f"v{page.get('current_version')}")
                     except Exception as e:
-                        print(f"[mempalace-memorize-turns] bg error: {e}")
+                        import traceback; traceback.print_exc()
+                        print(f"[wiki-from-chat] bg error for {sid[:8]}: {e}")
                 threading.Thread(target=_do_mem, daemon=True,
-                                 name=f"mp-mem-turns-{sid[:8]}").start()
+                                 name=f"wiki-mem-{sid[:8]}").start()
                 self._send_json({"status": "ok", "memorizing": len(resolved),
                                  "turn_ids": resolved, "session_id": sid})
         elif action == "caveman_mode":

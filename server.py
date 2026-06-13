@@ -3029,6 +3029,23 @@ def _write_user_profile_atomic(uid: str, content: str, *, source: str = "manual"
         _mirror_user_profile_to_mempalace(uid, content)
     except Exception as e:
         print(f"[profile] mempalace mirror failed uid={uid}: {e}", flush=True)
+    # Surface the auto-maintained profile as a user-visible wiki page (the
+    # 'activity summary' the wiki promises). source_ref keeps it a single page
+    # that re-versions on each profile update rather than forking. Best-effort.
+    try:
+        def _wiki_profile():
+            try:
+                from engine import wiki_store as _wiki
+                _wiki.wiki_from_artifact(
+                    title="Profil & Aktivität", body_md=content,
+                    source="activity", source_ref=f"user-profile/{uid}",
+                    user_id=uid, scope="user")
+            except Exception as _e:
+                print(f"[profile] wiki page sync failed uid={uid}: {_e}", flush=True)
+        threading.Thread(target=_wiki_profile, daemon=True,
+                         name=f"wiki-profile-{uid[:8]}").start()
+    except Exception:
+        pass
     return {"path": path, "bytes": len(content.encode("utf-8")),
             "prior_kept": prior_kept, "source": source}
 

@@ -148,6 +148,27 @@ def save_report_output(output_id, agent_id, project_dir, kind, title, body_md, m
                       tokens_out=meta.get("tokens_out", 0), cost=meta.get("cost", 0),
                       duration_s=meta.get("duration_s", 0))
     ChatDB.update_project_output(output_id, **fields)
+    # File the finished report into the wiki (best-effort, background) so it's
+    # browsable + searchable alongside everything else. Scoped to the project
+    # (project_id from the row → project_chat wing), owned by its creator.
+    try:
+        row = ChatDB.get_project_output(output_id) or {}
+        import threading as _th
+        from engine import wiki_store as _wiki
+
+        def _file():
+            try:
+                _wiki.wiki_from_artifact(
+                    title=title, body_md=body_md, source="studio",
+                    source_ref=f"output/{output_id}",
+                    user_id=row.get("created_by", "") or "",
+                    project_id=row.get("project_id", "") or "",
+                    scope="user", agent_id=agent_id)
+            except Exception as _e:
+                print(f"[wiki] output→wiki failed for {output_id}: {_e}", flush=True)
+        _th.Thread(target=_file, daemon=True, name=f"wiki-out-{output_id[:8]}").start()
+    except Exception:
+        pass
     return output_id, path, artifact_id
 
 
