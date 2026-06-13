@@ -2349,3 +2349,77 @@ async function saveServiceModels() {
     showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
   }
 }
+
+async function _genTab_wiki(C) {
+  /* ─── WIKI ─── settings for the LLM Wiki (engine/wiki_store). */
+  try {
+    const cfg = await API.get('/v1/wiki/config').catch(e => ({ error: e.message || String(e) }));
+    if (cfg.error) { C.innerHTML = P(`<div style="color:var(--error)">${esc(cfg.error)}</div>`); return; }
+    const isAdmin = state.authUser && state.authUser.role === 'admin';
+    const dis = isAdmin ? '' : 'disabled';
+
+    // TTS model picker — only models registered in config (any provider).
+    const allModels = (cfg.available_models || []);
+    const ttsCur = cfg.tts_model || '';
+    const ttsOpts = '<option value="">(kein TTS-Modell — Podcast/Vorlesen deaktiviert)</option>'
+      + allModels.map(mid => `<option value="${esc(mid)}" ${mid === ttsCur ? 'selected' : ''}>${esc(mid)}</option>`).join('');
+
+    const ROW = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--border-100)';
+    C.innerHTML = P(`
+      <div style="max-width:720px">
+        <h2 style="margin:0 0 4px;font-size:18px">Wiki</h2>
+        <p style="color:var(--text-400);font-size:13px;margin:0 0 16px">
+          Einstellungen für das LLM-Wiki — das durchsuchbare, editierbare Wissens-Wiki, das zugleich das Langzeit-Gedächtnis des Agenten ist.
+        </p>
+
+        <div style="${ROW}">
+          <div style="flex:1">
+            <div style="font-weight:600">Knowledge Graph für Wiki-Seiten</div>
+            <div style="color:var(--text-400);font-size:12px">
+              Aus <b>projekt-getaggten</b> Wiki-Seiten zusätzlich KG-Tripel in die Projekt-KG extrahieren (zusätzlich zur normalen Suche). Jeder LLM-Aufruf kostet — daher optional. Standard: aus.
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px">
+            <input type="checkbox" id="wiki-kg-toggle" ${cfg.kg_wiki ? 'checked' : ''} ${dis}>
+          </label>
+        </div>
+
+        <div style="${ROW}">
+          <div style="flex:1">
+            <div style="font-weight:600">Text-to-Speech-Modell</div>
+            <div style="color:var(--text-400);font-size:12px">
+              Für <b>🔊 Vorlesen</b> und <b>🎧 Podcast</b> im Wiki (sowie Chat-Vorlesen + Studio Audio Overview). Ohne Modell sind diese Funktionen deaktiviert.
+            </div>
+          </div>
+          <select id="wiki-tts-model" ${dis} style="min-width:240px;padding:6px 8px;border-radius:6px;background:var(--bg-100);color:var(--text-100);border:1px solid var(--border-100)">${ttsOpts}</select>
+        </div>
+
+        <div style="padding:14px 0;color:var(--text-300);font-size:13px;line-height:1.6">
+          <div style="font-weight:600;color:var(--text-200);margin-bottom:4px">Zur Information (anderswo konfiguriert)</div>
+          <div>• <b>Text-Modell des Wiki</b> (Reorganisieren von Chats, Auto-Tags, Zusammenfassungen): nutzt das Zusammenfassungs-Modell
+            <code>${esc(cfg.summary_model || '(nicht gesetzt)')}</code>${cfg.summary_model ? '' : ` → Fallback Server-Standard <code>${esc(cfg.default_model || '—')}</code>`} — einstellbar unter <b>Server → Zusammenfassungen</b>.</div>
+          <div>• <b>KG global</b> ist ${cfg.kg_enabled ? '<span style="color:#4caf50">aktiv</span>' : '<span style="color:var(--error)">deaktiviert</span>'} — Detail-Einstellungen unter <b>Knowledge Graph</b>. (Wiki-KG braucht beides: hier AN + KG global AN.)</div>
+          <div>• <b>Chat → Wiki automatisch</b>: passiert pro Chat, wenn dessen Gedächtnis-Schalter (im Chat) auf AN/Auto steht — kein globaler Schalter.</div>
+        </div>
+
+        <div style="margin-top:12px">
+          <button class="btn-primary" id="wiki-save-btn" onclick="saveWikiConfig()" ${dis}>${isAdmin ? 'Einstellungen speichern' : 'Nur für Administratoren'}</button>
+        </div>
+      </div>
+    `);
+  } catch (e) {
+    C.innerHTML = P(`<div style="color:var(--error)">${esc(e.message || e)}</div>`);
+  }
+}
+
+async function saveWikiConfig() {
+  try {
+    await API.post('/v1/wiki/config', {
+      kg_wiki: document.getElementById('wiki-kg-toggle')?.checked ? true : false,
+      tts_model: document.getElementById('wiki-tts-model')?.value || '',
+    });
+    showToast('Wiki-Einstellungen gespeichert');
+  } catch (e) {
+    showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
+  }
+}

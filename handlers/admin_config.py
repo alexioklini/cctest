@@ -697,6 +697,60 @@ class AdminConfigHandlers:
         result["status"] = "saved"
         self._send_json(result)
 
+    # --- Wiki config handlers ---
+
+    def _handle_wiki_config_get(self):
+        """GET /v1/wiki/config — current wiki-related settings + read-only context
+        (which model serves the wiki's text LLM calls, whether TTS is configured)."""
+        if self._require_auth() is None:
+            return
+        mcfg = engine._load_mempalace_config()
+        kg = mcfg.get("kg") or {}
+        cfg_full = server_config or {}
+        tts = (engine.get_tool_config() or {}).get("text_to_speech", {}) or {}
+        self._send_json({
+            # Editable
+            "kg_wiki": bool(kg.get("wiki", False)),         # KG for project-tagged pages
+            "tts_model": (tts.get("default_model") or "").strip(),
+            # Read-only context (configured elsewhere; shown so the Wiki tab is
+            # the one place that explains where the wiki's models come from).
+            "kg_enabled": bool(kg.get("enabled", True)),
+            "summary_model": (cfg_full.get("chat_summary_model") or "").strip(),
+            "default_model": (cfg_full.get("default_model") or "").strip(),
+            "available_models": sorted((engine._models_config or {}).keys()),
+        })
+
+    def _handle_wiki_config_save(self):
+        """POST /v1/wiki/config — save wiki settings (admin). Persists to the
+        REPOSITORY-ROOT config.json (mempalace.kg.wiki + text_to_speech.default_model)."""
+        if self._require_role("admin") is None:
+            return
+        body = self._read_json() or {}
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+        try:
+            cfg = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    cfg = json.load(f)
+            if "kg_wiki" in body:
+                cfg.setdefault("mempalace", {}).setdefault("kg", {})["wiki"] = bool(body["kg_wiki"])
+                with open(config_path, "w") as f:
+                    json.dump(cfg, f, indent=2, ensure_ascii=False)
+                engine._mempalace_config_cache = None     # bust the 10s cache
+            # TTS model lives in tools_config.json (NOT root config.json) — write
+            # it via the tool-config seam so get_tool_config() picks it up.
+            if "tts_model" in body:
+                m = str(body["tts_model"] or "").strip()
+                if m:
+                    models = cfg.get("models") or {}
+                    if m not in models:
+                        self._send_json({"error": f"unknown model id: {m}"}, 400)
+                        return
+                    engine.save_tool_config({"text_to_speech": {"default_model": m}})
+            self._send_json({"status": "saved"})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     # --- Tools config handlers ---
 
     def _handle_tools_config_get(self):

@@ -4047,8 +4047,5 @@
   "auto_route": {
     "classifier_mode": "llm"
   },
-  "background_task_model": "CLIProxyAPI/mistral-small-latest",
-  "text_to_speech": {
-    "default_model": "voxtral-mini-tts-latest"
-  }
+  "background_task_model": "CLIProxyAPI/mistral-small-latest"
 }

@@ -1440,7 +1440,9 @@ class BrainAgentHandler(
                 return
             self._auth_user = user
 
-        if path == "/v1/wiki/tree":
+        if path == "/v1/wiki/config":
+            self._handle_wiki_config_get()
+        elif path == "/v1/wiki/tree":
             self._handle_wiki_tree(path)
         elif path.startswith("/v1/wiki/pages/"):
             self._handle_wiki_get(path)
@@ -1805,6 +1807,8 @@ class BrainAgentHandler(
 
         if path == "/mcp":
             self._handle_mcp_jsonrpc()
+        elif path == "/v1/wiki/config":
+            self._handle_wiki_config_save()
         elif path == "/v1/wiki/pages":
             self._handle_wiki_create(path)
         elif path.startswith("/v1/wiki/pages/") and "/promote/" in path:
