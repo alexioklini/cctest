@@ -44,7 +44,6 @@ class RequestContext:
     current_session_id: object = None
     session_id: str = ""
     current_team_ids: list = field(default_factory=list)
-    memory_store: object = None
     mcp_manager: object = None
     project: object = None
     # --- delegation ---
@@ -212,13 +211,12 @@ class ExecutionContext:
       user_id       – str  (empty string for background/anonymous)
       team_ids      – list[str]
       project       – str | None  (project name, if any)
-      memory_store  – MemoryStore | None
       mcp_manager   – MCPManager | None
     """
 
     __slots__ = (
         "mode", "agent_id", "session_id", "user_id", "team_ids",
-        "project", "memory_store", "mcp_manager",
+        "project", "mcp_manager",
     )
 
     def __init__(
@@ -230,7 +228,6 @@ class ExecutionContext:
         user_id: str = "",
         team_ids: "list[str] | None" = None,
         project: "str | None" = None,
-        memory_store=None,
         mcp_manager=None,
     ):
         self.mode = mode
@@ -239,7 +236,6 @@ class ExecutionContext:
         self.user_id = user_id
         self.team_ids = team_ids or []
         self.project = project
-        self.memory_store = memory_store
         self.mcp_manager = mcp_manager
 
 
@@ -259,8 +255,6 @@ def init_thread_context(ctx: ExecutionContext, agent_config=None) -> None:
     rc.current_user_id = ctx.user_id
     rc.current_team_ids = ctx.team_ids
     rc.delegate_agent_id = ctx.agent_id
-    if ctx.memory_store is not None:
-        rc.memory_store = ctx.memory_store
     if ctx.mcp_manager is not None:
         rc.mcp_manager = ctx.mcp_manager
     if ctx.project is not None:
@@ -276,7 +270,6 @@ def clear_thread_context() -> None:
     """
     rc = get_request_context()
     rc.current_agent = None
-    rc.memory_store = None
     rc.delegate_agent_id = None
     rc.current_session_id = None
     rc.session_id = None

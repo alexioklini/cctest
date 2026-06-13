@@ -282,14 +282,6 @@ class AdminAgentsHandlers:
             with open(filepath, "w") as f:
                 f.write(content)
             self._send_json({"status": "saved", "name": filename})
-            if filename.endswith(".md"):
-                self._qmd_trigger_update()
-            # Re-sync memory summary schedules when agent.json changes
-            if filename == "agent.json":
-                try:
-                    engine.ensure_memory_summary_schedules()
-                except Exception:
-                    pass
             # Invalidate warm pool if the main agent's system-prompt inputs
             # changed — the pooled KV prefix would no longer match the real
             # first-turn payload.

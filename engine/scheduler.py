@@ -54,7 +54,7 @@ class _LazyBrain:
     here would be a cycle (brain imports this module); resolving the
     attribute on first access defers the import until after brain has
     finished loading. Every brain-runtime symbol the scheduler touches
-    (AgentConfig, MemoryStore, resolve_provider_for_model, the live
+    (AgentConfig, resolve_provider_for_model, the live
     `_scheduler` instance, `_err`/`_ok`, the notification hook, …) is
     reached through this proxy as `_brain.<name>`.
     """
@@ -962,20 +962,8 @@ class Scheduler:
         schedule_id = task_row.get("id")
         name = task_row.get("name", "")
 
-        # Memory summary tasks: clean up orphaned chat indexes, then regenerate prompt with live data
-        if name.startswith("_memory_summary_"):
-            try:
-                _brain._cleanup_orphaned_chat_index_files(agent_id)
-            except Exception:
-                pass
-            try:
-                task = _brain._build_memory_summary_prompt(agent_id)
-            except Exception:
-                pass
-
         # Use delegation infrastructure
         target = _brain.AgentConfig(agent_id)
-        target_memory = _brain.MemoryStore(agent_id, base_dir=target.memory_dir)
 
         if not model:
             model = target.preferred_model or _brain._delegate_fallback_model or "claude-opus-4-5-20251101"
@@ -1046,7 +1034,6 @@ class Scheduler:
             agent_id=agent_id,
             session_id=sched_session_id,
             user_id=(task_row.get("user_id") or ""),
-            memory_store=target_memory,
         )
         with request_context():
             init_thread_context(_sched_ctx_pre, agent_config=target)

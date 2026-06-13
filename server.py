@@ -384,7 +384,6 @@ class Session:
         self._warmup_lock = threading.Lock()
 
         self.agent = engine.AgentConfig(agent_id)
-        self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
 
     def add_message(self, role: str, content, metadata=None):
         msg = {"role": role, "content": content}
@@ -411,11 +410,9 @@ class Session:
     def switch_agent(self, agent_id: str, model: str | None = None):
         """Switch this session to a different agent (and optionally model)."""
         new_agent = engine.AgentConfig(agent_id)
-        new_memory = engine.MemoryStore(agent_id, base_dir=new_agent.memory_dir)
         with self.lock:
             self.agent_id = agent_id
             self.agent = new_agent
-            self.memory = new_memory
             if model:
                 self.model = model
 
@@ -2153,10 +2150,6 @@ class BrainAgentHandler(
                         _cleanup_chat_index(sid, agent)
                     except Exception:
                         pass
-                    try:
-                        engine.trigger_memory_summary_refresh(agent)
-                    except Exception:
-                        pass
             else:
                 self._send_json({"error": "Session not found"}, 404)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes/" in path:
@@ -2257,8 +2250,6 @@ class BrainAgentHandler(
                 with engine.request_context():
                     agent_config = engine.AgentConfig(agent_id)
                     engine.get_request_context().current_agent = agent_config
-                    engine.get_request_context().memory_store = engine.MemoryStore(
-                        agent_id, base_dir=agent_config.memory_dir)
                     engine.get_request_context().mcp_manager = engine._mcp_manager
                     if session_id:
                         engine.get_request_context().session_id = session_id
@@ -3248,7 +3239,6 @@ def _user_profile_run_llm(uid: str, prior_profile: str, samples: list[str],
             # current_agent must be an AgentConfig object, not just the agent id.
             engine.get_request_context().current_agent = engine.AgentConfig("main")
             engine.get_request_context().current_user_id = uid
-            engine.get_request_context().memory_store = None
             from handlers import sidecar_proxy as _sidecar_proxy
             _res = _sidecar_proxy.background_call(
                 messages=[{"role": "user", "content": user_msg}],
@@ -3642,12 +3632,6 @@ def main():
     engine._notification_hook = _notif_hook
     print(f"Notifications: {'enabled' if notif_config.get('enabled', False) else 'disabled'}")
 
-    # Ensure memory summary schedules for all agents
-    try:
-        engine.ensure_memory_summary_schedules()
-    except Exception as e:
-        print(f"[WARN] Memory summary schedule init: {e}")
-
     # Start task runner
     engine._task_runner = engine.TaskRunner()
 
@@ -3658,7 +3642,6 @@ def main():
 
     # Initialize main agent
     engine._current_agent = engine.AgentConfig("main")
-    engine._memory_store = engine.MemoryStore("main", base_dir=engine._current_agent.memory_dir)
 
     # Initialize shared MCP manager (singleton used by all request handlers + Web UI)
     engine._mcp_manager = engine.MCPManager()

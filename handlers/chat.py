@@ -402,7 +402,6 @@ def deliver_background_results(session_id: str) -> bool:
             engine.get_request_context().current_session_id = session_id
             engine.get_request_context().current_user_id = session.user_id or ""
             engine.get_request_context().current_agent = engine.AgentConfig(session.agent_id)
-            engine.get_request_context().memory_store = session.memory
             engine.get_request_context().mcp_manager = engine._mcp_manager
             engine.get_request_context().project = session.project or ""
 
@@ -520,7 +519,6 @@ def deliver_background_group(session_id: str, group_id: str, members: list) -> b
             engine.get_request_context().current_session_id = session_id
             engine.get_request_context().current_user_id = session.user_id or ""
             engine.get_request_context().current_agent = engine.AgentConfig(session.agent_id)
-            engine.get_request_context().memory_store = session.memory
             engine.get_request_context().mcp_manager = engine._mcp_manager
             engine.get_request_context().project = session.project or ""
             t = run_session_turn(
@@ -1008,7 +1006,6 @@ def _generate_chat_summary(session):
         return
     with engine.request_context():
         engine.get_request_context().current_agent = session.agent
-        engine.get_request_context().memory_store = None
         engine.get_request_context().current_user_id = (getattr(session, "user_id", "") or "")
         engine.get_request_context().cost_purpose = "chat_summary"
         msgs = session.messages
@@ -1477,7 +1474,6 @@ def _recover_one_turn(sid, turn_id, model, started_at):
             engine.get_request_context().current_session_id = sid
             engine.get_request_context().current_user_id = session.user_id or ""
             engine.get_request_context().current_agent = engine.AgentConfig(session.agent_id)
-            engine.get_request_context().memory_store = session.memory
             engine.get_request_context().mcp_manager = engine._mcp_manager
             engine.get_request_context().project = session.project or ""
         except Exception:
@@ -1712,7 +1708,6 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
     def worker():
         with engine.request_context():
             # Set thread-local agent context (thread-safe, no global mutation)
-            engine.get_request_context().memory_store = session.memory
             agent_config = engine.AgentConfig(session.agent_id)
             engine.get_request_context().current_agent = agent_config
             engine.get_request_context().current_session_id = sid

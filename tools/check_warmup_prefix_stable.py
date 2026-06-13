@@ -57,7 +57,6 @@ def compute_prefix_hashes() -> dict:
     ctx = ExecutionContext(
         mode="chat",
         agent_id=_AGENT,
-        memory_store=brain.MemoryStore(_AGENT, base_dir=agent_config.memory_dir),
         mcp_manager=None,
     )
     init_thread_context(ctx, agent_config=agent_config)

@@ -29,7 +29,7 @@ brain imports them for the re-export); they reach brain runtime via lazy
 | `pii_ner.py` / `classification.py` / `doc_convert.py` / `kg_extract.py` / `sync_log.py` | GDPR regex+NER · ARL classification · doc-extraction pipeline · KG triple extraction · sync log |
 
 What STAYS in `brain.py`: tool registry **wiring** (`TOOL_GROUPS`, `TOOL_DISPATCH`),
-runtime classes (AgentConfig, MemoryStore, ProjectManager, MCPManager, TaskRunner,
+runtime classes (AgentConfig, ProjectManager, MCPManager, TaskRunner,
 WorkflowEngine, ContextManager, LocalProviderQueue), warmup/`build_first_turn_prefix`,
 the tool-resolver (`resolve_active_tools`), GDPR/PII + classification config glue,
 KG entity-indexing, the ask_* blocking-state (`_ask_user_pending`/`deliver_*`),

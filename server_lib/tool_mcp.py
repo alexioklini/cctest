@@ -130,15 +130,6 @@ def _apply_context(ctx: dict) -> None:
     # _thread_local.current_agent. Rebuild it here.
     agent_id = ctx.get("agent_id") or "main"
     tl.current_agent = engine.AgentConfig(agent_id)
-    # Memory store is per-agent
-    try:
-        memory_dir = (tl.current_agent.config or {}).get("memory_dir") or ""
-        if memory_dir:
-            tl.memory_store = engine.MemoryStore(memory_dir)
-        else:
-            tl.memory_store = None
-    except Exception:
-        tl.memory_store = None
     # Share MCP manager singleton — same as the chat worker.
     tl.mcp_manager = engine._mcp_manager
     # Caveman flags are response-style only; tools don't read them, but set

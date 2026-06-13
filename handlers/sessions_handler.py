@@ -340,17 +340,8 @@ class SessionsHandlerMixin:
                         "verbatim prompt that was sent to the model]"
                     )
                     system_tokens = 0
-                # Memory summary (injected on first turn, separate from system prompt)
-                try:
-                    agent_config = engine.AgentConfig(session.agent_id)
-                    ms = engine.get_memory_summary(session.agent_id)
-                    if ms:
-                        tc = agent_config.config.get("token_config") or {}
-                        cap = tc.get("memory_summary_cap", 3000)
-                        memory_summary = ms[:cap] if len(ms) > cap else ms
-                        memory_tokens = len(memory_summary) // 4
-                except Exception:
-                    pass
+                # (Memory-summary injection retired with MemoryStore — the wiki
+                # is the agent's memory now. Field kept empty for inspector shape.)
             except Exception:
                 pass
 
@@ -696,43 +687,11 @@ class SessionsHandlerMixin:
         results = []
         seen_sessions = set()
 
-        # 1. QMD semantic search on chat transcript chunks
-        if agent_id:
-            try:
-                ms = engine.MemoryStore(agent_id)
-                qmd_results = ms.recall(query, limit=limit * 2, mem_type="chat_transcript")
-                for r in qmd_results:
-                    sid = ""
-                    # Extract session_id from frontmatter (already parsed into result)
-                    fm_path = r.get("file_path", "")
-                    # Try to read session_id from the file's frontmatter
-                    if fm_path and os.path.exists(fm_path):
-                        try:
-                            with open(fm_path, "r") as f:
-                                raw_head = f.read(500)
-                            fm, _ = engine._parse_frontmatter(raw_head)
-                            sid = fm.get("session_id", "")
-                        except Exception:
-                            pass
-                    if not sid:
-                        # Try to extract from filename: chat-{session_id}-{chunk}.md
-                        fname = os.path.basename(fm_path or "")
-                        if fname.startswith("chat-") and fname.endswith(".md"):
-                            parts = fname[5:].rsplit("-", 1)
-                            if len(parts) == 2:
-                                sid = parts[0]
-                    if sid and sid not in seen_sessions:
-                        seen_sessions.add(sid)
-                        info = ChatDB.get_session_info(sid)
-                        if info:
-                            info["match_type"] = "content"
-                            info["match_preview"] = (r.get("content", ""))[:150]
-                            info["score"] = r.get("score", 0)
-                            results.append(info)
-            except Exception:
-                pass
+        # (Removed v9.109.0: the MemoryStore-backed chat-transcript semantic
+        # search — MemoryStore is retired. Session search now uses the SQL
+        # title/summary match below; full-text recall lives in the wiki/MemPalace.)
 
-        # 2. SQLite search on title + summary (for sessions not found by QMD)
+        # SQLite search on title + summary
         try:
             with _db_conn() as conn:
                 conn.row_factory = sqlite3.Row
@@ -956,10 +915,6 @@ class SessionsHandlerMixin:
                 agent = info.get("agent_id", "main")
                 try:
                     _cleanup_chat_index(sid, agent)
-                except Exception:
-                    pass
-                try:
-                    engine.trigger_memory_summary_refresh(agent)
                 except Exception:
                     pass
         elif action == "incognito":
