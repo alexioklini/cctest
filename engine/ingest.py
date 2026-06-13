@@ -515,9 +515,6 @@ tags:
                 f.write(md_content)
             files_written.append(filename)
 
-        # Trigger QMD indexing
-        _brain._qmd_debounced_embed(collection)
-
         word_count = len(text.split())
         return {
             "source": source,
@@ -593,8 +590,6 @@ tags:
                         pass
                 os.remove(os.path.join(ingest_dir, fname))
                 deleted += 1
-        collection = IngestManager._collection_name(agent_id, project_name)
-        _brain._qmd_debounced_embed(collection)
         return {"source": source_name, "source_hash": source_hash, "deleted": deleted}
 
 

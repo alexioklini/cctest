@@ -1517,15 +1517,6 @@ class Scheduler:
                                artifact_folder=_folder_for_row,
                                model=model)
 
-        # Chain relationship discovery after memory summary completes
-        if name.startswith("_memory_summary_") and status == "success":
-            rd_cfg = _brain._get_relationship_discovery_config(agent_id)
-            if rd_cfg.get("enabled"):
-                try:
-                    _brain.trigger_relationship_discovery(agent_id)
-                except Exception:
-                    pass
-
         # Fire notification hook for task completion/failure
         if _brain._notification_hook:
             try:
@@ -1537,8 +1528,7 @@ class Scheduler:
                                        agent=agent_id,
                                        metadata={"task_name": name, "status": status,
                                                   "tool_calls": run_info.get("tool_calls", 0)})
-                elif status == "success" and not name.startswith("_memory_summary_") \
-                        and not name.startswith("_relationship_discovery_"):
+                elif status == "success" and not name.startswith("_memory_summary_"):
                     _brain._notification_hook("task_complete", f"Task completed: {name}",
                                        f"Agent {agent_id} completed '{name}' with {run_info.get('tool_calls', 0)} tool calls.",
                                        severity="info", agent=agent_id,

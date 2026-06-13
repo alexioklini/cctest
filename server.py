@@ -2813,8 +2813,6 @@ def _index_chat_transcript(session):
         except Exception:
             pass
 
-    # Trigger QMD reindex for this agent
-    engine._qmd_debounced_embed(agent_id)
 
 
 def _cleanup_chat_index(session_id: str, agent_id: str):
@@ -2831,8 +2829,6 @@ def _cleanup_chat_index(session_id: str, agent_id: str):
                 removed = True
     except OSError:
         pass
-    if removed:
-        engine._qmd_debounced_embed(agent_id)
 
 
 # ── User profile storage (module level) ────────────────────────────
@@ -3652,12 +3648,6 @@ def main():
     except Exception as e:
         print(f"[WARN] Memory summary schedule init: {e}")
 
-    # Ensure relationship discovery schedules for all agents
-    try:
-        engine.ensure_relationship_discovery_schedules()
-    except Exception as e:
-        print(f"[WARN] Relationship discovery schedule init: {e}")
-
     # Start task runner
     engine._task_runner = engine.TaskRunner()
 
@@ -3752,7 +3742,6 @@ def main():
                             pass
                 if removed:
                     print(f"Chat index cleanup: removed {removed} orphaned files for {agent_dir}", flush=True)
-                    engine._qmd_debounced_embed(agent_dir)
         except Exception as e:
             print(f"[WARN] Chat index orphan cleanup: {e}", flush=True)
 

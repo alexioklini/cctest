@@ -2852,29 +2852,11 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     live.emit("done", done_data)
 
                     # Continuous session summarization: refresh memory summary at token thresholds
-                    try:
-                        token_count = engine._estimate_conversation_tokens(session.messages)
-                        last_summary_tokens = getattr(session, '_last_summary_at', 0)
-                        threshold = 10000 if last_summary_tokens == 0 else last_summary_tokens + 5000
-                        if token_count >= threshold:
-                            session._last_summary_at = token_count
-                            engine.trigger_memory_summary_refresh(session.agent_id)
-                    except Exception:
-                        pass
-
-                    # Auto-memory extraction: check if response contains memorable info
-                    try:
-                        am_cfg = engine._get_auto_memory_config(session.agent_id)
-                        min_msg_len = am_cfg.get("min_message_length", 20)
-                        if am_cfg.get("enabled", True) and reply and message and len(message) > min_msg_len:
-                            threading.Thread(
-                                target=engine._auto_memory_extract,
-                                args=(session.agent_id, message, reply[:1000]),
-                                daemon=True,
-                                name=f"auto_memory_{session.agent_id}"
-                            ).start()
-                    except Exception:
-                        pass
+                    # (Retired v9.107.0: per-turn Memory-Summary refresh +
+                    # auto-memory extraction. Both wrote MemoryStore .md files
+                    # that no longer surface anywhere — the user-visible LLM Wiki
+                    # is the agent's memory now. Chats reach the wiki via the
+                    # 'merken' action → wiki_from_chat, not an auto-extract daemon.)
 
                     # Generate chat summary (background, for sidebar display).
                     # Regenerated every turn so the synopsis tracks the latest

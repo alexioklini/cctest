@@ -9,7 +9,7 @@ metadata:
   #   falls behind brain.VERSION (override with SKILL_DOC_OK=1). Keep both in
   #   sync with the change that touches the skill.
   skill_version: 1.48.0
-  brain_agent_version: 9.106.0
+  brain_agent_version: 9.107.0
 ---
 
 # Brain-Agent Operator Guide

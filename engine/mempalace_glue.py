@@ -1231,80 +1231,13 @@ def _get_reranker_model(model_id: str, device_pref: str = "auto"):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# E4 additions — memory tools + project-KG tools (folded in here per the
-# refactor plan: the memory + KG tools belong with the MemPalace glue).
-#
-#   - tool_memory_store / tool_memory_recall / tool_memory_delete /
-#     tool_memory_shared — the legacy file-backed MemoryStore tools, plus the
-#     private `_graph_expand_results` helper (follows `related` frontmatter
-#     links one hop). The MemoryStore class + `_get_memory_store` /
-#     `_parse_frontmatter` / `_record_recall_cooccurrence` /
-#     `_get_agent_team_info` / `trigger_memory_summary_refresh` / `AgentConfig`
-#     / `AGENTS_DIR` STAY in brain — reached via `_brain.`.
-#   - tool_mempalace_kg_query / tool_mempalace_kg_search /
-#     tool_mempalace_kg_neighbors — the project-scoped KG tools, plus their
-#     private helper cluster (`_kg_resolve_project_scope`, `_kg_open`,
-#     `_kg_source_in_scope`, `_kg_has_adapter_column`, `_kg_has_span_column`).
-#     These reach `_load_mempalace_config` / `_ensure_mempalace_importable`
-#     (defined above in this module) and `_brain.ProjectManager` lazily.
-#
-# Pure relocation — JSON envelopes + error strings byte-identical to pre-E4.
-# brain.py re-exports all 7 tools via `from engine.mempalace_glue import (...)`.
+# Project-KG tools (folded in here per the E4 refactor: KG tools belong with the
+# MemPalace glue). tool_mempalace_kg_query / _search / _neighbors + their private
+# helpers (`_kg_resolve_project_scope`, `_kg_open`, `_kg_source_in_scope`,
+# `_kg_has_adapter_column`, `_kg_has_span_column`). brain.py re-exports them.
+# (The legacy file-backed memory_* tools + `_graph_expand_results` that also
+# lived here were deleted with MemoryStore — the wiki is the agent's memory now.)
 # ─────────────────────────────────────────────────────────────────────────────
-
-
-def _graph_expand_results(results: list[dict], base_dir: str, ingest_dir: str,
-                          max_hops: int = 1) -> list[dict]:
-    """Follow 'related' frontmatter links from matched results for context expansion."""
-    seen_files = {r.get("file_path", "") for r in results}
-    expanded = list(results)
-    frontier = list(results)
-    for _hop in range(max_hops):
-        next_frontier = []
-        for r in frontier:
-            fpath = r.get("file_path", "")
-            if not fpath or not os.path.exists(fpath):
-                continue
-            try:
-                with open(fpath, "r") as f:
-                    raw = f.read(2000)
-                fm, _ = _brain._parse_frontmatter(raw)
-            except Exception:
-                continue
-            # Parse related field (simple YAML list parsing)
-            related_raw = fm.get("related", "")
-            if not related_raw:
-                continue
-            # related is stored as multi-line YAML in frontmatter, parse linked files
-            related_files = re.findall(r'file:\s*(\S+\.md)', raw)
-            for rel_file in related_files:
-                # Try ingest_dir first, then base_dir
-                for search_dir in (ingest_dir, base_dir):
-                    rel_path = os.path.join(search_dir, rel_file)
-                    if rel_path in seen_files or not os.path.exists(rel_path):
-                        continue
-                    seen_files.add(rel_path)
-                    try:
-                        with open(rel_path, "r") as f:
-                            rel_raw = f.read()
-                        rel_fm, rel_body = _brain._parse_frontmatter(rel_raw)
-                        mem = {
-                            "id": hashlib.sha256(rel_fm.get("name", rel_file).encode()).hexdigest()[:12],
-                            "name": rel_fm.get("name", rel_fm.get("title", rel_file.replace(".md", ""))),
-                            "description": rel_fm.get("description", ""),
-                            "type": rel_fm.get("type", "general"),
-                            "content": rel_body,
-                            "file_path": rel_path,
-                            "score": max(0, (r.get("score", 0.5) - 0.2)),
-                            "source_scope": "related",
-                        }
-                        expanded.append(mem)
-                        next_frontier.append(mem)
-                    except Exception:
-                        continue
-                    break  # found in one dir, skip the other
-        frontier = next_frontier
-    return expanded
 
 
 # ─── Wiki tools (the agent's interface to the user-visible LLM Wiki) ──────────
