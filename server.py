@@ -1811,6 +1811,8 @@ class BrainAgentHandler(
             self._handle_mcp_jsonrpc()
         elif path == "/v1/wiki/config":
             self._handle_wiki_config_save()
+        elif path == "/v1/wiki/tags/rename":
+            self._handle_wiki_tag_rename()
         elif path == "/v1/wiki/tags":
             self._handle_wiki_tags_save()
         elif path == "/v1/wiki/pages":

@@ -8603,6 +8603,15 @@ code, pre, .tool-result-pre, .wf-card-fname, .font-mono {
 }
 #wiki-view .wiki-tag.active { background: var(--accent-main-100, #2563eb); color: #fff; border-color: transparent; }
 #wiki-view .wiki-tag-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; }
+#wiki-view .wiki-tagbar-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  font-family: var(--font-ui); font-size: 12px;
+  background: var(--bg-200); color: var(--text-200); border: 1px solid var(--border-100);
+}
+#wiki-view .wiki-tagbar-btn:hover { background: var(--bg-300); color: var(--text-000); }
+#wiki-view .wiki-tagbar-btn.on { background: var(--accent-main-100, #2563eb); color: #fff; border-color: transparent; }
+#wiki-view .wiki-tagbar-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; }
 
 /* Computed-grouping headers (read-only group views) */
 #wiki-view .wiki-group-header {

@@ -68,6 +68,7 @@ class API {
   static wikiTags() { return this.get('/v1/wiki/tags'); }
   static wikiSaveTag(name, color) { return this.post('/v1/wiki/tags', { name, color }); }
   static wikiDeleteTag(name) { return this.del(`/v1/wiki/tags/${encodeURIComponent(name)}`); }
+  static wikiRenameTag(oldName, newName) { return this.post('/v1/wiki/tags/rename', { old: oldName, new: newName }); }
   static wikiMove(id, body) { return this.post(`/v1/wiki/pages/${id}/move`, body); }
   static wikiGenerate(id, body) { return this.post(`/v1/wiki/pages/${id}/generate`, body); }
   static async wikiMedia(id, file) {

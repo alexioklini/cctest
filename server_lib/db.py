@@ -1520,6 +1520,56 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
+    def rename_wiki_tag(old_name, new_name):
+        """Rename a tag EVERYWHERE: the palette entry (keeping its color) AND the
+        tag string on every page's tags/auto_tags. Case-insensitive on old;
+        new is lowercased. Returns {renamed_pages} or {error}. If new already
+        exists in the palette, the two MERGE (pages get the surviving name once)."""
+        old = (old_name or "").strip().lower()
+        new = (new_name or "").strip().lower()[:40]
+        if not old or not new or old == new:
+            return {"error": "invalid rename"}
+        import json as _json
+        with _db_conn() as conn:
+            # Palette: carry old color onto new (unless new already has one), drop old.
+            row = conn.execute("SELECT color FROM wiki_tags WHERE name=?", (old,)).fetchone()
+            old_color = row[0] if row else "#888888"
+            existing_new = conn.execute("SELECT 1 FROM wiki_tags WHERE name=?", (new,)).fetchone()
+            if not existing_new:
+                conn.execute("INSERT INTO wiki_tags (name, color) VALUES (?, ?)", (new, old_color))
+            conn.execute("DELETE FROM wiki_tags WHERE name=?", (old,))
+            # Pages: rewrite the tag in every tags/auto_tags JSON that contains it.
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, tags, auto_tags FROM wiki_pages "
+                "WHERE tags LIKE ? OR auto_tags LIKE ?",
+                (f'%"{old}"%', f'%"{old}"%')).fetchall()
+            n = 0
+            for r in rows:
+                changed = False
+                vals = {}
+                for col in ("tags", "auto_tags"):
+                    try:
+                        arr = _json.loads(r[col] or "[]")
+                    except Exception:
+                        arr = []
+                    out, seen = [], set()
+                    for t in arr:
+                        nt = new if str(t).strip().lower() == old else str(t)
+                        if nt.lower() not in seen:
+                            seen.add(nt.lower()); out.append(nt)
+                    if out != arr:
+                        changed = True
+                    vals[col] = _json.dumps(out)
+                if changed:
+                    conn.execute("UPDATE wiki_pages SET tags=?, auto_tags=? WHERE id=?",
+                                 (vals["tags"], vals["auto_tags"], r["id"]))
+                    n += 1
+            conn.commit()
+            return {"renamed_pages": n, "old": old, "new": new}
+
+    @staticmethod
+    @_db_safe(default=None)
     def get_artifact_with_parent_block(artifact_id):
         """Resolve an artifact to (parent_block, visibility_override, parent_label).
         The parent is the producing session (or, for sched-<run> synthetic

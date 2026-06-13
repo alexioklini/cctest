@@ -69,6 +69,19 @@ class WikiHandlerMixin:
         ChatDB.delete_wiki_tag(name)
         self._send_json({"deleted": True, "name": name.strip().lower()})
 
+    def _handle_wiki_tag_rename(self):
+        """POST /v1/wiki/tags/rename {old, new} — rename a tag in the palette AND
+        on every page that uses it (all scopes)."""
+        if self._require_auth() is None:
+            return
+        from server_lib.db import ChatDB
+        body = self._read_json() or {}
+        res = ChatDB.rename_wiki_tag(body.get("old"), body.get("new"))
+        if isinstance(res, dict) and res.get("error"):
+            self._send_json(res, 400)
+            return
+        self._send_json(res or {"status": "ok"})
+
     def _handle_wiki_tree(self, path: str):
         """GET /v1/wiki/tree?filter=mine|team|global|all&project_id=&team_id=
 

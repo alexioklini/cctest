@@ -6,7 +6,7 @@
 window._wiki = window._wiki || {
   filter: 'all',
   grouping: 'manual', // manual | topic | project | source | created_by | updated_by
-  tagFilter: '',      // active tag chip ('' = none)
+  tagFilters: [],     // active filter tags (lowercase); empty = no tag filter (OR-match)
   pages: [],          // flat rows from the tree endpoint
   current: null,      // currently open page object
   mode: 'render',     // 'render' | 'raw'
@@ -48,6 +48,8 @@ const WIKI_ICONS = {
 };
 const WIKI_ICONS_EDIT = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>';
 const WIKI_ICONS_TRASH = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+const WIKI_ICONS_FILTER = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>';
+const WIKI_ICONS_GEAR = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
 
 const WIKI_SOURCE_LABELS = {
   manual: 'Manuell', agent: 'Vom Agent', chat: 'Aus Chat', studio: 'Aus Studio',
@@ -117,9 +119,13 @@ function wikiRowHtml(page, depth, draggable) {
 
 function wikiVisiblePages() {
   let pages = window._wiki.pages;
-  if (window._wiki.tagFilter) {
-    const tf = window._wiki.tagFilter.toLowerCase();
-    pages = pages.filter(p => (p.tags || []).some(t => t.toLowerCase() === tf));
+  const filters = (window._wiki.tagFilters || []).map(t => t.toLowerCase());
+  if (filters.length) {
+    // OR-match: a page passes if it has ANY of the selected tags.
+    pages = pages.filter(p => {
+      const pt = (p.tags || []).map(t => t.toLowerCase());
+      return filters.some(f => pt.includes(f));
+    });
   }
   return pages;
 }
@@ -134,7 +140,7 @@ function wikiRenderTree() {
     return;
   }
   const mode = window._wiki.grouping;
-  if (mode === 'manual' && !window._wiki.tagFilter) {
+  if (mode === 'manual' && !(window._wiki.tagFilters || []).length) {
     // Editable nested tree (parent_id/position), drag-and-drop enabled.
     const byParent = {};
     pages.forEach(p => { (byParent[p.parent_id || ''] = byParent[p.parent_id || ''] || []).push(p); });
@@ -173,29 +179,84 @@ function wikiRenderTree() {
 
 // Tag filter row: colored chips for the tags in view + a 'Tags verwalten' button
 // that opens the palette-management modal.
+// The tag bar (tree view): a Filter button + a Manage button. Active filter
+// tags appear as small colored chips next to the buttons (click a chip = remove
+// it from the filter). The list of all tags lives in the modals, NOT inline.
 function wikiRenderTagFilter() {
   const host = document.getElementById('wiki-tag-filter');
   if (!host) return;
-  const counts = {};
-  window._wiki.pages.forEach(p => (p.tags || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
-  const tags = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 30);
-  const active = window._wiki.tagFilter;
-  const manageBtn = `<span class="wiki-tag" onclick="wikiOpenTagManager()" title="Tags verwalten (Namen + Farben)"
-      style="background:transparent;color:var(--text-400);border-style:dashed;cursor:pointer">⚙ Tags</span>`;
-  const chips = tags.map(t => {
-    const on = (t.toLowerCase() === (active || '').toLowerCase());
+  const active = window._wiki.tagFilters || [];
+  const filterLabel = active.length ? `Filter (${active.length})` : 'Filter';
+  const filterBtn = `<button class="wiki-tagbar-btn${active.length ? ' on' : ''}" onclick="wikiOpenTagFilter()" title="Nach Tags filtern">${WIKI_ICONS_FILTER} ${filterLabel}</button>`;
+  const manageBtn = `<button class="wiki-tagbar-btn" onclick="wikiOpenTagManager()" title="Tags verwalten (anlegen, umbenennen, Farbe, löschen)">${WIKI_ICONS_GEAR} Verwalten</button>`;
+  const chips = active.map(t => {
     const c = wikiTagColor(t);
-    const style = on
-      ? `background:${c};color:#fff;border-color:${c}`
-      : `background:${c}22;color:${c};border-color:${c}55`;
-    return `<span class="wiki-tag" onclick="wikiToggleTag('${esc(t)}')" style="${style};cursor:pointer">${esc(t)}${on ? ' ✕' : ''}</span>`;
+    return `<span class="wiki-tag" onclick="wikiToggleTag('${esc(t)}')" title="Aus Filter entfernen" style="background:${c};color:#fff;border-color:${c};cursor:pointer">${esc(t)} ✕</span>`;
   }).join('');
-  host.innerHTML = manageBtn + chips;
+  host.innerHTML = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${filterBtn}${manageBtn}${chips}</div>`;
 }
 
+// Toggle a tag in the multi-select filter (OR-match).
 function wikiToggleTag(tag) {
-  window._wiki.tagFilter = (window._wiki.tagFilter === tag) ? '' : tag;
+  const t = (tag || '').toLowerCase();
+  const set = window._wiki.tagFilters || [];
+  const i = set.findIndex(x => x.toLowerCase() === t);
+  if (i >= 0) set.splice(i, 1); else set.push(t);
+  window._wiki.tagFilters = set;
   wikiRenderTree();
+  // keep an open filter modal in sync
+  if (document.getElementById('wiki-tagfilter-modal')) wikiRenderTagFilterList();
+}
+
+// ── Filter modal: pick which tags filter the tree (multi-select, OR) ──
+async function wikiOpenTagFilter() {
+  await wikiLoadPalette();
+  let m = document.getElementById('wiki-tagfilter-modal');
+  if (m) m.remove();
+  m = document.createElement('div');
+  m.id = 'wiki-tagfilter-modal';
+  m.className = 'modal-overlay';
+  m.style.cssText = 'display:flex;position:fixed;inset:0;z-index:9000;background:var(--modal-overlay);align-items:center;justify-content:center';
+  m.innerHTML = `<div class="modal" style="max-width:480px;width:90%;background:var(--bg-100);border-radius:10px;overflow:hidden">
+      <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border-100)">
+        <h3 style="margin:0">Nach Tags filtern</h3>
+        <button class="modal-close" onclick="wikiCloseTagFilter()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-300)">×</button>
+      </div>
+      <div class="modal-body" style="padding:14px 18px;max-height:60vh;overflow-y:auto">
+        <div style="font-size:12px;color:var(--text-400);margin-bottom:10px">Mehrfachauswahl — eine Seite erscheint, wenn sie <b>mindestens einen</b> der gewählten Tags hat.</div>
+        <div id="wiki-tagfilter-list" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+        <div style="margin-top:14px;text-align:right">
+          <button onclick="wikiClearTagFilter()" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer">Filter zurücksetzen</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  wikiRenderTagFilterList();
+}
+
+function wikiRenderTagFilterList() {
+  const host = document.getElementById('wiki-tagfilter-list');
+  if (!host) return;
+  const names = Object.keys(window._wiki.palette).sort();
+  if (!names.length) { host.innerHTML = '<div style="color:var(--text-400);font-size:13px">Noch keine Tags.</div>'; return; }
+  const active = (window._wiki.tagFilters || []).map(t => t.toLowerCase());
+  host.innerHTML = names.map(n => {
+    const c = window._wiki.palette[n];
+    const on = active.includes(n);
+    const style = on ? `background:${c};color:#fff;border-color:${c}` : `background:${c}22;color:${c};border-color:${c}55`;
+    return `<span class="wiki-tag" onclick="wikiToggleTag('${esc(n)}')" style="${style};cursor:pointer">${on ? '✓ ' : ''}${esc(n)}</span>`;
+  }).join('');
+}
+
+function wikiClearTagFilter() {
+  window._wiki.tagFilters = [];
+  wikiRenderTree();
+  wikiRenderTagFilterList();
+}
+
+function wikiCloseTagFilter() {
+  const m = document.getElementById('wiki-tagfilter-modal');
+  if (m) m.remove();
 }
 
 // ── Tag palette manager (modal) ──
@@ -231,11 +292,30 @@ function wikiRenderTagList() {
   const entries = Object.entries(window._wiki.palette).sort((a, b) => a[0].localeCompare(b[0]));
   if (!entries.length) { host.innerHTML = '<div style="color:var(--text-400);font-size:13px">Noch keine Tags.</div>'; return; }
   host.innerHTML = entries.map(([name, color]) => `
-    <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border-100)">
-      <input type="color" value="${esc(color)}" onchange="wikiSetTagColor('${esc(name)}',this.value)" style="width:32px;height:28px;border:none;background:none;cursor:pointer">
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border-100)">
+      <input type="color" value="${esc(color)}" onchange="wikiSetTagColor('${esc(name)}',this.value)" title="Farbe ändern" style="width:32px;height:28px;border:none;background:none;cursor:pointer">
       <span class="wiki-tag" style="background:${color}22;color:${color};border-color:${color}55;flex:1">${esc(name)}</span>
-      <button onclick="wikiDeleteTagDef('${esc(name)}')" title="Tag löschen" style="background:none;border:none;color:var(--error,#dc2626);cursor:pointer;font-size:13px">${WIKI_ICONS_TRASH}</button>
+      <button onclick="wikiRenameTagDef('${esc(name)}')" title="Umbenennen" style="background:none;border:none;color:var(--text-400);cursor:pointer;padding:2px">${WIKI_ICONS_EDIT}</button>
+      <button onclick="wikiDeleteTagDef('${esc(name)}')" title="Tag löschen" style="background:none;border:none;color:var(--error,#dc2626);cursor:pointer;padding:2px">${WIKI_ICONS_TRASH}</button>
     </div>`).join('');
+}
+
+async function wikiRenameTagDef(oldName) {
+  const next = (prompt(`Tag umbenennen — "${oldName}" → ?`, oldName) || '').trim().toLowerCase();
+  if (!next || next === oldName.toLowerCase()) return;
+  if (window._wiki.palette[next] && !confirm(`Tag "${next}" existiert bereits — die beiden zusammenführen?`)) return;
+  try {
+    const res = await API.wikiRenameTag(oldName, next);
+    if (res.error) { alert(res.error); return; }
+    await wikiLoadPalette();
+    wikiRenderTagList();
+    // tree/page may reference the renamed tag → refresh both.
+    wikiRefreshTree();
+    if (window._wiki.current) {
+      const fresh = await API.wikiGet(window._wiki.current.id).catch(() => null);
+      if (fresh && !fresh.error) { window._wiki.current = fresh; wikiRenderMeta(fresh); }
+    }
+  } catch (e) { alert('Umbenennen fehlgeschlagen: ' + e.message); }
 }
 
 function wikiCloseTagManager() {
@@ -378,34 +458,68 @@ function wikiRenderMeta(page) {
   meta.innerHTML = bits.join('  ·  ') + '<br><span style="display:inline-flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center">' + tags + ' ' + addBtn + '</span>';
 }
 
-// Add a tag to the current page — pick from palette or type a new one.
+// Page tag assignment: a small modal to pick WHICH existing palette tags apply
+// to this page (toggle on/off). NO creating/renaming/deleting here — that's the
+// tree's Verwalten modal. New tags are created there (or by auto-tagging).
 async function wikiAddTagToPage() {
-  const page = window._wiki.current;
-  if (!page) return;
+  if (!window._wiki.current) return;
   await wikiLoadPalette();
-  const known = Object.keys(window._wiki.palette).sort();
-  const hint = known.length ? `\n\nVorhandene Tags: ${known.join(', ')}` : '';
-  const name = (prompt('Tag hinzufügen (vorhandenen wählen oder neuen eingeben):' + hint) || '').trim().toLowerCase();
-  if (!name) return;
-  const cur = (page.tags || []).map(t => t.toLowerCase());
-  if (cur.includes(name)) return;   // already on the page — no duplicate
-  const next = [...(page.tags || []), name];
-  try {
-    // If it's a brand-new tag name, register it in the palette first (color).
-    if (!window._wiki.palette[name]) {
-      const color = '#' + Math.floor(0x40 + Math.random() * 0xbf).toString(16).padStart(2, '0')
-        + Math.floor(0x40 + Math.random() * 0xbf).toString(16).padStart(2, '0')
-        + Math.floor(0x40 + Math.random() * 0xbf).toString(16).padStart(2, '0');
-      await API.wikiSaveTag(name, color);
-    }
-    const updated = await API.wikiUpdate(page.id, { tags: next });
-    window._wiki.current = updated;
-    await wikiLoadPalette();
-    wikiRenderMeta(updated);
-    wikiRefreshTree();
-  } catch (e) { alert('Tag hinzufügen fehlgeschlagen: ' + e.message); }
+  let m = document.getElementById('wiki-pagetag-modal');
+  if (m) m.remove();
+  m = document.createElement('div');
+  m.id = 'wiki-pagetag-modal';
+  m.className = 'modal-overlay';
+  m.style.cssText = 'display:flex;position:fixed;inset:0;z-index:9000;background:var(--modal-overlay);align-items:center;justify-content:center';
+  m.innerHTML = `<div class="modal" style="max-width:460px;width:90%;background:var(--bg-100);border-radius:10px;overflow:hidden">
+      <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border-100)">
+        <h3 style="margin:0">Tags dieser Seite</h3>
+        <button class="modal-close" onclick="wikiClosePageTagPicker()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-300)">×</button>
+      </div>
+      <div class="modal-body" style="padding:14px 18px;max-height:60vh;overflow-y:auto">
+        <div style="font-size:12px;color:var(--text-400);margin-bottom:10px">Vorhandene Tags an-/abwählen. Neue Tags anlegen unter <b>Verwalten</b> in der Übersicht.</div>
+        <div id="wiki-pagetag-list" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  wikiRenderPageTagPicker();
 }
 
+function wikiRenderPageTagPicker() {
+  const host = document.getElementById('wiki-pagetag-list');
+  if (!host) return;
+  const names = Object.keys(window._wiki.palette).sort();
+  if (!names.length) { host.innerHTML = '<div style="color:var(--text-400);font-size:13px">Noch keine Tags. Lege welche unter „Verwalten" an.</div>'; return; }
+  const on = (window._wiki.current.tags || []).map(t => t.toLowerCase());
+  host.innerHTML = names.map(n => {
+    const c = window._wiki.palette[n];
+    const sel = on.includes(n);
+    const style = sel ? `background:${c};color:#fff;border-color:${c}` : `background:${c}22;color:${c};border-color:${c}55`;
+    return `<span class="wiki-tag" onclick="wikiTogglePageTag('${esc(n)}')" style="${style};cursor:pointer">${sel ? '✓ ' : ''}${esc(n)}</span>`;
+  }).join('');
+}
+
+async function wikiTogglePageTag(name) {
+  const page = window._wiki.current;
+  if (!page) return;
+  const n = name.toLowerCase();
+  const cur = (page.tags || []);
+  const has = cur.some(t => t.toLowerCase() === n);
+  const next = has ? cur.filter(t => t.toLowerCase() !== n) : [...cur, n];
+  try {
+    const updated = await API.wikiUpdate(page.id, { tags: next });
+    window._wiki.current = updated;
+    wikiRenderPageTagPicker();   // refresh the picker's checks
+    wikiRenderMeta(updated);     // refresh the page's pill row
+    wikiRefreshTree();
+  } catch (e) { alert('Tag ändern fehlgeschlagen: ' + e.message); }
+}
+
+function wikiClosePageTagPicker() {
+  const m = document.getElementById('wiki-pagetag-modal');
+  if (m) m.remove();
+}
+
+// × on a page pill removes the tag from this page (no modal).
 async function wikiRemoveTagFromPage(tag) {
   const page = window._wiki.current;
   if (!page) return;
