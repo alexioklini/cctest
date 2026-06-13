@@ -1307,173 +1307,162 @@ def _graph_expand_results(results: list[dict], base_dir: str, ingest_dir: str,
     return expanded
 
 
-def tool_memory_store(args: dict) -> str:
-    """Store a memory. When a project is active, writes to project directory."""
-    ms = _brain._get_memory_store()
-    if not ms:
-        return _err("Memory store not initialized")
-    name = args.get("name", "")
+# ─── Wiki tools (the agent's interface to the user-visible LLM Wiki) ──────────
+# These replaced the old MemoryStore-backed memory_* tools (v9.103.0). The wiki
+# IS the agent's long-term memory now: a page tree the user can also see/edit,
+# every saved page mirrored into MemPalace so `mempalace_query` finds it. Scope
+# (user|team|global) maps to the MemPalace wings; a `project` tag routes a page
+# to the active project. The agent never touches MemoryStore .md files.
+
+def _wiki_scope_from_args(args: dict) -> str:
+    sc = (args.get("scope") or "user").strip().lower()
+    return sc if sc in ("user", "team", "global") else "user"
+
+
+def tool_wiki_write(args: dict) -> str:
+    """Create a new wiki page, or update an existing one (pass page_id)."""
+    from engine import wiki_store
+    title = (args.get("title") or "").strip()
     content = args.get("content", "")
-    description = args.get("description", "")
-    mem_type = args.get("type", "general")
-    if not name or not content:
-        return _err("memory_store: name and content are required")
-    # If project is active, store in project directory
-    project = get_request_context().project
-    if project:
-        agent_id = ms.agent_id
-        proj_dir = os.path.join(_brain.AGENTS_DIR, agent_id, "projects", project)
-        if os.path.isdir(proj_dir):
-            proj_store = _brain.MemoryStore(agent_id=f"{agent_id}/{project}", base_dir=proj_dir)
-            result = proj_store.store(name, content, description, mem_type)
-            result["project"] = project
-            return _ok(result)
-    result = ms.store(name, content, description, mem_type)
-    # Trigger near-term memory summary refresh when user-facing memories are stored
-    # (skip if this IS the memory summary being written)
-    if name != "Memory Summary" and mem_type in ("user", "feedback", "project"):
-        try:
-            agent_id = ms.agent_id if hasattr(ms, 'agent_id') else "main"
-            _brain.trigger_memory_summary_refresh(agent_id)
-        except Exception:
-            pass
-    return _ok(result)
+    page_id = (args.get("page_id") or "").strip()
+    try:
+        if page_id:
+            page = wiki_store.update_page(
+                page_id,
+                title=title or None,
+                body_md=content if "content" in args else None)
+            if not page:
+                return _err(f"wiki_write: page {page_id} not found")
+            return _ok({"action": "updated", "id": page["id"], "title": page["title"],
+                        "version": page.get("current_version")})
+        if not title:
+            return _err("wiki_write: title is required to create a page")
+        scope = _wiki_scope_from_args(args)
+        # A team page needs a team id the caller belongs to; pick their first team.
+        team_id = ""
+        if scope == "team":
+            tids = list(get_request_context().current_team_ids or [])
+            if not tids:
+                return _err("wiki_write: you are not in any team — use scope 'user' or 'global'")
+            team_id = args.get("team_id") or tids[0]
+        # Resolve project name → id for the project tag, if a project is active.
+        project_id = ""
+        proj = args.get("project") or get_request_context().project
+        if proj:
+            try:
+                from server_lib.db import _project_id_for_name
+                _ag = get_request_context().current_agent or _brain._current_agent
+                _aid = _ag.agent_id if _ag else "main"
+                project_id = _project_id_for_name(_aid, proj)
+            except Exception:
+                project_id = ""
+        page = wiki_store.create_page(
+            scope=scope, title=title, body_md=content,
+            parent_id=args.get("parent_id", ""), project_id=project_id,
+            team_id=team_id, source="agent")
+        if not page:
+            return _err("wiki_write: create failed")
+        return _ok({"action": "created", "id": page["id"], "title": page["title"],
+                    "scope": page["scope"], "version": page.get("current_version")})
+    except wiki_store.WikiAccessError as e:
+        return _err(str(e))
 
 
-def tool_memory_recall(args: dict) -> str:
-    """Recall memories by searching. When a project is active, searches project first."""
-    ms = _brain._get_memory_store()
-    if not ms:
-        return _err("Memory store not initialized")
-    query = args.get("query", "")
-    limit = args.get("limit", 10)
-    mem_type = args.get("type")
-    mode = args.get("mode", "")
-
-    # Project-scoped search: search project collection first, then agent
-    project = get_request_context().project
-    if project and query:
-        agent_id = ms.agent_id
-        proj_dir = os.path.join(_brain.AGENTS_DIR, agent_id, "projects", project)
-        if os.path.isdir(proj_dir):
-            proj_store = _brain.MemoryStore(agent_id=f"{agent_id}/{project}", base_dir=proj_dir)
-            # Also search ingested subdir
-            ingest_dir = os.path.join(proj_dir, "ingested")
-            proj_results = proj_store.recall(query, limit, mem_type)
-            # Tag project results
-            for r in proj_results:
-                r["source_scope"] = "project"
-            # Then agent-level results
-            agent_results = ms.recall(query, max(2, limit - len(proj_results)), mem_type)
-            for r in agent_results:
-                r["source_scope"] = "agent"
-            results = proj_results + agent_results
-            # Always expand via graph relationships (follow related links 1 hop)
-            if results:
-                results = _graph_expand_results(results, proj_dir, ingest_dir,
-                                                max_hops=2 if mode == "graph" else 1)
-            for r in results:
-                if r.get("content") and len(r["content"]) > 4000:
-                    r["content"] = r["content"][:4000] + "..."
-            return _ok({"query": query, "project": project, "results": results[:limit], "count": len(results[:limit])})
-
-    if not query:
-        results = ms.list_all(mem_type)
-        return _ok({"query": "", "results": results, "count": len(results)})
-    results = ms.recall(query, limit, mem_type)
-
-    # Always expand via graph relationships (1 hop default, 2 hops for explicit graph mode)
-    if results:
-        agent_id = ms.agent_id
-        agent_dir = os.path.join(_brain.AGENTS_DIR, agent_id)
-        ingest_dir = os.path.join(agent_dir, "ingested")
-        results = _graph_expand_results(results, agent_dir, ingest_dir,
-                                        max_hops=2 if mode == "graph" else 1)
-
-    for r in results:
-        if r.get("content") and len(r["content"]) > 4000:
-            r["content"] = r["content"][:4000] + "..."
-
-    # --- Co-recall tracking (Mechanism 3) ---
-    if query and len(results) >= 2:
-        try:
-            result_files = [os.path.basename(r.get("file_path", "")) for r in results if r.get("file_path")]
-            agent_id = ms.agent_id
-            agent_dir = os.path.join(_brain.AGENTS_DIR, agent_id)
-            threading.Thread(
-                target=_brain._record_recall_cooccurrence,
-                args=(result_files, agent_id, agent_dir),
-                daemon=True,
-            ).start()
-        except Exception:
-            pass  # Co-recall tracking is best-effort
-
-    return _ok({"query": query, "results": results, "count": len(results)})
+def tool_wiki_read(args: dict) -> str:
+    """Read one wiki page (page_id) OR search the wiki semantically (query) OR
+    list the page tree (neither). Search uses the same vector store the rest of
+    memory does, scoped to the caller's accessible wiki wings."""
+    from engine import wiki_store
+    page_id = (args.get("page_id") or "").strip()
+    query = (args.get("query") or "").strip()
+    try:
+        if page_id:
+            page = wiki_store.get_page(page_id)
+            if not page:
+                return _err(f"wiki_read: page {page_id} not found")
+            body = page.get("body_md", "")
+            if len(body) > 6000:
+                body = body[:6000] + "\n…(truncated)"
+            return _ok({"id": page["id"], "title": page["title"], "scope": page["scope"],
+                        "body_md": body, "version": page.get("current_version"),
+                        "source_ref": page.get("source_ref", "")})
+        if query:
+            # Wiki pages live in room='wiki' across the caller's accessible wings:
+            # their own user wing, each team wing, and the shared wiki_global wing.
+            # mempalace_query defaults to the user wing only, so search each
+            # accessible wing explicitly and merge (dedup by source_file, keep best
+            # similarity). The C3 visibility gate inside mempalace_query still
+            # applies per call.
+            import json as _json
+            rc = get_request_context()
+            limit = args.get("limit", 8)
+            wings = []
+            if rc.current_user_id:
+                wings.append(f"user__{rc.current_user_id}")
+            for tid in (rc.current_team_ids or []):
+                wings.append(f"team__{tid}")
+            wings.append("wiki_global")
+            merged = {}
+            for w in wings:
+                try:
+                    r = tool_mempalace_query({"query": query, "room": "wiki",
+                                              "wing": w, "limit": limit})
+                    d = _json.loads(r)
+                    for dr in d.get("drawers", []):
+                        key = dr.get("source_file") or dr.get("read_path") or id(dr)
+                        if key not in merged or dr.get("similarity", 0) > merged[key].get("similarity", 0):
+                            merged[key] = dr
+                except Exception:
+                    continue
+            best = sorted(merged.values(), key=lambda x: x.get("similarity", 0), reverse=True)[:limit]
+            return _ok({"query": query, "count": len(best), "drawers": best})
+        # No page_id, no query → list the tree the caller can see.
+        rows = wiki_store.list_tree(args.get("filter", "all"))
+        slim = [{"id": r["id"], "title": r["title"], "scope": r["scope"],
+                 "parent_id": r.get("parent_id", ""), "source": r.get("source", "")}
+                for r in rows]
+        return _ok({"pages": slim, "count": len(slim)})
+    except wiki_store.WikiAccessError as e:
+        return _err(str(e))
 
 
-def tool_memory_delete(args: dict) -> str:
-    """Delete a memory."""
-    ms = _brain._get_memory_store()
-    if not ms:
-        return _err("Memory store not initialized")
-    name = args.get("name", "")
-    if not name:
-        return _err("memory_delete: name is required")
-    result = ms.delete(name)
-    return _ok(result)
+def tool_wiki_delete(args: dict) -> str:
+    """Delete a wiki page by id (its children re-parent; subtree survives)."""
+    from engine import wiki_store
+    page_id = (args.get("page_id") or "").strip()
+    if not page_id:
+        return _err("wiki_delete: page_id is required")
+    try:
+        ok = wiki_store.delete_page(page_id)
+        return _ok({"deleted": bool(ok), "id": page_id}) if ok \
+            else _err(f"wiki_delete: page {page_id} not found")
+    except wiki_store.WikiAccessError as e:
+        return _err(str(e))
 
 
-def tool_memory_shared(args: dict) -> str:
-    """Access shared memory — global (main) or team (team head) scope."""
-    action = args.get("action", "recall")
-    scope = args.get("scope", "global")
-
-    # Determine which agent's memory to use
-    if scope == "team":
-        # Find the team head for the calling agent
-        caller_id = get_request_context().delegate_agent_id
-        if not caller_id:
-            agent = get_request_context().current_agent or _brain._current_agent
-            caller_id = agent.agent_id if agent else "main"
-        team_info = _brain._get_agent_team_info(caller_id)
-        if not team_info:
-            return _err("memory_shared: agent is not in any team — use scope='global' instead")
-        team_head_id = team_info["head"]
-        target_agent = _brain.AgentConfig(team_head_id)
-        source_label = f"{team_info['name']} (team)"
-    else:
-        target_agent = _brain.AgentConfig("main")
-        source_label = "main (shared)"
-
-    shared_store = _brain.MemoryStore(agent_id=target_agent.agent_id, base_dir=target_agent.memory_dir)
-
-    if action == "store":
-        name = args.get("name", "")
-        content = args.get("content", "")
-        description = args.get("description", "")
-        mem_type = args.get("type", "general")
-        if not name or not content:
-            return _err("memory_shared store: name and content are required")
-        result = shared_store.store(name, content, description, mem_type)
-        result["source"] = source_label
-        return _ok(result)
-    else:  # recall
-        query = args.get("query", "")
-        limit = args.get("limit", 10)
-        mem_type = args.get("type")
-        if not query:
-            results = shared_store.list_all(mem_type)
-        else:
-            results = shared_store.recall(query, limit, mem_type)
-            # Graph expansion on shared memory too
-            if results:
-                shared_dir = os.path.join(_brain.AGENTS_DIR, target_agent.agent_id)
-                shared_ingest = os.path.join(shared_dir, "ingested")
-                results = _graph_expand_results(results, shared_dir, shared_ingest, max_hops=1)
-            for r in results:
-                if r.get("content") and len(r["content"]) > 4000:
-                    r["content"] = r["content"][:4000] + "..."
-        return _ok({"query": query, "source": source_label, "results": results[:limit], "count": len(results[:limit])})
+def tool_wiki_structure(args: dict) -> str:
+    """Inspect or restructure the wiki tree. action 'list' (default) returns the
+    accessible tree; 'move' re-parents/repositions a page."""
+    from engine import wiki_store
+    action = (args.get("action") or "list").strip().lower()
+    try:
+        if action == "move":
+            page_id = (args.get("page_id") or "").strip()
+            if not page_id:
+                return _err("wiki_structure move: page_id is required")
+            page = wiki_store.move_page(page_id, parent_id=args.get("parent_id", ""),
+                                        position=args.get("position"))
+            if not page:
+                return _err(f"wiki_structure: page {page_id} not found")
+            return _ok({"moved": page["id"], "parent_id": page.get("parent_id", ""),
+                        "position": page.get("position")})
+        rows = wiki_store.list_tree(args.get("filter", "all"))
+        tree = [{"id": r["id"], "title": r["title"], "scope": r["scope"],
+                 "parent_id": r.get("parent_id", ""), "position": r.get("position")}
+                for r in rows]
+        return _ok({"pages": tree, "count": len(tree)})
+    except wiki_store.WikiAccessError as e:
+        return _err(str(e))
 
 
 # ─── Project Knowledge-Graph tools + helper cluster ──────────────────────────

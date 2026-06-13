@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.102.1"
+VERSION = "9.103.0"
 VERSION_DATE = "2026-06-13"
 CHANGELOG = [
+    ("9.103.0", "2026-06-13", "feat(wiki): LLM Wiki Phase 2 — the agent's memory_* tools are REPLACED by wiki_* tools; MemoryStore retired as the agent interface. The user-visible wiki IS the agent's long-term memory now. NEW TOOLS (4-site wired, new `wiki` TOOL_GROUP): wiki_write (create/update a page — title+content to create, page_id to update; scope user|team|global, nestable via parent_id, project-taggable), wiki_read (page_id→full page · query→semantic search · neither→list accessible tree), wiki_delete (by page_id; children re-parent), wiki_structure (list/move — reorganize the tree). All are thin wrappers over engine.wiki_store (access-checked, MemPalace-mirrored from Phase 1/1.1). REMOVED: memory_store/memory_recall/memory_delete/memory_shared from TOOL_DEFINITIONS+TOOL_GROUPS+TOOL_DISPATCH+re-exports; their impls deleted from mempalace_glue. CROSS-WING SEARCH: wiki_read(query) searches EACH accessible wing (user__ + team__* + wiki_global) and merges/dedups — mempalace_query defaults to the user wing only, so global/team pages were invisible without this (caught + fixed live: a migrated global page scored 0 hits, now 3). Updated everywhere the old names appeared: READONLY_TOOLS (wiki_read), _DEDUP_EXEMPT (wiki_read/wiki_structure), plan-mode gate (dropped the memory_shared special-case — wiki_write/delete are non-readonly so already blocked), TUI tool-call/result previews, TOOL_GLYPHS/TOOL_VERBS, team-head system-prompt hint (wiki_write scope=team), _MEMORY_SUMMARY_TOOLS (+wiki_read/wiki_write) + the Memory-Summary daemon prompt (now writes a 'Memory Summary' wiki page, updating by page_id). MIGRATION: the 3 stray agents/main/*.md MemoryStore files imported as global wiki pages (source=migrated), originals archived *.md.migrated. MemoryStore class kept + marked DEPRECATED for the few internal callers (auto-memory-extract + agent context field) superseded by the Phase-4 chat→wiki feeder; relationship-discovery (built on MemoryStore frontmatter links) was already a disabled no-op. Verified LIVE: 4-site consistency (defs=dispatch=grouped=True, direct fn refs; old names absent), end-to-end dispatch (write→v1, read query→hits, structure list→tree, delete→ok), migration searchable cross-wing. NEXT: Phase 3 UI. py_compile OK."),
     ("9.102.1", "2026-06-13", "feat(wiki): LLM Wiki Phase 1.1 — source links, real version model, promote, tree filters, diff-merge re-wikify. (1) SOURCE LINKS: wiki_pages gains source_ref ('session/<id>', 'output/<id>', …) + a find_wiki_page_by_source lookup, so a page auto-generated from a chat/artifact knows its origin and a CHANGED source re-versions the SAME page instead of forking a duplicate. (2) VERSION MODEL: current_version column mirrors MAX(version) (current is always the max — keeps 'only the current version is editable' trivial); add_wiki_version advances it + takes a `note` ('manual edit' / 'merged from chat' / 'restored from vN' / 'created from <source>'). manually_edited flag set on human edits so the re-wikify merge preserves them. ONLY the current version is mirrored to MemPalace. (3) PROMOTE: wiki_store.promote_version copies an old version's title+body to the live page and APPENDS it as a brand-new version (append-only history, nothing overwritten) + re-mirrors; endpoint POST /v1/wiki/pages/<id>/promote/<n>. Old versions are read-only — GET /v1/wiki/pages/<id>/versions/<n>. (4) TREE FILTERS: GET /v1/wiki/tree?filter=mine|team|global|all (all=union of own+teams+global accessible to the caller, the default; legacy ?scope= still accepted) backed by ChatDB.list_wiki_pages_for_user. (5) DIFF-MERGE RE-WIKIFY: wiki_store.upsert_from_source is the Phase-4 auto-feeder entry — first time creates the page from the source; thereafter LLM diff-merges only the new/changed source content into the existing body (preserving manual edits), saving a new version; a no-op merge skips the version. The merge uses background_call(purpose=transform, cost_purpose=wiki) on the chat_summary_model/default. Verified LIVE: create→v1+source_ref, human edit→v2+manually_edited, version list/specific-version GET, promote v1→v3 ('restored from v1'), tree filters mine/global/all. Upsert/version logic unit-verified (create→v1, merge→v2 'merged from chat', no-op→skip). NB: the live LLM-merge QUALITY is exercised in Phase 4 against the running server — a standalone process has no server_config so _diff_merge correctly no-ops to the existing body there (per the never-probe-config-via-import footgun). py_compile OK."),
     ("9.102.0", "2026-06-13", "feat(wiki): LLM Wiki — Phase 1 (storage + sync backbone). New user-visible, editable markdown wiki with user/team/global scoping (project-aware), and a fundamental inversion of how chat-derived memory reaches MemPalace: the WIKI is now the SOLE feeder for the chat-derived wings (user__/team__/wiki_global, and project_chat__<id> for project-tagged pages). Ingested PROJECT knowledge (input folders / files / web-URLs → project__<id>) is unchanged — still fed by the project-sync daemon. NEW: wiki_pages + wiki_page_versions tables (server_lib/db.py) — pages form a tree via parent_id/position, scoped by (scope, owner_id, team_id, project_id); per-edit immutable version snapshots like artifact_versions. engine/wiki_store.py — access-checked CRUD (global=anyone, user=owner, team=member; fails closed with WikiAccessError) + MemPalace mirror: every save purges the page's existing drawer by exact source_file=wiki/<id> then re-adds title+body into the page's wing under the shared _palace_write_lock (queues with, never races, the other palace writers). _wing_for routes a project-tagged page to project_chat__<id>, else global/team/user wing. Delete re-parents children so the subtree survives, and purges the drawer. handlers/wiki.py (WikiHandlerMixin) + routes: GET /v1/wiki/tree, GET/POST/PUT/DELETE /v1/wiki/pages[/<id>], POST /v1/wiki/pages/<id>/move, GET /v1/wiki/pages/<id>/versions — each runs inside a request_context carrying the caller's user/team ids so the store's gate applies. RETIRED: _mempalace_chat_sync_loop (server_daemons.py) is now a no-op + its thread is no longer launched in server.py — chats become searchable by being memorized into a wiki page (Phase 4), not by mirroring raw turns, so the wiki-fed wings are never double-fed. A boot-time seed of MEMPALACE_PALACE_PATH (server.py main(), setdefault) was REQUIRED: tool_add_drawer resolves its palace from that env and the now-retired chat-sync daemon used to set it — without the seed the first MemPalace touch bound the stale default ~/.mempalace/palace (a dead chroma palace) and cached the failure ('backend resolution failed: contains chroma'); wiki_store also setdefaults it defensively. Phase 1 verified LIVE end-to-end on a fresh boot: HTTP CRUD cycle (create 201 → get → update → tree → versions → delete), MemPalace mirror lifecycle (create→1 drawer, update→still 1 [purge+rewrite, no dupes], delete→0), and the agent's mempalace_query SEMANTICALLY retrieves a wiki page (sim 0.698) — the core 'wiki is the searchable feeder' goal. No backend-resolution failures post-seed. NEXT: Phase 2 renames the obsolete memory_* tools to wiki_* (the agent's wiki interface) + retires MemoryStore; Phase 3 the UI (tree + CodeMirror editor); Phase 4 auto-build feeders; Phase 5 page summary/podcast/read-aloud + media. py_compile OK."),
     ("9.101.12", "2026-06-12", "fix(ask_user): the ask_user / ask_user_for_file tools never displayed their questions in chat — the model called ask_user with a well-formed questions array, but no question card rendered, the tool blocked on its answer Event for the full 300s timeout, then the turn died with NO assistant message persisted (repro'd live on session e783c08a + a fresh gemma-4-12B session). ROOT CAUSE: these blocking tools emit cb('user_input_needed', ...) via the request-context event_callback and then wait. Tool dispatch runs on the sidecar /v1/tools/call thread (tool_mcp._apply_context), NOT the chat worker thread, so the ONLY event_callback they see there is make_artifact_event_callback (handlers/chat.py) — which since cbb377d was a FILTER that dropped every event except file_created/artifact_updated. So user_input_needed was silently swallowed → no SSE → no card → guaranteed 300s block. (ask_user has actually been broken in chat since the sidecar migration: before cbb377d the dispatch thread had NO event_callback at all, so the tool's `if cb:` guard skipped the emit; cbb377d added a callback but only for artifacts.) FIX: make_artifact_event_callback now also forwards user_input_needed / user_input_received / file_upload_needed straight into the session LiveStream (artifact events keep their _turn_created_files recording; passthrough events carry no file payload so they skip it). Verified live end-to-end on gemma-4-12B: tool_call → user_input_needed SSE with 3 questions → POST /v1/chat/answer → tool unblocked → final assistant reply persisted. No client change (chat_send.js already renders user_input_needed). py_compile OK."),
@@ -514,7 +515,7 @@ _web_cache = WebCache()
 
 READONLY_TOOLS = frozenset({
     "read_file", "list_directory", "search_files", "web_fetch", "exa_search",
-    "memory_recall", "memory_shared", "task_status", "list_nodes",
+    "wiki_read", "task_status", "list_nodes",
     "context_search", "context_detail", "context_recall", "schedule_list",
     "schedule_history", "use_skill", "gmail_inbox", "gmail_read", "gmail_search",
     "read_document",
@@ -524,8 +525,8 @@ READONLY_TOOLS = frozenset({
 PLAN_MODE_PROMPT = (
     "\n\nPLAN MODE ACTIVE: You are in read-only planning mode. "
     "You may ONLY use read-only tools (read_file, list_directory, search_files, "
-    "web_fetch, exa_search, memory_recall, memory_shared, task_status, etc.). "
-    "Do NOT attempt to write files, execute commands, store memory, send emails, "
+    "web_fetch, exa_search, wiki_read, task_status, etc.). "
+    "Do NOT attempt to write files, execute commands, edit the wiki, send emails, "
     "or delegate tasks. Instead, describe a detailed plan of what you WOULD do, "
     "including specific file paths, commands, and steps.\n"
 )
@@ -800,8 +801,8 @@ TOOL_GROUPS = {
              "execute_command", "tool_search", "ask_user"},
     "memory": {"mempalace_query", "save_chat_to_memory",
                "mempalace_kg_query", "mempalace_kg_search",
-               "mempalace_kg_neighbors",
-               "memory_store", "memory_recall", "memory_delete", "memory_shared"},
+               "mempalace_kg_neighbors"},
+    "wiki": {"wiki_write", "wiki_read", "wiki_delete", "wiki_structure"},
     "context": {"context_search", "context_detail", "context_recall"},
     "web": {"web_fetch", "exa_search", "searxng_search"},
     "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
@@ -1424,7 +1425,8 @@ def _filter_tools(tool_list: list[dict], allowed: set[str] | None,
 # mempalace_get_drawer / mempalace_list_drawers were rolled back; if they
 # reappear the resolver will pick them up automatically (intersection with
 # TOOL_DEFINITIONS happens via _filter_tools).
-_MEMORY_SUMMARY_TOOLS = {"mempalace_query", "save_chat_to_memory"}
+_MEMORY_SUMMARY_TOOLS = {"mempalace_query", "save_chat_to_memory",
+                         "wiki_read", "wiki_write"}
 
 # Fixed read-only tool set for the helpdesk bot (Brainy). It loads the exclusive
 # brain-agent-guide skill (use_skill), reads the current session + user context,
@@ -4413,7 +4415,14 @@ def _yaml_escape(value: str) -> str:
 
 
 class MemoryStore:
-    """Per-agent memory store backed by QMD hybrid search and markdown files."""
+    """DEPRECATED (v9.103.0): the agent's named key/value memory store (markdown
+    files + file-scan search). The agent-facing memory_* tools that used this
+    were replaced by the wiki_* tools (engine.wiki_store) — the user-visible LLM
+    Wiki is the agent's memory now. This class is retained only for the few
+    remaining INTERNAL callers (auto-memory-extract + the per-agent context
+    field), which are superseded by the chat→wiki feeder in Phase 4. Do NOT wire
+    new agent tools to it. Stray legacy *.md memories were migrated into global
+    wiki pages and archived as *.md.migrated."""
 
     _ensured_collections: set[str] = set()
     _ensured_lock = threading.Lock()
@@ -5641,7 +5650,7 @@ Your job is to create or update a structured synthesis of recent activity. Below
 
 Now do the following:
 
-1. Use memory_recall with query "Memory Summary" to find any existing summary.
+1. Use wiki_read with query "Memory Summary" to find any existing summary page (note its page_id if found).
 
 2. Analyze the conversation and task data above, then write or update the synthesis using the following structured sections. Keep each section concise — omit a section if there is nothing relevant for it.
 
@@ -5663,11 +5672,11 @@ Now do the following:
    **## Key Decisions & Context**
    Important decisions, user feedback, and context that should inform future interactions.
 
-3. Store the updated synthesis using memory_store with:
-   - name: "Memory Summary"
-   - type: "general"
-   - description: "Auto-generated synthesis of recent conversations and task executions, updated periodically"
+3. Save the updated synthesis using wiki_write:
+   - title: "Memory Summary"
+   - scope: "user"
    - content: The structured synthesis (300-800 words)
+   - page_id: the existing page's id from step 1 if one was found (so it updates rather than creating a duplicate)
 
 Focus on actionable insights, not a chronological log. If an existing summary exists, integrate new information — preserve important older context while adding recent developments. Remove information from conversations that no longer appear in the data above (they may have been deleted by the user). Drop stale details that are no longer relevant.
 
@@ -7814,7 +7823,7 @@ class TaskRunner:
                     f"\nTEAM: You are the head of team '{team_info['name']}'. "
                     f"Your team members: {', '.join(peers)}\n"
                     "Delegate sub-tasks to your team members when appropriate.\n"
-                    "Use memory_shared(scope='team') for team-level shared knowledge.\n"
+                    "Use wiki_write(scope='team') for team-level shared knowledge.\n"
                 )
             else:
                 peers = [m for m in team_info["members"] if m != agent_id and m != team_info["head"]]
@@ -7824,7 +7833,7 @@ class TaskRunner:
                 )
                 if peers:
                     system_prompt += f"Team peers: {', '.join(peers)}\n"
-                system_prompt += "Use memory_shared(scope='team') for team-level shared knowledge.\n"
+                system_prompt += "Use wiki_write(scope='team') for team-level shared knowledge.\n"
 
         # Per-tool prompt prose for the delegate's resolved tool set.
         _delegate_tool_names = _get_agent_tool_names(agent_id)
@@ -12360,7 +12369,7 @@ TOOL_ICONS = {
     "read_file": "r", "write_file": "w", "edit_file": "e",
     "list_directory": "d", "search_files": "s", "execute_command": "$",
     "web_fetch": "~", "exa_search": "?",
-    "memory_store": "+", "memory_recall": "m", "memory_delete": "-", "memory_shared": "M",
+    "wiki_write": "+", "wiki_read": "m", "wiki_delete": "-", "wiki_structure": "M",
     "delegate_task": ">", "use_skill": "*",
     "helpdesk_session_info": "i", "helpdesk_user_context": "i", "helpdesk_user_activity": "i",
     "gmail_inbox": "@", "gmail_read": "@", "gmail_search": "@",
@@ -12377,7 +12386,7 @@ TOOL_VERBS = {
     "read_file": "Reading", "write_file": "Writing", "edit_file": "Editing",
     "list_directory": "Listing", "search_files": "Searching", "execute_command": "Executing",
     "web_fetch": "Fetching", "exa_search": "Searching",
-    "memory_store": "Remembering", "memory_recall": "Recalling", "memory_delete": "Forgetting", "memory_shared": "Shared Memory",
+    "wiki_write": "Writing Wiki", "wiki_read": "Reading Wiki", "wiki_delete": "Deleting Wiki Page", "wiki_structure": "Wiki Structure",
     "delegate_task": "Delegating", "use_skill": "Loading Skill",
     "helpdesk_session_info": "Session-Info", "helpdesk_user_context": "Nutzer-Kontext", "helpdesk_user_activity": "Nutzer-Aktivität",
     "gmail_inbox": "Inbox", "gmail_read": "Reading Email", "gmail_search": "Searching Email",
@@ -12468,22 +12477,16 @@ def _format_tool_call(name: str, args: dict) -> list[str]:
         lines.append(_box_mid(f"{CYAN}{name}{RESET} {MAGENTA}/{args.get('pattern', '')}/{RESET} in {WHITE}{args.get('path', '.')}{RESET}"))
     elif name == "web_fetch":
         lines.append(_box_mid(f"{CYAN}{args.get('method', 'GET')}{RESET} {WHITE}{args.get('url', '')}{RESET}"))
-    elif name == "memory_store":
-        lines.append(_box_mid(f"{MAGENTA}{args.get('name', '')}{RESET} {DIM}[{args.get('type', 'general')}]{RESET}"))
-    elif name == "memory_recall":
-        q = args.get("query", "(list all)")
+    elif name == "wiki_write":
+        _t = args.get('title') or args.get('page_id', '')
+        lines.append(_box_mid(f"{MAGENTA}{_t}{RESET} {DIM}[{args.get('scope', 'user')}]{RESET}"))
+    elif name == "wiki_read":
+        q = args.get("query") or args.get("page_id") or "(list tree)"
         lines.append(_box_mid(f"{MAGENTA}{q}{RESET}"))
-    elif name == "memory_shared":
-        action = args.get("action", "recall")
-        scope = args.get("scope", "global")
-        scope_label = "team" if scope == "team" else "main"
-        if action == "store":
-            lines.append(_box_mid(f"{CYAN}store → {scope_label}:{RESET} {MAGENTA}{args.get('name', '')}{RESET}"))
-        else:
-            q = args.get("query", "(list all)")
-            lines.append(_box_mid(f"{CYAN}recall ← {scope_label}:{RESET} {MAGENTA}{q}{RESET}"))
-    elif name == "memory_delete":
-        lines.append(_box_mid(f"{RED}{args.get('name', '')}{RESET}"))
+    elif name == "wiki_structure":
+        lines.append(_box_mid(f"{CYAN}{args.get('action', 'list')}{RESET} {MAGENTA}{args.get('filter', 'all')}{RESET}"))
+    elif name == "wiki_delete":
+        lines.append(_box_mid(f"{RED}{args.get('page_id', '')}{RESET}"))
     elif name == "delegate_task":
         lines.append(_box_mid(f"{CYAN}agent:{RESET} {BOLD}{args.get('agent', '')}{RESET}"))
         task_preview = args.get("task", "")[:max_w]
@@ -12592,34 +12595,29 @@ def _format_tool_result(name: str, result_str: str) -> list[str]:
             out.append(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
         if len(lines) > 5:
             out.append(_box_mid(f"{DIM}... {len(lines) - 5} more lines{RESET}"))
-    elif name == "memory_store":
-        out.append(_box_top(f"{GREEN}{BOLD}✔ Stored{RESET}"))
-        out.append(_box_mid(f"{rdata.get('name', '')} → {rdata.get('file', '')}"))
-    elif name == "memory_recall":
-        count = rdata.get("count", 0)
-        out.append(_box_top(f"{GREEN}{BOLD}✔ {count} memories{RESET}"))
-        for r in rdata.get("results", [])[:5]:
-            out.append(_box_mid(f"{BOLD}{r.get('name', '')}{RESET} {DIM}[{r.get('type', '')}]{RESET}"))
-            desc = r.get("description", "")
-            if desc:
-                out.append(_box_mid(f"  {DIM}{desc[:max_w]}{RESET}"))
-        if count > 5:
-            out.append(_box_mid(f"{DIM}... and {count - 5} more{RESET}"))
-    elif name == "memory_shared":
-        source = rdata.get("source", "main")
-        if rdata.get("status") == "stored":
-            out.append(_box_top(f"{GREEN}{BOLD}✔ Stored → {source}{RESET}"))
-            out.append(_box_mid(f"{rdata.get('name', '')} → {rdata.get('file', '')}"))
+    elif name == "wiki_write":
+        out.append(_box_top(f"{GREEN}{BOLD}✔ Wiki {rdata.get('action', 'saved')}{RESET}"))
+        out.append(_box_mid(f"{rdata.get('title', '')} {DIM}(v{rdata.get('version', '')}){RESET}"))
+    elif name == "wiki_read":
+        if "pages" in rdata:
+            cnt = rdata.get("count", 0)
+            out.append(_box_top(f"{GREEN}{BOLD}✔ {cnt} wiki pages{RESET}"))
+            for r in rdata.get("pages", [])[:5]:
+                out.append(_box_mid(f"{BOLD}{r.get('title', '')}{RESET} {DIM}[{r.get('scope', '')}]{RESET}"))
+        elif "body_md" in rdata:
+            out.append(_box_top(f"{GREEN}{BOLD}✔ {rdata.get('title', '')}{RESET}"))
+            for line in str(rdata.get("body_md", "")).split("\n")[:5]:
+                out.append(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
         else:
-            count = rdata.get("count", 0)
-            out.append(_box_top(f"{GREEN}{BOLD}✔ {count} shared memories{RESET} {DIM}({source}){RESET}"))
-            for r in rdata.get("results", [])[:5]:
-                out.append(_box_mid(f"{BOLD}{r.get('name', '')}{RESET} {DIM}[{r.get('type', '')}]{RESET}"))
-            if count > 5:
-                out.append(_box_mid(f"{DIM}... and {count - 5} more{RESET}"))
-    elif name == "memory_delete":
+            cnt = rdata.get("count", 0)
+            out.append(_box_top(f"{GREEN}{BOLD}✔ {cnt} matches{RESET}"))
+    elif name == "wiki_structure":
+        cnt = rdata.get("count", rdata.get("moved", ""))
+        out.append(_box_top(f"{GREEN}{BOLD}✔ Wiki structure{RESET}"))
+        out.append(_box_mid(f"{DIM}{cnt}{RESET}"))
+    elif name == "wiki_delete":
         out.append(_box_top(f"{GREEN}{BOLD}✔ Deleted{RESET}"))
-        out.append(_box_mid(f"{rdata.get('name', '')}"))
+        out.append(_box_mid(f"{rdata.get('id', '')}"))
     elif name == "delegate_task":
         agent = rdata.get("agent", "")
         resp = rdata.get("response", "")
@@ -12784,10 +12782,11 @@ from engine.mempalace_glue import (  # noqa: E402
     _get_reranker_model,
     # E4 — memory + project-KG tools folded into mempalace_glue.
     _graph_expand_results,
-    tool_memory_store,
-    tool_memory_recall,
-    tool_memory_delete,
-    tool_memory_shared,
+    # Wiki tools (replaced the old memory_* tools, v9.103.0).
+    tool_wiki_write,
+    tool_wiki_read,
+    tool_wiki_delete,
+    tool_wiki_structure,
     _kg_resolve_project_scope,
     _kg_open,
     _kg_source_in_scope,
@@ -12886,10 +12885,10 @@ TOOL_DISPATCH = {
     "mempalace_kg_search": tool_mempalace_kg_search,
     "mempalace_kg_neighbors": tool_mempalace_kg_neighbors,
     "save_chat_to_memory": tool_save_chat_to_memory,
-    "memory_store": tool_memory_store,
-    "memory_recall": tool_memory_recall,
-    "memory_delete": tool_memory_delete,
-    "memory_shared": tool_memory_shared,
+    "wiki_write": tool_wiki_write,
+    "wiki_read": tool_wiki_read,
+    "wiki_delete": tool_wiki_delete,
+    "wiki_structure": tool_wiki_structure,
     "gmail_inbox": tool_gmail_inbox,
     "gmail_read": tool_gmail_read,
     "gmail_search": tool_gmail_search,
@@ -13849,8 +13848,6 @@ def _execute_tool_inner(name: str, args: dict) -> str:
     # --- Built-in pre-hooks ---
     # Plan mode: block non-readonly tools
     if get_request_context().plan_mode:
-        if name == "memory_shared" and args.get("action") == "store":
-            return _err("Blocked in plan mode. Describe what you would do instead.")
         if name not in READONLY_TOOLS:
             return _err("Blocked in plan mode. Describe what you would do instead.")
     # Workflow tool restriction (was dead code — now enforced)

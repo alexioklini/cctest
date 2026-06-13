@@ -141,21 +141,28 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
 (`mempalace_get_drawer`, `mempalace_list_drawers` are admin-side; see
 `03-storage.md` for direct SQLite if you need to inspect MemPalace.)
 
-### Structured key/value memory (separate from MemPalace)
+### Wiki tools (the agent's long-term memory = the user-visible LLM Wiki)
 
-The agent's named-item memory — discrete facts retrievable by name, not the
-vector palace. Project-aware (writes to the active project's dir). In the
-`memory` group; registered with schemas as of v9.101.3 (they were dispatchable
-but schema-less before, so the model never actually received them).
+As of v9.103.0 the wiki IS the agent's memory: a user-visible, editable page
+tree, every saved page mirrored into MemPalace for search. These REPLACED the
+old `memory_store`/`memory_recall`/`memory_delete`/`memory_shared` tools (gone).
+In the `wiki` group. Scope `user` (private) | `team` (shared with the team) |
+`global` (everyone). Access is enforced; pages nest via `parent_id`.
 
-- `memory_store(name, content, description?, type?)` — save one named memory
-  (`type`: general | user | feedback | project).
-- `memory_recall(query?, limit?, type?, mode?)` — semantic search over stored
-  memories (graph-link expansion; `mode='graph'` = 2 hops). Empty query lists all.
-- `memory_delete(name)` — forget a memory by exact name.
-- `memory_shared(action?, scope?, …)` — read/write SHARED memory: `scope='global'`
-  (main agent's store, visible to all) or `scope='team'` (team head's store).
-  `action`: 'recall' (default) or 'store'.
+- `wiki_write(title, content?, page_id?, scope?, parent_id?, project?)` — create
+  a page (give `title`) or update one (give `page_id`). Write durable facts/
+  notes/summaries here. A human/agent edit makes a new version; only the current
+  version is searchable.
+- `wiki_read(query?, page_id?, filter?, limit?)` — `page_id` reads one full page;
+  `query` searches the wiki semantically across ALL accessible wings (user +
+  teams + global); neither lists the tree (`filter`: mine|team|global|all).
+- `wiki_delete(page_id)` — delete a page (children re-parent to its parent).
+- `wiki_structure(action?, filter?, page_id?, parent_id?, position?)` — `list`
+  the accessible tree (default) or `move` a page (re-parent/reposition).
+
+See `01-api.md` (LLM Wiki endpoints) + `03-storage.md` (wiki_pages schema). The
+old MemoryStore .md-file backend is retired; the per-page history, promote, and
+auto-feed-from-chat behavior live in the wiki, not a key/value store.
 
 ## Context manager
 
@@ -330,7 +337,7 @@ core          read_file write_file edit_file list_directory search_files
 documents     read_document write_document edit_document
 memory        mempalace_query save_chat_to_memory
               mempalace_kg_query mempalace_kg_search mempalace_kg_neighbors
-              memory_store memory_recall memory_delete memory_shared
+wiki          wiki_write wiki_read wiki_delete wiki_structure
 context       context_search context_detail context_recall
 web           web_fetch exa_search searxng_search
 email         gmail_inbox gmail_read gmail_search gmail_send gmail_reply

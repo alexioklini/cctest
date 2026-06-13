@@ -716,73 +716,73 @@ TOOL_DEFINITIONS = [
         },
     },
     {
-        "name": "memory_store",
+        "name": "wiki_write",
         "description": (
-            "Store a single named memory (a discrete fact, preference, or note) in the "
-            "agent's structured key/value memory. Use for an atomic item you want to "
-            "recall by name later — distinct from save_chat_to_memory (which persists "
-            "the whole conversation). When a project is active, the memory is written to "
-            "the project's directory."
+            "Create or update a page in the WIKI — the user-visible, editable knowledge "
+            "base that is also your long-term memory. To CREATE a page give a title (and "
+            "content); to UPDATE an existing page give its page_id. Every saved page is "
+            "indexed for search, so write durable facts/notes/summaries here instead of "
+            "letting them vanish with the chat. scope: 'user' (your private wiki, "
+            "default), 'team' (shared with your team), 'global' (everyone). Pages can be "
+            "nested via parent_id."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Unique name/key for this memory"},
-                "content": {"type": "string", "description": "The memory content to store"},
-                "description": {"type": "string", "description": "Optional short description"},
-                "type": {"type": "string", "description": "Category: general | user | feedback | project (default: general)"},
+                "title": {"type": "string", "description": "Page title (required to create a new page)"},
+                "content": {"type": "string", "description": "The page body in markdown"},
+                "page_id": {"type": "string", "description": "If set, UPDATE this existing page instead of creating one"},
+                "scope": {"type": "string", "description": "user (default) | team | global"},
+                "parent_id": {"type": "string", "description": "Optional parent page id to nest under"},
+                "project": {"type": "string", "description": "Optional project name to tag the page to"},
             },
-            "required": ["name", "content"],
         },
     },
     {
-        "name": "memory_recall",
+        "name": "wiki_read",
         "description": (
-            "Recall stored memories by semantic search over the agent's structured "
-            "memory (related items are expanded via graph links). With no query, lists "
-            "all memories. When a project is active, searches the project's memory first, "
-            "then the agent-level memory."
+            "Read the wiki. Give page_id to read one full page; give query to SEARCH the "
+            "wiki semantically (the same vector store the rest of memory uses); give "
+            "neither to list the page tree you can access. This is your primary recall "
+            "tool — search the wiki before answering from assumptions."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Search query; empty lists all memories"},
-                "limit": {"type": "integer", "description": "Max results (default: 10)"},
-                "type": {"type": "string", "description": "Optional category filter (general | user | feedback | project)"},
-                "mode": {"type": "string", "description": "'graph' for 2-hop relationship expansion (default: 1 hop)"},
+                "query": {"type": "string", "description": "Semantic search query over wiki pages"},
+                "page_id": {"type": "string", "description": "Read this specific page's full content"},
+                "filter": {"type": "string", "description": "When listing: mine | team | global | all (default all)"},
+                "limit": {"type": "integer", "description": "Max search results (default 8)"},
             },
         },
     },
     {
-        "name": "memory_delete",
-        "description": "Delete a stored memory by its exact name. Use to forget a fact the user asked you to remove or that is no longer correct.",
+        "name": "wiki_delete",
+        "description": "Delete a wiki page by its page_id. The page's child pages are kept (re-parented to its parent). Use when the user asks to remove a page or it is obsolete.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Exact name of the memory to delete"},
+                "page_id": {"type": "string", "description": "Id of the page to delete"},
             },
-            "required": ["name"],
+            "required": ["page_id"],
         },
     },
     {
-        "name": "memory_shared",
+        "name": "wiki_structure",
         "description": (
-            "Read or write SHARED memory visible beyond this agent: scope='global' "
-            "(the main agent's shared store, visible to all) or scope='team' (the team "
-            "head's store, visible to teammates). Use to store/recall facts that should "
-            "be shared rather than kept in this agent's private memory."
+            "Inspect or reorganize the wiki tree. action='list' (default) returns the "
+            "pages you can access (id, title, scope, parent_id, position); action='move' "
+            "re-parents and/or repositions a page (parent_id='' moves it to the top "
+            "level). Use to keep the wiki tidily organized by topic."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "description": "'recall' (default) or 'store'"},
-                "scope": {"type": "string", "description": "'global' (default) or 'team'"},
-                "query": {"type": "string", "description": "For recall: search query; empty lists all"},
-                "name": {"type": "string", "description": "For store: the memory name/key"},
-                "content": {"type": "string", "description": "For store: the memory content"},
-                "description": {"type": "string", "description": "For store: optional short description"},
-                "type": {"type": "string", "description": "Optional category (general | user | feedback | project)"},
-                "limit": {"type": "integer", "description": "For recall: max results (default: 10)"},
+                "action": {"type": "string", "description": "'list' (default) or 'move'"},
+                "filter": {"type": "string", "description": "For list: mine | team | global | all (default all)"},
+                "page_id": {"type": "string", "description": "For move: the page to move"},
+                "parent_id": {"type": "string", "description": "For move: new parent id ('' = top level)"},
+                "position": {"type": "integer", "description": "For move: order among siblings"},
             },
         },
     },

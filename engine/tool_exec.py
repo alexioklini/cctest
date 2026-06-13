@@ -142,7 +142,7 @@ def _check_tool_dedup(name: str, args: dict) -> str | None:
     threads and ThreadPoolExecutor batches that would otherwise each get a
     fresh, empty dedup set and miss every duplicate.
     """
-    _DEDUP_EXEMPT = {"memory_recall", "memory_shared", "delegate_task", "task_status",
+    _DEDUP_EXEMPT = {"wiki_read", "wiki_structure", "delegate_task", "task_status",
                      "schedule_list", "schedule_history"}
     if name in _DEDUP_EXEMPT:
         return None
