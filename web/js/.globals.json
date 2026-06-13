@@ -1317,6 +1317,7 @@
     "wikiLoadPalette": "writable",
     "wikiMediaSelected": "writable",
     "wikiNewPage": "writable",
+    "wikiOpenFromCitation": "writable",
     "wikiOpenPage": "writable",
     "wikiOpenTagFilter": "writable",
     "wikiOpenTagManager": "writable",

@@ -418,6 +418,14 @@ async function wikiDeletePage(id) {
   } catch (e) { alert('Löschen fehlgeschlagen: ' + e.message); }
 }
 
+// Jump to the Wiki view + open a page (used by citation/source badges in chat).
+async function wikiOpenFromCitation(pageId) {
+  if (!pageId) return;
+  if (typeof navigateTo === 'function') navigateTo('wiki');
+  // loadWikiView (via navigateTo) refreshes the tree; open the page after.
+  setTimeout(() => { try { wikiOpenPage(pageId); } catch (_) {} }, 150);
+}
+
 async function wikiOpenPage(id) {
   if (window._wiki.dirty && !confirm('Ungespeicherte Änderungen verwerfen?')) return;
   try {

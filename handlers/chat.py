@@ -3112,14 +3112,27 @@ class ChatHandlerMixin:
                     snippet = str(it["text"])[:280]
                 elif it.get("subject") and it.get("predicate") and it.get("object"):
                     snippet = f"({it['subject']}) — [{it['predicate']}] → ({it['object']})"[:280]
-                refs.append({
+                ref = {
                     "title": basename,
                     "link": original,
                     "snippet": snippet,
                     "domain": "project",
                     "favicon": "",
                     "source_file": sf,
-                })
+                }
+                # Wiki drawers: show the PAGE TITLE (not the raw id) + mark as wiki
+                # so the client renders a 'Wiki-Seite' badge that opens the page.
+                if sf.startswith("wiki/"):
+                    pid = sf.split("/", 1)[1]
+                    try:
+                        from server_lib.db import ChatDB as _CDB
+                        pg = _CDB.get_wiki_page(pid)
+                    except Exception:
+                        pg = None
+                    ref["source_kind"] = "wiki"
+                    ref["wiki_page_id"] = pid
+                    ref["title"] = (pg or {}).get("title") or basename
+                refs.append(ref)
 
             # Regex sweep for any source_file tokens the JSON parse may have missed
             # (truncated result strings, nested structures, etc.)

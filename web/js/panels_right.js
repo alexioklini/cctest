@@ -379,6 +379,25 @@ function onPanelTurnToggle(pane, turnNum, isOpen) {
 
 function _refCardHtml(ref) {
   const snippetHtml = ref.snippet ? `<div class="ref-card-snippet">${esc(ref.snippet)}</div>` : '';
+  // Wiki source: a 'Wiki-Seite' card showing the page title; click opens the page.
+  const isWiki = ref.source_kind === 'wiki' ||
+    (typeof ref.source_file === 'string' && ref.source_file.startsWith('wiki/'));
+  if (isWiki) {
+    const pid = ref.wiki_page_id || (ref.source_file || '').split('/')[1] || '';
+    const bookSvg = `<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="#fff" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`;
+    return `
+      <div class="ref-card" onclick="wikiOpenFromCitation('${esc(pid)}')">
+        <div class="ref-card-preview">
+          <div class="ref-thumb-placeholder" style="display:flex;align-items:center;justify-content:center;background:var(--accent-brand)">${bookSvg}</div>
+          <span class="ref-domain-pill">Wiki-Seite</span>
+        </div>
+        <div class="ref-card-body">
+          <div class="ref-card-title">${esc(ref.title || 'Wiki-Seite')}</div>
+          ${snippetHtml}
+        </div>
+      </div>
+    `;
+  }
   const isProject = ref.domain === 'project';
   const clickHandler = isProject
     ? `openProjectSource(this.dataset.link)`
@@ -588,14 +607,23 @@ function extractReferencesFromToolResult(msg) {
       else if (it.subject && it.predicate && it.object) {
         snippet = `(${it.subject}) — [${it.predicate}] → (${it.object})`.slice(0, 280);
       } else if (it.text) snippet = String(it.text).slice(0, 280);
-      refs.push({
+      const ref = {
         title: basename,
         link: original,           // absolute path to the original binary
         snippet: snippet,
         domain: 'project',        // marker so the panel can render differently
         favicon: '',
         source_file: sf,          // raw drawer/triple source for debugging
-      });
+      };
+      if (sf.startsWith('wiki/')) {
+        // Live/legacy path (no server title): label by the drawer's '# Title'
+        // first line if present, else the id; mark as wiki so the card opens it.
+        ref.source_kind = 'wiki';
+        ref.wiki_page_id = sf.split('/')[1] || '';
+        const m1 = (it.text || '').match(/^#\s+(.+)/);
+        ref.title = (m1 && m1[1].trim()) || basename;
+      }
+      refs.push(ref);
     }
     // Regex top-up — always runs, not just when JSON parse failed. Even
     // when JSON.parse succeeds, the persisted `metadata.tools[i].result`

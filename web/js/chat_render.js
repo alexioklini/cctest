@@ -927,6 +927,19 @@ function renderAssistantMessage(msg, idx) {
   let refsHtml = '';
   const { cited: citedMsgRefs, searched: searchedMsgRefs } = getReferencesForMessage(idx);
   const renderBadge = (ref) => {
+    const isWiki = ref.source_kind === 'wiki' ||
+      (typeof ref.source_file === 'string' && ref.source_file.startsWith('wiki/'));
+    if (isWiki) {
+      // Wiki source: show the page TITLE + a 'Wiki' chip; click opens the page.
+      const pid = ref.wiki_page_id || (ref.source_file || '').split('/')[1] || '';
+      const wikiChip = `<span class="ref-badge-icon" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;background:var(--accent-brand);color:#fff" title="Wiki-Seite"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>`;
+      return `
+        <div class="ref-badge" onclick="wikiOpenFromCitation('${esc(pid)}')" title="Wiki-Seite: ${esc(ref.title || '')}">
+          ${wikiChip}
+          <span class="ref-badge-text">${esc(ref.title || 'Wiki-Seite')}</span>
+        </div>
+      `;
+    }
     const isProject = ref.domain === 'project';
     const tipPath = ref.link;
     const ext = (ref.title || '').split('.').pop().toLowerCase();
