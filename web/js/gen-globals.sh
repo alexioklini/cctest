@@ -100,6 +100,7 @@ Node
 NodeList
 marked
 hljs
+CodeMirror
 electronAPI
 EOF
 )

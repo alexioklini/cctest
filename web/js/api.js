@@ -52,6 +52,22 @@ class API {
     return r.json();
   }
 
+  // Wiki
+  static wikiTree(filter, opts) {
+    const q = new URLSearchParams({ filter: filter || 'all' });
+    if (opts?.team_id) q.set('team_id', opts.team_id);
+    if (opts?.project_id) q.set('project_id', opts.project_id);
+    return this.get(`/v1/wiki/tree?${q.toString()}`);
+  }
+  static wikiGet(id) { return this.get(`/v1/wiki/pages/${id}`); }
+  static wikiVersions(id) { return this.get(`/v1/wiki/pages/${id}/versions`); }
+  static wikiVersion(id, n) { return this.get(`/v1/wiki/pages/${id}/versions/${n}`); }
+  static wikiCreate(body) { return this.post('/v1/wiki/pages', body); }
+  static wikiUpdate(id, body) { return this.put(`/v1/wiki/pages/${id}`, body); }
+  static wikiPromote(id, n) { return this.post(`/v1/wiki/pages/${id}/promote/${n}`, {}); }
+  static wikiMove(id, body) { return this.post(`/v1/wiki/pages/${id}/move`, body); }
+  static wikiDelete(id) { return this.del(`/v1/wiki/pages/${id}`); }
+
   // Agents
   static getStatus() { return this.get('/v1/status'); }
   static getAgents() { return this.get('/v1/agents'); }

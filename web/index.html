@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Brain Agent</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<!-- CodeMirror (markdown editor for the Wiki raw pane). CM5 UMD build: a single
+     `CodeMirror` global that works in this no-bundler global-scope SPA. CM6 is
+     ESM-only and cannot load without a bundler, so CM5 is the pragmatic fit. -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/markdown/markdown.min.js"></script>
 <link id="hljs-theme-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <link id="hljs-theme-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" disabled>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -144,6 +150,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <div class="sb-nav-item" onclick="navigateTo('data')" data-view="data">
           <span class="sb-icon"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg></span>
           <span class="sb-label">Daten</span>
+        </div>
+        <div class="sb-nav-item" onclick="navigateTo('wiki')" data-view="wiki">
+          <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+          <span class="sb-label">Wiki</span>
         </div>
         <div class="sb-nav-item" id="sb-nav-customize" onclick="openAgentSettings()" data-view="settings">
           <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
@@ -1155,6 +1165,58 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
   <!-- (Workflow Run Modal removed in v8.24.0 — replaced by inline wf-detail.) -->
   <!-- (Tool Palette removed — completion now inline via Ctrl-Space in editor.) -->
 
+  <!-- ═══ Wiki View ═══ -->
+  <div id="wiki-view">
+    <div class="wiki-container" style="display:flex;height:100%;overflow:hidden">
+      <!-- Left: page tree + filter -->
+      <div class="wiki-sidebar" style="width:280px;min-width:240px;border-right:1px solid var(--border-100);display:flex;flex-direction:column;overflow:hidden">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border-100)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <h2 style="margin:0;font-size:15px;color:var(--text-000)">Wiki</h2>
+            <button class="wiki-new-btn" onclick="wikiNewPage()" title="Neue Seite" style="padding:4px 10px;border-radius:6px;border:1px solid var(--border-100);background:var(--bg-300);color:var(--text-000);cursor:pointer;font-size:13px">+ Seite</button>
+          </div>
+          <div class="wiki-filter-tabs" style="display:flex;gap:3px">
+            <button class="wiki-filter-tab active" data-filter="all" onclick="wikiSetFilter('all')" style="flex:1;padding:5px 6px;border:none;border-radius:5px;background:var(--bg-300);color:var(--text-000);cursor:pointer;font-size:11px">Alle</button>
+            <button class="wiki-filter-tab" data-filter="mine" onclick="wikiSetFilter('mine')" style="flex:1;padding:5px 6px;border:none;border-radius:5px;background:transparent;color:var(--text-300);cursor:pointer;font-size:11px">Meine</button>
+            <button class="wiki-filter-tab" data-filter="team" onclick="wikiSetFilter('team')" style="flex:1;padding:5px 6px;border:none;border-radius:5px;background:transparent;color:var(--text-300);cursor:pointer;font-size:11px">Team</button>
+            <button class="wiki-filter-tab" data-filter="global" onclick="wikiSetFilter('global')" style="flex:1;padding:5px 6px;border:none;border-radius:5px;background:transparent;color:var(--text-300);cursor:pointer;font-size:11px">Alle&nbsp;sichtbar</button>
+          </div>
+        </div>
+        <div class="wiki-tree" id="wiki-tree" style="flex:1;overflow-y:auto;padding:6px">
+          <!-- Page tree populated by panels_wiki.js -->
+        </div>
+      </div>
+      <!-- Right: editor / renderer -->
+      <div class="wiki-main" id="wiki-main" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+        <div class="wiki-empty" id="wiki-empty" style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-400);font-size:14px">
+          Wähle links eine Seite oder erstelle eine neue.
+        </div>
+        <div class="wiki-page" id="wiki-page" style="display:none;flex:1;flex-direction:column;overflow:hidden">
+          <div class="wiki-page-header" style="padding:12px 18px;border-bottom:1px solid var(--border-100);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <input id="wiki-title-input" class="wiki-title-input" placeholder="Seitentitel" style="flex:1;min-width:200px;font-size:18px;font-weight:600;background:transparent;border:none;color:var(--text-000);outline:none">
+            <div class="wiki-mode-toggle" style="display:flex;border:1px solid var(--border-100);border-radius:6px;overflow:hidden">
+              <button id="wiki-mode-render" class="wiki-mode-btn active" onclick="wikiSetMode('render')" style="padding:5px 12px;border:none;background:var(--bg-300);color:var(--text-000);cursor:pointer;font-size:12px">Ansicht</button>
+              <button id="wiki-mode-raw" class="wiki-mode-btn" onclick="wikiSetMode('raw')" style="padding:5px 12px;border:none;background:transparent;color:var(--text-300);cursor:pointer;font-size:12px">Markdown</button>
+            </div>
+            <button class="wiki-save-btn" id="wiki-save-btn" onclick="wikiSavePage()" style="padding:6px 14px;border-radius:6px;border:none;background:var(--accent-main-100,#2563eb);color:#fff;cursor:pointer;font-size:13px">Speichern</button>
+            <button class="wiki-action-btn" onclick="wikiOpenVersions()" title="Versionen" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer;font-size:13px">Versionen</button>
+            <button class="wiki-action-btn" onclick="wikiDeleteCurrent()" title="Löschen" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--error,#dc2626);cursor:pointer;font-size:13px">Löschen</button>
+          </div>
+          <div class="wiki-page-meta" id="wiki-page-meta" style="padding:4px 18px;font-size:11px;color:var(--text-400);border-bottom:1px solid var(--border-100)"></div>
+          <div class="wiki-page-body" style="flex:1;overflow:auto;position:relative">
+            <div id="wiki-render" class="wiki-render msg-content" style="padding:18px 24px;max-width:860px"></div>
+            <div id="wiki-raw" style="display:none;height:100%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wiki versions modal is built dynamically in panels_wiki.js (appended to
+       body on open, removed on close) so it never sits in the static DOM as a
+       hidden .modal-overlay that generic ".modal-overlay .modal-close" selectors
+       would match first. -->
+
   <!-- ═══ Scheduled Tasks View ═══ -->
   <div id="scheduled-view">
     <div class="scheduled-container">
@@ -1483,6 +1545,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/panels_artifacts.js"></script>
 <script src="js/panels_studio.js"></script>
 <script src="js/panels_research.js"></script>
+<script src="js/panels_wiki.js"></script>
 <script src="js/settings_teams.js"></script>
 <script src="js/settings_general.js"></script>
 <script src="js/settings_general_tabs.js"></script>

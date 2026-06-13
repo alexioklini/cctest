@@ -29,6 +29,7 @@ wechsle zu `04-recipes.md` und führe sie aus.
 - **Workflows** — mehrstufige Automatisierungen mit Freigabe-Gates
 - **Übersetzung** — Text / Dokument / Audio / Live-Mikrofon
 - **Daten** — Platzhalter (Funktion in Entwicklung)
+- **Wiki** — editierbares Wissens-Wiki (= Langzeit-Gedächtnis; durchsuchbar)
 - **Einstellungen (Zahnrad)** — Agent- + allgemeine Einstellungen
   (meist nur für Admins)
 
@@ -561,6 +562,37 @@ Artifact): Vorschau, Quelle ansehen, kopieren, herunterladen, teilen.
 
 Jeder Schreib-/Bearbeitungsvorgang erzeugt eine **Artifact-Version**
 (5 MB-Limit). Artifact-Panel → Versions-Auswahl zum Vergleichen.
+
+---
+
+## Wiki
+
+Seitenleiste → **Wiki**. Dein durchsuchbares, editierbares Wissens-Wiki — und
+zugleich das Langzeit-Gedächtnis des Agenten: jede gespeicherte Seite wird in
+MemPalace gespiegelt, sodass der Agent sie bei der Suche findet.
+
+**Aufbau:**
+- **Links** der Seitenbaum. Seiten lassen sich verschachteln (Unterseiten).
+  Symbole: 🌐 = global (für alle), 👥 = Team. Der Filter oben schaltet zwischen
+  **Alle** (alles, was du sehen darfst), **Meine** (deine privaten Seiten),
+  **Team** und **Alle sichtbar** (globale Seiten) um.
+- **Rechts** der Editor mit zwei Ansichten, umschaltbar oben rechts:
+  **Ansicht** (gerendertes Markdown) ↔ **Markdown** (Roh-Editor mit
+  Zeilennummern). Titel oben ist direkt editierbar.
+
+**Aktionen:** **+ Seite** legt eine neue Seite an (Bereich richtet sich nach dem
+aktiven Filter; optional als Unterseite der offenen Seite). **Speichern**
+schreibt eine neue Version. **Versionen** zeigt den Verlauf — jede Bearbeitung
+ist eine unveränderliche Version; **Ansehen** öffnet eine schreibgeschützte
+Vorschau, **Aktivieren** macht eine alte Version wieder zur aktuellen (nur die
+aktuelle Version ist editierbar und durchsuchbar). **Löschen** entfernt die
+Seite; Unterseiten bleiben erhalten (rücken eine Ebene hoch).
+
+**Bereiche (Scopes):** *Meine* Seiten sehen nur du, *Team*-Seiten dein Team,
+*globale* Seiten alle. Aus Chats, Studio-Ergebnissen, geplanten Aufgaben und
+Workflows automatisch erzeugte Seiten tragen eine Quell-Markierung (↩) und
+werden bei einer Änderung der Quelle als neue Version fortgeschrieben statt
+doppelt angelegt.
 
 ---
 

@@ -25,6 +25,8 @@ function navigateTo(view, opts) {
   if (trView) trView.classList.remove('active');
   const dvView = document.getElementById('data-view');
   if (dvView) dvView.classList.remove('active');
+  const wkView = document.getElementById('wiki-view');
+  if (wkView) wkView.classList.remove('active');
 
   // Update sidebar active state
   document.querySelectorAll('.sb-nav-item').forEach(n => n.classList.remove('active'));
@@ -131,6 +133,14 @@ function navigateTo(view, opts) {
       updatePageHeader('Daten');
       document.getElementById('status-bar').style.display = 'none';
       if (typeof clsOpenView === 'function') clsOpenView();
+      break;
+    }
+
+    case 'wiki': {
+      document.getElementById('wiki-view').classList.add('active');
+      updatePageHeader('Wiki');
+      document.getElementById('status-bar').style.display = 'none';
+      if (typeof loadWikiView === 'function') loadWikiView();
       break;
     }
 
