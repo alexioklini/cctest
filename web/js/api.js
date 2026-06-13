@@ -66,6 +66,14 @@ class API {
   static wikiUpdate(id, body) { return this.put(`/v1/wiki/pages/${id}`, body); }
   static wikiPromote(id, n) { return this.post(`/v1/wiki/pages/${id}/promote/${n}`, {}); }
   static wikiMove(id, body) { return this.post(`/v1/wiki/pages/${id}/move`, body); }
+  static wikiGenerate(id, body) { return this.post(`/v1/wiki/pages/${id}/generate`, body); }
+  static async wikiMedia(id, file) {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    const h = {}; const t = localStorage.getItem('auth-token'); if (t) h['Authorization'] = `Bearer ${t}`;
+    const r = await fetch(`${BASE_URL}/v1/wiki/pages/${id}/media`, { method: 'POST', headers: h, body: fd });
+    return r.json();
+  }
   static wikiDelete(id) { return this.del(`/v1/wiki/pages/${id}`); }
 
   // Agents

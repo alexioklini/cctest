@@ -191,6 +191,66 @@ class WikiHandlerMixin:
         finally:
             cm.__exit__(None, None, None)
 
+    def _handle_wiki_generate(self, path: str):
+        """POST /v1/wiki/pages/{id}/generate {kind: summary|podcast, include_children?}
+        Generates a summary or podcast from the page (+ optional subtree) and
+        saves it as a new CHILD page. Synchronous (LLM/TTS) — the UI shows a
+        spinner; returns the created page."""
+        page_id = path.rstrip("/").split("/")[-2]
+        body = self._read_json()
+        kind = (body.get("kind") or "summary").strip().lower()
+        include_children = bool(body.get("include_children"))
+        cm = self._with_wiki_ctx()
+        try:
+            from engine import wiki_gen
+            if kind == "podcast":
+                res = wiki_gen.generate_podcast(page_id, include_children)
+            else:
+                res = wiki_gen.generate_summary(page_id, include_children)
+            if isinstance(res, dict) and res.get("error"):
+                self._send_json(res, 400)
+                return
+            self._send_json(res)
+        except wiki_store.WikiAccessError as e:
+            self._send_json({"error": str(e)}, 403)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            self._send_json({"error": f"generation failed: {e}"}, 500)
+        finally:
+            cm.__exit__(None, None, None)
+
+    def _handle_wiki_media(self, path: str):
+        """POST /v1/wiki/pages/{id}/media (multipart) — upload image/audio/video,
+        store as an artifact, return {artifact_id, kind, snippet} to insert."""
+        page_id = path.rstrip("/").split("/")[-2]
+        ctype = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in ctype:
+            self._send_json({"error": "expected multipart/form-data"}, 400)
+            return
+        clen = int(self.headers.get("Content-Length", "0") or 0)
+        if not clen:
+            self._send_json({"error": "empty body"}, 400)
+            return
+        raw = self.rfile.read(clen)
+        from handlers.classification import _parse_multipart_files
+        files, _fields, err = _parse_multipart_files(ctype, raw)
+        if err or not files:
+            self._send_json({"error": err or "no file"}, 400)
+            return
+        f = files[0]
+        cm = self._with_wiki_ctx()
+        try:
+            from engine import wiki_gen
+            res = wiki_gen.save_media(page_id, f.get("name", "media"), f.get("bytes", b""))
+            if res.get("error"):
+                self._send_json(res, 400)
+                return
+            self._send_json(res)
+        except wiki_store.WikiAccessError as e:
+            self._send_json({"error": str(e)}, 403)
+        finally:
+            cm.__exit__(None, None, None)
+
     def _handle_wiki_delete(self, path: str):
         """DELETE /v1/wiki/pages/{id}"""
         page_id = path.rstrip("/").split("/")[-1]

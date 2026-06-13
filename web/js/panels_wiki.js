@@ -119,12 +119,101 @@ function wikiSetMode(mode) {
     if (bRaw) { bRaw.classList.add('active'); bRaw.style.background = 'var(--bg-300)'; bRaw.style.color = 'var(--text-000)'; }
     wikiEnsureEditor();
   } else {
-    // Render the (possibly edited) markdown.
-    const md = window._wiki.cm ? window._wiki.cm.getValue() : (window._wiki.current?.body_md || '');
+    // Render the (possibly edited) markdown. Replace [[image|audio|video:<id>]]
+    // media tokens with placeholders, render, then hydrate with authed blobs.
+    let md = window._wiki.cm ? window._wiki.cm.getValue() : (window._wiki.current?.body_md || '');
+    const media = [];
+    md = md.replace(/\[\[(image|audio|video):([a-zA-Z0-9_-]+)\]\]/g, (m, kind, id) => {
+      const slot = `wiki-media-${media.length}`;
+      media.push({ slot, kind, id });
+      return `\n\n<div id="${slot}" data-wiki-media="${kind}:${id}"></div>\n\n`;
+    });
     render.innerHTML = (typeof renderMarkdown === 'function') ? renderMarkdown(md) : (window.marked ? marked.parse(md) : esc(md));
     render.style.display = 'block';
     raw.style.display = 'none';
     if (bRender) { bRender.classList.add('active'); bRender.style.background = 'var(--bg-300)'; bRender.style.color = 'var(--text-000)'; }
+    media.forEach(m => wikiHydrateMedia(m.slot, m.kind, m.id));
+  }
+}
+
+// Fetch an artifact (authed, Bearer-only) and mount it as img/audio/video.
+async function wikiHydrateMedia(slot, kind, artifactId) {
+  const el = document.getElementById(slot);
+  if (!el) return;
+  try {
+    const url = (typeof API.getArtifactDownloadUrl === 'function')
+      ? API.getArtifactDownloadUrl(artifactId)
+      : `/v1/artifacts/${artifactId}/download`;
+    const h = {}; const t = localStorage.getItem('auth-token'); if (t) h['Authorization'] = `Bearer ${t}`;
+    const resp = await fetch(url, { headers: h });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const obj = URL.createObjectURL(await resp.blob());
+    if (kind === 'image') el.innerHTML = `<img src="${obj}" style="max-width:100%;border-radius:8px">`;
+    else if (kind === 'audio') el.innerHTML = `<audio controls preload="metadata" style="width:100%;max-width:520px" src="${obj}"></audio>`;
+    else el.innerHTML = `<video controls preload="metadata" style="max-width:100%;border-radius:8px" src="${obj}"></video>`;
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--error);font-size:12px">Medien konnten nicht geladen werden</div>`;
+  }
+}
+
+// Read the current page aloud (reuses the chat read-aloud TTS pipeline).
+async function wikiReadAloud() {
+  const body = window._wiki.cm ? window._wiki.cm.getValue() : (window._wiki.current?.body_md || '');
+  if (!body.trim()) return;
+  // Strip media tokens before speaking.
+  const text = body.replace(/\[\[(image|audio|video):[a-zA-Z0-9_-]+\]\]/g, '');
+  if (typeof _stripMarkdownForSpeech === 'function' && typeof _chunkForTts === 'function' && typeof _playChatQueue === 'function') {
+    window._chatAudioQueue = _chunkForTts(_stripMarkdownForSpeech(text), 3000);
+    try {
+      const det = await API.post('/v1/translate/detect', { text: text.slice(0, 400) });
+      window._chatAudioLang = (det && det.lang) || '';
+    } catch (_) { window._chatAudioLang = ''; }
+    _playChatQueue();
+  } else {
+    alert('Vorlesen nicht verfügbar.');
+  }
+}
+
+async function wikiGenerate(kind) {
+  const page = window._wiki.current;
+  if (!page) return;
+  const inc = confirm('Auch Unterseiten einbeziehen?');
+  const btnLabel = kind === 'podcast' ? '🎧 Podcast' : 'Zusammenfassung';
+  const note = document.getElementById('wiki-page-meta');
+  const prev = note ? note.textContent : '';
+  if (note) note.textContent = `${btnLabel} wird erzeugt… (das kann einen Moment dauern)`;
+  try {
+    const res = await API.wikiGenerate(page.id, { kind, include_children: inc });
+    if (res.error) { alert(res.error); if (note) note.textContent = prev; return; }
+    await wikiRefreshTree();
+    wikiOpenPage(res.id);   // open the new child page
+  } catch (e) {
+    alert('Erzeugung fehlgeschlagen: ' + e.message);
+    if (note) note.textContent = prev;
+  }
+}
+
+function wikiInsertMedia() {
+  const inp = document.getElementById('wiki-media-input');
+  if (inp) inp.click();
+}
+
+async function wikiMediaSelected(input) {
+  const page = window._wiki.current;
+  const file = input.files && input.files[0];
+  input.value = '';   // reset for next pick
+  if (!page || !file) return;
+  try {
+    const res = await API.wikiMedia(page.id, file);
+    if (res.error) { alert(res.error); return; }
+    // Insert the snippet at the end of the raw body + save.
+    wikiSetMode('raw');
+    const cur = window._wiki.cm.getValue();
+    window._wiki.cm.setValue(cur + `\n\n${res.snippet}\n`);
+    window._wiki.dirty = true;
+    await wikiSavePage();
+  } catch (e) {
+    alert('Medien-Upload fehlgeschlagen: ' + e.message);
   }
 }
 

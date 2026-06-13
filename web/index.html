@@ -1199,6 +1199,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
               <button id="wiki-mode-raw" class="wiki-mode-btn" onclick="wikiSetMode('raw')" style="padding:5px 12px;border:none;background:transparent;color:var(--text-300);cursor:pointer;font-size:12px">Markdown</button>
             </div>
             <button class="wiki-save-btn" id="wiki-save-btn" onclick="wikiSavePage()" style="padding:6px 14px;border-radius:6px;border:none;background:var(--accent-main-100,#2563eb);color:#fff;cursor:pointer;font-size:13px">Speichern</button>
+            <button class="wiki-action-btn" onclick="wikiReadAloud()" title="Vorlesen" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer;font-size:13px">🔊</button>
+            <button class="wiki-action-btn" onclick="wikiGenerate('summary')" title="Zusammenfassung erzeugen" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer;font-size:13px">Zusammenfassung</button>
+            <button class="wiki-action-btn" onclick="wikiGenerate('podcast')" title="Podcast erzeugen" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer;font-size:13px">🎧 Podcast</button>
+            <button class="wiki-action-btn" onclick="wikiInsertMedia()" title="Medien einfügen" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer;font-size:13px">📎 Medien</button>
+            <input type="file" id="wiki-media-input" accept="image/*,audio/*,video/*" style="display:none" onchange="wikiMediaSelected(this)">
             <button class="wiki-action-btn" onclick="wikiOpenVersions()" title="Versionen" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-300);cursor:pointer;font-size:13px">Versionen</button>
             <button class="wiki-action-btn" onclick="wikiDeleteCurrent()" title="Löschen" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--error,#dc2626);cursor:pointer;font-size:13px">Löschen</button>
           </div>

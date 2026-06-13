@@ -511,7 +511,10 @@ User-visible, editable markdown wiki with user/team/global scoping (a page may a
 - `PUT /v1/wiki/pages/<id>` — `{title?, body_md?, project_id?, archived?}` (a human text change → new version, sets `manually_edited`, re-mirrors).
 - `POST /v1/wiki/pages/<id>/promote/<n>` — make version `n` current (copied to a new version; re-mirrors). Append-only history.
 - `POST /v1/wiki/pages/<id>/move` — `{parent_id?, position?}` restructure (`parent_id:""` = top level).
+- `POST /v1/wiki/pages/<id>/generate` — `{kind: summary|podcast, include_children?}` → generates a summary (LLM) or podcast (LLM script + TTS MP3) from the page (+ optional subtree) and saves it as a new CHILD page (synchronous). Podcast links the MP3 artifact via an `[[audio:<artifact_id>]]` token.
+- `POST /v1/wiki/pages/<id>/media` — multipart upload of an image/audio/video → stored as an artifact; returns `{artifact_id, kind, snippet}` where `snippet` is an `[[image|audio|video:<artifact_id>]]` token to insert in the page (the UI hydrates it to a real `<img>/<audio>/<video>` via authed blob-fetch).
 - `DELETE /v1/wiki/pages/<id>` — delete; children re-parent to the deleted page's parent; the page's drawer is purged from its wing.
+- Read-aloud is client-only (reuses `/v1/translate/tts`); no wiki-specific endpoint.
 
 Auto-generated pages (chat/Studio/task/workflow) carry `source`+`source_ref`; the feeder calls `wiki_store.upsert_from_source` which **diff-merges** a changed source into the existing page (preserving manual edits) as a new version rather than forking a duplicate. Only the current version is searchable in MemPalace.
 

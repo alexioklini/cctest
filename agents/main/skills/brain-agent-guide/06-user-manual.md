@@ -594,6 +594,18 @@ Workflows automatisch erzeugte Seiten tragen eine Quell-Markierung (↩) und
 werden bei einer Änderung der Quelle als neue Version fortgeschrieben statt
 doppelt angelegt.
 
+**Erzeugen & Medien (Seitenkopf):**
+- **🔊** liest die Seite vor (Sprache wird automatisch erkannt).
+- **Zusammenfassung** erzeugt per KI eine kompakte Zusammenfassung als
+  Unterseite (optional inklusive aller Unterseiten).
+- **🎧 Podcast** erzeugt eine zweistimmige Audio-Übersicht (MP3) als Unterseite.
+- **📎 Medien** lädt Bild / Audio / Video hoch und fügt es in die Seite ein;
+  in der Ansicht wird es als `<img>`/`<audio>`/`<video>` dargestellt.
+
+Wie in Studio brauchen Zusammenfassung und Podcast Quellen-Inhalt und ein
+konfiguriertes Hintergrund- bzw. TTS-Modell; die Erzeugung läuft synchron
+(kurzer Moment Geduld).
+
 ---
 
 ## Favoriten

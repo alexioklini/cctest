@@ -1814,6 +1814,10 @@ class BrainAgentHandler(
             self._handle_wiki_promote(path)
         elif path.startswith("/v1/wiki/pages/") and path.rstrip("/").endswith("/move"):
             self._handle_wiki_move(path)
+        elif path.startswith("/v1/wiki/pages/") and path.rstrip("/").endswith("/generate"):
+            self._handle_wiki_generate(path)
+        elif path.startswith("/v1/wiki/pages/") and path.rstrip("/").endswith("/media"):
+            self._handle_wiki_media(path)
         elif path == "/v1/favourites":
             self._handle_favourites_add()
         elif path.startswith("/v1/favourites/") and path.endswith("/image"):
