@@ -285,6 +285,24 @@ run (`engine/deep_research.py`). The RUN record; the report itself is a
 checkpoint (E3). Boot reconcile flips a leftover `running` row to `error`. See
 `05-internals.md` → Deep Research.
 
+### chats.db → wiki_pages / wiki_page_versions (LLM Wiki)
+```
+wiki_pages: id TEXT PK (uuid hex16), agent_id TEXT, scope TEXT (user|team|global),
+  owner_id TEXT, team_id TEXT, project_id TEXT (optional tag), parent_id TEXT (''=top level),
+  slug TEXT, title TEXT, body_md TEXT (live markdown), position INTEGER (order among siblings),
+  source TEXT (manual|chat|studio|task|workflow|activity), archived INTEGER,
+  created_at/by, updated_at/by
+wiki_page_versions: id PK, page_id TEXT, version INTEGER, title TEXT, body_md TEXT, created_at/by
+```
+Indexes `idx_wiki_scope(scope,owner_id,team_id,project_id)`, `idx_wiki_parent(parent_id,position)`,
+`idx_wiki_versions(page_id,version)`. Pages form a tree via `parent_id`/`position`. User-visible,
+editable markdown wiki — and the **sole feeder** for chat-derived MemPalace wings: every save mirrors
+the page into its wing (`user__`/`team__`/`wiki_global`, or `project_chat__<id>` when `project_id` set)
+as one drawer `source_file=wiki/<id>`, replacing the old direct chat-sync writes (that daemon is
+retired) and the obsolete `MemoryStore` .md files. Ingested project knowledge (`project__<id>`) is
+unaffected. CRUD in `engine/wiki_store.py` (access-checked: global=anyone, user=owner, team=member);
+endpoints `/v1/wiki/*` (see `01-api.md`). See `05-internals.md` → LLM Wiki.
+
 ### chats.db → feedback (👍/👎 on responses)
 ```
 id INTEGER PK AUTOINCREMENT, surface TEXT, target_id TEXT,

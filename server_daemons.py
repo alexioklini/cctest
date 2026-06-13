@@ -580,6 +580,16 @@ def _extract_references_from_tool_payload(tool_name, payload):
 
 
 def _mempalace_chat_sync_loop(srv):
+    # RETIRED (LLM Wiki): chat content no longer feeds MemPalace directly. Under
+    # the wiki model, the ONLY feeder for user__/team__/wiki_global and
+    # project_chat__<id> wings is the wiki (engine.wiki_store._mirror_page);
+    # chats become searchable by being memorized into a wiki page, not by this
+    # daemon mirroring raw turns. Ingested PROJECT knowledge (files/folders/
+    # web-URLs → project__<id>) is unaffected — that's the project-sync daemon.
+    # Body retained below but unreachable; the thread is also no longer launched
+    # in server.py. Re-enabling would double-feed the wiki-fed wings.
+    print("MemPalace chat-sync: retired (wiki is the sole feeder for chat-derived wings)")
+    return
     mcfg = engine._load_mempalace_config()
     if not mcfg.get("enabled", True):
         return

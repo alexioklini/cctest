@@ -894,6 +894,58 @@ class ChatDB:
                 "UPDATE research_runs SET status='error', "
                 "error='Server restart — research run lost', "
                 "finished_at=strftime('%s','now') WHERE status='running'")
+            # ── LLM Wiki ──
+            # User-visible, editable markdown wiki. One row per page; pages form
+            # a tree via parent_id (NULL/'' = top level), ordered by `position`
+            # among siblings. `scope` (user|team|global) + owner_id/team_id/
+            # project_id mirror the MemPalace wing scheme — every saved page is
+            # mirrored into the matching wing (source_file=f"wiki/{id}") so it's
+            # searchable, replacing the obsolete MemoryStore .md files. `slug` is
+            # a stable URL-ish handle the agent can address pages by. body_md is
+            # the live markdown; history lives in wiki_page_versions.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS wiki_pages (
+                    id          TEXT PRIMARY KEY,
+                    agent_id    TEXT NOT NULL DEFAULT 'main',
+                    scope       TEXT NOT NULL DEFAULT 'user',
+                    owner_id    TEXT NOT NULL DEFAULT '',
+                    team_id     TEXT NOT NULL DEFAULT '',
+                    project_id  TEXT NOT NULL DEFAULT '',
+                    parent_id   TEXT NOT NULL DEFAULT '',
+                    slug        TEXT NOT NULL DEFAULT '',
+                    title       TEXT NOT NULL DEFAULT '',
+                    body_md     TEXT NOT NULL DEFAULT '',
+                    position    INTEGER NOT NULL DEFAULT 0,
+                    source      TEXT NOT NULL DEFAULT 'manual',
+                    archived    INTEGER NOT NULL DEFAULT 0,
+                    created_at  REAL DEFAULT (strftime('%s','now')),
+                    created_by  TEXT NOT NULL DEFAULT '',
+                    updated_at  REAL DEFAULT (strftime('%s','now')),
+                    updated_by  TEXT NOT NULL DEFAULT ''
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_wiki_scope "
+                "ON wiki_pages(scope, owner_id, team_id, project_id)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_wiki_parent "
+                "ON wiki_pages(parent_id, position)")
+            # Per-edit version history (mirrors artifact_versions): immutable
+            # snapshots so the user can see/restore prior page bodies.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS wiki_page_versions (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    page_id     TEXT NOT NULL,
+                    version     INTEGER NOT NULL,
+                    title       TEXT NOT NULL DEFAULT '',
+                    body_md     TEXT NOT NULL DEFAULT '',
+                    created_at  REAL DEFAULT (strftime('%s','now')),
+                    created_by  TEXT NOT NULL DEFAULT ''
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_wiki_versions "
+                "ON wiki_page_versions(page_id, version)")
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -1212,6 +1264,135 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("UPDATE research_runs SET cancel = 1 WHERE id = ?", (run_id,))
             conn.commit()
+
+    # ── LLM Wiki CRUD ──
+
+    @staticmethod
+    @_db_safe(default=None)
+    def create_wiki_page(page_id, agent_id, scope, owner_id, team_id, project_id,
+                         parent_id, slug, title, body_md, position, source, created_by):
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO wiki_pages (id, agent_id, scope, owner_id, team_id, "
+                "project_id, parent_id, slug, title, body_md, position, source, "
+                "created_by, updated_by) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (page_id, agent_id, scope, owner_id, team_id, project_id,
+                 parent_id or "", slug, title, body_md, int(position), source,
+                 created_by, created_by))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_wiki_page(page_id, **fields):
+        """Patch a wiki page. Whitelisted columns only; bumps updated_at."""
+        allowed = ("title", "body_md", "parent_id", "slug", "position",
+                   "scope", "owner_id", "team_id", "project_id", "archived",
+                   "source", "updated_by")
+        sets, vals = [], []
+        for k in allowed:
+            if k in fields:
+                sets.append(f"{k} = ?")
+                vals.append(fields[k])
+        if not sets:
+            return
+        sets.append("updated_at = strftime('%s','now')")
+        vals.append(page_id)
+        with _db_conn() as conn:
+            conn.execute(f"UPDATE wiki_pages SET {', '.join(sets)} WHERE id = ?", vals)
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_wiki_page(page_id):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM wiki_pages WHERE id = ?", (page_id,)).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_wiki_pages(scope=None, owner_id=None, team_id=None, project_id=None,
+                        include_archived=False):
+        """Pages in a scope, ordered for tree assembly (parent, then position).
+        Filters are ANDed when provided. Bodies included (pages are small)."""
+        where, vals = [], []
+        if scope is not None:
+            where.append("scope = ?"); vals.append(scope)
+        if owner_id is not None:
+            where.append("owner_id = ?"); vals.append(owner_id)
+        if team_id is not None:
+            where.append("team_id = ?"); vals.append(team_id)
+        if project_id is not None:
+            where.append("project_id = ?"); vals.append(project_id)
+        if not include_archived:
+            where.append("COALESCE(archived, 0) = 0")
+        sql = "SELECT * FROM wiki_pages"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY parent_id, position, created_at"
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, vals).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=list)
+    def wiki_children(parent_id):
+        """Direct children of a page (for cascade delete)."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id FROM wiki_pages WHERE parent_id = ?",
+                (parent_id,)).fetchall()
+            return [r["id"] for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def delete_wiki_page(page_id):
+        """Delete a page row + its version history. Children are re-parented by
+        the caller (WikiStore) before this runs — no cascade here."""
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM wiki_page_versions WHERE page_id = ?", (page_id,))
+            conn.execute("DELETE FROM wiki_pages WHERE id = ?", (page_id,))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=0)
+    def add_wiki_version(page_id, title, body_md, created_by):
+        """Append an immutable snapshot; returns the new version number."""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM wiki_page_versions WHERE page_id = ?",
+                (page_id,)).fetchone()
+            nxt = int(row[0]) + 1
+            conn.execute(
+                "INSERT INTO wiki_page_versions (page_id, version, title, body_md, created_by) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (page_id, nxt, title, body_md, created_by))
+            conn.commit()
+            return nxt
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_wiki_versions(page_id):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT version, title, created_at, created_by FROM wiki_page_versions "
+                "WHERE page_id = ? ORDER BY version DESC", (page_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_wiki_version(page_id, version):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM wiki_page_versions WHERE page_id = ? AND version = ?",
+                (page_id, int(version))).fetchone()
+            return dict(row) if row else None
 
     @staticmethod
     @_db_safe(default=None)

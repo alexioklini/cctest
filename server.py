@@ -956,6 +956,7 @@ from handlers.chat import ChatHandlerMixin
 from handlers.sessions_handler import SessionsHandlerMixin
 from handlers.providers import ProvidersHandlerMixin
 from handlers.projects import ProjectsHandlerMixin
+from handlers.wiki import WikiHandlerMixin
 from handlers.admin import AdminHandlerMixin
 from handlers.admin_workflows import AdminWorkflowHandlers
 from handlers.admin_agents import AdminAgentsHandlers
@@ -1044,6 +1045,7 @@ class BrainAgentHandler(
     HelpdeskHandlerMixin,
     FeedbackHandlerMixin,
     BackgroundTasksHandlerMixin,
+    WikiHandlerMixin,
     BaseHTTPRequestHandler,
 ):
     """HTTP request handler for Brain Agent API."""
@@ -1441,7 +1443,11 @@ class BrainAgentHandler(
                 return
             self._auth_user = user
 
-        if path == "/v1/tools/list":
+        if path == "/v1/wiki/tree":
+            self._handle_wiki_tree(path)
+        elif path.startswith("/v1/wiki/pages/"):
+            self._handle_wiki_get(path)
+        elif path == "/v1/tools/list":
             self._handle_tools_list()
         elif path == "/v1/chat/stream":
             self._handle_chat_stream()
@@ -1802,6 +1808,10 @@ class BrainAgentHandler(
 
         if path == "/mcp":
             self._handle_mcp_jsonrpc()
+        elif path == "/v1/wiki/pages":
+            self._handle_wiki_create(path)
+        elif path.startswith("/v1/wiki/pages/") and path.rstrip("/").endswith("/move"):
+            self._handle_wiki_move(path)
         elif path == "/v1/favourites":
             self._handle_favourites_add()
         elif path.startswith("/v1/favourites/") and path.endswith("/image"):
@@ -2097,7 +2107,9 @@ class BrainAgentHandler(
             if not user:
                 return
             self._auth_user = user
-        if path.startswith("/v1/agents/") and "/projects/" in path and "/notes/" in path:
+        if path.startswith("/v1/wiki/pages/"):
+            self._handle_wiki_update(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes/" in path:
             self._handle_notes(path, "PUT")
         elif path.startswith("/v1/agents/") and "/projects/" in path:
             self._handle_project_update(path)
@@ -2113,6 +2125,9 @@ class BrainAgentHandler(
             if not user:
                 return
             self._auth_user = user
+        if path.startswith("/v1/wiki/pages/"):
+            self._handle_wiki_delete(path)
+            return
         if path == "/v1/background-tasks":
             self._handle_background_task_delete()
             return
@@ -3307,6 +3322,20 @@ def main():
     # (server_config, warm_pool, the _project_sync_* / _warmup_wakeup
     # events, _profile_run_synchronous, ...) without an import cycle.
     _srv = sys.modules[__name__]
+    # Seed MEMPALACE_PALACE_PATH process-wide BEFORE anything touches MemPalace.
+    # mempalace.mcp_server's _get_collection caches a backend handle keyed on the
+    # resolved palace_path; if the FIRST touch happens with the env unset it
+    # binds the stale default (~/.mempalace/palace, a dead chroma palace) and
+    # caches that failure. The retired chat-sync daemon used to seed this; now we
+    # do it at boot so the miner / memdash / wiki-mirror all resolve the right
+    # (qdrant) palace from their very first call. setdefault: the plist env wins.
+    try:
+        _mp_cfg_boot = engine._load_mempalace_config()
+        _mp_pp_boot = _mp_cfg_boot.get("palace_path", "")
+        if _mp_pp_boot:
+            os.environ.setdefault("MEMPALACE_PALACE_PATH", _mp_pp_boot)
+    except Exception as _e_mp_boot:
+        print(f"[boot] MemPalace palace-path seed skipped: {_e_mp_boot}")
     # Load config.json for defaults
     file_config = _load_config_file()
     file_config = _migrate_audio_provider_once(file_config)
@@ -4069,7 +4098,9 @@ def main():
     # chats.db into MemPalace drawers. Rebuilds closets per (wing, room,
     # source_file) group so chat memories rank on par with mined code.
 
-    threading.Thread(target=server_daemons._mempalace_chat_sync_loop, args=(_srv,), daemon=True, name="mempalace-chat-sync").start()
+    # LLM Wiki: chat-sync daemon RETIRED — the wiki is the sole feeder for
+    # chat-derived wings (see server_daemons._mempalace_chat_sync_loop). Thread
+    # no longer launched. Ingested project knowledge keeps its own (project-sync).
 
     # ── Project-sync daemon ─────────────────────────────────────────────
     # Walks every project's manual attachments (`ingested/`) plus any

@@ -499,6 +499,18 @@ Once a feedback row exists, user and admin exchange short one-line messages
 - `GET /v1/backup/info` / `POST /v1/backup` / `POST /v1/restore`
 - `POST /v1/refine` — `{text, purpose, tier, caveman}` one-shot refine LLM call. `purpose` ∈ `chat_prompt`(default)/`scheduled_task`/`soul`/`profile_field`. `tier` ∈ `polish`(default)/`engineer`: **polish** = conservative grammar/clarity cleaner (intent verbatim); **engineer** = intent-extract + restructure, grounded in active model hint + resolved tool names + project instructions (`scheduled_task` adds unattended stop-condition/safeguard discipline; `soul` becomes a structural editor; `profile_field` always falls back to polish). Engineer keeps good drafts unchanged and asks-back on hopelessly-vague drafts rather than inventing scope. Response echoes `tier`.
 
+## LLM Wiki
+
+User-visible, editable markdown wiki with user/team/global scoping (a page may also carry a `project_id`). Every save is mirrored into the matching MemPalace wing so pages are searchable — and the wiki is now the **sole** feeder for chat-derived wings (`user__`/`team__`/`wiki_global`, and `project_chat__<id>` for project-tagged pages). Ingested project knowledge (`project__<id>`) is unaffected. Each request runs as the authenticated caller; access is enforced (global = anyone, user = owner, team = member).
+
+- `GET /v1/wiki/tree?scope=user|team|global&project_id=&team_id=` — flat list of accessible pages in a scope (UI builds the tree from `parent_id`/`position`).
+- `GET /v1/wiki/pages/<id>` — one page (`id, scope, owner_id, team_id, project_id, parent_id, slug, title, body_md, position, …`).
+- `GET /v1/wiki/pages/<id>/versions` — immutable per-edit snapshots (newest first).
+- `POST /v1/wiki/pages` — `{scope, title, body_md?, parent_id?, project_id?, team_id?}` → 201 with the created page.
+- `PUT /v1/wiki/pages/<id>` — `{title?, body_md?, project_id?, archived?}` (any text change appends a version + re-mirrors).
+- `POST /v1/wiki/pages/<id>/move` — `{parent_id?, position?}` restructure (`parent_id:""` = top level).
+- `DELETE /v1/wiki/pages/<id>` — delete; children re-parent to the deleted page's parent; the page's drawer is purged from its wing.
+
 ## Tasks (delegate API)
 
 - `GET /v1/tasks` — delegated tasks visible to caller
