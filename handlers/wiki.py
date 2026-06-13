@@ -36,17 +36,21 @@ class WikiHandlerMixin:
     # ── list / tree ──
 
     def _handle_wiki_tree(self, path: str):
-        """GET /v1/wiki/tree?scope=user|team|global&project_id=&team_id="""
+        """GET /v1/wiki/tree?filter=mine|team|global|all&project_id=&team_id=
+
+        filter: mine (my pages) · team (team pages) · global (pages for all) ·
+        all (everything accessible to me — default)."""
         qs = self.path.split("?", 1)[1] if "?" in self.path else ""
         from urllib.parse import parse_qs
         q = parse_qs(qs)
-        scope = (q.get("scope", ["user"])[0]) or "user"
+        # Back-compat: accept legacy ?scope= too.
+        filter_mode = (q.get("filter", q.get("scope", ["all"]))[0]) or "all"
         project_id = q.get("project_id", [""])[0] or None
         team_id = q.get("team_id", [""])[0] or None
         cm = self._with_wiki_ctx()
         try:
-            rows = wiki_store.list_tree(scope, project_id=project_id, team_id=team_id)
-            self._send_json({"scope": scope, "pages": rows})
+            rows = wiki_store.list_tree(filter_mode, project_id=project_id, team_id=team_id)
+            self._send_json({"filter": filter_mode, "pages": rows})
         except wiki_store.WikiAccessError as e:
             self._send_json({"error": str(e)}, 403)
         finally:
@@ -55,21 +59,42 @@ class WikiHandlerMixin:
     # ── single page ──
 
     def _handle_wiki_get(self, path: str):
-        """GET /v1/wiki/pages/{id}  (+ optional /versions suffix handled here)"""
-        page_id = path.rstrip("/").split("/")[-1]
-        want_versions = path.rstrip("/").endswith("/versions")
-        if want_versions:
-            page_id = path.rstrip("/").split("/")[-2]
+        """GET /v1/wiki/pages/{id}
+           GET /v1/wiki/pages/{id}/versions           — list versions
+           GET /v1/wiki/pages/{id}/versions/{n}       — one version (read-only)"""
+        # /v1/wiki/pages/<id>[/versions[/<n>]]
+        segs = path.rstrip("/").split("/")
+        # segs: ['', 'v1', 'wiki', 'pages', '<id>', ...]
+        try:
+            base = segs.index("pages")
+        except ValueError:
+            self._send_json({"error": "Bad path"}, 400)
+            return
+        page_id = segs[base + 1] if len(segs) > base + 1 else ""
+        tail = segs[base + 2:]  # [] | ['versions'] | ['versions', '<n>']
         cm = self._with_wiki_ctx()
         try:
-            page = wiki_store.get_page(page_id)
-            if not page:
-                self._send_json({"error": "Page not found"}, 404)
-                return
-            if want_versions:
-                from server_lib.db import ChatDB
-                self._send_json({"versions": ChatDB.list_wiki_versions(page_id)})
+            from server_lib.db import ChatDB
+            if tail and tail[0] == "versions":
+                if len(tail) >= 2:  # specific version
+                    page = wiki_store.get_page(page_id)
+                    if not page:
+                        self._send_json({"error": "Page not found"}, 404)
+                        return
+                    ver = ChatDB.get_wiki_version(page_id, tail[1])
+                    self._send_json(ver or {"error": "Version not found"},
+                                    200 if ver else 404)
+                else:  # version list
+                    page = wiki_store.get_page(page_id)
+                    if not page:
+                        self._send_json({"error": "Page not found"}, 404)
+                        return
+                    self._send_json({"versions": ChatDB.list_wiki_versions(page_id)})
             else:
+                page = wiki_store.get_page(page_id)
+                if not page:
+                    self._send_json({"error": "Page not found"}, 404)
+                    return
                 self._send_json(page)
         except wiki_store.WikiAccessError as e:
             self._send_json({"error": str(e)}, 403)
@@ -93,6 +118,7 @@ class WikiHandlerMixin:
                 project_id=body.get("project_id", ""),
                 team_id=body.get("team_id", ""),
                 source=body.get("source", "manual"),
+                source_ref=body.get("source_ref", ""),
             )
             self._send_json(page or {"error": "create failed"}, 201 if page else 500)
         except wiki_store.WikiAccessError as e:
@@ -133,6 +159,29 @@ class WikiHandlerMixin:
                 parent_id=body.get("parent_id", ""),
                 position=body.get("position"),
             )
+            if not page:
+                self._send_json({"error": "Page not found"}, 404)
+                return
+            self._send_json(page)
+        except wiki_store.WikiAccessError as e:
+            self._send_json({"error": str(e)}, 403)
+        finally:
+            cm.__exit__(None, None, None)
+
+    def _handle_wiki_promote(self, path: str):
+        """POST /v1/wiki/pages/{id}/promote/{version} — make an old version the
+        current one (copied to a new version; re-mirrored to MemPalace)."""
+        segs = path.rstrip("/").split("/")
+        try:
+            base = segs.index("pages")
+            page_id = segs[base + 1]
+            version = segs[segs.index("promote") + 1]
+        except (ValueError, IndexError):
+            self._send_json({"error": "Bad path — expected /pages/<id>/promote/<n>"}, 400)
+            return
+        cm = self._with_wiki_ctx()
+        try:
+            page = wiki_store.promote_version(page_id, version)
             if not page:
                 self._send_json({"error": "Page not found"}, 404)
                 return

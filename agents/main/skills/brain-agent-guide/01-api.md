@@ -503,13 +503,17 @@ Once a feedback row exists, user and admin exchange short one-line messages
 
 User-visible, editable markdown wiki with user/team/global scoping (a page may also carry a `project_id`). Every save is mirrored into the matching MemPalace wing so pages are searchable — and the wiki is now the **sole** feeder for chat-derived wings (`user__`/`team__`/`wiki_global`, and `project_chat__<id>` for project-tagged pages). Ingested project knowledge (`project__<id>`) is unaffected. Each request runs as the authenticated caller; access is enforced (global = anyone, user = owner, team = member).
 
-- `GET /v1/wiki/tree?scope=user|team|global&project_id=&team_id=` — flat list of accessible pages in a scope (UI builds the tree from `parent_id`/`position`).
-- `GET /v1/wiki/pages/<id>` — one page (`id, scope, owner_id, team_id, project_id, parent_id, slug, title, body_md, position, …`).
-- `GET /v1/wiki/pages/<id>/versions` — immutable per-edit snapshots (newest first).
-- `POST /v1/wiki/pages` — `{scope, title, body_md?, parent_id?, project_id?, team_id?}` → 201 with the created page.
-- `PUT /v1/wiki/pages/<id>` — `{title?, body_md?, project_id?, archived?}` (any text change appends a version + re-mirrors).
+- `GET /v1/wiki/tree?filter=mine|team|global|all&project_id=&team_id=` — flat list of accessible pages (UI builds the tree from `parent_id`/`position`). `filter`: **mine** (my user pages) · **team** (a team's pages; `team_id` optional → all my teams) · **global** (pages for all) · **all** (union of everything accessible to me — default). Legacy `?scope=` accepted.
+- `GET /v1/wiki/pages/<id>` — one page (`id, scope, owner_id, team_id, project_id, parent_id, slug, title, body_md, position, source, source_ref, current_version, manually_edited, …`).
+- `GET /v1/wiki/pages/<id>/versions` — immutable per-edit snapshots (newest first; each has `version, title, note, created_at/by`).
+- `GET /v1/wiki/pages/<id>/versions/<n>` — one historical version (read-only). Only the current version is editable / in MemPalace.
+- `POST /v1/wiki/pages` — `{scope, title, body_md?, parent_id?, project_id?, team_id?, source?, source_ref?}` → 201 with the created page.
+- `PUT /v1/wiki/pages/<id>` — `{title?, body_md?, project_id?, archived?}` (a human text change → new version, sets `manually_edited`, re-mirrors).
+- `POST /v1/wiki/pages/<id>/promote/<n>` — make version `n` current (copied to a new version; re-mirrors). Append-only history.
 - `POST /v1/wiki/pages/<id>/move` — `{parent_id?, position?}` restructure (`parent_id:""` = top level).
 - `DELETE /v1/wiki/pages/<id>` — delete; children re-parent to the deleted page's parent; the page's drawer is purged from its wing.
+
+Auto-generated pages (chat/Studio/task/workflow) carry `source`+`source_ref`; the feeder calls `wiki_store.upsert_from_source` which **diff-merges** a changed source into the existing page (preserving manual edits) as a new version rather than forking a duplicate. Only the current version is searchable in MemPalace.
 
 ## Tasks (delegate API)
 

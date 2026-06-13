@@ -289,11 +289,18 @@ checkpoint (E3). Boot reconcile flips a leftover `running` row to `error`. See
 ```
 wiki_pages: id TEXT PK (uuid hex16), agent_id TEXT, scope TEXT (user|team|global),
   owner_id TEXT, team_id TEXT, project_id TEXT (optional tag), parent_id TEXT (''=top level),
-  slug TEXT, title TEXT, body_md TEXT (live markdown), position INTEGER (order among siblings),
-  source TEXT (manual|chat|studio|task|workflow|activity), archived INTEGER,
-  created_at/by, updated_at/by
-wiki_page_versions: id PK, page_id TEXT, version INTEGER, title TEXT, body_md TEXT, created_at/by
+  slug TEXT, title TEXT, body_md TEXT (live markdown = current version), position INTEGER,
+  source TEXT (manual|chat|studio|task|workflow|activity), source_ref TEXT (origin object,
+  e.g. 'session/<id>' — re-version key so a changed source updates the SAME page),
+  manually_edited INTEGER (a human touched it → merge preserves), current_version INTEGER
+  (= MAX(version)), archived INTEGER, created_at/by, updated_at/by
+wiki_page_versions: id PK, page_id TEXT, version INTEGER, title TEXT, body_md TEXT,
+  note TEXT ('manual edit'|'merged from chat'|'restored from vN'|'created from <source>'),
+  created_at/by
 ```
+Only the CURRENT version (MAX) is editable + mirrored to MemPalace. Promote copies an old
+version to a new current version (append-only). Re-wikify of a changed source LLM-diff-merges
+into the existing page as a new version (`wiki_store.upsert_from_source`).
 Indexes `idx_wiki_scope(scope,owner_id,team_id,project_id)`, `idx_wiki_parent(parent_id,position)`,
 `idx_wiki_versions(page_id,version)`. Pages form a tree via `parent_id`/`position`. User-visible,
 editable markdown wiki — and the **sole feeder** for chat-derived MemPalace wings: every save mirrors

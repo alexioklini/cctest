@@ -1810,6 +1810,8 @@ class BrainAgentHandler(
             self._handle_mcp_jsonrpc()
         elif path == "/v1/wiki/pages":
             self._handle_wiki_create(path)
+        elif path.startswith("/v1/wiki/pages/") and "/promote/" in path:
+            self._handle_wiki_promote(path)
         elif path.startswith("/v1/wiki/pages/") and path.rstrip("/").endswith("/move"):
             self._handle_wiki_move(path)
         elif path == "/v1/favourites":

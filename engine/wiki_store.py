@@ -187,9 +187,10 @@ def _chatdb():
 
 
 def create_page(scope, title, body_md="", parent_id="", project_id="",
-                team_id="", source="manual", agent_id="main"):
+                team_id="", source="manual", source_ref="", agent_id="main"):
     """Create a page in `scope`. owner_id is taken from the caller for user
-    scope; team_id must be supplied (and the caller a member) for team scope."""
+    scope; team_id must be supplied (and the caller a member) for team scope.
+    `source`/`source_ref` link an auto-generated page to its origin object."""
     uid, tids = _caller()
     scope = scope or "user"
     owner_id = uid if scope == "user" else ""
@@ -207,11 +208,14 @@ def create_page(scope, title, body_md="", parent_id="", project_id="",
     position = len(siblings)
     ChatDB.create_wiki_page(
         page_id, agent_id, scope, owner_id, team_id, project_id,
-        parent_id or "", _slugify(title), title, body_md, position, source, uid)
+        parent_id or "", _slugify(title), title, body_md, position, source, uid,
+        source_ref=source_ref)
     page = ChatDB.get_wiki_page(page_id)
     if page:
-        ChatDB.add_wiki_version(page_id, title, body_md, uid)
+        note = "initial" if source == "manual" else f"created from {source}"
+        ChatDB.add_wiki_version(page_id, title, body_md, uid, note=note)
         _mirror_page(page)
+        page = ChatDB.get_wiki_page(page_id)  # refresh current_version
     return page
 
 
@@ -223,28 +227,48 @@ def get_page(page_id):
     return page
 
 
-def list_tree(scope, project_id=None, team_id=None):
-    """All accessible pages in a scope as flat rows (UI assembles the tree from
-    parent_id/position). For user scope, owner is the caller; team scope filters
-    to the given team (membership enforced)."""
+def list_tree(filter_mode="all", project_id=None, team_id=None):
+    """Accessible pages as flat rows (UI assembles the tree from parent_id/
+    position). Filter modes:
+      - 'mine'   → the caller's own user-scope pages
+      - 'team'   → a specific team's pages (team_id required, membership enforced)
+                   or, if no team_id, every team the caller belongs to
+      - 'global' → 'pages for all' (global scope)
+      - 'all'    → union of everything accessible to the caller (own + teams +
+                   global). DEFAULT.
+    `project_id` further filters to pages tagged with that project, if given.
+    """
     uid, tids = _caller()
-    scope = scope or "user"
-    if scope == "user":
-        rows = _chatdb().list_wiki_pages(scope="user", owner_id=uid or None,
-                                         project_id=project_id)
-    elif scope == "team":
-        if not team_id or team_id not in tids:
-            raise WikiAccessError("wiki: not a member of the requested team")
-        rows = _chatdb().list_wiki_pages(scope="team", team_id=team_id,
-                                         project_id=project_id)
-    elif scope == "global":
-        rows = _chatdb().list_wiki_pages(scope="global", project_id=project_id)
-    else:
-        rows = []
+    ChatDB = _chatdb()
+    mode = filter_mode or "all"
+    if mode == "mine":
+        rows = ChatDB.list_wiki_pages(scope="user", owner_id=uid or None,
+                                      project_id=project_id)
+    elif mode == "team":
+        if team_id:
+            if team_id not in tids:
+                raise WikiAccessError("wiki: not a member of the requested team")
+            rows = ChatDB.list_wiki_pages(scope="team", team_id=team_id,
+                                          project_id=project_id)
+        else:
+            rows = [p for t in tids for p in
+                    ChatDB.list_wiki_pages(scope="team", team_id=t,
+                                           project_id=project_id)]
+    elif mode == "global":
+        rows = ChatDB.list_wiki_pages(scope="global", project_id=project_id)
+    else:  # 'all'
+        rows = ChatDB.list_wiki_pages_for_user(uid, list(tids))
+        if project_id is not None:
+            rows = [r for r in rows if (r.get("project_id") or "") == project_id]
     return rows
 
 
-def update_page(page_id, title=None, body_md=None, **fields):
+def update_page(page_id, title=None, body_md=None, _by_human=True, _note="",
+                **fields):
+    """Edit the CURRENT page. A human edit stamps manually_edited=1 (so the
+    re-wikify merge knows to preserve it). Any title/body change appends a new
+    version (which becomes current) and re-mirrors to MemPalace. Only the current
+    version is ever editable — old versions are read-only (view/promote only)."""
     ChatDB = _chatdb()
     page = ChatDB.get_wiki_page(page_id)
     if not page:
@@ -262,13 +286,18 @@ def update_page(page_id, title=None, body_md=None, **fields):
             patch[k] = fields[k]
     if not patch:
         return page
+    content_changed = title is not None or body_md is not None
+    if content_changed and _by_human:
+        patch["manually_edited"] = 1
     patch["updated_by"] = uid
     ChatDB.update_wiki_page(page_id, **patch)
     fresh = ChatDB.get_wiki_page(page_id)
-    if title is not None or body_md is not None:
+    if content_changed:
         ChatDB.add_wiki_version(page_id, fresh.get("title", ""),
-                                fresh.get("body_md", ""), uid)
+                                fresh.get("body_md", ""), uid,
+                                note=_note or ("manual edit" if _by_human else "auto update"))
         _mirror_page(fresh)
+        fresh = ChatDB.get_wiki_page(page_id)
     return fresh
 
 
@@ -287,6 +316,119 @@ def move_page(page_id, parent_id="", position=None):
     patch["updated_by"] = _caller()[0]
     ChatDB.update_wiki_page(page_id, **patch)
     return ChatDB.get_wiki_page(page_id)
+
+
+def get_version(page_id, version):
+    """Read-only fetch of a historical version. Access-checked via the page."""
+    ChatDB = _chatdb()
+    page = ChatDB.get_wiki_page(page_id)
+    if not page:
+        return None
+    _require_access(page)
+    return ChatDB.get_wiki_version(page_id, version)
+
+
+def promote_version(page_id, version):
+    """Make an old version current: copy its title+body to the live page and
+    APPEND it as a brand-new version (current is always MAX(version)). History
+    is append-only — nothing is overwritten. Re-mirrors the now-current body to
+    MemPalace (only the current version is ever in MemPalace)."""
+    ChatDB = _chatdb()
+    page = ChatDB.get_wiki_page(page_id)
+    if not page:
+        return None
+    _require_access(page)
+    ver = ChatDB.get_wiki_version(page_id, version)
+    if not ver:
+        raise WikiAccessError(f"wiki: version {version} not found for page")
+    uid, _ = _caller()
+    ChatDB.update_wiki_page(page_id, title=ver["title"], slug=_slugify(ver["title"]),
+                            body_md=ver["body_md"], updated_by=uid)
+    fresh = ChatDB.get_wiki_page(page_id)
+    ChatDB.add_wiki_version(page_id, fresh["title"], fresh["body_md"], uid,
+                            note=f"restored from v{version}")
+    _mirror_page(fresh)
+    return ChatDB.get_wiki_page(page_id)
+
+
+# ── Auto-feeder support: source upsert + LLM diff-merge re-wikify ────────────
+
+def _diff_merge(existing_body: str, source_text: str, title: str) -> str:
+    """LLM merge: fold the new/changed content from `source_text` into
+    `existing_body`, preserving manual edits and structure. Returns the merged
+    markdown. Falls back to the existing body on any failure (never destructive).
+    """
+    import brain as _brain
+    from handlers import sidecar_proxy
+    rc = get_request_context()
+    # Prefer the configured small background model (chat_summary_model); else the
+    # server default. Empty → no model available → keep the existing body.
+    model = ""
+    try:
+        _sc = _brain._server_config() or {}
+        _csm = (_sc.get("chat_summary_model") or "").strip()
+        if _csm and _brain._is_model_available(_csm):
+            model = _csm
+    except Exception:
+        pass
+    if not model:
+        model = _brain._background_model_default()
+    if not model:
+        return existing_body
+    sys_p = (
+        "You maintain a personal knowledge wiki. You are given an EXISTING wiki "
+        "page (markdown) and NEW source material. Fold only the genuinely new or "
+        "changed information from the source into the existing page. PRESERVE the "
+        "existing structure, headings, and any manual edits; do not drop content "
+        "that is still valid; do not duplicate facts already present. Keep the "
+        "same language as the existing page. Return ONLY the full merged markdown "
+        "body — no preamble, no code fences.")
+    user_p = (f"# Page title: {title}\n\n## EXISTING PAGE\n{existing_body}\n\n"
+              f"## NEW SOURCE MATERIAL\n{source_text}\n\n"
+              "Return the merged markdown body.")
+    try:
+        out = sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": user_p}],
+            model=model, system_prompt=sys_p, purpose="transform",
+            cost_purpose="wiki", max_rounds=1,
+            user_id=rc.current_user_id or None, session_id="wiki-merge")
+        if not isinstance(out, dict) or out.get("error"):
+            return existing_body
+        merged = (out.get("reply") or "").strip()
+        # Strip accidental code-fence wrap.
+        if merged.startswith("```"):
+            merged = merged.split("\n", 1)[-1]
+            if merged.rstrip().endswith("```"):
+                merged = merged.rstrip()[:-3].rstrip()
+        return merged or existing_body
+    except Exception as e:
+        print(f"[wiki] diff-merge failed: {type(e).__name__}: {e}", flush=True)
+        return existing_body
+
+
+def upsert_from_source(scope, title, source_text, source, source_ref,
+                       project_id="", team_id="", parent_id="", agent_id="main"):
+    """The auto-feeder entry point. If a page already exists for `source_ref`,
+    diff-merge the new source into it and save as a new version (current). Else
+    create a fresh page from the source. Returns the (current) page.
+
+    Respects manual edits: the merge prompt is told to preserve them, and the
+    new version is tagged so history shows where it came from. Only the current
+    version lands in MemPalace (via update_page/create_page → _mirror_page)."""
+    ChatDB = _chatdb()
+    existing = ChatDB.find_wiki_page_by_source(source_ref) if source_ref else None
+    if existing:
+        _require_access(existing)
+        merged = _diff_merge(existing.get("body_md", ""), source_text,
+                             existing.get("title", title))
+        if merged == existing.get("body_md", ""):
+            return existing  # nothing new — skip a no-op version
+        return update_page(existing["id"], body_md=merged, _by_human=False,
+                           _note=f"merged from {source}")
+    # First time: the source text IS the initial body (no existing page to merge).
+    return create_page(scope, title, body_md=source_text, parent_id=parent_id,
+                       project_id=project_id, team_id=team_id, source=source,
+                       source_ref=source_ref, agent_id=agent_id)
 
 
 def delete_page(page_id):

@@ -946,6 +946,26 @@ class ChatDB:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_wiki_versions "
                 "ON wiki_page_versions(page_id, version)")
+            # Migrations: source_ref links an auto-generated page back to its
+            # source object (e.g. 'session/<id>', 'output/<id>') so a changed
+            # source can re-find + re-version the SAME page instead of forking a
+            # duplicate; manually_edited flags pages a human touched (the
+            # re-wikify merge respects it). wiki_page_versions.note labels a
+            # version's origin ('manual edit', 'merged from chat', 'restored
+            # from v3'). current_version mirrors MAX(version) for fast reads.
+            for _tbl, _col, _decl in (
+                ("wiki_pages", "source_ref", "TEXT NOT NULL DEFAULT ''"),
+                ("wiki_pages", "manually_edited", "INTEGER NOT NULL DEFAULT 0"),
+                ("wiki_pages", "current_version", "INTEGER NOT NULL DEFAULT 0"),
+                ("wiki_page_versions", "note", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                try:
+                    conn.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_decl}")
+                except sqlite3.OperationalError:
+                    pass
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_wiki_source "
+                "ON wiki_pages(source_ref)")
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -1270,17 +1290,33 @@ class ChatDB:
     @staticmethod
     @_db_safe(default=None)
     def create_wiki_page(page_id, agent_id, scope, owner_id, team_id, project_id,
-                         parent_id, slug, title, body_md, position, source, created_by):
+                         parent_id, slug, title, body_md, position, source, created_by,
+                         source_ref=""):
         with _db_conn() as conn:
             conn.execute(
                 "INSERT INTO wiki_pages (id, agent_id, scope, owner_id, team_id, "
                 "project_id, parent_id, slug, title, body_md, position, source, "
-                "created_by, updated_by) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "source_ref, created_by, updated_by) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (page_id, agent_id, scope, owner_id, team_id, project_id,
                  parent_id or "", slug, title, body_md, int(position), source,
-                 created_by, created_by))
+                 source_ref or "", created_by, created_by))
             conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def find_wiki_page_by_source(source_ref):
+        """The page generated from a given source object (e.g. 'session/<id>'),
+        if any — so a changed source re-versions the SAME page. Returns the
+        most-recently-updated match (there should be exactly one)."""
+        if not source_ref:
+            return None
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM wiki_pages WHERE source_ref = ? "
+                "ORDER BY updated_at DESC LIMIT 1", (source_ref,)).fetchone()
+            return dict(row) if row else None
 
     @staticmethod
     @_db_safe(default=None)
@@ -1288,7 +1324,8 @@ class ChatDB:
         """Patch a wiki page. Whitelisted columns only; bumps updated_at."""
         allowed = ("title", "body_md", "parent_id", "slug", "position",
                    "scope", "owner_id", "team_id", "project_id", "archived",
-                   "source", "updated_by")
+                   "source", "source_ref", "manually_edited", "current_version",
+                   "updated_by")
         sets, vals = [], []
         for k in allowed:
             if k in fields:
@@ -1339,6 +1376,28 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=list)
+    def list_wiki_pages_for_user(owner_id, team_ids, include_archived=False):
+        """Union of every page the user can access: their own user pages, their
+        teams' pages, and all global pages. For the 'all' tree filter."""
+        clauses = ["(scope='global')"]
+        vals = []
+        if owner_id:
+            clauses.append("(scope='user' AND owner_id=?)")
+            vals.append(owner_id)
+        if team_ids:
+            ph = ",".join("?" for _ in team_ids)
+            clauses.append(f"(scope='team' AND team_id IN ({ph}))")
+            vals.extend(team_ids)
+        sql = "SELECT * FROM wiki_pages WHERE (" + " OR ".join(clauses) + ")"
+        if not include_archived:
+            sql += " AND COALESCE(archived,0)=0"
+        sql += " ORDER BY scope, parent_id, position, created_at"
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(r) for r in conn.execute(sql, vals).fetchall()]
+
+    @staticmethod
+    @_db_safe(default=list)
     def wiki_children(parent_id):
         """Direct children of a page (for cascade delete)."""
         with _db_conn() as conn:
@@ -1360,17 +1419,21 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=0)
-    def add_wiki_version(page_id, title, body_md, created_by):
-        """Append an immutable snapshot; returns the new version number."""
+    def add_wiki_version(page_id, title, body_md, created_by, note=""):
+        """Append an immutable snapshot + advance the page's current_version
+        pointer to it (current is always MAX(version)). Returns the new number."""
         with _db_conn() as conn:
             row = conn.execute(
                 "SELECT COALESCE(MAX(version), 0) FROM wiki_page_versions WHERE page_id = ?",
                 (page_id,)).fetchone()
             nxt = int(row[0]) + 1
             conn.execute(
-                "INSERT INTO wiki_page_versions (page_id, version, title, body_md, created_by) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (page_id, nxt, title, body_md, created_by))
+                "INSERT INTO wiki_page_versions (page_id, version, title, body_md, created_by, note) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (page_id, nxt, title, body_md, created_by, note or ""))
+            conn.execute(
+                "UPDATE wiki_pages SET current_version = ? WHERE id = ?",
+                (nxt, page_id))
             conn.commit()
             return nxt
 
@@ -1380,7 +1443,7 @@ class ChatDB:
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT version, title, created_at, created_by FROM wiki_page_versions "
+                "SELECT version, title, note, created_at, created_by FROM wiki_page_versions "
                 "WHERE page_id = ? ORDER BY version DESC", (page_id,)).fetchall()
             return [dict(r) for r in rows]
 
