@@ -233,6 +233,30 @@ def _inject_web_preamble_into_wire(messages, preamble):
     return wire
 
 
+def _append_to_wire_user(messages, suffix):
+    """Like _inject_web_preamble_into_wire but APPENDS `suffix` to the LAST user
+    message (a trailing instruction reads better than a leading one for response-
+    style directives, e.g. caveman). Transient wire-only — shallow-copies the one
+    message it touches so session.messages / the DB stay clean."""
+    if not suffix or not messages:
+        return messages
+    wire = list(messages)
+    for i in range(len(wire) - 1, -1, -1):
+        if wire[i].get("role") == "user":
+            msg = dict(wire[i])
+            content = msg.get("content")
+            if isinstance(content, str):
+                msg["content"] = f"{content}{suffix}"
+            elif isinstance(content, list):
+                # Multimodal: append a trailing text block (keeps image blocks).
+                msg["content"] = content + [{"type": "text", "text": suffix}]
+            else:
+                msg["content"] = suffix
+            wire[i] = msg
+            break
+    return wire
+
+
 def _undelivered_groups_preamble(session_id: str) -> str:
     """Next-turn injection floor for fan-out groups: any completed group whose
     proactive push didn't fire (busy chat) is delivered here. Pops + marks
@@ -2416,6 +2440,16 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     engine.get_request_context()._discipline_meta = _discipline_meta
                 except Exception:
                     pass
+                # Caveman OUTPUT-STYLE (v9.121.0): injected as a trailing wire-only
+                # instruction on the last user message — NOT the system prompt and
+                # NOT tool descriptions (warm-pool KV prefix stays byte-stable;
+                # nothing caveman enters history). effective = session toggle, else
+                # the per-model default.
+                _cav_eff = (engine.get_request_context().caveman_chat
+                            or engine.get_request_context().caveman_system)
+                if _cav_eff and _cav_eff in engine.CAVEMAN_CHAT_PROMPTS:
+                    _wire_messages = _append_to_wire_user(
+                        _wire_messages, engine.CAVEMAN_CHAT_PROMPTS[_cav_eff])
                 _result = sidecar_proxy.run_turn(
                     messages=_wire_messages,
                     model=session.model,

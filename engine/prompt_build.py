@@ -587,24 +587,18 @@ def _apply_system_prompt_postprocess(base: str, caveman_system: int,
     """Append the caveman OUTPUT-STYLE instruction + plan-mode/GDPR suffixes to a
     cached base prose.
 
-    Caveman is OUTPUT-only (v9.120.0): it NEVER compresses the system prompt or
-    tool descriptions — mangling the instructions the model relies on was unsafe.
-    Both knobs feed the same response-style appendix:
-      - caveman_chat   — the per-session 🪨 toggle (0-3)
-      - caveman_system — the per-model DEFAULT output style (0-3); applies only
-        when the session toggle is off (caveman_chat == 0).
-    The session toggle wins so a user can override the model default per chat.
-    Input-side compression now happens during REFINEMENT (the refined query text
-    is compressed), not here. Pure string transform; runs in microseconds and is
-    kept out of the cache key so flipping levels mid-session reuses the base.
+    Caveman is OUTPUT-only and touches NOTHING in the system prompt (v9.121.0):
+    it neither compresses the prompt/tools (removed v9.120.0) nor appends a style
+    line here anymore. The output-style instruction is injected as a trailing
+    wire-only suffix on the user message at turn time (handlers/chat.py +
+    engine/scheduler.py) so the warm-pool KV prefix stays byte-stable and nothing
+    caveman enters history. caveman_system / caveman_chat are accepted here only
+    for signature stability — they are intentionally unused. Input-side
+    compression happens during REFINEMENT (the refined query text is compressed).
+    Pure string transform; kept out of the cache key.
     """
     out = base
-    _CAVEMAN_CHAT = _brain.CAVEMAN_CHAT_PROMPTS
-    # Effective output-style level: session toggle takes precedence; fall back to
-    # the per-model default (caveman_system, repurposed — no longer compresses).
-    effective = caveman_chat if caveman_chat else caveman_system
-    if effective and effective in _CAVEMAN_CHAT:
-        out += _CAVEMAN_CHAT[effective]
+    # (caveman append removed — now a wire-only suffix on the user message)
     if plan_mode:
         out += _brain.PLAN_MODE_PROMPT
     if gdpr_anon:

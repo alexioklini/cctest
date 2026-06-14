@@ -1175,6 +1175,13 @@ class Scheduler:
                         notice = f"\n\n[Task attachments on disk:]\n{paths_list}"
                     task_message = task_message + notice
 
+            # Caveman OUTPUT-STYLE (v9.121.0): appended to the task's user message,
+            # NOT the system prompt (mirrors the chat worker). The per-task
+            # caveman_chat was set on the context above; apply it here so the
+            # scheduled run gets the same terse-output steering as a chat turn.
+            if _task_caveman and _task_caveman in _brain.CAVEMAN_CHAT_PROMPTS:
+                task_message = task_message + _brain.CAVEMAN_CHAT_PROMPTS[_task_caveman]
+
             messages = [{"role": "user", "content": task_message}]
 
             # Get timeout (default 5 min)

@@ -855,13 +855,15 @@ Startup wipe drops every drawer in `project__*` wings AND clears
   `"interactive"` → `interactive`. Per-task `thinking_level` empty →
   inherit at fire time. `caveman_chat` is per-task. `caveman_system` is
   NOT exposed per task (would invalidate warmup KV prefix).
-- **Caveman is OUTPUT-only (v9.120.0)**: it never compresses the system prompt
-  or tool descriptions. `caveman_chat` (per-session 🪨 toggle) and `caveman_system`
-  (per-model DEFAULT output style, applied only when the toggle is off) both just
-  append a terse-response-style instruction (`CAVEMAN_CHAT_PROMPTS`) in
-  `_apply_system_prompt_postprocess`. Input-side compression happens ONLY during
-  refinement (`/v1/refine` rule-compresses the refined query text). Warmup sets
-  `caveman_system` from model config so its prefix matches turn 0.
+- **Caveman is OUTPUT-only + wire-injected (v9.121.0)**: it touches NOTHING in
+  the system prompt or tool descriptions. The terse-response-style instruction
+  (`CAVEMAN_CHAT_PROMPTS`) is appended as a trailing WIRE-ONLY suffix on the last
+  user message at turn time (`handlers/chat.py` `_append_to_wire_user`;
+  `engine/scheduler.py` on `task_message`) — never persisted, so the warm-pool KV
+  prefix stays byte-stable and nothing caveman enters history. Level: `caveman_chat`
+  (per-session 🪨 toggle) else `caveman_system` (per-model default). Input-side
+  compression happens ONLY during refinement (`/v1/refine` rule-compresses the
+  refined query text). Warmup needs no caveman handling.
 - **Shared domain logic (no parallel impl)**: a scheduled task runs the SAME
   domain logic as a chat in its domain. Two shared functions on `brain` do it:
   `apply_domain_context(agent_id, project|project_id, user_id,

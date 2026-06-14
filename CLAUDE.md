@@ -154,15 +154,15 @@ For oMLX-direct: warmup must mirror the chat-template `enable_thinking` kwarg by
 
 **Persistence**: each round → `role='thinking'` row w/ `metadata.tool_round`. `_ALLOWED_MSG_KEYS`/`_INTERNAL_ROLES` strip thinking rows before wire — UI-only.
 
-## Caveman Mode (OUTPUT-only, v9.120.0)
+## Caveman Mode (OUTPUT-only, wire-injected — v9.121.0)
 
-Caveman is **output-style only** — it NEVER compresses the system prompt or tool descriptions (that was unsafe; it mangled the instructions the model relies on). Two knobs, both feeding the SAME response-style appendix (`CAVEMAN_CHAT_PROMPTS`, appended in `_apply_system_prompt_postprocess`):
+Caveman is **output-style only** and touches **NOTHING** in the system prompt or tool descriptions. The response-style instruction (`CAVEMAN_CHAT_PROMPTS`) is injected as a **trailing wire-only suffix on the last user message** at turn time — `handlers/chat.py` (`_append_to_wire_user`, just before `run_turn`) and `engine/scheduler.py` (appended to `task_message`). Two knobs decide the level:
 - **Chat** (`caveman_mode` in sessions DB / `caveman_chat`, 0–3): the per-session 🪨 toggle.
-- **System** (`caveman_system` per model, 0–3): the per-model **default output style** — applied only when the session toggle is off (`effective = caveman_chat or caveman_system`; session wins).
+- **System** (`caveman_system` per model, 0–3): the per-model **default output style** — used only when the session toggle is off (`effective = caveman_chat or caveman_system`; session wins).
 
-`_caveman_compress_text()` survives but is now used in **exactly one place** — the `/v1/refine` handler, which compresses the **refined query text** (input-side compression lives in refinement, not the prompt). `CAVEMAN_SYSTEM_PROMPTS` (the old "compression active" banners) was deleted.
+Why wire-only: it keeps the warm-pool KV prefix (system prompt + tools) **byte-stable** regardless of caveman level, and nothing caveman enters history (shallow-copies the one wire message; `session.messages`/DB stay clean — same pattern as the Websuche preamble). `_apply_system_prompt_postprocess` no longer appends caveman at all (it still handles plan-mode + GDPR clamp); warmup needs zero caveman handling.
 
-Caveman is post-cache string work (NOT in the `_build_system_prompt` cache key — flipping mid-session reuses the base). **Warmup invariant**: since `caveman_system` now appends to the system prompt, `run_model_warmup` sets `caveman_system` from model config on its context so the warm prefix matches turn 0 of a freshly-claimed bare session (which has `caveman_chat=0` → `effective = caveman_system`). `caveman_system` stays in the warm-pool `_prefix_fields`. `caveman_system` is still NOT per-scheduled-task (per-model knob; per-task `caveman_chat` exists).
+`_caveman_compress_text()` survives but is used in **exactly one place** — the `/v1/refine` handler, which compresses the **refined query text** (input-side compression lives in refinement). `CAVEMAN_SYSTEM_PROMPTS` (the old "compression active" banners) was deleted in v9.120.0. `caveman_system` is still NOT per-scheduled-task (per-model knob; per-task `caveman_chat` exists and is wire-injected into the task message).
 
 ## Token Optimization
 
