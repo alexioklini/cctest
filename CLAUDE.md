@@ -154,13 +154,15 @@ For oMLX-direct: warmup must mirror the chat-template `enable_thinking` kwarg by
 
 **Persistence**: each round → `role='thinking'` row w/ `metadata.tool_round`. `_ALLOWED_MSG_KEYS`/`_INTERNAL_ROLES` strip thinking rows before wire — UI-only.
 
-## Caveman Mode (Dual)
+## Caveman Mode (OUTPUT-only, v9.120.0)
 
-Two independent settings that compose:
-- **System** (`caveman_system` per model, 0–3): compresses system prompt via `_caveman_compress_text()`
-- **Chat** (`caveman_mode` in sessions DB, 0–3): appends `CAVEMAN_CHAT_PROMPTS` response-style instruction
+Caveman is **output-style only** — it NEVER compresses the system prompt or tool descriptions (that was unsafe; it mangled the instructions the model relies on). Two knobs, both feeding the SAME response-style appendix (`CAVEMAN_CHAT_PROMPTS`, appended in `_apply_system_prompt_postprocess`):
+- **Chat** (`caveman_mode` in sessions DB / `caveman_chat`, 0–3): the per-session 🪨 toggle.
+- **System** (`caveman_system` per model, 0–3): the per-model **default output style** — applied only when the session toggle is off (`effective = caveman_chat or caveman_system`; session wins).
 
-Set on request context in chat worker (inside its `with request_context()`). **Cache key for `_build_system_prompt` includes both.**
+`_caveman_compress_text()` survives but is now used in **exactly one place** — the `/v1/refine` handler, which compresses the **refined query text** (input-side compression lives in refinement, not the prompt). `CAVEMAN_SYSTEM_PROMPTS` (the old "compression active" banners) was deleted.
+
+Caveman is post-cache string work (NOT in the `_build_system_prompt` cache key — flipping mid-session reuses the base). **Warmup invariant**: since `caveman_system` now appends to the system prompt, `run_model_warmup` sets `caveman_system` from model config on its context so the warm prefix matches turn 0 of a freshly-claimed bare session (which has `caveman_chat=0` → `effective = caveman_system`). `caveman_system` stays in the warm-pool `_prefix_fields`. `caveman_system` is still NOT per-scheduled-task (per-model knob; per-task `caveman_chat` exists).
 
 ## Token Optimization
 

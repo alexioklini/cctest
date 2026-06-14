@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.119.0"
+VERSION = "9.120.0"
 VERSION_DATE = "2026-06-14"
 CHANGELOG = [
+    ("9.120.0", "2026-06-14", "fix(caveman): caveman mode is now OUTPUT-only -- it no longer compresses the system prompt or tool descriptions (that mangled the instructions the model relies on, a real hazard). (1) engine/prompt_build.py _apply_system_prompt_postprocess: removed the _caveman_compress_text + CAVEMAN_SYSTEM_PROMPTS branch. Both knobs now feed the SAME response-style appendix (CAVEMAN_CHAT_PROMPTS): caveman_chat (per-session 🪨 toggle) and caveman_system (per-model DEFAULT output style) -- effective = caveman_chat or caveman_system, so the session toggle wins and the model default applies only when the toggle is off. The system prompt + tool descriptions are passed through verbatim at every level. (2) INPUT-side compression moved to REFINEMENT: handlers/admin_artifacts.py /v1/refine no longer compresses the refiner instructions/system; instead it tells the refiner to write tersely AND rule-compresses the RETURNED refined text (_caveman_compress_text) to the active level -- so the query the user sends is itself caveman, the only place input gets compressed. (3) WARMUP: since caveman_system now appends to the system prompt, run_model_warmup sets caveman_system from model config on its context so the warm prefix is byte-identical to turn 0 of a freshly-claimed bare session (caveman_chat=0 -> effective=caveman_system). caveman_system stays in _prefix_fields. (4) CLEANUP: deleted the dead CAVEMAN_SYSTEM_PROMPTS dict; _caveman_compress_text kept but now used ONLY by refinement. (5) UI/docs: Models-tab knob relabelled 'Caveman (Standard-Ausgabestil)' with a ? help explaining it is output-only; per-turn caveman badge tooltip + Frugal-profile help + a code comment corrected; CLAUDE.md Caveman section + skill (01-api refine, 05-internals) rewritten. Verified in-process: caveman_system=3 leaves the base prose intact (no compression) and only appends the ultra style; session toggle overrides the model default; refine still compresses output. py_compile OK; js_gate pending."),
     ("9.119.0", "2026-06-14", "feat(ui): config-modal polish -- inline help behind a '?' icon, German wording, chat-consistent fonts; wider chat line spacing. FRONTEND-ONLY. (1) NEW shared inline-help primitive (web/js/utils.js): helpIcon(text) renders a small '?' chip; one delegated handler shows the explanation in an anchored, viewport-aware popover (.help-popover, mirrors the citation-popover; outside-click + Esc + re-click-to-toggle close) -- so prose explanations are on-demand instead of always cluttering the dialog. CSS .help-icon/.help-popover (chat --font-ui, 13px). SEC(title, help) gained an optional help arg that appends the icon. (2) ALWAYS-VISIBLE PROSE moved behind '?' across every config modal: General Settings tabs (server: Anhaenge/Zusammenfassungen/Auto-Routing/DSGVO; models: Profil; providers: Lokaler Provider; quotas: Durchsetzung-bei-Rot; mempalace: Chat-Sync-Classifier; KG already done), Agent settings (Soul/Agent/Tokens: Next-Prompt, Tool-Overrides, Werkzeug-Optimierung), Tools detail modal (Integration/Status/Zwecke/Gilt-mit/Wire-Schema + per-integration notes -- incl. the unreadable 9px wire text), and the Warmup-Pool modal (full/minimal modes). Each explanation was REWRITTEN to match the current implementation (verified against the backend) and is in German. (3) FONT CONSISTENCY: .modal-body + #general-tab-content now inherit the chat UI font at a uniform 14px (was a mix of 9-13px); .cfg-help (13px) for the few short notes kept always-visible; tiny 9-11px prose bumped to 13px. (4) GERMAN ROLE LABELS: new roleLabelDe() (Administrator/Hauptbenutzer/Benutzer) used in the user-admin dropdowns/badges + quota table; role VALUES stay the English config keys. (5) ACCURACY FIX: the Werkzeug-Optimierung help wrongly claimed all warm local models skip optimization -- only FULL-mode warmup is protected (model_should_optimize_tools); corrected. (6) CHAT: normal paragraph line-height 1.65 -> 1.8 for readability; list items keep the tighter 1.65 (bullet spacing was already fine). Verified LIVE (Playwright): every General-Settings tab renders + its '?' popover opens/closes with zero console errors; agent + user modals open with working help; user modal shows German role labels; chat p line-height computes to 28.8px. js_gate PASS (net-globals 1351->1358). py_compile OK (no Python logic changed). Hard refresh."),
     ("9.118.0", "2026-06-14", "feat(kg): rule-based (non-LLM) KG extraction option + per-scope method/profile config (wiki vs projects). KG triple extraction was LLM-only (config.json mempalace.kg.extraction_model, currently cloud mistral-small). NEW: engine/kg_rules.py — a local, zero-LLM extractor ('generic SVO + NER'): its OWN spaCy de_core_news_md pipeline (NER + sentencizer, parser disabled; regex fallback if spaCy missing) finds PER/LOC/ORG entities, joins entity pairs in a sentence via a German+English relational-cue lexicon (works_at/member_of/founded/leads/located_in/lives_in/born_in/works_on/collaborates_with/knows) + a few date regexes (born_in/founded_in), and emits the SAME triple shape {subject,predicate,object,confidence,span} as the LLM path. Open lowercase predicates only — it can't reach the 12 normative predicates, so the generic profile is forced for rules. DISPATCH: extract_triples_from_drawer + run_kg_post_pass gained a `method` kwarg (llm|rules); rules path skips GDPR model-resolution entirely (fully local, nothing leaves the box) and the whole-doc GDPR pre-scan. CONFIG (mempalace.kg): split method+profile per scope — `method`+`profile` = project-wide DEFAULT (per-project overridable), `wiki`+`wiki_method`+`wiki_profile` = independent wiki knobs. Per-project override: project.json kg_method/kg_profile (whitelisted in ProjectManager.update_project, empty=inherit; resolved in server_daemons _run_kg_for via a per-iteration holder). wiki_store._kg_for_wiki_page_async reads the wiki_* knobs. ENDPOINT /v1/mempalace/kg/config (admin_observability.py) GET returns + POST validates method/wiki/wiki_method/wiki_profile; method=rules coerces its profile→generic (config stays honest); `method` added to KG_FIELDS cursor-invalidation. UI: General Settings → Knowledge Graph now has 'Projekte (Standard)' (method+profile) + a 'Wiki' sub-section (enabled+method+profile), profile greyed when method=rules (kgSyncMethodUI). Project view gains a 'Wissensgraph (KG)' section: method + profile dropdowns ('Standard übernehmen'=inherit) → toggleProjectKgMethod/Profile → update_project. Verified: kg_rules on German samples (Anna Schmidt works_at Deutschen Bank, Max Müller lives_in/member_of, Acme founded_in 1998, Peter Wagner born_in 1975). js_gate PASS (net-globals 1348→1351). py_compile OK."),
     ("9.117.0", "2026-06-14", "feat(chat-ui): inline streaming status + inline thinking/tool calls (Claude-Code style); tool-display toggle removed. (1) STATUS LINE: the top spinner-bar (#spinner-bar, deleted from index.html) moved INTO the chat at the very start of the in-flight assistant response — wave-bars + working model + label + elapsed, as a .stream-status div rendered by renderStreamingMessage (gated on chat.streaming). It carries the historical ids spinner-model/spinner-label/spinner-elapsed so the SSE handlers + the 100ms elapsed timer keep working; their text is mirrored onto chat._streamModel/_streamLabel/_streamElapsed via new setStreamStatus() so a re-render (renderMessages wipes + re-appends) never loses the label. sendMessage calls renderStreamingMessage right after updateStreamingUI(true) so the status shows immediately on send (before the first SSE event), and it auto-vanishes on done/error/cancel (streaming=false → block not re-emitted). The fallback/auto_route/warmup/max_tokens/compacting/citation_reround/empty_round_nudge handlers were converted from getElementById('spinner-*') writes to setStreamStatus; triggerLCM no longer drives the (now-gone) top bar (toast + buddy phase instead). (2) THINKING + TOOLS INLINE: removed the showToolCalls setting (state.js field, the #btn-toggle-tools composer button, toggleToolDisplay) — tool calls ALWAYS render now. renderTurnBody renders REAL activity (thinking + tool_call) INLINE in strict chronological (_seq||id) order — no Aktivitaet wrapper, no round-grouping, no collapse. Thinking renders as .msg-thinking (chat font, lighter --text-400, italic, no block) both live (chat.thinkingText) and reloaded (msg._thinking; opaque-reasoning case -> small inline italic note); tool calls keep the existing flat clickable .tool-line (-> right panel). GDPR/privacy synthetic rows keep their grouped 'Datenschutz' collapsible (counters + state.showGdprDetails) per the user, emitted once at the first privacy row. Verified LIVE (Playwright, real turn): #spinner-bar gone; .stream-status appears as first child of the streaming block on send (model+label 'Denke nach...'+elapsed spans), disappears after done; no .thinking-block; zero console errors. js_gate PASS (net-globals 1348 unchanged; eslint baseline shrank - latent spinnerBar no-undef fixed). py_compile OK. Frontend hard refresh."),
@@ -748,26 +749,16 @@ CAVEMAN_CHAT_PROMPTS = {
     ),
 }
 
-CAVEMAN_SYSTEM_PROMPTS = {
-    1: (  # lite — strip verbose examples, collapse whitespace
-        "SYSTEM PROMPT COMPRESSION ACTIVE (lite): The instructions below are authoritative "
-        "but may be verbose. Ignore stylistic padding in them. Focus on substance.\n\n"
-    ),
-    2: (  # full — aggressive compression prefix
-        "SYSTEM PROMPT COMPRESSION ACTIVE (full): Instructions below heavily compressed. "
-        "Interpret telegraphically. Fragments = complete thoughts. "
-        "Abbreviations, symbols, shorthand all valid.\n\n"
-    ),
-    3: (  # ultra — max compression prefix
-        "SYSTEM PROMPT COMPRESSION ACTIVE (ultra): All instructions below max-compressed. "
-        "Interpret minimal syntax. No prose expected in instructions. "
-        "Symbol-heavy, list-only, zero redundancy.\n\n"
-    ),
-}
+# NOTE: CAVEMAN_SYSTEM_PROMPTS (the "system prompt compression active" banners)
+# was removed in v9.120.0. Caveman no longer compresses the system prompt or tool
+# descriptions — it is OUTPUT-style only (CAVEMAN_CHAT_PROMPTS, appended) plus an
+# input-side compression of the REFINED query text during refinement.
 
 
 def _caveman_compress_text(text: str, level: int) -> str:
-    """Apply rule-based compression to system prompt text based on caveman level."""
+    """Rule-based text compression by caveman level (0-3). Used ONLY to compress
+    the REFINED query text in the /v1/refine handler — NEVER the system prompt or
+    tool descriptions (those are left intact as of v9.120.0)."""
     import re
     if level <= 0:
         return text
@@ -6272,6 +6263,17 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
         )
         with request_context():
             init_thread_context(_warmup_ctx, agent_config=agent_config)
+            # Caveman is OUTPUT-style only and now appends to the system prompt
+            # (it no longer compresses). The first turn of a freshly-CLAIMED warm
+            # session has caveman_chat=0 (bare session) and caveman_system=the
+            # model default, so the effective appended style = caveman_system.
+            # Mirror that here so the warm prefix is byte-identical to turn 0 —
+            # otherwise the appended style line diverges and the KV tail misses.
+            try:
+                _wm_cfg = resolve_model_settings(model) if _models_config else {}
+                get_request_context().caveman_system = int(_wm_cfg.get("caveman_system", 0) or 0)
+            except Exception:
+                pass
 
             if mode == "full":
                 # Build the prefix through the SHARED helper so it is byte-identical

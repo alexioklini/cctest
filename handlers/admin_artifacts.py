@@ -358,17 +358,17 @@ class AdminArtifactsHandlers:
             )
             request_line = f"Rewrite this prompt (output ONLY the rewritten version):\n\n{text}"
 
-        # Caveman compression — applied only to the *instructions* block,
-        # never to the user's text being polished/rewritten (we don't want
-        # to mangle their content). Prepends the system-style compression
-        # banner + appends the chat-style suffix so the refiner produces
-        # a tighter, more telegraphic rewrite.
+        # Caveman (v9.120.0): caveman is OUTPUT-only — it never compresses the
+        # system prompt or tool descriptions. The ONE place the INPUT query gets
+        # caveman-compressed is here, during refinement: we (1) instruct the
+        # refiner to write the rewrite in the requested terse style (the chat
+        # style instruction is a legitimate instruction to the refiner, not a
+        # compression of our own rules), and (2) deterministically compress the
+        # REFINED TEXT the refiner returns (see _caveman_compress_text below), so
+        # the query the user sends is itself caveman. The refiner's instructions
+        # are left intact (readable) — only its OUTPUT is the target.
         if caveman in (1, 2, 3):
-            sys_banner = engine.CAVEMAN_SYSTEM_PROMPTS.get(caveman, "")
-            chat_suffix = engine.CAVEMAN_CHAT_PROMPTS.get(caveman, "")
-            instructions = (
-                sys_banner + engine._caveman_compress_text(instructions, caveman) + chat_suffix
-            )
+            instructions = instructions + engine.CAVEMAN_CHAT_PROMPTS.get(caveman, "")
         # Build the wire-level messages: prepend the (possibly compressed)
         # instructions to the user's request-line, since /v1/refine doesn't
         # use _build_system_prompt — the rules HAVE to ride in the user msg.
@@ -405,6 +405,13 @@ class AdminArtifactsHandlers:
             if _res.get("error") and not result:
                 self._send_json({"error": str(_res["error"])}, 500)
                 return
+            # Deterministically compress the REFINED query text to the active
+            # caveman level — this is the input-side compression that used to
+            # (wrongly) live on the system prompt. The user's refined query lands
+            # in the composer already in caveman form. Code/URLs/paths survive
+            # (the rule-based pass leaves them intact).
+            if result and caveman in (1, 2, 3):
+                result = engine._caveman_compress_text(result, caveman)
             self._send_json({"refined": result or text, "model": refine_model,
                              "caveman": caveman, "tier": tier})
         except Exception as e:

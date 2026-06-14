@@ -201,7 +201,7 @@ async function _genTab_models(C) {
               <textarea class="mdl-description" rows="2" style="width:100%;padding:4px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:12px;background:var(--bg-000);color:var(--text-100);font-family:inherit;resize:vertical" placeholder="z. B. Am besten für Long-Context-Analyse. Langsam, aber günstig.">${esc(cfg.description || '')}</textarea>
             </div>
             <div style="display:flex;align-items:center;gap:10px;padding:6px 8px;margin-bottom:8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000)">
-              <label style="font-size:13px;font-weight:600;color:var(--text-100);margin:0">Profil${helpIcon('Optimierungs-Profil — setzt sinnvolle Standardwerte für die Felder unten; explizit gesetzte Felder überschreiben das Profil.\n\n• Speed (lokal): Warmup + stabiles KV-Präfix, keine Token-Einsparung.\n• Balanced (Standard): aktuelle Standardwerte.\n• Frugal (Cloud): aggressive Token-Einsparung, Caveman-System-Prompt.\n• Custom: keine Überlagerung.')}</label>
+              <label style="font-size:13px;font-weight:600;color:var(--text-100);margin:0">Profil${helpIcon('Optimierungs-Profil — setzt sinnvolle Standardwerte für die Felder unten; explizit gesetzte Felder überschreiben das Profil.\n\n• Speed (lokal): Warmup + stabiles KV-Präfix, keine Token-Einsparung.\n• Balanced (Standard): aktuelle Standardwerte.\n• Frugal (Cloud): aggressive Token-Einsparung, knapper Caveman-Ausgabestil.\n• Custom: keine Überlagerung.')}</label>
               <select class="mdl-profile" style="padding:3px 8px;border:1px solid var(--border-100);border-radius:4px;font-size:13px;background:var(--bg-100);color:var(--text-100)">
                 ${[['custom','Custom (keine Überlagerung)'],['speed','Speed (lokal, warmer Cache)'],['balanced','Balanced (Standard)'],['frugal','Frugal (Cloud, Tokens sparen)']].map(([v,l]) => `<option value="${v}"${(cfg.profile||'custom')===v?' selected':''}>${l}</option>`).join('')}
               </select>
@@ -225,8 +225,8 @@ async function _genTab_models(C) {
               ${mdlInput('mdl-cost-output','Kosten aus ($/M)',cfg.cost_output,{step:'0.01',min:0,ph:'0'})}
               <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
               <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
-              <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px">Caveman System</label>
-                <select class="mdl-caveman-system" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
+              <div><label style="font-size:13px;color:var(--text-400);display:block;margin-bottom:2px">Caveman (Standard-Ausgabestil)${helpIcon('Standard-Antwortstil für dieses Modell (0=aus, lite/voll/ultra). Wirkt NUR auf den Ausgabestil — der System-Prompt und die Tool-Beschreibungen werden NICHT mehr komprimiert (das war fehleranfällig). Wird angewendet, solange im Chat der 🪨-Schalter auf „aus" steht; der Schalter pro Chat hat Vorrang. Die Eingabe wird nicht beeinflusst — die Komprimierung der Eingabe passiert nur beim Verfeinern.')}</label>
+                <select class="mdl-caveman-system" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:13px;background:var(--bg-000);color:var(--text-200)">
                   ${[[0,'off'],[1,'lite'],[2,'full'],[3,'ultra']].map(([v,l]) => `<option value="${v}"${(cfg.caveman_system||0)===v?' selected':''}>${l}</option>`).join('')}
                 </select>
               </div>

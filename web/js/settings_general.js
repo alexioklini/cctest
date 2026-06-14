@@ -349,7 +349,8 @@ async function saveModelsConfig() {
       if (tl) inf.thinking_level = tl;
       mc[mid].inference = Object.keys(inf).length > 0 ? inf : undefined;
       if (!mc[mid].inference) delete mc[mid].inference;
-      // Caveman system level (per-model system prompt compression)
+      // Caveman system level (per-model DEFAULT output style — v9.120.0; no
+      // longer compresses the system prompt, only appends a terse response style)
       const cavSys = readNum(row, 'mdl-caveman-system');
       if (cavSys) mc[mid].caveman_system = cavSys; else delete mc[mid].caveman_system;
       // Parallel tool calls

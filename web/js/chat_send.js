@@ -1386,7 +1386,7 @@ async function openInspectModal() {
       if (cavSys) cavParts.push(`sys ${cavName(cavSys)}`);
       if (cavChat) cavParts.push(`chat ${cavName(cavChat)}`);
       const cavBadge = cavParts.length
-        ? `<span style="font-size:10px;background:#fef3c7;color:#b45309;padding:1px 6px;border-radius:4px" title="Für diese Anfrage angewendete Caveman-Komprimierung (System-Prompt / Chat-Antwort)">caveman: ${cavParts.join(' / ')}</span>`
+        ? `<span style="font-size:10px;background:#fef3c7;color:#b45309;padding:1px 6px;border-radius:4px" title="Caveman-Ausgabestil dieser Anfrage (sys = Modell-Standard, chat = 🪨-Schalter). Wirkt nur auf den Antwortstil, nicht auf System-Prompt oder Tools.">caveman: ${cavParts.join(' / ')}</span>`
         : '';
       html += `<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--bg-100);border-bottom:1px solid var(--border-100);flex-wrap:wrap">
         <span style="font-weight:600;color:var(--text-000)">Anfrage ${ix.turn}</span>
