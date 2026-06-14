@@ -645,7 +645,11 @@ async function saveKgConfig() {
     const body = {
       enabled: document.getElementById('kg-enabled')?.checked ?? true,
       extraction_model: document.getElementById('kg-model')?.value || '',
+      method: document.getElementById('kg-method')?.value || 'llm',
       profile: document.getElementById('kg-profile')?.value || 'normative',
+      wiki: document.getElementById('kg-wiki-enabled')?.checked ?? false,
+      wiki_method: document.getElementById('kg-wiki-method')?.value || 'llm',
+      wiki_profile: document.getElementById('kg-wiki-profile')?.value || 'normative',
       max_triples_per_drawer: parseInt(document.getElementById('kg-max-triples')?.value) || 12,
       min_confidence: parseFloat(document.getElementById('kg-min-conf')?.value) || 0.5,
       max_drawer_chars: parseInt(document.getElementById('kg-max-chars')?.value) || 6000,

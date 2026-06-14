@@ -463,6 +463,21 @@ feeder** for chat-derived wings (the old `mempalace-chat-sync` daemon is retired
   built (no project KG scope). The scheduled-results→wiki feeder (`schedules.wiki_file`)
   files each run as a fresh VERSION of one page (`source_ref=schedule/<id>`,
   `replace=True` — no diff-merge).
+- **KG extraction method (LLM vs rule-based) + profile are configurable PER
+  SCOPE** (v9.118.0). `run_kg_post_pass(method=...)` takes `llm` (default — one
+  LLM call per chunk, model = `mempalace.kg.extraction_model`, can be cloud) or
+  `rules` (`engine/kg_rules.py` — NO LLM: its own spaCy `de_core_news_md`
+  pipeline + a German/English relational-cue lexicon emit generic-profile
+  triples; fully local, so it skips the GDPR model-swap/pre-scan seam entirely).
+  Rule output is OPEN lowercase predicates only → the `generic` profile is forced
+  for `rules`. Config split: `mempalace.kg.method`+`profile` = the project-wide
+  DEFAULT (overridable per project via `project.json → kg_method`/`kg_profile`,
+  empty = inherit; resolved in `server_daemons._run_kg_for`); `mempalace.kg.wiki`
+  + `wiki_method` + `wiki_profile` = the INDEPENDENT wiki knobs (read in
+  `wiki_store._kg_for_wiki_page_async`). Admin sets the wiki + project-default
+  knobs in General Settings → Knowledge Graph; per-project overrides live in the
+  project view ('Wissensgraph (KG)' section). `POST /v1/mempalace/kg/config`
+  validates all four and coerces a `rules` method's profile → `generic`.
 
 ## Deep Research (the bounded agentic loop)
 

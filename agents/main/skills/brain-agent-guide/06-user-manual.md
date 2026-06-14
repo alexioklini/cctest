@@ -327,6 +327,15 @@ breitere Web-Analyse vorzutäuschen. Mehr Tiefe holt man, indem man VOR dem
 Sperren eine Deep-Recherche fährt (Quellen finden → prüfen → übernehmen) —
 nicht durch tieferes Mining.
 
+**Wissensgraph (KG)** (Projekt-Setting, eigener Abschnitt im Projekt-Panel):
+zwei Dropdowns — **Methode** und **Profil** — jeweils mit „Standard
+übernehmen" (= der in den Einstellungen gesetzte Projekt-Standard). Methode
+**LLM** extrahiert hochwertigere Triples (kann ein Cloud-Modell sein);
+**Regelbasiert** läuft ganz ohne LLM und lokal (spaCy-NER + Beziehungsmuster),
+liefert aber nur generische Prädikate und geringere Qualität — gut für
+biografische/relationale Inhalte oder wenn nichts das Gerät verlassen soll.
+Das Profil (normative/generic) ist nur bei der LLM-Methode wirksam.
+
 **Synchronisierung**: Eingabeordner werden von einem Daemon alle 6 h
 eingespeist. Knöpfe auf der Projektseite:
 - **Jetzt synchronisieren** — neue/geänderte Dateien sofort einspeisen
@@ -859,7 +868,13 @@ Zahnrad, unten links. Je nach Rolle zwei Bereiche:
 - **Kontext** — LCM-Schwellen (Lossless Context Manager)
 - **MemPalace** — Statistik (Drawers/Closets/Wings/Rooms/Halls/DB-Größe),
   Palace-Explorer, Chat-Sync-Klassifizierer, Wing-Regeln, **Daemons**
-- **Knowledge Graph** — Extraktionsprofil + Closet-Konfiguration
+- **Knowledge Graph** — Extraktionseinstellungen mit getrennten Knöpfen für
+  **Projekte (Standard)** und **Wiki**: je **Methode** (LLM = hochwertig, ggf.
+  Cloud · Regelbasiert = kein LLM, ganz lokal via spaCy-NER, nur generische
+  Prädikate) + **Profil** (normative/generic; bei Regelbasiert auf generic
+  fixiert und ausgegraut). Der Projekt-Standard ist pro Projekt überschreibbar
+  (Projektansicht → „Wissensgraph (KG)"). Dazu Extraktionsmodell (nur LLM),
+  Max-Triples/Konfidenz/Zeichen + Closet-Konfiguration
 - **Tools** — Pro-Tool aktivieren/deferren/Purpose + Prosatexte; enthält
   auch den **Brainy**-Tab (siehe unten)
 - **Doctor** — Konfig-Diagnose: erkennt Modell-/Konfig-Verweise auf nicht

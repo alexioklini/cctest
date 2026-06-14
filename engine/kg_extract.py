@@ -582,14 +582,24 @@ def extract_triples_from_drawer(
     inference_temperature: float = 0.0,
     inference_max_tokens: int = 8000,
     cancel_token=None,
+    method: str = "llm",
 ) -> tuple[list[dict], str | None]:
-    """Run one LLM extraction. Returns (triples, error_msg or None).
+    """Extract triples from one chunk/drawer. Returns (triples, error_msg or None).
 
-    Triples are normalized: lowercased predicates, stripped fields, dropped
-    if confidence < min_confidence or any of subject/predicate/object missing.
+    method="llm" (default): one LLM call via the sidecar (GDPR model-swap +
+        retry). Triples normalized: lowercased predicates, stripped fields,
+        dropped if confidence < min_confidence or any field missing.
+    method="rules": NO LLM — engine.kg_rules (spaCy NER + relational cues).
+        Local-only, so it skips GDPR model-resolution entirely (nothing leaves
+        the box). Emits generic-profile triples regardless of `profile`.
     """
     if not content or not content.strip():
         return [], None
+
+    if method == "rules":
+        from engine import kg_rules
+        return kg_rules.extract_triples_rule_based(
+            content, max_triples=max_triples, min_confidence=min_confidence)
 
     # Lazy import — claude_cli is a heavy module.
     import brain as cc
@@ -830,6 +840,7 @@ def run_kg_post_pass(
     cancel_token=None,
     log_prefix: str = "[kg-extract]",
     max_workers: int = 0,
+    method: str = "llm",
 ) -> RunResult:
     """Extract KG triples for content in `wing` whose source_file startswith
     `source_prefix`, write into MemPalace's KG, and record progress in chats.db.
@@ -861,6 +872,11 @@ def run_kg_post_pass(
             "supported in step 1 (no full-wing access for projects)")
     if not adapter_name:
         raise ValueError("adapter_name must be non-empty for provenance")
+    # The rule-based extractor emits OPEN lowercase predicates (it can't reach
+    # the normative vocabulary), so it always runs the generic profile — force
+    # it here so the run log + downstream filters are honest about what was used.
+    if method == "rules" and profile_name != "generic":
+        profile_name = "generic"
     profile = PROFILES.get(profile_name)
     if profile is None:
         raise ValueError(
@@ -1056,7 +1072,7 @@ def run_kg_post_pass(
                     max_triples=max_triples_per_drawer,
                     max_drawer_chars=max_drawer_chars,
                     min_confidence=min_confidence,
-                    cancel_token=cancel_token)
+                    cancel_token=cancel_token, method=method)
                 if err and err.startswith("gdpr_skip:"):
                     # Policy 'skip' — mark this drawer done (no retry), count once.
                     _progress_record(chats_db_path, wing, did, sf,
@@ -1098,19 +1114,24 @@ def run_kg_post_pass(
         # advances → no retry-loop), surfaced per-file as 'KG⊘'. On
         # anonymise/swap/proceed the per-chunk extraction below re-applies the
         # policy normally.
-        try:
-            import brain as _cc
-            _cc.gdpr_pick_model_for_background(
-                model, [file_text], purpose="kg_extract")
-            _doc_gdpr = ""          # proceed
-        except Exception as _ge:
-            _name = type(_ge).__name__
-            if _name == "GDPRSkipError":
-                _doc_gdpr = "skip"
-            elif _name in ("GDPRBlockedError", "ClassificationBlockedError"):
-                _doc_gdpr = "block"
-            else:
-                _doc_gdpr = ""      # scanner error → fail open, proceed
+        if method == "rules":
+            # Rule-based extraction is fully local — no text leaves the box, so
+            # the GDPR/classification model-swap gate is moot; always proceed.
+            _doc_gdpr = ""
+        else:
+            try:
+                import brain as _cc
+                _cc.gdpr_pick_model_for_background(
+                    model, [file_text], purpose="kg_extract")
+                _doc_gdpr = ""          # proceed
+            except Exception as _ge:
+                _name = type(_ge).__name__
+                if _name == "GDPRSkipError":
+                    _doc_gdpr = "skip"
+                elif _name in ("GDPRBlockedError", "ClassificationBlockedError"):
+                    _doc_gdpr = "block"
+                else:
+                    _doc_gdpr = ""      # scanner error → fail open, proceed
         if _doc_gdpr:
             cursor_key = f"{rep_did}#0"
             _progress_record(chats_db_path, wing, cursor_key, sf,
@@ -1176,7 +1197,7 @@ def run_kg_post_pass(
                 max_triples=max_triples_per_drawer,
                 max_drawer_chars=max_drawer_chars,
                 min_confidence=min_confidence,
-                cancel_token=cancel_token)
+                cancel_token=cancel_token, method=method)
 
             # Policy 'skip' (background_pii_action='skip') — PII found, deliberate
             # no-op. The whole document shares the same PII profile, so skip the
@@ -1315,7 +1336,8 @@ def run_kg_post_pass(
                     model=model, profile=profile,
                     max_triples=max_triples_per_drawer,
                     max_drawer_chars=max_drawer_chars,
-                    min_confidence=min_confidence, cancel_token=cancel_token)
+                    min_confidence=min_confidence, cancel_token=cancel_token,
+                    method=method)
 
                 if err:
                     result.errors += 1

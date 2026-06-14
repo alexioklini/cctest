@@ -371,12 +371,21 @@ def _kg_for_wiki_page_async(page: dict, wing: str, palace_path: str):
                 r = get_request_context()
                 r.current_user_id = uid
                 r.current_team_ids = tids
+                # Wiki KG uses its OWN method + profile knobs (admin-set in
+                # General Settings), independent of the project-wide default.
+                _w_method = (kg_cfg.get("wiki_method", "llm") or "llm").strip().lower()
+                if _w_method not in ("llm", "rules"):
+                    _w_method = "llm"
+                _w_profile = (kg_cfg.get("wiki_profile", "normative")
+                              or "normative").strip().lower()
+                if _w_profile not in ("normative", "generic"):
+                    _w_profile = "normative"
                 _kg.run_kg_post_pass(
                     palace_path=palace_path,
                     wing=wing,
                     source_prefix=src,
                     adapter_name=adapter,
-                    profile_name=kg_cfg.get("profile", "normative") or "normative",
+                    profile_name=_w_profile,
                     model=kg_cfg.get("extraction_model", "") or "",
                     chats_db_path=chats_db,
                     max_triples_per_drawer=int(kg_cfg.get("max_triples_per_drawer", 12)),
@@ -384,6 +393,7 @@ def _kg_for_wiki_page_async(page: dict, wing: str, palace_path: str):
                     min_confidence=float(kg_cfg.get("min_confidence", 0.5)),
                     chunking_mode="per_drawer",
                     skip_code=True,
+                    method=_w_method,
                     log_prefix="[wiki.kg]",
                 )
         except Exception as e:

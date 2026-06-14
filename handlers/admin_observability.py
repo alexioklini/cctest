@@ -706,6 +706,12 @@ class AdminObservabilityHandlers:
             "enabled": kg_cfg.get("enabled", True),
             "extraction_model": kg_cfg.get("extraction_model", ""),
             "profile": kg_cfg.get("profile", "normative"),
+            # Project-wide default extraction method (per-project overridable
+            # in the project view); wiki has its OWN method + profile knobs.
+            "method": kg_cfg.get("method", "llm"),
+            "wiki": bool(kg_cfg.get("wiki", False)),
+            "wiki_method": kg_cfg.get("wiki_method", "llm"),
+            "wiki_profile": kg_cfg.get("wiki_profile", "normative"),
             "scopes": kg_cfg.get("scopes") or ["projects"],
             "max_triples_per_drawer": kg_cfg.get("max_triples_per_drawer", 12),
             "min_confidence": kg_cfg.get("min_confidence", 0.5),
@@ -747,6 +753,35 @@ class AdminObservabilityHandlers:
                     self._send_json({"error": f"unknown profile: {p}"}, 400)
                     return
                 kg["profile"] = p
+            # Project-wide default extraction method (llm|rules).
+            if "method" in body:
+                m = str(body["method"] or "").strip().lower()
+                if m not in ("llm", "rules"):
+                    self._send_json({"error": f"unknown method: {m}"}, 400)
+                    return
+                kg["method"] = m
+            # Wiki KG knobs — independent of the project default.
+            if "wiki" in body:
+                kg["wiki"] = bool(body["wiki"])
+            if "wiki_method" in body:
+                wm = str(body["wiki_method"] or "").strip().lower()
+                if wm not in ("llm", "rules"):
+                    self._send_json({"error": f"unknown wiki_method: {wm}"}, 400)
+                    return
+                kg["wiki_method"] = wm
+            if "wiki_profile" in body:
+                wp = str(body["wiki_profile"] or "").strip().lower()
+                if wp not in ("normative", "generic"):
+                    self._send_json({"error": f"unknown wiki_profile: {wp}"}, 400)
+                    return
+                kg["wiki_profile"] = wp
+            # Rule-based extraction can only emit generic predicates, so force
+            # the matching profile when the method is rules (keeps config honest
+            # with what the extractor actually produces; the UI greys it out too).
+            if kg.get("method") == "rules":
+                kg["profile"] = "generic"
+            if kg.get("wiki_method") == "rules":
+                kg["wiki_profile"] = "generic"
             if "max_triples_per_drawer" in body:
                 kg["max_triples_per_drawer"] = max(
                     1, min(50, int(body["max_triples_per_drawer"])))
@@ -768,7 +803,8 @@ class AdminObservabilityHandlers:
 
             # Invalidate cursors for fields that affect extraction quality.
             # Fields that change what triples get extracted → purge KG cursors.
-            KG_FIELDS = {"extraction_model", "profile", "max_triples_per_drawer",
+            KG_FIELDS = {"extraction_model", "profile", "method",
+                         "max_triples_per_drawer",
                          "min_confidence", "max_drawer_chars", "chunking_mode",
                          "source_chunk_chars"}
             # Fields that affect closet generation → purge closet cursor.

@@ -364,6 +364,17 @@ async function loadProjectDetail(agentId, projectName) {
     if (disableWebCb) {
       disableWebCb.checked = !!project.disable_web_search;
     }
+    // Per-project KG method/profile overrides (empty = inherit the global
+    // default). Profile is inert under the rule-based method (generic only).
+    const kgMethodSel = document.getElementById('project-kg-method');
+    const kgProfileSel = document.getElementById('project-kg-profile');
+    if (kgMethodSel) kgMethodSel.value = project.kg_method || '';
+    if (kgProfileSel) {
+      kgProfileSel.value = project.kg_profile || '';
+      const rules = (project.kg_method || '') === 'rules';
+      kgProfileSel.disabled = rules;
+      kgProfileSel.style.opacity = rules ? '0.5' : '';
+    }
 
     // Instructions now render inside the unified source tree (the Anweisungen
     // node) — no separate panel section.
@@ -1100,6 +1111,42 @@ async function toggleProjectDisableWeb(enabled) {
     showToast('Einstellung konnte nicht geändert werden', true);
     const cb = document.getElementById('project-disable-web-checkbox');
     if (cb) cb.checked = !enabled;
+  }
+}
+
+// Per-project KG extraction method override (''=inherit global, 'llm', 'rules').
+// Selecting 'rules' forces the generic profile (rule extraction can't do the
+// normative vocabulary), so the profile select is greyed to match.
+async function toggleProjectKgMethod(method) {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  try {
+    await API.updateProject(agentId, projectName, { kg_method: method });
+    if (state._projectDetail) state._projectDetail.kg_method = method;
+    const pSel = document.getElementById('project-kg-profile');
+    if (pSel) {
+      const rules = method === 'rules';
+      pSel.disabled = rules;
+      pSel.style.opacity = rules ? '0.5' : '';
+    }
+    showToast('KG-Methode für dieses Projekt gespeichert');
+  } catch (e) {
+    showToast('KG-Einstellung konnte nicht geändert werden', true);
+  }
+}
+
+// Per-project KG profile override (''=inherit global, 'normative', 'generic').
+async function toggleProjectKgProfile(profile) {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  try {
+    await API.updateProject(agentId, projectName, { kg_profile: profile });
+    if (state._projectDetail) state._projectDetail.kg_profile = profile;
+    showToast('KG-Profil für dieses Projekt gespeichert');
+  } catch (e) {
+    showToast('KG-Einstellung konnte nicht geändert werden', true);
   }
 }
 

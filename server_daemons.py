@@ -1422,6 +1422,13 @@ def _project_sync_loop(srv):
     palace_path = mcfg.get("palace_path", "")
     chats_db_path = os.path.join(engine.AGENTS_DIR, "main", "chats.db")
 
+    # Per-project KG override holder: set at the top of each project iteration
+    # to {"method":..,"profile":..} from project.json (empty values = inherit the
+    # global default). _run_kg_for reads it at call time. Attachment/folder KG
+    # runs all belong to the project currently being synced, so one holder is
+    # correct (the loop is single-threaded per project).
+    _cur_project_kg: dict = {}
+
     def _run_kg_for(wing: str, source_prefix: str, item_set_fn,
                     item_kind: str, item_id: str):
         """Run the KG extraction post-pass scoped to (wing, source_prefix).
@@ -1450,7 +1457,6 @@ def _project_sync_loop(srv):
                 and source_prefix.endswith(os.sep):
             resolved_prefix += os.sep
         model = kg_cfg.get("extraction_model", "") or ""
-        profile_name = kg_cfg.get("profile", "normative") or "normative"
         max_triples = int(kg_cfg.get("max_triples_per_drawer", 12))
         max_drawer_chars = int(kg_cfg.get("max_drawer_chars", 6000))
         min_conf = float(kg_cfg.get("min_confidence", 0.5))
@@ -1458,6 +1464,17 @@ def _project_sync_loop(srv):
         if chunk_mode not in ("source_file", "per_drawer"):
             chunk_mode = "source_file"
         source_chunk_chars = int(kg_cfg.get("source_chunk_chars", 3500))
+        # method + profile resolve project-wide default → per-project override.
+        # The per-project override (project.json kg_method/kg_profile) is set on
+        # `_cur_project_kg` at the top of each project iteration; empty = inherit.
+        ov = _cur_project_kg or {}
+        method = (ov.get("method") or kg_cfg.get("method", "llm") or "llm").strip().lower()
+        if method not in ("llm", "rules"):
+            method = "llm"
+        profile_name = (ov.get("profile") or kg_cfg.get("profile", "normative")
+                        or "normative").strip().lower()
+        if profile_name not in ("normative", "generic"):
+            profile_name = "normative"
         try:
             import time as _time
             _kg_started_at = _time.time()
@@ -1492,6 +1509,7 @@ def _project_sync_loop(srv):
                 min_confidence=min_conf, skip_code=True,
                 chunking_mode=chunk_mode,
                 source_chunk_chars=source_chunk_chars,
+                method=method,
                 log_prefix="[project-sync.kg]",
                 progress_cb=_kg_progress_cb,
             )
@@ -1766,6 +1784,13 @@ def _project_sync_loop(srv):
                               f"no project id", flush=True)
                         continue
                     wing = _project_wing(project_id)
+                    # Per-project KG method/profile override (project.json) for
+                    # the _run_kg_for closure this iteration. Empty = inherit the
+                    # global default from config.json mempalace.kg.
+                    _cur_project_kg = {
+                        "method": (project.get("kg_method") or "").strip().lower(),
+                        "profile": (project.get("kg_profile") or "").strip().lower(),
+                    }
 
                     # Project-level web URLs → fetch fresh into pdir/web-urls/ as
                     # hash-gated .md files BEFORE mining, so they ride the same

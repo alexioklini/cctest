@@ -2469,7 +2469,10 @@
       "source_chunk_chars": 3500,
       "regenerate_closets": true,
       "profile": "normative",
-      "wiki": false
+      "method": "llm",
+      "wiki": true,
+      "wiki_method": "rules",
+      "wiki_profile": "generic"
     },
     "reranker": {
       "enabled": true,

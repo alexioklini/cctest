@@ -513,6 +513,36 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       </div>
       <div class="project-panel-section">
         <div class="project-panel-section-header">
+          <span class="project-panel-section-title">Wissensgraph (KG)</span>
+        </div>
+        <div class="project-panel-section-body">
+          <div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:8px">
+            <label style="flex:0 0 120px"><strong>Methode</strong></label>
+            <select id="project-kg-method" class="form-select" onchange="toggleProjectKgMethod(this.value)" style="flex:1">
+              <option value="">Standard übernehmen</option>
+              <option value="llm">LLM (hochwertig)</option>
+              <option value="rules">Regelbasiert (kein LLM, lokal)</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:13px">
+            <label style="flex:0 0 120px"><strong>Profil</strong></label>
+            <select id="project-kg-profile" class="form-select" onchange="toggleProjectKgProfile(this.value)" style="flex:1">
+              <option value="">Standard übernehmen</option>
+              <option value="normative">normative</option>
+              <option value="generic">generic</option>
+            </select>
+          </div>
+          <div class="project-panel-help" id="project-kg-help">
+            Steuert, wie aus den Projektquellen Beziehungen (Triples) extrahiert
+            werden. Leer = der in den Einstellungen gesetzte Standard.
+            <b>LLM</b> liefert hochwertigere Triples; <b>Regelbasiert</b> läuft
+            ganz lokal ohne LLM (spaCy-NER + Muster, nur <code>generic</code>-Prädikate).
+            Das Profil ist nur bei der LLM-Methode wirksam.
+          </div>
+        </div>
+      </div>
+      <div class="project-panel-section">
+        <div class="project-panel-section-header">
           <span class="project-panel-section-title">Quellen</span>
         </div>
         <div class="project-panel-help">

@@ -1249,9 +1249,12 @@ async function _genTab_knowledge_graph(C) {
           return modelOption(mid, {selected: mid === currentModel, suffix: localTag});
         }).join('');
 
-      const profileOpts = ['normative','generic'].map(p =>
-        `<option value="${p}" ${p === (kgConfig.profile||'normative')?'selected':''}>${p}</option>`
+      const profOpts = (sel) => ['normative','generic'].map(p =>
+        `<option value="${p}" ${p === (sel||'normative')?'selected':''}>${p}</option>`
       ).join('');
+      const methodOpts = (sel) => [['llm','LLM (hochwertig)'],['rules','Regelbasiert (kein LLM, lokal)']]
+        .map(([v,l]) => `<option value="${v}" ${v === (sel||'llm')?'selected':''}>${l}</option>`).join('');
+      const profileOpts = profOpts(kgConfig.profile);
 
       const STAT = (val, label, color='var(--accent-brand)') => `<div style="padding:12px 20px;background:var(--bg-200);border-radius:8px;text-align:center;min-width:120px">
         <div style="font-size:22px;font-weight:600;color:${color}">${val}</div>
@@ -1303,16 +1306,39 @@ async function _genTab_knowledge_graph(C) {
             <label style="display:inline-flex;gap:6px;font-size:12px"><input type="checkbox" id="kg-enabled" ${kgConfig.enabled===false?'':'checked'}> KG-Extraktion während der Projekt-Synchronisierung ausführen</label>
             <span></span>
           </div>
+          <div style="font-size:12px;font-weight:500;color:var(--text-200);margin-top:4px">Projekte (Standard)</div>
+          <div style="font-size:11px;color:var(--text-400);margin-top:-4px">Standard-Methode + -Profil für alle Projekte. Jedes Projekt kann beides in der Projektansicht überschreiben.</div>
+          <div style="display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:center">
+            <label style="font-size:12px;color:var(--text-300)">Methode</label>
+            <select class="form-select" id="kg-method" onchange="kgSyncMethodUI()" ${isAdmin?'':'disabled'}>${methodOpts(kgConfig.method)}</select>
+          </div>
+          <div style="font-size:11px;color:var(--text-400);margin-left:150px;margin-top:-4px"><b>LLM</b>: ein Modell extrahiert Triples (hochwertig, kann Cloud sein). <b>Regelbasiert</b>: spaCy-NER + Beziehungsmuster, ganz lokal, kein LLM — nur offene (generic) Prädikate, geringere Qualität.</div>
           <div style="display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:center">
             <label style="font-size:12px;color:var(--text-300)">Extraktionsmodell</label>
             <select class="form-select" id="kg-model" ${isAdmin?'':'disabled'}>${modelOptionsKg}</select>
           </div>
-          <div style="font-size:11px;color:var(--text-400);margin-left:150px;margin-top:-4px">Cloud-Modelle extrahieren hochwertigere Triples; lokale Modelle halten Ihre Dokumente vor Ort. Das ausgewählte Modell läuft einmal pro Drawer während der Synchronisierung — wählen Sie sparsam. <b>Getesteter Standard:</b> gemma-4-e4b-it-4bit (lokal, deutschfähig, läuft neben dem Chat-Warmpool).</div>
+          <div style="font-size:11px;color:var(--text-400);margin-left:150px;margin-top:-4px">Nur für die <b>LLM</b>-Methode. Cloud-Modelle extrahieren hochwertigere Triples; lokale Modelle halten Ihre Dokumente vor Ort. Das ausgewählte Modell läuft einmal pro Drawer während der Synchronisierung — wählen Sie sparsam. <b>Getesteter Standard:</b> gemma-4-e4b-it-4bit (lokal, deutschfähig, läuft neben dem Chat-Warmpool).</div>
           <div style="display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:center">
             <label style="font-size:12px;color:var(--text-300)">Profil</label>
             <select class="form-select" id="kg-profile" ${isAdmin?'':'disabled'}>${profileOpts}</select>
           </div>
-          <div style="font-size:11px;color:var(--text-400);margin-left:150px;margin-top:-4px"><b>normative</b>: Richtlinien, Verordnungen, Gesetze, Spezifikationen, Verträge, SOPs &mdash; kontrollierte Prädikate (requires/forbids/cites/...). <b>generic</b>: offene Prädikate, beliebiger Dokumenttyp.</div>
+          <div style="font-size:11px;color:var(--text-400);margin-left:150px;margin-top:-4px" id="kg-profile-help"><b>normative</b>: Richtlinien, Verordnungen, Gesetze, Spezifikationen, Verträge, SOPs &mdash; kontrollierte Prädikate (requires/forbids/cites/...). <b>generic</b>: offene Prädikate, beliebiger Dokumenttyp.</div>
+
+          <div style="font-size:12px;font-weight:500;color:var(--text-200);margin-top:8px">Wiki</div>
+          <div style="font-size:11px;color:var(--text-400);margin-top:-4px">Eigene Einstellungen für die KG-Extraktion aus Wiki-Seiten (das Gedächtnis des Agenten), unabhängig von den Projekten.</div>
+          <div style="display:grid;grid-template-columns:140px 1fr auto;gap:10px;align-items:center">
+            <label style="font-size:12px;color:var(--text-300)">Aktiviert</label>
+            <label style="display:inline-flex;gap:6px;font-size:12px"><input type="checkbox" id="kg-wiki-enabled" ${kgConfig.wiki?'checked':''} ${isAdmin?'':'disabled'}> KG-Triples aus projektmarkierten Wiki-Seiten extrahieren</label>
+            <span></span>
+          </div>
+          <div style="display:grid;grid-template-columns:140px 1fr 140px 1fr;gap:10px;align-items:center">
+            <label style="font-size:12px;color:var(--text-300)">Methode</label>
+            <select class="form-select" id="kg-wiki-method" onchange="kgSyncMethodUI()" ${isAdmin?'':'disabled'}>${methodOpts(kgConfig.wiki_method)}</select>
+            <label style="font-size:12px;color:var(--text-300)">Profil</label>
+            <select class="form-select" id="kg-wiki-profile" ${isAdmin?'':'disabled'}>${profOpts(kgConfig.wiki_profile)}</select>
+          </div>
+          <div style="font-size:11px;color:var(--text-400);margin-left:150px;margin-top:-4px" id="kg-wiki-profile-help">Wiki-Inhalte sind meist biografisch/relational — <b>generic</b> + <b>Regelbasiert</b> passt hier gut. Profil ist nur bei der LLM-Methode wirksam.</div>
+
           <div style="display:grid;grid-template-columns:140px 1fr 140px 1fr;gap:10px;align-items:center">
             <label style="font-size:12px;color:var(--text-300)">Max. Triples / Drawer</label>
             <input type="number" class="form-input" id="kg-max-triples" min="1" max="50" value="${kgConfig.max_triples_per_drawer||12}" ${isAdmin?'':'disabled'}>
@@ -1344,9 +1370,28 @@ async function _genTab_knowledge_graph(C) {
           Agent-Tools: <code>mempalace_kg_query(entity)</code>, <code>mempalace_kg_search(predicate)</code>, <code>mempalace_kg_neighbors(entity, depth)</code> — alle automatisch auf das aufrufende Projekt beschränkt.
         </div>
       </div>`);
+      kgSyncMethodUI();  // grey out profile selects where method=rules
     } catch(e) {
       C.innerHTML = P(`<div style="color:var(--error)">Knowledge-Graph-Ansicht konnte nicht geladen werden: ${esc(e.message||e)}</div>`);
     }
+}
+
+// Rule-based extraction only emits generic predicates, so the profile choice is
+// inert when method=rules — grey the matching profile select + note it. Called
+// on render and on each method <select> change.
+function kgSyncMethodUI() {
+  const pairs = [['kg-method', 'kg-profile', 'kg-profile-help'],
+                 ['kg-wiki-method', 'kg-wiki-profile', 'kg-wiki-profile-help']];
+  for (const [mId, pId, hId] of pairs) {
+    const m = document.getElementById(mId);
+    const p = document.getElementById(pId);
+    if (!m || !p) continue;
+    const rules = m.value === 'rules';
+    if (rules) { p.value = 'generic'; p.disabled = true; p.style.opacity = '0.5'; }
+    else { p.disabled = false; p.style.opacity = ''; }
+    const h = document.getElementById(hId);
+    if (h) h.style.opacity = rules ? '0.5' : '';
+  }
 }
 
 async function _genTab_gdpr(C) {
