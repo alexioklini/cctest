@@ -6,12 +6,84 @@ function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// German display label for a role identifier. The role VALUE stays the English
+// config key (admin/poweruser/user) — only the visible label is localized.
+function roleLabelDe(role) {
+  return { admin: 'Administrator', poweruser: 'Hauptbenutzer', user: 'Benutzer' }[role] || role;
+}
+
 function showToast(msg, isError) {
   const t = document.createElement('div');
   t.className = 'toast' + (isError ? ' error' : '');
   t.textContent = msg;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 3000);
+}
+
+/* ── Inline help: a "?" icon that reveals an explanation in an anchored popover.
+   Used across the config modals (agent / user / admin) so prose explanations
+   are available on demand instead of always cluttering the dialog. The text is
+   stashed (URI-encoded) on the icon's data-help attribute; a single delegated
+   handler (see helpIconClick) opens the popover. Mirrors the citation-popover
+   anchoring (viewport-aware flip + outside-click/Esc close). */
+function helpIcon(text, opts) {
+  if (!text) return '';
+  const enc = encodeURIComponent(String(text));
+  const lbl = (opts && opts.label) ? ` ${esc(opts.label)}` : '';
+  return `<span class="help-icon" role="button" tabindex="0" aria-label="Hilfe"`
+    + ` data-help="${enc}" onclick="helpIconClick(event, this)"`
+    + ` onkeydown="if(event.key==='Enter'||event.key===' '){helpIconClick(event,this);}">?${lbl}</span>`;
+}
+let _activeHelpPopover = null;
+function closeHelpPopover() {
+  if (_activeHelpPopover) { _activeHelpPopover.remove(); _activeHelpPopover = null; }
+  document.removeEventListener('click', _helpPopoverOutside, true);
+  document.removeEventListener('keydown', _helpPopoverEsc);
+}
+function _helpPopoverOutside(e) {
+  if (_activeHelpPopover && !_activeHelpPopover.contains(e.target)
+      && !e.target.closest('.help-icon')) closeHelpPopover();
+}
+function _helpPopoverEsc(e) { if (e.key === 'Escape') closeHelpPopover(); }
+function helpIconClick(ev, iconEl) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const wasOpen = _activeHelpPopover && _activeHelpPopover._anchor === iconEl;
+  closeHelpPopover();
+  if (wasOpen) return;  // toggle off if re-clicking the same icon
+  let text = '';
+  try { text = decodeURIComponent(iconEl.getAttribute('data-help') || ''); } catch (e) { text = ''; }
+  if (!text) return;
+  const pop = document.createElement('div');
+  pop.className = 'help-popover';
+  pop._anchor = iconEl;
+  // Plain text (escaped); newlines become breaks so multi-paragraph help reads.
+  pop.innerHTML = `<div class="help-popover-arrow"></div>`
+    + `<div class="help-popover-body">${esc(text).replace(/\n/g, '<br>')}</div>`;
+  document.body.appendChild(pop);
+  // Anchor: prefer below the icon, flip above when short on room (citation-popover pattern).
+  const r = iconEl.getBoundingClientRect();
+  const pr = pop.getBoundingClientRect();
+  const vh = window.innerHeight, vw = window.innerWidth;
+  let top = r.bottom + 8, arrow = 'top';
+  if (top + pr.height + 12 > vh && r.top - pr.height - 12 > 0) {
+    top = r.top - pr.height - 8; arrow = 'bottom';
+  }
+  const left = Math.max(8, Math.min(vw - pr.width - 8, r.left + r.width / 2 - pr.width / 2));
+  pop.style.top = top + 'px';
+  pop.style.left = left + 'px';
+  const arrowEl = pop.querySelector('.help-popover-arrow');
+  if (arrowEl) {
+    const ax = Math.max(10, Math.min(pr.width - 18, r.left + r.width / 2 - left - 5));
+    arrowEl.style.left = ax + 'px';
+    arrowEl.style[arrow === 'top' ? 'top' : 'bottom'] = '-5px';
+    arrowEl.style[arrow === 'top' ? 'borderTop' : 'borderBottom'] = 'none';
+  }
+  _activeHelpPopover = pop;
+  // Attach immediately — the opening click was on the "?" icon, which
+  // _helpPopoverOutside explicitly ignores (closest('.help-icon')), so it
+  // won't self-close. (No setTimeout → no open-then-instant-close race.)
+  document.addEventListener('click', _helpPopoverOutside, true);
+  document.addEventListener('keydown', _helpPopoverEsc);
 }
 
 /**

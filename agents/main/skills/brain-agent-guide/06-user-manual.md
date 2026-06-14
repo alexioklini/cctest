@@ -796,6 +796,13 @@ du sie per **Löschen** entfernst.
 
 Zahnrad, unten links. Je nach Rolle zwei Bereiche:
 
+**Hilfe-Symbole („?")**: In allen Konfigurationsdialogen (Agent, Benutzer,
+Allgemeine Einstellungen) stehen Erklärungen nicht mehr dauerhaft im Dialog,
+sondern hinter einem kleinen runden **„?"** neben dem jeweiligen Feld oder
+Abschnitt. Klick (oder Tastatur: Enter/Leertaste) öffnet ein Popover mit der
+Erklärung; erneuter Klick, Klick daneben oder Esc schließt es wieder. So bleiben
+die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
+
 ### Agent-Einstellungen (Admin)
 - **Soul** — die Persona des Agenten (Markdown)
 - **Agent** — `agent.json`: tool_groups, token_config, rate_limits, team

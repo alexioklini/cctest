@@ -46,7 +46,7 @@ async function _genTab_server(C) {
           <select class="form-select" id="srv-default-model" style="flex:1">${modelOpts}</select>
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{default_model:document.getElementById('srv-default-model').value}).then(()=>showToast('Standardmodell aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
         </div>
-        ${SEC('Anhänge')}
+        ${SEC('Anhänge', 'Vision-Modell, das angehängte Bilder beschreibt, wenn das aktive Chat-Modell selbst keine Bilder verarbeiten kann. Greift nur bei Modellen ohne Vision-Fähigkeit; multimodale Modelle erhalten das Bild direkt. Ist hier nichts gesetzt, liefert ein Bildanhang an ein reines Textmodell nur Metadaten (Abmessungen, Format). Beispiele für Vision-Modelle: gemini-2.5-flash, mistral-small-latest.')}
         <div style="display:flex;gap:8px;align-items:center">
           <select class="form-select" id="srv-attachment-image-model" style="flex:1">
             <option value="">Keines (Bilder werden nicht beschrieben)</option>
@@ -54,14 +54,13 @@ async function _genTab_server(C) {
           </select>
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{attachment_image_model:document.getElementById('srv-attachment-image-model').value}).then(()=>showToast('Bildmodell aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
         </div>
-        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Vision-Modell zum Beschreiben angehängter Bilder, wenn das aktive Modell keine Vision-Unterstützung hat (z. B. gemini-2.5-flash, mistral-small-latest)</div>
         ${(() => {
           const defMdl = srv.default_model || '';
           const hasVision = modelHasCapability(defMdl, 'image');
           const hasImageModel = !!(srv.attachment_image_model);
-          return (!hasVision && !hasImageModel) ? `<div style="font-size:11px;color:var(--warning, #b45309);margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--bg-200)">&#9888; Ihr Standardmodell unterstützt keine Vision und es ist kein Bildbeschreibungsmodell konfiguriert. Angehängte Bilder liefern nur grundlegende Metadaten (Abmessungen, Format).</div>` : '';
+          return (!hasVision && !hasImageModel) ? `<div style="font-size:13px;color:var(--warning, #b45309);margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--bg-200)">&#9888; Ihr Standardmodell unterstützt keine Vision und es ist kein Bildbeschreibungsmodell konfiguriert. Angehängte Bilder liefern nur grundlegende Metadaten (Abmessungen, Format).</div>` : '';
         })()}
-        ${SEC('Zusammenfassungen')}
+        ${SEC('Zusammenfassungen', 'Hintergrundmodell, das die Chat-Synopse (Tooltip in der Sitzungsliste + einklappbarer Block über dem Chat) und das automatisch gepflegte Benutzerprofil erzeugt. „Auto" verwendet das Server-Standardmodell. Wird auch von den LLM-/Hybrid-Modi des Auto-Routings als Klassifizierungsmodell genutzt. Nur ändern, wenn ein bestimmtes Modell gewünscht ist.')}
         <div style="display:flex;gap:8px;align-items:center">
           <select class="form-select" id="srv-chat-summary-model" style="flex:1">
             <option value="">Auto (Server-Standardmodell verwenden)</option>
@@ -69,8 +68,7 @@ async function _genTab_server(C) {
           </select>
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{chat_summary_model:document.getElementById('srv-chat-summary-model').value}).then(()=>showToast('Zusammenfassungsmodell aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
         </div>
-        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Hintergrundmodell, das die Synopse pro Chat (Hover-Tooltip + einklappbarer Block) und das automatisch gepflegte Benutzerprofil erzeugt. Belassen Sie es auf Auto, sofern Sie kein bestimmtes Modell wünschen.</div>
-        ${SEC('Auto-Routing')}
+        ${SEC('Auto-Routing', 'Legt fest, wie das „✨ Smart/Auto"-Modell im Verfasser (und background_task_model=auto beim Fan-out) die Absicht einer Anfrage erkennt und das passende Modell wählt.\n\n• Schlüsselwörter: regelbasiert, ohne Kosten, ohne LLM-Aufruf.\n• LLM: ein günstiges/lokales Modell klassifiziert die Anfrage (nutzt das oben gesetzte Zusammenfassungsmodell, sonst das günstigste/lokale Modell).\n• Hybrid: erst Schlüsselwörter, das LLM nur bei Unklarheit.\n\nLLM/Hybrid fallen bei Fehler oder Timeout still auf Schlüsselwörter zurück. Im LLM-Modus liefert der Classifier zusätzlich eine Komplexität (gering/mittel/hoch): hoch hebt die Modellstufe an (Reasoning-Modell), gering senkt sie (günstigeres Modell). Einfachere Aufgaben bleiben bevorzugt in der Cloud (günstigstes Cloud-Modell), lokal nur als letzte Option.')}
         <div style="display:flex;gap:8px;align-items:center">
           ${(() => {
             const arm = srv.auto_route_classifier_mode || 'keywords';
@@ -83,7 +81,6 @@ async function _genTab_server(C) {
           })()}
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{auto_route_classifier_mode:document.getElementById('srv-auto-route-mode').value}).then(()=>showToast('Auto-Routing aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
         </div>
-        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Wie das „✨ Auto"-Modell im Verfasser (und background_task_model=auto bei Fan-out) die Absicht erkennt und das passende Modell wählt. LLM/Hybrid nutzen das oben gesetzte <b>Zusammenfassungsmodell</b> (sonst das günstigste/lokale Modell) und fallen bei Fehler/Timeout still auf Schlüsselwörter zurück. Im LLM-Modus liefert der Classifier zusätzlich <b>Komplexität</b> (gering/mittel/hoch): hoch hebt die Modellstufe an (Reasoning-Modell), gering senkt sie (günstigeres Cloud-Modell). Einfachere Aufgaben bleiben bevorzugt in der <b>Cloud</b> (günstigstes Cloud-Modell), lokal nur als letzte Option.</div>
         ${SEC('Sidecar')}
         ${_renderSupervisorStatus(sc, {
           restartFn: 'restartSidecar',
@@ -108,19 +105,18 @@ async function _genTab_server(C) {
         })}
         ${SEC('Kostenkontingente')}
         <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
-          <span style="font-size:12px;color:var(--text-200);flex:1">Limits pro Benutzer und Rolle mit Zurücksetzung im Abrechnungszyklus.</span>
-          <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="switchGeneralTab('quotas', document.querySelector('.modal-tab[onclick*=\\'quotas\\']'))">Konfigurieren &rarr;</button>
+          <span style="font-size:13px;color:var(--text-200);flex:1">Limits pro Benutzer und Rolle mit Zurücksetzung im Abrechnungszyklus.</span>
+          <button class="btn-secondary" style="font-size:12px;padding:4px 10px" onclick="switchGeneralTab('quotas', document.querySelector('.modal-tab[onclick*=\\'quotas\\']'))">Konfigurieren &rarr;</button>
         </div>
-        ${SEC('DSGVO / PII-Scanner')}
+        ${SEC('DSGVO / PII-Scanner', 'Schnellüberblick über den PII-Scanner. Die vollständige Konfiguration — granulare Kategorie-Aktionen, E-Mail-Allowlist und das lokale Fallback-Modell — liegt im eigenen DSGVO-Tab. „Hard-Block an" bedeutet: erkannte personenbezogene Daten werden vor dem Senden an ein Nicht-lokales Modell hart blockiert (statt nur zu warnen oder lokal zu ersetzen).')}
         <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
           ${DOT((srv.gdpr_scanner||{}).enabled !== false)}
-          <span style="font-size:12px;color:var(--text-200);flex:1">
+          <span style="font-size:13px;color:var(--text-200);flex:1">
             ${(srv.gdpr_scanner||{}).enabled !== false ? 'Scanner aktiv' : 'Scanner deaktiviert'}
             ${(srv.gdpr_scanner||{}).server_block ? ' &middot; <b style="color:var(--warning,#b45309)">Hard-Block an</b>' : ''}
           </span>
-          <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="switchGeneralTab('gdpr', document.querySelector('.modal-tab[onclick*=\\'gdpr\\']'))">Konfigurieren &rarr;</button>
+          <button class="btn-secondary" style="font-size:12px;padding:4px 10px" onclick="switchGeneralTab('gdpr', document.querySelector('.modal-tab[onclick*=\\'gdpr\\']'))">Konfigurieren &rarr;</button>
         </div>
-        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Granulare Kategorieaktionen, E-Mail-Allowlist und das lokale Fallback-Modell befinden sich im eigenen DSGVO-Tab.</div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn-secondary" onclick="API.restartServer().then(()=>showToast('Server wird neu gestartet…')).catch(e=>showToast('Fehlgeschlagen',true))">Server neu starten</button>
         </div>
@@ -205,11 +201,10 @@ async function _genTab_models(C) {
               <textarea class="mdl-description" rows="2" style="width:100%;padding:4px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:12px;background:var(--bg-000);color:var(--text-100);font-family:inherit;resize:vertical" placeholder="z. B. Am besten für Long-Context-Analyse. Langsam, aber günstig.">${esc(cfg.description || '')}</textarea>
             </div>
             <div style="display:flex;align-items:center;gap:10px;padding:6px 8px;margin-bottom:8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000)">
-              <label style="font-size:11px;font-weight:600;color:var(--text-100);margin:0">Profil</label>
-              <select class="mdl-profile" style="padding:3px 8px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-100);color:var(--text-100)" title="Speed: Warmup + stabiles KV-Präfix, keine Token-Einsparung (lokal). Balanced: aktuelle Standardwerte. Frugal: aggressive Token-Einsparung, Caveman-System-Prompt (Cloud). Custom: keine Überlagerung.">
+              <label style="font-size:13px;font-weight:600;color:var(--text-100);margin:0">Profil${helpIcon('Optimierungs-Profil — setzt sinnvolle Standardwerte für die Felder unten; explizit gesetzte Felder überschreiben das Profil.\n\n• Speed (lokal): Warmup + stabiles KV-Präfix, keine Token-Einsparung.\n• Balanced (Standard): aktuelle Standardwerte.\n• Frugal (Cloud): aggressive Token-Einsparung, Caveman-System-Prompt.\n• Custom: keine Überlagerung.')}</label>
+              <select class="mdl-profile" style="padding:3px 8px;border:1px solid var(--border-100);border-radius:4px;font-size:13px;background:var(--bg-100);color:var(--text-100)">
                 ${[['custom','Custom (keine Überlagerung)'],['speed','Speed (lokal, warmer Cache)'],['balanced','Balanced (Standard)'],['frugal','Frugal (Cloud, Tokens sparen)']].map(([v,l]) => `<option value="${v}"${(cfg.profile||'custom')===v?' selected':''}>${l}</option>`).join('')}
               </select>
-              <span style="font-size:10px;color:var(--text-400);margin-left:auto">Das Profil setzt Standardwerte — explizite Felder unten überschreiben sie</span>
             </div>
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px">
               ${mdlInput('mdl-max-context','Kontextfenster',cfg.max_context,{ph:'131072'})}
@@ -462,7 +457,7 @@ async function _genTab_providers(C) {
             <div style="${G('8px')}">
               <div><label class="form-label">Basis-URL</label><input class="form-input" id="${pid}-url" value="${esc(p.base_url||'')}"></div>
               <div><label class="form-label">Standardmodell</label><input class="form-input" id="${pid}-model" value="${esc(p.default_model||'')}"></div>
-              <div><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200);cursor:pointer"><input type="checkbox" id="${pid}-is-local"${p.is_local?' checked':''}> Lokaler Provider <span style="color:var(--text-400);font-size:11px">(Inferenz erfolgt auf dem Gerät — umgeht PII-Block & Kostenkontingente)</span></label></div>
+              <div><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200);cursor:pointer"><input type="checkbox" id="${pid}-is-local"${p.is_local?' checked':''}> Lokaler Provider${helpIcon('Markiert diesen Provider als „läuft auf diesem Gerät". Lokale Modelle umgehen den harten PII-/DSGVO-Block und die Kostenkontingente (es entstehen keine Cloud-Kosten und die Daten verlassen das Gerät nicht).')}</label></div>
               <div><button class="btn-primary" style="font-size:12px" onclick="saveProviderEdit('${esc(p.name)}','${pid}')">Einstellungen speichern</button></div>
             </div>
           </div>
@@ -475,7 +470,7 @@ async function _genTab_providers(C) {
           <div><label class="form-label">Basis-URL</label><input class="form-input" id="prov-url" placeholder="http://localhost:8081/v1"></div>
           <div><label class="form-label">API-Schlüssel</label><input class="form-input" id="prov-key" placeholder="sk-..." type="password"></div>
           <div><label class="form-label">Standardmodell</label><input class="form-input" id="prov-model" placeholder="Modellname (optional)"></div>
-          <div><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200);cursor:pointer"><input type="checkbox" id="prov-is-local"> Lokaler Provider <span style="color:var(--text-400);font-size:11px">(Inferenz erfolgt auf dem Gerät — umgeht PII-Block & Kostenkontingente)</span></label></div>
+          <div><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200);cursor:pointer"><input type="checkbox" id="prov-is-local"> Lokaler Provider${helpIcon('Markiert diesen Provider als „läuft auf diesem Gerät". Lokale Modelle umgehen den harten PII-/DSGVO-Block und die Kostenkontingente (es entstehen keine Cloud-Kosten und die Daten verlassen das Gerät nicht).')}</label></div>
           <div style="display:flex;gap:8px">
             <button class="btn-secondary" onclick="testNewProvider()">Verbindung testen</button>
             <button class="btn-primary" onclick="saveNewProvider()">Provider hinzufügen</button>
@@ -766,16 +761,13 @@ async function _genTab_quotas(C) {
           </label>
         </div>
 
-        ${SEC('Durchsetzung bei Rot')}
+        ${SEC('Durchsetzung bei Rot', 'Was passiert, sobald ein Benutzer sein Kostenlimit erreicht (die Plan-Pille wird rot):\n\n• Nur warnen: Pille wird rot, Anfragen bleiben erlaubt.\n• Lokal erzwingen: Anfragen wechseln automatisch zum konfigurierten lokalen Fallback-Modell.\n• Hart blockieren: Anfragen werden abgelehnt, bis der Abrechnungszyklus zurücksetzt.\n\nDas lokale Fallback-Modell wird nur im Modus „Lokal erzwingen" verwendet.')}
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
           <select id="q-enforce" class="form-input" style="flex:1;max-width:340px">${enforceOpts}</select>
           <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:200px">
-            <label style="font-size:11px;color:var(--text-400)">Lokales Fallback-Modell (force_local-Modus)</label>
+            <label style="font-size:13px;color:var(--text-400)">Lokales Fallback-Modell (force_local-Modus)</label>
             <select id="q-fallback" class="form-input">${fbOpts}</select>
           </div>
-        </div>
-        <div style="font-size:11px;color:var(--text-400)">
-          <b>Nur warnen</b>: Pille wird rot, Anfragen weiterhin erlaubt. <b>Lokal erzwingen</b>: Anfragen wechseln automatisch zum konfigurierten lokalen Modell. <b>Hart blockieren</b>: Anfragen werden abgelehnt, bis der Zyklus zurückgesetzt wird.
         </div>
 
         ${SEC('Limits pro Rolle (USD)')}
@@ -787,13 +779,13 @@ async function _genTab_quotas(C) {
           </tr></thead>
           <tbody>
           ${['admin','poweruser','user'].map(role => `
-            <tr><td style="padding:6px 8px;color:var(--text-100);text-transform:capitalize">${role}</td>
+            <tr><td style="padding:6px 8px;color:var(--text-100)">${esc(roleLabelDe(role))}</td>
               <td style="padding:6px 8px;text-align:right">${limitInput(role,'daily_usd')}</td>
               <td style="padding:6px 8px;text-align:right">${limitInput(role,'cycle_usd')}</td>
             </tr>`).join('')}
           </tbody>
         </table>
-        <div style="font-size:11px;color:var(--text-400)">0 setzen bedeutet „kein Limit" für diese Achse. Nutzung lokaler Modelle zählt nie.</div>
+        <div class="cfg-help">0 setzen bedeutet „kein Limit" für diese Achse. Nutzung lokaler Modelle zählt nie.</div>
 
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn-primary" onclick="saveQuotaConfig()">Einstellungen speichern</button>
@@ -1001,9 +993,8 @@ async function _genTab_mempalace(C) {
         ${SEC('Daemons')}
         ${daemonRows}
 
-        ${SEC('Chat-Sync-Classifier')}
+        ${SEC('Chat-Sync-Classifier', 'LLM-Gate, das jede Nachricht klassifiziert, bevor sie ins MemPalace-Gedächtnis abgelegt wird. Filtert Ablehnungen, Smalltalk und generische Inhalte heraus, damit nur sinnvolle Inhalte gespeichert werden.\n\n• Min. Turns: Chats, die kürzer sind, werden übersprungen (0 = kein Minimum).\n• Standard für neue Chats: Aus / Auto (Classifier entscheidet) / An (immer speichern).\n• Kategorien zum Ablegen: welche klassifizierten Inhaltsarten gespeichert werden.')}
         <div style="${G('10px')}">
-          <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">LLM-Gate, das Nachrichten klassifiziert, bevor sie in MemPalace abgelegt werden. Überspringt Ablehnungen, Smalltalk und generische Inhalte.</div>
           <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
             <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="mp-clf-enabled" ${clf.enabled?'checked':''}>Aktiviert</label>
             <div style="display:flex;align-items:center;gap:6px">

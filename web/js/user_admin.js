@@ -10,14 +10,14 @@ async function openUserManagement() {
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
     modal.onclick = e => { if (e.target === modal) modal.remove(); };
-    const roleBadge = (r) => `<span class="role-badge ${esc(r)}">${esc(r)}</span>`;
+    const roleBadge = (r) => `<span class="role-badge ${esc(r)}">${esc(roleLabelDe(r))}</span>`;
     const statusDot = (disabled) => `<span title="${disabled?'deaktiviert':'aktiv'}" style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle;background:${disabled?'#dc2626':'#16a34a'}"></span>`;
     modal.innerHTML = `
       <div class="modal-content" style="max-width:920px">
         <div class="modal-header"><h2>Benutzerverwaltung</h2><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button></div>
         <div class="modal-body" style="max-height:75vh;overflow-y:auto">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-            <div style="font-size:12px;color:var(--text-secondary);flex:1">Selbstregistrierung ist deaktiviert. Benutzer müssen hier angelegt werden.</div>
+            <div class="cfg-help" style="flex:1">Selbstregistrierung ist deaktiviert. Benutzer müssen hier angelegt werden.</div>
             <button class="um-btn" onclick="document.querySelector('.modal-overlay').remove();openUserTeams()">Teams &rsaquo;</button>
           </div>
           <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -25,7 +25,7 @@ async function openUserManagement() {
               <th style="padding:8px">Status</th>
               <th style="padding:8px">Benutzername</th>
               <th style="padding:8px">Anzeigename</th>
-              <th style="padding:8px">Rolle</th>
+              <th style="padding:8px">Rolle${helpIcon('Benutzer — nur Chat innerhalb freigegebener Agents und Modelle.\n\nHauptbenutzer — Teamleitung: kann eigene Benutzer-Teams erstellen und verwalten.\n\nAdministrator — voller Konfigurationszugriff auf alle Agents, Modelle und Funktionen.')}</th>
               <th style="padding:8px">Letzte Anmeldung</th>
               <th style="padding:8px;text-align:right">Aktionen</th>
             </tr></thead>
@@ -39,7 +39,7 @@ async function openUserManagement() {
                 <td style="padding:8px">${esc(u.display_name || '')}</td>
                 <td style="padding:8px">
                   <select onchange="changeUserRole('${esc(u.id)}', this.value)" ${isSelf?'disabled title="Eigene Rolle kann nicht geändert werden"':''} style="font-size:12px;padding:2px 6px;border-radius:4px;border:1px solid var(--border-light)">
-                    ${['admin','poweruser','user'].map(r => `<option value="${r}" ${u.role===r?'selected':''}>${r}</option>`).join('')}
+                    ${['admin','poweruser','user'].map(r => `<option value="${r}" ${u.role===r?'selected':''}>${esc(roleLabelDe(r))}</option>`).join('')}
                   </select>
                 </td>
                 <td style="padding:8px;color:var(--text-secondary);font-size:12px">${u.last_login ? new Date(u.last_login*1000).toLocaleString() : 'Nie'}</td>
@@ -62,14 +62,9 @@ async function openUserManagement() {
               <input id="new-user-display" placeholder="Anzeigename (optional)" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
               <input id="new-user-pass" type="password" placeholder="Passwort (min. 6)" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
               <select id="new-user-role" style="padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
-                <option value="user">user</option><option value="poweruser">poweruser (Teamleitung)</option><option value="admin">admin</option>
+                <option value="user">${esc(roleLabelDe('user'))}</option><option value="poweruser">${esc(roleLabelDe('poweruser'))}</option><option value="admin">${esc(roleLabelDe('admin'))}</option>
               </select>
               <button onclick="addUser()" class="auth-btn" style="width:auto;padding:8px 20px">Hinzufügen</button>
-            </div>
-            <div style="font-size:11px;color:var(--text-secondary);margin-top:8px">
-              <b>user</b> — nur Chat innerhalb freigegebener Agents/Modelle.
-              <b>poweruser</b> — Teamleitung, kann eigene Teams erstellen/verwalten.
-              <b>admin</b> — voller Konfigurationszugriff.
             </div>
           </div>
         </div>
@@ -182,15 +177,12 @@ async function openUserPermissions(userId, username) {
     modal.innerHTML = `
       <div class="modal-content" style="max-width:780px">
         <div class="modal-header">
-          <h2>Berechtigungen: ${esc(username)}${isAdmin?' (Admin — voller Zugriff)':''}</h2>
+          <h2>Berechtigungen: ${esc(username)}${isAdmin?' (Administrator — voller Zugriff)':''}${helpIcon(isAdmin
+              ? 'Administratoren haben immer Zugriff auf alle Agents, Modelle und Funktionen. Die folgenden Einstellungen werden gespeichert, aber für Administratoren nicht durchgesetzt.'
+              : 'Berechtigungen steuern, mit welchen Agents und Modellen dieser Benutzer chatten kann. Teammitgliedschaften ergänzen die direkten Berechtigungen. Fähigkeiten schalten den Funktionszugriff um.')}</h2>
           <button class="modal-close" onclick="document.querySelector('.modal-overlay').remove();openUserManagement()">&times;</button>
         </div>
         <div class="modal-body" style="max-height:75vh;overflow-y:auto">
-          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:16px">
-            ${isAdmin
-              ? 'Administratoren haben immer Zugriff auf alle Agents, Modelle und Funktionen. Die folgenden Einstellungen werden gespeichert, aber für Administratoren nicht durchgesetzt.'
-              : 'Berechtigungen steuern, mit welchen Agents/Modellen dieser Benutzer chatten kann. Teammitgliedschaften ergänzen die direkten Berechtigungen. Fähigkeiten schalten den Funktionszugriff um.'}
-          </div>
           <h3 style="font-size:13px;margin:0 0 8px;font-weight:600">Fähigkeiten</h3>
           <div id="user-caps-row" style="display:flex;flex-wrap:wrap;gap:12px;padding:10px 12px;border:1px solid var(--border-light);border-radius:8px;margin-bottom:16px">
             ${(() => {
@@ -275,7 +267,7 @@ async function openUserTeams() {
         ${addableUsers.length ? `<div style="display:flex;gap:6px;margin-top:10px;align-items:center">
           <select id="ut-add-${esc(t.id)}" style="flex:1;font-size:12px;padding:6px;border:1px solid var(--border-light);border-radius:6px">
             <option value="">Mitglied hinzufügen...</option>
-            ${addableUsers.map(u => `<option value="${esc(u.id)}">${esc(u.display_name || u.username)} (${esc(u.role)})</option>`).join('')}
+            ${addableUsers.map(u => `<option value="${esc(u.id)}">${esc(u.display_name || u.username)} (${esc(roleLabelDe(u.role))})</option>`).join('')}
           </select>
           <button class="um-btn" onclick="addUserTeamMember('${esc(t.id)}')">Hinzufügen</button>
         </div>` : ''}
@@ -299,10 +291,10 @@ async function openUserTeams() {
               ${isAdmin && headCandidates.length ? `
                 <select id="new-user-team-head" style="padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
                   <option value="">Teamleitung... (Standard: Sie)</option>
-                  ${headCandidates.map(u => `<option value="${esc(u.id)}">${esc(u.display_name || u.username)} (${esc(u.role)})</option>`).join('')}
+                  ${headCandidates.map(u => `<option value="${esc(u.id)}">${esc(u.display_name || u.username)} (${esc(roleLabelDe(u.role))})</option>`).join('')}
                 </select>` : ''}
               <button onclick="createUserTeam()" class="auth-btn" style="width:auto;padding:8px 20px">Team erstellen</button>
-              <div style="font-size:11px;color:var(--text-secondary)">Die Teamleitung muss ein poweruser oder admin sein.</div>
+              <div class="cfg-help">Die Teamleitung muss ein Hauptbenutzer oder Administrator sein.</div>
             </div>
           </div>
         </div>
@@ -590,7 +582,7 @@ function renderUserSettingsProfile(body) {
       <div style="font-size:11px;color:var(--text-400);margin-bottom:14px">
         <span style="font-weight:500;color:var(--text-300)">Benutzername:</span> ${esc(u.username || '')}
         &nbsp;·&nbsp;
-        <span style="font-weight:500;color:var(--text-300)">Rolle:</span> ${esc(u.role || 'user')}
+        <span style="font-weight:500;color:var(--text-300)">Rolle:</span> ${esc(roleLabelDe(u.role || 'user'))}
       </div>
       ${_us_input('Vollständiger Name (Anzeige)', 'us-display-name', u.display_name, 'text', 'Wird in der Seitenleiste und in Admin-Listen angezeigt.')}
       ${_us_input('Anredename', 'us-greeting-name', prefs.greeting_name, 'text', 'Wie der Agent Sie im Gespräch nennen soll. Fällt auf den vollständigen Namen zurück.')}

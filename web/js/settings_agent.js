@@ -177,13 +177,12 @@ async function switchAgentTab(agentId, tab, btn) {
       const soul = data.content || '';
       container.innerHTML = `
         <div style="display:flex;flex-direction:column;height:100%;padding:16px;overflow:hidden">
-          <div style="font-size:12px;color:var(--text-400);margin-bottom:6px">System-Prompt — definiert Persönlichkeit und Verhalten des Agents</div>
+          <div style="font-size:13px;color:var(--text-400);margin-bottom:6px">System-Prompt${helpIcon('Definiert Persönlichkeit und Verhalten des Agents. Wird als System-Prompt an das Modell übergeben.')}</div>
           <textarea id="agent-soul-editor" class="form-textarea" style="flex:3 1 0;min-height:80px;font-size:13px;overflow-y:auto">${esc(soul)}</textarea>
           <div style="display:flex;justify-content:flex-end;gap:8px;margin:6px 0;align-items:center">
             ${_refineTierButton('soul:' + esc(agentId))}
             <button type="button" id="agent-soul-editor-refine"
               onclick="refineAgentSoul('${esc(agentId)}')"
-              title="Die Soul mit KI verfeinern (bewahrt die Du-/Sie-Anrede und die Markdown-Struktur)"
               class="btn-secondary"
               style="font-size:12px;padding:4px 10px;display:inline-flex;align-items:center;gap:4px">
               <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" style="flex-shrink:0">
@@ -191,11 +190,11 @@ async function switchAgentTab(agentId, tab, btn) {
                 <path d="M19 14l.75 2.25L22 17l-2.25.75L19 20l-.75-2.25L16 17l2.25-.75L19 14z"/>
               </svg>
               <span id="agent-soul-editor-refine-label">Mit KI verfeinern</span>
-            </button>
+            </button>${helpIcon('Die Soul mit KI verfeinern. Bewahrt die Du-/Sie-Anrede und die Markdown-Struktur.')}
             <button class="btn-primary" onclick="saveAgentSoul('${esc(agentId)}')">Soul speichern</button>
           </div>
           <div style="border-top:1px solid var(--border);padding-top:6px;display:flex;flex-direction:column;flex:2 1 0;min-height:60px;overflow:hidden">
-            <div style="font-size:12px;color:var(--text-400);margin-bottom:4px">KI-Soul-Editor — per Chat die Soul verfeinern</div>
+            <div style="font-size:13px;color:var(--text-400);margin-bottom:4px">KI-Soul-Editor${helpIcon('Bearbeiten Sie die Soul per Chat: Beschreiben Sie die gewünschte Änderung, und die KI passt den System-Prompt oben an.')}</div>
             <div id="soul-chat-messages" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:4px;padding:2px 4px;min-height:0"></div>
             <div style="display:flex;gap:8px;flex-shrink:0">
               <input id="soul-chat-input" class="form-input" style="flex:1;font-size:13px" placeholder="KI bitten, die Soul zu bearbeiten…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendSoulChat('${esc(agentId)}')}" />
@@ -258,8 +257,7 @@ async function switchAgentTab(agentId, tab, btn) {
             <label for="cfg-paused" style="font-size:14px;color:var(--text-200)">Pausiert</label>
           </div>
           <div style="border-top:1px solid var(--border-100);padding-top:12px;display:grid;gap:10px">
-            <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Next-Prompt-Vorschläge</div>
-            <div style="font-size:11px;color:var(--text-400)">Geistertext-Vorhersage, die nach jeder Assistenten-Antwort im Eingabefeld angezeigt wird. Überschreiben Sie das Modell, wenn das Sitzungsmodell ein langsames Denkmodell ist (z. B. Qwen3.6) — wählen Sie ein schnelles Modell wie Haiku für Vorschläge im Sekundenbruchteil.</div>
+            <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Next-Prompt-Vorschläge${helpIcon('Geistertext-Vorhersage, die nach jeder Assistenten-Antwort im Eingabefeld angezeigt wird. Überschreiben Sie das Modell, wenn das Sitzungsmodell ein langsames Denkmodell ist (z. B. Qwen3.6) — wählen Sie ein schnelles Modell wie Haiku für Vorschläge im Sekundenbruchteil.')}</div>
             <div style="display:flex;align-items:center;gap:8px">
               <input type="checkbox" id="cfg-nps-enabled" ${npsEnabled?'checked':''}>
               <label for="cfg-nps-enabled" style="font-size:14px;color:var(--text-200)">Aktiviert</label>
@@ -753,7 +751,7 @@ async function switchAgentTab(agentId, tab, btn) {
         return `
         <select class="tok-override" data-tool="${esc(toolName)}" data-purpose="${esc(purpose)}"
                 style="font-size:10px;padding:1px;font-family:var(--font-mono);background:${A_CELL_BG[eff]||'var(--bg-100)'};color:${A_CELL_FG[eff]||'var(--text-100)'};border:none;width:100%;text-align:center"
-                title="Standard: globalen Wert dieses Kanals erben (aktuell: ${stTxt(inh)}) · Aktiv: im Prompt · Inaktiv: ganz aus · Aufgeschoben: nur über tool_search">
+                title="Geerbter globaler Wert: ${stTxt(inh)}">
           <option value="default"  ${cur==='default'?'selected':''}>Standard (${stTxt(inh)})</option>
           <option value="active"   ${cur==='active'?'selected':''}>Aktiv</option>
           <option value="inactive" ${cur==='inactive'?'selected':''}>Inaktiv</option>
@@ -780,17 +778,11 @@ async function switchAgentTab(agentId, tab, btn) {
 
       container.innerHTML = `
         <div style="padding:16px;display:grid;gap:14px">
-          <div style="font-size:16px;font-weight:600;color:var(--text-100)">Token-Optimierung</div>
-          <div style="font-size:11px;color:var(--text-400)">
-            Pro-Tool-Überschreibungen für diesen Agent. Jedes Tool wird aufgelöst über:
-            <b>global</b> (Einstellungen → Tools) → <b>Agent-Überschreibung</b> → <b>Zweck-Filter</b>.
-            <b>Standard</b> erbt den globalen Wert; <b>Aktiv</b> / <b>Inaktiv</b> / <b>Aufgeschoben</b> überschreiben nur für diesen Agent.
-            Tool-Definitionskosten und Pro-Tool-Text finden Sie unter <b>Allgemeine Einstellungen → Tools</b>.
-          </div>
+          <div style="font-size:16px;font-weight:600;color:var(--text-100)">Token-Optimierung${helpIcon('Pro-Tool-Überschreibungen für diesen Agent. Jedes Tool wird aufgelöst über: global (Einstellungen → Tools) → Agent-Überschreibung → Zweck-Filter.\n\nStandard erbt den globalen Wert; Aktiv / Inaktiv / Aufgeschoben überschreiben nur für diesen Agent.\n\nTool-Definitionskosten und Pro-Tool-Text finden Sie unter Allgemeine Einstellungen → Tools.')}</div>
 
           <div style="border:1px solid var(--border-100);border-radius:8px;padding:12px">
             <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">
-              Tool-Überschreibungen
+              Tool-Überschreibungen${helpIcon('Standard: erbt den globalen Wert dieses Kanals.\n\nAktiv: im System-Prompt verfügbar.\n\nInaktiv: ganz abgeschaltet.\n\nAufgeschoben: nicht im Prompt, aber per tool_search auffindbar.')}
               <span style="font-size:11px;color:var(--text-400);font-weight:400">— ${Object.keys(overrides).length} Tool${Object.keys(overrides).length===1?'':'s'} derzeit überschrieben</span>
             </div>
             <div style="overflow:auto;border:1px solid var(--border-100);border-radius:6px;max-height:56vh">
@@ -824,15 +816,10 @@ async function switchAgentTab(agentId, tab, btn) {
           </div>
 
           <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
-            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Werkzeug-Optimierung pro Anfrage</div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Werkzeug-Optimierung pro Anfrage${helpIcon('Klassifiziert jede Anfrage und stellt nicht benötigte Werkzeuge zurück (bleiben per tool_search erreichbar) — schlankerer Prompt, bessere Treffsicherheit bei schwächeren Modellen.\n\nUnabhängig von der Modellwahl (✨ Smart). Bei lokalen Modellen mit Warmup im Modus „full“ wird die Optimierung übersprungen, um den warmen KV-Prefix stabil zu halten. Lokale Modelle ohne Warmup oder im Warmup-Modus „minimal“ werden optimiert wie Cloud-Modelle.')}</div>
             <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
               <input type="checkbox" id="tok-optimize-tools" ${tcfg.optimize_tools === false ? '' : 'checked'} style="margin-top:2px">
-              <span style="font-size:12px;color:var(--text-300)">
-                Klassifiziert jede Anfrage und stellt nicht benötigte Werkzeuge zurück (bleiben per <code>tool_search</code> erreichbar) — schlankerer Prompt, bessere Treffsicherheit bei schwächeren Modellen.
-                <span style="display:block;color:var(--text-400);margin-top:3px">
-                  Unabhängig von der Modellwahl (✨ Smart). Bei <b>lokalen Modellen mit aktiviertem Warmup</b> wird die Optimierung übersprungen, um den warmen KV-Prefix stabil zu halten; lokale Modelle <b>ohne</b> Warmup werden optimiert wie Cloud-Modelle.
-                </span>
-              </span>
+              <span style="font-size:13px;color:var(--text-300)">Werkzeuge pro Anfrage optimieren</span>
             </label>
           </div>
 

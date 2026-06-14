@@ -96,7 +96,7 @@ function renderToolPanelBody(toolName) {
     integHTML = `
       <div style="margin-bottom:14px;padding:10px;border:1px dashed var(--border-100);border-radius:6px;background:var(--bg-100)">
         <div style="font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
-          <span>Integration</span>
+          <span>Integration${helpIcon('Konfiguriert einen vom Server genutzten Dienst (API-Schlüssel, Standardmodell, Timeouts). Bei reinen Integrations-Einträgen ist dies kein vom Agent aufrufbares Tool, sondern nur die Dienstkonfiguration.')}</span>
           ${status ? `<span style="font-size:10px;color:var(--text-400)">${esc(status.status||'')}</span>` : ''}
         </div>
         ${renderToolIntegrationFields(toolName, cfg)}
@@ -108,9 +108,6 @@ function renderToolPanelBody(toolName) {
   // no applies_with. Render the integration block alone.
   if (t.integration_only) {
     return `
-      <div style="font-size:11px;color:var(--text-400);margin-bottom:10px">
-        Nur Integration — dieser Eintrag konfiguriert einen vom Server genutzten Dienst (kein vom Agent aufrufbares Tool).
-      </div>
       ${integHTML || '<div style="color:var(--error);font-size:11px">Für diesen Eintrag sind keine Integrationsfelder registriert.</div>'}
       <div style="display:flex;justify-content:flex-end">
         <button class="btn-primary" onclick="saveTool('${esc(toolName)}')" style="padding:6px 14px;font-size:12px">Speichern</button>
@@ -125,8 +122,8 @@ function renderToolPanelBody(toolName) {
       </div>
       <div style="display:flex;gap:14px;align-items:end">
         <label style="display:flex;flex-direction:column;gap:3px">
-          <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Status</span>
-          <select id="ts-${esc(toolName)}-state" class="form-select" style="font-size:12px;width:150px" title="Aktiv: im Prompt verfügbar · Inaktiv: ganz aus · Aufgeschoben: nur über tool_search">
+          <span style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Status${helpIcon('Aktiv: im System-Prompt verfügbar.\n\nInaktiv: ganz abgeschaltet.\n\nAufgeschoben: nicht im Prompt, aber per tool_search auffindbar.')}</span>
+          <select id="ts-${esc(toolName)}-state" class="form-select" style="font-size:12px;width:150px">
             <option value="active" ${toolGlobalState(t)==='active'?'selected':''}>Aktiv</option>
             <option value="inactive" ${toolGlobalState(t)==='inactive'?'selected':''}>Inaktiv</option>
             <option value="deferred" ${toolGlobalState(t)==='deferred'?'selected':''}>Aufgeschoben</option>
@@ -147,7 +144,7 @@ function renderToolPanelBody(toolName) {
 
     <div style="margin-bottom:10px">
       <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">
-        Zwecke <span style="text-transform:none;font-weight:400">— Aufrufzwecke, bei denen dieses Tool erlaubt ist. Leer (nichts ausgewählt) = für jeden Zweck verfügbar.</span>
+        Zwecke${helpIcon('Aufrufzwecke, bei denen dieses Tool erlaubt ist. Leer (nichts ausgewählt) = für jeden Zweck verfügbar.')}
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:14px;padding:6px 8px;background:var(--bg-100);border-radius:4px" id="ts-${esc(toolName)}-purposes-wrap">
         ${purposeChecks}
@@ -156,7 +153,7 @@ function renderToolPanelBody(toolName) {
 
     <div style="margin-bottom:10px">
       <div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">
-        Gilt mit <span style="text-transform:none;font-weight:400">— Text wird nur angezeigt, wenn ALLE ausgewählten Tools ebenfalls aktiv sind (Cmd/Strg-Klick für Mehrfachauswahl)</span>
+        Gilt mit${helpIcon('Der Prompt-Text dieses Tools wird nur angezeigt, wenn ALLE hier ausgewählten Tools ebenfalls aktiv sind. Cmd/Strg-Klick für Mehrfachauswahl.')}
       </div>
       <select id="ts-${esc(toolName)}-applies_with" multiple size="4" class="form-input" style="width:100%;font-family:var(--font-mono);font-size:11px">${awOptions}</select>
     </div>
@@ -215,7 +212,7 @@ function renderWireSchemaBlock(toolName, t) {
   return `
     <details style="margin-bottom:14px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)" open>
       <summary style="cursor:pointer;padding:8px 10px;font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">
-        Wire-Schema (was das LLM erhält) ${overridden?'<span style="color:var(--warning,#d97706);text-transform:none">· überschrieben</span>':''}
+        Wire-Schema (was das LLM erhält)${helpIcon('Genau das, was das Modell für dieses Tool auf der Leitung erhält. Die Beschreibung ist editierbar (Override in tool_settings) — leer lassen sendet den unveränderten Code-Standard; ein Wert hier ERSETZT die Wire-Beschreibung. Das input_schema ist an die Python-Signatur des Tools gebunden und bleibt schreibgeschützt. Die Felder unter „Prompt-Text“ sind ZUSÄTZLICHE Anweisungen im System-Prompt, kein Ersatz für die Wire-Beschreibung.')} ${overridden?'<span style="color:var(--warning,#d97706);text-transform:none">· überschrieben</span>':''}
       </summary>
       <div style="padding:0 10px 10px">
         <div style="display:flex;align-items:center;gap:8px;margin:6px 0 3px">
@@ -226,7 +223,6 @@ function renderWireSchemaBlock(toolName, t) {
         <textarea id="ts-${esc(toolName)}-wire_description" rows="6" class="form-input"
           placeholder="(leer = Code-Standard verwenden)"
           style="width:100%;font-family:var(--font-mono);font-size:11px;resize:vertical">${esc(override)}</textarea>
-        <div style="font-size:9px;color:var(--text-400);margin-top:2px">Leer lassen, um den unveränderten Code-Standard zu senden. Ein Wert hier ERSETZT die Wire-Beschreibung, die das Modell erhält (das <code>input_schema</code> bleibt unverändert).</div>
 
         <details style="margin-top:8px">
           <summary style="cursor:pointer;font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Code-Standard (TOOL_DEFINITIONS · schreibgeschützt)</summary>
@@ -240,8 +236,6 @@ function renderWireSchemaBlock(toolName, t) {
           <summary style="cursor:pointer;font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Roh-JSON (input_schema · schreibgeschützt)</summary>
           <pre style="font-family:var(--font-mono);font-size:10px;color:var(--text-300);background:var(--bg-200);border-radius:4px;padding:8px;max-height:300px;overflow:auto;white-space:pre">${esc(rawJson)}</pre>
         </details>` : ''}
-
-        <div style="font-size:10px;color:var(--text-400);margin-top:8px">Das <code>input_schema</code> ist an die Python-Signatur des Tools gebunden und bleibt nicht editierbar. Die <b>Wire-Beschreibung</b> ist editierbar (Override in <code>tool_settings</code>); die Felder unter „Prompt-Text" sind ZUSÄTZLICHE Anweisungen im System-Prompt, kein Ersatz für die Wire-Beschreibung.</div>
       </div>
     </details>`;
 }
@@ -282,8 +276,7 @@ function renderToolIntegrationFields(name, cfg) {
         ${lbl('Standard-Ergebnisse pro Anfrage')}
         <input id="tool-exa-num" type="number" min="1" max="50" value="${cfg.default_num_results||5}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px">`;
     case 'searxng_search':
-      return `<div style="font-size:11px;color:var(--text-400);margin-bottom:6px">Verwendet die mitgelieferte, selbst gehostete SearXNG-Instanz. Verwalten Sie sie (URL, Status, Neustart) unter <b>Einstellungen &rarr; Server &rarr; Websuche</b>.</div>
-        ${lbl('Standard-Ergebnisse pro Anfrage')}
+      return `${lbl('Standard-Ergebnisse pro Anfrage' + helpIcon('Verwendet die mitgelieferte, selbst gehostete SearXNG-Instanz. Verwalten Sie sie (URL, Status, Neustart) unter Einstellungen → Server → Websuche.'))}
         <input id="tool-searxng-num" type="number" min="1" max="50" value="${cfg.default_num_results||5}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px">`;
     case 'gmail':
       return `${lbl('E-Mail')}
@@ -301,9 +294,8 @@ function renderToolIntegrationFields(name, cfg) {
         <div>${lbl('Max. Größe (MB)')}<input id="tool-wf-maxsize" type="number" min="1" max="100" value="${cfg.max_size_mb||10}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px"></div>
       </div>`;
     case 'refinement':
-      return `${lbl('Modell')}
-        ${chatModelSelect('tool-refine-model', cfg.model || '', 'Auto (Haiku > Sonnet > günstigstes)')}
-        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Modell, das vom Verfeinern-Button im Chat und in Notiz-KI-Eingaben verwendet wird.</div>`;
+      return `${lbl('Modell' + helpIcon('Modell, das vom Verfeinern-Button im Chat und in Notiz-KI-Eingaben verwendet wird.'))}
+        ${chatModelSelect('tool-refine-model', cfg.model || '', 'Auto (Haiku > Sonnet > günstigstes)')}`;
     case 'read_document': {
       const visEntries = enabledModelsWithCapability('image');
       const visIds = new Set(visEntries.map(([mid]) => mid));
@@ -333,11 +325,10 @@ function renderToolIntegrationFields(name, cfg) {
         opts += audioEntries.map(([mid]) => modelOption(mid, {selected: mid === sel})).join('');
         return `<select id="${id}" class="form-select" style="font-size:11px;width:100%">${opts}</select>`;
       };
-      return `${lbl('Standardmodell')}
+      return `${lbl('Standardmodell' + helpIcon('Nur Modelle mit der Fähigkeit „audio“ werden aufgelistet. Das Tool verwendet die konfigurierte ID exakt — unscharfes Namensmatching wurde entfernt.'))}
         ${audioSelectHtml('tool-ta-default-model', cfg.default_model || '')}
         ${lbl('Fallback-Modell')}
-        ${audioSelectHtml('tool-ta-fallback-model', cfg.fallback_model || '')}
-        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Nur Modelle mit der Fähigkeit <code>audio</code> werden aufgelistet. Das Tool verwendet die konfigurierte ID exakt — unscharfes Namensmatching wurde entfernt.</div>`;
+        ${audioSelectHtml('tool-ta-fallback-model', cfg.fallback_model || '')}`;
     }
     case 'text_to_speech': {
       const ttsEntries = enabledModelsWithCapability('tts');
@@ -346,20 +337,17 @@ function renderToolIntegrationFields(name, cfg) {
       let opts = '';
       if (sel && !ttsIds.has(sel)) opts += `<option value="${esc(sel)}" selected>${esc(sel)} (veraltet/fehlend)</option>`;
       opts += ttsEntries.map(([mid]) => modelOption(mid, {selected: mid === sel})).join('');
-      return `${lbl('Standardmodell')}
+      return `${lbl('Standardmodell' + helpIcon('Nur Modelle mit der Fähigkeit „tts“ werden aufgelistet. Das Tool verwendet die konfigurierte ID exakt.'))}
         <select id="tool-tts-model" class="form-select" style="font-size:11px;width:100%">${opts}</select>
         ${lbl('Stimme')}
         <input id="tool-tts-voice" type="text" value="${esc(cfg.voice||'en_paul_neutral')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
-        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Nur Modelle mit der Fähigkeit <code>tts</code> werden aufgelistet. Das Tool verwendet die konfigurierte ID exakt.</div>
         <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-200)">
-          <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="openVoiceManager()">🎙️ Stimmen verwalten / klonen</button>
-          <div style="font-size:10px;color:var(--text-400);margin-top:4px">Eigene Stimmen aus einer Audioprobe klonen (z. B. eine deutsche Stimme). Audio Overview &amp; Vorlesen wählen automatisch eine Stimme passend zur erkannten Sprache.</div>
+          <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="openVoiceManager()">🎙️ Stimmen verwalten / klonen${helpIcon('Eigene Stimmen aus einer Audioprobe klonen (z. B. eine deutsche Stimme). Audio Overview und Vorlesen wählen automatisch eine Stimme passend zur erkannten Sprache.')}</button>
         </div>`;
     }
     case 'translation':
-      return `${lbl('Standardmodell')}
-        ${chatModelSelect('tool-tr-model', cfg.default_model || '', 'Auto (Refinement-Modell → Fallback)')}
-        <div style="font-size:10px;color:var(--text-400);margin-top:4px">Chat-fähiges LLM zum Übersetzen von Text, Dokumenten und Audio-/Videosegmenten. Getrennt vom Transkriptionsmodell (Voxtral/Whisper) und TTS.</div>`;
+      return `${lbl('Standardmodell' + helpIcon('Chat-fähiges LLM zum Übersetzen von Text, Dokumenten und Audio-/Videosegmenten. Getrennt vom Transkriptionsmodell (Voxtral/Whisper) und TTS.'))}
+        ${chatModelSelect('tool-tr-model', cfg.default_model || '', 'Auto (Refinement-Modell → Fallback)')}`;
     default:
       return `<div style="font-size:11px;color:var(--text-400)">Keine Integrationsfelder für dieses Tool.</div>`;
   }

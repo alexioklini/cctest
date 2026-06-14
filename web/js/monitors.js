@@ -118,7 +118,7 @@ function openWarmPoolModal() {
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
   overlay.innerHTML = `<div class="modal-content" style="max-width:680px;max-height:80vh;display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;padding:20px 24px 0;gap:12px">
-      <h2 style="margin:0;font-size:18px;font-weight:600;color:var(--text-000)">Warm-Session-Pool</h2>
+      <h2 style="margin:0;font-size:18px;font-weight:600;color:var(--text-000)">Warm-Session-Pool${helpIcon('Warmup hält Modelle vorgeladen, um die Latenz bis zum ersten Token zu verringern. Der Modus wird pro Modell im Tab „Modelle“ festgelegt:\n\nfull: lädt System-Prompt + Werkzeuge in den KV-Cache vor (~5-6 s bis zur ersten Antwort).\n\nminimal: lädt nur die Modellgewichte, keinen Prompt und keine Werkzeuge (~10-15 s bis zur ersten Antwort).\n\nVoll vorgeladene Modelle teilen sich den GPU-Speicher — bei Engpässen verdrängen sie sich gegenseitig.\n\nIst kein Modell mit Warmup aktiviert: Aktivieren Sie Warmup für ein Modell im Tab „Modelle“, um Sessions vorzubereiten.')}</h2>
       <span id="warmpool-modal-hint" style="font-size:12px;color:var(--text-400)"></span>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()" style="margin-left:auto">&times;</button>
     </div>
@@ -141,16 +141,10 @@ function renderWarmPoolModalBody() {
     : 'Kein Modell hat Warmup aktiviert';
   if (!entries.length) {
     body.innerHTML = `<div style="color:var(--text-400);padding:24px;text-align:center">
-      Aktivieren Sie <strong>Warmup</strong> für ein Modell im Tab „Modelle“, um Sessions vorzubereiten und die Latenz bis zum ersten Token zu verringern.
+      Kein Modell hat Warmup aktiviert. Details über das <span style="font-weight:500">?</span> oben im Titel.
     </div>`;
     return;
   }
-  // Short explainer — mode is now per-model (set in Models tab)
-  const banner = `<div style="background:var(--bg-200);border-radius:10px;padding:8px 14px;margin-bottom:12px;font-size:11px;color:var(--text-400);line-height:1.5">
-    <span style="color:#22c55e;font-weight:500">full</span>: lädt System+Tools in den KV-Cache vor (~5-6 s erste Antwort).
-    <span style="color:#8b5cf6;font-weight:500;margin-left:8px">minimal</span>: nur Gewichte (~10-15 s erste Antwort).
-    Pro Modell im Tab „Modelle“ konfigurierbar. Voll vorgeladene Modelle teilen sich den GPU-Speicher — bei Engpässen verdrängen sie sich gegenseitig.
-  </div>`;
   entries.sort((a, b) => (a[1].display_name || a[0]).localeCompare(b[1].display_name || b[0]));
   const now = Date.now() / 1000;
   const rows = entries.map(([mid, st]) => {
@@ -205,7 +199,7 @@ function renderWarmPoolModalBody() {
       ${err}
     </div>`;
   }).join('');
-  body.innerHTML = banner + rows;
+  body.innerHTML = rows;
 }
 
 async function triggerPoolWarmup(modelId) {

@@ -1280,12 +1280,15 @@ textarea { resize: none; }
 .msg-actions-bar { position: relative; }
 
 /* Markdown content styles */
-.msg-content p { margin: 0.7em 0; }
+/* Normal prose: looser line spacing for readability (the 1.65 base felt too
+   narrow for running text). Lists keep the tighter rhythm — bullet spacing was
+   already fine — so the wider leading applies to paragraphs only. */
+.msg-content p { margin: 0.7em 0; line-height: 1.8; }
 .msg-content p:first-child { margin-top: 0; }
 .msg-content p:last-child { margin-bottom: 0; }
 .msg-content ul, .msg-content ol { margin: 0.7em 0; padding-left: 1.5em; }
-.msg-content li { margin: 0.4em 0; }
-.msg-content li > p { margin: 0; }
+.msg-content li { margin: 0.4em 0; line-height: 1.65; }
+.msg-content li > p { margin: 0; line-height: 1.65; }
 .msg-content h1, .msg-content h2, .msg-content h3, .msg-content h4 {
   margin: 1em 0 0.5em;
   font-weight: 600;
@@ -2022,6 +2025,66 @@ details.msg-references-row[open] .msg-references {
   border-top: 1px solid var(--border-200);
   transform: rotate(45deg);
   top: -6px;
+}
+
+/* ── Inline help: "?" icon + anchored explanation popover (config modals) ── */
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 5px;
+  border-radius: 50%;
+  border: 1px solid var(--border-200);
+  background: var(--bg-200);
+  color: var(--text-400);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  user-select: none;
+  vertical-align: middle;
+  flex: 0 0 auto;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.help-icon:hover,
+.help-icon:focus-visible {
+  background: var(--accent-brand);
+  color: #fff;
+  border-color: var(--accent-brand);
+  outline: none;
+}
+.help-popover {
+  position: fixed;
+  z-index: 10000;
+  max-width: 420px;
+  min-width: 200px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: var(--bg-100);
+  color: var(--text-200);
+  border: 1px solid var(--border-200);
+  box-shadow: 0 10px 32px rgba(0,0,0,0.18);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.help-popover-body code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg-300);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.help-popover-arrow {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: var(--bg-100);
+  border-left: 1px solid var(--border-200);
+  border-top: 1px solid var(--border-200);
+  transform: rotate(45deg);
 }
 
 /* Numbered inline citation chip [n] — overrides the icon-pin sizing */
@@ -4538,6 +4601,28 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   background: var(--bg-100); color: var(--text-100);
 }
 .modal-body input:disabled, .modal-body select:disabled { opacity: 0.6; }
+/* Config modals (agent / user / admin): a consistent base font in the chat UI
+   family so labels read uniformly and professionally. Inputs/selects/labels
+   inherit ~14px instead of the browser default; per-element inline sizes still
+   win where intentionally smaller (mono IDs, section labels). The always-on
+   prose has moved behind "?" help icons (.help-icon → .help-popover). */
+.modal-body, #general-tab-content {
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+.modal-body input, .modal-body select, .modal-body textarea,
+#general-tab-content input, #general-tab-content select, #general-tab-content textarea {
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+/* The few explanations that stay always-visible (rare) use this instead of an
+   inline 9-11px style — readable, theme-aware, chat font. */
+.cfg-help {
+  font-size: 13px;
+  color: var(--text-400);
+  line-height: 1.5;
+  font-family: var(--font-ui);
+}
 .modal-close {
   width: 32px;
   height: 32px;

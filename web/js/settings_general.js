@@ -263,7 +263,10 @@ const ROW = `display:flex;align-items:center;gap:10px;padding:10px 12px;border:1
 const DOT = (ok) => `<span style="width:7px;height:7px;border-radius:50%;background:${ok?'var(--success)':'var(--error)'};flex-shrink:0"></span>`;
 const MONO = `font-size:11px;font-family:var(--font-mono);color:var(--text-400)`;
 const BADGE = (t,c='var(--text-400)') => `<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-200);color:${c}">${esc(t)}</span>`;
-const SEC = (title) => `<div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:12px 0 4px">${title}</div>`;
+// Section label. Optional second arg `help` appends a "?" icon that reveals the
+// explanation in a popover (utils.helpIcon) — keeps prose out of the dialog
+// until asked for. The icon stays non-uppercase so the "?" reads cleanly.
+const SEC = (title, help) => `<div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:12px 0 4px">${title}${help ? `<span style="text-transform:none">${helpIcon(help)}</span>` : ''}</div>`;
 
 async function switchGeneralTab(tab, btn) {
   if (btn) {
