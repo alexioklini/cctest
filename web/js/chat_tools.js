@@ -555,7 +555,6 @@ function renderToolCall(msg, idx) {
   if (msg.synthetic) {
     return renderSyntheticGdprCall(msg, idx);
   }
-  if (!state.showToolCalls) return '';
   // Look ahead for matching tool_result — match by tool_use_id when available,
   // fall back to name. Don't stop at sibling tool_calls (parallel batches interleave).
   const chat = state.activeChat;
@@ -779,7 +778,6 @@ function renderToolResult(msg, idx) {
   if (msg.synthetic) return '';
   // Tool results are now rendered inside their tool_call block
   // Only render standalone if no preceding tool_call found
-  if (!state.showToolCalls) return '';
   const chat = state.activeChat;
   if (chat) {
     for (let j = idx - 1; j >= 0; j--) {

@@ -98,7 +98,6 @@ Tokens); Aufrufe von vor der Einführung dieser Funktion erscheinen als
 - 🔬 Recherche-Modus-Override (nur in Projekt-Chats)
 - ✨ Verfeinern — den Entwurf vor dem Senden überarbeiten
 - 🔧 Verfeinerungs-Modus (Polish ↔ Engineer) — der Schalter direkt neben ✨. **Polish** (Standard) säubert nur Grammatik/Klarheit und lässt die Absicht unverändert. **Engineer** (akzentfarben, wenn aktiv) strukturiert den Prompt um: präzisiert die Aufgabe, nutzt das aktive Modell + verfügbare Tools + Projekt-Anweisungen als Kontext, fragt bei hoffnungslos vagen Entwürfen nach (statt Details zu erfinden) und lässt bereits gute Entwürfe unangetastet. Pro Oberfläche gemerkt (Chat, geplante Aufgaben, Soul-Editor)
-- 🔧 Tool-Aufrufe im Verlauf ein-/ausblenden
 - 🛡️ GDPR-Details (PII-Funde inline aus-/einblenden)
 - 💾 In-Gedächtnis-speichern-Zyklus (aus / an / auto)
 - 🪨 Caveman-Modus (knappe Antworten)
@@ -133,7 +132,8 @@ eingeschränkt). Wie die Absicht erkannt wird, steuert Einstellungen → Server 
 Auto-Routing. Wird beim Senden eine DSGVO-Sperre ausgelöst, verschwindet
 **Smart (Cloud)** aus der Liste, **Smart (Lokal)** bleibt (es trifft ohnehin
 nur lokale Modelle). Der Verfasser zeigt weiter „✨ Smart (…)"; welches Modell
-gerade arbeitet, steht im Spinner und im Tooltip.
+gerade arbeitet, steht in der Status-Zeile am Anfang der laufenden Antwort
+(siehe unten) und im Tooltip.
 
 **Klassifikations-Inspektor (Lupe am Turn-Ende)**: Lief für eine Anfrage der
 LLM-Classifier (Einstellungen → Server → Auto-Routing = LLM/Hybrid), erscheint
@@ -159,13 +159,20 @@ Ein Klick klappt diese eine Anfrage auf oder zu. **Lange gedrückt halten**
 (≈ ½ Sekunde) klappt **alle** Anfragen auf oder zu — die Richtung richtet
 sich nach der gehaltenen Anfrage (eine offene gehalten → alle zu; eine
 zugeklappte gehalten → alle auf); danach wird die gehaltene Anfrage wieder
-in den Blick gescrollt. Alle Auf-/Zuklapp-Bereiche im Chat — Anfragen, die
-**Aktivität**-Box (Tool-Aufrufe/Denken), verdichteter Kontext, Webquellen,
-Quellen-Legende, durchsuchte Quellen — animieren weich. Die **Aktivität**-Box
-bleibt während der gesamten Anfrage offen (man sieht die Tools live laufen)
-und klappt erst zu, sobald die Antwort fertig ist; sie lässt sich jederzeit
-wieder öffnen, und sobald man sie selbst umschaltet, klappt sie nicht mehr
-automatisch zu. Tool-Aufrufe zeigen ihre Ausführungsdauer.
+in den Blick gescrollt. Alle Auf-/Zuklapp-Bereiche im Chat — Anfragen, der
+**Datenschutz**-Block, verdichteter Kontext, Webquellen, Quellen-Legende,
+durchsuchte Quellen — animieren weich.
+
+**Live-Anzeige während der Antwort (Claude-Code-Stil)**: Denken und Tool-Aufrufe
+erscheinen jetzt **direkt im Chat-Verlauf, genau in der Reihenfolge, in der sie
+passieren** — kein eigener Block, kein Auf-/Zuklappen. **Denken** steht in der
+Chat-Schrift, etwas heller und kursiv; **Tool-Aufrufe** stehen als kompakte,
+anklickbare Zeile (Klick öffnet die Details im rechten Panel) und zeigen ihre
+Ausführungsdauer. Am Anfang der laufenden Antwort steht eine **Status-Zeile**
+(Spinner-Balken + arbeitendes Modell + „Denke nach…" + verstrichene Zeit); sie
+verschwindet automatisch, sobald der Turn fertig ist oder abgebrochen wird.
+Nur **Datenschutz**-Vorgänge (Anonymisierung / De-Anonymisierung) bleiben in
+einem eigenen, aufklappbaren **Datenschutz**-Block mit Zählern zusammengefasst.
 
 **Quellenangaben (Zitat-Chips)**: Belegt die Antwort eine Aussage mit einer
 Quelle, erscheint an der Stelle eine kleine nummerierte Hochzahl **[1] [2] …**.

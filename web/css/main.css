@@ -1426,6 +1426,29 @@ textarea { resize: none; }
   text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }
 .act-highlight { outline: 2px solid var(--accent-brand);
   outline-offset: 1px; transition: outline 0.2s; }
+
+/* Inline thinking — same font/size as chat body, lighter + italic, no block.
+   Renders directly in the message flow (chronological with tool lines). */
+.msg-thinking {
+  font-size: var(--font-body);
+  color: var(--text-400);
+  font-style: italic;
+  margin: 2px 0;
+  line-height: 1.5;
+}
+.msg-thinking p:first-child { margin-top: 0; }
+.msg-thinking p:last-child { margin-bottom: 0; }
+
+/* Inline streaming status line — Claude-Code style. Sits at the very start of
+   the in-flight assistant response (spinner + working model + label + elapsed),
+   auto-removed when the .msg-streaming block is replaced on done/error/cancel. */
+.stream-status {
+  display: flex; align-items: center; gap: 8px;
+  font-size: var(--font-body); color: var(--text-400);
+  margin: 2px 0 6px;
+}
+.stream-status .spinner-model { font-weight: 500; color: var(--accent-brand); }
+.stream-status .spinner-elapsed { margin-left: auto; font-family: var(--font-mono); font-size: 11px; }
 .worker-question-card {
   margin: 12px 0; border-radius: 10px; border: 2px solid #0891b2;
   background: var(--bg-100); overflow: hidden;

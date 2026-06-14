@@ -336,6 +336,10 @@ async function sendMessage() {
   chat._msgSeq = chat._msgSeq || 0;
   const streamGen = (chat._streamGen = (chat._streamGen || 0) + 1);
   updateStreamingUI(true, chat);
+  // Show the inline status line immediately (before the first SSE event) so the
+  // user sees the spinner + model + "Denke nach…" at the start of the in-flight
+  // response right after sending — the old top spinner-bar appeared on send too.
+  renderStreamingMessage(chat);
 
   // Timer (per-chat, not global)
   chat._streamStartTime = Date.now();
@@ -450,9 +454,8 @@ function buildStreamCallbacks(chat, isActive) {
         if (isActive()) {
           // Real text is flowing → clear any prior nudge label so it doesn't
           // linger when the model finally answers.
-          const _lbl = document.getElementById('spinner-label');
-          if (_lbl && _lbl.textContent.startsWith('Modell wird neu angestoßen')) {
-            _lbl.textContent = '';
+          if ((chat._streamLabel || '').startsWith('Modell wird neu angestoßen')) {
+            setStreamStatus(chat, 'label', '');
           }
           renderStreamingMessage(chat); scrollToBottom();
         }
@@ -474,7 +477,7 @@ function buildStreamCallbacks(chat, isActive) {
         } else {
           last.args = d.args;
         }
-        // Re-render on every new tool call REGARDLESS of state.showToolCalls.
+        // Re-render on every new tool call.
         // With the toggle OFF, renderTurnBody emits no tool cards but still
         // renders the static `Aktivität · N Tools` header (count updates live)
         // — the user expects to see *that a tool ran* even when the details are
@@ -488,8 +491,7 @@ function buildStreamCallbacks(chat, isActive) {
       },
       references: (d) => {
         // Server-pushed normalized refs for the just-completed tool call.
-        // Mirrors the tool_result path below but fires independently so
-        // refs arrive even if tool_result is suppressed by showToolCalls=false.
+        // Mirrors the tool_result path below but fires independently.
         const refs = d.references || [];
         if (!refs.length || !chat.sessionId) return;
         if (!state.chatReferences[chat.sessionId]) state.chatReferences[chat.sessionId] = { cited: [], searched: [] };
@@ -533,7 +535,7 @@ function buildStreamCallbacks(chat, isActive) {
             updateRightPanelBadges();
           }
         }
-        if (!state.showToolCalls || !isActive()) return;
+        if (!isActive()) return;
         renderMessages();
         renderStreamingMessage(chat);
         scrollToBottom();
@@ -647,7 +649,7 @@ function buildStreamCallbacks(chat, isActive) {
         };
         // renderMessages() wipes the .msg-streaming div. Re-append it so the thinking
         // panel and partial text stay visible during the worker's lifetime.
-        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
       },
       'worker.progress': (d) => {
         if (!d.worker_id) return;
@@ -661,7 +663,7 @@ function buildStreamCallbacks(chat, isActive) {
           if (d.entry.kind === 'question') wf.question = { question: d.entry.question, options: d.entry.options };
           if (d.entry.kind === 'answer') wf.question = null;
         }
-        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
       },
       'worker.finished': (d) => {
         console.log('[SSE] worker.finished:', d.tool_name, d.duration_seconds + 's');
@@ -669,25 +671,25 @@ function buildStreamCallbacks(chat, isActive) {
         const w = state.activeWorkers[d.worker_id]; if (w) w.state = d.state || 'COMPLETED';
         const wf = state.workerFlows[d.worker_id];
         if (wf) { wf.state = d.state || 'COMPLETED'; wf.duration = d.duration_seconds; }
-        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
       },
       'worker.paused': (d) => {
         if (!d.worker_id) return;
         const w = state.activeWorkers[d.worker_id]; if (w) w.state = 'PAUSED';
         const wf = state.workerFlows[d.worker_id]; if (wf) wf.state = 'PAUSED';
-        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
       },
       'worker.resumed': (d) => {
         if (!d.worker_id) return;
         const w = state.activeWorkers[d.worker_id]; if (w) w.state = 'RUNNING';
         const wf = state.workerFlows[d.worker_id]; if (wf) wf.state = 'RUNNING';
-        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
       },
       'worker.aborted': (d) => {
         if (!d.worker_id) return;
         const w = state.activeWorkers[d.worker_id]; if (w) w.state = 'ABORTED';
         const wf = state.workerFlows[d.worker_id]; if (wf) wf.state = 'ABORTED';
-        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
       },
       worker_usage: (d) => {
         if (!d.worker_id) return;
@@ -699,7 +701,7 @@ function buildStreamCallbacks(chat, isActive) {
             model: d.model || '',
           };
         }
-        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
       },
       'worker.question': (d) => {
         console.log('[SSE] worker.question:', d.worker_id, d.question);
@@ -710,7 +712,7 @@ function buildStreamCallbacks(chat, isActive) {
           });
           wf.state = 'WAITING_FOR_USER';
           wf.question = { question: d.question, options: d.options };
-          if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
+          if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
         }
         if (!isActive()) return;
         const container = document.getElementById('messages-container');
@@ -747,7 +749,7 @@ function buildStreamCallbacks(chat, isActive) {
         if (d.worker_id) {
           const wf = state.workerFlows[d.worker_id];
           if (wf) { wf.question = null; wf.state = 'RUNNING'; }
-          if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
+          if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
         }
         const card = document.getElementById(`wq-${d.worker_id}`);
         if (card) {
@@ -830,10 +832,8 @@ function buildStreamCallbacks(chat, isActive) {
       fallback: (d) => {
         if (d.to) {
           chat.model = d.to;
-          if (isActive()) {
-            document.getElementById('spinner-model').textContent = modelShortName(d.to);
-            updateModelSelectorDisplay(d.to);
-          }
+          setStreamStatus(chat, 'model', modelShortName(d.to));
+          if (isActive()) updateModelSelectorDisplay(d.to);
         }
       },
       // Auto routing — the server picked a concrete model for this turn. Keep
@@ -846,9 +846,8 @@ function buildStreamCallbacks(chat, isActive) {
         // Structured task analysis (task_types/tools/complexity) when the LLM
         // classifier ran — kept for an optional richer Auto badge.
         chat.autoAnalysis = d.analysis || null;
+        setStreamStatus(chat, 'model', modelShortName(d.model));
         if (isActive()) {
-          const sm = document.getElementById('spinner-model');
-          if (sm) sm.textContent = modelShortName(d.model);
           // Keep the composer on whichever Smart mode is active (Cloud/Lokal),
           // not a bare 'auto' — the label + tooltip stay correct per mode.
           if (typeof updateModelSelectorDisplay === 'function')
@@ -858,7 +857,7 @@ function buildStreamCallbacks(chat, isActive) {
       warmup: (d) => {
         if (d.status === 'waiting') {
           if (isActive() && typeof buddyPhase === 'function') buddyPhase('warmup');
-          if (isActive()) document.getElementById('spinner-label').textContent = 'Warte auf Warmup...';
+          setStreamStatus(chat, 'label', 'Warte auf Warmup...');
         } else if (d.status === 'ready') {
           stopWarmupPoll(chat);
           updateStatusBar();
@@ -866,50 +865,30 @@ function buildStreamCallbacks(chat, isActive) {
       },
       max_tokens_exhausted: (d) => {
         if (isActive() && d.message) {
-          const el = document.getElementById('spinner-label');
-          if (el) el.textContent = 'Token-Limit erreicht';
+          setStreamStatus(chat, 'label', 'Token-Limit erreicht');
           showToast(d.message, true);
         }
       },
       compacting: (d) => {
         if (typeof buddyPhase === 'function') buddyPhase('compacting');
-        const spinnerBar = document.getElementById('spinner-bar');
-        const el = document.getElementById('spinner-label');
-        if (el) el.textContent = `Kontext wird verdichtet${d.pct ? ` (${d.pct}% voll)` : ''}…`;
-        if (spinnerBar && !spinnerBar.classList.contains('active')) {
-          document.getElementById('spinner-model').textContent = spinnerModelName(chat);
-          document.getElementById('spinner-elapsed').textContent = '';
-          spinnerBar.classList.add('active');
-        }
+        setStreamStatus(chat, 'label', `Kontext wird verdichtet${d.pct ? ` (${d.pct}% voll)` : ''}…`);
       },
       citation_reround_start: (d) => {
         if (!isActive()) return;
-        const el = document.getElementById('spinner-label');
-        if (el) {
-          const ratio = (d && d.claim_total)
-            ? ` (${d.uncited_claims}/${d.claim_total} ohne Quelle)`
-            : '';
-          el.textContent = `Quellen werden erneut geprüft${ratio}…`;
-        }
+        const ratio = (d && d.claim_total)
+          ? ` (${d.uncited_claims}/${d.claim_total} ohne Quelle)`
+          : '';
+        setStreamStatus(chat, 'label', `Quellen werden erneut geprüft${ratio}…`);
       },
       citation_reround_done: () => {
         if (!isActive()) return;
-        const el = document.getElementById('spinner-label');
-        if (el) el.textContent = '';
+        setStreamStatus(chat, 'label', '');
       },
       empty_round_nudge: (d) => {
         if (!isActive()) return;
-        const el = document.getElementById('spinner-label');
-        if (el) {
-          const attempt = (d && d.attempt) || 1;
-          const max = (d && d.max) || 3;
-          el.textContent = `Modell wird neu angestoßen (${attempt}/${max})…`;
-        }
-        if (spinnerBar && !spinnerBar.classList.contains('active')) {
-          document.getElementById('spinner-model').textContent = spinnerModelName(chat);
-          document.getElementById('spinner-elapsed').textContent = '';
-          spinnerBar.classList.add('active');
-        }
+        const attempt = (d && d.attempt) || 1;
+        const max = (d && d.max) || 3;
+        setStreamStatus(chat, 'label', `Modell wird neu angestoßen (${attempt}/${max})…`);
       },
       compacted: (d) => {
         // Inject a visual divider at the start of the message list so the user
@@ -1187,11 +1166,7 @@ async function triggerLCM() {
   if (chat.streaming) { showToast('Bitte auf das Ende der Antwort warten', true); return; }
   const btn = document.getElementById('status-lcm-btn');
   if (btn) btn.disabled = true;
-  const spinnerBar = document.getElementById('spinner-bar');
-  document.getElementById('spinner-model').textContent = spinnerModelName(chat);
-  document.getElementById('spinner-label').textContent = 'Kontext wird verdichtet…';
-  document.getElementById('spinner-elapsed').textContent = '';
-  spinnerBar.classList.add('active');
+  showToast('Kontext wird verdichtet…');
   if (typeof buddyPhase === 'function') buddyPhase('compacting');
   try {
     const result = await API.post('/v1/context/compact', { session_id: sessionId });
@@ -1227,7 +1202,6 @@ async function triggerLCM() {
     showToast('LCM fehlgeschlagen: ' + (e.message || e), true);
   } finally {
     if (btn) btn.disabled = false;
-    spinnerBar.classList.remove('active');
     if (typeof buddyTurnEnd === 'function') buddyTurnEnd();
   }
 }
@@ -1781,33 +1755,53 @@ function spinnerModelName(chat) {
   if (isAutoModel(chat?.model) && chat?.autoPicked) return modelShortName(chat.autoPicked);
   return modelShortName(chat?.model);
 }
+// Status text (model / label / elapsed) is mirrored onto chat state so the
+// inline status line in renderStreamingMessage survives re-renders, then the
+// live DOM span (if currently mounted) is updated in place. The SSE handlers
+// still write some labels directly by id — those also land on the mounted span;
+// the seed-from-state covers the next re-render.
+function setStreamStatus(chat, field, text) {
+  const target = chat || state.activeChat;
+  if (!target) return;
+  const key = field === 'model' ? '_streamModel' : field === 'elapsed' ? '_streamElapsed' : '_streamLabel';
+  target[key] = text;
+  if (target === state.activeChat) {
+    const id = field === 'model' ? 'spinner-model' : field === 'elapsed' ? 'spinner-elapsed' : 'spinner-label';
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+}
 function updateStreamingUI(isStreaming, chat) {
-  const spinnerBar = document.getElementById('spinner-bar');
   const sendBtn = document.getElementById('chat-send-btn');
   const stopBtn = document.getElementById('chat-stop-btn');
   // Use provided chat, fall back to activeChat for backward compat (stopGeneration, etc.)
   const targetChat = chat || state.activeChat;
 
   if (isStreaming) {
-    spinnerBar.classList.add('active');
     sendBtn.classList.add('hidden');
     stopBtn.classList.remove('hidden');
-    document.getElementById('spinner-model').textContent = spinnerModelName(targetChat);
-    document.getElementById('spinner-label').textContent = 'Denke nach...';
-    document.getElementById('spinner-elapsed').textContent = '';
+    if (targetChat) {
+      targetChat._streamModel = spinnerModelName(targetChat);
+      targetChat._streamLabel = 'Denke nach...';
+      targetChat._streamElapsed = '';
+    }
     if (typeof buddyTurnStart === 'function') buddyTurnStart();
   } else {
-    spinnerBar.classList.remove('active');
     sendBtn.classList.remove('hidden');
     stopBtn.classList.add('hidden');
+    if (targetChat) { targetChat._streamModel = ''; targetChat._streamLabel = ''; targetChat._streamElapsed = ''; }
     if (typeof buddyTurnEnd === 'function') buddyTurnEnd();
   }
 }
 function updateStreamTimer(chat) {
   const target = chat || state.activeChat;
   if (!target?._streamStartTime) return;
-  const elapsed = ((Date.now() - target._streamStartTime) / 1000).toFixed(1);
-  document.getElementById('spinner-elapsed').textContent = elapsed + 's';
+  const elapsed = ((Date.now() - target._streamStartTime) / 1000).toFixed(1) + 's';
+  target._streamElapsed = elapsed;
+  if (target === state.activeChat) {
+    const el = document.getElementById('spinner-elapsed');
+    if (el) el.textContent = elapsed;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════

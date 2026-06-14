@@ -1,9 +1,8 @@
 # Pre-existing ESLint no-undef findings in UNCHANGED code at Tier-F start (2026-05-23).
 # Out of refactor scope (Rule 3 — no fixing adjacent bugs). The gate fails on any
 # finding NOT listed here; this list may shrink but never grow. Details:
-#   chat_send.js spinnerBar  — const declared in compacting cb, referenced in empty_round_nudge cb (latent block-scope bug; relocated from chat.js in Tier F Phase 4)
 #   sessions.js autoGrow — optional, try/catch-guarded, defined nowhere in web/js
 #   workflows.js loadSessions — optional, typeof-guarded
-chat_send.js: no-undef: 'spinnerBar' is not defined.
+# (chat_send.js spinnerBar fixed 2026-06-14 — inline streaming status rework removed the dangling reference)
 sessions.js: no-undef: 'autoGrow' is not defined.
 workflows.js: no-undef: 'loadSessions' is not defined.

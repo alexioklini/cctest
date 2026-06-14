@@ -446,32 +446,22 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   const userKey = userMemberPos >= 0 ? sortKey(messages[memberIdxs[userMemberPos]]) : 0;
   if (!Number.isFinite(postUserAnchor)) postUserAnchor = userKey + 1;
 
-  const bodyItems = []; // { kind, sortTs, ... }
-  let currentRound = null;
-  const flushRound = () => {
-    if (!currentRound) return;
-    const firstMsg = currentRound.thinking?.m || currentRound.tools[0]?.m;
-    const ts = sortKey(firstMsg);
-    bodyItems.push({ kind: 'round', sortTs: ts, round: currentRound });
-    currentRound = null;
-  };
+  // Build a flat chronological list of body items. Per the inline-flow spec,
+  // REAL activity (thinking + tool calls) renders inline in exact order — no
+  // round grouping, no Aktivität collapsible. GDPR/privacy synthetic rows keep
+  // their existing grouped display (collected into one 'privacy' bucket rendered
+  // at the position of the first privacy row).
+  const bodyItems = []; // { kind: 'thinking'|'tool'|'privacy', sortTs, ... }
   for (let i = 0; i < memberIdxs.length; i++) {
     const idx = memberIdxs[i];
     const m = messages[idx];
     if (isSynthetic(m)) {
-      // tool_result is rendered paired inside the tool_call by
-      // renderSyntheticGdprCall — skip standalone to avoid duplication.
+      // tool_result is rendered paired inside the tool_call — skip standalone.
       if (m.role !== 'tool_call') continue;
       if (!realOpsByCall.has(idx)) continue;
-      flushRound();
       let ts = sortKey(m);
-      // Pre-user synthetic row: bump into the post-user window so it
-      // renders between the user send and the first real activity item.
-      // 0.5 keeps relative order between multiple pre-user synthetics
-      // intact (stable sort) while landing them strictly before
-      // postUserAnchor.
       if (userMemberPos >= 0 && i < userMemberPos) {
-        ts = postUserAnchor - 0.5;
+        ts = postUserAnchor - 0.5;  // pre-user anon → after the user send
       }
       bodyItems.push({ kind: 'privacy', sortTs: ts, item: { idx, m } });
       continue;
@@ -479,24 +469,13 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
     // Real activity items: only those before the response.
     if (i >= scanEnd) continue;
     if (!isActivity(m)) continue;
-    if (m.role === 'tool_result') continue; // paired inside tool_call
-    if (m.role === 'thinking') {
-      flushRound();
-      currentRound = { thinking: { idx, m }, tools: [], toolRound: null };
-    } else if (m.role === 'tool_call') {
-      const tr = m.tool_round ?? null;
-      // Flush when the LLM round number changes (new multi-step round
-      // without a thinking block in between).
-      if (currentRound && tr !== null && currentRound.toolRound !== null && tr !== currentRound.toolRound) {
-        flushRound();
-      }
-      if (!currentRound) currentRound = { thinking: null, tools: [], toolRound: tr };
-      if (currentRound.toolRound === null && tr !== null) currentRound.toolRound = tr;
-      currentRound.tools.push({ idx, m });
-    }
+    if (m.role === 'tool_result') continue;       // paired inside tool_call
+    bodyItems.push({
+      kind: m.role === 'thinking' ? 'thinking' : 'tool',
+      sortTs: sortKey(m), item: { idx, m },
+    });
   }
-  flushRound();
-  // Stable sort by sortTs. Equal keys retain their walker-order.
+  // Stable sort by sortTs — equal keys retain walker (chronological) order.
   bodyItems.sort((a, b) => a.sortTs - b.sortTs);
 
   // Trailing per-category notes if attempts existed but nothing real fired.
@@ -508,43 +487,57 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
     trailingNotes.push('<div class="privacy-empty-note">Keine De-Anonymisierungen notwendig</div>');
   }
 
-  // Render body. Privacy rows respect state.showGdprDetails — when OFF,
-  // their rows are omitted from the body but counters still appear in the
-  // header.
+  // Render body INLINE in chronological order: thinking + tool calls flow
+  // directly in the conversation (no Aktivität collapsible, no block) exactly
+  // where they happened. GDPR/privacy rows are kept in their existing grouped
+  // 'Aktivität' collapsible (with counters + the state.showGdprDetails toggle),
+  // emitted once at the position of the first privacy row.
+  const privacyEntries = bodyItems.filter(e => e.kind === 'privacy');
+  let privacyEmitted = false;
+  const privacyBlockHtml = () => {
+    // Build the (kept-as-is) GDPR collapsible. Counts only privacy ops now —
+    // tools render inline. Returns '' if nothing to show.
+    let pBody = '';
+    if (state.showGdprDetails) {
+      for (const e of privacyEntries) {
+        pBody += `<div class="activity-item activity-privacy">${renderMessage(e.item.m, e.item.idx)}</div>`;
+      }
+      pBody += trailingNotes.join('');
+    }
+    const parts = [];
+    if (anonReal > 0) parts.push(anonReal === 1 ? '1 Anon' : `${anonReal} Anon`);
+    if (deanonReal > 0) parts.push(deanonReal === 1 ? '1 De-Anon' : `${deanonReal} De-Anon`);
+    if (!parts.length && anonAttempted === 0 && deanonAttempted === 0) return '';
+    const countHtml = parts.length ? `<span class="activity-summary-count">${esc(parts.join(' · '))}</span>` : '';
+    if (!pBody.trim()) {
+      return `<div class="activity-summary-header-static"><span>Datenschutz</span>${countHtml}</div>`;
+    }
+    const headerEl = `<div class="activity-summary-header" onclick="toggleActivitySummary(${turnNum})">
+        <svg class="activity-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        <span>Datenschutz</span>${countHtml}
+      </div>`;
+    return `<div class="activity-summary" data-activity-turn="${turnNum}">
+      ${headerEl}
+      <div class="activity-summary-body"><div class="activity-summary-body-inner">${pBody}</div></div>
+    </div>`;
+  };
+
   let bodyHtml = '';
   for (const entry of bodyItems) {
-    if (entry.kind === 'round') {
-      const r = entry.round;
-      let roundHtml = '';
-      if (r.thinking) {
-        const th = renderMessage(r.thinking.m, r.thinking.idx);
-        if (th.trim()) roundHtml += `<div class="activity-item activity-thinking">${th}</div>`;
-      }
-      if (r.tools.length) {
-        // renderMessage returns '' for tool calls when state.showToolCalls is
-        // off — skip those so we don't emit empty wrapper divs that make the
-        // disclosure body look non-empty and offer an expander revealing nothing.
-        const toolsHtml = r.tools.map(t => {
-          const tc = renderMessage(t.m, t.idx);
-          return tc.trim() ? `<div class="activity-item activity-tool">${tc}</div>` : '';
-        }).join('');
-        if (toolsHtml.trim()) {
-          roundHtml += `<div class="activity-tools-group${r.thinking ? ' activity-tools-indented' : ''}">${toolsHtml}</div>`;
-        }
-      }
-      if (roundHtml.trim()) bodyHtml += `<div class="activity-round">${roundHtml}</div>`;
+    if (entry.kind === 'thinking') {
+      bodyHtml += renderMessage(entry.item.m, entry.item.idx);
+    } else if (entry.kind === 'tool') {
+      bodyHtml += renderMessage(entry.item.m, entry.item.idx);
     } else if (entry.kind === 'privacy') {
-      if (!state.showGdprDetails) continue;
-      const it = entry.item;
-      bodyHtml += `<div class="activity-item activity-privacy">${renderMessage(it.m, it.idx)}</div>`;
+      // Emit the whole privacy block once, at the first privacy row's position.
+      if (!privacyEmitted) { bodyHtml += privacyBlockHtml(); privacyEmitted = true; }
     }
   }
-  if (state.showGdprDetails) bodyHtml += trailingNotes.join('');
+  // If there were privacy attempts but no row reached the loop's emit point
+  // (e.g. all filtered), still surface the block.
+  if (!privacyEmitted && privacyEntries.length) bodyHtml += privacyBlockHtml();
 
   // Everything from lastResponseMemberPos onwards = assistant reply.
-  // Trailing synthetic rows (next-turn pre-anonymisation) already counted
-  // in the header above; skip here so they don't render bare under the
-  // assistant reply.
   let responseHtml = '';
   if (lastResponseMemberPos !== -1) {
     for (let i = lastResponseMemberPos; i < memberIdxs.length; i++) {
@@ -553,65 +546,7 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
     }
   }
 
-  // No activity AND no real synthetic rows — nothing to disclose.
-  if (toolCount === 0 && anonReal === 0 && deanonReal === 0 && anonAttempted === 0 && deanonAttempted === 0
-      && !bodyItems.some(e => e.kind === 'round' && e.round.thinking)) {
-    return responseHtml;
-  }
-
-  // Header label per user spec: N Tools · M Anon · K De-Anon. Hide zeros.
-  // "Aktivität" is the label (left); the parts render as a right-aligned count
-  // (margin-left:auto), matching the citation-legend / web-sources / Durchsucht
-  // header layout instead of being inlined into the label text.
-  const parts = [];
-  if (toolCount > 0) parts.push(toolCount === 1 ? '1 Tool' : `${toolCount} Tools`);
-  if (anonReal > 0) parts.push(anonReal === 1 ? '1 Anon' : `${anonReal} Anon`);
-  if (deanonReal > 0) parts.push(deanonReal === 1 ? '1 De-Anon' : `${deanonReal} De-Anon`);
-  const countHtml = parts.length ? `<span class="activity-summary-count">${esc(parts.join(' · '))}</span>` : '';
-
-  // Open/closed state is NOT decided here — renderTurnBody emits state-agnostic
-  // markup (stable hash) and _applyChatCollapseStates stamps the .open class
-  // post-render from chat._activityStates. (Previously computed an `isOpen`
-  // here; now dead.)
-
-  // When the body is empty there's nothing to disclose — e.g. tool calls are
-  // suppressed (state.showToolCalls=false) and there are no thinking/GDPR rows.
-  // Render a static header without the chevron/<details> so the user isn't
-  // offered an expander that reveals nothing.
-  if (!bodyHtml.trim()) {
-    const staticHeader = `<div class="activity-summary-header-static"><span>Aktivität</span>${countHtml}</div>`;
-    return lastResponseMemberPos === -1
-      ? staticHeader
-      : `${staticHeader}${responseHtml}`;
-  }
-
-  // NOTE: deliberately NOT a native <details> — its body is removed from
-  // layout when closed, which can't be height-animated. Instead the body
-  // stays in the DOM always and open/closed is a class on the wrapper; the
-  // CSS grid-template-rows 0fr↔1fr trick animates the collapse smoothly
-  // (see .activity-summary in main.css). toggleActivitySummary flips the
-  // class on this live node instead of forcing a full re-render, so the
-  // transition actually runs.
-  const headerEl = `<div class="activity-summary-header" onclick="toggleActivitySummary(${turnNum})">
-        <svg class="activity-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        <span>Aktivität</span>${countHtml}
-      </div>`;
-
-  // NOTE: the `open` class is intentionally NOT baked into this HTML, and the
-  // open/closed signal is NOT in the hashed markup at all. If it were, every
-  // open↔close flip would change the block hash and the reconciler would
-  // replace the node — killing the CSS transition. Instead the HTML is
-  // open-state-agnostic (stable hash); `_applyActivityOpenStates()` runs after
-  // each render and stamps `.open` from chat._activityStates onto the
-  // persistent node, so toggles + auto-close animate instead of snapping.
-  const detailsHtml = `<div class="activity-summary" data-activity-turn="${turnNum}">
-      ${headerEl}
-      <div class="activity-summary-body"><div class="activity-summary-body-inner">${bodyHtml}</div></div>
-    </div>`;
-
-  return lastResponseMemberPos === -1
-    ? detailsHtml
-    : `${detailsHtml}${responseHtml}`;
+  return bodyHtml + responseHtml;
 }
 function renderMessage(msg, idx) {
   if (msg.role === 'human' || msg.role === 'user') {
@@ -641,17 +576,9 @@ function renderMessage(msg, idx) {
 function renderThinkingMessage(msg, idx) {
   const text = typeof msg.content === 'string' ? msg.content : '';
   if (!text) return '';
-  return `
-    <div class="msg-turn msg-turn-assistant">
-      <div class="thinking-block" onclick="this.classList.toggle('open')">
-        <div class="thinking-block-header">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
-          Denke nach...
-        </div>
-        <div class="thinking-block-body collapsible-body"><div class="collapsible-inner msg-content">${renderMarkdown(text)}</div></div>
-      </div>
-    </div>
-  `;
+  // Inline thinking: flows in the conversation like output, in chat font/size
+  // but lighter + italic. No block, no collapse. (Claude-Code style.)
+  return `<div class="msg-thinking msg-content">${renderMarkdown(text)}</div>`;
 }
 function renderUserMessage(msg, idx) {
   let textContent = '';
@@ -821,32 +748,16 @@ function renderAssistantMessage(msg, idx) {
   // from validator metadata (server no longer bakes the prose into content).
   const citationWarnHtml = _buildCitationWarnBadge(msg.metadata?.citation_validation);
 
+  // Thinking attached to a reloaded assistant message (meta.thinking). Rendered
+  // inline, italic + lighter, matching the live thinking rows (no block/collapse).
   let thinkingHtml = '';
   if (msg._thinking) {
-    const summaryNote = msg._thinkingSummary?.reasoning_tokens
-      ? `<span style="margin-left:8px;opacity:0.7;font-size:11px;">${msg._thinkingSummary.reasoning_tokens.toLocaleString()} tok</span>`
-      : '';
-    thinkingHtml = `
-      <div class="thinking-block" onclick="this.classList.toggle('open')">
-        <div class="thinking-block-header">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
-          Denken${summaryNote}
-        </div>
-        <div class="thinking-block-body collapsible-body"><div class="collapsible-inner msg-content">${renderMarkdown(msg._thinking)}</div></div>
-      </div>
-    `;
+    thinkingHtml = `<div class="msg-thinking msg-content">${renderMarkdown(msg._thinking)}</div>`;
   } else if (msg._thinkingSummary?.reasoning_tokens) {
-    // Opaque reasoning: provider burned tokens on thinking but didn't return the text.
-    // Render a non-expandable badge so the user knows it happened.
+    // Opaque reasoning: provider burned tokens on thinking but didn't return the
+    // text. A small inline italic note so the user knows it happened.
     const n = msg._thinkingSummary.reasoning_tokens.toLocaleString();
-    thinkingHtml = `
-      <div class="thinking-block" style="cursor:default;opacity:0.75;" title="Provider hat die Anzahl der Reasoning-Token zurückgegeben, aber nicht den Text (verdecktes Denken).">
-        <div class="thinking-block-header">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
-          ${n} Token nachgedacht
-        </div>
-      </div>
-    `;
+    thinkingHtml = `<div class="msg-thinking msg-content" title="Provider hat die Anzahl der Reasoning-Token zurückgegeben, aber nicht den Text (verdecktes Denken).">${n} Token nachgedacht</div>`;
   }
 
   let filesHtml = '';
@@ -1149,23 +1060,34 @@ function renderStreamingMessage(chat) {
     return;
   }
 
-  // Nothing to show yet — don't emit an empty wrapper.
-  if (!chat.thinkingText && !chat.streamingText) return;
+  // Nothing to show and not streaming — don't emit an empty wrapper.
+  if (!chat.streaming && !chat.thinkingText && !chat.streamingText) return;
 
   let html = '<div class="msg-turn msg-turn-assistant msg-streaming">';
 
-  // Show the thinking panel during streaming. Default collapsed — header shows
-  // "Thinking..." progress, click to peek at the chain-of-thought as it arrives.
+  // Inline streaming status line (Claude-Code style) — sits at the very start
+  // of the in-flight response: spinner + working model + label + elapsed. The
+  // three spans keep their historical ids (spinner-model/label/elapsed) so the
+  // SSE handlers that write status text by id, plus the 100ms elapsed timer,
+  // keep working without change. The text content is seeded from chat state so
+  // a re-render (renderMessages wipes + this re-appends) doesn't lose the label.
+  if (chat.streaming) {
+    const modelLbl = esc(chat._streamModel || '');
+    const statusLbl = esc(chat._streamLabel || 'Denke nach...');
+    const elapsedLbl = esc(chat._streamElapsed || '');
+    html += `<div class="stream-status">
+      <div class="wave-bars"><span></span><span></span><span></span><span></span><span></span></div>
+      <span class="spinner-model" id="spinner-model">${modelLbl}</span>
+      <span id="spinner-label">${statusLbl}</span>
+      <span class="spinner-elapsed" id="spinner-elapsed">${elapsedLbl}</span>
+    </div>`;
+  }
+
+  // Live thinking — inline, italic, lighter (no block, no collapse), exactly
+  // where it happens in the flow. Completed rounds already render via
+  // renderMessages (renderThinkingMessage); this is only the in-flight buffer.
   if (chat.thinkingText) {
-    html += `
-      <div class="thinking-block" onclick="this.classList.toggle('open')">
-        <div class="thinking-block-header">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
-          Denke nach...
-        </div>
-        <div class="thinking-block-body collapsible-body"><div class="collapsible-inner msg-content">${renderMarkdown(chat.thinkingText)}</div></div>
-      </div>
-    `;
+    html += `<div class="msg-thinking msg-content">${renderMarkdown(chat.thinkingText)}</div>`;
   }
 
   if (chat.streamingText) {

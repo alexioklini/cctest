@@ -202,25 +202,14 @@ function _applyRefineTierComposer() {
   }
 }
 
-function toggleToolDisplay() {
-  state.showToolCalls = !state.showToolCalls;
-  localStorage.setItem('showToolCalls', state.showToolCalls);
-
-  for (const btn of _composerToggleEls('btn-toggle-tools')) {
-    btn.style.color = state.showToolCalls ? 'var(--accent-brand)' : '';
-    btn.title = state.showToolCalls ? 'Tool-Aufrufe: sichtbar' : 'Tool-Aufrufe: ausgeblendet';
-  }
-
-  renderMessages();
-  showToast(state.showToolCalls ? 'Tool-Aufrufe sichtbar' : 'Tool-Aufrufe ausgeblendet');
-}
+// (toggleToolDisplay removed — tool calls now always render inline in chat.)
 
 // Composer toggle for GDPR detail visibility. Privacy-first default: when
 // off (initial state), every assistant reply renders with the inline yellow
 // highlight stripped out and the Datenschutz disclosure body suppressed —
 // only the header counts remain. When on, restored spans get tooltips and
-// the disclosure expands as designed. Mirror of `toggleToolDisplay` —
-// localStorage scope, immediate re-render of currently visible messages.
+// the disclosure expands as designed. localStorage-scoped, with an immediate
+// re-render of the currently visible messages.
 function toggleGdprDetails() {
   state.showGdprDetails = !state.showGdprDetails;
   localStorage.setItem('showGdprDetails', state.showGdprDetails);
@@ -1082,7 +1071,6 @@ function initComposers() {
       set('slash-popup',          'chat-slash-popup');
       set('btn-thinking',         'btn-thinking');
       set('btn-refine',           'btn-refine');
-      set('btn-toggle-tools',     'btn-toggle-tools');
       set('btn-save-to-memory',   'btn-save-to-memory');
       set('btn-caveman',          'btn-caveman');
       set('model-selector',       'chat-model-selector');
@@ -1097,7 +1085,6 @@ function initComposers() {
       set('slash-popup',          p + 'slash-popup');
       set('btn-thinking',         p + 'btn-thinking');
       set('btn-refine',           p + 'btn-refine');
-      set('btn-toggle-tools',     p + 'btn-toggle-tools');
       set('btn-save-to-memory',   p + 'btn-save-to-memory');
       set('btn-caveman',          p + 'btn-caveman');
       set('model-selector',       p + 'model-selector');
@@ -1200,10 +1187,6 @@ async function init() {
   }
 
   // Init button states from stored preferences
-  for (const toolBtn of _composerToggleEls('btn-toggle-tools')) {
-    toolBtn.style.color = state.showToolCalls ? 'var(--accent-brand)' : '';
-    toolBtn.title = state.showToolCalls ? 'Tool-Aufrufe: sichtbar' : 'Tool-Aufrufe: ausgeblendet';
-  }
   for (const gdprBtn of _composerToggleEls('btn-toggle-gdpr-details')) {
     gdprBtn.style.color = state.showGdprDetails ? 'var(--warning, #d97706)' : '';
     gdprBtn.title = state.showGdprDetails
