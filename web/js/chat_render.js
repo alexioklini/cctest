@@ -1310,7 +1310,15 @@ function extractCitationsFromRaw(text) {
   // The no-prefix form requires the em-dash + quote to avoid matching
   // arbitrary markdown links like [text](url).
   const _BRACKET_PAT = '(?:(?:Quelle|QUELLE|source|Source|SOURCE):\\s*(?:[^\\[\\]]|\\[\\.{2,3}\\])+?|[^\\[\\]\\n]+?\\s*[—–]\\s*[„""«][^„"""»\\]]+[„"""»][^\\[\\]]*?)';
-  text = text.replace(new RegExp('([^\\n])[ \\t]*\\n[ \\t]*(\\[' + _BRACKET_PAT + '\\])', 'g'), '$1 $2');
+  // Lift a standalone bracket up onto the previous non-blank line, tolerating
+  // one or more BLANK lines in between (models often list each source as its
+  // own paragraph after the answer: "…regnen.\n\n[Quelle: a]\n\n[Quelle: b]").
+  // Run repeatedly so a whole run of consecutive bracket-paragraphs collapses
+  // onto the claim line one by one (each pass joins the topmost bracket, which
+  // then becomes the "previous content" the next bracket joins to).
+  const _pullUp = new RegExp('([^\\n])[ \\t]*\\n(?:[ \\t]*\\n)*[ \\t]*(\\[' + _BRACKET_PAT + '\\])', 'g');
+  let _prev;
+  do { _prev = text; text = text.replace(_pullUp, '$1 $2'); } while (text !== _prev);
   // Bracket regex for extraction
   const re = new RegExp('\\[(' + _BRACKET_PAT + ')\\]', 'g');
   const citations = [];
