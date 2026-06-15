@@ -45,9 +45,8 @@ Panel wird beim Verlassen geschlossen. Tabs mit Inhalt:
 - **Referenzen** — Quellen, die das Modell in diesem Turn gelesen hat
   (Web-Abrufe, Dokument-Lesungen)
 - **Dateien** — Artifacts, die das Modell in diesem Turn erzeugt hat
-- **Websuche** — kuratierte Web-Quellen für den nächsten Turn (siehe unten).
-  Checkbox „Nur Kurzfassung je Quelle (Abstract, spart Tokens)" lädt je
-  markierte Quelle nur eine ~1500-Zeichen-Kurzfassung statt der ganzen Seite
+- **Websuche** — kuratierte Web-Quellen für den nächsten Turn (siehe unten);
+  jede markierte Quelle wird beim Senden frisch + vollständig geladen
 - **Aktivität** — alle Tool-Aufrufe dieses Chats (synchrone + Hintergrund­aufgaben),
   chronologisch (neueste oben) in „Laufend" / „Abgeschlossen" (siehe unten)
 
@@ -689,9 +688,10 @@ Web-Quellen, und der nächste Turn arbeitet strikt aus dieser Menge.
 1. Im Websuche-Tab eine Suchanfrage eingeben → Treffer erscheinen.
 2. Treffer ankreuzen, um sie in den **Korb** zu legen. URLs lassen sich
    auch manuell eintippen oder per Drag&Drop ablegen.
-3. Der Korb ist global und bleibt erhalten (über Suchen und Sitzungen
-   hinweg, im Browser gespeichert) — nur der Nutzer leert ihn. Einträge
-   einzeln aktivieren/deaktivieren (überspringen, aber behalten) oder
+3. Der Korb gehört zur jeweiligen **Sitzung** (er wird serverseitig in der
+   Sitzung gespeichert und beim Öffnen eines Chats geladen) und bleibt über
+   mehrere Suchen innerhalb der Sitzung erhalten — nur der Nutzer leert ihn.
+   Einträge einzeln aktivieren/deaktivieren (überspringen, aber behalten) oder
    entfernen; Sammelaktionen vorhanden. Die Kopfzeile zeigt eine grobe
    Token-Schätzung der aktivierten Menge.
 4. Die nächste Chat-Nachricht senden. Der Server ruft jede aktivierte URL
