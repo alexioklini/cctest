@@ -2942,11 +2942,20 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     _rollback_messages(session, sid, _msg_count_before)
                     live.emit("done", {"text": "", "tokens": 0, "model": session.model})
             except engine.TaskCancelled:
-                # Save partial response if any text was streamed
+                # Persist whatever this turn produced before the cancel — partial
+                # text AND/OR tool calls. Gating on text alone lost a turn that
+                # had only made tool calls and no text yet (e.g. an ask_user that
+                # blocked waiting for an answer, then got cancelled — the tool
+                # call showed in the right panel but vanished on cancel, the
+                # 1fa62d2d bug). Persist when there's partial text OR partial
+                # tools so nothing the user was shown is silently dropped.
                 partial = "".join(_partial_reply).strip()
-                if partial:
+                if partial or _partial_tools:
                     _rollback_messages(session, sid, _msg_count_before)
-                    partial += "\n\n*(Cancelled)*"
+                    # Marker on its own line; if there was no text, the assistant
+                    # message body is just the cancel marker so the tool calls
+                    # (in metadata) still render under a real turn.
+                    partial = (partial + "\n\n*(Cancelled)*") if partial else "*(Cancelled)*"
                     meta = {"model": session.model, "partial": True}
                     if _partial_tools:
                         meta["tools"] = _sanitize_partial_tools(_partial_tools)
@@ -2956,10 +2965,13 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     _rollback_messages(session, sid, _msg_count_before)
                 live.emit("error", {"message": "Cancelled"})
             except SystemExit as e:
+                # Persist partial text AND/OR tool calls (same principle as the
+                # cancel branch — don't drop a turn that only made tool calls).
                 partial = "".join(_partial_reply).strip()
-                if partial:
+                if partial or _partial_tools:
                     _rollback_messages(session, sid, _msg_count_before)
-                    partial += f"\n\n*(Engine error: exit code {e.code})*"
+                    _marker = f"*(Engine error: exit code {e.code})*"
+                    partial = (partial + f"\n\n{_marker}") if partial else _marker
                     meta = {"model": session.model, "partial": True}
                     if _partial_tools:
                         meta["tools"] = _sanitize_partial_tools(_partial_tools)
@@ -2972,9 +2984,10 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 import traceback
                 traceback.print_exc()
                 partial = "".join(_partial_reply).strip()
-                if partial:
+                if partial or _partial_tools:
                     _rollback_messages(session, sid, _msg_count_before)
-                    partial += f"\n\n*(Error: {str(e)[:200]})*"
+                    _marker = f"*(Error: {str(e)[:200]})*"
+                    partial = (partial + f"\n\n{_marker}") if partial else _marker
                     meta = {"model": session.model, "partial": True}
                     if _partial_tools:
                         meta["tools"] = _sanitize_partial_tools(_partial_tools)
