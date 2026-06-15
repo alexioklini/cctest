@@ -173,7 +173,14 @@ import subprocess
 
 _MARKITDOWN_BIN = shutil.which("markitdown")
 _MARKITDOWN_TIMEOUT_SECS = 120
-_MARKITDOWN_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".msg", ".epub", ".zip"}
+# .xlsx is deliberately NOT here → Brain's own _extract_xlsx runs instead of
+# markitdown. Reason: markitdown flattens FOOTER-grouped reports (group key on a
+# total row below its members) and loses member→group membership identically to
+# our own flattener — but our _extract_xlsx now ALSO emits an explicit grouping
+# note when that pattern is present (the e487a415 Kostenstellen bug). markitdown
+# offers no such structure recovery, so own-code wins here. (Same
+# remove-from-set pattern .eml/.txt/.md use to opt out of markitdown.)
+_MARKITDOWN_EXTS = {".pdf", ".docx", ".pptx", ".msg", ".epub", ".zip"}
 
 # ── OCR fallback for scanned PDFs ────────────────────────────────────────────
 #
@@ -767,6 +774,71 @@ def _extract_pptx(path: str, *, slides: str | None = None
     return text + "\n", None
 
 
+def _detect_footer_groups(header, data_rows):
+    """Detect a FOOTER-grouped report: a 'key' column filled ONLY on TOTAL rows
+    (where a 'label' column is empty), each preceded by a block of MEMBER rows
+    (key empty, label filled). Returns (key_name, label_name, [(key, [labels])])
+    or None when the pattern isn't clearly present (→ normal table, no note).
+
+    Conservative on purpose: requires ≥3 total rows, members ≥ totals, at most
+    one structural violation, and every group non-empty — so it fires on real
+    grouped reports (e.g. Kostenstellen-Teilnehmer) but never reshapes an
+    ordinary flat table. Verified on the live e487a415 files (22 groups, no
+    false positive on flat/key-value tables)."""
+    if not header or len(header) < 2:
+        return None
+    n = len(header)
+
+    def s(v):
+        return str(v).strip() if v is not None else ""
+
+    norm = []
+    for r in data_rows:
+        rr = [s(c) for c in (r or [])]
+        rr += [""] * (n - len(rr))
+        norm.append(rr[:n])
+
+    best = None
+    for kc in range(n):
+        for lc in range(n):
+            if kc == lc:
+                continue
+            members = []
+            groups = []
+            totals = 0
+            member_rows = 0
+            bad = 0
+            for r in norm:
+                if not any(r):              # blank separator row
+                    if members:
+                        bad += 1            # members with no total before a blank = orphan
+                        members = []
+                    continue
+                kv, lv = r[kc], r[lc]
+                if kv and not lv:           # TOTAL/footer row
+                    totals += 1
+                    groups.append((kv, list(members)))
+                    members = []
+                elif lv and not kv:         # MEMBER row
+                    member_rows += 1
+                    members.append(lv)
+                else:                        # both filled / partial → not the pattern
+                    bad += 1
+            if members:
+                bad += 1
+            if (totals >= 3 and member_rows >= totals and bad <= 1
+                    and groups and all(len(m) >= 1 for _, m in groups)):
+                score = totals + member_rows
+                if not best or score > best[0]:
+                    best = (score, kc, lc, groups)
+    if not best:
+        return None
+    _, kc, lc, groups = best
+    kname = s(header[kc]) or f"col{kc + 1}"
+    lname = s(header[lc]) or f"col{lc + 1}"
+    return (kname, lname, groups)
+
+
 def _extract_xlsx(path: str, *, caps: bool = True,
                   sheet: str | None = None) -> tuple[str, str | None]:
     """Render every sheet's header + first N rows as a markdown table.
@@ -823,6 +895,34 @@ def _extract_xlsx(path: str, *, caps: bool = True,
                 continue
             sheet_count += 1
             parts.append(f"\n## Sheet: {sheet.title}\n")
+            # Buffer the data rows so we can both (a) detect a footer-grouping
+            # structure and (b) render the table. Memory note: read_only +
+            # generator was for streaming, but sheets we extract are already
+            # capped/previewed; buffering one sheet's rows is fine.
+            data_rows = list(rows)
+            # Footer-grouping note: some reports encode group membership by
+            # POSITION — a "group key" column (e.g. Kostenstelle) is filled only
+            # on a TOTAL/footer row BELOW its member rows (whose key cell is
+            # blank). Flattening to a table drops which member belongs to which
+            # group (the e487a415 bug: model couldn't map person→Kostenstelle).
+            # When the pattern is CLEARLY present, prepend an explicit
+            # "group: members" list so the model (and KG) get the membership
+            # the flat table loses. No-op on normal tables (returns None).
+            try:
+                _fg = _detect_footer_groups(header, data_rows)
+            except Exception:
+                _fg = None
+            if _fg:
+                _kname, _lname, _groups = _fg
+                parts.append(
+                    f"_Hinweis zur Struktur: Diese Tabelle ist nach **{_kname}** "
+                    f"gruppiert — der {_kname}-Wert steht jeweils in der "
+                    f"Summenzeile UNTER seinen Mitgliedern (deren {_kname}-Zelle "
+                    f"leer ist). Zuordnung der Mitglieder zur Gruppe:_\n")
+                for _k, _mem in _groups:
+                    _names = ", ".join(m for m in _mem)
+                    parts.append(f"- **{_kname} {_cell(_k)}**: {_cell(_names)}")
+                parts.append("")  # blank line before the raw table
             cells = [_cell(c) for c in header]
             # Drop trailing empty columns so the table doesn't have ragged
             # padding from sparsely-used right side of the sheet.
@@ -836,7 +936,7 @@ def _extract_xlsx(path: str, *, caps: bool = True,
             parts.append("|" + "|".join(["---"] * n_cols) + "|")
             shown = 0
             warned = False
-            for r in rows:
+            for r in data_rows:
                 if row_cap is not None and shown >= row_cap:
                     parts.append(
                         f"\n_(truncated at {row_cap:,} "
