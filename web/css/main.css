@@ -1483,13 +1483,13 @@ textarea { resize: none; }
 }
 .stream-status .spinner-elapsed { margin-left: auto; font-family: var(--font-mono); font-size: 11px; }
 
-/* Cross-fading model ↔ synthetic-word slot (Claude-Code style). The two spans
-   overlap (absolute) in a relative wrapper; their opacity animates so they
-   ALTERNATE cleanly — one fully fades OUT, a short gap where BOTH are hidden,
-   then the other fades IN. The gap is what prevents the "both visible at once"
-   ghosting (a plain anti-phase crossfade has both at ~0.5 mid-transition, and
-   since they stack at the same spot you saw both). 9s cycle: each word holds
-   ~3s, ~0.7s fades, ~0.3s all-hidden gaps — calm, not flickery. */
+/* Alternating model ↔ synthetic-word slot (Claude-Code style). Two spans
+   overlap (absolute) in a relative wrapper; only ONE is opaque at a time. The
+   flip is driven by JS (_streamRotateTick, ~4.5s) — NOT a CSS keyframe
+   animation, because .msg-streaming is rebuilt on every SSE delta and a
+   keyframe would restart at 0% forever (the "model never disappears" bug). The
+   transition below turns each opacity flip into a soft ~0.6s cross-dissolve;
+   because only one is ever set to opacity:1 they never ghost together. */
 .stream-status .spinner-rotate {
   position: relative;
   display: inline-flex;
@@ -1499,7 +1499,7 @@ textarea { resize: none; }
 .stream-status .spinner-synth,
 .stream-status .spinner-model {
   white-space: nowrap;
-  animation: spinner-fade-synth 9s ease-in-out infinite;
+  transition: opacity 0.6s ease-in-out;
 }
 /* The synth span stays in flow (sizes the wrapper); the model span overlaps it. */
 .stream-status .spinner-model {
@@ -1507,34 +1507,14 @@ textarea { resize: none; }
   left: 0; top: 50%;
   transform: translateY(-50%);
   color: var(--accent-brand);
-  animation-name: spinner-fade-model;
 }
 .stream-status .spinner-synth {
   color: var(--warning, #d97706);
   font-style: italic;
 }
-/* Synth: hidden at the 0%/100% wrap (where animationiteration fires → safe to
-   swap the word), visible across the FIRST half. Note the 0→1 in's start (8%)
-   is AFTER the model's out finishes (5%), and synth's out (43%) finishes before
-   model's in starts (53%) → never both opaque. */
-/* Windows are STRICTLY non-overlapping (verified max simultaneous opacity =
-   0.00): each span fully reaches 0 before the other leaves 0, so the two never
-   ghost over each other. */
-@keyframes spinner-fade-synth {
-  0%, 15%   { opacity: 0; }   /* hidden at the wrap (word-swap point) + while model shows */
-  21%, 44%  { opacity: 1; }   /* synth's visible window */
-  50%, 100% { opacity: 0; }
-}
-@keyframes spinner-fade-model {
-  0%, 8%    { opacity: 1; }   /* model visible at the ends */
-  14%, 51%  { opacity: 0; }   /* OUT (by 14%) before synth fades IN (15%); hidden while synth shows */
-  57%, 100% { opacity: 1; }   /* model fades back IN after synth is fully OUT (50%) */
-}
 @media (prefers-reduced-motion: reduce) {
   .stream-status .spinner-synth,
-  .stream-status .spinner-model { animation: none; }
-  .stream-status .spinner-synth { opacity: 0; }   /* show the model statically */
-  .stream-status .spinner-model { opacity: 1; }
+  .stream-status .spinner-model { transition: none; }
 }
 .worker-question-card {
   margin: 12px 0; border-radius: 10px; border: 2px solid #0891b2;

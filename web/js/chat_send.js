@@ -1798,6 +1798,9 @@ function updateStreamTimer(chat) {
     const el = document.getElementById('spinner-elapsed');
     if (el) el.textContent = elapsed;
   }
+  // Drive the model↔synthetic-word alternation (JS, not CSS — the streaming
+  // block is rebuilt each delta so a keyframe animation can't run).
+  if (typeof _streamRotateTick === 'function') _streamRotateTick(target);
 }
 
 /* ═══════════════════════════════════════════════════════════
