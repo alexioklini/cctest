@@ -367,3 +367,20 @@ function buddyPhase(phase) { buddy()?.setPhase(phase); }      // stream callback
 function buddyTurnStart()  { buddy()?.setPhase('thinking'); } // first beat of a turn
 function buddyTurnEnd()    { buddy()?.turnEnd(); }
 function buddyPoke()       { buddy()?.poke(); }               // composer typing
+
+// SINGLE SOURCE for the whimsical "working" words (Claude-Code-CLI flavour),
+// shared with the chat streaming spinner so the two never drift. Returns a
+// random word for the CURRENT buddy phase (thinking/tool/writing/…), falling
+// back to the `thinking` pool when idle/unset (a streaming turn is always at
+// least "thinking"). Trailing '…' matches the bubble style. `last` lets the
+// caller avoid an immediate repeat.
+function buddyWorkingWord(last) {
+  const ph = (_buddy && _buddy.phase && _buddy.phase !== 'idle') ? _buddy.phase : 'thinking';
+  let words = (BUDDY_PHASES[ph] && BUDDY_PHASES[ph].words) || [];
+  if (!words.length) words = BUDDY_PHASES.thinking.words;
+  let w = words[Math.floor(Math.random() * words.length)] + '…';
+  if (w === last && words.length > 1) {            // avoid immediate repeat
+    w = words[(words.indexOf((last||'').replace(/…$/,'')) + 1) % words.length] + '…';
+  }
+  return w;
+}

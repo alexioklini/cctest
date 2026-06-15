@@ -1059,6 +1059,31 @@ function renderAssistantMessage(msg, idx) {
     </div>
   `;
 }
+// The spinner's synthetic "working" word comes from buddy.js' buddyWorkingWord()
+// — the SINGLE shared source (same Claude-Code-flavour pool Brainy uses), and
+// it's PHASE-AWARE: thinking→'Sinniert…', tool→'Stöbert…', writing→'Formuliert…'
+// (the chat stream callbacks drive buddyPhase() so the live phase is current).
+// Keeping one source means the spinner + the Brainy bubble never drift.
+function _streamSynthWord(last) {
+  return (typeof buddyWorkingWord === 'function')
+    ? buddyWorkingWord(last)
+    : 'Überlegt…';   // defensive fallback if buddy.js isn't loaded
+}
+// Swap the synth word on every fade cycle, WHILE it's faded out (the
+// animationiteration fires at the keyframe wrap, where the synth span's opacity
+// is ~0), so the next fade-in reveals a fresh term with no visible jump. Bound
+// once per mounted span (guard flag) — survives the frequent re-renders.
+function _wireSynthRotation() {
+  const el = document.getElementById('spinner-synth');
+  if (!el || el._synthWired) return;
+  el._synthWired = true;
+  el.addEventListener('animationiteration', () => {
+    const w = _streamSynthWord(el.textContent);
+    el.textContent = w;
+    if (state.activeChat) state.activeChat._streamSynth = w;
+  });
+}
+
 function renderStreamingMessage(chat) {
   const container = document.getElementById('messages-container');
   // Remove previous streaming element if any
@@ -1106,11 +1131,20 @@ function renderStreamingMessage(chat) {
   // a re-render (renderMessages wipes + this re-appends) doesn't lose the label.
   if (chat.streaming) {
     const modelLbl = esc(chat._streamModel || '');
+    const synthLbl = esc(chat._streamSynth || _streamSynthWord());
     const statusLbl = esc(chat._streamLabel || 'Denke nach...');
     const elapsedLbl = esc(chat._streamElapsed || '');
+    // The model slot cross-fades between a synthetic "working" word and the
+    // real model name (Claude-Code style) — two stacked spans, each its own
+    // colour, alternated purely by a CSS keyframe (no JS timer fighting the
+    // re-render; the elapsed timer just rotates the synth WORD by id). The
+    // wrapper is position:relative so the two absolute spans overlap in place.
     html += `<div class="stream-status">
       <div class="wave-bars"><span></span><span></span><span></span><span></span><span></span></div>
-      <span class="spinner-model" id="spinner-model">${modelLbl}</span>
+      <span class="spinner-rotate">
+        <span class="spinner-synth" id="spinner-synth">${synthLbl}</span>
+        <span class="spinner-model" id="spinner-model">${modelLbl}</span>
+      </span>
       <span id="spinner-label">${statusLbl}</span>
       <span class="spinner-elapsed" id="spinner-elapsed">${elapsedLbl}</span>
     </div>`;
@@ -1130,6 +1164,10 @@ function renderStreamingMessage(chat) {
   html += '</div>';
 
   injectTarget.insertAdjacentHTML('beforeend', html);
+
+  // Bind the synth-word rotation to the freshly-mounted spinner (no-op if the
+  // span was reused / already wired).
+  if (chat.streaming) _wireSynthRotation();
 
   // Highlight code in streaming content
   container.querySelectorAll('.msg-streaming pre code').forEach(block => {

@@ -1481,8 +1481,55 @@ textarea { resize: none; }
   font-size: var(--font-body); color: var(--text-400);
   margin: 2px 0 6px;
 }
-.stream-status .spinner-model { font-weight: 500; color: var(--accent-brand); }
 .stream-status .spinner-elapsed { margin-left: auto; font-family: var(--font-mono); font-size: 11px; }
+
+/* Cross-fading model ↔ synthetic-word slot (Claude-Code style). The two spans
+   overlap (absolute) inside a relative wrapper sized to fit the WIDER of the
+   two via the in-flow synth span; their opacity animates in anti-phase so one
+   fades in as the other fades out — no hard transition. Colours alternate too:
+   the synth word is the warm accent, the model the brand blue.
+   ~5.2s cycle (≈2s visible each + soft 0.6s crossfades). */
+.stream-status .spinner-rotate {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  font-weight: 500;
+}
+.stream-status .spinner-synth,
+.stream-status .spinner-model {
+  white-space: nowrap;
+  animation: spinner-crossfade 5.2s ease-in-out infinite;
+}
+/* The synth span stays in flow (sizes the wrapper); the model span overlaps it. */
+.stream-status .spinner-model {
+  position: absolute;
+  left: 0; top: 50%;
+  transform: translateY(-50%);
+  color: var(--accent-brand);
+  animation-name: spinner-crossfade-alt;
+}
+.stream-status .spinner-synth {
+  color: var(--warning, #d97706);
+  font-style: italic;
+}
+/* Synth is FADED at the 0%/100% wrap (where animationiteration fires) so the
+   word can be swapped there with no visible jump; it's visible mid-cycle. */
+@keyframes spinner-crossfade {       /* synth: visible in the middle */
+  0%, 12% { opacity: 0; }
+  24%, 60% { opacity: 1; }
+  72%, 100% { opacity: 0; }
+}
+@keyframes spinner-crossfade-alt {   /* model: visible at the ends (anti-phase) */
+  0%, 12% { opacity: 1; }
+  24%, 60% { opacity: 0; }
+  72%, 100% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stream-status .spinner-synth,
+  .stream-status .spinner-model { animation: none; }
+  .stream-status .spinner-synth { opacity: 0; }   /* show the model statically */
+  .stream-status .spinner-model { opacity: 1; }
+}
 .worker-question-card {
   margin: 12px 0; border-radius: 10px; border: 2px solid #0891b2;
   background: var(--bg-100); overflow: hidden;
