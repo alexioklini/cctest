@@ -549,6 +549,18 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
             "type": "auto",
             "disable_parallel_tool_use": True,
         }
+    # Forced-tool (structured-output) mode: the caller offers exactly one tool
+    # and forces it via tool_choice {type:tool,name}. The model is constrained
+    # to emit a single tool_use whose `input` IS the structured result — we
+    # CAPTURE that input and finish the turn instead of dispatching the tool
+    # (there's nothing to execute; this is the Anthropic-idiomatic equivalent of
+    # OpenAI response_format json_schema). `capture_forced_tool` names the tool
+    # whose input to harvest. An explicit `tool_choice` in the request wins over
+    # the disable_parallel default above.
+    capture_forced_tool = req.get("capture_forced_tool") or ""
+    if isinstance(req.get("tool_choice"), dict) and tools:
+        sampling_kwargs["tool_choice"] = req["tool_choice"]
+    forced_tool_input: dict | None = None
     # oMLX/vLLM extension: chat_template_kwargs is forwarded via `extra_body`
     # so the SDK passes it through as a top-level JSON field on the wire. We
     # use this to set `enable_thinking: false` on gemma-4/qwen3/etc. so the
@@ -700,6 +712,20 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
             "usage": round_usage,
         })
 
+        # Forced-tool capture: harvest the constrained tool_use's `input` as the
+        # structured result and finish — do NOT dispatch (nothing to execute).
+        # The model was forced to emit this single tool, so its input is the
+        # whole answer (e.g. the auto-route classifier's routing JSON). Match by
+        # name so a stray tool_use can't hijack the capture.
+        if capture_forced_tool and tool_uses:
+            for _tu in tool_uses:
+                if getattr(_tu, "name", "") == capture_forced_tool:
+                    forced_tool_input = _tu.input or {}
+                    final_stop_reason = "forced_tool"
+                    break
+            if forced_tool_input is not None:
+                break
+
         if not tool_uses:
             # Same whitespace + EOS-token guard as above — don't clobber an
             # earlier real answer with a final-round `\n` or `<eos>` placeholder.
@@ -824,6 +850,9 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
         "usage_total": usage_total,
         "tool_events": tool_events,
     }
+    # Structured-output result from forced-tool mode (None when not used).
+    if forced_tool_input is not None:
+        summary["forced_tool_input"] = forced_tool_input
     return summary
 
 

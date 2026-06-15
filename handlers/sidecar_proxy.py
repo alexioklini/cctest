@@ -745,6 +745,7 @@ def run_turn_blocking(
     max_rounds: int,
     timeout_s: float = 1800.0,
     turn_id: str | None = None,
+    forced_tool: dict | None = None,
 ) -> dict:
     """Non-streaming variant for background callers (scheduler, summariser,
     classifier, refine, ...). Returns the same shape as run_turn() minus the
@@ -753,6 +754,14 @@ def run_turn_blocking(
     `turn_id`: callers that need to cancel the run mid-flight (background tasks)
     or attach a live transcript pass a pre-minted id; the sidecar's
     `POST /cancel/<turn_id>` then targets it. Default None → mint as before.
+
+    `forced_tool`: structured-output mode. An Anthropic tool def
+    {name, description, input_schema}. When set, the model is offered ONLY this
+    tool and forced to call it (tool_choice {type:tool,name}); the sidecar
+    captures the tool_use `input` (never dispatches it) and returns it as
+    `forced_tool_input`. This is the Anthropic-idiomatic way to get reliable
+    schema-valid JSON from local models that drop braces on free-text JSON
+    (verified on vllm-metal/Qwen). Overrides the per-purpose tool list.
     """
     sid = tool_context.get("session_id") or ""
     nonce = tool_mcp.mint_nonce(sid)
@@ -761,16 +770,24 @@ def run_turn_blocking(
     tool_context.setdefault("model", model)
     tool_context["turn_id"] = turn_id
 
-    _tools = _build_tool_list(
-        purpose=purpose,
-        agent_id=tool_context.get("agent_id") or None,
-        mcp_manager=getattr(engine, "_mcp_manager", None),
-    )
-    # Carry the resolved tool names so the Brain-side dispatcher can ENFORCE the
-    # set — the model can otherwise call any registered tool (e.g. read_file)
-    # even when it wasn't offered this turn. tool_mcp.handle_tools_call checks
-    # this list; empty/absent = no enforcement (legacy callers unchanged).
-    tool_context["allowed_tools"] = [t.get("name", "") for t in _tools if t.get("name")]
+    if forced_tool:
+        # Structured-output mode: offer ONLY the forced tool and constrain the
+        # model to it. No dispatch happens (the sidecar captures the input), so
+        # `allowed_tools` stays empty — nothing is executable this turn.
+        _tools = [forced_tool]
+        tool_context["allowed_tools"] = []
+    else:
+        _tools = _build_tool_list(
+            purpose=purpose,
+            agent_id=tool_context.get("agent_id") or None,
+            mcp_manager=getattr(engine, "_mcp_manager", None),
+        )
+        # Carry the resolved tool names so the Brain-side dispatcher can ENFORCE
+        # the set — the model can otherwise call any registered tool (e.g.
+        # read_file) even when it wasn't offered this turn.
+        # tool_mcp.handle_tools_call checks this list; empty/absent = no
+        # enforcement (legacy callers unchanged).
+        tool_context["allowed_tools"] = [t.get("name", "") for t in _tools if t.get("name")]
     _log_wire_tools(_tools, turn_id=turn_id, purpose=purpose,
                     agent_id=tool_context.get("agent_id") or None, model=model)
     payload: dict[str, Any] = {
@@ -788,6 +805,9 @@ def run_turn_blocking(
         "turn_id": turn_id,
         "trace_id": tool_context.get("trace_id") or "",
     }
+    if forced_tool:
+        payload["tool_choice"] = {"type": "tool", "name": forced_tool["name"]}
+        payload["capture_forced_tool"] = forced_tool["name"]
     for key in ("temperature", "top_p", "top_k", "stop_sequences"):
         if key in sampling and sampling[key] is not None:
             payload[key] = sampling[key]
@@ -825,6 +845,7 @@ def run_turn_blocking(
         "tool_calls_total": summary.get("tool_calls_total", 0),
         "usage_total": summary.get("usage_total", {}) or {},
         "tool_events": summary.get("tool_events", []) or [],
+        "forced_tool_input": summary.get("forced_tool_input"),
         "cancelled": False,
         "error": error_msg or summary.get("error"),
         "turn_id": turn_id,
@@ -850,6 +871,7 @@ def background_call(
     bg_task: bool = False,
     account_cost: bool = True,
     cost_purpose: str | None = None,
+    forced_tool: dict | None = None,
 ) -> dict:
     """Thin convenience wrapper around `run_turn_blocking` for background /
     non-interactive LLM calls (Phase 4).
@@ -926,6 +948,7 @@ def background_call(
         max_rounds=max_rounds,
         timeout_s=timeout_s,
         turn_id=turn_id,
+        forced_tool=forced_tool,
     )
     # Central cost ledger seam — one row per background_call, even at $0 (local/
     # free) or zero reported usage, so the breakdown is a complete audit. Tagged

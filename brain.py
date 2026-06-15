@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.122.0"
-VERSION_DATE = "2026-06-14"
+VERSION = "9.123.0"
+VERSION_DATE = "2026-06-15"
 CHANGELOG = [
+    ("9.123.0", "2026-06-15", "feat(sidecar): forced-tool (structured-output) mode for background LLM calls — reliable schema-valid JSON from weak local models via the Anthropic-idiomatic forced tool_use, NOT response_format (which /v1/messages ignores). Motivated by the local-background-model work: Qwen-7B on vllm-metal dropped the opening '{' on ~20% of free-text classifier JSON → classify_task_structured fail-opened to keyword routing 1-in-5 turns. (1) SIDECAR (sidecar/sidecar.py run_turn_streaming): reads `capture_forced_tool` (a tool NAME) + an explicit `tool_choice` dict from the req (explicit tool_choice now wins over the disable_parallel default). When a tool_use with that name appears, harvest its `.input` into `forced_tool_input`, set stop_reason='forced_tool', and BREAK before dispatch — nothing is executed. summary gains `forced_tool_input` ONLY when used (legacy summaries byte-identical). (2) BROKER (handlers/sidecar_proxy.py): run_turn_blocking + background_call gain `forced_tool` param (an Anthropic tool def {name,description,input_schema}). When set, the payload offers ONLY that tool, sets tool_choice {type:tool,name} + capture_forced_tool, and allowed_tools=[] (nothing dispatchable); the result dict surfaces `forced_tool_input`. (3) CONSUMER (brain.classify_task_structured): now requests the routing JSON as a forced `route` tool (input_schema enums built from _TASK_TYPE_TIER / _TASK_TOOL_GROUPS so the parser filter stays in sync) and reads forced_tool_input directly — with a fallback to the old {...} text-span extraction for any provider that ignores tool_choice (cloud paths unchanged). VERIFIED end-to-end against live vllm-metal/Qwen (edited sidecar imported in .venv_sdk, 15 eval questions): forced_tool_input captured + schema-valid 15/15 (was 12/15 free-text), memory routing 15/15, stop_reason=forced_tool, tool NEVER dispatched; normal non-forced path regression-checked (returns final_text, no forced_tool_input key). py_compile OK all three files. NOT YET wired into a running server (sidecar restart needed to load) — this is the enabling mechanism for the planned local-background-model swap."),
     ("9.122.0", "2026-06-14", "fix(chat-ui): inline citation chips [n] that the model emits as separate, blank-line-separated source paragraphs after the answer no longer stack one-per-line. chat_render.js extractCitationsFromRaw 'pull-up' step: the regex that lifts a standalone citation bracket onto the previous claim line now tolerates one or more BLANK lines in between (was: a single \\n only), and runs in a loop so a whole run of consecutive bracket-paragraphs collapses onto the claim line one at a time. Result: 'Morgen … wird es nicht regnen.\\n\\n[Quelle: a]\\n\\n[Quelle: b]\\n\\n[Quelle: c]' renders as one line '… nicht regnen. [1] [2] [3]' instead of three stacked chip blocks. Already-inline citations (list items), single-bracket lines, and citation-free paragraphs are unchanged. Loop terminates (each pass strictly removes newlines). js_gate PASS (lint + Playwright smoke, net-globals 1358 unchanged). Frontend hard refresh; no server change."),
     ("9.121.0", "2026-06-14", "fix(caveman): the output-style instruction is now a TRAILING WIRE-ONLY suffix on the user message -- caveman touches NOTHING in the system prompt or tool descriptions. Follow-up to v9.120.0 (which kept appending the style line to the system prompt). (1) engine/prompt_build.py _apply_system_prompt_postprocess: removed the caveman append entirely -- it now only handles plan-mode + GDPR clamp. The system prompt is byte-identical regardless of caveman level. (2) handlers/chat.py: new _append_to_wire_user(messages, suffix) (append-variant of _inject_web_preamble_into_wire -- shallow-copies the last user message, transient wire-only, never persisted); just before run_turn the worker appends CAVEMAN_CHAT_PROMPTS[effective] (effective = caveman_chat or caveman_system) to the wire user message. (3) engine/scheduler.py: the per-task caveman_chat is appended to task_message the same way (was previously relying on the now-removed system-prompt append). (4) WARMUP: reverted the v9.120.0 run_model_warmup change that set caveman_system on the warmup context -- the warm KV prefix (system+tools) is now caveman-independent, so warmup needs zero caveman handling and the prefix stays byte-stable at every level. (5) Docs: CLAUDE.md Caveman section + skill 05-internals rewritten (wire-only). Benefits: warm-pool KV prefix never invalidated by caveman; nothing caveman enters history (drops out of context after the turn like a tool result); system prompt + tools fully protected. Verified in-process: _apply_system_prompt_postprocess leaves the system prompt unchanged for caveman_system/chat in {0..3} (plan-mode still appends). py_compile OK; js_gate + live verify pending."),
     ("9.120.0", "2026-06-14", "fix(caveman): caveman mode is now OUTPUT-only -- it no longer compresses the system prompt or tool descriptions (that mangled the instructions the model relies on, a real hazard). (1) engine/prompt_build.py _apply_system_prompt_postprocess: removed the _caveman_compress_text + CAVEMAN_SYSTEM_PROMPTS branch. Both knobs now feed the SAME response-style appendix (CAVEMAN_CHAT_PROMPTS): caveman_chat (per-session 🪨 toggle) and caveman_system (per-model DEFAULT output style) -- effective = caveman_chat or caveman_system, so the session toggle wins and the model default applies only when the toggle is off. The system prompt + tool descriptions are passed through verbatim at every level. (2) INPUT-side compression moved to REFINEMENT: handlers/admin_artifacts.py /v1/refine no longer compresses the refiner instructions/system; instead it tells the refiner to write tersely AND rule-compresses the RETURNED refined text (_caveman_compress_text) to the active level -- so the query the user sends is itself caveman, the only place input gets compressed. (3) WARMUP: since caveman_system now appends to the system prompt, run_model_warmup sets caveman_system from model config on its context so the warm prefix is byte-identical to turn 0 of a freshly-claimed bare session (caveman_chat=0 -> effective=caveman_system). caveman_system stays in _prefix_fields. (4) CLEANUP: deleted the dead CAVEMAN_SYSTEM_PROMPTS dict; _caveman_compress_text kept but now used ONLY by refinement. (5) UI/docs: Models-tab knob relabelled 'Caveman (Standard-Ausgabestil)' with a ? help explaining it is output-only; per-turn caveman badge tooltip + Frugal-profile help + a code comment corrected; CLAUDE.md Caveman section + skill (01-api refine, 05-internals) rewritten. Verified in-process: caveman_system=3 leaves the base prose intact (no compression) and only appends the ultra style; session toggle overrides the model default; refine still compresses output. py_compile OK; js_gate pending."),
@@ -10082,6 +10083,34 @@ def classify_task_structured(message: str) -> dict | None:
         classifier_model = _resolve_classifier_model()
         if not classifier_model:
             return None
+        # Force the routing JSON through a single constrained tool call so the
+        # model can't emit malformed JSON. Weaker LOCAL models (verified: Qwen
+        # on vllm-metal) dropped the opening brace ~20% of the time on free-text
+        # JSON → fail-open to keywords; forced tool-use makes the output
+        # schema-valid 15/15. The tool is never dispatched — the sidecar returns
+        # its `input` as `forced_tool_input`. Schema enums track the valid
+        # task_types / tools so the parser's filter stays in sync.
+        _route_tool = {
+            "name": "route",
+            "description": "Emit the routing analysis for this task.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "task_types": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": sorted(_TASK_TYPE_TIER.keys())},
+                        "minItems": 1, "maxItems": 3,
+                    },
+                    "tools": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": sorted(_TASK_TOOL_GROUPS.keys())},
+                    },
+                    "complexity": {"type": "string", "enum": ["low", "medium", "high"]},
+                    "reasoning": {"type": "string"},
+                },
+                "required": ["task_types", "tools", "complexity"],
+            },
+        }
         _res = sidecar_proxy.background_call(
             messages=[{"role": "user", "content": message[:4000]}],
             model=classifier_model,
@@ -10090,21 +10119,23 @@ def classify_task_structured(message: str) -> dict | None:
             max_tokens=200,
             max_rounds=1,
             timeout_s=25.0,
+            forced_tool=_route_tool,
         )
         if _res.get("error"):
             return None
-        raw = (_res.get("reply") or "").strip()
-        if not raw:
-            return None
-        # Tolerant extraction: strip a ```json fence / surrounding prose by
-        # taking the first {...} span.
-        start, end = raw.find("{"), raw.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None
-        try:
-            obj = _json.loads(raw[start:end + 1])
-        except Exception:
-            return None
+        # Forced-tool path: the structured input IS the result (no parsing).
+        obj = _res.get("forced_tool_input")
+        if not isinstance(obj, dict):
+            # Fallback: a provider that ignored tool_choice returned free text —
+            # recover the JSON span the old way so non-forcing models still work.
+            raw = (_res.get("reply") or "").strip()
+            start, end = raw.find("{"), raw.rfind("}")
+            if start == -1 or end == -1 or end <= start:
+                return None
+            try:
+                obj = _json.loads(raw[start:end + 1])
+            except Exception:
+                return None
         if not isinstance(obj, dict):
             return None
         task_types = [t for t in obj.get("task_types", []) if t in _TASK_TYPE_TIER]
