@@ -42,10 +42,17 @@ tool set BY DEFAULT — see "Helpdesk tools" below. That set is now a default an
 admin can extend/restrict via the helpdesk column: adding a write/exec tool there
 makes Brainy able to write/run (the global matrix warns ⚠ on this). Since 9.22.0
 the resolved tool names are enforced at dispatch: `tool_mcp` rejects any
-`tool_use` not in the turn's allowed list before it runs — and that allowed list
-is the resolved (post-override) set, so an added write tool IS dispatchable.
+`tool_use` not in the turn's allowed list before it runs. That allowed list is
+the DISPATCHABLE set = **active ∪ deferred** (NOT in-prompt only) — so a deferred
+tool the model reaches for (directly or after `tool_search`) RUNS; only hard-
+EXCLUDED tools (Websuche web-lockout, helpdesk read-only) are rejected. (Before
+9.131.0 the whitelist was in-prompt-only, so a deferred tool was wrongly rejected
+'not available in this context' — deferred collapsed to disabled, e.g. read_document
+on an attachment turn that the classifier had deferred; chat f2168652.)
 
-Deferred tools are hidden from the initial list and surfaced via `tool_search`.
+Deferred tools are hidden from the initial list, dispatchable, and surfaced via
+`tool_search`. Disabled tools are neither in-prompt, tool_search-able, nor
+dispatchable (never in the base set).
 
 **Two layers reach the model: the wire schema and the admin prose overlay.**
 Each tool's wire schema (the `description` + `input_schema` on the `tools` array)

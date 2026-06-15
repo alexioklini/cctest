@@ -150,13 +150,14 @@ def _to_anthropic_messages(messages: list[dict]) -> list[dict]:
 
 
 def _build_tool_list(*, purpose: str, agent_id: str | None,
-                     mcp_manager=None) -> list[dict]:
+                     mcp_manager=None, breakdown: dict | None = None) -> list[dict]:
     """Return Anthropic-shape tool schemas for the given purpose.
 
     Thin wrapper over engine.resolve_active_tools — the single source of
     truth (PROMPT_TOOLS_UNIFICATION_PLAN.md). Deferred-group filtering and
     MCP merging happen inside the resolver; we just hand it the discovered-
-    tools set from thread-local.
+    tools set from thread-local. If `breakdown` is passed it's filled in place
+    with {in_prompt, deferred, excluded} (ground truth of the resolution).
     """
     discovered = engine.get_request_context()._discovered_tools or set()
     return engine.resolve_active_tools(
@@ -165,7 +166,29 @@ def _build_tool_list(*, purpose: str, agent_id: str | None,
         discovered_tools=discovered,
         mcp_manager=mcp_manager,
         is_openai_shape=False,
+        breakdown=breakdown,
     )
+
+
+def _dispatchable_allowed_tools(tools: list[dict], breakdown: dict) -> list[dict]:
+    """The Brain-side dispatch enforcement whitelist. A DEFERRED tool is
+    hidden from the prompt but still DISPATCHABLE — the model may reach it via
+    tool_search (or call it directly if it knows the name), and that must work
+    (the documented 'deferral is recoverable' contract). So the whitelist is
+    `in_prompt ∪ deferred` — everything EXCEPT hard-`excluded` tools (Websuche
+    web-lockout, helpdesk read-only, etc.). Returns the list of allowed NAMES.
+
+    Bug it fixes (chat f2168652): enforcement used only the in-prompt names, so
+    a deferred tool the model legitimately called (read_document on an
+    attachment turn, gated out by the classifier) was hard-rejected with
+    'tool X is not available in this context' — making deferred == deactivated,
+    contradicting the gating design + breaking tool_search recovery."""
+    names = set(b for b in (breakdown.get("in_prompt") or []))
+    names |= set(b for b in (breakdown.get("deferred") or []))
+    # MCP tools in the wire list aren't in the breakdown's built-in lists; allow
+    # whatever was actually offered too (belt-and-suspenders).
+    names |= set(t.get("name", "") for t in tools if t.get("name"))
+    return sorted(n for n in names if n)
 
 
 def _log_wire_tools(tools: list[dict], *, turn_id: str, purpose: str,
@@ -512,16 +535,20 @@ def run_turn(
         except Exception:
             pass
 
+    _tb: dict = {}
     _tools = _build_tool_list(
         purpose=purpose,
         agent_id=tool_context.get("agent_id") or None,
         mcp_manager=getattr(engine, "_mcp_manager", None),
+        breakdown=_tb,
     )
-    # Carry the resolved tool names so the Brain-side dispatcher can ENFORCE the
-    # set — the model can otherwise call any registered tool (e.g. read_file)
-    # even when it wasn't offered this turn. tool_mcp.handle_tools_call checks
-    # this list; empty/absent = no enforcement (legacy callers unchanged).
-    tool_context["allowed_tools"] = [t.get("name", "") for t in _tools if t.get("name")]
+    # Carry the DISPATCHABLE tool names so the Brain-side dispatcher can ENFORCE
+    # scope — the model can otherwise call a hard-EXCLUDED tool (Websuche
+    # web-lockout, helpdesk read-only). This is in_prompt ∪ deferred: a deferred
+    # tool is hidden from the prompt but still dispatchable (tool_search-
+    # recoverable), so it must NOT be rejected. tool_mcp.handle_tools_call
+    # checks this list; empty/absent = no enforcement (legacy callers).
+    tool_context["allowed_tools"] = _dispatchable_allowed_tools(_tools, _tb)
     _log_wire_tools(_tools, turn_id=turn_id, purpose=purpose,
                     agent_id=tool_context.get("agent_id") or None, model=model)
     payload: dict[str, Any] = {
@@ -777,17 +804,17 @@ def run_turn_blocking(
         _tools = [forced_tool]
         tool_context["allowed_tools"] = []
     else:
+        _tb: dict = {}
         _tools = _build_tool_list(
             purpose=purpose,
             agent_id=tool_context.get("agent_id") or None,
             mcp_manager=getattr(engine, "_mcp_manager", None),
+            breakdown=_tb,
         )
-        # Carry the resolved tool names so the Brain-side dispatcher can ENFORCE
-        # the set — the model can otherwise call any registered tool (e.g.
-        # read_file) even when it wasn't offered this turn.
-        # tool_mcp.handle_tools_call checks this list; empty/absent = no
-        # enforcement (legacy callers unchanged).
-        tool_context["allowed_tools"] = [t.get("name", "") for t in _tools if t.get("name")]
+        # DISPATCHABLE set = in_prompt ∪ deferred (a deferred tool is hidden but
+        # still callable / tool_search-recoverable — must not be hard-rejected).
+        # Only hard-EXCLUDED tools are out of scope. See _dispatchable_allowed_tools.
+        tool_context["allowed_tools"] = _dispatchable_allowed_tools(_tools, _tb)
     _log_wire_tools(_tools, turn_id=turn_id, purpose=purpose,
                     agent_id=tool_context.get("agent_id") or None, model=model)
     payload: dict[str, Any] = {

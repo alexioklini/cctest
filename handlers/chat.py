@@ -1784,6 +1784,18 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             # on every turn). This does NOT change the model — only deferral.
             _auto_groups = getattr(session, "_auto_tool_groups", None)
             _auto_rm = getattr(session, "_auto_route_model", "") or session.model
+            # ATTACHMENT → documents IN-PROMPT (UX, not correctness): when the
+            # user attached files this turn, surface the `documents` group
+            # (read_document) directly in the prompt so the model doesn't waste a
+            # round on a tool_search hop for a tool the attachment notice
+            # explicitly tells it to use. The classifier only sees the typed text
+            # ("wer hat mehr verbraucht…"), which rarely mentions files, so it
+            # often omits `documents`. (Correctness is handled separately: a
+            # deferred tool is now dispatchable anyway — see
+            # _dispatchable_allowed_tools in sidecar_proxy; this just saves the
+            # round-trip.) Only meaningful when the classifier produced a list.
+            if saved_paths and isinstance(_auto_groups, list) and "documents" not in _auto_groups:
+                _auto_groups = _auto_groups + ["documents"]
             # `_auto_groups` is a LIST when the classifier ran (possibly EMPTY =
             # "no tool groups needed" → defer everything to the floor), or None
             # when there was no signal (keyword fallback / down classifier →
