@@ -4489,6 +4489,108 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   justify-content: center;
   color: var(--text-400);
 }
+/* Lazy visual thumbnails (image / svg / html / video / audio …) inside the
+   180px preview box. No padding so the media fills the frame. */
+.artifact-browse-preview.artifact-lazy-preview { padding: 0; }
+/* The bottom fade-out gradient (::after) is for clipped TEXT — suppress it for
+   media/rendered previews where it would dim the image or cover audio/video
+   controls. Keep it for the text snippet + the rendered-markdown/code previews
+   (which do clip). */
+.artifact-browse-preview.artifact-lazy-preview:has(.artifact-thumb)::after,
+.artifact-browse-preview.artifact-lazy-preview:has(.artifact-thumb-video)::after,
+.artifact-browse-preview.artifact-lazy-preview:has(.artifact-thumb-audio)::after,
+.artifact-browse-preview.artifact-lazy-preview:has(.artifact-thumb-svg)::after,
+.artifact-browse-preview.artifact-lazy-preview:has(.artifact-thumb-frame)::after {
+  display: none;
+}
+.artifact-browse-preview .artifact-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;        /* fill the card, crop overflow — a thumbnail, not letterboxed */
+  object-position: top center;
+  display: block;
+}
+.artifact-browse-preview .artifact-thumb-svg {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: #fff;          /* SVGs often assume a light canvas */
+}
+.artifact-browse-preview .artifact-thumb-svg svg {
+  max-width: 100%;
+  max-height: 100%;
+}
+/* HTML mini-render: the iframe renders the page at a virtual desktop width
+   (1024px) then the whole thing is scaled down to fill the card width, so a
+   full-width snapshot of the page top shows — not just a tiny top-left corner
+   (the scale(0.5) of a 200%-wide frame left the page in the top-left quadrant
+   over a black/transparent remainder). The container is white so any
+   transparent page background reads as paper, not the dark card bg. */
+.artifact-browse-preview.artifact-html-preview { background: #fff; }
+.artifact-browse-preview .artifact-thumb-frame {
+  width: 1024px;
+  height: 720px;
+  border: none;
+  /* scale set inline per-card from the card's real width (≈ w/1024) so it
+     fills exactly; a CSS fallback for the common ~300px card width: */
+  transform: scale(0.3);
+  transform-origin: top left;
+  pointer-events: none;      /* the card click belongs to the preview, not the iframe */
+  background: #fff;
+}
+/* Inline audio player inside an audio card — centered in the 180px box. */
+.artifact-browse-preview .artifact-thumb-audio {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 90%;
+}
+/* Video preview: native element with controls + first-frame poster. */
+.artifact-browse-preview .artifact-thumb-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+  display: block;
+}
+/* Rendered markdown preview (not raw source snippet). */
+.artifact-browse-preview .artifact-thumb-md {
+  width: 100%;
+  height: 100%;
+  padding: 12px 14px;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-200);
+  text-align: left;
+}
+.artifact-browse-preview .artifact-thumb-md h1,
+.artifact-browse-preview .artifact-thumb-md h2,
+.artifact-browse-preview .artifact-thumb-md h3 { font-size: 13px; margin: 0 0 4px; }
+.artifact-browse-preview .artifact-thumb-md p,
+.artifact-browse-preview .artifact-thumb-md li { margin: 0 0 4px; }
+.artifact-browse-preview .artifact-thumb-md pre,
+.artifact-browse-preview .artifact-thumb-md img { display: none; }
+/* Syntax-highlighted code snippet preview. */
+.artifact-browse-preview .artifact-thumb-code {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 12px 14px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre;
+  background: var(--bg-100);
+}
+.artifact-browse-preview .artifact-thumb-code code { background: none; padding: 0; }
 .artifact-browse-preview.no-preview svg {
   width: 36px;
   height: 36px;

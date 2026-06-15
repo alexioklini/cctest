@@ -150,6 +150,7 @@
     "_hookRerenderList": "writable",
     "_hooksSave": "writable",
     "_hookToggle": "writable",
+    "_hydrateLazyArtifactPreviews": "writable",
     "_initComposerListeners": "writable",
     "_installFromRegistry": "writable",
     "_isToolResultStub": "writable",
