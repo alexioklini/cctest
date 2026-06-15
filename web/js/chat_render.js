@@ -345,8 +345,16 @@ function _reconcileMessageBlocks(container, blocks) {
 function _stripPreamble(msg, txt) {
   const pre = msg?.metadata?.preamble;
   if (typeof pre === 'string' && pre && txt.startsWith(pre)) {
-    return txt.slice(pre.length).replace(/^\n+/, '');
+    txt = txt.slice(pre.length).replace(/^\n+/, '');
   }
+  // Strip the wire-internal attachment notice the server appends to the user
+  // message ("[User attached files saved to disk. IMPORTANT: Use the
+  // read_document tool …]\n  - /tmp/...") — it's an instruction to the MODEL,
+  // not something the user typed, and the attachments already show as chips.
+  // The notice always begins at "[User attached files…" / "[User attached
+  // image(s)…" and runs to the end of the message, so cut from there.
+  const _at = txt.search(/\n*\[User attached (?:files saved to disk|image\(s\))/);
+  if (_at !== -1) txt = txt.slice(0, _at).replace(/\n+$/, '');
   return txt;
 }
 // Privacy (Datenschutz) state was previously tracked on a separate
