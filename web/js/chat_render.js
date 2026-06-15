@@ -1069,41 +1069,23 @@ function _streamSynthWord(last) {
     ? buddyWorkingWord(last)
     : 'Überlegt…';   // defensive fallback if buddy.js isn't loaded
 }
-// Alternate the model name ↔ synthetic word by JS (NOT CSS animation — the
-// streaming block is rebuilt every SSE delta, which would restart a keyframe
-// animation at 0% forever). Called from the 100ms stream timer; flips
-// chat._streamShowSynth every ROTATE_MS and drives the two spans' opacity by id
-// (a CSS opacity transition does the soft fade). On the synth→model flip the
-// synth word is swapped to a fresh one WHILE it's transparent, so the next time
-// synth shows it's a new term with no visible jump. State lives on `chat`, so a
-// re-render re-seeds the right visible span (no flicker across renders).
-const _STREAM_ROTATE_MS = 4500;
+// Rotate just the working WORD over time (model name + word shown side by side;
+// no alternation/fade — that fought the per-delta rebuild of .msg-streaming).
+// Called from the 100ms stream timer; every ROTATE_MS picks a fresh phase-aware
+// word (shared buddyWorkingWord) and writes #spinner-synth by id. State on
+// `chat` so a re-render keeps the current word.
+const _STREAM_ROTATE_MS = 3500;
 function _streamRotateTick(chat) {
   if (!chat || !chat.streaming) return;
   const now = Date.now();
   if (!chat._streamRotateAt) { chat._streamRotateAt = now; return; }
   if (now - chat._streamRotateAt < _STREAM_ROTATE_MS) return;
   chat._streamRotateAt = now;
-  const showSynth = !(chat._streamShowSynth !== false); // toggle (default was true)
-  chat._streamShowSynth = showSynth;
+  const w = _streamSynthWord(chat._streamSynth);
+  chat._streamSynth = w;
   if (chat !== state.activeChat) return;
   const synth = document.getElementById('spinner-synth');
-  const model = document.getElementById('spinner-model');
-  const incoming = showSynth ? synth : model;
-  const outgoing = showSynth ? model : synth;
-  // Swap the synth word while it's hidden (i.e. whenever model is incoming, so
-  // the synth is on its way out and the NEXT synth-show is a fresh word).
-  if (!showSynth && synth) {
-    const w = _streamSynthWord(chat._streamSynth);
-    chat._streamSynth = w;
-    synth.textContent = w;
-  }
-  // No ghosting: the outgoing span fades out immediately (0.6s), the incoming
-  // one is DELAYED 0.5s before it starts fading in (CSS transition-delay), so
-  // the box is essentially clear before the new label appears. Pure
-  // CSS-transition driven (no setTimeout to get cancelled by rapid re-renders).
-  if (outgoing) { outgoing.style.transitionDelay = '0s'; outgoing.style.opacity = '0'; }
-  if (incoming) { incoming.style.transitionDelay = '0.5s'; incoming.style.opacity = '1'; }
+  if (synth) synth.textContent = w;
 }
 
 function renderStreamingMessage(chat) {
@@ -1154,24 +1136,18 @@ function renderStreamingMessage(chat) {
   if (chat.streaming) {
     const modelLbl = esc(chat._streamModel || '');
     const synthLbl = esc(chat._streamSynth || (chat._streamSynth = _streamSynthWord()));
-    const statusLbl = esc(chat._streamLabel || 'Denke nach...');
+    const statusLbl = esc(chat._streamLabel || '');  // empty unless a specific SSE state set it
     const elapsedLbl = esc(chat._streamElapsed || '');
-    // The model slot ALTERNATES between a synthetic "working" word and the real
-    // model name (Claude-Code style), in different colours, with a soft fade.
-    // CSS animation can't drive this: .msg-streaming is rebuilt via
-    // insertAdjacentHTML on every SSE delta, so a keyframe animation restarts
-    // at 0% each render and never advances. Instead a JS timer
-    // (_streamRotateTick on the 100ms interval) toggles which span is shown by
-    // id, and a CSS opacity TRANSITION does the fade — both survive re-render
-    // because the visible state lives on chat._streamShowSynth and is re-seeded
-    // here. `showSynth` true → synth opaque, model transparent (and vice versa).
-    const showSynth = chat._streamShowSynth !== false; // default: start on synth
+    // Simple, robust status line: the model name + the working word side by
+    // side (no overlap, no fade — the cross-fade fought the per-delta rebuild of
+    // .msg-streaming). Only the WORD rotates over time (_streamRotateTick swaps
+    // #spinner-synth by id every few seconds — a fresh, phase-aware,
+    // Brainy-synced term). The model name shows the historical id so the SSE
+    // fallback/auto_route handlers can still update it.
     html += `<div class="stream-status">
       <div class="wave-bars"><span></span><span></span><span></span><span></span><span></span></div>
-      <span class="spinner-rotate">
-        <span class="spinner-synth" id="spinner-synth" style="opacity:${showSynth ? 1 : 0}">${synthLbl}</span>
-        <span class="spinner-model" id="spinner-model" style="opacity:${showSynth ? 0 : 1}">${modelLbl}</span>
-      </span>
+      <span class="spinner-model" id="spinner-model">${modelLbl}</span>
+      <span class="spinner-synth" id="spinner-synth">${synthLbl}</span>
       <span id="spinner-label">${statusLbl}</span>
       <span class="spinner-elapsed" id="spinner-elapsed">${elapsedLbl}</span>
     </div>`;

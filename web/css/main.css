@@ -1483,38 +1483,24 @@ textarea { resize: none; }
 }
 .stream-status .spinner-elapsed { margin-left: auto; font-family: var(--font-mono); font-size: 11px; }
 
-/* Alternating model ↔ synthetic-word slot (Claude-Code style). Two spans
-   overlap (absolute) in a relative wrapper; only ONE is opaque at a time. The
-   flip is driven by JS (_streamRotateTick, ~4.5s) — NOT a CSS keyframe
-   animation, because .msg-streaming is rebuilt on every SSE delta and a
-   keyframe would restart at 0% forever (the "model never disappears" bug). The
-   transition below turns each opacity flip into a soft ~0.6s cross-dissolve;
-   because only one is ever set to opacity:1 they never ghost together. */
-.stream-status .spinner-rotate {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
+/* Model name + working word shown side by side (no alternation/fade). The
+   model is the brand blue; the working word follows with a "·" separator in
+   warm italic and rotates over time (_streamRotateTick swaps its text). */
+.stream-status .spinner-model {
   font-weight: 500;
-}
-.stream-status .spinner-synth,
-.stream-status .spinner-model {
-  white-space: nowrap;
-  transition: opacity 0.6s ease-in-out;
-}
-/* The synth span stays in flow (sizes the wrapper); the model span overlaps it. */
-.stream-status .spinner-model {
-  position: absolute;
-  left: 0; top: 50%;
-  transform: translateY(-50%);
   color: var(--accent-brand);
+  white-space: nowrap;
 }
 .stream-status .spinner-synth {
   color: var(--warning, #d97706);
   font-style: italic;
+  white-space: nowrap;
 }
-@media (prefers-reduced-motion: reduce) {
-  .stream-status .spinner-synth,
-  .stream-status .spinner-model { transition: none; }
+.stream-status .spinner-synth::before {
+  content: '·';
+  margin: 0 6px 0 2px;
+  color: var(--text-400);
+  font-style: normal;
 }
 .worker-question-card {
   margin: 12px 0; border-radius: 10px; border: 2px solid #0891b2;

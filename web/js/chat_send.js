@@ -1778,7 +1778,10 @@ function updateStreamingUI(isStreaming, chat) {
     stopBtn.classList.remove('hidden');
     if (targetChat) {
       targetChat._streamModel = spinnerModelName(targetChat);
-      targetChat._streamLabel = 'Denke nach...';
+      // The rotating working word (spinner-synth) now carries the generic
+      // "is working" hint, so the label starts EMPTY — SSE handlers still set
+      // it for SPECIFIC states (warmup, queue, citation re-check, …).
+      targetChat._streamLabel = '';
       targetChat._streamElapsed = '';
     }
     if (typeof buddyTurnStart === 'function') buddyTurnStart();
