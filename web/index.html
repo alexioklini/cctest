@@ -259,6 +259,15 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 
   <!-- ═══ Chat View ═══ -->
   <div id="chat-view">
+    <!-- Quick "new chat" — floating top-right of the chat view, so a new chat
+         can be started without going to the sidebar nav. Reuses newChat(). -->
+    <button id="chat-new-quick" class="chat-new-quick" onclick="newChat()"
+            title="Neuer Chat" aria-label="Neuer Chat">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 5v14M5 12h14"/>
+      </svg>
+      <span>Neuer Chat</span>
+    </button>
     <div class="messages-scroll" id="messages-scroll">
       <!-- Workflow-run banner: rendered when the active chat is bound to a
            workflow run (has workflow_run_id). Carries header (agent/model/

@@ -281,12 +281,19 @@ function _reconcileMessageBlocks(container, blocks) {
 
   // Transient UI cards live in messages-container but are NOT part of the
   // message model: the ask_user question card (id `aq-…`) and the worker
-  // question card (id `wq-…`). They are appended on a `user_input_needed` /
-  // `worker.question` SSE event and removed on answer. Reconcile must LEAVE
-  // THEM ALONE — otherwise the next renderMessages() (fired by any streaming
-  // event after the card appears) drops them as "stray" and the question
-  // vanishes from the chat view while the turn blocks waiting (the 1fa62d2d
-  // ask_user-invisible bug). They have no data-render-key by design.
+  // question card (id `wq-…`). They're appended on a `user_input_needed` /
+  // `worker.question` SSE event while a turn is live. Reconcile must preserve
+  // them ONLY while THIS chat is actively streaming — otherwise the next
+  // renderMessages() (fired by any streaming event after the card appears)
+  // drops them as "stray" and the question vanishes mid-turn (the 1fa62d2d
+  // bug). But once the turn ends (streaming=false), an answer was sent, or the
+  // user switches to another chat (a non-streaming chat re-renders), the card
+  // MUST be dropped — else it sticks at the tail of every chat (the bug the
+  // user reported after the first fix). So: preserve only when the active chat
+  // is streaming; let it fall through to the stray-drop otherwise. The card is
+  // appended at the live tail by its SSE handler and left in place here (no
+  // re-pin), so it sits in the turn flow, not forced to the bottom.
+  const _keepTransient = !!(state.activeChat && state.activeChat.streaming);
   const _isTransientCard = (el) => {
     const id = el && el.id;
     return typeof id === 'string' && (id.startsWith('aq-') || id.startsWith('wq-'));
@@ -295,7 +302,11 @@ function _reconcileMessageBlocks(container, blocks) {
   // Index existing children by render-key for O(1) reuse lookups.
   const existing = new Map();
   for (const child of Array.from(container.children)) {
-    if (_isTransientCard(child)) continue; // preserve question cards
+    if (_isTransientCard(child)) {
+      if (_keepTransient) continue;   // preserve the live question card
+      child.remove();                 // turn over / chat switched → drop it
+      continue;
+    }
     const k = child.getAttribute && child.getAttribute('data-render-key');
     if (k != null) existing.set(k, child);
     else child.remove(); // stray node without our key — drop it
@@ -325,11 +336,6 @@ function _reconcileMessageBlocks(container, blocks) {
 
   // Remove any leftover nodes whose keys no longer appear.
   for (const stale of existing.values()) stale.remove();
-  // Keep transient question cards (aq-/wq-) pinned to the END, below all turn
-  // blocks — the cursor walk above may have inserted a new turn after them.
-  for (const child of Array.from(container.children)) {
-    if (_isTransientCard(child)) container.appendChild(child);
-  }
   return changed;
 }
 // --- Turn collapse/nav helpers ---

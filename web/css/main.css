@@ -794,7 +794,38 @@ textarea { resize: none; }
   flex-direction: column;
   background: var(--bg-page);
   overflow: hidden;
+  position: relative; /* anchors the floating "Neuer Chat" quick button */
 }
+
+/* Floating "Neuer Chat" quick action — top-right of the chat view, always in
+   reach without opening the sidebar nav. position:absolute → scoped to
+   #chat-view (NOT the right panel), so it tracks the message area's width. */
+.chat-new-quick {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px 5px 9px;
+  border: 1px solid var(--border-100, #e5e7eb);
+  border-radius: 16px;
+  background: var(--bg-card, #fff);
+  color: var(--text-300, #6b7280);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  opacity: 0.85;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.chat-new-quick:hover {
+  opacity: 1;
+  color: var(--text-100, #111);
+  border-color: var(--border-200, #d1d5db);
+}
+.chat-new-quick svg { flex-shrink: 0; }
 #chat-view.active { display: flex; }
 
 /* Scroll anchors — centered overlay arrows, Claude-desktop style.

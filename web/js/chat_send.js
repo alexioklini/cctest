@@ -815,19 +815,11 @@ function buildStreamCallbacks(chat, isActive) {
         scrollToBottom();
       },
       user_input_received: (d) => {
+        // The answer landed (from this tab's submit, or another tab / the TUI).
+        // Remove the question card — it's resolved. answerChatQuestion already
+        // removes it on this tab's own submit; this covers the other paths.
         const card = document.getElementById(`aq-${d.session_id}`);
-        if (!card) return;
-        card.classList.add('wq-answered');
-        const body = card.querySelector('.wq-body');
-        if (!body) return;
-        if (d.answers && typeof d.answers === 'object') {
-          const lines = Object.entries(d.answers).map(([q, a]) =>
-            `<div>· ${esc(q)} → ${esc(a)}</div>`
-          ).join('');
-          body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Antworten:${lines}</div>`;
-        } else if (d.answer != null) {
-          body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Beantwortet: ${esc(d.answer)}</div>`;
-        }
+        if (card) card.remove();
       },
       fallback: (d) => {
         if (d.to) {
@@ -1715,7 +1707,11 @@ async function answerChatQuestion(sessionId) {
   }
   try {
     await API.post('/v1/chat/answer', body);
-    card.classList.add('wq-answered');
+    // Answer submitted → remove the question card immediately. The turn keeps
+    // streaming (so reconcile would otherwise preserve it); leaving it visible
+    // after answering confused users. The model's continued response renders
+    // normally in the streaming block below.
+    card.remove();
   } catch (e) { showToast('Antwort konnte nicht gesendet werden: ' + e.message, true); }
 }
 async function abortWorkerFromQuestion(workerId) {
