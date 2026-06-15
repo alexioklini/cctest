@@ -355,108 +355,6 @@ def _trim_to_brain_code_regions(text: str, chunks: list, ctx_lines: int = 8):
     return trimmed
 
 
-# ─── Abstract-first triage ───────────────────────────────────────────────────
-#
-# mode="abstract" returns a short survey (~1500 chars) instead of the whole
-# page so the model (or the Websuche prefetch) can triage relevance cheaply and
-# only pay full-page token cost for the pages it actually needs. Derived from
-# the already-fetched+converted text — no extra request. For HTML the page's own
-# meta description (the author's summary) is preferred when present; otherwise
-# the lead of the converted markdown. For PDF/academic text it's the lead, which
-# for a paper is the title + abstract.
-_ABSTRACT_CHARS = 1500
-
-
-def _meta_description(html: str) -> str:
-    """Pull <meta name=description> / og:description from raw HTML. Returns ""
-    when absent. Runs on the RAW html (the markdown conversion drops <meta>)."""
-    for pat in (
-        r'<meta[^>]+(?:name|property)=["\'](?:description|og:description)["\'][^>]+content=["\']([^"\']+)["\']',
-        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:name|property)=["\'](?:description|og:description)["\']',
-    ):
-        m = re.search(pat, html, re.IGNORECASE)
-        if m and m.group(1).strip():
-            return m.group(1).strip()
-    return ""
-
-
-# A converted markdown line is "nav chrome" (skip it when hunting for the lead
-# prose) when it's a heading, a list/ToC item, a link-only line, a bare menu
-# label, or has too few real words to be a sentence. Chrome-heavy pages
-# (Wikipedia, docs portals) start with a wall of these before any prose.
-_NAV_LABELS = {
-    "main menu", "navigation", "contents", "search", "appearance",
-    "personal tools", "move to sidebar", "hide", "show", "jump to content",
-    "contribute", "tools", "toggle the table of contents", "menu", "skip to content",
-}
-
-
-def _is_prose_line(ln: str) -> bool:
-    """True when a converted-markdown line looks like real sentence prose, not
-    navigation/heading/list boilerplate. Heuristic, deliberately conservative —
-    a false negative just skips one line, a false positive only lets chrome
-    through (the old behavior)."""
-    s = ln.strip()
-    if len(s) < 40:                       # too short to be a lead sentence
-        return False
-    low = s.lower()
-    if low in _NAV_LABELS:
-        return False
-    if s[0] in "#*-+>|[":                  # heading / list / quote / table / link-line
-        return False
-    # ToC / link-fragment line. markitdown splits each Wikipedia ToC entry across
-    # two lines, leaving a dangling "<prose text>](#Anchor)" fragment that starts
-    # with a letter and reads like prose but is really a heading link. Reject any
-    # line that ends in a markdown-link close pointing at an anchor or url.
-    if re.search(r"\]\((?:#|https?://|/)[^)]*\)\s*$", s):
-        return False
-    # "Mostly link" line: if markdown links cover the bulk of the line, it's a
-    # nav/index row, not prose. Compare link-span length to total.
-    link_chars = sum(len(m.group(0)) for m in re.finditer(r"\[[^\]]*\]\([^)]*\)", s))
-    if link_chars > 0.5 * len(s):
-        return False
-    # Strip links and require enough real words to be a sentence.
-    delinked = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)
-    if len(delinked.split()) < 8:          # needs a clause's worth of real words
-        return False
-    return True
-
-
-def _lead_prose(text: str, want: int = _ABSTRACT_CHARS) -> str:
-    """Assemble a survey from the page's real prose, skipping nav/ToC chrome,
-    infobox tables, and link-list rows that markitdown emits for chrome-heavy
-    pages (Wikipedia etc.). Gathers prose lines (in order) until ~`want` chars are
-    collected — so the survey is actual sentences, not the menu/infobox the page
-    happens to lead with. Falls back to the raw lead when no prose line is found
-    (e.g. genuinely list-only content) so we never return empty."""
-    out, total = [], 0
-    for ln in text.splitlines():
-        if _is_prose_line(ln):
-            s = ln.strip()
-            out.append(s)
-            total += len(s) + 1
-            if total >= want:
-                break
-    if out:
-        return "\n".join(out).strip()
-    return text.strip()
-
-
-def _to_abstract(text: str, meta_desc: str = "") -> str:
-    """Reduce converted page text to a ~_ABSTRACT_CHARS survey. Prefers the
-    page's meta description (HTML); else the lead of the body STARTING AT THE
-    FIRST REAL PROSE (nav/ToC chrome skipped — fixes Wikipedia-style pages whose
-    converted lead is menus, not the intro), truncated on a word boundary."""
-    base = meta_desc.strip() or _lead_prose(text or "")
-    if len(base) <= _ABSTRACT_CHARS:
-        return base
-    cut = base[:_ABSTRACT_CHARS]
-    sp = cut.rfind(" ")
-    if sp > _ABSTRACT_CHARS * 0.6:
-        cut = cut[:sp]
-    return cut + " …"
-
-
 # ─── Academic-source inlining ────────────────────────────────────────────────
 #
 # Academic sites hide the real paper behind a landing/abstract page at a
@@ -513,8 +411,7 @@ def _academic_pdf_url(url: str):
     return None
 
 
-def _fetch_academic_pdf(pdf_url: str, max_length: int, timeout: int, max_size_mb: int,
-                        abstract: bool = False) -> dict | None:
+def _fetch_academic_pdf(pdf_url: str, max_length: int, timeout: int, max_size_mb: int) -> dict | None:
     """Download an academic PDF and extract its text via the shared doc_convert
     pipeline (same path as every other PDF read — fitz/pdfplumber + OCR). Spills
     to a uniquely-named tempfile (doc_convert reads a path, not bytes), extracts,
@@ -544,9 +441,6 @@ def _fetch_academic_pdf(pdf_url: str, max_length: int, timeout: int, max_size_mb
         if _err or not text or not text.strip():
             return None
         fetch_method = "academic"
-        if abstract:
-            text = _to_abstract(text)
-            fetch_method = "academic+abstract"
         if len(text) > max_length:
             text = text[:max_length] + "\n... (truncated)"
         return {"url": final_url, "status": 200, "length": len(text),
@@ -569,23 +463,13 @@ def tool_web_fetch(args: dict) -> str:
     body = args.get("body")
     max_length = args.get("max_length", 50000)
     force_fresh = args.get("force_fresh", False)
-    # Abstract-first triage: mode="abstract" returns a short (~1500-char) survey
-    # of the page instead of the whole body — cheap relevance triage before
-    # paying full-page token cost. mode="full" (default) is the original
-    # behavior. The abstract is derived AFTER conversion (from the same
-    # markdown/PDF text full mode would return), so it costs no extra fetch.
-    mode = (args.get("mode") or "full").lower()
     # Read timeout and max_size from tools_config
     _wf_cfg = _brain.get_tool_config().get("web_fetch", {})
     _wf_timeout = _wf_cfg.get("timeout", 30)
     _wf_max_size_mb = _wf_cfg.get("max_size_mb", 10)
 
-    # Check cache for GET requests without body. Scope the key by mode so a
-    # `full` and an `abstract` fetch of the SAME url never collide — an abstract
-    # caches a ~1500-char survey, and a later full read (or vice versa) must not
-    # be served the wrong variant.
-    cache_key = (f"{url}#abstract" if mode == "abstract" else url) \
-        if method == "GET" and not body else None
+    # Check cache for GET requests without body.
+    cache_key = url if method == "GET" and not body else None
     if cache_key and not force_fresh:
         cached = _brain._web_cache.get(cache_key)
         if cached is not None:
@@ -613,7 +497,7 @@ def tool_web_fetch(args: dict) -> str:
         _pdf_url = _academic_pdf_url(url)
         if _pdf_url:
             _ac = _fetch_academic_pdf(_pdf_url, max_length, _wf_timeout,
-                                      _wf_max_size_mb, abstract=(mode == "abstract"))
+                                      _wf_max_size_mb)
             if _ac is not None:
                 if cache_key:
                     _brain._web_cache.put(cache_key, dict(_ac))
@@ -649,9 +533,6 @@ def tool_web_fetch(args: dict) -> str:
         # what we fall back to only when nothing better exists). This is what
         # the JS-shell gate measures — NOT the raw byte length.
         usable = text
-        # Capture the page's own summary from the RAW html before conversion
-        # discards <meta>; used only by abstract mode (no-op otherwise).
-        meta_desc = _meta_description(text) if (is_html and mode == "abstract") else ""
         if is_html:
             md = _brain._html_to_markdown(text)
             if md:
@@ -685,9 +566,6 @@ def tool_web_fetch(args: dict) -> str:
                 text = _md
                 fetch_method = "crawl4ai"
 
-        if mode == "abstract":
-            text = _to_abstract(text, meta_desc)
-            fetch_method = f"{fetch_method}+abstract"
         if len(text) > max_length:
             text = text[:max_length] + "\n... (truncated)"
         # brain_code fetch-trim: if this is a GitHub-raw URL for a file the
@@ -744,13 +622,15 @@ def tool_searxng_search(args: dict) -> str:
     searxng.url, managed by the SearxngSupervisor); an admin can override to
     an external instance via tools_config.searxng_search.url. Hits
     <url>/search?format=json, mapping results to the same {title, link} shape
-    exa_search returns. Only SearXNG's real `news` category is mapped;
-    other categories have no SearXNG equivalent and are dropped (passing an
-    unknown category returns zero results)."""
+    exa_search returns. Always searches SearXNG's broad `general` category (no
+    category param): general already surfaces news outlets AND the authoritative
+    source pages for news-y queries, ranked sensibly. The old opt-in `news`
+    category was dropped — it removed the authoritative source (e.g. buried the
+    Bundesbank page under press coverage) on news queries and returned stale
+    regional noise on non-news ones."""
     import brain as _brain
     query = args.get("query", "")
     num_results = args.get("num_results", 5)
-    category = args.get("category")
     force_fresh = args.get("force_fresh", False)
     # Snippets are surfaced ONLY to the human-curation Websuche panel
     # (POST /v1/web/search sets include_snippets=True). The LLM-facing path
@@ -770,7 +650,7 @@ def tool_searxng_search(args: dict) -> str:
                      "tools_config.searxng_search.url for an external instance)",
         })
 
-    cache_key = f"searxng:{base}:{query}:{num_results}:{category or ''}:{int(include_snippets)}"
+    cache_key = f"searxng:{base}:{query}:{num_results}:{int(include_snippets)}"
     if not force_fresh:
         cached = _brain._web_cache.get(cache_key)
         if cached is not None:
@@ -778,8 +658,6 @@ def tool_searxng_search(args: dict) -> str:
             return json.dumps(cached, indent=1)
 
     params = {"q": query, "format": "json"}
-    if category == "news":
-        params["categories"] = "news"
     url = base + "/search?" + urllib.parse.urlencode(params)
 
     headers = {
@@ -816,8 +694,6 @@ def tool_searxng_search(args: dict) -> str:
             results.append(entry)
 
         search_info = {"query": query, "results": results, "result_count": len(results)}
-        if category:
-            search_info["category"] = category
 
         # Wikipedia/Wikidata return a structured infobox (authoritative summary
         # + canonical URL) on encyclopedic queries — surface it so the model can

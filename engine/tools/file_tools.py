@@ -915,9 +915,6 @@ def _streaming_execute_command(command: str, timeout: int, cwd: str | None,
 
 def tool_execute_command(args: dict) -> str:
     import brain as _brain
-    node_result = _brain._route_to_node("execute_command", args)
-    if node_result is not None:
-        return node_result
     command = args.get("command", "")
     cwd = args.get("cwd")
     # Read default timeout from tools_config (per-call timeout still overrides)

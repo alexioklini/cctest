@@ -298,7 +298,6 @@ TOOL_DEFINITIONS = [
                 "command": {"type": "string", "description": "The shell command to execute"},
                 "cwd": {"type": "string", "description": "Working directory for the command. Default: the current session's artifact folder (files written there auto-promote to the Artifacts panel)."},
                 "timeout": {"type": "integer", "description": "Timeout in seconds (default: 120)"},
-                "node": {"type": "string", "description": "Remote node name or 'tag:NAME' to execute on a remote node instead of locally"},
             },
             "required": ["command"],
         },
@@ -341,7 +340,6 @@ TOOL_DEFINITIONS = [
                 "headers": {"type": "object", "description": "Additional HTTP headers as key-value pairs"},
                 "body": {"type": "string", "description": "Request body (for POST/PUT/PATCH)"},
                 "max_length": {"type": "integer", "description": "Max response length in characters (default: 50000)"},
-                "mode": {"type": "string", "enum": ["full", "abstract"], "description": "'full' (default) returns the whole page. 'abstract' returns only a ~1500-char survey (the page's own summary, or its lead) — use it to triage which results are worth fetching in full before paying the token cost."},
             },
             "required": ["url"],
         },
@@ -474,17 +472,6 @@ TOOL_DEFINITIONS = [
                     "description": "Number of search results to return (default: 5)",
                     "minimum": 1,
                     "maximum": 20,
-                },
-                "category": {
-                    "type": "string",
-                    "description": (
-                        "Optional. Set to 'news' ONLY when the user explicitly "
-                        "wants recent news articles/press coverage. Do NOT use "
-                        "it for general current-info queries (weather, prices, "
-                        "schedules, facts) — 'news' restricts results to news "
-                        "outlets and buries the authoritative source pages."
-                    ),
-                    "enum": ["news"],
                 },
             },
             "required": ["query"],

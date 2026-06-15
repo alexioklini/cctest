@@ -172,37 +172,34 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
 
 ## Web / email
 
-- `web_fetch(url)` — GET one URL, returns its content tagged with a
-  `fetch_method`: `raw` (non-HTML, or HTML nothing converted) /
+- `web_fetch(url)` — GET one URL, returns its FULL content (the whole page;
+  there is no summary/abstract mode — a page is always read in full) tagged
+  with a `fetch_method`: `raw` (non-HTML, or HTML nothing converted) /
   `markitdown` (our HTML→markdown) / `crawl4ai` (headless-browser render) /
-  `academic` (academic landing page resolved to its full-text PDF), plus a
-  `+abstract` suffix in abstract mode.
+  `academic` (academic landing page resolved to its full-text PDF).
   markitdown is tried first; the crawl4ai headless render fires **only**
   when the converted text is near-empty (<30 chars) on an HTML GET — so
   JS-rendered pages get rendered, static pages never pay the browser cost.
   Academic landing pages (arxiv, bioRxiv/medRxiv, PubMed Central) are
   auto-resolved to their full-text PDF and extracted via doc_convert — just
-  pass the abstract URL. `mode` arg: `full` (default, whole page) or `abstract`
-  (~1500-char survey — the page's own meta-description or its lead **prose**,
-  skipping nav/table-of-contents/infobox chrome — for cheap relevance triage
-  before fetching the chosen ones in full).
+  pass the abstract URL.
   The chat view shows the method as a colored badge.
 - `exa_search(query, num_results?)` — semantic web search (Exa cloud, API
-  key). **Search-only**: returns title + link, no page content. Recommended
-  flow (set in the configurable tool description): after a search, `web_fetch`
-  each URL in `mode="abstract"` first to triage relevance cheaply, then
-  `web_fetch(mode="full")` ONLY the results whose abstract shows they help —
-  skip full-reading off-topic pages. Never answer from titles/URLs alone.
-- `searxng_search(query, num_results?, category?)` — self-hosted SearXNG
+  key). **Search-only**: returns title + link, no page content. After a
+  search, `web_fetch` the most relevant URLs (up to 5, in parallel) and answer
+  from the full page text — never from titles/URLs alone.
+- `searxng_search(query, num_results?)` — self-hosted SearXNG
   search (no API key). Returns a ranked list of `title` + `link` + `score`
   ONLY — **no snippets** to the model (v9.99.2: snippets were biasing the
   model's fetch choice toward whoever had a tempting blurb instead of the
   source that best answers the intent). The model must then `web_fetch` the
   top URLs (up to 5, in parallel) and answer from page text — never from
   titles — preferring primary/authoritative pages over outlets that merely
-  mention the topic. An `infobox` is still surfaced when available. `category` accepts `news` but should be
-  used ONLY for explicit news-article queries, not general current-info
-  (weather/prices/schedules — `news` buries the authoritative source pages).
+  mention the topic. An `infobox` is still surfaced when available. Always
+  searches the broad `general` category (v9.124.0: the `news` category param
+  was dropped — `general` already returns news outlets AND the authoritative
+  source pages, while `news` buried the authoritative page and added noise on
+  non-news queries).
   The human Websuche curation panel still shows ~300-char snippets (server
   passes `include_snippets=True` on that path). This is a **standalone
   tool**, not an exa_search backend. Default-disabled at the global gate —

@@ -1435,10 +1435,6 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <input type="checkbox" id="websuche-allow-further" onchange="toggleAllowFurtherWeb(this.checked)">
       <span>Weitere Websuche / Webabruf erlauben</span>
     </label>
-    <label class="websuche-allow-row" id="websuche-abstract-row" title="Lädt je markierte Quelle nur eine ~1500-Zeichen-Kurzfassung statt der ganzen Seite — spart Tokens">
-      <input type="checkbox" id="websuche-abstract-first">
-      <span>Nur Kurzfassung je Quelle (Abstract, spart Tokens)</span>
-    </label>
     <div class="websuche-manual">
       <input type="text" id="websuche-manual-url" class="websuche-input" placeholder="URL manuell hinzufügen…"
              onkeydown="if(event.key==='Enter')addManualWebUrl()">

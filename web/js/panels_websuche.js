@@ -256,10 +256,3 @@ async function toggleAllowFurtherWeb(checked) {
   catch (e) {}
 }
 
-// Abstract-first triage: when checked, API.streamChat sends web_abstract_first
-// so the server fetches each curated source as a ~1500-char survey instead of
-// the whole page (big token saving on large baskets). Per-send, not persisted.
-function webAbstractFirstEnabled() {
-  const cb = document.getElementById('websuche-abstract-first');
-  return !!(cb && cb.checked);
-}
