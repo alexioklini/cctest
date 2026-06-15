@@ -4,6 +4,7 @@
 
 import json
 import os
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -15,6 +16,20 @@ def _ok(result: dict) -> str:
 
 def _err(msg: str) -> str:
     return json.dumps({"error": msg}, ensure_ascii=False)
+
+
+def _slug_from_prompt(prompt: str) -> str:
+    """A short, filesystem-safe, content-reflecting base name derived from the
+    image prompt — so a generated file is `ginger-cat-on-a-windowsill.png`, not
+    Mistral's artificial `image_generated_0.png`. Lowercased, non-word chars
+    dropped, spaces → hyphens, capped at ~50 chars on a word boundary. Falls
+    back to `image` when the prompt yields nothing usable (e.g. all punctuation
+    or non-latin that strips empty)."""
+    safe = re.sub(r"[^\w\s-]", "", (prompt or "").strip().lower())
+    safe = re.sub(r"\s+", "-", safe).strip("-")
+    if len(safe) > 50:
+        safe = safe[:50].rsplit("-", 1)[0] or safe[:50]
+    return safe or "image"
 
 
 _MISTRAL_BASE = "https://api.mistral.ai"
@@ -189,11 +204,23 @@ def tool_generate_image(args: dict) -> str:
         artifact_dir = os.path.join(brain.AGENTS_DIR, agent_id_local, "artifacts", "image_gen")
     os.makedirs(artifact_dir, exist_ok=True)
 
+    # Speaking filename from the prompt instead of Mistral's artificial
+    # `image_generated_0.png`. Keep the extension Mistral returned (default
+    # .png). Multiple images get a `-2`, `-3`, … suffix; an on-disk collision
+    # bumps the suffix too so a re-generate in the same session never clobbers.
+    _base = _slug_from_prompt(prompt)
     saved: list[dict] = []
-    for file_id, file_name in file_ids:
-        if not file_name.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
-            file_name += ".png"
+    for _idx, (file_id, _orig_name) in enumerate(file_ids):
+        _ext = os.path.splitext(_orig_name)[1].lower()
+        if _ext not in (".png", ".jpg", ".jpeg", ".webp"):
+            _ext = ".png"
+        file_name = f"{_base}{_ext}" if len(file_ids) == 1 else f"{_base}-{_idx + 1}{_ext}"
         save_path = os.path.join(artifact_dir, file_name)
+        _n = 2
+        while os.path.exists(save_path):
+            file_name = f"{_base}-{_n}{_ext}"
+            save_path = os.path.join(artifact_dir, file_name)
+            _n += 1
 
         dl_req = urllib.request.Request(
             f"{_MISTRAL_BASE}/v1/files/{file_id}/content",
