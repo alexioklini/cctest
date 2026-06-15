@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.129.0"
+VERSION = "9.130.0"
 VERSION_DATE = "2026-06-15"
 CHANGELOG = [
+    ("9.130.0", "2026-06-15", "perf(artifacts): precompute + persist + reuse browse previews instead of recomputing every time. Follow-up to 9.129.0 (which fetched full content + re-rendered on every card view). (1) IMAGE THUMBNAILS — server-PRECOMPUTED at write time: new `artifact_versions.thumbnail` BLOB column (migration); brain._make_image_thumbnail() (Pillow) downscales image content to a ~480px WebP (q78) once in _register_artifact_version → stored on the version row (best-effort; failure → NULL → client falls back). New GET /v1/artifacts/<id>/thumbnail (handlers/admin_artifacts) serves the WebP with immutable max-age=1y caching; the browse payload sets has_thumbnail per image. Client requests the SMALL thumbnail blob, never the full image bytes (a 2000px PNG → ~0.4KB WebP in testing). (2) TEXT-RENDER PREVIEWS (svg/html/markdown/code) — CLIENT-cached in IndexedDB (_ArtPreviewCache, key id:version:type): the rendered HTML (marked/hljs/iframe-srcdoc) is computed once per browser then reused, so scrolling the grid skips both the content fetch and the re-render. (3) AUDIO/VIDEO still stream an auth'd download blob inline (browser handles range requests; no cache needed). Server can't precompute md/html/svg/code (those are marked/hljs JS renders) and video posters (ffmpeg is broken on this box — libx265 dyld failure — so no frame extraction); IndexedDB-cache + client-render is the correct split. ESLint: window.indexedDB (eslint browser-global gap, same window.NodeFilter convention). py_compile OK (brain/db/admin_artifacts/server); js_gate PASS (net-globals 1358→1359 for _ArtPreviewCache; smoke green). Needs Brain restart for the thumbnail column + generation + the /thumbnail route; thumbnails are generated going forward (existing images backfill lazily via the /content fallback until rewritten). Frontend hard-refresh."),
     ("9.129.0", "2026-06-15", "feat(artifacts): real previews on browse cards for every type where possible (was: only text-ish types got a snippet; image/document showed a generic icon). All lazy-hydrated via IntersectionObserver — each card fetches its content ONLY when scrolled into view (rootMargin 200px), so the grid never fires N heavy authed fetches up front; one-shot per card; any failure leaves the type icon in place (best-effort). NEW `_hydrateLazyArtifactPreviews(grid)` (web/js/panels_artifacts.js) handles: image → thumbnail (object-fit:cover, base64 data-URI from /content); video → <video controls> (auth'd download blob); audio → inline <audio controls> player, playable without opening the card (auth'd blob — bare src 401s); svg → inline render; html → sandboxed iframe mini-render scaled from a 1024px virtual width down to the card width (transform:scale set inline per card — fixes the 'renders only in the top-left quarter' bug from a fixed scale(0.5) of a 200%-wide frame); markdown → rendered (renderMarkdown), not raw source; code → hljs syntax-highlighted snippet (first 2000 chars, lang from ext else highlightAuto); text → keeps the server snippet (no fetch). Only `document` (pdf/docx/xlsx/pptx) keeps the icon (needs server-side rendering). renderArtifactsBrowse marks lazy cards with data-lazy-{id,version,type,name}; .artifact-thumb* CSS in main.css; the bottom text-fade ::after is suppressed for media/render previews via :has(). BACKEND: added a `video` artifact type to _ARTIFACT_TYPE_MAP (mp4/webm/mov/m4v) — previously unmapped (fell through to code) so video files couldn't be treated as playable; needs Brain restart for the type to apply to newly-written files. js_gate PASS (net-globals +1 for _hydrateLazyArtifactPreviews, baseline 1357→1358; smoke green). Frontend hard-refresh; Brain restart for the video type mapping."),
     ("9.128.0", "2026-06-15", "feat(generate_image): speaking, content-reflecting filenames instead of Mistral's artificial `image_generated_0.png`. engine/tools/image_gen.py: new `_slug_from_prompt()` (lowercased, non-word chars dropped, spaces→hyphens, capped ~50 chars on a word boundary, falls back to `image` when the prompt strips empty) derives the base name from the image PROMPT — the only content signal the tool has. The save loop uses `<slug><ext>` for a single image and `<slug>-N<ext>` for multiples, keeping whatever extension Mistral returned (default .png); an on-disk collision bumps the numeric suffix so a re-generate in the same session never clobbers. Pure deterministic transform (slugify) — no extra LLM call. Example: prompt 'a ginger cat on a windowsill at sunset' → `a-ginger-cat-on-a-windowsill-at-sunset.png`. German umlauts survive (Unicode \\w); ASCII-only not enforced. py_compile OK; no schema/arg/dispatch change (only the produced filename), so no Brain restart strictly needed to keep working, but the running server must reload to pick up the new naming."),
     ("9.127.0", "2026-06-15", "fix(chat-ui): ask_user / worker question card lifecycle — the v9.126.0 fix made the card survive mid-turn re-renders but over-corrected: it pinned the card to the END of the container and NEVER removed it, so the question (a) hung at the bottom instead of in the turn flow, (b) stuck visible in EVERY chat after switching, and (c) stayed after the answer was sent. All client-side (web/js). (1) _reconcileMessageBlocks (chat_render.js): preserve the transient aq-/wq- card ONLY while the active chat is streaming (`state.activeChat?.streaming`); otherwise let it fall through to the stray-node drop. So it survives streaming re-renders but is removed on turn-end (done/error set streaming=false BEFORE the final renderMessages) and on chat switch (a non-streaming chat re-renders → dropped). Removed the 'pin to END' loop — the card stays where its SSE handler appended it (the live tail = correct turn-flow position). (2) answerChatQuestion (chat_send.js): on a successful POST /v1/chat/answer the card is now card.remove()'d immediately (was: just marked .wq-answered and left visible — the turn keeps streaming so reconcile would otherwise keep it). (3) user_input_received handler: now removes the card (covers answers arriving from another tab / the TUI) instead of annotating it. ESLint caught a scope bug during the fix (referenced `chat` in _reconcileMessageBlocks which only has state.activeChat) — fixed. ALSO in this version: a floating 'Neuer Chat' quick-action button top-right of the chat view (web/index.html #chat-new-quick + .chat-new-quick CSS in main.css), position:absolute scoped to #chat-view (which is now position:relative), onclick=newChat() — lets you start a new chat without opening the sidebar nav; only shows in an active chat (the welcome view is its own separate view). js_gate PASS (net-globals 1357 unchanged, smoke green). Frontend hard-refresh only; no server change."),
@@ -12278,6 +12279,32 @@ def _is_artifact_path(path: str) -> bool:
     except Exception:
         return False
 
+def _make_image_thumbnail(content: bytes, max_px: int = 480) -> bytes | None:
+    """Downscale image bytes to a small WebP thumbnail for the browse grid.
+    Returns WebP bytes (or None on any failure — caller treats None as 'no
+    thumbnail', client falls back to fetching the full image). Pillow handles
+    the common raster formats; animated/huge images collapse to a single frame.
+    max_px caps the longest side (the browse card is ~300px, 480 covers retina)."""
+    try:
+        from PIL import Image
+        import io as _io
+        im = Image.open(_io.BytesIO(content))
+        # Flatten palette/alpha onto white so WebP/JPEG don't choke; keep RGB.
+        im.draft("RGB", (max_px, max_px))  # fast pre-scale on JPEG decode
+        im = im.convert("RGB")
+        im.thumbnail((max_px, max_px), Image.LANCZOS)
+        out = _io.BytesIO()
+        im.save(out, format="WEBP", quality=78, method=4)
+        data = out.getvalue()
+        # Sanity: a thumbnail that somehow came out larger than a 5MB cap is not
+        # worth storing (degenerate input).
+        return data if data and len(data) < 2 * 1024 * 1024 else None
+    except Exception as e:
+        try: print(f"  [WARN] thumbnail gen failed: {e}", flush=True)
+        except Exception: pass
+        return None
+
+
 def _register_artifact_version(path: str, action: str, agent_id: str):
     """Register or update an artifact in the DB, capturing content snapshot.
     Returns (artifact_id, version, type) or None on failure."""
@@ -12319,7 +12346,15 @@ def _register_artifact_version(path: str, action: str, agent_id: str):
         # array position) so the UI can group artifacts by turn in the right
         # panel. None when no user message exists yet (background writes).
         msg_idx = ChatDB.artifact_message_idx(session_id)
-        ChatDB.add_artifact_version(artifact_id, next_version, content, size, msg_idx, action)
+        # Precompute a small image thumbnail ONCE at write time (Pillow), stored
+        # on the version row so the browse grid never re-fetches full image bytes
+        # per card. Best-effort: any failure → no thumbnail, client falls back to
+        # the /content fetch. Only for raster image types (svg is text; vectors
+        # render fine client-side).
+        thumb = None
+        if artifact_type == "image" and content and ext not in ("svg",):
+            thumb = _make_image_thumbnail(content)
+        ChatDB.add_artifact_version(artifact_id, next_version, content, size, msg_idx, action, thumbnail=thumb)
         return (artifact_id, next_version, artifact_type, msg_idx)
     except Exception as e:
         print(f"  [WARN] artifact registration: {e}", flush=True)

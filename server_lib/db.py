@@ -414,6 +414,15 @@ class ChatDB:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_artver_artifact ON artifact_versions(artifact_id)")
+            # Precomputed image thumbnail for this version (small WebP/JPEG bytes,
+            # Pillow-downscaled at write time). Reused by the browse grid so it
+            # never re-fetches the full image bytes per card. NULL = no thumbnail
+            # (non-image, generation failed, or pre-migration row → client falls
+            # back to fetching /content as before).
+            try:
+                conn.execute("ALTER TABLE artifact_versions ADD COLUMN thumbnail BLOB")
+            except sqlite3.OperationalError:
+                pass
             # ── Multi-user migrations ──
             # Add user_id to sessions (migration)
             try:
@@ -999,12 +1008,37 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def add_artifact_version(artifact_id, version, content, size, message_idx, action):
+    def add_artifact_version(artifact_id, version, content, size, message_idx, action, thumbnail=None):
         with _db_conn() as conn:
             conn.execute(
-                "INSERT INTO artifact_versions (artifact_id, version, content, size, message_idx, action) VALUES (?, ?, ?, ?, ?, ?)",
-                (artifact_id, version, content, size, message_idx, action))
+                "INSERT INTO artifact_versions (artifact_id, version, content, size, message_idx, action, thumbnail) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (artifact_id, version, content, size, message_idx, action, thumbnail))
             conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_artifact_thumbnail(artifact_id, version=None):
+        """Return the precomputed thumbnail bytes for a version (latest if
+        version is None), or None when there isn't one."""
+        with _db_conn() as conn:
+            if version:
+                row = conn.execute(
+                    "SELECT thumbnail FROM artifact_versions WHERE artifact_id=? AND version=?",
+                    (artifact_id, version)).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT thumbnail FROM artifact_versions WHERE artifact_id=? ORDER BY version DESC LIMIT 1",
+                    (artifact_id,)).fetchone()
+            return row[0] if row and row[0] is not None else None
+
+    @staticmethod
+    @_db_safe(default=False)
+    def has_artifact_thumbnail(artifact_id, version):
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM artifact_versions WHERE artifact_id=? AND version=? AND thumbnail IS NOT NULL",
+                (artifact_id, version)).fetchone()
+            return bool(row)
 
     @staticmethod
     @_db_safe(default=list)

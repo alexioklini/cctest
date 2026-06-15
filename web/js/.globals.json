@@ -13,6 +13,7 @@
     "_applyRefineTierComposer": "writable",
     "_applyScheduledReadonlyUI": "writable",
     "_artifactListRoleFilter": "writable",
+    "_ArtPreviewCache": "writable",
     "_ATTACH_REVIEW_BADGE": "writable",
     "_ATTACH_TEXT_EXTS": "writable",
     "_attachIdent": "writable",

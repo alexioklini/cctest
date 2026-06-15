@@ -1255,7 +1255,7 @@ function renderArtifactsBrowse() {
       <div class="artifact-browse-card" data-art-id="${esc(a.id)}" data-art-agent="${esc(a.agent_id)}" ${isInter ? 'style="opacity:0.78"' : ''}>
         <div class="artifact-browse-fav-slot" onclick="event.stopPropagation()" data-art-fav-id="${esc(a.id)}" data-art-fav-agent="${esc(a.agent_id)}"></div>
         <div class="artifact-browse-preview${hasPreview || isLazy ? '' : ' no-preview'}${isLazy ? ' artifact-lazy-preview' : ''}${a.type === 'html' ? ' artifact-html-preview' : ''}"
-             ${isLazy ? `data-lazy-id="${esc(a.id)}" data-lazy-version="${a.latest_version || 1}" data-lazy-type="${esc(a.type)}" data-lazy-name="${esc(a.name)}"` : ''}
+             ${isLazy ? `data-lazy-id="${esc(a.id)}" data-lazy-version="${a.latest_version || 1}" data-lazy-type="${esc(a.type)}" data-lazy-name="${esc(a.name)}" data-lazy-thumb="${a.has_thumbnail ? '1' : ''}"` : ''}
              onclick="openArtifactFromBrowse('${esc(a.id)}', '${esc(a.session_id)}', '${esc(a.agent_id)}')">
           ${hasPreview ? preview : artifactTypeIcon(a.type)}
         </div>
@@ -1288,12 +1288,56 @@ function renderArtifactsBrowse() {
   _hydrateLazyArtifactPreviews(grid);
 }
 
+// Tiny IndexedDB cache for COMPUTED text-render previews (svg/html/md/code).
+// Keyed by `${id}:${version}` → the rendered HTML string. Computed once per
+// browser, then reused — so scrolling the grid doesn't re-fetch the source +
+// re-run marked/hljs every time. Images don't use this: they have a
+// server-persisted thumbnail (the heavy case). Best-effort: any IDB failure
+// degrades to compute-each-time, never throws.
+const _ArtPreviewCache = (() => {
+  const DB = 'brain_artifact_previews', STORE = 'previews';
+  let _dbp = null;
+  function _open() {
+    if (_dbp) return _dbp;
+    _dbp = new Promise((resolve) => {
+      try {
+        const req = window.indexedDB.open(DB, 1);
+        req.onupgradeneeded = () => { try { req.result.createObjectStore(STORE); } catch (e) {} };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      } catch (e) { resolve(null); }
+    });
+    return _dbp;
+  }
+  return {
+    async get(key) {
+      const db = await _open(); if (!db) return null;
+      return new Promise((resolve) => {
+        try {
+          const r = db.transaction(STORE, 'readonly').objectStore(STORE).get(key);
+          r.onsuccess = () => resolve(r.result || null);
+          r.onerror = () => resolve(null);
+        } catch (e) { resolve(null); }
+      });
+    },
+    async put(key, val) {
+      const db = await _open(); if (!db) return;
+      try { db.transaction(STORE, 'readwrite').objectStore(STORE).put(val, key); } catch (e) {}
+    },
+  };
+})();
+
 // Lazy visual previews for image/video/audio/svg/html/markdown/code browse
-// cards. Each fetches the artifact content (authed /content for text+image,
-// authed download blob for audio/video) ONLY when the card scrolls into view
-// (IntersectionObserver), then swaps the placeholder icon for a real thumbnail
-// / player / rendered mini-preview. One-shot per card (unobserve after
-// hydrate). Failures leave the icon in place — best-effort, never blocks.
+// cards. Hydrated ONLY when the card scrolls into view (IntersectionObserver),
+// one-shot per card. Sources, in order of preference:
+//   image          → server-PRECOMPUTED thumbnail (/thumbnail, auth'd blob) —
+//                    never the full image bytes; falls back to /content only if
+//                    no thumbnail exists (pre-migration rows).
+//   svg/html/md/code → rendered once, then CACHED in IndexedDB (id:version);
+//                    a cache hit skips both the content fetch and the re-render.
+//   audio/video    → auth'd download blob (played inline; not cached — the
+//                    browser handles range requests).
+// Failures leave the type icon in place — best-effort, never blocks the card.
 function _hydrateLazyArtifactPreviews(grid) {
   const cards = grid.querySelectorAll('.artifact-lazy-preview[data-lazy-id]');
   if (!cards.length) return;
@@ -1304,59 +1348,75 @@ function _hydrateLazyArtifactPreviews(grid) {
     const version = parseInt(el.dataset.lazyVersion, 10) || 1;
     const type = el.dataset.lazyType;
     const name = el.dataset.lazyName || '';
+    const hasThumb = el.dataset.lazyThumb === '1';
+    const setInner = (inner) => { if (inner) { el.classList.remove('no-preview'); el.innerHTML = inner; } };
     try {
-      // Audio + video: fetch the raw bytes as an auth'd blob (the download URL
-      // is Bearer-only, so a bare src 401s) and play inline — no base64 bloat.
-      if (type === 'audio' || type === 'video') {
-        const resp = await fetch(API.getArtifactDownloadUrl(id, version), { headers: API._headers() });
-        if (!resp.ok) return; // keep icon
-        const url = URL.createObjectURL(await resp.blob());
-        el.classList.remove('no-preview');
-        if (type === 'audio') {
-          el.innerHTML = `<audio class="artifact-thumb-audio" controls preload="metadata" src="${url}" onclick="event.stopPropagation()"></audio>`;
-        } else {
-          el.innerHTML = `<video class="artifact-thumb-video" controls preload="metadata" src="${url}" onclick="event.stopPropagation()"></video>`;
-        }
-        return;
-      }
-      // Text-ish + image + svg/html: the JSON content endpoint (base64 for
-      // image, raw text otherwise).
-      const data = await API.getArtifactContent(id, version);
-      if (!data || !data.content) return; // keep icon
-      let inner = '';
+      // IMAGE: prefer the server-precomputed thumbnail (small WebP, auth'd
+      // blob) — never re-fetch the full image. Fall back to /content only for
+      // pre-migration rows that have no thumbnail yet.
       if (type === 'image') {
+        if (hasThumb) {
+          const resp = await fetch(API.getArtifactThumbnailUrl(id, version), { headers: API._headers() });
+          if (resp.ok) {
+            const url = URL.createObjectURL(await resp.blob());
+            setInner(`<img class="artifact-thumb" src="${url}" alt="" loading="lazy">`);
+            return;
+          }
+        }
+        const data = await API.getArtifactContent(id, version);
+        if (!data || !data.content) return;
         const ext = (name.split('.').pop() || 'png').toLowerCase();
         const mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
         const src = data.encoding === 'base64' ? `data:${mime};base64,${data.content}` : data.content;
-        inner = `<img class="artifact-thumb" src="${src}" alt="" loading="lazy">`;
-      } else if (type === 'svg') {
-        inner = `<div class="artifact-thumb-svg">${data.content}</div>`;
-      } else if (type === 'html') {
-        // Sandboxed, non-interactive mini-render. Scale the 1024px virtual
-        // frame down to the card's real width so the whole page top fills the
-        // card (not just a top-left corner).
-        const w = el.clientWidth || 300;
-        inner = `<iframe class="artifact-thumb-frame" sandbox="" srcdoc="${esc(data.content)}" scrolling="no" tabindex="-1" aria-hidden="true" style="transform:scale(${(w / 1024).toFixed(3)})"></iframe>`;
-      } else if (type === 'markdown') {
-        // Rendered markdown, not raw source.
-        const md = (typeof renderMarkdown === 'function') ? renderMarkdown(data.content) : esc(data.content);
-        inner = `<div class="artifact-thumb-md msg-content">${md}</div>`;
-      } else if (type === 'code') {
-        // Syntax-highlighted snippet (cap chars so highlight stays cheap).
-        const ext = (name.split('.').pop() || '').toLowerCase();
-        const snippet = (data.content || '').slice(0, 2000);
-        let body;
-        try {
-          const lang = (typeof hljs !== 'undefined' && hljs.getLanguage(ext)) ? ext : null;
-          body = (typeof hljs !== 'undefined')
-            ? (lang ? hljs.highlight(snippet, { language: lang }).value : hljs.highlightAuto(snippet).value)
-            : esc(snippet);
-        } catch (e) { body = esc(snippet); }
-        inner = `<pre class="artifact-thumb-code"><code class="hljs">${body}</code></pre>`;
+        setInner(`<img class="artifact-thumb" src="${src}" alt="" loading="lazy">`);
+        return;
       }
-      if (inner) {
-        el.classList.remove('no-preview');
-        el.innerHTML = inner;
+      // AUDIO / VIDEO: auth'd download blob, played inline (browser handles
+      // range requests; no caching needed).
+      if (type === 'audio' || type === 'video') {
+        const resp = await fetch(API.getArtifactDownloadUrl(id, version), { headers: API._headers() });
+        if (!resp.ok) return;
+        const url = URL.createObjectURL(await resp.blob());
+        setInner(type === 'audio'
+          ? `<audio class="artifact-thumb-audio" controls preload="metadata" src="${url}" onclick="event.stopPropagation()"></audio>`
+          : `<video class="artifact-thumb-video" controls preload="metadata" src="${url}" onclick="event.stopPropagation()"></video>`);
+        return;
+      }
+      // TEXT-RENDER TYPES (svg/html/markdown/code): rendered HTML cached in
+      // IndexedDB keyed by id:version — compute once, then reuse.
+      const cacheKey = `${id}:${version}:${type}`;
+      let inner = await _ArtPreviewCache.get(cacheKey);
+      if (!inner) {
+        const data = await API.getArtifactContent(id, version);
+        if (!data || !data.content) return;
+        if (type === 'svg') {
+          inner = `<div class="artifact-thumb-svg">${data.content}</div>`;
+        } else if (type === 'html') {
+          inner = `<iframe class="artifact-thumb-frame" sandbox="" srcdoc="${esc(data.content)}" scrolling="no" tabindex="-1" aria-hidden="true"></iframe>`;
+        } else if (type === 'markdown') {
+          const md = (typeof renderMarkdown === 'function') ? renderMarkdown(data.content) : esc(data.content);
+          inner = `<div class="artifact-thumb-md msg-content">${md}</div>`;
+        } else if (type === 'code') {
+          const ext = (name.split('.').pop() || '').toLowerCase();
+          const snippet = (data.content || '').slice(0, 2000);
+          let body;
+          try {
+            const lang = (typeof hljs !== 'undefined' && hljs.getLanguage(ext)) ? ext : null;
+            body = (typeof hljs !== 'undefined')
+              ? (lang ? hljs.highlight(snippet, { language: lang }).value : hljs.highlightAuto(snippet).value)
+              : esc(snippet);
+          } catch (e) { body = esc(snippet); }
+          inner = `<pre class="artifact-thumb-code"><code class="hljs">${body}</code></pre>`;
+        }
+        if (inner) _ArtPreviewCache.put(cacheKey, inner);
+      }
+      if (!inner) return;
+      setInner(inner);
+      // The html iframe needs its scale set from the live card width (can't be
+      // baked into the cached string — width is layout-dependent).
+      if (type === 'html') {
+        const frame = el.querySelector('.artifact-thumb-frame');
+        if (frame) frame.style.transform = `scale(${((el.clientWidth || 300) / 1024).toFixed(3)})`;
       }
     } catch (e) { /* keep the icon placeholder on any failure */ }
   };

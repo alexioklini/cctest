@@ -247,6 +247,7 @@ class API {
   static browseArtifacts(agentId, limit) { return this.get(`/v1/artifacts/browse?${agentId ? 'agent_id=' + encodeURIComponent(agentId) + '&' : ''}limit=${limit || 100}`); }
   static getArtifactContent(id, version) { return this.get(`/v1/artifacts/${id}/content${version ? '?version=' + version : ''}`); }
   static getArtifactDownloadUrl(id, version) { return `${BASE_URL}/v1/artifacts/${id}/download${version ? '?version=' + version : ''}`; }
+  static getArtifactThumbnailUrl(id, version) { return `${BASE_URL}/v1/artifacts/${id}/thumbnail${version ? '?version=' + version : ''}`; }
 
   // Project outputs (Output Presets / Studio — the SHARED store + generate endpoint)
   static _projOutBase(agentId, projectName) { return `/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}`; }

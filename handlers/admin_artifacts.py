@@ -1666,7 +1666,9 @@ class AdminArtifactsHandlers:
         if source_filter in ("chat", "scheduled", "translation"):
             artifacts = [a for a in artifacts if a.get("source") == source_filter]
 
-        # Fetch text preview for each text-based artifact
+        # Fetch text preview for each text-based artifact; flag image artifacts
+        # that have a precomputed thumbnail so the browse grid can request it
+        # (the small thumbnail) instead of re-fetching the full image bytes.
         binary_types = {"image", "document"}
         for a in artifacts:
             if a.get("type") not in binary_types:
@@ -1674,7 +1676,29 @@ class AdminArtifactsHandlers:
                 a["preview"] = preview
             else:
                 a["preview"] = None
+            if a.get("type") == "image":
+                a["has_thumbnail"] = ChatDB.has_artifact_thumbnail(a["id"], a.get("latest_version") or 1)
         self._send_json({"artifacts": artifacts})
+
+    def _handle_artifact_thumbnail(self, path):
+        """GET /v1/artifacts/<id>/thumbnail?version=N — serve the precomputed
+        WebP thumbnail bytes (image artifacts only). 404 when none exists so the
+        client falls back to /content. Cacheable (immutable per id+version)."""
+        from urllib.parse import urlparse, parse_qs
+        parts = path.split("/")
+        artifact_id = parts[3] if len(parts) >= 5 else ""
+        qs = parse_qs(urlparse(self.path).query)
+        version = qs.get("version", [None])[0]
+        thumb = ChatDB.get_artifact_thumbnail(artifact_id, version)
+        if not thumb:
+            self._send_json({"error": "No thumbnail"}, 404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/webp")
+        self.send_header("Content-Length", str(len(thumb)))
+        self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+        self.end_headers()
+        self.wfile.write(thumb)
 
     def _handle_artifact_content(self, path):
         """GET /v1/artifacts/<id>/content?version=N — get artifact version content."""
