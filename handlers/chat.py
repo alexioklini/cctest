@@ -254,6 +254,49 @@ def _append_to_wire_user(messages, suffix):
     return wire
 
 
+def _session_attachment_paths(session_id: str) -> list[str]:
+    """All files attached EARLIER in this session, still on disk under the
+    session-scoped /tmp/brain-attachments/<sid>/ dir (the upload path never
+    clears it, so attachments accumulate across the whole chat). Sorted for
+    stable order. Empty list when the dir is absent / empty."""
+    try:
+        d = os.path.join("/tmp", "brain-attachments", session_id)
+        if not os.path.isdir(d):
+            return []
+        return sorted(
+            os.path.join(d, n) for n in os.listdir(d)
+            if os.path.isfile(os.path.join(d, n)))
+    except Exception:
+        return []
+
+
+_DOC_ATTACH_EXTS = (".pdf", ".docx", ".xlsx", ".xls", ".pptx", ".csv", ".tsv",
+                    ".eml", ".msg", ".epub", ".txt", ".md")
+
+
+def _session_attachments_wire_suffix(session_id: str) -> tuple[str, bool]:
+    """A wire-only reminder, appended to the last user message EVERY turn, that
+    lists the documents attached so far in this chat — so a later turn can still
+    read them with read_document (the upload-turn notice only fires on the turn
+    the file arrived; later turns 'forgot' the file → the model answered from
+    stale context instead of re-reading, chat 29ce67d2). Transient (never
+    persisted → no history bloat / freeze, same pattern as the web preamble).
+    Returns (suffix, has_docs); has_docs drives forcing read_document in-prompt.
+    Covers the 'extra file attached in a later turn' case automatically: the dir
+    accumulates, so every doc ever attached in the session is listed."""
+    paths = _session_attachment_paths(session_id)
+    docs = [p for p in paths if os.path.splitext(p)[1].lower() in _DOC_ATTACH_EXTS]
+    if not docs:
+        return "", False
+    listing = "\n".join(f"  - {p}" for p in docs)
+    suffix = (
+        "\n\n[Dateien, die in diesem Chat angehängt wurden und weiterhin auf "
+        "Disk verfügbar sind — mit dem read_document-Tool (NICHT read_file) "
+        "jederzeit (erneut) lesbar, auch wenn sie in einer früheren Anfrage "
+        "hochgeladen wurden:]\n" + listing)
+    return suffix, True
+
+
 def _undelivered_groups_preamble(session_id: str) -> str:
     """Next-turn injection floor for fan-out groups: any completed group whose
     proactive push didn't fire (busy chat) is delivered here. Pops + marks
@@ -1794,7 +1837,15 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             # deferred tool is now dispatchable anyway — see
             # _dispatchable_allowed_tools in sidecar_proxy; this just saves the
             # round-trip.) Only meaningful when the classifier produced a list.
-            if saved_paths and isinstance(_auto_groups, list) and "documents" not in _auto_groups:
+            # Fire when EITHER this turn uploaded files (saved_paths) OR the
+            # session already has documents on disk from an earlier turn — so a
+            # follow-up question about a previously-attached file still gets
+            # read_document in-prompt (chat 29ce67d2: turn 2 had no upload, the
+            # classifier deferred read_document, the model never re-read the xlsx).
+            _has_session_docs = any(
+                os.path.splitext(p)[1].lower() in _DOC_ATTACH_EXTS
+                for p in _session_attachment_paths(sid))
+            if (saved_paths or _has_session_docs) and isinstance(_auto_groups, list) and "documents" not in _auto_groups:
                 _auto_groups = _auto_groups + ["documents"]
             # `_auto_groups` is a LIST when the classifier ran (possibly EMPTY =
             # "no tool groups needed" → defer everything to the floor), or None
@@ -2449,6 +2500,18 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     engine.get_request_context()._discipline_meta = _discipline_meta
                 except Exception:
                     pass
+                # Session attachments (v9.138.0): wire-only reminder, EVERY turn,
+                # of the documents attached so far in this chat so a later turn
+                # can still read them via read_document — the upload-turn notice
+                # only fires on the turn the file arrived, so later turns
+                # 'forgot' the file and the model answered from stale context
+                # instead of re-reading it (chat 29ce67d2). Transient (never
+                # persisted). Also forces read_document in-prompt when the
+                # session has docs (read_document is otherwise classifier-
+                # deferred on a turn whose text doesn't mention files).
+                _att_suffix, _att_has_docs = _session_attachments_wire_suffix(sid)
+                if _att_suffix:
+                    _wire_messages = _append_to_wire_user(_wire_messages, _att_suffix)
                 # Caveman OUTPUT-STYLE (v9.121.0): injected as a trailing wire-only
                 # instruction on the last user message — NOT the system prompt and
                 # NOT tool descriptions (warm-pool KV prefix stays byte-stable;
