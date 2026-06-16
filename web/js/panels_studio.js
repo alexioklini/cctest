@@ -291,7 +291,7 @@ function studioOutputCardHtml(o) {
                      : o.phase === 'writing' ? 'Bericht schreiben'
                      : 'Wird vorbereitet';
     // Live elapsed clock (data-since drives the ticker; see studioTickElapsed).
-    statusLine = `<span style="color:var(--text-400)">⟳ ${esc(phaseLabel)}… <span class="studio-elapsed" data-since="${o.created_at || ''}">0:00</span></span>`;
+    statusLine = `<span style="color:var(--text-400)">⟳ ${esc(phaseLabel)}… <span class="studio-elapsed" data-since="${o.created_at || ''}">${_studioElapsedStr(o.created_at)}</span></span>`;
     actions = `<button class="studio-act" onclick="studioCancelOutput('${esc(o.output_id)}')"
                 style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 12px;border-radius:6px">Stoppen</button>`;
   } else if (o.status === 'cancelled') {
@@ -475,14 +475,23 @@ function stopStudioPoll() {
 }
 
 let _studioElapsedHandle = null;
+// m:ss elapsed from a `created_at` epoch. Used BOTH at render time (so a fresh
+// card shows the real elapsed immediately) and by the 1s ticker (so it keeps
+// counting). Rendering the live value — not a hardcoded "0:00" — is what stops
+// the clock from flashing back to 0:00 on every 2.5s poll re-render.
+function _studioElapsedStr(since) {
+  since = parseFloat(since);
+  if (!since) return '0:00';
+  const sec = Math.max(0, Math.floor(Date.now() / 1000 - since));
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+}
 // Tick every generating card's elapsed clock from its data-since epoch, so the
 // long single LLM "writing" phase never looks frozen (no per-token progress).
 function studioTickElapsed() {
   document.querySelectorAll('.studio-elapsed[data-since]').forEach(el => {
     const since = parseFloat(el.dataset.since);
     if (!since) return;
-    const sec = Math.max(0, Math.floor(Date.now() / 1000 - since));
-    el.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+    el.textContent = _studioElapsedStr(since);
   });
 }
 

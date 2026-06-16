@@ -315,6 +315,7 @@
     "_stripMarkdownForSpeech": "writable",
     "_stripPreamble": "writable",
     "_studioElapsedHandle": "writable",
+    "_studioElapsedStr": "writable",
     "_studioKindMeta": "writable",
     "_studioPollHandle": "writable",
     "_studioProjectHasSources": "writable",
