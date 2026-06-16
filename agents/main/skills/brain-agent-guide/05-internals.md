@@ -267,14 +267,22 @@ probe), admin status/restart endpoints:
   `config.json → crawl4ai.auto_start`. `brain._crawl4ai_render()` degrades
   gracefully when down. Admin: `/v1/crawl4ai/{status,restart}`.
 
-`web_fetch` fallback chain: markitdown HTML→md first; crawl4ai render fires
+`web_fetch` content handling: the response Content-Type / URL extension is
+checked FIRST. A non-HTML FILE (PDF/DOCX/XLSX/PPTX/CSV/image — by URL ext,
+Content-Type, or `%PDF` magic bytes) is ingested like an uploaded file:
+documents go through the shared `doc_convert._do_extract` pipeline
+(fitz/pdfplumber + OCR) tagged `fetch_method=document`, images through the
+vision describer tagged `image`. This is what stops a direct `…/foo.pdf`
+link from returning raw `%PDF…` binary (the v9.139.0 fix — the project
+web-url miner was storing that garbage). HTML/text/JSON keep the
+markitdown→crawl4ai chain: markitdown HTML→md first; crawl4ai render fires
 on an HTML GET when the converted text is THIN (<600 chars — v9.99.2 raised
 this from <30 so a consent-wall teaser triggers it, not just an empty shell)
 OR when the final URL is a consent/cookie interstitial (`/consent`, `/tcf/`,
 `cookie`, `datenschutz/zustimmung`). The render is only taken when it's
 strictly longer than the HTTP result (guards against a render that itself
 hits the wall). Every result is tagged `fetch_method`
-(raw/markitdown/crawl4ai), surfaced as a chat-view badge.
+(raw/markitdown/crawl4ai/document/image/academic), surfaced as a chat-view badge.
 
 ## Manual web search (Websuche) + tool lockout
 

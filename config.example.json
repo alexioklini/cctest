@@ -398,7 +398,8 @@
             "ts": "2026-06-03T15:04:33Z"
           }
         }
-      }
+      },
+      "raw_formats": []
     },
     "gemini-2.5-flash": {
       "enabled": false,
@@ -2393,6 +2394,46 @@
           }
         }
       }
+    },
+    "mistral-ocr-3-0": {
+      "enabled": true,
+      "shortname": "mistral-ocr-3-0",
+      "display_name": "mistral-ocr-3-0",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistral-ocr-3": {
+      "enabled": true,
+      "shortname": "mistral-ocr-3",
+      "display_name": "mistral-ocr-3",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true
     }
   },
   "nodes": {},

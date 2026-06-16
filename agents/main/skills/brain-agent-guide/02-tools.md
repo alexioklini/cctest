@@ -183,13 +183,18 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
   there is no summary/abstract mode — a page is always read in full) tagged
   with a `fetch_method`: `raw` (non-HTML, or HTML nothing converted) /
   `markitdown` (our HTML→markdown) / `crawl4ai` (headless-browser render) /
+  `document` (the URL was a file — PDF/DOCX/XLSX/PPTX/CSV — extracted via
+  doc_convert) / `image` (the URL was an image, described by a vision model) /
   `academic` (academic landing page resolved to its full-text PDF).
   markitdown is tried first; the crawl4ai headless render fires **only**
   when the converted text is near-empty (<30 chars) on an HTML GET — so
   JS-rendered pages get rendered, static pages never pay the browser cost.
-  Academic landing pages (arxiv, bioRxiv/medRxiv, PubMed Central) are
-  auto-resolved to their full-text PDF and extracted via doc_convert — just
-  pass the abstract URL.
+  A URL that resolves to a FILE rather than a web page (a direct `…/foo.pdf`
+  link, a `.docx`/`.xlsx`/`.pptx`/`.csv`, or an image) is ingested like an
+  uploaded file — its text is extracted (or the image described) instead of
+  the raw bytes being returned. Academic landing pages (arxiv,
+  bioRxiv/medRxiv, PubMed Central) are auto-resolved to their full-text PDF —
+  just pass the abstract URL.
   The chat view shows the method as a colored badge.
 - `exa_search(query, num_results?)` — semantic web search (Exa cloud, API
   key). **Search-only**: returns title + link, no page content. After a

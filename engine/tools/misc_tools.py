@@ -411,18 +411,124 @@ def _academic_pdf_url(url: str):
     return None
 
 
+# content-type → file extension for the binary/document types we can ingest.
+# Mirrors doc_convert.SUPPORTED_EXTS (documents) + the image types the vision
+# describer handles. HTML/text/json/xml are deliberately ABSENT — those keep the
+# existing text-decode + markitdown path untouched.
+_CTYPE_TO_EXT = {
+    "application/pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.ms-excel": ".xls",
+    "application/msword": ".docx",
+    "application/vnd.ms-powerpoint": ".pptx",
+    "application/epub+zip": ".epub",
+    "application/zip": ".zip",
+    "message/rfc822": ".eml",
+    "text/csv": ".csv",
+    "text/tab-separated-values": ".tsv",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/bmp": ".bmp",
+    "image/tiff": ".tiff",
+}
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff"}
+
+
+def _binary_ext_for(url: str, content_type: str, raw: bytes) -> str | None:
+    """Decide the file extension for a NON-HTML response we should ingest as a
+    file rather than decode as text. Resolution order: URL path extension (most
+    reliable for a direct `…/foo.pdf` link, even when the server mislabels the
+    Content-Type as octet-stream) → Content-Type map → `%PDF` magic bytes.
+    Returns a supported extension, or None when the response is plain
+    text/HTML/JSON/etc. (caller keeps the existing text path)."""
+    from engine import doc_convert
+    ctype = (content_type or "").lower().split(";")[0].strip()
+    # text/* and html/json/xml are NOT files — leave them on the text path.
+    if ctype.startswith("text/") and ctype not in ("text/csv", "text/tab-separated-values"):
+        return None
+    if ctype in ("application/json", "application/xml", "application/xhtml+xml") or "html" in ctype:
+        return None
+    known = doc_convert.SUPPORTED_EXTS | _IMAGE_EXTS
+    try:
+        path = urllib.parse.urlparse(url).path
+    except ValueError:
+        path = ""
+    url_ext = os.path.splitext(path)[1].lower()
+    if url_ext in known:
+        return url_ext
+    ct_ext = _CTYPE_TO_EXT.get(ctype)
+    if ct_ext:
+        return ct_ext
+    # Last resort: PDF magic bytes (covers octet-stream / missing Content-Type).
+    if raw[:5].startswith(b"%PDF"):
+        return ".pdf"
+    return None
+
+
+def _fetch_as_file_result(raw: bytes, ext: str, final_url: str, status: int,
+                          max_length: int) -> dict | None:
+    """Turn already-downloaded bytes into a web_fetch-shaped result by ingesting
+    them like an uploaded file. Documents go through the shared doc_convert
+    pipeline (fitz/pdfplumber + OCR — the SAME path as read_document); images go
+    through the vision describer. Spills to a uniquely-named tempfile (doc_convert
+    reads a path, not bytes). Returns None on any failure so the caller falls back
+    to the raw text path (graceful degradation)."""
+    from engine import doc_convert
+    if ext in _IMAGE_EXTS:
+        # Image → vision description (same helper the chat attachment path uses).
+        import base64
+        import brain as _brain
+        media = next((k for k, v in _CTYPE_TO_EXT.items() if v == ext and k.startswith("image/")), "image/jpeg")
+        try:
+            text = _brain._describe_image_with_vision(
+                base64.b64encode(raw).decode("ascii"), media,
+                os.path.basename(urllib.parse.urlparse(final_url).path) or "image")
+        except Exception:
+            return None
+        if not text or not text.strip():
+            return None
+        if len(text) > max_length:
+            text = text[:max_length] + "\n... (truncated)"
+        return {"url": final_url, "status": status, "length": len(text),
+                "content": text, "fetch_method": "image"}
+    # Document → doc_convert extraction.
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=ext, prefix="brain-webfetch-")
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(raw)
+        # _do_extract returns a 3-tuple (text, backend, error) — NOT a string.
+        text, _backend, _err = doc_convert._do_extract(tmp_path, caps=False)
+        if _err or not text or not text.strip():
+            return None
+        if len(text) > max_length:
+            text = text[:max_length] + "\n... (truncated)"
+        return {"url": final_url, "status": status, "length": len(text),
+                "content": text, "fetch_method": "document"}
+    except Exception:
+        return None
+    finally:
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
 def _fetch_academic_pdf(pdf_url: str, max_length: int, timeout: int, max_size_mb: int) -> dict | None:
     """Download an academic PDF and extract its text via the shared doc_convert
     pipeline (same path as every other PDF read — fitz/pdfplumber + OCR). Spills
     to a uniquely-named tempfile (doc_convert reads a path, not bytes), extracts,
     deletes. Returns a web_fetch-shaped result dict, or None on any failure so
     the caller falls back to the normal HTTP fetch (graceful degradation)."""
-    from engine import doc_convert
     req_headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Accept": "application/pdf,*/*",
     }
-    tmp_path = None
     try:
         req = urllib.request.Request(pdf_url, headers=req_headers, method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -433,26 +539,12 @@ def _fetch_academic_pdf(pdf_url: str, max_length: int, timeout: int, max_size_mb
         # a paywall/HTML redirect means our rewrite missed; fall back.
         if "pdf" not in ctype and not raw[:5].startswith(b"%PDF"):
             return None
-        fd, tmp_path = tempfile.mkstemp(suffix=".pdf", prefix="brain-academic-")
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(raw)
-        # _do_extract returns a 3-tuple (text, backend, error) — NOT a string.
-        text, _backend, _err = doc_convert._do_extract(tmp_path, caps=False)
-        if _err or not text or not text.strip():
-            return None
-        fetch_method = "academic"
-        if len(text) > max_length:
-            text = text[:max_length] + "\n... (truncated)"
-        return {"url": final_url, "status": 200, "length": len(text),
-                "content": text, "fetch_method": fetch_method}
+        res = _fetch_as_file_result(raw, ".pdf", final_url, 200, max_length)
+        if res is not None:
+            res["fetch_method"] = "academic"
+        return res
     except Exception:
         return None
-    finally:
-        if tmp_path:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
 
 
 def tool_web_fetch(args: dict) -> str:
@@ -521,6 +613,21 @@ def tool_web_fetch(args: dict) -> str:
             text = raw.decode(charset, errors="replace")
         final_url = resp.url if hasattr(resp, 'url') else url
         content_type = resp.headers.get_content_type() or ""
+        # Non-HTML file response (PDF/DOCX/XLSX/PPTX/CSV/image/…): ingest the
+        # bytes through the shared doc_convert / vision pipeline instead of
+        # decoding them as text (which dumped raw `%PDF…` binary into the result
+        # — the project web-url miner then stored that garbage). HTML/text/JSON
+        # keep the existing path below. Falls back to the text path on any
+        # extraction failure (graceful degradation).
+        _file_ext = _binary_ext_for(final_url, content_type, raw)
+        if _file_ext:
+            _fres = _fetch_as_file_result(raw, _file_ext, final_url, resp.status, max_length)
+            if _fres is not None:
+                _fres["etag"] = resp.headers.get("ETag", "") or ""
+                _fres["last_modified"] = resp.headers.get("Last-Modified", "") or ""
+                if cache_key:
+                    _brain._web_cache.put(cache_key, dict(_fres))
+                return _ok(_fres)
         # fetch_method records how the returned content was produced, surfaced
         # as a badge in the chat view so it's clear what the LLM actually saw:
         #   "raw"       — non-HTML, or HTML returned verbatim (no conversion)
