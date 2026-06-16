@@ -37,16 +37,13 @@ Anthropic→OpenAI bridge in front, exactly like Mistral has CLIProxyAPI. (The
 direct-Anthropic-native path the vllm-metal plan used is OUT — `fm serve` can't
 speak Anthropic.)
 
-**BRIDGE SOLVED (config-only — verified in the live CLIProxyAPI config 2026-06-16):**
-CLIProxyAPI (`router-for-me/CLIProxyAPI`, the Homebrew binary at the Studio,
-`/opt/homebrew/etc/cliproxyapi.conf`) is a multi-backend ROUTER and has an
-**`openai-compatibility:`** provider section — add ANY OpenAI-compatible upstream
-by name/prefix/base-url/models. So `fm serve` plugs straight in, NO new service,
-NO Python adapter, NO second proxy on the M4:
+**Bridge = CLIProxyAPI's `openai-compatibility` upstream**, BUT on a DEDICATED
+instance/port (not the shared Studio `:8317`). CLIProxyAPI
+(`router-for-me/CLIProxyAPI`, Homebrew binary, `/opt/homebrew/etc/cliproxyapi.conf`)
+is a multi-backend router with an `openai-compatibility:` section:
 ```yaml
 openai-compatibility:
   - name: "apple-fm"
-    prefix: "apple"
     base-url: "http://192.168.4.65:<fm-serve-port>/v1"   # fm serve on the M4
     api-key-entries:
       - api-key: "dummy"        # fm serve needs none
@@ -54,19 +51,28 @@ openai-compatibility:
       - name: "system"          # AFM 3 on-device
         alias: "apple-fm"
 ```
-The sidecar keeps talking Anthropic to the Studio CLIProxyAPI (`:8317`); the
-router translates Anthropic→OpenAI and forwards to the M4's `fm serve`. One
-CLIProxyAPI instance routes both cloud Mistral AND local Apple-FM (prefix/alias
-keep them separate).
 
-⚠️ **`is_local` caveat (per-provider, not per-model — confirmed):** the Studio
-CLIProxyAPI provider is `is_local: false` (it proxies cloud Mistral). Apple-FM
-must NOT inherit that, or it loses the PII-bypass + skips quotas. So on the
-brain-agent side, add a SEPARATE provider entry (e.g. `Apple-FM`,
-`base_url: http://127.0.0.1:8317/v1`, **`is_local: true`**) with the
-prefix-scoped Apple model ids — two brain-agent provider entries, ONE
-CLIProxyAPI instance. (This is exactly why is_local lives on the provider: same
-URL, different locality intent → two named providers.)
+⚠️ **Why a DEDICATED instance, not the shared `:8317` (the model-SYNC trap —
+user-flagged, important):** brain-agent's model sync queries each provider's
+`GET <base_url>/v1/models` and attributes EVERY returned model to that provider
+(`init_models_config`, brain.py:9673). If cloud Mistral and Apple-FM share one
+CLIProxyAPI, `:8317/v1/models` returns the UNION — so the `CLIProxyAPI`
+provider (is_local:false) would pick up `apple-fm` as CLOUD, and an `Apple-FM`
+provider sharing the same URL would pick up Mistral as LOCAL. The is_local flag
+is per-provider; two providers on one URL each discover everything → cloud/local
+get mixed + mis-flagged. Prefix/tombstone juggling could paper over it but is
+fragile.
+**Clean fix:** run a SECOND CLIProxyAPI instance for Apple-FM on its own port,
+e.g. `cliproxyapi -config ~/.cli-proxy-api/apple-fm.conf` (the binary takes
+`-config <path>`; a 2nd instance is trivial — verified). Then:
+- brain-agent provider `Apple-FM` → `base_url: http://<host>:<apple-port>/v1`,
+  **`is_local: true`**. Its `/v1/models` returns ONLY `apple-fm` → sync stays
+  clean, locality correct, no mixing.
+- The existing `:8317` Studio instance keeps serving only cloud Mistral,
+  untouched.
+- The Apple-FM CLIProxyAPI instance can run on the M4 (next to `fm serve`) OR on
+  the Studio (pointing across the LAN at the M4) — either works; on the M4 keeps
+  "M4 = self-contained local node".
 
 Remaining unknowns (M4-side): `fm serve`'s exact port/endpoint, and whether the
 Anthropic forced-tool → OpenAI tool_choice translation through CLIProxyAPI
@@ -129,21 +135,23 @@ No shim — just bring up the built-in server and confirm the 3 open facts.
 5. **Note the model:** AFM 3, ~20B sparse / 1–4B active. No size/quant config to
    manage (OS-owned). Confirm it actually runs on the M4's RAM headroom (it
    should — Apple sizes it for the device).
-6. **Wire the Anthropic bridge — CONFIG-ONLY (decided):** add the
-   `openai-compatibility` block above to the Studio's
-   `/opt/homebrew/etc/cliproxyapi.conf` pointing at the M4's `fm serve`, restart
-   CLIProxyAPI. No M4-side proxy / Python adapter needed. Confirm a chat round
-   works end-to-end: brain-agent sidecar → `:8317` (Anthropic) → CLIProxyAPI
-   translate → M4 `fm serve` (OpenAI) → AFM 3 → back.
+6. **Wire the Anthropic bridge — a DEDICATED CLIProxyAPI instance (config + a
+   launchd service, NOT the shared :8317):** write `~/.cli-proxy-api/apple-fm.conf`
+   with the `openai-compatibility` Apple-FM upstream above + a distinct `port`,
+   start it (`cliproxyapi -config <that>`), supervise via launchd. This keeps
+   model-sync + is_local clean (see the sync-trap note above) — the shared
+   :8317 stays cloud-Mistral-only. Confirm end-to-end: brain-agent sidecar →
+   `<apple-port>` (Anthropic) → CLIProxyAPI translate → M4 `fm serve` (OpenAI) →
+   AFM 3 → back.
    - Verify the forced-tool → OpenAI tool_choice translation survives the hop
-     (the classifier path). If CLIProxyAPI drops/garbles `tools`+`tool_choice`
-     to the OpenAI upstream, fall back to keeping the classifier on Qwen/cloud
-     (or a tiny Python adapter only for that path).
+     (classifier path). If CLIProxyAPI drops/garbles `tools`+`tool_choice` to the
+     OpenAI upstream, keep the classifier on Qwen/cloud (or a tiny Python adapter
+     only for that path).
 
-**Exit gate:** `:8317` routes a chat turn to AFM via the new
-`openai-compatibility` upstream, reachable + working from the brain-agent host.
-Structured-output result (step 4 + the forced-tool translation) decides whether
-the classifier is in scope (Phase 2/3).
+**Exit gate:** the dedicated Apple-FM CLIProxyAPI port routes a chat turn to AFM,
+reachable + working from the brain-agent host, and `GET /v1/models` on it returns
+ONLY the Apple model (clean sync). Structured-output result (step 4 + the
+forced-tool translation) decides whether the classifier is in scope (Phase 2/3).
 
 ---
 
