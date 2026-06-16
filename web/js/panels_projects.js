@@ -1198,6 +1198,86 @@ function removeProjectWebUrl(idx) {
   _saveProjectWebUrls(urls);
 }
 
+// ── Discover linked documents (Option B — propose, don't auto-import) ────────
+// Scans the project's configured HTML web_urls for SAME-HOST document links
+// (PDF/DOCX/XLSX/…) and shows them in a modal. The user ticks which to add;
+// approved links are appended to web_urls via the existing save path. Nothing
+// is imported automatically. Deliberately NOT a recursive crawler (depth-1,
+// same host, documents only — matches the closed-corpus design).
+async function discoverProjectWebLinks() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  const urls = state._projectDetail?.web_urls || [];
+  if (!urls.length) { showToast('Erst eine Web-Adresse hinzufügen'); return; }
+  showToast('Seiten werden nach verlinkten Dokumenten durchsucht…');
+  let res;
+  try {
+    res = await API.discoverProjectWebLinks(agentId, projectName);
+  } catch (e) {
+    showToast('Linksuche fehlgeschlagen: ' + (e.message || e), true);
+    return;
+  }
+  const proposed = (res.proposed || []);
+  state._weblinkProposed = proposed;
+  _renderWebLinkModal(proposed, res.scanned || 0);
+}
+
+function _renderWebLinkModal(proposed, scanned) {
+  document.querySelector('.modal-overlay.weblink-modal')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay weblink-modal';
+  // Pre-check everything not already in the project.
+  const rows = proposed.map((s, i) => {
+    const dimmed = s.in_project;
+    return `
+      <label style="display:flex;align-items:flex-start;gap:8px;padding:8px 4px;border-bottom:1px solid var(--border-100);${dimmed ? 'opacity:0.5' : ''}">
+        <input type="checkbox" class="weblink-pick" data-idx="${i}" ${dimmed ? 'disabled' : 'checked'} style="margin-top:3px">
+        <span style="flex:1;min-width:0">
+          <span style="font-weight:600;font-size:13px;word-break:break-word">${esc(s.title || s.url)}</span>
+          <span style="display:inline-block;margin-left:6px;font-size:10px;text-transform:uppercase;color:var(--text-400);border:1px solid var(--border-200);border-radius:4px;padding:0 4px">${esc((s.ext || '').replace('.', ''))}</span>
+          ${dimmed ? '<span style="font-size:11px;color:var(--text-400);margin-left:6px">bereits im Projekt</span>' : ''}
+          <span style="display:block;font-size:11px;color:var(--text-400);word-break:break-all">${esc(s.url)}</span>
+        </span>
+      </label>`;
+  }).join('');
+  const body = proposed.length
+    ? `<div style="font-size:12px;color:var(--text-400);margin-bottom:8px">${proposed.length} verlinkte Dokumente auf ${scanned} Seite(n) gefunden. Wähle aus, was als Wissensquelle aufgenommen werden soll — nichts wird automatisch importiert.</div>
+       <div style="max-height:50vh;overflow:auto">${rows}</div>
+       <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+         <button class="btn-primary" style="padding:6px 16px;font-size:13px" onclick="importSelectedWebLinks()">Ausgewählte importieren →</button>
+         <button class="btn-secondary" style="padding:6px 12px;font-size:13px" onclick="this.closest('.modal-overlay').remove()">Abbrechen</button>
+       </div>`
+    : `<div style="font-size:13px;color:var(--text-400);padding:8px 0">Keine verlinkten Dokumente auf den ${scanned} durchsuchten Seite(n) gefunden. Nur Links zu Dateien (PDF, DOCX, XLSX …) auf derselben Domain werden vorgeschlagen.</div>
+       <div style="margin-top:10px"><button class="btn-secondary" style="padding:6px 12px;font-size:13px" onclick="this.closest('.modal-overlay').remove()">Schließen</button></div>`;
+  overlay.innerHTML = `<div class="modal-content" style="max-width:680px;width:90vw;max-height:82vh;display:flex;flex-direction:column">
+    <div class="modal-header" style="display:flex;align-items:center;gap:10px">
+      <span style="font-weight:600">Verlinkte Dokumente</span>
+      <button class="modal-close" style="margin-left:auto" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+    </div>
+    <div style="padding:14px 18px;overflow:auto">${body}</div>
+  </div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+async function importSelectedWebLinks() {
+  const proposed = state._weblinkProposed || [];
+  const picks = Array.from(document.querySelectorAll('.weblink-pick:checked'))
+    .map(cb => proposed[parseInt(cb.dataset.idx, 10)]).filter(Boolean);
+  if (!picks.length) { showToast('Nichts ausgewählt'); return; }
+  const existing = (state._projectDetail?.web_urls || []).slice();
+  const have = new Set(existing.map(u => (u.url || '').toLowerCase().replace(/\/$/, '')));
+  const toAdd = picks
+    .filter(s => !have.has((s.url || '').toLowerCase().replace(/\/$/, '')))
+    .map(s => ({ url: s.url, title: s.title || '' }));
+  if (!toAdd.length) { showToast('Alle ausgewählten sind bereits im Projekt'); return; }
+  const merged = existing.concat(toAdd);
+  await _saveProjectWebUrls(merged);
+  document.querySelector('.modal-overlay.weblink-modal')?.remove();
+  showToast(`${toAdd.length} Dokument(e) importiert — werden jetzt ins Gedächtnis gemined`);
+}
+
 // ── Project-settings help toggle ───────────────────────────
 // One "Hilfe" button reveals/hides the per-section help blocks. Preference
 // persisted so it stays on/off across project switches and reloads.

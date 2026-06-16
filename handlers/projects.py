@@ -1662,6 +1662,34 @@ class ProjectsHandlerMixin:
                          "backend": "Exa" if backend == "exa" else "SearXNG" if backend == "searxng" else backend,
                          "duration_s": round(_time.time() - _t0, 2)})
 
+    def _handle_weburl_discover_links(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/web-urls/discover-links
+        — Option B: scan the project's configured HTML web_urls for SAME-HOST
+        document links (PDF/DOCX/XLSX/…) and return them as PROPOSED sources.
+        Nothing is imported — the FE shows the proposals and the user appends
+        approved ones via the existing update_project web_urls path. Deliberately
+        bounded (depth-1, same host, documents only): NOT a recursive crawler."""
+        from engine import web_link_discovery
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        web_urls = project.get("web_urls") or []
+        if not web_urls:
+            self._send_json({"proposed": [], "scanned": 0, "pages": [],
+                             "message": "Keine Web-Adressen im Projekt."})
+            return
+        import time as _time
+        _t0 = _time.time()
+        try:
+            res = web_link_discovery.discover_document_links(web_urls)
+        except Exception as e:
+            self._send_json({"error": f"Linksuche fehlgeschlagen: {e}"}, 500)
+            return
+        res["duration_s"] = round(_time.time() - _t0, 2)
+        self._send_json(res)
+
     def _handle_research_deep(self, path: str):
         """POST /v1/agents/{id}/projects/{name}/research/deep {topic, budget?}
         — spawn the bounded Deep Research loop; returns {run_id, budget}.

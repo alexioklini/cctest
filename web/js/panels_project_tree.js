@@ -32,7 +32,18 @@ const _PT_ICON = {
   // Virtual (user) folder — dashed-look via a tag/bookmark-ish glyph to read as
   // "grouping", distinct from the solid real-folder icon.
   vfolder: _ptSvg('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>'),
+  // link (chain) — "find linked documents on these pages"
+  link: _ptSvg('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'),
+  // external-link (open in new tab)
+  external: _ptSvg('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>'),
 };
+
+// Open a project web-URL in a new browser tab (used by the row click + the ↗
+// action). noopener/noreferrer for safety on outbound links.
+function ptOpenWebUrl(url) {
+  if (!url) return;
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
 
 // localStorage key for the per-project expand/collapse state (UI-only, per user).
 function _ptExpandKey() {
@@ -285,7 +296,7 @@ function _ptTypeNode(type, label, p) {
     ? `<label class="pt-act" title="Dateien hinzufügen" onclick="event.stopPropagation()">＋<input type="file" multiple style="display:none" onchange="uploadProjectFiles(this.files)"></label>`
     : type === 'folders'
       ? `<button class="pt-act" onclick="event.stopPropagation(); addProjectInputFolder()" title="Ordner hinzufügen">＋</button>`
-      : `<button class="pt-act" onclick="event.stopPropagation(); addProjectWebUrl()" title="Web-Adresse hinzufügen">＋</button>`;
+      : `<button class="pt-act" onclick="event.stopPropagation(); discoverProjectWebLinks()" title="Verlinkte Dokumente auf diesen Seiten finden">${_PT_ICON.link || '🔗'}</button><button class="pt-act" onclick="event.stopPropagation(); addProjectWebUrl()" title="Web-Adresse hinzufügen">＋</button>`;
   const groupAction = `<button class="pt-act" onclick="event.stopPropagation(); ptCreateGroup('${type}','')" title="Neue Gruppe">⊞</button>`;
   return `
     <div class="pt-branch" data-node="${type}" data-type="${type}">
@@ -388,8 +399,9 @@ function _ptFillUrls(p) {
     let host_ = url; try { host_ = new URL(url).host.replace(/^www\./, ''); } catch (_) {}
     const st = (state._ptUrlStates || {})[url] || 'pending';
     ids.push(url);
+    const openAct = `<button class="pt-act" onclick="event.stopPropagation(); ptOpenWebUrl('${esc(url)}')" title="In neuem Tab öffnen">${_PT_ICON.external || '↗'}</button>`;
     byId[url] = _ptItemRow('urls', url, u.title || host_, _PT_ICON.urls, st,
-      `removeProjectWebUrl(${i})`, { title: url });
+      `removeProjectWebUrl(${i})`, { title: url, actions: openAct });
   });
   host.innerHTML = _ptRenderGrouped('urls', ids, byId) || '<div class="pt-empty">Noch keine Web-Adressen.</div>';
   // Fetch real per-URL states (companion .md indexed in MemPalace) + patch dots.
@@ -546,6 +558,12 @@ function _ptRefreshType(type) {
 // ── Multi-select ──
 function _ptSelKey(type, id) { return `${type}:${id}`; }
 function ptItemClick(ev, type, id) {
+  // Web-URL rows: a PLAIN click opens the page in a new tab (the id IS the URL).
+  // Modifier-clicks still fall through to multi-selection (drag-to-group etc.).
+  if (type === 'urls' && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey) {
+    ptOpenWebUrl(id);
+    return;
+  }
   if (!state._ptSelected) state._ptSelected = new Set();
   const k = _ptSelKey(type, id);
   if (ev.metaKey || ev.ctrlKey) {

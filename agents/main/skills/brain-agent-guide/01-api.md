@@ -203,6 +203,13 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `DELETE .../projects/<name>/outputs/<output_id>` — delete the row + its artifact
   rows + the `.md` on disk (no orphans). Refuses (409) while `status=generating`.
   Requires manage. The Studio tab on the project page is the UI for all of these.
+- `POST .../projects/<name>/web-urls/discover-links` — scan the project's
+  configured HTML `web_urls` for SAME-HOST document links (PDF/DOCX/XLSX/PPTX/
+  CSV) and return them as PROPOSALS: `{proposed:[{url,title,ext,found_on,
+  in_project}], scanned, pages, duration_s}`. Nothing is imported — the UI (🔗
+  on the Web-Adressen source-tree node) shows the proposals and the user appends
+  approved ones via the existing `update_project` path. Bounded: depth-1,
+  same-host, documents-only, ≤12 pages — NOT a recursive crawler.
 - `GET .../projects/<name>/research/backends` — `{backend}` = THE one active
   search tool (`"searxng"` | `"exa"` | `""`). Empty = Research disabled (E1 gate).
   Research uses the single enabled search tool (admin's Tools toggle); no merge.

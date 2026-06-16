@@ -2076,6 +2076,8 @@ class BrainAgentHandler(
             self._handle_project_artifact_archive(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/research/runs/" in path and path.endswith("/cancel"):
             self._handle_research_run_cancel(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/web-urls/discover-links"):
+            self._handle_weburl_discover_links(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/research/search"):
             self._handle_research_search(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/research/deep"):

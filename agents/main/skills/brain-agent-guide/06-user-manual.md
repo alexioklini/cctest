@@ -266,7 +266,16 @@ Codebasen, Forschungspapiere, …).
 4. **Hochladen** — Dateien über die Projektseite (Multipart-Drag&Drop).
 5. **Web-Adressen** — eine Liste von URLs, die das Projekt frisch abruft
    und ins Projektgedächtnis + KG einspeist (per crawl4ai gerendert, also
-   auch JS-Seiten). Anderer Mechanismus als die Websuche im Chat.
+   auch JS-Seiten). Anderer Mechanismus als die Websuche im Chat. Zeigt eine
+   Web-Adresse auf eine **Datei** (PDF, DOCX, XLSX …) statt auf eine Webseite,
+   wird ihr Inhalt wie bei einem hochgeladenen Dokument extrahiert (nicht der
+   Rohcode gespeichert). Ein **Klick** auf eine Web-Adresse im Quellen-Baum
+   öffnet sie in einem neuen Tab (auch über das ↗-Symbol). Mit dem
+   🔗-Symbol in der Web-Adressen-Zeile lassen sich **verlinkte Dokumente**
+   finden: Brain durchsucht die hinterlegten Webseiten nach Links auf Dateien
+   (PDF/DOCX/XLSX …) derselben Domain und schlägt sie zur Aufnahme vor — du
+   wählst aus, was ins Projekt übernommen wird (nichts wird automatisch
+   importiert; keine rekursive Suche).
 6. **Projektmodus** / **Recherche**-Umschalter — siehe unten.
 
 Die Hilfe auf der Projekt-Einstellungsseite ist ein aufklappbarer
