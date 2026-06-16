@@ -1190,7 +1190,14 @@ class AdminObservabilityHandlers:
                     p = os.path.join(base, fn)
                     if os.path.isfile(p):
                         with open(p, encoding="utf-8") as f:
-                            self._send_json({"name": safe, "file": fn, "yaml": f.read()})
+                            raw = f.read()
+                        # Also return the preset deep-merged over the built-in
+                        # defaults so the GUI form can populate every field even
+                        # if the file omits some keys (the form editor reads
+                        # `parsed`; the raw `yaml` stays for round-trip/debug).
+                        from engine.tools.file_tools import _load_doc_style
+                        self._send_json({"name": safe, "file": fn, "yaml": raw,
+                                         "parsed": _load_doc_style(safe)})
                         return
                 self._send_json({"error": f"preset '{name}' not found"}, 404)
                 return
@@ -1214,7 +1221,11 @@ class AdminObservabilityHandlers:
             template = _y.safe_dump(
                 dict({"name": "neu", "description": "Beschreibung"}, **_DEFAULT_DOC_STYLE),
                 sort_keys=False, allow_unicode=True)
-            self._send_json({"presets": presets, "template": template})
+            # Structured defaults let the GUI form pre-fill a brand-new preset
+            # (the form editor reads `defaults`; `template` stays for the raw
+            # YAML fallback).
+            self._send_json({"presets": presets, "template": template,
+                             "defaults": _DEFAULT_DOC_STYLE})
         except Exception as e:
             self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
 

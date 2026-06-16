@@ -489,12 +489,16 @@ Once a feedback row exists, user and admin exchange short one-line messages
   coerced to a default. Powers Settings → Allgemein → **Service-Modelle** (incl.
   the Dokumentkonvertierungs-Matrix in the read_document/OCR area).
 - `GET /v1/doc-styles` — admin: list document style presets (name +
-  description) + a YAML `template`; `?name=X` returns one preset's raw YAML.
+  description) + a YAML `template` + a structured `defaults` object (the
+  built-in style shape, used to pre-fill a new preset in the form editor);
+  `?name=X` returns one preset's raw `yaml` AND a `parsed` object (the preset
+  deep-merged over the defaults, full shape — what the form editor reads).
   `POST /v1/doc-styles {name, yaml}` validates the YAML parses to a dict, writes
   `agents/main/skills/doc-styles/<slug>.yaml` (name sanitised, no traversal);
   `{name, delete:true}` removes it. Presets set fonts/colors/layout that
   write_document + render_diagram apply (style="<name>"). Powers Settings →
-  Allgemein → **Dokument-Stile**.
+  Allgemein → **Dokument-Stile** (a WYSIWYG form editor — color pickers, font
+  dropdowns, live preview — that builds the YAML; storage stays YAML on disk).
 - `GET /v1/services` — daemon status (mempalace-miner, chat-sync, …)
 - `GET /v1/services/log?name=&lines=` — tail a service log
 - `POST /v1/services/telegram` / `/services/server` — start/stop/restart.

@@ -2478,42 +2478,239 @@ async function _genTab_doc_styles(C) {
     <div id="doc-style-editor" style="margin-top:16px"></div>`;
 }
 
+// ── WYSIWYG form editor for doc-style presets ──────────────────────────────
+// The storage format stays YAML (what _load_doc_style in file_tools.py reads);
+// this form just builds that YAML deterministically from typed fields + shows a
+// live preview. Field spec mirrors _DEFAULT_DOC_STYLE (file_tools.py): grouped
+// by section, each field has a key path, a widget type, and an optional choice
+// list. Keep in sync with the Python default shape.
+const _DOC_STYLE_FIELDS = [
+  { group: 'Schriften', icon: '🔤', fields: [
+    { path: 'fonts.body',    label: 'Fließtext',   type: 'font' },
+    { path: 'fonts.heading', label: 'Überschrift', type: 'font' },
+    { path: 'fonts.mono',    label: 'Monospace',   type: 'font' },
+  ]},
+  { group: 'Schriftgrößen (pt)', icon: '📏', fields: [
+    { path: 'sizes.body', label: 'Fließtext', type: 'num', min: 6, max: 32 },
+    { path: 'sizes.h1',   label: 'H1',        type: 'num', min: 8, max: 60 },
+    { path: 'sizes.h2',   label: 'H2',        type: 'num', min: 8, max: 48 },
+    { path: 'sizes.h3',   label: 'H3',        type: 'num', min: 8, max: 40 },
+  ]},
+  { group: 'Farben', icon: '🎨', fields: [
+    { path: 'colors.heading',           label: 'Überschrift',          type: 'color' },
+    { path: 'colors.body',              label: 'Fließtext',            type: 'color' },
+    { path: 'colors.accent',            label: 'Akzent / Links',       type: 'color' },
+    { path: 'colors.table_header_bg',   label: 'Tabellenkopf (Füllung)', type: 'color' },
+    { path: 'colors.table_header_text', label: 'Tabellenkopf (Text)',  type: 'color' },
+  ]},
+  { group: 'Word (.docx)', icon: '📄', fields: [
+    { path: 'docx.table_style',  label: 'Tabellenstil', type: 'text', ph: 'Light Grid Accent 1' },
+    { path: 'docx.heading_bold', label: 'Überschriften fett', type: 'bool' },
+  ]},
+  { group: 'PDF', icon: '📕', fields: [
+    { path: 'pdf.page_size',   label: 'Seitengröße', type: 'choice', choices: ['letter', 'a4'] },
+    { path: 'pdf.margin_inch', label: 'Rand (inch)', type: 'num', min: 0, max: 4, step: 0.25 },
+  ]},
+  { group: 'PowerPoint (.pptx)', icon: '📊', fields: [
+    { path: 'pptx.title_color', label: 'Titelfarbe', type: 'color' },
+    { path: 'pptx.body_color',  label: 'Textfarbe',  type: 'color' },
+    { path: 'pptx.accent',      label: 'Akzent',     type: 'color' },
+    { path: 'pptx.background',  label: 'Hintergrund', type: 'color' },
+  ]},
+  { group: 'Diagramme (Mermaid)', icon: '📈', fields: [
+    { path: 'mermaid.theme',      label: 'Theme',       type: 'choice', choices: ['default', 'dark', 'forest', 'neutral'] },
+    { path: 'mermaid.background', label: 'Hintergrund', type: 'text', ph: 'white' },
+  ]},
+];
+
+function _dsGet(obj, path) {
+  return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+
 function docStyleNew() {
-  const tmpl = (state._docStyles && state._docStyles.template) || 'name: neu\ndescription: ""\n';
-  _docStyleRenderEditor('', tmpl);
+  const defaults = (state._docStyles && state._docStyles.defaults) || {};
+  _docStyleRenderEditor('', { name: '', description: '', ...defaults });
 }
 
 async function docStyleEdit(name) {
   try {
     const d = await API.get('/v1/doc-styles?name=' + encodeURIComponent(name));
-    _docStyleRenderEditor(d.name || name, d.yaml || '');
+    // `parsed` is the preset deep-merged over defaults (full shape). Fall back
+    // to defaults if the server is old and didn't send it.
+    const parsed = d.parsed || (state._docStyles && state._docStyles.defaults) || {};
+    _docStyleRenderEditor(d.name || name, parsed);
   } catch (e) { showToast('Laden fehlgeschlagen: ' + (e.message || e), true); }
 }
 
-function _docStyleRenderEditor(name, yamlText) {
+function _docStyleRenderEditor(name, data) {
   const el = document.getElementById('doc-style-editor');
   if (!el) return;
+  const fid = p => 'ds-f-' + p.replace(/\./g, '-');  // stable input id per key path
+  const fieldHtml = (f) => {
+    const v = _dsGet(data, f.path);
+    const id = fid(f.path);
+    const lbl = `<label style="font-size:11px;color:var(--text-300);display:block;margin-bottom:3px">${esc(f.label)}</label>`;
+    if (f.type === 'color') {
+      const hex = (typeof v === 'string' && v) ? v : '#000000';
+      return `<div>${lbl}<div style="display:flex;align-items:center;gap:6px">
+        <input type="color" id="${id}" data-ds-path="${f.path}" data-ds-type="color" value="${esc(hex)}"
+          oninput="document.getElementById('${id}-hex').value=this.value;_docStylePreview()"
+          style="width:34px;height:28px;padding:0;border:1px solid var(--border-200);border-radius:5px;background:none;cursor:pointer">
+        <input type="text" id="${id}-hex" value="${esc(hex)}" spellcheck="false"
+          oninput="(/^#[0-9a-fA-F]{6}$/.test(this.value))&&(document.getElementById('${id}').value=this.value);_docStylePreview()"
+          style="width:84px;padding:4px 6px;font-family:var(--font-mono);font-size:12px;border:1px solid var(--border-200);border-radius:5px;background:var(--bg-000);color:var(--text-100)">
+      </div></div>`;
+    }
+    if (f.type === 'num') {
+      return `<div>${lbl}<input type="number" id="${id}" data-ds-path="${f.path}" data-ds-type="num"
+        value="${v ?? ''}" ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''} step="${f.step || 1}"
+        oninput="_docStylePreview()"
+        style="width:100%;padding:4px 6px;font-size:13px;border:1px solid var(--border-200);border-radius:5px;background:var(--bg-000);color:var(--text-100)"></div>`;
+    }
+    if (f.type === 'bool') {
+      return `<div style="display:flex;align-items:center;gap:8px;padding-top:18px">
+        <input type="checkbox" id="${id}" data-ds-path="${f.path}" data-ds-type="bool" ${v ? 'checked' : ''} onchange="_docStylePreview()">
+        <label for="${id}" style="font-size:12px;color:var(--text-200);cursor:pointer">${esc(f.label)}</label></div>`;
+    }
+    if (f.type === 'choice') {
+      return `<div>${lbl}<select id="${id}" data-ds-path="${f.path}" data-ds-type="choice" onchange="_docStylePreview()"
+        style="width:100%;padding:4px 6px;font-size:13px;border:1px solid var(--border-200);border-radius:5px;background:var(--bg-000);color:var(--text-100)">
+        ${f.choices.map(c => `<option value="${esc(c)}" ${v === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></div>`;
+    }
+    if (f.type === 'font') {
+      const FONTS = ['Calibri', 'Arial', 'Helvetica', 'Times New Roman', 'Georgia', 'Garamond', 'Verdana', 'Tahoma', 'Cambria', 'Consolas', 'Courier New', 'Roboto', 'Open Sans', 'Lato'];
+      const cur = typeof v === 'string' ? v : '';
+      const known = FONTS.includes(cur);
+      return `<div>${lbl}<input list="ds-fontlist" id="${id}" data-ds-path="${f.path}" data-ds-type="text"
+        value="${esc(cur)}" oninput="_docStylePreview()" placeholder="Schriftname"
+        style="width:100%;padding:4px 6px;font-size:13px;border:1px solid var(--border-200);border-radius:5px;background:var(--bg-000);color:var(--text-100)">
+        ${known ? '' : ''}</div>`;
+    }
+    // text
+    return `<div>${lbl}<input type="text" id="${id}" data-ds-path="${f.path}" data-ds-type="text"
+      value="${esc(typeof v === 'string' ? v : (v ?? ''))}" placeholder="${esc(f.ph || '')}" oninput="_docStylePreview()"
+      style="width:100%;padding:4px 6px;font-size:13px;border:1px solid var(--border-200);border-radius:5px;background:var(--bg-000);color:var(--text-100)"></div>`;
+  };
+
+  const sections = _DOC_STYLE_FIELDS.map(sec => `
+    <div style="border:1px solid var(--border-100);border-radius:8px;padding:10px 12px;background:var(--bg-100)">
+      <div style="font-size:12px;font-weight:600;color:var(--text-200);margin-bottom:8px">${sec.icon} ${esc(sec.group)}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">
+        ${sec.fields.map(fieldHtml).join('')}
+      </div>
+    </div>`).join('');
+
   el.innerHTML = `
-    <div style="border:1px solid var(--border-200);border-radius:10px;padding:12px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+    <datalist id="ds-fontlist">${['Calibri','Arial','Helvetica','Times New Roman','Georgia','Garamond','Verdana','Tahoma','Cambria','Consolas','Courier New','Roboto','Open Sans','Lato'].map(f=>`<option value="${esc(f)}">`).join('')}</datalist>
+    <div style="border:1px solid var(--border-200);border-radius:10px;padding:14px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
         <label style="font-size:12px;color:var(--text-300)">Name:</label>
         <input id="doc-style-name" type="text" value="${esc(name)}" placeholder="z.B. corporate" ${name ? 'readonly' : ''}
-               style="padding:4px 8px;font-size:13px;border:1px solid var(--border-200);border-radius:6px;background:var(--bg-000);color:var(--text-100);width:200px">
-        <span style="font-size:11px;color:var(--text-400)">a-z 0-9 _ - · YAML</span>
+               style="padding:4px 8px;font-size:13px;border:1px solid var(--border-200);border-radius:6px;background:${name ? 'var(--bg-100)' : 'var(--bg-000)'};color:var(--text-100);width:180px">
+        <span style="font-size:11px;color:var(--text-400)">a-z 0-9 _ -</span>
+        <label style="font-size:12px;color:var(--text-300);margin-left:8px">Beschreibung:</label>
+        <input id="doc-style-desc" type="text" value="${esc(_dsGet(data, 'description') || '')}" placeholder="Kurze Beschreibung"
+               style="flex:1;min-width:160px;padding:4px 8px;font-size:13px;border:1px solid var(--border-200);border-radius:6px;background:var(--bg-000);color:var(--text-100)">
       </div>
-      <textarea id="doc-style-yaml" spellcheck="false"
-        style="width:100%;height:340px;font-family:var(--font-mono);font-size:12px;border:1px solid var(--border-200);border-radius:8px;background:var(--bg-000);color:var(--text-100);padding:10px;resize:vertical">${esc(yamlText)}</textarea>
-      <div style="display:flex;gap:8px;margin-top:8px">
+      <div style="display:grid;grid-template-columns:1fr 280px;gap:14px;margin-top:10px;align-items:start">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">${sections}</div>
+        <div style="position:sticky;top:0">
+          <div style="font-size:11px;font-weight:600;color:var(--text-300);margin-bottom:6px">Vorschau</div>
+          <div id="doc-style-preview" style="border:1px solid var(--border-200);border-radius:8px;overflow:hidden;font-size:13px"></div>
+          <details style="margin-top:10px">
+            <summary style="font-size:11px;color:var(--text-400);cursor:pointer">YAML anzeigen</summary>
+            <pre id="doc-style-yaml-preview" style="margin:6px 0 0;padding:8px;font-family:var(--font-mono);font-size:11px;background:var(--bg-000);border:1px solid var(--border-100);border-radius:6px;color:var(--text-300);white-space:pre-wrap;max-height:240px;overflow:auto"></pre>
+          </details>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
         <button class="btn-primary" style="padding:5px 14px;font-size:13px" onclick="docStyleSave()">Speichern</button>
         <button class="btn-secondary" style="padding:5px 12px;font-size:13px" onclick="document.getElementById('doc-style-editor').innerHTML=''">Schließen</button>
       </div>
     </div>`;
+  _docStylePreview();
+}
+
+// Read every form field back into a nested style object keyed by the field paths.
+function _docStyleCollect() {
+  const out = {};
+  document.querySelectorAll('#doc-style-editor [data-ds-path]').forEach(inp => {
+    if (inp.id && inp.id.endsWith('-hex')) return;  // skip the color hex twin
+    const path = inp.dataset.dsPath;
+    const t = inp.dataset.dsType;
+    let v;
+    if (t === 'bool') v = inp.checked;
+    else if (t === 'num') { v = inp.value.trim() === '' ? null : Number(inp.value); }
+    else v = inp.value;
+    if (v === null || v === '' || (typeof v === 'number' && Number.isNaN(v))) return;
+    const keys = path.split('.');
+    let o = out;
+    for (let i = 0; i < keys.length - 1; i++) o = (o[keys[i]] = o[keys[i]] || {});
+    o[keys[keys.length - 1]] = v;
+  });
+  return out;
+}
+
+// Minimal YAML emitter for the fixed 2-level doc-style schema (top-level scalars
+// + one level of nested maps; values are strings/numbers/bools). The storage
+// format the doc tools read is YAML, so we build it here deterministically.
+function _docStyleToYaml(name, desc, style) {
+  const q = s => {
+    s = String(s);
+    // quote if it could be misread (leading #, has colon+space, empty, hex color)
+    return /^[#\s]|[:#]|^$|^["']|^\d|^(true|false|null|yes|no)$/i.test(s) || /\s$/.test(s)
+      ? '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' : s;
+  };
+  const scalar = v => typeof v === 'boolean' ? (v ? 'true' : 'false')
+    : typeof v === 'number' ? String(v) : q(v);
+  let out = `name: ${q(name)}\n`;
+  out += `description: ${q(desc || '')}\n`;
+  for (const [sec, val] of Object.entries(style)) {
+    if (sec === 'name' || sec === 'description') continue;
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      out += `${sec}:\n`;
+      for (const [k, vv] of Object.entries(val)) out += `  ${k}: ${scalar(vv)}\n`;
+    } else {
+      out += `${sec}: ${scalar(val)}\n`;
+    }
+  }
+  return out;
+}
+
+// Live preview: render a heading/body/table sample in the chosen fonts+colors,
+// and mirror the YAML that will be saved.
+function _docStylePreview() {
+  const box = document.getElementById('doc-style-preview');
+  if (!box) return;
+  const s = _docStyleCollect();
+  const c = s.colors || {}, f = s.fonts || {}, sz = s.sizes || {};
+  const fb = f.body || 'Calibri', fh = f.heading || fb, fm = f.mono || 'Consolas';
+  box.innerHTML = `
+    <div style="padding:12px 14px;background:#fff">
+      <div style="font-family:'${esc(fh)}',sans-serif;color:${esc(c.heading || '#1F3864')};font-size:${(sz.h1 || 20)}px;font-weight:700;line-height:1.15">Überschrift 1</div>
+      <div style="font-family:'${esc(fh)}',sans-serif;color:${esc(c.heading || '#1F3864')};font-size:${(sz.h2 || 16)}px;font-weight:700;margin-top:6px">Überschrift 2</div>
+      <p style="font-family:'${esc(fb)}',sans-serif;color:${esc(c.body || '#222')};font-size:${(sz.body || 11)}px;line-height:1.5;margin:6px 0">
+        Beispiel-Fließtext mit einem <span style="color:${esc(c.accent || '#2E74B5')}">Akzent-Link</span> und
+        <code style="font-family:'${esc(fm)}',monospace">monospace</code>.</p>
+      <table style="border-collapse:collapse;width:100%;font-family:'${esc(fb)}',sans-serif;font-size:${Math.max(9, (sz.body || 11) - 1)}px;margin-top:4px">
+        <tr><th style="background:${esc(c.table_header_bg || '#1F3864')};color:${esc(c.table_header_text || '#fff')};padding:3px 6px;text-align:left;border:1px solid #ddd">Spalte A</th>
+            <th style="background:${esc(c.table_header_bg || '#1F3864')};color:${esc(c.table_header_text || '#fff')};padding:3px 6px;text-align:left;border:1px solid #ddd">Spalte B</th></tr>
+        <tr><td style="color:${esc(c.body || '#222')};padding:3px 6px;border:1px solid #ddd">Zeile 1</td><td style="color:${esc(c.body || '#222')};padding:3px 6px;border:1px solid #ddd">Wert</td></tr>
+      </table>
+    </div>`;
+  const yp = document.getElementById('doc-style-yaml-preview');
+  if (yp) {
+    const name = (document.getElementById('doc-style-name')?.value || 'neu').trim() || 'neu';
+    const desc = document.getElementById('doc-style-desc')?.value || '';
+    yp.textContent = _docStyleToYaml(name, desc, s);
+  }
 }
 
 async function docStyleSave() {
   const name = (document.getElementById('doc-style-name')?.value || '').trim();
-  const yamlText = document.getElementById('doc-style-yaml')?.value || '';
+  const desc = document.getElementById('doc-style-desc')?.value || '';
   if (!name) { showToast('Name erforderlich', true); return; }
+  const yamlText = _docStyleToYaml(name, desc, _docStyleCollect());
   try {
     await API.post('/v1/doc-styles', { name, yaml: yamlText });
     showToast('Stil gespeichert');
