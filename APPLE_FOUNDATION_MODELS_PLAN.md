@@ -33,21 +33,44 @@ upstream** (config.json: "CLIProxyAPI … Speaks Anthropic /v1/messages, proxies
 to Mistral upstream"). The translation is CLIProxyAPI's job, never the sidecar's.
 
 **Therefore `fm serve` (OpenAI) is NOT directly attachable** — it needs an
-Anthropic→OpenAI bridge in front, exactly like Mistral has CLIProxyAPI. Two
-realistic bridges (the direct-Anthropic-native path the vllm-metal plan used is
-OUT — `fm serve` can't speak Anthropic):
-1. **Teach CLIProxyAPI an Apple-FM OpenAI upstream** — IF CLIProxyAPI can route
-   additional OpenAI upstreams (it's currently wired Anthropic→Mistral only).
-   Config-only if yes; needs CLIProxyAPI config investigation.
-2. **A tiny Python Anthropic adapter on the M4** — accepts Anthropic
-   `/v1/messages`, calls `apple-fm-sdk` (or `fm serve`), returns Anthropic shape.
-   Trivial in Python (Apple ships the SDK), but its own service. (This is the
-   "shim" again — now Python, not Swift, and much smaller.)
+Anthropic→OpenAI bridge in front, exactly like Mistral has CLIProxyAPI. (The
+direct-Anthropic-native path the vllm-metal plan used is OUT — `fm serve` can't
+speak Anthropic.)
 
-So `fm serve` removes the Swift requirement and the model-download/quant pain,
-but does NOT remove the need for an Anthropic bridge. The remaining unknowns:
-which bridge (decide on the M4), and whether the chosen bridge passes reliable
-structured output / forced-tool through to the classifier.
+**BRIDGE SOLVED (config-only — verified in the live CLIProxyAPI config 2026-06-16):**
+CLIProxyAPI (`router-for-me/CLIProxyAPI`, the Homebrew binary at the Studio,
+`/opt/homebrew/etc/cliproxyapi.conf`) is a multi-backend ROUTER and has an
+**`openai-compatibility:`** provider section — add ANY OpenAI-compatible upstream
+by name/prefix/base-url/models. So `fm serve` plugs straight in, NO new service,
+NO Python adapter, NO second proxy on the M4:
+```yaml
+openai-compatibility:
+  - name: "apple-fm"
+    prefix: "apple"
+    base-url: "http://192.168.4.65:<fm-serve-port>/v1"   # fm serve on the M4
+    api-key-entries:
+      - api-key: "dummy"        # fm serve needs none
+    models:
+      - name: "system"          # AFM 3 on-device
+        alias: "apple-fm"
+```
+The sidecar keeps talking Anthropic to the Studio CLIProxyAPI (`:8317`); the
+router translates Anthropic→OpenAI and forwards to the M4's `fm serve`. One
+CLIProxyAPI instance routes both cloud Mistral AND local Apple-FM (prefix/alias
+keep them separate).
+
+⚠️ **`is_local` caveat (per-provider, not per-model — confirmed):** the Studio
+CLIProxyAPI provider is `is_local: false` (it proxies cloud Mistral). Apple-FM
+must NOT inherit that, or it loses the PII-bypass + skips quotas. So on the
+brain-agent side, add a SEPARATE provider entry (e.g. `Apple-FM`,
+`base_url: http://127.0.0.1:8317/v1`, **`is_local: true`**) with the
+prefix-scoped Apple model ids — two brain-agent provider entries, ONE
+CLIProxyAPI instance. (This is exactly why is_local lives on the provider: same
+URL, different locality intent → two named providers.)
+
+Remaining unknowns (M4-side): `fm serve`'s exact port/endpoint, and whether the
+Anthropic forced-tool → OpenAI tool_choice translation through CLIProxyAPI
+reaches AFM's guided generation reliably enough for the classifier.
 
 ## Why consider it
 - **Zero install / zero model download** — model ships with the OS; `fm` CLI
@@ -106,19 +129,21 @@ No shim — just bring up the built-in server and confirm the 3 open facts.
 5. **Note the model:** AFM 3, ~20B sparse / 1–4B active. No size/quant config to
    manage (OS-owned). Confirm it actually runs on the M4's RAM headroom (it
    should — Apple sizes it for the device).
-6. **Decide the Anthropic bridge (REQUIRED — the sidecar can't call OpenAI):**
-   - Check CLIProxyAPI: can it add an Apple-FM OpenAI upstream + expose it as an
-     Anthropic model? If yes → config-only, no new service.
-   - Else: write the tiny Python Anthropic-adapter on the M4 (`/v1/messages` →
-     apple-fm-sdk → Anthropic-shape resp), run it as a launchd service on a free
-     port (e.g. :8014), supervised, graceful-degrade. The classifier needs this
-     adapter to map Anthropic `tools`+`tool_choice` (forced-tool) → AFM guided
-     generation (`@Generable`/`fm schema`) and back.
+6. **Wire the Anthropic bridge — CONFIG-ONLY (decided):** add the
+   `openai-compatibility` block above to the Studio's
+   `/opt/homebrew/etc/cliproxyapi.conf` pointing at the M4's `fm serve`, restart
+   CLIProxyAPI. No M4-side proxy / Python adapter needed. Confirm a chat round
+   works end-to-end: brain-agent sidecar → `:8317` (Anthropic) → CLIProxyAPI
+   translate → M4 `fm serve` (OpenAI) → AFM 3 → back.
+   - Verify the forced-tool → OpenAI tool_choice translation survives the hop
+     (the classifier path). If CLIProxyAPI drops/garbles `tools`+`tool_choice`
+     to the OpenAI upstream, fall back to keeping the classifier on Qwen/cloud
+     (or a tiny Python adapter only for that path).
 
-**Exit gate:** an Anthropic `/v1/messages` endpoint (CLIProxyAPI route OR the
-Python adapter) reachable from the brain-agent host, serving AFM, with a chat
-turn working. Structured-output result (step 4 + the bridge's forced-tool
-mapping) decides whether the classifier is in scope (Phase 2/3).
+**Exit gate:** `:8317` routes a chat turn to AFM via the new
+`openai-compatibility` upstream, reachable + working from the brain-agent host.
+Structured-output result (step 4 + the forced-tool translation) decides whether
+the classifier is in scope (Phase 2/3).
 
 ---
 
