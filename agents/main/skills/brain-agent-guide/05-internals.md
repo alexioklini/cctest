@@ -984,10 +984,17 @@ validator. TWO mutually-exclusive modes, chosen by the auto-route classifier mod
   `research_mode` flag / per-session override is the ONLY control and renders the
   discipline in the SYSTEM PROMPT (`engine/prompt_build.py`), as before.
 - **Validator gate**: `session._citation_discipline_active` (set per turn in both
-  modes). `validate_citations_in_response` verifies quotes against the files read
-  this turn + appends a fidelity warning past the threshold (>30% uncited OR ≥2
-  unverified) — in any chat. Web-source quotes verify as unverified (not
-  file-backed) — the inline-citation chips link those out instead.
+  modes). `validate_citations_in_response` verifies quotes against the session's
+  sources + appends a fidelity warning past the threshold (>30% uncited OR ≥2
+  unverified) — in any chat. **Verifiable sources = files read via read_document
+  THIS turn ∪ the on-disk companions of `mempalace_query` drawers this turn**
+  (v9.145.0 — a memory-grounded answer with no read_document is now verifiable;
+  before, it flagged everything "source not in session reads"). Matching is
+  **quote-first**: the named source is tried, but if the label doesn't resolve
+  (the model's "Jahresfinanzbericht 2025" won't match a slugified `www-…-20_….md`)
+  the verbatim quote is searched across ALL session sources — found = verified.
+  Only truly-absent quotes (e.g. `…`-stitched table values) stay flagged. Web
+  quotes verify as unverified (not file-backed) — chips link those out instead.
 - **Per-claim scope = bullets + TABLE rows + multi-fact PROSE** (v9.144.0). The
   CITATION DISCIPLINE requires a citation on every factual unit, not one per
   block: each bullet, each table DATA row (a final "Quelle" column; `s.o.`/`siehe

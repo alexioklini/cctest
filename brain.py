@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.144.0"
+VERSION = "9.145.0"
 VERSION_DATE = "2026-06-16"
 CHANGELOG = [
+    ("9.145.0", "2026-06-16", "fix(citations): two defects from chat 00024b1d. (1) MOST CITATIONS SHOWED 'Zitat konnte in der Quelle nicht verifiziert werden' — the validator (brain.validate_citations_in_response) only checked quotes against files READ via read_document this turn (_read_doc_cache_session_paths), but a project answer grounds on mempalace_query DRAWERS, not read_document — so _session_read_paths was empty → every quote 'source not in session reads'. FIX: validator now ALSO consults the drawer companion paths surfaced by mempalace_query this turn (new engine.tool_exec._session_match_region_paths, re-exported on brain, unioned into session_paths). AND name-matching is no longer required: the model's human-readable source label ('Jahresfinanzbericht 2025') won't substring-match a slugified web-url filename (www-…-jahresfinanzbericht-20_….md), so verification now FALLS BACK to searching the verbatim quote across ALL session sources — the quote is the strong signal, the label is fuzzy. A quote found in any session source verifies; only genuinely-absent quotes (e.g. the model's '…'-stitched table values that aren't verbatim) stay flagged — which is correct. (2) CITATIONS #7/#8 LISTED IN THE LEGEND BUT NO INLINE CHIP — a [Quelle: …] on its own line right after a markdown table was pulled UP onto the previous line by extractCitationsFromRaw's _pullUp (chat_render.js); that previous line was a TABLE ROW (| … |), so the sentinel landed inside the table where marked.parse drops it → extracted (legend) but invisible (no chip). FIX: _pullUp now SKIPS joining a bracket onto a table-row line — the citation stays a standalone paragraph below the table and renders as a visible pin. Verified on the real 00024b1d answer: 8 citations extract, 0 sentinels stuck in table rows (was the bug), 4 post-table citations now standalone. py_compile OK; js_gate PASS (net-globals unchanged). NOT restarted (user mining) — loads next restart."),
     ("9.144.0", "2026-06-16", "feat(citations): citation discipline now covers TABLES and multi-fact PROSE, not just bullets (chats 385676ee/00024b1d — a Konzernbilanz answer put ONE generic [Quelle: …] under a whole balance-sheet table + a FAZIT sentence packed many figures with no per-fact citation). The CITATION DISCIPLINE prompt (config.json research_mode_disciplines.citation + the brain.py seed default _RESEARCH_MODE_DISCIPLINE_CITATION_DEFAULT — kept in sync) gains two rules: (a) TABLES are not exempt — add a final 'Quelle' column with a per-row [Quelle: <name> — \"<quote>\"], use 's.o.'/'siehe oben' for rows sharing one passage's quote (never an empty Quelle cell), both year columns traceable, derived/Δ columns noted once as 'eigene Berechnung'; (b) PROSE — a summary/FAZIT sentence packing several facts needs a citation per fact (split or one bracket per figure), every number traceable to a verbatim quote. The server-side citation VALIDATOR (brain.validate_citations_in_response) was bullet-only; now also counts (3b) markdown table DATA rows that bear figures — header row (the line above the |---| separator) + label/divider rows skipped; a row is 'cited' if it has [Quelle:] OR s.o./siehe oben — and (3c) standalone non-bullet/non-table prose lines with ≥2 numeric facts + no [Quelle:]. New _TABLE_SEP_RE; uncited_claims/claim_total now reflect tables+prose; the annotation text updated ('faktische Aussagen (Bullet-Points, Tabellenzeilen, Fakt-Sätze)'). Validator counting unit-tested: uncited table (2,2), cited+s.o. table (2,0), FAZIT prose (1 uncited); header-row '2025/2024' no longer miscounted. py_compile OK. NOT restarted (user mining) — loads next restart. NOTE: takes effect for classifier-driven discipline turns (llm/hybrid) + research_mode projects."),
     ("9.143.0", "2026-06-16", "feat(doc-pipeline): macro-enabled (.xlsm) + binary (.xlsb) Excel support + VBA macro SOURCE extraction. Before, .xlsm/.xlsb were rejected (not in SUPPORTED_EXTS) and VBA was invisible. NOW (engine/doc_convert.py): SUPPORTED_EXTS gains .xlsm + .xlsb; .xlsm dispatches to _extract_xlsx (openpyxl reads its cells identically — multi-sheet, footer-group detection, data_only cached values all apply); NEW _extract_xlsb uses pyxlsb (openpyxl can't read the binary format) rendering one markdown table per sheet (header + capped rows, no footer-group pass since pyxlsb is streaming/values-only). NEW _extract_vba (oletools/olevba) appends every VBA module's SOURCE as fenced ```vba blocks under a '## VBA-Makros (Quellcode — wird NICHT ausgeführt)' heading — macros are NEVER executed, only the stored source is read, so the agent can reason about a workbook's automation; called from _extract_xlsx (.xlsm/.xls) + _extract_xlsb, no-op (returns '') when there are no macros or oletools is absent. read_document now gates on doc_convert.SUPPORTED_EXTS directly (no more drift-prone hardcoded ext list) + sheet= applies to all four spreadsheet types; fmt label normalises xlsm/xlsb→xlsx. web_fetch _CTYPE_TO_EXT gains the xlsm/xlsb MIME types (a web URL to such a file ingests via doc_convert). Matrix _MARKITDOWN_OPTIONAL_EXTS gains them (shown as own-code in Settings). requirements.txt: pyxlsb + oletools (installed --break-system-packages). Verified: 2-sheet .xlsm extracts both sheets + Summe-Aktiva row; _extract_vba assembles per-module vba code blocks (stub-tested) + returns '' on no-macro files; dispatch/SUPPORTED wiring confirmed. py_compile OK (3 modules). Restart to load (new deps + extractors)."),
     ("9.142.0", "2026-06-16", "feat(doc-pipeline): pymupdf4llm as the default PDF→markdown engine + a per-type conversion matrix in Settings. markitdown flattens financial-report tables (the WPB Konzernbilanz came out as broken/half-rastered rows); fitz's plain page.get_text is fully flat (one cell per line). An eval on the WPB annual report showed pymupdf4llm renders BOTH the balance sheet AND the risk table as clean GitHub-markdown tables (verified: '| **Summe Aktiva** | | **344.631.454** | **325.811.404** |'). engine/doc_convert.py: new _extract_pdf_pymupdf4llm() (a fitz wrapper, no model/GPU) + _pdf_engine() (config conversion.pdf_engine: pymupdf4llm|markitdown|fitz, default pymupdf4llm). _do_extract tries the chosen PDF engine BEFORE markitdown for .pdf, falling through to markitdown→fitz→OCR on empty (scanned) / missing dep, so the scanned-PDF OCR path is unaffected. Backend tag 'pymupdf4llm'. Settings → Allgemein → Service-Modelle gains the Dokumentkonvertierungs-Matrix: a PDF engine dropdown (3-way) + per-type markitdown-vs-own checkboxes for the other formats; GET/POST /v1/services/models carry conversion.{pdf_engine, markitdown_exts}. requirements.txt: pymupdf + pymupdf4llm (installed via --break-system-packages, matching how fitz already lives in the homebrew site-packages). LICENSE NOTE: pymupdf4llm/PyMuPDF is AGPL-3.0 (Artifex) — but fitz was ALREADY in use in _extract_pdf, so this adds no NEW license exposure; clear commercial licensing for the deployment regardless. docling (MIT, ~300MB model, PDF-only) is being evaluated as an alternative — matrix makes swapping trivial. js_gate PASS (net-globals unchanged); py_compile OK; pymupdf4llm path verified live via _do_extract (backend=pymupdf4llm, balance sheet present). Restart + re-mine PDFs (WPB) for the new extraction + hard-refresh."),
@@ -11875,7 +11876,13 @@ def validate_citations_in_response(text: str, session_id: str | None = None,
     if not text or not text.strip():
         return out
 
-    session_paths = _read_doc_cache_session_paths(session_id)
+    # Verifiable sources = files read via read_document this turn PLUS the
+    # on-disk companions of drawers surfaced by mempalace_query this turn. The
+    # latter is what makes a memory-grounded answer (mempalace_query, no
+    # read_document — the common project case) verifiable at all; without it the
+    # validator marked every quote "source not in session reads".
+    session_paths = set(_read_doc_cache_session_paths(session_id) or set())
+    session_paths |= _session_match_region_paths(session_id)
     _vcache: dict = {}
 
     # 1. Find every [Quelle: X — "Y"] bracket and verify Y appears in X.
@@ -11887,20 +11894,35 @@ def validate_citations_in_response(text: str, session_id: str | None = None,
         bn_raw, quote = m.group(1), m.group(2)
         parsed_basenames.add(bn_raw.strip())
         path = _find_source_path_by_basename(bn_raw, session_paths) if session_paths else None
-        if not path:
+        nq = _normalize_quote(quote)
+        # Primary: verify against the NAMED source. If the name didn't resolve
+        # (the model's human-readable source name often won't match a slugified
+        # web-url/companion filename, e.g. "Jahresfinanzbericht 2025" vs
+        # www-…-jahresfinanzbericht-20_….md) OR the quote isn't there, FALL BACK
+        # to searching the quote across ALL session sources — the verbatim quote
+        # is the strong signal; the source label is fuzzy. A quote found in any
+        # session source is genuinely grounded, just mis-labelled.
+        if path:
+            content = _read_file_cached_for_validation(path, _vcache)
+            if content is not None and nq and nq in _normalize_quote(content):
+                out["verified"] += 1
+                continue
+        # Fallback: quote search across every session source.
+        if nq and any(
+            (lambda c: c is not None and nq in _normalize_quote(c))(
+                _read_file_cached_for_validation(p, _vcache))
+            for p in session_paths):
+            out["verified"] += 1
+            continue
+        if not path and not session_paths:
             out["unverified"].append((bn_raw.strip(), quote[:120],
                                       "source not in session reads"))
             continue
-        content = _read_file_cached_for_validation(path, _vcache)
-        if content is None:
-            out["unverified"].append((bn_raw.strip(), quote[:120],
-                                      f"could not read {path}"))
-            continue
-        if _normalize_quote(quote) in _normalize_quote(content):
-            out["verified"] += 1
-        else:
-            out["unverified"].append((bn_raw.strip(), quote[:120],
-                                      "quote not found in source"))
+        # Had sources to check but the quote wasn't in any of them.
+        reason = "quote not found in any session source"
+        if path and _read_file_cached_for_validation(path, _vcache) is None:
+            reason = f"could not read {path}"
+        out["unverified"].append((bn_raw.strip(), quote[:120], reason))
 
     # 2. Count brackets that didn't match the verbatim-quote shape (bare
     # `[Quelle: …]` without a quote part) — these are partial citations.
@@ -13006,6 +13028,7 @@ from engine.tool_exec import (  # noqa: E402
     _session_match_regions,
     _record_match_regions,
     _get_match_regions,
+    _session_match_region_paths,
     _brain_code_regions_lock,
     _brain_code_regions,
     _record_brain_code_region,

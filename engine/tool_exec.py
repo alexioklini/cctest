@@ -324,6 +324,16 @@ def _get_match_regions(md_path: str) -> set:
         return set((_session_match_regions.get(sid) or {}).get(abs_path) or set())
 
 
+def _session_match_region_paths(session_id: str | None = None) -> set:
+    """All md source paths surfaced by mempalace_query this session. The
+    citation validator uses these as verifiable sources too — a turn that
+    grounds purely on mempalace_query drawers (no read_document) still has its
+    quotes checked against the drawers' on-disk companion files."""
+    sid = session_id or _session_read_paths_sid()
+    with _session_match_regions_lock:
+        return set((_session_match_regions.get(sid) or {}).keys())
+
+
 # --- brain_code fetch-trim tracker -------------------------------------------
 # Brainy (helpdesk) finds source via mempalace_query against the `brain_code`
 # wing, then reads the WHOLE file from GitHub raw (live main — there's no local

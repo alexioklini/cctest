@@ -1391,7 +1391,20 @@ function extractCitationsFromRaw(text) {
   // then becomes the "previous content" the next bracket joins to).
   const _pullUp = new RegExp('([^\\n])[ \\t]*\\n(?:[ \\t]*\\n)*[ \\t]*(\\[' + _BRACKET_PAT + '\\])', 'g');
   let _prev;
-  do { _prev = text; text = text.replace(_pullUp, '$1 $2'); } while (text !== _prev);
+  do {
+    _prev = text;
+    text = text.replace(_pullUp, (full, lastCh, bracket, off, str) => {
+      // Do NOT pull a citation up onto a TABLE row — joining "[Quelle: …]" onto
+      // a "| … |" line lands the sentinel inside the markdown table, where
+      // marked drops it (the citation then shows in the legend but has no
+      // visible inline chip — the #7/#8 bug). Leave such brackets as their own
+      // paragraph below the table; restoreCitationPins renders a standalone pin.
+      const lineStart = str.lastIndexOf('\n', off - 1) + 1;
+      const prevLine = str.slice(lineStart, off).trimEnd();
+      if (/\|\s*$/.test(prevLine) || /^\s*\|/.test(prevLine)) return full;
+      return lastCh + ' ' + bracket;
+    });
+  } while (text !== _prev);
   // Bracket regex for extraction
   const re = new RegExp('\\[(' + _BRACKET_PAT + ')\\]', 'g');
   const citations = [];
