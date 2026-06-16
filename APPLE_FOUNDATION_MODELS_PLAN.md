@@ -1,5 +1,13 @@
 # Plan: Evaluate Apple Foundation Models (macOS 27) as a local background model
 
+> ⚠️ **SCOPE UPDATE 2026-06-16:** production target is now **10–15 concurrent
+> users** (was assumed single-user throughout below). Apple's `fm serve` is a
+> single-foreground-request on-device stack, NOT a multi-tenant batching server
+> → it is **OUT for the shared production path**. See
+> `LOCAL_BG_MODEL_CAPACITY_PLAN.md` for the real production approach (vLLM
+> continuous batching on stronger HW / a DGX Spark). This document remains valid
+> only as a **per-device / privacy experiment**, not the production backend.
+
 Drafted **2026-06-16**. Target box: **Mac mini M4 24GB, macOS 27** (now has
 Apple Intelligence on-device "Foundation Models"). Idea: use Apple's on-device
 model for brain-agent's SHORT-input background tasks — as an alternative (or
