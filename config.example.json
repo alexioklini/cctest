@@ -317,7 +317,6 @@
       "inference": {
         "temperature": 0.7
       },
-      "raw_formats": [],
       "provider": "CLIProxyAPI",
       "base_model_id": "mistral-small-latest",
       "profile": "speed",
@@ -2388,7 +2387,7 @@
         "fast": {
           "measured": {
             "capability": 100,
-            "tps": 7.0,
+            "tps": 7,
             "n": 4,
             "ts": "2026-06-12T19:26:31Z"
           }
@@ -3376,10 +3375,10 @@
       "warnings": "",
       "examples": "",
       "applies_with": [],
+      "state": "active",
       "purposes": [
         "interactive"
       ],
-      "state": "active",
       "states": {
         "interactive": "active",
         "transform": "inactive",
