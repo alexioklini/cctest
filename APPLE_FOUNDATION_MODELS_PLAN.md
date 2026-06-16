@@ -30,6 +30,23 @@ stays the proven baseline / fallback.
 
 ---
 
+## Access to the M4 (status 2026-06-16 — deferred)
+
+- **M4 mini IP: `192.168.4.65`**. SSH user `alexander`.
+- **Network blocker (resolve first):** this dev box is on `192.168.1.x`, the M4
+  is on `192.168.4.x` — DIFFERENT subnets. From here the M4 is currently
+  unreachable (ping 100% loss, port 22 + HTTP all closed). Route goes via
+  gateway `192.168.1.1` but nothing answers. Likely one of: M4 asleep/off,
+  Remote Login not enabled, the two subnets aren't routed to each other
+  (separate router / VLAN / guest net), or macOS firewall. **Must be fixed
+  before any remote work** — the work itself (Phase 0–2) happens ON the M4.
+- **Access method (decided):** KEY-BASED. Use the existing
+  `~/.ssh/id_ed25519.pub` — `ssh-copy-id` it onto the M4 once (the only time the
+  password is needed), then key auth only. Do NOT put the password in commands
+  / shell history. (Security note: the password was shared in chat — rotate it
+  once the key is in place.)
+- Status: **deferred** per the user. Pick up when the M4 is reachable.
+
 ## Phase 0 — Resolve the blockers (do FIRST, on the M4; no brain-agent changes)
 
 These three answers decide whether this is even feasible. Investigate each on
