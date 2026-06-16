@@ -173,14 +173,52 @@ import subprocess
 
 _MARKITDOWN_BIN = shutil.which("markitdown")
 _MARKITDOWN_TIMEOUT_SECS = 120
-# .xlsx is deliberately NOT here → Brain's own _extract_xlsx runs instead of
-# markitdown. Reason: markitdown flattens FOOTER-grouped reports (group key on a
-# total row below its members) and loses member→group membership identically to
-# our own flattener — but our _extract_xlsx now ALSO emits an explicit grouping
-# note when that pattern is present (the e487a415 Kostenstellen bug). markitdown
-# offers no such structure recovery, so own-code wins here. (Same
-# remove-from-set pattern .eml/.txt/.md use to opt out of markitdown.)
-_MARKITDOWN_EXTS = {".pdf", ".docx", ".pptx", ".msg", ".epub", ".zip"}
+# Per-extension extractor choice: which formats try markitdown FIRST (vs. go
+# straight to Brain's own _extract_* fallback). This is the DEFAULT; an admin
+# can override it per type in config.json -> conversion.markitdown_exts (a list
+# of extensions). Resolved via _markitdown_exts() so a Settings change takes
+# effect without a code edit.
+#
+# .xlsx/.csv/.tsv/.eml are deliberately NOT defaults → Brain's own extractors
+# win. Reason: markitdown flattens FOOTER-grouped xlsx reports and loses
+# member→group membership (the e487a415 Kostenstellen bug; our _extract_xlsx
+# emits an explicit grouping note instead), and leaks MIME headers on .eml. The
+# remaining defaults (.pdf/.docx/.pptx/.msg/.epub/.zip) extract better via
+# markitdown empirically. (.epub/.zip have no own extractor — _extract_markitdown_only
+# just re-invokes markitdown, so removing them from the set would break them;
+# they're filtered out of the editable matrix in the UI.)
+_DEFAULT_MARKITDOWN_EXTS = {".pdf", ".docx", ".pptx", ".msg", ".epub", ".zip"}
+# Formats that have a real own-code extractor, so flipping markitdown off for
+# them is meaningful (the UI matrix is built from this set).
+_MARKITDOWN_OPTIONAL_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls",
+                            ".csv", ".tsv", ".eml", ".msg"}
+
+
+def _markitdown_exts() -> set:
+    """Effective markitdown-first extension set: config override if present,
+    else the default. config.json -> conversion.markitdown_exts is a list of
+    extensions (with or without leading dot); absent = use defaults."""
+    try:
+        import brain as _brain
+        conv = (_brain._server_config() or {}).get("conversion") or {}
+    except Exception:
+        conv = {}
+    raw = conv.get("markitdown_exts")
+    if raw is None:
+        return set(_DEFAULT_MARKITDOWN_EXTS)
+    out = set()
+    for e in raw:
+        e = ("." + e.lstrip(".")).lower()
+        out.add(e)
+    # .epub/.zip have no own extractor — always keep them markitdown-first
+    # regardless of config, or they'd produce nothing.
+    out.update({".epub", ".zip"})
+    return out
+
+
+# Back-compat shim: some call sites still read the module constant directly.
+# Kept as the DEFAULT; the live decision uses _markitdown_exts().
+_MARKITDOWN_EXTS = _DEFAULT_MARKITDOWN_EXTS
 
 # ── OCR fallback for scanned PDFs ────────────────────────────────────────────
 #
@@ -1171,7 +1209,7 @@ def _do_extract(src: str, *, use_markitdown: bool = True,
         return "", "", f"unsupported extension: {ext}"
     md_enabled = bool(use_markitdown and _MARKITDOWN_BIN)
     text = ""
-    if md_enabled and ext in _MARKITDOWN_EXTS:
+    if md_enabled and ext in _markitdown_exts():
         text, err = _extract_with_markitdown(src)
         if not err and text:
             return text, "markitdown", None
@@ -1381,7 +1419,7 @@ def convert_folder(root: str, *, log_prefix: str = "[doc-convert]",
         text = ""
         err: str | None = None
         backend = ""
-        if md_enabled and ext in _MARKITDOWN_EXTS:
+        if md_enabled and ext in _markitdown_exts():
             text, err = _extract_with_markitdown(src)
             if err or not text:
                 md_fallback += 1

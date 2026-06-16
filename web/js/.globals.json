@@ -319,6 +319,7 @@
     "_studioKindMeta": "writable",
     "_studioPollHandle": "writable",
     "_studioProjectHasSources": "writable",
+    "_svcConversionMatrix": "writable",
     "_SVCMODEL_STATUS": "writable",
     "_svcModelPill": "writable",
     "_svcModelSelect": "writable",

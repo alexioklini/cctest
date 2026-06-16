@@ -442,11 +442,30 @@ def _compress_old_tool_results(messages: list[dict], keep_recent: int = 4):
 # preprocessing call site stays until step 7's broader cleanup.
 
 TOOL_RESULT_BUDGET_THRESHOLD = 50000  # chars — persist results larger than this
-TOOL_RESULT_PREVIEW_SIZE = 2000  # chars — preview kept in context
+# Preview kept in context when a result is persisted. 2000 was punishingly small
+# for a read_document of a long doc — the model saw only the title/TOC and had to
+# re-read with offset/limit (the fc3fa95b loop). Raised to 8000 + the preview
+# message now points at offset/limit. Both overridable via config.json ->
+# conversion.{tool_result_threshold_chars, tool_result_preview_chars}.
+TOOL_RESULT_PREVIEW_SIZE = 8000  # chars — preview kept in context
+
+
+def _tool_result_budget_cfg() -> tuple[int, int]:
+    """(threshold, preview) chars — config override (conversion block) or default."""
+    try:
+        import brain as _brain
+        conv = (_brain._server_config() or {}).get("conversion") or {}
+        th = int(conv.get("tool_result_threshold_chars") or TOOL_RESULT_BUDGET_THRESHOLD)
+        pv = int(conv.get("tool_result_preview_chars") or TOOL_RESULT_PREVIEW_SIZE)
+        return th, pv
+    except Exception:
+        return TOOL_RESULT_BUDGET_THRESHOLD, TOOL_RESULT_PREVIEW_SIZE
+
 
 def _apply_tool_result_budget(messages: list[dict], session_id: str | None = None,
                                agent_id: str | None = None) -> int:
     """Persist oversized tool results to disk and replace with truncated previews."""
+    _threshold, _preview_size = _tool_result_budget_cfg()
     if not session_id:
         session_id = get_request_context().current_session_id or ""
     if not agent_id:
@@ -460,7 +479,7 @@ def _apply_tool_result_budget(messages: list[dict], session_id: str | None = Non
     for msg in messages:
         if msg.get("role") == "tool":
             content = msg.get("content", "")
-            if isinstance(content, str) and len(content) > TOOL_RESULT_BUDGET_THRESHOLD:
+            if isinstance(content, str) and len(content) > _threshold:
                 tool_id = msg.get("tool_call_id", "unknown")
                 filepath = os.path.join(results_dir, f"{tool_id}.txt")
                 if not os.path.exists(filepath):
@@ -470,11 +489,14 @@ def _apply_tool_result_budget(messages: list[dict], session_id: str | None = Non
                             f.write(content)
                     except OSError:
                         continue
-                preview = content[:TOOL_RESULT_PREVIEW_SIZE]
+                preview = content[:_preview_size]
                 size_kb = len(content) // 1024
                 msg["content"] = (
                     f"[Output too large ({size_kb}KB). Full output saved to: {filepath}]\n"
-                    f"Preview (first {TOOL_RESULT_PREVIEW_SIZE} chars):\n{preview}\n..."
+                    f"Preview (first {_preview_size} chars):\n{preview}\n...\n"
+                    f"[To read more, call read_document/read_file on {filepath} with "
+                    f"offset+limit (line numbers), or grep it via execute_command — "
+                    f"do NOT re-read the same range.]"
                 )
                 persisted += 1
 
@@ -483,7 +505,7 @@ def _apply_tool_result_budget(messages: list[dict], session_id: str | None = Non
                 if not isinstance(block, dict) or block.get("type") != "tool_result":
                     continue
                 content = block.get("content", "")
-                if isinstance(content, str) and len(content) > TOOL_RESULT_BUDGET_THRESHOLD:
+                if isinstance(content, str) and len(content) > _threshold:
                     tool_id = block.get("tool_use_id", "unknown")
                     filepath = os.path.join(results_dir, f"{tool_id}.txt")
                     if not os.path.exists(filepath):
@@ -493,11 +515,14 @@ def _apply_tool_result_budget(messages: list[dict], session_id: str | None = Non
                                 f.write(content)
                         except OSError:
                             continue
-                    preview = content[:TOOL_RESULT_PREVIEW_SIZE]
+                    preview = content[:_preview_size]
                     size_kb = len(content) // 1024
                     block["content"] = (
                         f"[Output too large ({size_kb}KB). Full output saved to: {filepath}]\n"
-                        f"Preview (first {TOOL_RESULT_PREVIEW_SIZE} chars):\n{preview}\n..."
+                        f"Preview (first {_preview_size} chars):\n{preview}\n...\n"
+                        f"[To read more, call read_document/read_file on {filepath} with "
+                        f"offset+limit (line numbers), or grep it via execute_command — "
+                        f"do NOT re-read the same range.]"
                     )
                     persisted += 1
     return persisted

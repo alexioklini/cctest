@@ -1300,7 +1300,15 @@ def _sync_project_web_urls(pdir, web_urls):
             # fetch's own error handling keeps the prior copy.
 
         try:
-            parsed = json.loads(engine.tool_web_fetch({"url": url, "force_fresh": True}))
+            # max_length is web_fetch's PER-LLM-TURN char cap (default 50k) —
+            # wrong for mining, which goes to disk + chunked embedding, NOT into
+            # an LLM context. A 50k cap silently truncated long PDFs/pages
+            # (e.g. a 520k-char annual report lost its balance-sheet tables),
+            # so the mined companion .md — and thus the project memory — held
+            # only the first ~50k chars. Mine the FULL document; the byte cap
+            # (_wf_max_size_mb, 10 MB) still guards against pathological sizes.
+            parsed = json.loads(engine.tool_web_fetch(
+                {"url": url, "force_fresh": True, "max_length": 10_000_000}))
         except (ValueError, TypeError):
             parsed = {}
         if parsed.get("error") or "content" not in parsed:

@@ -479,10 +479,16 @@ Once a feedback row exists, user and admin exchange short one-line messages
 - `GET /v1/services/models` — admin: every service-model slot (default,
   chat-summary, fan-out, KG-extraction, TTS, transcribe) + OCR, each with a
   resolve status (`ok`/`unset`/`missing`/`disabled`) + the dropdown option
-  lists. `POST /v1/services/models` — save any subset (model-id strings, `''`
-  to unset, or an `ocr:{engine,provider,model}` object). **Fail-loud**: an
-  unknown model id or OCR provider is rejected 400 — never coerced to a
-  default. Powers Settings → Allgemein → **Service-Modelle**.
+  lists. Also returns a `conversion` block: the per-file-type extractor
+  **matrix** (`{ext, markitdown, own_extractor}`) + the tool-result budget knobs
+  (`tool_result_threshold_chars`, `tool_result_preview_chars`). `POST
+  /v1/services/models` — save any subset (model-id strings, `''` to unset, an
+  `ocr:{engine,provider,model}` object, or a `conversion:{markitdown_exts:[…],
+  tool_result_threshold_chars, tool_result_preview_chars}` object). **Fail-loud**:
+  an unknown model id or OCR provider is rejected 400 — never coerced to a
+  default; a budget value <500 is rejected 400. Powers Settings → Allgemein →
+  **Service-Modelle** (incl. the Dokumentkonvertierungs-Matrix in the
+  read_document/OCR area).
 - `GET /v1/services` — daemon status (mempalace-miner, chat-sync, …)
 - `GET /v1/services/log?name=&lines=` — tail a service log
 - `POST /v1/services/telegram` / `/services/server` — start/stop/restart.

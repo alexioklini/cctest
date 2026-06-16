@@ -380,9 +380,19 @@ def tool_read_document(args: dict) -> str:
                 numbered.append(f"{i:>6}\t{line.rstrip()}")
             content = "\n".join(numbered)
             shown = f"{start+1}-{min(end, total)}"
-            return _ok_and_cache({"path": path, "format": "text",
-                        "total_lines": total, "showing": shown,
-                        "content": content})
+            result = {"path": path, "format": "text",
+                      "total_lines": total, "showing": shown,
+                      "content": content}
+            # Fail-LOUD on a misused `pages` arg: `pages` only applies to real
+            # PDFs (page-indexed). On a .md/.txt it was silently ignored, so a
+            # model trying to narrow to "page 41" got the whole file back every
+            # time and kept retrying with different page ranges (the fc3fa95b
+            # 16-round / 500k-token loop). Tell it plainly so it stops guessing.
+            if args.get("pages"):
+                result["note"] = (f"`pages` has no effect on this {ext or 'text'} "
+                                  f"file — it has lines, not pages ({total} lines total). "
+                                  f"To read a slice, use offset + limit (line numbers).")
+            return _ok_and_cache(result)
     except ImportError as e:
         return _err(str(e))
     except Exception as e:

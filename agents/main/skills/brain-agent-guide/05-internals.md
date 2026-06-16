@@ -284,6 +284,31 @@ strictly longer than the HTTP result (guards against a render that itself
 hits the wall). Every result is tagged `fetch_method`
 (raw/markitdown/crawl4ai/document/image/academic), surfaced as a chat-view badge.
 
+## Document extraction (read_document + mining)
+
+One pipeline (`engine.doc_convert._do_extract`) serves chat read_document,
+project mining, PII scan, and classification. Per file type it tries
+**markitdown first** OR goes straight to Brain's own `_extract_*`. That split is
+**config-driven** (was a hardcoded constant): `config.json →
+conversion.markitdown_exts` (editable per type in Settings → Service-Modelle).
+Defaults markitdown-first: `.pdf/.docx/.pptx/.msg/.epub/.zip`. Own-code: `.xlsx/
+.xls` (footer-group recovery — markitdown loses member↔group), `.csv/.tsv`,
+`.eml` (markitdown leaks MIME headers). `.epub/.zip` are forced markitdown (no
+own extractor). markitdown is a good TEXT converter, weak on TABLES — but an eval
+on the WPB annual report showed it renders balance-sheet tables BETTER than
+fitz here, so PDF stays markitdown-first. (datalab-to/marker would be stronger
+but is deferred — OpenRAIL-M model license + GPU cost.)
+
+**Truncation invariants** (the fc3fa95b 561k-token incident): mining fetches
+web-urls with `max_length=10_000_000` (mining → disk + chunked embedding, NOT an
+LLM context, so the per-turn 50k cap was wrong — it had silently cut a 524k-char
+PDF before its balance sheet). The chat `web_fetch` keeps its 50k per-turn cap
+(protects context; abstract mode was removed v9.125.0 — always full content). A
+read whose result exceeds `conversion.tool_result_threshold_chars` (default 50k)
+is spilled to disk with a preview of `tool_result_preview_chars` (default 8000,
+was 2000) + an offset/limit hint. `read_document(pages=…)` only applies to PDFs;
+on `.md/.txt` it returns a `note` (use offset/limit) instead of silently ignoring.
+
 ## Manual web search (Websuche) + tool lockout
 
 The Websuche tab is human-curated retrieval. `POST /v1/web/search` is a

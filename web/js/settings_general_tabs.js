@@ -2348,11 +2348,55 @@ async function _genTab_service_models(C) {
       </div>
     </div>
 
+    ${_svcConversionMatrix(d.conversion, dis)}
+
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn-primary" id="svc-save-btn" onclick="saveServiceModels()"${dis}>${isAdmin ? 'Service-Modelle speichern' : 'Nur für Administratoren'}</button>
     </div>
   </div>`);
   _svcOcrEngineToggle();
+}
+
+// Conversion matrix: per file type, markitdown-first vs. Brain's own extractor
+// (read_document / mining use this). Plus the read_document tool-result budget
+// knobs (preview size when a read is too big for one turn).
+function _svcConversionMatrix(conv, dis) {
+  conv = conv || {};
+  const matrix = conv.matrix || [];
+  const mdAvail = conv.markitdown_available;
+  const rows = matrix.map(m => {
+    const own = m.own_extractor ? `eigen (${esc(m.own_extractor)})` : 'eigen';
+    return `<div style="display:grid;grid-template-columns:90px 1fr;gap:10px;align-items:center;padding:3px 0">
+        <code style="font-size:12px">${esc(m.ext)}</code>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-300)">
+          <input type="checkbox" class="svc-conv-md" data-ext="${esc(m.ext)}" ${m.markitdown ? 'checked' : ''}${dis}>
+          markitdown zuerst <span style="color:var(--text-400)">— sonst ${own}</span>
+        </label>
+      </div>`;
+  }).join('');
+  const mdWarn = mdAvail ? '' : '<div style="font-size:11px;color:var(--warning,#c80)">⚠ markitdown ist nicht auf dem PATH — überall läuft der eigene Extractor.</div>';
+  return `
+    <h4 style="margin:18px 0 6px;font-size:13px">Dokumentkonvertierung (read_document & Mining)</h4>
+    <div style="display:flex;flex-direction:column;gap:2px;padding:12px;border:1px solid var(--border-100);border-radius:8px">
+      <p style="font-size:12px;color:var(--text-400);margin:0 0 8px">
+        Pro Dateityp: <b>markitdown</b> (guter Text, schwach bei Tabellen) oder Brains
+        <b>eigener Extractor</b>. .xlsx/.eml laufen bewusst über eigenen Code (markitdown
+        verliert Tabellen-/Gruppenstruktur). .epub/.zip immer markitdown (kein eigener Extractor).</p>
+      ${mdWarn}
+      ${rows}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border-100)">
+        <label style="font-size:12px;color:var(--text-300)">Großes Tool-Ergebnis ab (Zeichen)
+          <input type="number" class="form-input" id="svc-conv-threshold" value="${conv.tool_result_threshold_chars || 50000}" min="500"${dis} style="margin-top:4px">
+        </label>
+        <label style="font-size:12px;color:var(--text-300)">Vorschau im Kontext (Zeichen)
+          <input type="number" class="form-input" id="svc-conv-preview" value="${conv.tool_result_preview_chars || 8000}" min="500"${dis} style="margin-top:4px">
+        </label>
+      </div>
+      <p style="font-size:11px;color:var(--text-400);margin:6px 0 0">
+        Liest das Modell ein Dokument, das größer als die Schwelle ist, wird der Volltext auf
+        Disk gelegt und nur die Vorschau in den Chat-Kontext gegeben (Rest per offset/limit
+        nachladbar). Zu kleine Vorschau = Modell muss viel nachladen.</p>
+    </div>`;
 }
 
 function _svcOcrEngineToggle() {
@@ -2374,6 +2418,14 @@ async function saveServiceModels() {
     engine: document.getElementById('svc-ocr-engine')?.value || 'none',
     provider: document.getElementById('svc-ocr-provider')?.value || '',
     model: document.getElementById('svc-ocr-model')?.value || '',
+  };
+  // Conversion matrix: which extensions are markitdown-first + the budget knobs.
+  const mdExts = Array.from(document.querySelectorAll('.svc-conv-md:checked'))
+    .map(cb => cb.dataset.ext);
+  body.conversion = {
+    markitdown_exts: mdExts,
+    tool_result_threshold_chars: parseInt(document.getElementById('svc-conv-threshold')?.value, 10) || 50000,
+    tool_result_preview_chars: parseInt(document.getElementById('svc-conv-preview')?.value, 10) || 8000,
   };
   try {
     await API.post('/v1/services/models', body);
