@@ -2445,6 +2445,93 @@ async function saveServiceModels() {
   }
 }
 
+// ─── Document Styles ─── editable per-format style presets (fonts/colors/
+// layout) applied deterministically by write_document/render_diagram. Files in
+// agents/main/skills/doc-styles/*.yaml. Admin-only.
+async function _genTab_doc_styles(C) {
+  const isAdmin = (state.currentUser && state.currentUser.role === 'admin');
+  let d;
+  try {
+    d = await API.get('/v1/doc-styles');
+  } catch (e) {
+    C.innerHTML = `<div style="padding:16px;color:var(--error)">${esc(e.message || e)}</div>`;
+    return;
+  }
+  state._docStyles = d;
+  const presets = d.presets || [];
+  const rows = presets.length ? presets.map(p =>
+    `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border-100);border-radius:8px">
+       <code style="font-size:13px;font-weight:600">${esc(p.name)}</code>
+       <span style="flex:1;font-size:12px;color:var(--text-400)">${esc(p.description || '')}</span>
+       <button class="btn-secondary" style="padding:3px 10px;font-size:12px" onclick="docStyleEdit('${esc(p.name)}')">Bearbeiten</button>
+       ${isAdmin ? `<button class="btn-secondary" style="padding:3px 10px;font-size:12px;color:var(--error)" onclick="docStyleDelete('${esc(p.name)}')">Löschen</button>` : ''}
+     </div>`).join('') :
+    '<div style="font-size:13px;color:var(--text-400);padding:8px 0">Noch keine Stile.</div>';
+  C.innerHTML = `
+    <h3 style="margin:0 0 4px">Dokument-Stile</h3>
+    <p style="font-size:12px;color:var(--text-400);margin:0 0 12px">
+      Stil-Vorlagen (Schriften, Farben, Layout) für erzeugte <b>.docx / .pptx / .pdf</b>-Dateien
+      und Diagramme. Werden vom Tool <b>deterministisch</b> angewandt, wenn ein Dokument mit
+      <code>style="&lt;name&gt;"</code> erstellt wird — das Modell schreibt nur den Inhalt.</p>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">${rows}</div>
+    ${isAdmin ? `<button class="btn-primary" style="padding:5px 14px;font-size:13px" onclick="docStyleNew()">+ Neuer Stil</button>` : '<p style="font-size:12px;color:var(--text-400)">Nur Administratoren können Stile bearbeiten.</p>'}
+    <div id="doc-style-editor" style="margin-top:16px"></div>`;
+}
+
+function docStyleNew() {
+  const tmpl = (state._docStyles && state._docStyles.template) || 'name: neu\ndescription: ""\n';
+  _docStyleRenderEditor('', tmpl);
+}
+
+async function docStyleEdit(name) {
+  try {
+    const d = await API.get('/v1/doc-styles?name=' + encodeURIComponent(name));
+    _docStyleRenderEditor(d.name || name, d.yaml || '');
+  } catch (e) { showToast('Laden fehlgeschlagen: ' + (e.message || e), true); }
+}
+
+function _docStyleRenderEditor(name, yamlText) {
+  const el = document.getElementById('doc-style-editor');
+  if (!el) return;
+  el.innerHTML = `
+    <div style="border:1px solid var(--border-200);border-radius:10px;padding:12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <label style="font-size:12px;color:var(--text-300)">Name:</label>
+        <input id="doc-style-name" type="text" value="${esc(name)}" placeholder="z.B. corporate" ${name ? 'readonly' : ''}
+               style="padding:4px 8px;font-size:13px;border:1px solid var(--border-200);border-radius:6px;background:var(--bg-000);color:var(--text-100);width:200px">
+        <span style="font-size:11px;color:var(--text-400)">a-z 0-9 _ - · YAML</span>
+      </div>
+      <textarea id="doc-style-yaml" spellcheck="false"
+        style="width:100%;height:340px;font-family:var(--font-mono);font-size:12px;border:1px solid var(--border-200);border-radius:8px;background:var(--bg-000);color:var(--text-100);padding:10px;resize:vertical">${esc(yamlText)}</textarea>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn-primary" style="padding:5px 14px;font-size:13px" onclick="docStyleSave()">Speichern</button>
+        <button class="btn-secondary" style="padding:5px 12px;font-size:13px" onclick="document.getElementById('doc-style-editor').innerHTML=''">Schließen</button>
+      </div>
+    </div>`;
+}
+
+async function docStyleSave() {
+  const name = (document.getElementById('doc-style-name')?.value || '').trim();
+  const yamlText = document.getElementById('doc-style-yaml')?.value || '';
+  if (!name) { showToast('Name erforderlich', true); return; }
+  try {
+    await API.post('/v1/doc-styles', { name, yaml: yamlText });
+    showToast('Stil gespeichert');
+    const C = document.getElementById('general-tab-content');
+    if (C) await _genTab_doc_styles(C);
+  } catch (e) { showToast('Speichern fehlgeschlagen: ' + (e.message || e), true); }
+}
+
+async function docStyleDelete(name) {
+  if (!confirm(`Stil „${name}" löschen?`)) return;
+  try {
+    await API.post('/v1/doc-styles', { name, delete: true });
+    showToast('Gelöscht');
+    const C = document.getElementById('general-tab-content');
+    if (C) await _genTab_doc_styles(C);
+  } catch (e) { showToast('Löschen fehlgeschlagen: ' + (e.message || e), true); }
+}
+
 async function _genTab_wiki(C) {
   /* ─── WIKI ─── settings for the LLM Wiki (engine/wiki_store). */
   try {

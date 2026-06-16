@@ -1166,6 +1166,96 @@ class AdminObservabilityHandlers:
         except Exception as e:
             self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
 
+    # ─── Document style presets (skills/doc-styles/*.yaml) ──────────────────
+    def _doc_styles_dir(self):
+        import brain as _brain
+        return os.path.join(_brain.AGENTS_DIR, "main", "skills", "doc-styles")
+
+    def _handle_doc_styles_get(self):
+        """GET /v1/doc-styles[?name=X] — admin. No name: list presets (name +
+        description) + the built-in default keys as a template. With name:
+        return that preset's raw YAML text."""
+        if self._require_role("admin") is None:
+            return
+        import glob
+        base = self._doc_styles_dir()
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        name = (qs.get("name", [""])[0] or "").strip()
+        try:
+            if name:
+                # whitelist: basename only, must be an existing .yaml in the dir
+                safe = os.path.basename(name)
+                for fn in (f"{safe}.yaml", f"{safe}.yml"):
+                    p = os.path.join(base, fn)
+                    if os.path.isfile(p):
+                        with open(p, encoding="utf-8") as f:
+                            self._send_json({"name": safe, "file": fn, "yaml": f.read()})
+                        return
+                self._send_json({"error": f"preset '{name}' not found"}, 404)
+                return
+            presets = []
+            if os.path.isdir(base):
+                for p in sorted(glob.glob(os.path.join(base, "*.yaml")) +
+                                glob.glob(os.path.join(base, "*.yml"))):
+                    nm = os.path.splitext(os.path.basename(p))[0]
+                    desc = ""
+                    try:
+                        import yaml
+                        with open(p, encoding="utf-8") as f:
+                            d = yaml.safe_load(f) or {}
+                        desc = str(d.get("description", "") or "")
+                    except Exception:
+                        pass
+                    presets.append({"name": nm, "description": desc})
+            # Built-in default keys as a starting template for "new preset".
+            from engine.tools.file_tools import _DEFAULT_DOC_STYLE
+            import yaml as _y
+            template = _y.safe_dump(
+                dict({"name": "neu", "description": "Beschreibung"}, **_DEFAULT_DOC_STYLE),
+                sort_keys=False, allow_unicode=True)
+            self._send_json({"presets": presets, "template": template})
+        except Exception as e:
+            self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
+
+    def _handle_doc_styles_save(self):
+        """POST /v1/doc-styles {name, yaml, delete?} — admin. Validates the YAML
+        parses to a dict before writing skills/doc-styles/<name>.yaml; delete:true
+        removes the preset. Name is sanitised to a bare slug (no path traversal)."""
+        if self._require_role("admin") is None:
+            return
+        import re as _re
+        body = self._read_json() or {}
+        name = (body.get("name") or "").strip()
+        slug = _re.sub(r"[^a-zA-Z0-9_-]", "", os.path.basename(name))
+        if not slug:
+            self._send_json({"error": "gültiger Name erforderlich (a-z0-9_-)"}, 400)
+            return
+        base = self._doc_styles_dir()
+        path = os.path.join(base, f"{slug}.yaml")
+        try:
+            if body.get("delete"):
+                for fn in (f"{slug}.yaml", f"{slug}.yml"):
+                    p = os.path.join(base, fn)
+                    if os.path.isfile(p):
+                        os.remove(p)
+                self._send_json({"ok": True, "deleted": slug})
+                return
+            text = body.get("yaml") or ""
+            import yaml
+            parsed = yaml.safe_load(text)
+            if not isinstance(parsed, dict):
+                self._send_json({"error": "YAML muss ein Objekt (key: value) sein"}, 400)
+                return
+            os.makedirs(base, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            self._send_json({"ok": True, "name": slug})
+        except yaml.YAMLError as e:
+            self._send_json({"error": f"YAML-Fehler: {e}"}, 400)
+        except Exception as e:
+            self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
+
     def _handle_kg_reextract(self):
         """POST /v1/mempalace/kg/reextract — purge a project's triples and
         kick the daemon to rebuild. Body: {agent_id, project, source_prefix?}.

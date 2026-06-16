@@ -488,6 +488,13 @@ Once a feedback row exists, user and admin exchange short one-line messages
   **Fail-loud**: an unknown model id or OCR provider is rejected 400 — never
   coerced to a default. Powers Settings → Allgemein → **Service-Modelle** (incl.
   the Dokumentkonvertierungs-Matrix in the read_document/OCR area).
+- `GET /v1/doc-styles` — admin: list document style presets (name +
+  description) + a YAML `template`; `?name=X` returns one preset's raw YAML.
+  `POST /v1/doc-styles {name, yaml}` validates the YAML parses to a dict, writes
+  `agents/main/skills/doc-styles/<slug>.yaml` (name sanitised, no traversal);
+  `{name, delete:true}` removes it. Presets set fonts/colors/layout that
+  write_document + render_diagram apply (style="<name>"). Powers Settings →
+  Allgemein → **Dokument-Stile**.
 - `GET /v1/services` — daemon status (mempalace-miner, chat-sync, …)
 - `GET /v1/services/log?name=&lines=` — tail a service log
 - `POST /v1/services/telegram` / `/services/server` — start/stop/restart.

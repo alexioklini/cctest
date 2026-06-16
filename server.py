@@ -1657,6 +1657,8 @@ class BrainAgentHandler(
             self._handle_lib_versions()
         elif path == "/v1/services/models":
             self._handle_service_models_get()
+        elif path == "/v1/doc-styles":
+            self._handle_doc_styles_get()
         elif path == "/v1/mcp/connections":
             self._handle_mcp_list()
         elif path == "/v1/mcp/registry":
@@ -1950,6 +1952,8 @@ class BrainAgentHandler(
             self._handle_doctor_live()
         elif path == "/v1/services/models":
             self._handle_service_models_save()
+        elif path == "/v1/doc-styles":
+            self._handle_doc_styles_save()
         elif path == "/v1/mempalace/kg/reextract":
             self._handle_kg_reextract()
         elif path == "/v1/quotas/config":
