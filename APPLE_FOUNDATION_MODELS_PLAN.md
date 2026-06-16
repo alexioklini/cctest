@@ -6,27 +6,47 @@ model for brain-agent's SHORT-input background tasks — as an alternative (or
 complement) to the vllm-metal + Qwen2.5-7B path already benchmarked
 (see `[[project_local_bg_model_vllmmetal_bench]]`).
 
-This is an **investigation-first** plan: several load-bearing facts are UNKNOWN
-and must be verified on the actual M4 before any integration. Do NOT wire it
-into brain-agent until Phase 0 resolves the blockers. The vllm-metal+Qwen path
-stays the proven baseline / fallback.
+**UPDATE 2026-06-16 — the original "Swift-framework-only → needs a shim"
+premise is WRONG, the picture is much better.** Confirmed from Apple's official
+docs + WWDC26:
+- There IS an official **Python SDK: `pip install apple-fm-sdk`** (apple/python-apple-fm-sdk),
+  Python 3.10+, macOS 26.0+, Apple Silicon, Xcode 26+ CLI tools, on-device,
+  no API key/cloud cost. (https://github.com/apple/python-apple-fm-sdk,
+  https://apple.github.io/python-apple-fm-sdk/getting_started.html)
+- macOS 27 ships an **`fm` CLI** built-in (not a dev preview — ships with the OS)
+  that includes **`fm serve` → a local OpenAI-compatible Chat Completions HTTP
+  server** (`fm serve --model system --stream`). (WWDC26 session 334;
+  https://developer.apple.com/videos/play/wwdc2026/334/)
+- The on-device model is **AFM 3 (Apple Foundation Model 3): ~20B sparse MoE,
+  1–4B active params per prompt** (Instruction-Following Pruning), reportedly
+  "outperforms 9B dense on math/coding." → a MUCH stronger model than the ~3B I
+  feared — the classifier-viability odds are far better than for gemma-e2b/Qwen-7B.
+
+**Net: no Swift shim is needed.** `fm serve` gives exactly the OpenAI-compatible
+HTTP surface brain-agent already speaks (providers are "plain OpenAI-compatible
+config.json entries"). This collapses Phases 0–1 into "stand up `fm serve` and
+point a provider at it." The ONE thing still to verify is whether `fm serve`'s
+OpenAI surface exposes reliable `response_format`/tool-calling for the
+classifier — `fm schema` (guided generation) exists, but server-level structured
+output is unconfirmed in the docs read so far.
 
 ## Why consider it
-- Zero install / zero model download — the model ships with the OS.
-- Apple-managed updates, NPU-accelerated, designed for low-power on-device.
-- Free, fully private (PII never leaves the box) — the same wins we wanted from
-  vllm-metal, but with no venv/model-management overhead.
+- **Zero install / zero model download** — model ships with the OS; `fm` CLI
+  built-in. No venv-of-doom, no HF cache, no quant-format gymnastics (vs vllm-metal).
+- Apple-managed updates, NPU-accelerated, low-power on-device.
+- Free, fully private (PII never leaves the box).
+- Stronger model than expected (AFM 3 20B-sparse) → better odds for the
+  classifier than a 3–7B dense local model.
 
-## Why be cautious (what we already know from the Qwen work)
-- The background-task set includes the **auto-route classifier**, which needs
-  reliable **structured/JSON (or tool-call) output**. We learned even Qwen-7B
-  dropped JSON braces ~20% of the time and only became viable with FORCED
-  TOOL-USE. A ~3B-class on-device model is *more* format-fragile, not less
-  (gemma-e2b @2B tanked the routing eval 0.75→0.48).
-- German prose quality matters (chat summary, wiki) — must be eval'd, not assumed.
-- brain-agent talks to local models over **HTTP** (sidecar → Anthropic
-  `/v1/messages` or OpenAI-compat). Apple's model is exposed as a **Swift
-  framework**, not an HTTP server — so a shim is almost certainly required.
+## Why still verify (lessons from the Qwen work)
+- The **auto-route classifier** needs reliable **structured/JSON (or tool-call)
+  output**. Qwen-7B dropped JSON braces ~20% and only passed with FORCED
+  TOOL-USE; gemma-e2b @2B tanked the routing eval 0.75→0.48. Must confirm AFM 3
+  via `fm serve` produces schema-valid routing JSON (the docs say guided
+  generation exists — verify it reaches the OpenAI server).
+- German prose quality (chat summary, wiki) — eval, don't assume.
+- `fm serve` exact host/port/endpoint + whether `response_format`/tool-calling
+  works on the server are NOT yet documented in sources read — confirm on the M4.
 
 ---
 
@@ -47,69 +67,41 @@ stays the proven baseline / fallback.
   once the key is in place.)
 - Status: **deferred** per the user. Pick up when the M4 is reachable.
 
-## Phase 0 — Resolve the blockers (do FIRST, on the M4; no brain-agent changes)
+## Phase 0 — Stand up `fm serve` + nail the unknowns (on the M4, no brain-agent change)
 
-These three answers decide whether this is even feasible. Investigate each on
-the actual macOS 27 M4 — do not assume.
+No shim — just bring up the built-in server and confirm the 3 open facts.
 
-### 0a. Access surface: framework-only, or is there an HTTP/CLI path?
-- Apple's on-device model is the **`FoundationModels`** Swift framework
-  (`LanguageModelSession`, `SystemLanguageModel`, guided generation via
-  `@Generable`). As of the betas this was Swift-only — **no built-in HTTP server
-  and no official OpenAI/Anthropic-compatible endpoint.**
-- VERIFY on the box: is there now any CLI (`xcrun`/`mlx`-style) or a system
-  service that exposes it over a socket? Check Apple's macOS 27 release notes +
-  the `FoundationModels` docs for any new server/endpoint affordance.
-- **If framework-only (most likely):** integration requires a **small Swift
-  shim** — a local HTTP server (e.g. Vapor or a stdlib `Network` listener) that
-  accepts a request, calls `LanguageModelSession`, returns the text. This shim
-  is the bulk of the work. Decide: build the shim, or skip Apple FM.
+1. **Confirm the toolchain:** `fm --version`; `fm serve --help`. Confirm the
+   on-device model is available (`apple-fm-sdk`: `fm.SystemLanguageModel().is_available()`).
+2. **Start the server:** `fm serve --model system --stream` (per WWDC26). Capture
+   the EXACT host + port + endpoint path it prints (docs don't state the default
+   — likely `127.0.0.1:<port>/v1/chat/completions`). Bind it to the LAN iface (or
+   `0.0.0.0`) so the brain-agent host can reach it, mind the macOS firewall.
+3. **Smoke a chat completion** with `curl` against `/v1/chat/completions` — text
+   round-trips, latency for a short prompt.
+4. **THE critical check — structured output on the SERVER:** does `fm serve`
+   accept OpenAI `response_format` (json_schema) and/or `tools`+`tool_choice`?
+   (`fm schema` proves guided generation exists; the question is whether the
+   SERVER exposes it.) Test with a routing-shaped json_schema request. This
+   decides classifier viability — without it, AFM is prose-only here.
+5. **Note the model:** AFM 3, ~20B sparse / 1–4B active. No size/quant config to
+   manage (OS-owned). Confirm it actually runs on the M4's RAM headroom (it
+   should — Apple sizes it for the device).
 
-### 0b. Structured output / tool-calling capability
-- The framework supports **guided generation** (`@Generable` / guided decoding)
-  — Swift-side schema-constrained output. That's promising for the classifier
-  IF the shim can expose it.
-- VERIFY: can the shim force the routing JSON shape (task_types/tools/
-  complexity) reliably via `@Generable`? This is the single most important
-  capability — without reliable structured output, Apple FM is unfit for the
-  classifier (same bar Qwen only cleared via forced tool-use).
-- Note: brain-agent's classifier fix uses Anthropic **forced tool-use**
-  (`capture_forced_tool`). The Apple shim won't speak that — so the shim must
-  either (i) accept the JSON-schema and use `@Generable` internally, returning
-  plain JSON the broker parses, or (ii) the broker must have an
-  OpenAI-`response_format` path for this provider. Map this before building.
-
-### 0c. Model class / quality
-- Apple's on-device model is ~3B-class (NPU). VERIFY the actual model + any
-  size/quant details exposed in macOS 27.
-- Expectation: fine for the EASY prose tasks (chat summary, wiki tag, /refine,
-  memory-classifier one-word label); RISKY for the auto-route classifier (the
-  3B-fragility concern). Plan to keep the classifier on cloud OR Qwen unless the
-  eval proves Apple FM holds.
-
-**Exit gate for Phase 0:** if (0a) there is no HTTP path AND you don't want to
-build the Swift shim → STOP, stay on vllm-metal+Qwen. If a shim is acceptable →
-proceed to Phase 1.
+**Exit gate:** server reachable from the brain-agent host + chat works → proceed.
+Structured-output result decides whether the classifier is in scope (Phase 2/3).
 
 ---
 
-## Phase 1 — Build the access shim (only if Phase 0 says framework-only)
+## Phase 1 — Connectivity from the brain-agent host (the real first blocker)
 
-A minimal local HTTP server in Swift wrapping `FoundationModels`:
-- One endpoint, simplest shape brain-agent already speaks. Two options:
-  - **OpenAI-compat** `POST /v1/chat/completions` (non-streaming first) — Brain
-    providers are "plain OpenAI-compatible config.json entries" per CLAUDE.md,
-    so this is the path of least resistance. CLIProxyAPI would translate to the
-    Anthropic shape the sidecar wants.
-  - **Anthropic** `POST /v1/messages` — matches what the sidecar speaks
-    natively (like vllm-metal's native endpoint), no CLIProxyAPI hop. More work
-    in the shim (Anthropic event/stop_reason shape).
-- Map `@Generable` guided generation to a JSON-schema / forced-tool request so
-  the classifier can get reliable structured output (Phase 0b).
-- Run it as a launchd service (mirror `com.brain-agent.vllm-metal.plist`
-  pattern), pick a port (e.g. :8013 to avoid vllm-metal's :8012).
-- Keep it tiny + supervised; it must degrade gracefully (down → Brain just sees
-  a dead provider).
+This is the actual gating issue right now (see "Access to the M4" above): the
+M4 (192.168.4.65) is on a DIFFERENT subnet and unreachable from the brain-agent
+box (192.168.1.x). Resolve before Phase 2:
+- M4 awake; Remote Login on; the two subnets routed to each other (or co-locate);
+  firewall allows the `fm serve` port.
+- Verify: from the brain-agent host, `curl http://192.168.4.65:<port>/v1/models`
+  (or the chat endpoint) succeeds. Until this works, nothing downstream matters.
 
 ---
 
@@ -138,32 +130,48 @@ Reuse the proven harness so results are comparable to Qwen2.5-7B:
 
 ## Phase 3 — Wire into brain-agent (only if Phase 2 passes)
 
-Same mechanism as the vllm-metal plan — Apple FM is just another **named
-provider** in `config.json → providers` (its own `LocalProviderQueue` slot,
-keyed by name; see `[[project_local_bg_model_vllmmetal_bench]]` § LocalProviderQueue).
-- Add provider `Apple-FM` (base_url `http://<m4-ip>:8013`), `max_concurrent` per
-  the Phase-2 concurrency result.
-- Point the relevant config knobs at the Apple model id (the 3 knobs from the
+`fm serve` is OpenAI-compatible, so Apple FM is just another **named provider**
+in `config.json → providers` — like the existing local providers, CLIProxyAPI
+translates it to the Anthropic shape the sidecar wants. Its own
+`LocalProviderQueue` slot, keyed by name (see
+`[[project_local_bg_model_vllmmetal_bench]]` § LocalProviderQueue).
+- Add provider `Apple-FM` (base_url `http://192.168.4.65:<fm-serve-port>/v1`),
+  `max_concurrent` per the Phase-2 result (single-user → small).
+- Point only the Phase-2-cleared knobs at the Apple model id (the 3 from the
   Qwen plan: `chat_summary_model`, `tools_config.refinement.model`,
-  `mempalace.chat_sync.classifier.model`) — only the ones Phase-2 cleared.
-- If the classifier goes to Apple FM, the forced-tool / JSON-schema enforcement
-  (sidecar `capture_forced_tool`, already built v9.123.0) must reach it — verify
-  the shim honors it, else keep classifier on Qwen/cloud.
+  `mempalace.chat_sync.classifier.model`).
+- If the classifier goes to Apple FM: it routes through CLIProxyAPI → sidecar,
+  and the classifier fix uses Anthropic forced-tool-use (`capture_forced_tool`,
+  built v9.123.0). Confirm that path produces schema-valid routing JSON through
+  the OpenAI→Anthropic translation; if `fm serve`'s `response_format`/tool path
+  is reliable (Phase 0 step 4) this should just work, else keep classifier on
+  Qwen/cloud.
 
 ---
 
 ## Open questions to answer on the M4 (checklist)
-- [ ] macOS 27: is there ANY official HTTP/CLI access to the Foundation Model, or Swift-framework-only?
-- [ ] Exact on-device model + size/quant exposed in macOS 27.
-- [ ] Does `@Generable` guided generation give reliable schema-constrained JSON?
+- [x] Official Python/HTTP access? → YES: `pip install apple-fm-sdk` + `fm serve`
+      (OpenAI-compatible HTTP server, built into macOS 27). No shim needed.
+- [x] Model? → AFM 3, ~20B sparse MoE / 1–4B active (stronger than feared).
+- [ ] `fm serve` exact host/port/endpoint path?
+- [ ] Does `fm serve` expose OpenAI `response_format` (json_schema) / tools on
+      the SERVER (not just `fm schema` locally)? ← decides classifier viability.
 - [ ] German prose quality vs Qwen2.5-7B on the bench inputs?
 - [ ] Classifier probe: valid-JSON 15/15? memory-inclusion 15/15?
-- [ ] Latency per short task (sub-2s bar)?
-- [ ] Effort to build + maintain the Swift shim vs. just running vllm-metal+Qwen?
+- [ ] Latency per short task (sub-2s bar)? Concurrency behaviour?
+- [ ] Reachable from the brain-agent host (subnet/firewall — Phase 1)?
 
 ## Bottom line
-Apple FM is worth a **look** (zero model management, OS-managed, private), but
-the realistic blocker is the **access surface** (likely Swift-framework-only →
-needs a shim) and the **classifier reliability of a ~3B model**. The vllm-metal
-+ Qwen2.5-7B path is already proven and remains the baseline. Treat Apple FM as
-a Phase-0-gated experiment, not a commitment.
+Much more promising than first thought: **no Swift shim** (official Python SDK +
+built-in `fm serve` OpenAI server), and a **stronger model** than expected
+(AFM 3 20B-sparse, beats 9B dense). It would drop in as a plain OpenAI provider
+with ZERO model management — very attractive vs vllm-metal's venv/quant overhead.
+Two things still gate it: (1) the M4 must be reachable (subnet/firewall), and
+(2) the classifier needs `fm serve` to expose reliable structured output —
+verify both, then benchmark with the Qwen harness. vllm-metal+Qwen stays the
+fallback.
+
+## Sources
+- https://github.com/apple/python-apple-fm-sdk
+- https://apple.github.io/python-apple-fm-sdk/getting_started.html
+- https://developer.apple.com/videos/play/wwdc2026/334/  (WWDC26: fm CLI + Python SDK)
