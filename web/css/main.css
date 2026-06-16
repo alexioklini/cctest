@@ -4553,6 +4553,15 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   width: 1024px;
   height: 720px;
   border: none;
+  /* The preview box is a CENTERING flex container (align/justify: center). As a
+     flex item the iframe both collapsed to the card width AND got centered, so
+     a top-left-origin scale-down pushed the rendered page out of the clipped
+     box → a blank/white card. Take the iframe out of flow (absolute, pinned
+     top-left) so it lays out at the full 1024px virtual-desktop width and the
+     scale-down keeps the page top-left aligned with the box. */
+  position: absolute;
+  top: 0;
+  left: 0;
   /* scale set inline per-card from the card's real width (≈ w/1024) so it
      fills exactly; a CSS fallback for the common ~300px card width: */
   transform: scale(0.3);
