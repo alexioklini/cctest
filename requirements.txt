@@ -26,3 +26,10 @@ de_core_news_md @ https://github.com/explosion/spacy-models/releases/download/de
 # (Artifex) — clear commercial licensing for the deployment.
 pymupdf
 pymupdf4llm
+
+# Macro-enabled + binary Excel workbooks: .xlsb needs pyxlsb (openpyxl can't read
+# the binary format); oletools/olevba extracts VBA macro SOURCE (never executed)
+# from .xlsm/.xls/.xlsb so the agent can read automation logic. .xlsm cells are
+# read by openpyxl like any .xlsx.
+pyxlsb
+oletools

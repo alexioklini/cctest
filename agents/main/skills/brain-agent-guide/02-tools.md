@@ -90,10 +90,13 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
 
 ## Document ops (binary-friendly)
 
-- `read_document(path, ...)` — auto-routes by extension: PDF→markdown,
-  docx/pptx/xlsx, images, audio. Honors `.md` companion in
-  `<dir>/.brain-extracted/<name>.<ext>.md`. Use this for any non-`.txt`
-  attachment.
+- `read_document(path, ...)` — auto-routes by extension: PDF→markdown
+  (pymupdf4llm default), docx/pptx, xlsx/**xlsm**/xls/**xlsb** (every sheet as a
+  markdown table; `sheet=` selects one; **VBA macro source** is appended as
+  ```vba blocks — never executed), csv/tsv, eml/msg, epub/zip, images. Honors the
+  `.md` companion in `<dir>/.brain-extracted/<name>.<ext>.md`. Returns content
+  VERBATIM (no size cap — only the model context limits a big read). Use this for
+  any non-`.txt` attachment.
 - `write_document(path, content, format)` — produce docx/pdf/pptx
 - `edit_document(path, ...)` — structural edit
 

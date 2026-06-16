@@ -304,11 +304,11 @@ def tool_read_document(args: dict) -> str:
         # caps=False (full fidelity) + the selection/meta knobs each format
         # supports. .xls aliases to the xlsx extractor; .msg/.epub/.zip are
         # markitdown-first (no inline MarkItDown() call here anymore).
-        if ext in (".pdf", ".docx", ".pptx", ".xlsx", ".xls",
-                   ".csv", ".tsv", ".eml", ".msg", ".epub", ".zip"):
+        from engine.doc_convert import SUPPORTED_EXTS as _SUPPORTED_EXTS
+        if ext in _SUPPORTED_EXTS:
             from engine.doc_convert import _do_extract
             kwargs: dict = {"caps": False}
-            if ext in (".xlsx", ".xls"):
+            if ext in (".xlsx", ".xlsm", ".xls", ".xlsb"):
                 kwargs["sheet"] = args.get("sheet")
             elif ext == ".pptx":
                 kwargs["slides"] = args.get("slides")
@@ -321,7 +321,8 @@ def tool_read_document(args: dict) -> str:
             if err:
                 return _err(f"read_document: {err}")
             # Normalise the reported format for the aliases.
-            fmt = {".xls": "xlsx", ".tsv": "csv"}.get(ext, ext.lstrip("."))
+            fmt = {".xls": "xlsx", ".xlsm": "xlsx", ".xlsb": "xlsx",
+                   ".tsv": "csv"}.get(ext, ext.lstrip("."))
             # `backend` ("markitdown" / "fitz/legacy" / "mistral-ocr (Np)" / …)
             # records which of the two extraction surfaces produced this text.
             # Surfaced in the chat tool-block + persisted via metadata.tools.

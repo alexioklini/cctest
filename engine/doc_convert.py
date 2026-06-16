@@ -39,8 +39,8 @@ from engine.context import get_request_context
 
 EXTRACT_SUBDIR = ".brain-extracted"
 
-SUPPORTED_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".csv", ".tsv",
-                  ".eml", ".msg", ".epub", ".zip"}
+SUPPORTED_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".xlsm", ".xls", ".xlsb",
+                  ".csv", ".tsv", ".eml", ".msg", ".epub", ".zip"}
 
 # Ad-hoc cache for files outside any project input folder (chat attachments,
 # arbitrary paths the agent reads via read_document). Each entry is a
@@ -190,8 +190,8 @@ _MARKITDOWN_TIMEOUT_SECS = 120
 _DEFAULT_MARKITDOWN_EXTS = {".pdf", ".docx", ".pptx", ".msg", ".epub", ".zip"}
 # Formats that have a real own-code extractor, so flipping markitdown off for
 # them is meaningful (the UI matrix is built from this set).
-_MARKITDOWN_OPTIONAL_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls",
-                            ".csv", ".tsv", ".eml", ".msg"}
+_MARKITDOWN_OPTIONAL_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".xlsm",
+                            ".xls", ".xlsb", ".csv", ".tsv", ".eml", ".msg"}
 
 
 def _markitdown_exts() -> set:
@@ -1045,9 +1045,116 @@ def _extract_xlsx(path: str, *, caps: bool = True,
         wb.close()
     except Exception:
         pass
-    if sheet_count == 0:
+    # Append any VBA macro source (xlsm/xls with macros). No-op for plain xlsx.
+    vba = _extract_vba(path)
+    if vba:
+        parts.append(vba)
+    if sheet_count == 0 and not vba:
         return "", None
     return "\n".join(parts) + "\n", None
+
+
+def _extract_xlsb(path: str, *, caps: bool = True,
+                  sheet: str | None = None) -> tuple[str, str | None]:
+    """Binary workbook (.xlsb) via pyxlsb (openpyxl can't read the binary
+    format). Mirrors _extract_xlsx's output shape: a markdown table per sheet
+    (header + capped rows), VBA source appended if present. pyxlsb is read-only
+    + values-only, so there's no formula text and no footer-group detection
+    pass (the value buffering would defeat its streaming design); the flat
+    table + VBA is the contract for binary workbooks."""
+    try:
+        from pyxlsb import open_workbook  # type: ignore
+    except ImportError:
+        return "", "pyxlsb not installed (pip install pyxlsb)"
+    cell_cap = XLSX_CELL_MAX_CHARS if caps else None
+    row_cap = XLSX_MAX_ROWS_PER_SHEET if caps else None
+    title = os.path.splitext(os.path.basename(path))[0]
+    parts = [f"# {title}\n"]
+
+    def _cell(v):
+        if v is None:
+            return ""
+        s = str(v)
+        if cell_cap is not None and len(s) > cell_cap:
+            s = s[:cell_cap] + "…"
+        return s.replace("|", "\\|").replace("\n", " ").strip()
+
+    sheet_count = 0
+    try:
+        with open_workbook(path) as wb:
+            names = wb.sheets
+            targets = [sheet] if (sheet and sheet in names) else names
+            for sname in targets:
+                try:
+                    with wb.get_sheet(sname) as ws:
+                        rows_iter = ws.rows()
+                        header = next(rows_iter, None)
+                        if header is None:
+                            continue
+                        sheet_count += 1
+                        parts.append(f"\n## Sheet: {sname}\n")
+                        hdr = [_cell(c.v) for c in header]
+                        while hdr and hdr[-1] == "":
+                            hdr.pop()
+                        if not hdr:
+                            continue
+                        parts.append("| " + " | ".join(hdr) + " |")
+                        parts.append("| " + " | ".join("---" for _ in hdr) + " |")
+                        n = 0
+                        for row in rows_iter:
+                            if row_cap is not None and n >= row_cap:
+                                parts.append(f"\n_(truncated at {row_cap:,} rows)_\n")
+                                break
+                            vals = [_cell(c.v) for c in row][:len(hdr)]
+                            vals += [""] * (len(hdr) - len(vals))
+                            if any(v for v in vals):
+                                parts.append("| " + " | ".join(vals) + " |")
+                                n += 1
+                except Exception as e:
+                    parts.append(f"\n_(failed to read sheet `{sname}`: "
+                                 f"{type(e).__name__})_\n")
+    except Exception as e:
+        return "", f"open failed: {type(e).__name__}: {e}"
+    vba = _extract_vba(path)
+    if vba:
+        parts.append(vba)
+    if sheet_count == 0 and not vba:
+        return "", None
+    return "\n".join(parts) + "\n", None
+
+
+def _extract_vba(path: str) -> str:
+    """Extract VBA macro source from a macro-enabled Office file as a markdown
+    section (one fenced code block per module), or '' when there are no macros /
+    oletools is absent. Macros are NEVER executed — this reads the stored source
+    only. Used by the xlsm/xls/xlsb extractors so the agent can read + reason
+    about automation logic in a workbook."""
+    try:
+        from oletools.olevba import VBA_Parser  # type: ignore
+    except ImportError:
+        return ""
+    vp = None
+    try:
+        vp = VBA_Parser(path)
+        if not vp.detect_vba_macros():
+            return ""
+        blocks = []
+        for (_fname, _stream, vba_name, vba_code) in vp.extract_macros():
+            code = (vba_code or "").strip()
+            if not code:
+                continue
+            blocks.append(f"### Makro: {vba_name}\n```vba\n{code}\n```")
+        if not blocks:
+            return ""
+        return "\n## VBA-Makros (Quellcode — wird NICHT ausgeführt)\n\n" + "\n\n".join(blocks)
+    except Exception:
+        return ""
+    finally:
+        if vp is not None:
+            try:
+                vp.close()
+            except Exception:
+                pass
 
 
 def _extract_eml(path: str) -> tuple[str, str | None]:
@@ -1191,7 +1298,10 @@ _EXTRACTORS = {
     ".docx": _extract_docx,
     ".pptx": _extract_pptx,
     ".xlsx": _extract_xlsx,
+    ".xlsm": _extract_xlsx,  # macro-enabled workbook — openpyxl reads cells the
+                            # same way; VBA source is appended by _extract_vba
     ".xls": _extract_xlsx,   # legacy alias; true .xls isn't openpyxl-readable
+    ".xlsb": _extract_xlsb,  # binary workbook — pyxlsb (openpyxl can't read it)
     ".csv": _extract_csv,
     ".tsv": _extract_csv,
     ".eml": _extract_eml,
@@ -1267,7 +1377,7 @@ def _do_extract(src: str, *, use_markitdown: bool = True,
     # Per-format fallback. Pass only the knobs each extractor accepts so a
     # default mining call stays byte-stable.
     extractor_kwargs: dict = {}
-    if ext in (".xlsx", ".xls"):
+    if ext in (".xlsx", ".xlsm", ".xls", ".xlsb"):
         extractor_kwargs = {"caps": caps, "sheet": sheet}
     elif ext in (".csv", ".tsv"):
         extractor_kwargs = {"caps": caps}

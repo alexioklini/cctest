@@ -420,6 +420,8 @@ _CTYPE_TO_EXT = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.ms-excel.sheet.macroenabled.12": ".xlsm",
+    "application/vnd.ms-excel.sheet.binary.macroenabled.12": ".xlsb",
     "application/vnd.ms-excel": ".xls",
     "application/msword": ".docx",
     "application/vnd.ms-powerpoint": ".pptx",
