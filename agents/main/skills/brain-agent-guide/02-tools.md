@@ -335,7 +335,13 @@ write/exec tool is deliberately excluded.
 
 ## Image / media
 
-- `generate_image(prompt, size?, ...)` — text-to-image
+- `generate_image(prompt, size?, ...)` — text-to-image for PHOTOS/ILLUSTRATIONS
+  only. NOT for diagrams/charts/org charts/flowcharts/timelines — a diffusion
+  model can't render legible exact text (labels come out as garbled glyphs).
+  For those, emit an inline ` ```mermaid ` fenced block instead (chat renders it
+  to crisp SVG; no tool needed). The classifier routes a clear diagram request
+  WITHOUT image_gen (the model writes mermaid directly); a "Bild/Foto" request
+  enables image_gen.
 
 ## Nodes (distributed compute)
 

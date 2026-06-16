@@ -97,6 +97,7 @@
     "_editProjectImageClear": "writable",
     "_editProjectImageUpload": "writable",
     "_editProjectOnVisChange": "writable",
+    "_ensureMermaid": "writable",
     "_ensureUserDirectory": "writable",
     "_ensureValidThinkingLevel": "writable",
     "_extractFetchMethod": "writable",
@@ -169,6 +170,7 @@
     "_mdlBenchmarkSection": "writable",
     "_mdlPopulateThinkingLevel": "writable",
     "_mdlRefreshThinkingLevel": "writable",
+    "_mermaidReady": "writable",
     "_mobileChromeRaf": "writable",
     "_nextSeq": "writable",
     "_onStreamCatch": "writable",
@@ -865,6 +867,7 @@
     "renderMarkdown": "writable",
     "renderMarkdownWithGdprHighlights": "writable",
     "renderMemoryMenuItems": "writable",
+    "renderMermaidBlocks": "writable",
     "renderMessage": "writable",
     "renderMessages": "writable",
     "renderPlainTextWithGdprHighlights": "writable",
@@ -1430,6 +1433,7 @@
     "marked": "readonly",
     "hljs": "readonly",
     "CodeMirror": "readonly",
+    "mermaid": "readonly",
     "electronAPI": "readonly"
   }
 }

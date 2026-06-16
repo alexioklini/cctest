@@ -1414,11 +1414,18 @@ TOOL_DEFINITIONS = [
     {
         "name": "generate_image",
         "description": (
-            "Generate an image from a text prompt using Mistral's native image generation service. "
-            "ALWAYS use this tool when the user asks to generate, create, or make an image — "
-            "do NOT use python_exec or write scripts for image generation. "
+            "Generate a PHOTO/ILLUSTRATION from a text prompt using Mistral's native image "
+            "generation service — for pictures, scenes, artwork, logos, mockups, photo-realistic "
+            "or artistic visuals. Use this when the user wants an IMAGE to look at. "
             "The generated image is saved to the session artifact folder and shown in the Artifacts panel. "
-            "Be descriptive: include subject, mood, style, lighting, and composition details for best results."
+            "Be descriptive: include subject, mood, style, lighting, and composition details. "
+            "DO NOT use this for DIAGRAMS, CHARTS, ORG CHARTS, FLOWCHARTS, TIMELINES, MIND MAPS, or "
+            "anything whose value is EXACT TEXT/LABELS/NUMBERS/CONNECTIONS: a diffusion image model "
+            "CANNOT render legible, correct text — names, percentages and labels come out as garbled "
+            "fake glyphs. For those, output a **Mermaid diagram** as a ```mermaid fenced code block "
+            "directly in your reply (flowchart/graph for org charts & relationships, e.g. "
+            "`graph TD; A[Wiener Privatbank SE] --> B[Tochter GmbH]`). The chat renders ```mermaid "
+            "blocks as crisp diagrams with exact text — no image tool needed."
         ),
         "input_schema": {
             "type": "object",

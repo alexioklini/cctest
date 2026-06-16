@@ -190,6 +190,8 @@ function renderMessages() {
     root.querySelectorAll('pre:not(.tool-result-pre) code').forEach(block => {
       try { hljs.highlightElement(block); } catch(e) {}
     });
+    // Render mermaid diagrams (org charts / flowcharts the model emits).
+    renderMermaidBlocks(root);
   }
 
   // Update right panel badges (attachment/reference/artifact counts)
@@ -1176,6 +1178,44 @@ function renderStreamingMessage(chat) {
     try { hljs.highlightElement(block); } catch(e) {}
   });
 }
+// One-time mermaid init (theme-aware, manual render — we call run() ourselves).
+let _mermaidReady = false;
+function _ensureMermaid() {
+  if (_mermaidReady || typeof mermaid === 'undefined') return _mermaidReady;
+  const dark = document.body.classList.contains('theme-dark') ||
+               document.documentElement.getAttribute('data-theme') === 'dark';
+  try {
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict',
+                         theme: dark ? 'dark' : 'default' });
+    _mermaidReady = true;
+  } catch (_) {}
+  return _mermaidReady;
+}
+
+// Render any .mermaid-diagram containers inside `root` into SVG. Each holds its
+// raw source in data-mermaid. On a syntax error, falls back to showing the
+// source as a code block (so the diagram source is never lost). Idempotent —
+// skips containers already rendered (data-rendered).
+async function renderMermaidBlocks(root) {
+  if (!root) return;
+  const nodes = root.querySelectorAll('.mermaid-diagram:not([data-rendered])');
+  if (!nodes.length || !_ensureMermaid()) return;
+  let seq = 0;
+  for (const el of nodes) {
+    el.setAttribute('data-rendered', '1');
+    const src = el.getAttribute('data-mermaid') || '';
+    if (!src.trim()) continue;
+    try {
+      const id = 'mmd-' + Date.now() + '-' + (seq++);
+      const { svg } = await mermaid.render(id, src);
+      el.innerHTML = svg;
+    } catch (e) {
+      el.innerHTML = `<div class="mermaid-error">Diagramm konnte nicht gerendert werden.</div>`
+        + `<pre><code>${esc(src)}</code></pre>`;
+    }
+  }
+}
+
 function renderMarkdown(text) {
   if (!text) return '';
   try {
@@ -1196,6 +1236,20 @@ function renderMarkdown(text) {
     const { stripped, citations } = extractCitationsFromRaw(text);
 
     let html = marked.parse(stripped);
+
+    // Mermaid diagrams: a ```mermaid block becomes a container the post-render
+    // step (renderMermaidBlocks) turns into an SVG. Done BEFORE the copy-button
+    // pass so a diagram doesn't get a "Kopieren" code header. The raw mermaid
+    // source is kept (decoded) in a data attr so re-renders / theme switches and
+    // a "show source" fallback work; marked HTML-encoded it inside <code>.
+    html = html.replace(
+      /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
+      (_m, code) => {
+        const src = code.replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+                        .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+                        .replace(/&amp;/g, '&');
+        return `<div class="mermaid-diagram" data-mermaid="${esc(src)}"></div>`;
+      });
 
     // Add copy buttons to code blocks
     html = html.replace(/<pre><code( class="language-(\w+)")?>/g, (match, cls, lang) => {

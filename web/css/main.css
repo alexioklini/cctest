@@ -1348,6 +1348,18 @@ textarea { resize: none; }
   border: 1px solid var(--code-border);
   background: var(--code-bg) !important;
 }
+/* Mermaid diagrams (org charts / flowcharts rendered from ```mermaid blocks) */
+.mermaid-diagram {
+  margin: 0.75rem 0;
+  padding: 12px;
+  border: 1px solid var(--border-200);
+  border-radius: 12px;
+  background: var(--bg-000);
+  overflow-x: auto;
+  text-align: center;
+}
+.mermaid-diagram svg { max-width: 100%; height: auto; }
+.mermaid-error { color: var(--error); font-size: 12px; margin-bottom: 6px; }
 .msg-content pre code {
   font-family: var(--font-mono);
   font-size: 13px;

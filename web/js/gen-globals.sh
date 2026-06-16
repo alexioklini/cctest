@@ -101,6 +101,7 @@ NodeList
 marked
 hljs
 CodeMirror
+mermaid
 electronAPI
 EOF
 )
