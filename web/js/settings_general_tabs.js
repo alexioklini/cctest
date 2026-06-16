@@ -2449,7 +2449,7 @@ async function saveServiceModels() {
 // layout) applied deterministically by write_document/render_diagram. Files in
 // agents/main/skills/doc-styles/*.yaml. Admin-only.
 async function _genTab_doc_styles(C) {
-  const isAdmin = (state.currentUser && state.currentUser.role === 'admin');
+  const isAdmin = state.authUser && state.authUser.role === 'admin';
   let d;
   try {
     d = await API.get('/v1/doc-styles');

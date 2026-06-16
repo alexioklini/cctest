@@ -257,16 +257,48 @@ def tool_generate_image(args: dict) -> str:
 # gantt, pie, journey, gitgraph, mindmap, timeline, quadrant, sankey, C4,
 # block, requirement, packet, and more.
 
-_MMDC_REL = "diagram_render/node_modules/.bin/mmdc"
+_MMDC_CLI_REL = "diagram_render/node_modules/@mermaid-js/mermaid-cli/src/cli.js"
 _DIAGRAM_FORMATS = ("svg", "png", "pdf")
 
 
-def _mmdc_path() -> str:
-    """Absolute path to the project-local mermaid-cli binary, or '' if absent."""
-    import brain as brain
+def _working_node() -> str:
+    """Find a Node binary that actually runs. The mmdc shebang is `env node`,
+    which under launchd resolves to homebrew node — and homebrew node has been
+    seen broken by a stale llhttp dylib (libllhttp.9.3 missing after a 9.4
+    upgrade) → dyld error. So we pick an explicitly-working node: try the nvm
+    node that built mmdc first, then any node on PATH, verifying each with
+    `--version` before trusting it. Returns '' if none works."""
+    import glob
+    import subprocess
+    candidates = []
+    # nvm-managed nodes (newest first) — these are self-contained, not affected
+    # by homebrew's dylib churn.
+    nvm = os.path.expanduser("~/.nvm/versions/node")
+    if os.path.isdir(nvm):
+        candidates += sorted(glob.glob(os.path.join(nvm, "*", "bin", "node")), reverse=True)
+    # then PATH node / common locations
+    candidates += ["node", "/usr/local/bin/node", "/opt/homebrew/bin/node"]
+    for c in candidates:
+        try:
+            r = subprocess.run([c, "--version"], capture_output=True, text=True, timeout=8)
+            if r.returncode == 0 and r.stdout.strip().startswith("v"):
+                return c
+        except Exception:
+            continue
+    return ""
+
+
+def _mmdc_invocation() -> list:
+    """[node, cli.js] to run mermaid-cli with a known-good node, or [] if the
+    cli or a working node is missing."""
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    p = os.path.join(root, _MMDC_REL)
-    return p if os.path.exists(p) else ""
+    cli = os.path.join(root, _MMDC_CLI_REL)
+    if not os.path.exists(cli):
+        return []
+    node = _working_node()
+    if not node:
+        return []
+    return [node, cli]
 
 
 def tool_render_diagram(args: dict) -> str:
@@ -304,10 +336,11 @@ def tool_render_diagram(args: dict) -> str:
         bg = "white"
     title = (args.get("title") or "").strip()
 
-    mmdc = _mmdc_path()
+    mmdc = _mmdc_invocation()
     if not mmdc:
-        return _err("render_diagram: mermaid-cli not installed. Run "
-                    "`cd diagram_render && npm install` (one-time, per machine).")
+        return _err("render_diagram: mermaid-cli not available — either it's not "
+                    "installed (run `cd diagram_render && npm install`) or no working "
+                    "Node was found (homebrew node may be broken by a dylib upgrade).")
 
     # Artifact folder (same resolution as tool_generate_image).
     session_id = brain.get_request_context().current_session_id
@@ -337,11 +370,16 @@ def tool_render_diagram(args: dict) -> str:
         fd, tmp_in = tempfile.mkstemp(suffix=".mmd", prefix="brain-diagram-")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(code)
-        cmd = [mmdc, "-i", tmp_in, "-o", save_path,
-               "-t", theme, "-b", bg]
+        cmd = mmdc + ["-i", tmp_in, "-o", save_path, "-t", theme, "-b", bg]
         env = dict(os.environ)
         # Puppeteer needs a writable home for its cache in the launchd sandbox.
         env.setdefault("HOME", os.path.expanduser("~"))
+        # Force the chosen node's own bin dir to the FRONT of PATH so any child
+        # `node`/`npm` mmdc spawns also uses the working node, not broken
+        # homebrew node (the libllhttp.9.3 dyld error).
+        _nodedir = os.path.dirname(mmdc[0]) if mmdc and os.path.sep in mmdc[0] else ""
+        if _nodedir:
+            env["PATH"] = _nodedir + os.pathsep + env.get("PATH", "")
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
         if proc.returncode != 0 or not os.path.exists(save_path):
             err = (proc.stderr or proc.stdout or "unknown").strip()
