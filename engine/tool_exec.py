@@ -442,30 +442,21 @@ def _compress_old_tool_results(messages: list[dict], keep_recent: int = 4):
 # preprocessing call site stays until step 7's broader cleanup.
 
 TOOL_RESULT_BUDGET_THRESHOLD = 50000  # chars — persist results larger than this
-# Preview kept in context when a result is persisted. 2000 was punishingly small
-# for a read_document of a long doc — the model saw only the title/TOC and had to
-# re-read with offset/limit (the fc3fa95b loop). Raised to 8000 + the preview
-# message now points at offset/limit. Both overridable via config.json ->
-# conversion.{tool_result_threshold_chars, tool_result_preview_chars}.
-TOOL_RESULT_PREVIEW_SIZE = 8000  # chars — preview kept in context
+TOOL_RESULT_PREVIEW_SIZE = 2000  # chars — preview kept in context
 
-
-def _tool_result_budget_cfg() -> tuple[int, int]:
-    """(threshold, preview) chars — config override (conversion block) or default."""
-    try:
-        import brain as _brain
-        conv = (_brain._server_config() or {}).get("conversion") or {}
-        th = int(conv.get("tool_result_threshold_chars") or TOOL_RESULT_BUDGET_THRESHOLD)
-        pv = int(conv.get("tool_result_preview_chars") or TOOL_RESULT_PREVIEW_SIZE)
-        return th, pv
-    except Exception:
-        return TOOL_RESULT_BUDGET_THRESHOLD, TOOL_RESULT_PREVIEW_SIZE
+# NOTE: _apply_tool_result_budget is currently NOT called on the interactive
+# chat path — the sidecar owns the per-turn ephemeral tool exchange and tool
+# results never live in session.messages, so it would be a no-op there (see
+# handlers/chat.py and CHANGELOG 9.46.5). Kept for any future native/background
+# caller. read_document returns its content VERBATIM (tool_mcp hard rule); the
+# only real ceiling on a big read is the model's context window.
 
 
 def _apply_tool_result_budget(messages: list[dict], session_id: str | None = None,
                                agent_id: str | None = None) -> int:
     """Persist oversized tool results to disk and replace with truncated previews."""
-    _threshold, _preview_size = _tool_result_budget_cfg()
+    _threshold = TOOL_RESULT_BUDGET_THRESHOLD
+    _preview_size = TOOL_RESULT_PREVIEW_SIZE
     if not session_id:
         session_id = get_request_context().current_session_id or ""
     if not agent_id:

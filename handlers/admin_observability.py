@@ -1038,15 +1038,12 @@ class AdminObservabilityHandlers:
                     "markitdown": ext in eff,
                     "own_extractor": _dc._EXTRACTORS.get(ext).__name__ if _dc._EXTRACTORS.get(ext) else "",
                 })
-            _conv = (_cfg.get("conversion") or {})
             self._send_json({
                 "slots": slots,
                 "ocr": {**ocr_block, "status": ocr_status, "why": ocr_why},
                 "conversion": {
                     "matrix": conv_matrix,
                     "markitdown_available": bool(_dc._MARKITDOWN_BIN),
-                    "tool_result_threshold_chars": int(_conv.get("tool_result_threshold_chars") or 50000),
-                    "tool_result_preview_chars": int(_conv.get("tool_result_preview_chars") or 8000),
                 },
                 "model_options": model_opts,
                 "providers": sorted(providers.keys()),
@@ -1133,16 +1130,6 @@ class AdminObservabilityHandlers:
                         if e in _dc._MARKITDOWN_OPTIONAL_EXTS:
                             cleaned.append(e)
                     conv["markitdown_exts"] = cleaned
-                for k in ("tool_result_threshold_chars", "tool_result_preview_chars"):
-                    if k in c:
-                        try:
-                            v = int(c[k])
-                            if v < 500:
-                                raise ValueError
-                            conv[k] = v
-                        except (ValueError, TypeError):
-                            self._send_json({"error": f"{k} muss eine Zahl ≥500 sein"}, 400)
-                            return
 
             # tools_config.json slots (tts/transcribe) — route through the
             # tool-config saver so we don't clobber the other tool integrations.

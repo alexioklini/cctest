@@ -2384,18 +2384,10 @@ function _svcConversionMatrix(conv, dis) {
         verliert Tabellen-/Gruppenstruktur). .epub/.zip immer markitdown (kein eigener Extractor).</p>
       ${mdWarn}
       ${rows}
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border-100)">
-        <label style="font-size:12px;color:var(--text-300)">Großes Tool-Ergebnis ab (Zeichen)
-          <input type="number" class="form-input" id="svc-conv-threshold" value="${conv.tool_result_threshold_chars || 50000}" min="500"${dis} style="margin-top:4px">
-        </label>
-        <label style="font-size:12px;color:var(--text-300)">Vorschau im Kontext (Zeichen)
-          <input type="number" class="form-input" id="svc-conv-preview" value="${conv.tool_result_preview_chars || 8000}" min="500"${dis} style="margin-top:4px">
-        </label>
-      </div>
-      <p style="font-size:11px;color:var(--text-400);margin:6px 0 0">
-        Liest das Modell ein Dokument, das größer als die Schwelle ist, wird der Volltext auf
-        Disk gelegt und nur die Vorschau in den Chat-Kontext gegeben (Rest per offset/limit
-        nachladbar). Zu kleine Vorschau = Modell muss viel nachladen.</p>
+      <p style="font-size:11px;color:var(--text-400);margin:8px 0 0">
+        read_document gibt den extrahierten Inhalt vollständig (ungekappt) an das
+        Modell — die einzige Grenze ist das Kontextfenster des Modells. Die Wahl des
+        Extractors bestimmt die Qualität (Tabellen!).</p>
     </div>`;
 }
 
@@ -2422,11 +2414,7 @@ async function saveServiceModels() {
   // Conversion matrix: which extensions are markitdown-first + the budget knobs.
   const mdExts = Array.from(document.querySelectorAll('.svc-conv-md:checked'))
     .map(cb => cb.dataset.ext);
-  body.conversion = {
-    markitdown_exts: mdExts,
-    tool_result_threshold_chars: parseInt(document.getElementById('svc-conv-threshold')?.value, 10) || 50000,
-    tool_result_preview_chars: parseInt(document.getElementById('svc-conv-preview')?.value, 10) || 8000,
-  };
+  body.conversion = { markitdown_exts: mdExts };
   try {
     await API.post('/v1/services/models', body);
     showToast('Service-Modelle gespeichert');

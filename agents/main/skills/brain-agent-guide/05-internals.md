@@ -303,11 +303,14 @@ but is deferred — OpenRAIL-M model license + GPU cost.)
 web-urls with `max_length=10_000_000` (mining → disk + chunked embedding, NOT an
 LLM context, so the per-turn 50k cap was wrong — it had silently cut a 524k-char
 PDF before its balance sheet). The chat `web_fetch` keeps its 50k per-turn cap
-(protects context; abstract mode was removed v9.125.0 — always full content). A
-read whose result exceeds `conversion.tool_result_threshold_chars` (default 50k)
-is spilled to disk with a preview of `tool_result_preview_chars` (default 8000,
-was 2000) + an offset/limit hint. `read_document(pages=…)` only applies to PDFs;
-on `.md/.txt` it returns a `note` (use offset/limit) instead of silently ignoring.
+(protects context; abstract mode was removed v9.125.0 — always full content).
+**`read_document` has NO size cap** — it returns the extracted content VERBATIM
+(tool_mcp hard rule: no truncation/summary); the only ceiling on a big read is
+the model's context window. (`_apply_tool_result_budget`'s disk-spill+preview is
+dead on the chat path — the sidecar owns the ephemeral tool exchange, results
+never live in `session.messages`; CHANGELOG 9.46.5.) `read_document(pages=…)`
+only applies to PDFs; on `.md/.txt` it returns a `note` (use offset/limit)
+instead of silently ignoring.
 
 ## Manual web search (Websuche) + tool lockout
 
