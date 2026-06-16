@@ -716,6 +716,47 @@ def _extract_pdf(path: str, *, pages: str | None = None,
     return text + "\n", None
 
 
+def _extract_pdf_pymupdf4llm(path: str, *, pages: str | None = None) -> tuple[str, str | None]:
+    """PDF → markdown via pymupdf4llm (a fitz wrapper). Renders tables + layout
+    to GitHub-flavoured markdown far better than markitdown on structured docs
+    (financial reports etc. — verified on the WPB Konzernbilanz). Returns
+    (markdown, error). Empty text + None = no extractable text (scanned →
+    caller's OCR path). Missing dep / failure → error so the caller falls back.
+    NOTE: pymupdf4llm/PyMuPDF is AGPL-3.0 (Artifex)."""
+    try:
+        import pymupdf4llm  # type: ignore
+    except ImportError:
+        return "", "pymupdf4llm not installed (pip install pymupdf4llm)"
+    page_sel = _parse_index_selection(pages)
+    kwargs = {}
+    if page_sel is not None:
+        # pymupdf4llm wants 0-based page numbers; our selection is 1-based.
+        kwargs["pages"] = sorted(p - 1 for p in page_sel if p >= 1)
+    try:
+        md = pymupdf4llm.to_markdown(path, **kwargs)
+    except Exception as e:
+        return "", f"pymupdf4llm: {type(e).__name__}: {e}"
+    md = (md or "").strip()
+    if len(md.splitlines()) <= 1:
+        return "", None   # scanned/empty → let the caller try OCR
+    return md + "\n", None
+
+
+def _pdf_engine() -> str:
+    """Which PDF→text backend to use: 'pymupdf4llm' (default — best tables),
+    'markitdown', or 'fitz' (the plain page.get_text legacy path). Overridable
+    via config.json -> conversion.pdf_engine."""
+    try:
+        import brain as _brain
+        conv = (_brain._server_config() or {}).get("conversion") or {}
+        eng = str(conv.get("pdf_engine") or "").strip().lower()
+        if eng in ("pymupdf4llm", "markitdown", "fitz"):
+            return eng
+    except Exception:
+        pass
+    return "pymupdf4llm"
+
+
 def _extract_docx(path: str) -> tuple[str, str | None]:
     try:
         import docx  # type: ignore
@@ -1209,7 +1250,17 @@ def _do_extract(src: str, *, use_markitdown: bool = True,
         return "", "", f"unsupported extension: {ext}"
     md_enabled = bool(use_markitdown and _MARKITDOWN_BIN)
     text = ""
-    if md_enabled and ext in _markitdown_exts():
+    # PDF engine choice (config conversion.pdf_engine, default pymupdf4llm).
+    # pymupdf4llm renders tables/layout far better than markitdown on structured
+    # PDFs; 'markitdown' keeps the old default; 'fitz' forces the plain legacy
+    # _extract_pdf path. Tried BEFORE markitdown so the choice actually wins;
+    # falls through to markitdown/fitz on empty/error (e.g. scanned → OCR).
+    if ext == ".pdf" and _pdf_engine() == "pymupdf4llm":
+        p_text, p_err = _extract_pdf_pymupdf4llm(src, pages=pages)
+        if not p_err and p_text:
+            return p_text, "pymupdf4llm", None
+        # empty (scanned) or dep missing → fall through to the normal chain
+    if md_enabled and ext in _markitdown_exts() and not (ext == ".pdf" and _pdf_engine() == "fitz"):
         text, err = _extract_with_markitdown(src)
         if not err and text:
             return text, "markitdown", None

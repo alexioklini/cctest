@@ -2358,13 +2358,13 @@ async function _genTab_service_models(C) {
 }
 
 // Conversion matrix: per file type, markitdown-first vs. Brain's own extractor
-// (read_document / mining use this). Plus the read_document tool-result budget
-// knobs (preview size when a read is too big for one turn).
+// (read_document + mining use this). PDF has its own 3-way engine dropdown
+// (pymupdf4llm / markitdown / fitz) rendered separately, so it's excluded here.
 function _svcConversionMatrix(conv, dis) {
   conv = conv || {};
   const matrix = conv.matrix || [];
   const mdAvail = conv.markitdown_available;
-  const rows = matrix.map(m => {
+  const rows = matrix.filter(m => m.ext !== '.pdf').map(m => {
     const own = m.own_extractor ? `eigen (${esc(m.own_extractor)})` : 'eigen';
     return `<div style="display:grid;grid-template-columns:90px 1fr;gap:10px;align-items:center;padding:3px 0">
         <code style="font-size:12px">${esc(m.ext)}</code>
@@ -2375,15 +2375,31 @@ function _svcConversionMatrix(conv, dis) {
       </div>`;
   }).join('');
   const mdWarn = mdAvail ? '' : '<div style="font-size:11px;color:var(--warning,#c80)">⚠ markitdown ist nicht auf dem PATH — überall läuft der eigene Extractor.</div>';
+  const pe = conv.pdf_engine || 'pymupdf4llm';
+  const peOpt = (v, label) => `<option value="${v}"${pe === v ? ' selected' : ''}>${label}</option>`;
+  const pdfEngineRow = `
+    <div style="display:grid;grid-template-columns:90px 1fr;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-100)">
+      <code style="font-size:12px">.pdf</code>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-300)">
+        Engine:
+        <select class="form-select" id="svc-conv-pdf-engine"${dis} style="max-width:220px">
+          ${peOpt('pymupdf4llm', 'pymupdf4llm (beste Tabellen)')}
+          ${peOpt('markitdown', 'markitdown')}
+          ${peOpt('fitz', 'fitz (roh, ohne Tabellen)')}
+        </select>
+      </label>
+    </div>`;
   return `
     <h4 style="margin:18px 0 6px;font-size:13px">Dokumentkonvertierung (read_document & Mining)</h4>
     <div style="display:flex;flex-direction:column;gap:2px;padding:12px;border:1px solid var(--border-100);border-radius:8px">
       <p style="font-size:12px;color:var(--text-400);margin:0 0 8px">
         Pro Dateityp: <b>markitdown</b> (guter Text, schwach bei Tabellen) oder Brains
-        <b>eigener Extractor</b>. .xlsx/.eml laufen bewusst über eigenen Code (markitdown
-        verliert Tabellen-/Gruppenstruktur). .epub/.zip immer markitdown (kein eigener Extractor).</p>
+        <b>eigener Extractor</b>. PDF hat eine eigene Engine-Wahl (pymupdf4llm rendert
+        Tabellen/Layout am besten). .xlsx/.eml laufen bewusst über eigenen Code; .epub/.zip
+        immer markitdown (kein eigener Extractor).</p>
       ${mdWarn}
-      ${rows}
+      ${pdfEngineRow}
+      ${rows.replace(/<div[^>]*>\s*<code[^>]*>\.pdf<\/code>[\s\S]*?<\/div>\s*<\/div>/, '')}
       <p style="font-size:11px;color:var(--text-400);margin:8px 0 0">
         read_document gibt den extrahierten Inhalt vollständig (ungekappt) an das
         Modell — die einzige Grenze ist das Kontextfenster des Modells. Die Wahl des
@@ -2414,7 +2430,10 @@ async function saveServiceModels() {
   // Conversion matrix: which extensions are markitdown-first + the budget knobs.
   const mdExts = Array.from(document.querySelectorAll('.svc-conv-md:checked'))
     .map(cb => cb.dataset.ext);
-  body.conversion = { markitdown_exts: mdExts };
+  body.conversion = {
+    markitdown_exts: mdExts,
+    pdf_engine: document.getElementById('svc-conv-pdf-engine')?.value || 'pymupdf4llm',
+  };
   try {
     await API.post('/v1/services/models', body);
     showToast('Service-Modelle gespeichert');

@@ -291,13 +291,19 @@ project mining, PII scan, and classification. Per file type it tries
 **markitdown first** OR goes straight to Brain's own `_extract_*`. That split is
 **config-driven** (was a hardcoded constant): `config.json →
 conversion.markitdown_exts` (editable per type in Settings → Service-Modelle).
-Defaults markitdown-first: `.pdf/.docx/.pptx/.msg/.epub/.zip`. Own-code: `.xlsx/
-.xls` (footer-group recovery — markitdown loses member↔group), `.csv/.tsv`,
-`.eml` (markitdown leaks MIME headers). `.epub/.zip` are forced markitdown (no
-own extractor). markitdown is a good TEXT converter, weak on TABLES — but an eval
-on the WPB annual report showed it renders balance-sheet tables BETTER than
-fitz here, so PDF stays markitdown-first. (datalab-to/marker would be stronger
-but is deferred — OpenRAIL-M model license + GPU cost.)
+Own-code: `.xlsx/.xls` (footer-group recovery — markitdown loses member↔group),
+`.csv/.tsv`, `.eml` (markitdown leaks MIME headers). `.epub/.zip` are forced
+markitdown (no own extractor).
+
+**PDF has its own engine** (`conversion.pdf_engine`, default **pymupdf4llm**):
+`pymupdf4llm` (a fitz wrapper — renders tables/layout to clean markdown, best on
+financial reports; verified on the WPB Konzernbilanz) | `markitdown` | `fitz`
+(plain `page.get_text`, flat). The chosen engine runs BEFORE markitdown for
+`.pdf`, falling through to markitdown→fitz→OCR on empty (scanned) / missing dep,
+so the scanned-PDF OCR path is unaffected. Backend tag `pymupdf4llm`. LICENSE:
+pymupdf4llm/PyMuPDF is AGPL-3.0 (Artifex) — fitz was already in use, so no new
+exposure. (docling — MIT, ~300MB PDF model — under eval as an alternative;
+datalab-to/marker deferred: OpenRAIL-M + 3-5GB VRAM.)
 
 **Truncation invariants** (the fc3fa95b 561k-token incident): mining fetches
 web-urls with `max_length=10_000_000` (mining → disk + chunked embedding, NOT an

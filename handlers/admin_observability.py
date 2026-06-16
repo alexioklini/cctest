@@ -1044,6 +1044,7 @@ class AdminObservabilityHandlers:
                 "conversion": {
                     "matrix": conv_matrix,
                     "markitdown_available": bool(_dc._MARKITDOWN_BIN),
+                    "pdf_engine": _dc._pdf_engine(),
                 },
                 "model_options": model_opts,
                 "providers": sorted(providers.keys()),
@@ -1130,6 +1131,12 @@ class AdminObservabilityHandlers:
                         if e in _dc._MARKITDOWN_OPTIONAL_EXTS:
                             cleaned.append(e)
                     conv["markitdown_exts"] = cleaned
+                if "pdf_engine" in c:
+                    eng = str(c["pdf_engine"] or "").strip().lower()
+                    if eng not in ("pymupdf4llm", "markitdown", "fitz"):
+                        self._send_json({"error": f"Unbekannte pdf_engine: {eng}"}, 400)
+                        return
+                    conv["pdf_engine"] = eng
 
             # tools_config.json slots (tts/transcribe) — route through the
             # tool-config saver so we don't clobber the other tool integrations.

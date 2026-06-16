@@ -480,10 +480,11 @@ Once a feedback row exists, user and admin exchange short one-line messages
   chat-summary, fan-out, KG-extraction, TTS, transcribe) + OCR, each with a
   resolve status (`ok`/`unset`/`missing`/`disabled`) + the dropdown option
   lists. Also returns a `conversion` block: the per-file-type extractor
-  **matrix** (`{ext, markitdown, own_extractor}`) + `markitdown_available`. `POST
-  /v1/services/models` — save any subset (model-id strings, `''` to unset, an
-  `ocr:{engine,provider,model}` object, or a `conversion:{markitdown_exts:[…]}`
-  object — extensions validated against the formats that have an own extractor).
+  **matrix** (`{ext, markitdown, own_extractor}`) + `markitdown_available` +
+  `pdf_engine`. `POST /v1/services/models` — save any subset (model-id strings,
+  `''` to unset, an `ocr:{engine,provider,model}` object, or a
+  `conversion:{markitdown_exts:[…], pdf_engine:'pymupdf4llm'|'markitdown'|'fitz'}`
+  object — exts validated against formats with an own extractor; bad pdf_engine 400).
   **Fail-loud**: an unknown model id or OCR provider is rejected 400 — never
   coerced to a default. Powers Settings → Allgemein → **Service-Modelle** (incl.
   the Dokumentkonvertierungs-Matrix in the read_document/OCR area).
