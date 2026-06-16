@@ -22,13 +22,32 @@ docs + WWDC26:
   "outperforms 9B dense on math/coding." → a MUCH stronger model than the ~3B I
   feared — the classifier-viability odds are far better than for gemma-e2b/Qwen-7B.
 
-**Net: no Swift shim is needed.** `fm serve` gives exactly the OpenAI-compatible
-HTTP surface brain-agent already speaks (providers are "plain OpenAI-compatible
-config.json entries"). This collapses Phases 0–1 into "stand up `fm serve` and
-point a provider at it." The ONE thing still to verify is whether `fm serve`'s
-OpenAI surface exposes reliable `response_format`/tool-calling for the
-classifier — `fm schema` (guided generation) exists, but server-level structured
-output is unconfirmed in the docs read so far.
+**CRITICAL ARCHITECTURE CONSTRAINT (verified in sidecar.py):** the sidecar is
+built on the **Anthropic Python SDK** — `client = anthropic.Anthropic(base_url=
+provider.base_url); client.messages.create(...)` (sidecar.py:517,615). The SDK
+speaks **only** the Anthropic `/v1/messages` wire — it CANNOT call OpenAI
+`/v1/chat/completions`. So every provider's `base_url` MUST serve an Anthropic
+`/v1/messages` endpoint. The existing OpenAI-shape providers work ONLY because
+**CLIProxyAPI sits in front speaking Anthropic and translating to OpenAI/Mistral
+upstream** (config.json: "CLIProxyAPI … Speaks Anthropic /v1/messages, proxies
+to Mistral upstream"). The translation is CLIProxyAPI's job, never the sidecar's.
+
+**Therefore `fm serve` (OpenAI) is NOT directly attachable** — it needs an
+Anthropic→OpenAI bridge in front, exactly like Mistral has CLIProxyAPI. Two
+realistic bridges (the direct-Anthropic-native path the vllm-metal plan used is
+OUT — `fm serve` can't speak Anthropic):
+1. **Teach CLIProxyAPI an Apple-FM OpenAI upstream** — IF CLIProxyAPI can route
+   additional OpenAI upstreams (it's currently wired Anthropic→Mistral only).
+   Config-only if yes; needs CLIProxyAPI config investigation.
+2. **A tiny Python Anthropic adapter on the M4** — accepts Anthropic
+   `/v1/messages`, calls `apple-fm-sdk` (or `fm serve`), returns Anthropic shape.
+   Trivial in Python (Apple ships the SDK), but its own service. (This is the
+   "shim" again — now Python, not Swift, and much smaller.)
+
+So `fm serve` removes the Swift requirement and the model-download/quant pain,
+but does NOT remove the need for an Anthropic bridge. The remaining unknowns:
+which bridge (decide on the M4), and whether the chosen bridge passes reliable
+structured output / forced-tool through to the classifier.
 
 ## Why consider it
 - **Zero install / zero model download** — model ships with the OS; `fm` CLI
@@ -87,9 +106,19 @@ No shim — just bring up the built-in server and confirm the 3 open facts.
 5. **Note the model:** AFM 3, ~20B sparse / 1–4B active. No size/quant config to
    manage (OS-owned). Confirm it actually runs on the M4's RAM headroom (it
    should — Apple sizes it for the device).
+6. **Decide the Anthropic bridge (REQUIRED — the sidecar can't call OpenAI):**
+   - Check CLIProxyAPI: can it add an Apple-FM OpenAI upstream + expose it as an
+     Anthropic model? If yes → config-only, no new service.
+   - Else: write the tiny Python Anthropic-adapter on the M4 (`/v1/messages` →
+     apple-fm-sdk → Anthropic-shape resp), run it as a launchd service on a free
+     port (e.g. :8014), supervised, graceful-degrade. The classifier needs this
+     adapter to map Anthropic `tools`+`tool_choice` (forced-tool) → AFM guided
+     generation (`@Generable`/`fm schema`) and back.
 
-**Exit gate:** server reachable from the brain-agent host + chat works → proceed.
-Structured-output result decides whether the classifier is in scope (Phase 2/3).
+**Exit gate:** an Anthropic `/v1/messages` endpoint (CLIProxyAPI route OR the
+Python adapter) reachable from the brain-agent host, serving AFM, with a chat
+turn working. Structured-output result (step 4 + the bridge's forced-tool
+mapping) decides whether the classifier is in scope (Phase 2/3).
 
 ---
 
@@ -130,13 +159,13 @@ Reuse the proven harness so results are comparable to Qwen2.5-7B:
 
 ## Phase 3 — Wire into brain-agent (only if Phase 2 passes)
 
-`fm serve` is OpenAI-compatible, so Apple FM is just another **named provider**
-in `config.json → providers` — like the existing local providers, CLIProxyAPI
-translates it to the Anthropic shape the sidecar wants. Its own
-`LocalProviderQueue` slot, keyed by name (see
-`[[project_local_bg_model_vllmmetal_bench]]` § LocalProviderQueue).
-- Add provider `Apple-FM` (base_url `http://192.168.4.65:<fm-serve-port>/v1`),
-  `max_concurrent` per the Phase-2 result (single-user → small).
+Apple FM becomes a **named provider** in `config.json → providers` whose
+`base_url` points at the **Anthropic bridge** chosen in Phase 0 step 6 (the
+CLIProxyAPI route OR the Python adapter) — NOT directly at `fm serve` (the
+sidecar's Anthropic SDK can't speak OpenAI). Its own `LocalProviderQueue` slot,
+keyed by name (see `[[project_local_bg_model_vllmmetal_bench]]` § LocalProviderQueue).
+- Add provider `Apple-FM` (base_url = the bridge's Anthropic `/v1/messages` URL,
+  e.g. `http://192.168.4.65:8014`), `max_concurrent` per Phase-2 (single-user → small).
 - Point only the Phase-2-cleared knobs at the Apple model id (the 3 from the
   Qwen plan: `chat_summary_model`, `tools_config.refinement.model`,
   `mempalace.chat_sync.classifier.model`).
