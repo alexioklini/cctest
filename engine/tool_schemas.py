@@ -849,6 +849,7 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "path": {"type": "string", "description": "Output file path (extension determines format)"},
                 "content": {"type": "string", "description": "Markdown content to convert into the document"},
+                "style": {"type": "string", "description": "Optional style preset name (a file in the agent's skills/doc-styles/, e.g. 'corporate') — sets fonts/colors/layout deterministically. Omit for the built-in default look."},
             },
             "required": ["path", "content"],
         },
@@ -1494,6 +1495,10 @@ TOOL_DEFINITIONS = [
                     "type": "string",
                     "enum": ["white", "transparent"],
                     "description": "Background. Default 'white' (good for documents); 'transparent' to overlay.",
+                },
+                "style": {
+                    "type": "string",
+                    "description": "Optional doc style preset name (skills/doc-styles/<name>) — inherits its mermaid theme/background so the diagram matches the report it goes into. Explicit theme/background override it.",
                 },
             },
             "required": ["code"],

@@ -402,6 +402,63 @@ def tool_read_document(args: dict) -> str:
 
 _MD_IMAGE_RE = re.compile(r'^\s*!\[([^\]]*)\]\(([^)\s]+)\)\s*$')
 
+# Built-in fallback style — used when no preset is named / found. Mirrors the
+# corporate.yaml keys so the apply-code can assume the full shape.
+_DEFAULT_DOC_STYLE = {
+    "fonts": {"body": "Calibri", "heading": "Calibri", "mono": "Consolas"},
+    "sizes": {"body": 11, "h1": 20, "h2": 16, "h3": 13},
+    "colors": {"heading": "#1F3864", "body": "#222222", "accent": "#2E74B5",
+               "table_header_bg": "#1F3864", "table_header_text": "#FFFFFF"},
+    "docx": {"table_style": "Light Grid Accent 1", "heading_bold": True},
+    "pdf": {"page_size": "letter", "margin_inch": 1.0},
+    "pptx": {"title_color": "#1F3864", "body_color": "#222222",
+             "accent": "#2E74B5", "background": "#FFFFFF"},
+    "mermaid": {"theme": "default", "background": "white"},
+}
+
+
+def _load_doc_style(name: str):
+    """Load a document style preset (agents/<agent>/skills/doc-styles/<name>.yaml),
+    deep-merged over the built-in defaults so callers always get the full shape.
+    name '' / None / not-found → built-in defaults. Deterministic — the MODEL
+    never interprets this; the doc tools apply it in code (CLAUDE.md rule 5)."""
+    import copy
+    import brain as _brain
+    style = copy.deepcopy(_DEFAULT_DOC_STYLE)
+    name = (name or "").strip()
+    if not name:
+        return style
+    try:
+        import yaml
+        agent = get_request_context().current_agent or _brain._current_agent
+        agent_id = agent.agent_id if agent else "main"
+        base = os.path.join(_brain.AGENTS_DIR, agent_id, "skills", "doc-styles")
+        for fn in (f"{name}.yaml", f"{name}.yml"):
+            p = os.path.join(base, fn)
+            if os.path.isfile(p):
+                with open(p, encoding="utf-8") as f:
+                    loaded = yaml.safe_load(f) or {}
+                for k, v in loaded.items():
+                    if isinstance(v, dict) and isinstance(style.get(k), dict):
+                        style[k].update(v)
+                    else:
+                        style[k] = v
+                break
+    except Exception:
+        pass
+    return style
+
+
+def _hex_rgb(h: str):
+    """'#RRGGBB' → (r,g,b) ints; tolerant of missing '#'. None on bad input."""
+    try:
+        h = (h or "").lstrip("#")
+        if len(h) != 6:
+            return None
+        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except Exception:
+        return None
+
 
 def _resolve_doc_image(src: str, doc_dir: str) -> str | None:
     """Resolve an image path from a markdown ![alt](src) inside write_document.
@@ -424,6 +481,7 @@ def tool_write_document(args: dict) -> str:
     import brain as _brain
     path = args.get("path", "")
     content = args.get("content", "")
+    _style = _load_doc_style(args.get("style", ""))
     try:
         path = os.path.expanduser(path)
         if not os.path.isabs(path):
@@ -435,9 +493,33 @@ def tool_write_document(args: dict) -> str:
         if ext == ".docx":
             try:
                 import docx
+                from docx.shared import Pt, RGBColor
             except ImportError:
                 return _err("Install python-docx: pip3 install python-docx")
             doc = docx.Document()
+            # Apply style: default body font + size on the Normal style; heading
+            # font/color/size on Heading 1-3. Deterministic — model writes plain md.
+            try:
+                _ds = _style
+                _normal = doc.styles["Normal"]
+                _normal.font.name = _ds["fonts"]["body"]
+                _normal.font.size = Pt(_ds["sizes"]["body"])
+                _bodyc = _hex_rgb(_ds["colors"]["body"])
+                if _bodyc:
+                    _normal.font.color.rgb = RGBColor(*_bodyc)
+                _hc = _hex_rgb(_ds["colors"]["heading"])
+                for _lvl, _szkey in ((1, "h1"), (2, "h2"), (3, "h3")):
+                    try:
+                        _hs = doc.styles[f"Heading {_lvl}"]
+                        _hs.font.name = _ds["fonts"]["heading"]
+                        _hs.font.size = Pt(_ds["sizes"][_szkey])
+                        _hs.font.bold = bool(_ds["docx"].get("heading_bold", True))
+                        if _hc:
+                            _hs.font.color.rgb = RGBColor(*_hc)
+                    except KeyError:
+                        pass
+            except Exception:
+                pass
             lines = content.split("\n")
             i = 0
             while i < len(lines):
@@ -474,7 +556,10 @@ def tool_write_document(args: dict) -> str:
                     if table_rows:
                         max_cols = max(len(r) for r in table_rows)
                         table = doc.add_table(rows=len(table_rows), cols=max_cols)
-                        table.style = "Table Grid"
+                        try:
+                            table.style = _style["docx"].get("table_style") or "Table Grid"
+                        except (KeyError, Exception):
+                            table.style = "Table Grid"
                         for ri, row_data in enumerate(table_rows):
                             for ci, cell_val in enumerate(row_data):
                                 if ci < max_cols:
@@ -527,9 +612,29 @@ def tool_write_document(args: dict) -> str:
         elif ext == ".pptx":
             try:
                 from pptx import Presentation
+                from pptx.dml.color import RGBColor as _PRGB
             except ImportError:
                 return _err("Install python-pptx: pip3 install python-pptx")
             prs = Presentation()
+            _title_rgb = _hex_rgb(_style["pptx"].get("title_color"))
+            _body_rgb = _hex_rgb(_style["pptx"].get("body_color"))
+
+            def _style_slide(slide):
+                """Apply preset title/body colors to a slide's placeholders."""
+                try:
+                    if slide.shapes.title and _title_rgb:
+                        for _p in slide.shapes.title.text_frame.paragraphs:
+                            for _r in _p.runs:
+                                _r.font.color.rgb = _PRGB(*_title_rgb)
+                    for _ph in slide.placeholders:
+                        if _ph == slide.shapes.title:
+                            continue
+                        if _body_rgb and _ph.has_text_frame:
+                            for _p in _ph.text_frame.paragraphs:
+                                for _r in _p.runs:
+                                    _r.font.color.rgb = _PRGB(*_body_rgb)
+                except Exception:
+                    pass
             slides_content = re.split(r'^#\s+(.+)$', content, flags=re.MULTILINE)
             if len(slides_content) < 3:
                 slide_layout = prs.slide_layouts[1]
@@ -571,18 +676,37 @@ def tool_write_document(args: dict) -> str:
                                                          _PInches(1.8), height=_PInches(4.0))
                             except Exception:
                                 pass
+            for _sl in prs.slides:
+                _style_slide(_sl)
             prs.save(path)
 
         elif ext == ".pdf":
             try:
-                from reportlab.lib.pagesizes import letter
+                from reportlab.lib.pagesizes import letter, A4
                 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as _RLImage
                 from reportlab.lib.styles import getSampleStyleSheet
                 from reportlab.lib.units import inch as _rl_inch
+                from reportlab.lib.colors import HexColor as _RLHex
             except ImportError:
                 return _err("Install reportlab: pip3 install reportlab")
-            doc_pdf = SimpleDocTemplate(path, pagesize=letter)
+            _psize = A4 if str(_style["pdf"].get("page_size", "letter")).lower() == "a4" else letter
+            _marg = float(_style["pdf"].get("margin_inch", 1.0)) * _rl_inch
+            doc_pdf = SimpleDocTemplate(path, pagesize=_psize, topMargin=_marg,
+                                        bottomMargin=_marg, leftMargin=_marg, rightMargin=_marg)
             styles = getSampleStyleSheet()
+            # Apply style fonts/colors to the reportlab paragraph styles.
+            try:
+                styles["Normal"].fontName = _style["fonts"]["body"] if False else styles["Normal"].fontName  # keep core font (reportlab needs registered TTFs for custom)
+                styles["Normal"].fontSize = _style["sizes"]["body"]
+                _bc = _style["colors"].get("body")
+                if _bc:
+                    styles["Normal"].textColor = _RLHex(_bc)
+                _hc = _style["colors"].get("heading")
+                for _hn in ("Heading1", "Heading2", "Heading3"):
+                    if _hn in styles and _hc:
+                        styles[_hn].textColor = _RLHex(_hc)
+            except Exception:
+                pass
             story = []
             for line in content.split("\n"):
                 line = line.strip()

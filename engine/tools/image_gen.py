@@ -287,10 +287,19 @@ def tool_render_diagram(args: dict) -> str:
     fmt = (args.get("format") or "svg").lower().lstrip(".")
     if fmt not in _DIAGRAM_FORMATS:
         return _err(f"render_diagram: format must be one of {_DIAGRAM_FORMATS}")
-    theme = (args.get("theme") or "default").lower()
+    # Theme/background: explicit arg wins; else inherit from the named doc style's
+    # mermaid block so diagrams match the document they'll be embedded in.
+    _style_mermaid = {}
+    if args.get("style"):
+        try:
+            from engine.tools.file_tools import _load_doc_style
+            _style_mermaid = (_load_doc_style(args.get("style")) or {}).get("mermaid", {}) or {}
+        except Exception:
+            _style_mermaid = {}
+    theme = (args.get("theme") or _style_mermaid.get("theme") or "default").lower()
     if theme not in ("default", "dark", "forest", "neutral"):
         theme = "default"
-    bg = (args.get("background") or "white").lower()
+    bg = (args.get("background") or _style_mermaid.get("background") or "white").lower()
     if bg not in ("transparent", "white"):
         bg = "white"
     title = (args.get("title") or "").strip()
