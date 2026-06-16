@@ -1029,6 +1029,7 @@
     "studioDeleteChatArtifact": "writable",
     "studioDeleteOutput": "writable",
     "studioGenerate": "writable",
+    "studioIcon": "writable",
     "studioOpenChatArtifact": "writable",
     "studioOpenOutput": "writable",
     "studioOutputCardHtml": "writable",

@@ -4,32 +4,64 @@
 // the server owns it (engine/output_gen.py). Globals only (no modules), loaded
 // after panels_projects.js, before init.js.
 
+// Inline Feather-style SVGs (viewBox 0 0 24 24, stroke=currentColor) so Studio
+// matches the rest of the UI's icon convention instead of using emoji. `size`
+// defaults to 1em so each icon inherits the surrounding text size/colour.
+function studioIcon(name, size) {
+  const s = size || '1em';
+  const open = `<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-0.15em">`;
+  const paths = {
+    // book — study guide
+    study_guide: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
+    // clipboard — briefing
+    briefing: '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>',
+    // help circle — faq
+    faq: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12" y2="17"/>',
+    // clock — timeline
+    timeline: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    // headphones — audio overview
+    audio_overview: '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h3zM3 19a2 2 0 0 0 2 2h1a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1H3z"/>',
+    // flask/search — research report
+    research_report: '<path d="M9 2v6.5L4.6 17a2 2 0 0 0 1.8 3h11.2a2 2 0 0 0 1.8-3L15 8.5V2"/><line x1="8" y1="2" x2="16" y2="2"/><line x1="7" y1="14" x2="17" y2="14"/>',
+    // file-text — generic document / output
+    file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+    // message-square — from chats
+    chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    // paperclip — chat artifact
+    attachment: '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+    // trash-2 — delete
+    trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  };
+  return open + (paths[name] || paths.file) + '</svg>';
+}
+
 // Preset metadata — mirrors engine/output_presets.PRESETS (icon/label) + the kinds
 // the generate endpoint validates. Research reports / audio overviews are also
 // project_outputs kinds (rendered in the browse groups) but generated elsewhere.
 const STUDIO_PRESETS = [
-  { kind: 'study_guide',    icon: '📖', label: 'Study Guide',    blurb: 'Konzepte · Begriffe · Wiederholungsfragen' },
-  { kind: 'briefing',       icon: '📋', label: 'Briefing',       blurb: 'Kurzfassung · Kernpunkte · Implikationen' },
-  { kind: 'faq',            icon: '❓', label: 'FAQ',             blurb: 'Belegte Frage-/Antwort-Paare' },
-  { kind: 'timeline',       icon: '🕒', label: 'Timeline',       blurb: 'Datierte Ereignisse (chronologisch)' },
-  { kind: 'audio_overview', icon: '🎧', label: 'Audio Overview', blurb: 'Podcast: zwei Hosts (englisch) · .mp3' },
+  { kind: 'study_guide',    label: 'Study Guide',    blurb: 'Konzepte · Begriffe · Wiederholungsfragen' },
+  { kind: 'briefing',       label: 'Briefing',       blurb: 'Kurzfassung · Kernpunkte · Implikationen' },
+  { kind: 'faq',            label: 'FAQ',             blurb: 'Belegte Frage-/Antwort-Paare' },
+  { kind: 'timeline',       label: 'Timeline',       blurb: 'Datierte Ereignisse (chronologisch)' },
+  { kind: 'audio_overview', label: 'Audio Overview', blurb: 'Podcast: zwei Hosts (englisch) · .mp3' },
 ];
 
-// kind → display label/icon for browse-group headers (covers presets + the
-// later research/audio kinds so they render with a sensible header too).
+// kind → display label for browse-group headers (covers presets + the later
+// research/audio kinds so they render with a sensible header too). The icon is
+// derived from `kind` via studioIcon().
 const STUDIO_KIND_META = {
-  study_guide:     { icon: '📖', label: 'Study Guides' },
-  briefing:        { icon: '📋', label: 'Briefings' },
-  faq:             { icon: '❓', label: 'FAQ' },
-  timeline:        { icon: '🕒', label: 'Timelines' },
-  research_report: { icon: '🔬', label: 'Research Reports' },
-  audio_overview:  { icon: '🎧', label: 'Audio Overviews' },
+  study_guide:     { label: 'Study Guides' },
+  briefing:        { label: 'Briefings' },
+  faq:             { label: 'FAQ' },
+  timeline:        { label: 'Timelines' },
+  research_report: { label: 'Research Reports' },
+  audio_overview:  { label: 'Audio Overviews' },
 };
 
 let _studioPollHandle = null;
 
 function _studioKindMeta(kind) {
-  return STUDIO_KIND_META[kind] || { icon: '📄', label: kind };
+  return STUDIO_KIND_META[kind] || { label: kind };
 }
 
 // Entry point from setProjectChatsFilter('studio').
@@ -66,7 +98,7 @@ function renderStudioGeneratePanel() {
   }
   const cards = STUDIO_PRESETS.map(p => `
     <div class="studio-card" style="flex:1 1 150px;min-width:140px;border:1px solid var(--border-200);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
-      <div style="font-size:22px">${p.icon}</div>
+      <div style="color:var(--text-300)">${studioIcon(p.kind, '22px')}</div>
       <div style="font-weight:600;font-size:13px">${esc(p.label)}</div>
       <div style="font-size:11px;color:var(--text-400);flex:1">${esc(p.blurb)}</div>
       <button class="btn-secondary" style="padding:4px 10px;font-size:12px" onclick="studioGenerate('${esc(p.kind)}')">Generieren</button>
@@ -167,7 +199,7 @@ function renderStudioOutputs(outputs, chatArts) {
     const cards = groups[kind].map(studioOutputCardHtml).join('');
     return `
       <div class="studio-group" style="margin-bottom:16px">
-        <div style="font-weight:600;font-size:13px;margin-bottom:8px">${meta.icon} ${esc(meta.label)} (${groups[kind].length})</div>
+        <div style="font-weight:600;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px"><span style="color:var(--text-300)">${studioIcon(kind)}</span>${esc(meta.label)} (${groups[kind].length})</div>
         <div style="display:flex;flex-wrap:wrap;gap:10px">${cards}</div>
       </div>`;
   }).join('');
@@ -178,7 +210,7 @@ function renderStudioOutputs(outputs, chatArts) {
     const cards = chatArts.map(studioChatArtifactCardHtml).join('');
     chatSection = `
       <div class="studio-group" style="margin-bottom:16px;${outputs.length ? 'border-top:1px solid var(--border-100);padding-top:14px' : ''}">
-        <div style="font-weight:600;font-size:13px;margin-bottom:8px">💬 Aus Projekt-Chats (${chatArts.length})</div>
+        <div style="font-weight:600;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px"><span style="color:var(--text-300)">${studioIcon('chat')}</span>Aus Projekt-Chats (${chatArts.length})</div>
         <div style="display:flex;flex-wrap:wrap;gap:10px">${cards}</div>
       </div>`;
   }
@@ -190,7 +222,7 @@ function studioChatArtifactCardHtml(a) {
   const aid = esc(a.artifact_id);
   return `
     <div class="studio-card" data-aid="${aid}" style="flex:1 1 220px;min-width:200px;max-width:320px;border:1px solid var(--border-200);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
-      <div style="font-weight:600;font-size:13px;line-height:1.3">📎 ${esc(a.name || '(Datei)')}</div>
+      <div style="font-weight:600;font-size:13px;line-height:1.3;display:flex;align-items:center;gap:6px"><span style="color:var(--text-300)">${studioIcon('attachment')}</span>${esc(a.name || '(Datei)')}</div>
       <div style="font-size:11px;color:var(--text-400)">v${a.latest_version || 1} · ${esc(when)}</div>
       <div style="display:flex;gap:6px;margin-top:4px">
         <button class="studio-act" onclick="studioOpenChatArtifact('${aid}')"
@@ -198,7 +230,7 @@ function studioChatArtifactCardHtml(a) {
         <button class="studio-act" onclick="studioArchiveChatArtifact('${aid}')"
                 style="background:var(--bg-100);border:1px solid var(--border-200);color:var(--text-200);cursor:pointer;font-size:12px;padding:4px 12px;border-radius:6px">Archivieren</button>
         <button class="studio-act" onclick="studioDeleteChatArtifact('${aid}')"
-                style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px" title="Löschen">🗑</button>
+                style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px;display:inline-flex;align-items:center" title="Löschen">${studioIcon('trash')}</button>
       </div>
     </div>`;
 }
@@ -211,7 +243,7 @@ async function studioOpenChatArtifact(artifactId) {
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `<div class="modal-content" style="max-width:900px;width:90vw;max-height:88vh;display:flex;flex-direction:column">
     <div class="modal-header" style="display:flex;align-items:center;gap:10px">
-      <span style="font-weight:600">📎 ${esc(title)}</span>
+      <span style="font-weight:600;display:inline-flex;align-items:center;gap:6px"><span style="color:var(--text-300)">${studioIcon('attachment')}</span>${esc(title)}</span>
       <a class="btn-secondary" style="margin-left:auto;padding:3px 10px;font-size:12px;text-decoration:none" href="${esc(API.getArtifactDownloadUrl(artifactId))}" target="_blank" rel="noopener">Herunterladen</a>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
     </div>
@@ -265,11 +297,11 @@ function studioOutputCardHtml(o) {
   } else if (o.status === 'cancelled') {
     statusLine = `<span style="color:var(--text-400)">⊘ Abgebrochen</span>`;
     actions = `<button class="studio-act" onclick="studioDeleteOutput('${esc(o.output_id)}')"
-                style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px">🗑 Löschen</button>`;
+                style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px;display:inline-flex;align-items:center;gap:5px">${studioIcon('trash')} Löschen</button>`;
   } else if (o.status === 'error') {
     statusLine = `<span style="color:var(--error)" title="${esc(o.error || '')}">⚠ Fehler</span>`;
     actions = `<button class="studio-act" onclick="studioDeleteOutput('${esc(o.output_id)}')"
-                style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px">🗑 Löschen</button>`;
+                style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px;display:inline-flex;align-items:center;gap:5px">${studioIcon('trash')} Löschen</button>`;
   } else {
     const oid = esc(o.output_id);
     const cites = (o.citations || 0) + ' Zitate';
@@ -282,7 +314,7 @@ function studioOutputCardHtml(o) {
       <button class="studio-act" onclick="studioArchiveOutput('${oid}')"
               style="background:var(--bg-100);border:1px solid var(--border-200);color:var(--text-200);cursor:pointer;font-size:12px;padding:4px 12px;border-radius:6px">Archivieren</button>
       <button class="studio-act" onclick="studioDeleteOutput('${oid}')"
-              style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px" title="Löschen">🗑</button>
+              style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px;display:inline-flex;align-items:center" title="Löschen">${studioIcon('trash')}</button>
       <button class="studio-act" onclick="studioOutputMenu(event, '${oid}')"
               style="background:none;border:1px solid var(--border-200);color:var(--text-400);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px" title="Weitere Optionen (Umbenennen, Neu generieren)">⋯</button>`;
   }
@@ -296,7 +328,7 @@ function studioOutputCardHtml(o) {
   }
   return `
     <div class="studio-card" data-oid="${esc(o.output_id)}" style="flex:1 1 220px;min-width:200px;max-width:320px;border:1px solid var(--border-200);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
-      <div style="font-weight:600;font-size:13px;line-height:1.3">📄 ${esc(o.title || o.kind)}</div>
+      <div style="font-weight:600;font-size:13px;line-height:1.3;display:flex;align-items:center;gap:6px"><span style="color:var(--text-300)">${studioIcon(o.kind)}</span>${esc(o.title || o.kind)}</div>
       <div style="font-size:11px">${statusLine}</div>
       ${metaLine}
       <div style="display:flex;gap:4px;margin-top:2px">${actions}</div>
@@ -310,7 +342,7 @@ async function studioOpenOutput(outputId) {
   if (!o) return;
   if (!o.artifact_id) { showToast('Keine Datei für diese Ausgabe gefunden', true); return; }
   const isAudio = o.kind === 'audio_overview';
-  const icon = isAudio ? '🎧' : '📄';
+  const icon = `<span style="color:var(--text-300)">${studioIcon(o.kind)}</span>`;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `<div class="modal-content" style="max-width:900px;width:90vw;max-height:88vh;display:flex;flex-direction:column">
@@ -329,7 +361,7 @@ async function studioOpenOutput(outputId) {
   if (isAudio) {
     body.innerHTML = `
       <div style="display:flex;flex-direction:column;gap:14px;align-items:center;padding:24px 8px">
-        <div style="font-size:48px">🎧</div>
+        <div style="color:var(--text-300)">${studioIcon('audio_overview', '48px')}</div>
         <div style="font-size:13px;color:var(--text-400);text-align:center">Zwei-Host-Podcast (englisch) aus den Projektquellen.</div>
         <div class="studio-audio-mount" style="width:100%;display:flex;justify-content:center">Lädt…</div>
       </div>`;
