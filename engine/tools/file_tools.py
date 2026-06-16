@@ -400,8 +400,27 @@ def tool_read_document(args: dict) -> str:
         return _err(f"read_document: {e}")
 
 
+_MD_IMAGE_RE = re.compile(r'^\s*!\[([^\]]*)\]\(([^)\s]+)\)\s*$')
+
+
+def _resolve_doc_image(src: str, doc_dir: str) -> str | None:
+    """Resolve an image path from a markdown ![alt](src) inside write_document.
+    `src` is usually a RELATIVE filename produced by render_diagram in the same
+    artifact folder, so try doc_dir first; then expanduser/abs. Returns an
+    existing path or None. (Remote URLs are not fetched here — the model should
+    render_diagram or attach the file.)"""
+    if not src or src.startswith(("http://", "https://", "data:")):
+        return None
+    for cand in (os.path.join(doc_dir, src), os.path.expanduser(src), os.path.abspath(src)):
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
 def tool_write_document(args: dict) -> str:
-    """Create documents from markdown content."""
+    """Create documents from markdown content. Markdown ![alt](file) image
+    references are EMBEDDED (docx/pptx/pdf) — pair with render_diagram to put
+    data-accurate diagrams into a report/presentation."""
     import brain as _brain
     path = args.get("path", "")
     content = args.get("content", "")
@@ -411,6 +430,7 @@ def tool_write_document(args: dict) -> str:
             path = os.path.abspath(path)
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         ext = os.path.splitext(path)[1].lower()
+        _doc_dir = os.path.dirname(path) or "."
 
         if ext == ".docx":
             try:
@@ -422,6 +442,20 @@ def tool_write_document(args: dict) -> str:
             i = 0
             while i < len(lines):
                 line = lines[i]
+                # Embedded image: ![alt](file) → add_picture (e.g. a render_diagram chart)
+                img_match = _MD_IMAGE_RE.match(line)
+                if img_match:
+                    img_path = _resolve_doc_image(img_match.group(2), _doc_dir)
+                    if img_path:
+                        try:
+                            from docx.shared import Inches
+                            doc.add_picture(img_path, width=Inches(6.0))
+                        except Exception:
+                            doc.add_paragraph(f"[Bild: {img_match.group(1) or img_match.group(2)}]")
+                    else:
+                        doc.add_paragraph(f"[Bild nicht gefunden: {img_match.group(2)}]")
+                    i += 1
+                    continue
                 # Headings
                 heading_match = re.match(r'^(#{1,6})\s+(.*)', line)
                 if heading_match:
@@ -503,30 +537,48 @@ def tool_write_document(args: dict) -> str:
                 slide.shapes.title.text = "Slide 1"
                 slide.placeholders[1].text = content.strip()
             else:
+                from pptx.util import Inches as _PInches
                 for si in range(1, len(slides_content), 2):
                     title = slides_content[si].strip()
                     body = slides_content[si + 1].strip() if si + 1 < len(slides_content) else ""
-                    slide_layout = prs.slide_layouts[1]
-                    slide = prs.slides.add_slide(slide_layout)
-                    slide.shapes.title.text = title
-                    tf = slide.placeholders[1].text_frame
-                    tf.clear()
                     body_lines = [l for l in body.split("\n") if l.strip()]
-                    for li, bline in enumerate(body_lines):
-                        bline = bline.strip()
-                        bline = re.sub(r'^[-*]\s+', '', bline)
-                        if li == 0:
-                            tf.text = bline
-                        else:
-                            p = tf.add_paragraph()
-                            p.text = bline
+                    # Image lines on this slide (e.g. render_diagram charts).
+                    imgs = [_resolve_doc_image(m.group(2), _doc_dir)
+                            for m in (_MD_IMAGE_RE.match(l) for l in body_lines) if m]
+                    imgs = [p for p in imgs if p]
+                    text_lines = [l for l in body_lines if not _MD_IMAGE_RE.match(l)]
+                    if imgs and not text_lines:
+                        # Picture-focused slide: title-only layout + centered image(s).
+                        slide = prs.slides.add_slide(prs.slide_layouts[5])
+                        slide.shapes.title.text = title
+                        slide.shapes.add_picture(imgs[0], _PInches(1.0), _PInches(1.6),
+                                                 height=_PInches(5.0))
+                    else:
+                        slide = prs.slides.add_slide(prs.slide_layouts[1])
+                        slide.shapes.title.text = title
+                        tf = slide.placeholders[1].text_frame
+                        tf.clear()
+                        for li, bline in enumerate(text_lines):
+                            bline = re.sub(r'^[-*]\s+', '', bline.strip())
+                            if li == 0:
+                                tf.text = bline
+                            else:
+                                tf.add_paragraph().text = bline
+                        # Any image on a text slide: place it to the right.
+                        if imgs:
+                            try:
+                                slide.shapes.add_picture(imgs[0], _PInches(5.2),
+                                                         _PInches(1.8), height=_PInches(4.0))
+                            except Exception:
+                                pass
             prs.save(path)
 
         elif ext == ".pdf":
             try:
                 from reportlab.lib.pagesizes import letter
-                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as _RLImage
                 from reportlab.lib.styles import getSampleStyleSheet
+                from reportlab.lib.units import inch as _rl_inch
             except ImportError:
                 return _err("Install reportlab: pip3 install reportlab")
             doc_pdf = SimpleDocTemplate(path, pagesize=letter)
@@ -536,6 +588,29 @@ def tool_write_document(args: dict) -> str:
                 line = line.strip()
                 if not line:
                     story.append(Spacer(1, 12))
+                    continue
+                # Embedded image (e.g. a render_diagram chart). reportlab can't
+                # place an SVG directly — PNG/JPG embed; SVG falls back to a note
+                # (the model should render_diagram with format=png for PDF).
+                img_match = _MD_IMAGE_RE.match(line)
+                if img_match:
+                    img_path = _resolve_doc_image(img_match.group(2), _doc_dir)
+                    if img_path and not img_path.lower().endswith(".svg"):
+                        try:
+                            img = _RLImage(img_path)
+                            maxw = 6.5 * _rl_inch
+                            if img.drawWidth > maxw:
+                                ratio = maxw / img.drawWidth
+                                img.drawWidth = maxw
+                                img.drawHeight *= ratio
+                            story.append(img)
+                            story.append(Spacer(1, 12))
+                        except Exception:
+                            story.append(Paragraph(f"[Bild: {img_match.group(1) or img_match.group(2)}]", styles["Normal"]))
+                    else:
+                        story.append(Paragraph(
+                            f"[Bild {img_match.group(2)} — für PDF bitte als PNG rendern (render_diagram format=png)]",
+                            styles["Normal"]))
                     continue
                 heading_match = re.match(r'^(#{1,6})\s+(.*)', line)
                 if heading_match:

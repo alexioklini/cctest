@@ -1,0 +1,8 @@
+{
+  "name": "brain-diagram-render",
+  "private": true,
+  "description": "Isolated mermaid-cli for the render_diagram tool (Mermaid -> SVG/PNG/PDF). Uses the Playwright Chromium already on disk (PUPPETEER_EXECUTABLE_PATH) to avoid a second browser download.",
+  "dependencies": {
+    "@mermaid-js/mermaid-cli": "^11"
+  }
+}

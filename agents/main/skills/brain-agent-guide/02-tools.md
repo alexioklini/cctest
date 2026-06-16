@@ -97,7 +97,9 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   `.md` companion in `<dir>/.brain-extracted/<name>.<ext>.md`. Returns content
   VERBATIM (no size cap — only the model context limits a big read). Use this for
   any non-`.txt` attachment.
-- `write_document(path, content, format)` — produce docx/pdf/pptx
+- `write_document(path, content, format)` — produce docx/pdf/pptx/xlsx from
+  markdown; embeds `![alt](file)` images (docx/pptx/pdf) → pair with
+  render_diagram for reports/slides with diagrams
 - `edit_document(path, ...)` — structural edit
 
 ## Memory (MemPalace, direct — not MCP)
@@ -338,10 +340,14 @@ write/exec tool is deliberately excluded.
 - `generate_image(prompt, size?, ...)` — text-to-image for PHOTOS/ILLUSTRATIONS
   only. NOT for diagrams/charts/org charts/flowcharts/timelines — a diffusion
   model can't render legible exact text (labels come out as garbled glyphs).
-  For those, emit an inline ` ```mermaid ` fenced block instead (chat renders it
-  to crisp SVG; no tool needed). The classifier routes a clear diagram request
-  WITHOUT image_gen (the model writes mermaid directly); a "Bild/Foto" request
-  enables image_gen.
+- `render_diagram(code, format?, title?, theme?, background?)` — render a Mermaid
+  diagram to a real SVG/PNG/PDF **artifact** (via mermaid-cli, exact legible
+  text). For org charts/flowcharts/structure/timeline/sequence/ER/gantt/etc.
+  Returns `path` + `embed` snippets. **For a chat-only diagram**, just write an
+  inline ` ```mermaid ` block (rendered live, no tool). **For a report/
+  presentation**: `render_diagram` (PNG for docx/pdf, SVG for HTML) → then embed
+  the file via `write_document` `![title](file.png)`. write_document embeds
+  `![](file)` images as real pictures in docx/pptx/pdf.
 
 ## Nodes (distributed compute)
 
@@ -352,7 +358,7 @@ write/exec tool is deliberately excluded.
 ```
 core          read_file write_file edit_file list_directory search_files
               execute_command tool_search ask_user
-documents     read_document write_document edit_document
+documents     read_document write_document edit_document render_diagram
 memory        mempalace_query save_chat_to_memory
               mempalace_kg_query mempalace_kg_search mempalace_kg_neighbors
 wiki          wiki_write wiki_read wiki_delete wiki_structure

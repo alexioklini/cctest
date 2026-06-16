@@ -33,3 +33,8 @@ pymupdf4llm
 # read by openpyxl like any .xlsx.
 pyxlsb
 oletools
+
+# Diagram rendering (render_diagram tool): mermaid-cli is a NODE dep, not pip —
+# see diagram_render/package.json. One-time per machine: `cd diagram_render && npm install`
+# (bundles its own Chromium via Puppeteer). reportlab/python-docx/python-pptx (already
+# used by write_document) handle embedding the rendered chart into pdf/docx/pptx.

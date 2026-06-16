@@ -833,11 +833,16 @@ TOOL_DEFINITIONS = [
         "name": "write_document",
         "description": (
             "Create a new document from markdown content. Dispatches by file extension: "
-            ".docx (headings, tables, bold/italic), .xlsx (markdown tables to sheets), "
-            ".pptx (# sections to slides), .pdf (basic formatted PDF via reportlab). "
-            "Use a RELATIVE filename (e.g. `report.docx`) so it lands in the session's "
-            "artifact folder and auto-promotes to the Artifacts panel; avoid absolute "
-            "paths unless the user gave you one."
+            ".docx (headings, tables, bold/italic, images), .xlsx (markdown tables to "
+            "sheets), .pptx (# sections to slides, images), .pdf (formatted PDF via "
+            "reportlab, images). Use a RELATIVE filename (e.g. `report.docx`) so it lands "
+            "in the session's artifact folder and auto-promotes to the Artifacts panel. "
+            "EMBEDDED DIAGRAMS/CHARTS: a markdown image `![alt](file.png)` is embedded as "
+            "a real picture (docx/pptx/pdf). For a professional report or presentation with "
+            "data-accurate diagrams, first call render_diagram (→ a chart file in the same "
+            "artifact folder), then reference that file with `![title](thatfile)` in the "
+            "content here. Use PNG for .docx/.pdf embedding (SVG embeds in HTML, not PDF); "
+            "in .pptx an image-only slide section becomes a centered full-slide picture."
         ),
         "input_schema": {
             "type": "object",
@@ -1445,6 +1450,53 @@ TOOL_DEFINITIONS = [
                 },
             },
             "required": ["prompt"],
+        },
+    },
+    {
+        "name": "render_diagram",
+        "description": (
+            "Render a DIAGRAM to a real image file (SVG/PNG/PDF) from Mermaid source — "
+            "use this for org charts, flowcharts, structure/relationship charts, "
+            "timelines, sequence/class/ER/state diagrams, gantt charts, mind maps, "
+            "pie charts, quadrant/sankey/C4. The text/labels/numbers come out EXACT and "
+            "legible (unlike generate_image, which garbles text). "
+            "The result is saved to the session artifact folder and returned with `path` + "
+            "`embed` snippets. "
+            "PROFESSIONAL REPORTS: this is the way to put good-looking, data-accurate "
+            "diagrams into a report. Workflow — call render_diagram to produce the image, "
+            "then embed it in the document you build with write_document (PDF/DOCX/HTML) or "
+            "Markdown: use SVG for crisp HTML/PDF, PNG for DOCX. For a quick in-CHAT diagram "
+            "(no file needed) just write a ```mermaid fenced block instead — the chat renders "
+            "it live. Use render_diagram when you need a FILE (report, download, embedding)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "Mermaid diagram source, e.g. 'graph TD; A[Parent] --> B[Child]'. Any Mermaid 11 diagram type (flowchart/sequence/class/state/er/gantt/pie/journey/gitgraph/mindmap/timeline/quadrant/sankey/C4/block).",
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["svg", "png", "pdf"],
+                    "description": "Output format. svg = crisp/scalable (best for HTML & PDF embedding); png = raster (best for DOCX); pdf = standalone. Default: svg.",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Optional title — used for the artifact filename and as the image alt text.",
+                },
+                "theme": {
+                    "type": "string",
+                    "enum": ["default", "dark", "forest", "neutral"],
+                    "description": "Mermaid theme. Default: 'default'. Use 'neutral' for a clean corporate report look.",
+                },
+                "background": {
+                    "type": "string",
+                    "enum": ["white", "transparent"],
+                    "description": "Background. Default 'white' (good for documents); 'transparent' to overlay.",
+                },
+            },
+            "required": ["code"],
         },
     },
 ]
