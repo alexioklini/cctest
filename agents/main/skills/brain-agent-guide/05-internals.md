@@ -988,6 +988,13 @@ validator. TWO mutually-exclusive modes, chosen by the auto-route classifier mod
   this turn + appends a fidelity warning past the threshold (>30% uncited OR ≥2
   unverified) — in any chat. Web-source quotes verify as unverified (not
   file-backed) — the inline-citation chips link those out instead.
+- **Per-claim scope = bullets + TABLE rows + multi-fact PROSE** (v9.144.0). The
+  CITATION DISCIPLINE requires a citation on every factual unit, not one per
+  block: each bullet, each table DATA row (a final "Quelle" column; `s.o.`/`siehe
+  oben` for rows sharing a passage's quote; derived/Δ columns noted once), and
+  each prose/FAZIT sentence that packs several figures (one bracket per fact). The
+  validator counts all three — table rows (header row above `|---|` + label rows
+  skipped) and ≥2-number prose lines feed `uncited_claims`/`claim_total`.
 
 ## Tool resolution (3-layer)
 

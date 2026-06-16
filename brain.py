@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.143.0"
+VERSION = "9.144.0"
 VERSION_DATE = "2026-06-16"
 CHANGELOG = [
+    ("9.144.0", "2026-06-16", "feat(citations): citation discipline now covers TABLES and multi-fact PROSE, not just bullets (chats 385676ee/00024b1d — a Konzernbilanz answer put ONE generic [Quelle: …] under a whole balance-sheet table + a FAZIT sentence packed many figures with no per-fact citation). The CITATION DISCIPLINE prompt (config.json research_mode_disciplines.citation + the brain.py seed default _RESEARCH_MODE_DISCIPLINE_CITATION_DEFAULT — kept in sync) gains two rules: (a) TABLES are not exempt — add a final 'Quelle' column with a per-row [Quelle: <name> — \"<quote>\"], use 's.o.'/'siehe oben' for rows sharing one passage's quote (never an empty Quelle cell), both year columns traceable, derived/Δ columns noted once as 'eigene Berechnung'; (b) PROSE — a summary/FAZIT sentence packing several facts needs a citation per fact (split or one bracket per figure), every number traceable to a verbatim quote. The server-side citation VALIDATOR (brain.validate_citations_in_response) was bullet-only; now also counts (3b) markdown table DATA rows that bear figures — header row (the line above the |---| separator) + label/divider rows skipped; a row is 'cited' if it has [Quelle:] OR s.o./siehe oben — and (3c) standalone non-bullet/non-table prose lines with ≥2 numeric facts + no [Quelle:]. New _TABLE_SEP_RE; uncited_claims/claim_total now reflect tables+prose; the annotation text updated ('faktische Aussagen (Bullet-Points, Tabellenzeilen, Fakt-Sätze)'). Validator counting unit-tested: uncited table (2,2), cited+s.o. table (2,0), FAZIT prose (1 uncited); header-row '2025/2024' no longer miscounted. py_compile OK. NOT restarted (user mining) — loads next restart. NOTE: takes effect for classifier-driven discipline turns (llm/hybrid) + research_mode projects."),
     ("9.143.0", "2026-06-16", "feat(doc-pipeline): macro-enabled (.xlsm) + binary (.xlsb) Excel support + VBA macro SOURCE extraction. Before, .xlsm/.xlsb were rejected (not in SUPPORTED_EXTS) and VBA was invisible. NOW (engine/doc_convert.py): SUPPORTED_EXTS gains .xlsm + .xlsb; .xlsm dispatches to _extract_xlsx (openpyxl reads its cells identically — multi-sheet, footer-group detection, data_only cached values all apply); NEW _extract_xlsb uses pyxlsb (openpyxl can't read the binary format) rendering one markdown table per sheet (header + capped rows, no footer-group pass since pyxlsb is streaming/values-only). NEW _extract_vba (oletools/olevba) appends every VBA module's SOURCE as fenced ```vba blocks under a '## VBA-Makros (Quellcode — wird NICHT ausgeführt)' heading — macros are NEVER executed, only the stored source is read, so the agent can reason about a workbook's automation; called from _extract_xlsx (.xlsm/.xls) + _extract_xlsb, no-op (returns '') when there are no macros or oletools is absent. read_document now gates on doc_convert.SUPPORTED_EXTS directly (no more drift-prone hardcoded ext list) + sheet= applies to all four spreadsheet types; fmt label normalises xlsm/xlsb→xlsx. web_fetch _CTYPE_TO_EXT gains the xlsm/xlsb MIME types (a web URL to such a file ingests via doc_convert). Matrix _MARKITDOWN_OPTIONAL_EXTS gains them (shown as own-code in Settings). requirements.txt: pyxlsb + oletools (installed --break-system-packages). Verified: 2-sheet .xlsm extracts both sheets + Summe-Aktiva row; _extract_vba assembles per-module vba code blocks (stub-tested) + returns '' on no-macro files; dispatch/SUPPORTED wiring confirmed. py_compile OK (3 modules). Restart to load (new deps + extractors)."),
     ("9.142.0", "2026-06-16", "feat(doc-pipeline): pymupdf4llm as the default PDF→markdown engine + a per-type conversion matrix in Settings. markitdown flattens financial-report tables (the WPB Konzernbilanz came out as broken/half-rastered rows); fitz's plain page.get_text is fully flat (one cell per line). An eval on the WPB annual report showed pymupdf4llm renders BOTH the balance sheet AND the risk table as clean GitHub-markdown tables (verified: '| **Summe Aktiva** | | **344.631.454** | **325.811.404** |'). engine/doc_convert.py: new _extract_pdf_pymupdf4llm() (a fitz wrapper, no model/GPU) + _pdf_engine() (config conversion.pdf_engine: pymupdf4llm|markitdown|fitz, default pymupdf4llm). _do_extract tries the chosen PDF engine BEFORE markitdown for .pdf, falling through to markitdown→fitz→OCR on empty (scanned) / missing dep, so the scanned-PDF OCR path is unaffected. Backend tag 'pymupdf4llm'. Settings → Allgemein → Service-Modelle gains the Dokumentkonvertierungs-Matrix: a PDF engine dropdown (3-way) + per-type markitdown-vs-own checkboxes for the other formats; GET/POST /v1/services/models carry conversion.{pdf_engine, markitdown_exts}. requirements.txt: pymupdf + pymupdf4llm (installed via --break-system-packages, matching how fitz already lives in the homebrew site-packages). LICENSE NOTE: pymupdf4llm/PyMuPDF is AGPL-3.0 (Artifex) — but fitz was ALREADY in use in _extract_pdf, so this adds no NEW license exposure; clear commercial licensing for the deployment regardless. docling (MIT, ~300MB model, PDF-only) is being evaluated as an alternative — matrix makes swapping trivial. js_gate PASS (net-globals unchanged); py_compile OK; pymupdf4llm path verified live via _do_extract (backend=pymupdf4llm, balance sheet present). Restart + re-mine PDFs (WPB) for the new extraction + hard-refresh."),
     ("9.141.1", "2026-06-16", "revert(doc-pipeline): roll back the v9.141.0 tool-result-budget part of fix #3 — it was a misdiagnosis. `_apply_tool_result_budget` (disk-spill + small preview of oversized tool results) is DEAD CODE on the interactive chat path: the sidecar owns the per-turn ephemeral tool exchange, results never live in session.messages, so the function is never called there (CHANGELOG 9.46.5). read_document returns its content VERBATIM (tool_mcp hard rule — no truncation/summary); the only ceiling on a big read is the model's context window. So raising the preview 2000→8000 + adding config knobs (conversion.tool_result_{threshold,preview}_chars) changed nothing on the chat path. REVERTED: TOOL_RESULT_PREVIEW_SIZE back to 2000, _tool_result_budget_cfg() removed (constants used directly again, with a NOTE that the function is dead on the chat path), the budget fields dropped from the /v1/services/models GET+POST and the Settings matrix UI. KEPT (these were real + verified): #1 web-url miner max_length=10M (the actual fc3fa95b cause — 50k truncation cut the WPB balance sheet from the mined .md), #2 read_document(pages=) note on .md/.txt, #4 the markitdown-vs-own-code conversion MATRIX (config.json conversion.markitdown_exts, editable per type in Service-Modelle). The improved over-budget message text (offset/limit hint) stays — harmless, only reached if the dead code is ever revived. js_gate PASS (net-globals unchanged); py_compile OK. Restart + hard-refresh."),
@@ -644,7 +645,25 @@ _RESEARCH_MODE_DISCIPLINE_CITATION_DEFAULT = (
     "paraphrase drift and fabrication slip in. Treat each bullet as an "
     "independent claim that must stand on its own with its own quote. A bullet "
     "with only a citation and no claim, or a claim with no citation, is not "
-    "correct.\n"
+    "correct. This applies to PROSE too: a summary/FAZIT sentence that packs "
+    "several facts (\"Bilanzsumme +5,8%, Barreserve +43%, CET1 28,13%\") needs a "
+    "citation for EACH fact, not one at the end of the paragraph — split it or "
+    "append a bracket per figure ([Quelle: … — \"+5,8%-quote\"] "
+    "[Quelle: … — \"+43%-quote\"]). Every number you state must be traceable to a "
+    "verbatim quote.\n"
+    "TABLES are NOT exempt — a table is a dense block of claims, and one citation "
+    "under the whole table is INSUFFICIENT for the same reason a single citation "
+    "under a bullet list is. When you present retrieved data as a markdown table, "
+    "add a final \"Quelle\" column and put the per-row reference "
+    "([Quelle: <name> — \"<wörtliches Zitat>\"]) in EVERY row whose figures came "
+    "from a source. If several rows share one verbatim quote (e.g. a whole "
+    "balance-sheet table copied from one passage), cite that quote in the first "
+    "row and write \"s.o.\" (siehe oben) in the following rows' Quelle cells so it "
+    "is explicit they share the source — never leave a data row's Quelle cell "
+    "empty. Every relevant column's figures must be traceable: if the 2025 and "
+    "2024 columns come from different passages, the row's Quelle cell carries both "
+    "brackets. A derived/computed column (e.g. a Δ you calculated) needs no quote — "
+    "mark its origin once in a note under the table (\"Δ = eigene Berechnung\").\n"
     "If you cannot find a verbatim quote in the retrieved source that supports a "
     "specific claim — DELETE that claim. Do not write claims you cannot cite. A "
     "shorter, fully-cited answer is always preferable to a longer answer with "
@@ -11781,6 +11800,8 @@ _CITATION_BARE_RE = re.compile(r'\[\s*Quelle:\s*([^\]]+?)\]')
 # statement but contain no [Quelle: …] bracket. Used to count uncited
 # claims. Bullet markers and numbered list markers count as separate items.
 _BULLET_RE = re.compile(r'^\s*(?:[-*•·]|\d+\.|[a-z]\))\s+', re.MULTILINE)
+# Markdown table separator row (| --- | :--: | …) — not a data/claim row.
+_TABLE_SEP_RE = re.compile(r'^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$')
 
 
 def _normalize_quote(s: str) -> str:
@@ -11906,6 +11927,54 @@ def validate_citations_in_response(text: str, session_id: str | None = None,
                 if words >= 8 or has_period:
                     out["uncited_claims"] += 1
 
+    # 3b. Markdown TABLE data rows — each data row that carries figures is a
+    # claim and needs its own citation (in a Quelle column or shared "s.o.").
+    # The HEADER row (the row immediately before a |---| separator) is skipped —
+    # column labels like "2025"/"2024" are not facts. Rows with no digits (pure
+    # labels) are skipped too. A row counts as cited if it has a [Quelle: …] OR
+    # an "s.o."/"siehe oben" cell (explicit shared-source marker).
+    _tbl_lines = text.splitlines()
+    _header_idx = set()
+    for i, tline in enumerate(_tbl_lines):
+        if _TABLE_SEP_RE.match(tline.strip()) and i > 0:
+            _header_idx.add(i - 1)   # the row above a separator is the header
+    for i, tline in enumerate(_tbl_lines):
+        s = tline.strip()
+        if not (s.startswith("|") and s.count("|") >= 2):
+            continue
+        if _TABLE_SEP_RE.match(s) or i in _header_idx:
+            continue
+        if not re.search(r"\d", s):          # no figures → label/divider row
+            continue
+        out["claim_total"] += 1
+        low = s.lower()
+        if "[quelle:" not in low and "s.o." not in low and "siehe oben" not in low:
+            out["uncited_claims"] += 1
+
+    # 3c. Standalone PROSE claims (no bullet, no table) that pack facts — e.g. a
+    # "FAZIT: …" paragraph with several figures in one line. Heuristic: a
+    # non-bullet, non-table line with ≥2 digit-bearing facts and no [Quelle:]
+    # is an uncited multi-fact claim. Conservative — needs real numbers, so
+    # connector/intro prose without figures never trips it.
+    in_table = False
+    for pline in text.splitlines():
+        s = pline.strip()
+        if s.startswith("|"):
+            in_table = True
+            continue
+        if not s:
+            in_table = False
+            continue
+        if in_table or _BULLET_RE.match(pline) or s.startswith(("#", ">", "---")):
+            continue
+        if "[Quelle:" in s:
+            continue
+        # count distinct numeric facts (numbers, %, ±, currency-ish)
+        nums = re.findall(r"[+\-−]?\d[\d.,]*\s*%?", s)
+        if len(nums) >= 2 and len(re.findall(r"\w+", s)) >= 8:
+            out["claim_total"] += 1
+            out["uncited_claims"] += 1
+
     # 4. Build human-readable annotation if there's anything to flag.
     if out["unverified"] or out["uncited_claims"] > 0 or bare_only > 0:
         lines = ["", "---", "**🛈 Citation-Validation:**"]
@@ -11928,9 +11997,10 @@ def validate_citations_in_response(text: str, session_id: str | None = None,
             )
         if out["uncited_claims"] > 0:
             lines.append(
-                f"- ⚠ {out['uncited_claims']} von {out['claim_total']} Bullet-Points / "
-                f"Behauptungen ohne `[Quelle: ...]`-Citation — pro Project-Instructions "
-                f"sollte jeder faktische Claim sein eigenes Zitat tragen."
+                f"- ⚠ {out['uncited_claims']} von {out['claim_total']} faktischen Aussagen "
+                f"(Bullet-Points, Tabellenzeilen, Fakt-Sätze) ohne `[Quelle: ...]`-Citation "
+                f"— pro CITATION DISCIPLINE trägt jeder faktische Claim sein eigenes Zitat "
+                f"(Tabellen: Quelle-Spalte je Zeile, „s.o.“ bei geteilter Quelle)."
             )
         out["annotation"] = "\n".join(lines)
     return out
