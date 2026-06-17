@@ -550,6 +550,15 @@ async function loadArtifactVersion(version) {
     await renderArtifactAudio(artifactId, version, reg?.name || 'audio');
     return;
   }
+  // Binary documents (PDF / Office): never pull the bytes through the JSON
+  // /content endpoint — it base64s the file and the default branch would feed
+  // that base64 into hljs (the "JVBERi0…" bug). PDF → native viewer via an
+  // auth'd blob iframe; Office (docx/xlsx/pptx/…) → a clean file card, since
+  // browsers can't render those inline.
+  if (reg?.type === 'document' || _DOC_PREVIEW_EXTS.has(regExt)) {
+    await renderArtifactDocument(artifactId, version, reg?.name || 'document', regExt);
+    return;
+  }
 
   try {
     const data = await API.getArtifactContent(artifactId, version);
@@ -562,6 +571,60 @@ async function loadArtifactVersion(version) {
   } catch (e) {
     console.error('[artifact] Load failed for', artifactId, 'version', version, e);
     container.innerHTML = `<div class="artifact-empty">Inhalt konnte nicht geladen werden: ${e.message || e}</div>`;
+  }
+}
+
+// Extensions that route through renderArtifactDocument (binary docs the JSON
+// /content endpoint would base64). PDF gets a native-viewer iframe; the rest a
+// download-only file card.
+const _DOC_PREVIEW_EXTS = new Set(['pdf', 'docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'odt', 'ods', 'odp']);
+// Brand-ish accent per office type for the file card chip.
+const _DOC_EXT_COLOR = {
+  pdf: '#d33', docx: '#2b579a', doc: '#2b579a', xlsx: '#217346', xls: '#217346',
+  pptx: '#d24726', ppt: '#d24726', odt: '#2b579a', ods: '#217346', odp: '#d24726',
+};
+
+// Render a binary document artifact (PDF inline, Office as a file card), fed by
+// the auth'd download blob (the download URL is Bearer-only so a bare <iframe
+// src> won't authenticate — fetch with headers → object URL).
+async function renderArtifactDocument(artifactId, version, name, ext) {
+  const container = document.getElementById('artifact-content');
+  const isPdf = ext === 'pdf';
+  if (isPdf) {
+    container.innerHTML = '<div class="artifact-empty"><div class="wave-bars"><span></span><span></span><span></span></div></div>';
+    try {
+      const resp = await fetch(API.getArtifactDownloadUrl(artifactId, version), { headers: API._headers() });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const objUrl = URL.createObjectURL(await resp.blob());
+      container.innerHTML = `<iframe src="${objUrl}" style="width:100%;height:100%;border:none;background:#fff"></iframe>`;
+    } catch (e) {
+      container.innerHTML = `<div class="artifact-empty">PDF konnte nicht geladen werden: ${esc(e.message || e)}</div>`;
+    }
+    return;
+  }
+  // Office / other binary doc — no native browser render. Clean file card with
+  // an open/download action (auth'd blob, opens in a new tab).
+  const extLabel = (ext || 'FILE').toUpperCase();
+  const color = _DOC_EXT_COLOR[ext] || 'var(--accent-brand)';
+  container.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;height:100%;padding:24px 16px;text-align:center">
+      <div style="width:88px;height:104px;border-radius:10px;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;letter-spacing:0.04em;box-shadow:0 2px 10px rgba(0,0,0,0.18)">${esc(extLabel)}</div>
+      <div style="font-size:13px;color:var(--text-000);word-break:break-word;max-width:90%">${esc(name)}</div>
+      <button class="btn-secondary" onclick="downloadArtifactBlob('${esc(artifactId)}','${esc(String(version))}','${esc(name)}')">Öffnen / Herunterladen</button>
+      <div style="font-size:11px;color:var(--text-400);max-width:80%">Keine Inline-Vorschau für ${esc(extLabel)} — im Tab öffnen oder herunterladen.</div>
+    </div>`;
+}
+
+// Open a binary artifact in a new tab from an auth'd blob (download URL is
+// Bearer-only). Shared by the document file card.
+async function downloadArtifactBlob(artifactId, version, name) {
+  try {
+    const resp = await fetch(API.getArtifactDownloadUrl(artifactId, version), { headers: API._headers() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const objUrl = URL.createObjectURL(await resp.blob());
+    window.open(objUrl, '_blank', 'noopener');
+  } catch (e) {
+    showToast('Öffnen fehlgeschlagen: ' + (e.message || e), true);
   }
 }
 
@@ -624,6 +687,11 @@ function renderArtifactContent(content, type, name, encoding) {
       container.innerHTML = `<div class="artifact-markdown msg-content">${renderMarkdown(content)}</div>`;
       // Apply syntax highlighting to code blocks
       container.querySelectorAll('pre code').forEach(el => { try { hljs.highlightElement(el); } catch(e) {} });
+      break;
+    case 'document':
+      // Binary doc reached the text renderer (e.g. source-toggle, or a direct
+      // call). Don't dump base64 into hljs — point back at the proper viewer.
+      container.innerHTML = `<div class="artifact-empty">Binärdokument — über „Öffnen / Herunterladen" ansehen (keine Quelltext-Ansicht).</div>`;
       break;
     case 'code':
     default: {

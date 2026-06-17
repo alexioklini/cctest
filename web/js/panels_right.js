@@ -415,6 +415,15 @@ function _refCardHtml(ref) {
     ? ''
     : `<img class="ref-favicon" src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">`;
   const domainLabel = isProject ? 'Projektquelle' : esc(ref.domain);
+  // Inline content preview for previewable text-ish project sources (md/txt/
+  // code/csv): a lazy "Vorschau" toggle loads + renders the file inline so the
+  // user sees the actual content, not just a gray type placeholder. Binary docs
+  // (pdf/docx/…) keep open-in-tab only (no inline render possible).
+  const canPreview = isProject && _REF_PREVIEW_EXTS.has(ext);
+  const previewToggle = canPreview
+    ? `<button class="ref-preview-toggle" onclick="event.stopPropagation();toggleRefPreview(this)" data-path="${esc(ref.link)}" data-ext="${esc(ext)}">Vorschau anzeigen</button>
+       <div class="ref-inline-preview" style="display:none"></div>`
+    : '';
   return `
     <div class="ref-card" data-link="${esc(ref.link)}" onclick="${clickHandler}">
       <div class="ref-card-preview">
@@ -426,9 +435,58 @@ function _refCardHtml(ref) {
         <div class="ref-card-title">${esc(ref.title)}</div>
         ${snippetHtml}
         <div class="ref-card-url" style="word-break:break-all">${esc(ref.link)}</div>
+        ${previewToggle}
       </div>
     </div>
   `;
+}
+
+// Project-source extensions that can render inline in a reference card.
+const _REF_PREVIEW_EXTS = new Set([
+  'md', 'markdown', 'txt', 'csv', 'tsv', 'json', 'yaml', 'yml', 'xml', 'log',
+  'py', 'js', 'ts', 'sh', 'sql', 'html', 'htm', 'ini', 'cfg', 'conf',
+]);
+
+// Lazy inline preview for a project-source reference card. Fetches the file
+// (auth'd /v1/files/download) once, renders markdown / syntax-highlighted code
+// into the card, and toggles visibility on subsequent clicks.
+async function toggleRefPreview(btn) {
+  const box = btn.nextElementSibling;
+  if (!box) return;
+  // Already loaded → just toggle.
+  if (box.dataset.loaded === '1') {
+    const showing = box.style.display !== 'none';
+    box.style.display = showing ? 'none' : 'block';
+    btn.textContent = showing ? 'Vorschau anzeigen' : 'Vorschau ausblenden';
+    return;
+  }
+  const path = btn.dataset.path;
+  const ext = btn.dataset.ext;
+  box.style.display = 'block';
+  box.innerHTML = '<div style="font-size:11px;color:var(--text-400);padding:6px 0">Wird geladen …</div>';
+  btn.textContent = 'Vorschau ausblenden';
+  try {
+    const url = `${BASE_URL}/v1/files/download?path=${encodeURIComponent(path)}`;
+    const resp = await fetch(url, { headers: API._headers() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    let text = await resp.text();
+    const MAX = 20000;  // cap so a huge file doesn't bloat the pane
+    const truncated = text.length > MAX;
+    if (truncated) text = text.slice(0, MAX);
+    if (ext === 'md' || ext === 'markdown') {
+      box.innerHTML = `<div class="ref-inline-md msg-content">${renderMarkdown(text)}</div>`;
+      box.querySelectorAll('pre code').forEach(el => { try { hljs.highlightElement(el); } catch (_) {} });
+    } else {
+      const lang = (typeof hljs !== 'undefined' && hljs.getLanguage(ext)) ? ext : 'plaintext';
+      let highlighted;
+      try { highlighted = hljs.highlight(text, { language: lang }).value; } catch (_) { highlighted = esc(text); }
+      box.innerHTML = `<pre class="ref-inline-code"><code class="hljs">${highlighted}</code></pre>`;
+    }
+    if (truncated) box.insertAdjacentHTML('beforeend', '<div style="font-size:11px;color:var(--text-400);padding:4px 0">… (gekürzt — vollständig über Klick auf die Karte öffnen)</div>');
+    box.dataset.loaded = '1';
+  } catch (e) {
+    box.innerHTML = `<div style="font-size:11px;color:var(--text-400);padding:6px 0">Vorschau nicht verfügbar: ${esc(e.message || e)}</div>`;
+  }
 }
 
 // References attributed per turn. Walks messages once; every ref-bearing

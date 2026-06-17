@@ -592,6 +592,13 @@ Seitenleiste → **Artifacts**. Zwei Ansichten:
 **Pro-Artifact-Aktionen** (rechtes Panel bei offenem Chat + gewähltem
 Artifact): Vorschau, Quelle ansehen, kopieren, herunterladen, teilen.
 
+**Vorschau je Dateityp** im rechten Panel: Bilder/SVG/HTML/Markdown/Code/
+Audio rendern direkt; **PDF** öffnet im eingebauten PDF-Viewer (blättern/
+zoomen); **Office-Dateien** (docx/xlsx/pptx) zeigen eine Datei-Karte mit
+„Öffnen / Herunterladen" (kein Inline-Render möglich). Im **Durchsucht**-
+Tab haben Projektquellen aus Text-/Markdown-Dateien einen „Vorschau
+anzeigen"-Schalter, der den Inhalt direkt in der Karte rendert.
+
 Jeder Schreib-/Bearbeitungsvorgang erzeugt eine **Artifact-Version**
 (5 MB-Limit). Artifact-Panel → Versions-Auswahl zum Vergleichen.
 
