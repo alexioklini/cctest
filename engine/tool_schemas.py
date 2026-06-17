@@ -1434,10 +1434,12 @@ TOOL_DEFINITIONS = [
             "DO NOT use this for DIAGRAMS, CHARTS, ORG CHARTS, FLOWCHARTS, TIMELINES, MIND MAPS, or "
             "anything whose value is EXACT TEXT/LABELS/NUMBERS/CONNECTIONS: a diffusion image model "
             "CANNOT render legible, correct text — names, percentages and labels come out as garbled "
-            "fake glyphs. For those, output a **Mermaid diagram** as a ```mermaid fenced code block "
-            "directly in your reply (flowchart/graph for org charts & relationships, e.g. "
-            "`graph TD; A[Wiener Privatbank SE] --> B[Tochter GmbH]`). The chat renders ```mermaid "
-            "blocks as crisp diagrams with exact text — no image tool needed."
+            "fake glyphs. For ALL diagrams/charts use **render_diagram** instead (Mermaid source → a "
+            "real chart file with EXACT text). This includes when the user asks for a diagram 'as PNG' "
+            "or 'as an image FILE' — that is render_diagram (format=png), NOT generate_image; 'PNG' "
+            "does not mean this tool. Only when no file is needed (a quick in-CHAT diagram) write a "
+            "```mermaid fenced block directly in your reply (e.g. `graph TD; A[Parent] --> B[Child]`) — "
+            "the chat renders it live. generate_image is ONLY for photos/illustrations/artwork."
         ),
         "input_schema": {
             "type": "object",

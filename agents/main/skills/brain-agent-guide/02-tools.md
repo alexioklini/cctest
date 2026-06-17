@@ -352,7 +352,11 @@ write/exec tool is deliberately excluded.
 
 - `generate_image(prompt, size?, ...)` — text-to-image for PHOTOS/ILLUSTRATIONS
   only. NOT for diagrams/charts/org charts/flowcharts/timelines — a diffusion
-  model can't render legible exact text (labels come out as garbled glyphs).
+  model can't render legible exact text (labels come out as garbled glyphs). Any
+  diagram/chart — even when the user asks for it "as PNG" or "as an image file" —
+  is `render_diagram`, NOT generate_image. (The prompt classifier has a dedicated
+  `diagram` tool word → the `documents` group, so such requests route to
+  render_diagram automatically.)
 - `render_diagram(code, format?, title?, theme?, background?)` — render a Mermaid
   diagram to a real SVG/PNG/PDF **artifact** (via mermaid-cli, exact legible
   text). For org charts/flowcharts/structure/timeline/sequence/ER/gantt/etc.
