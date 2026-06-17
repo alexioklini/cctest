@@ -945,7 +945,9 @@ textarea { resize: none; }
 .messages-scroll[data-fade-top="1"] { --fade-top: 48px; }
 .messages-scroll[data-fade-bottom="1"] { --fade-bottom: 48px; }
 .messages-container {
-  max-width: 48rem;
+  /* 48rem → 53rem: widen the column slightly so the left/right margin is ~10%
+     narrower (closer to Claude Desktop's reading width) without going full-bleed. */
+  max-width: 53rem;
   margin: 0 auto;
   padding: 16px 24px 24px;
   width: 100%;
