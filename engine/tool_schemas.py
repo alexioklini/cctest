@@ -835,14 +835,19 @@ TOOL_DEFINITIONS = [
             "Create a new document from markdown content. Dispatches by file extension: "
             ".docx (headings, tables, bold/italic, images), .xlsx (markdown tables to "
             "sheets), .pptx (# sections to slides, images), .pdf (formatted PDF via "
-            "reportlab, images). Use a RELATIVE filename (e.g. `report.docx`) so it lands "
+            "reportlab, images), .html (self-contained styled web report, images inlined "
+            "as base64). For an HTML report ALWAYS use this tool, NOT write_file with "
+            "hand-written HTML — only this tool applies the `style` preset (fonts/colors/"
+            "layout + running header/footer/logo) deterministically, so the report is "
+            "on-brand instead of ad-hoc invented CSS. Use a RELATIVE filename (e.g. "
+            "`report.docx`) so it lands "
             "in the session's artifact folder and auto-promotes to the Artifacts panel. "
             "EMBEDDED DIAGRAMS/CHARTS: a markdown image `![alt](file.png)` is embedded as "
-            "a real picture (docx/pptx/pdf). For a professional report or presentation with "
-            "data-accurate diagrams, first call render_diagram (→ a chart file in the same "
-            "artifact folder), then reference that file with `![title](thatfile)` in the "
-            "content here. Use PNG for .docx/.pdf embedding (SVG embeds in HTML, not PDF); "
-            "in .pptx an image-only slide section becomes a centered full-slide picture."
+            "a real picture (docx/pptx/pdf/html). For a professional report or presentation "
+            "with data-accurate diagrams, first call render_diagram (→ a chart file in the "
+            "same artifact folder), then reference that file with `![title](thatfile)` in "
+            "the content here. Use PNG for .docx/.pdf embedding (SVG embeds in HTML, not "
+            "PDF); in .pptx an image-only slide section becomes a centered full-slide picture."
         ),
         "input_schema": {
             "type": "object",
@@ -1480,7 +1485,15 @@ TOOL_DEFINITIONS = [
                 "format": {
                     "type": "string",
                     "enum": ["svg", "png", "pdf"],
-                    "description": "Output format. svg = crisp/scalable (best for HTML & PDF embedding); png = raster (best for DOCX); pdf = standalone. Default: svg.",
+                    "description": "Output format. svg = crisp/scalable, resolution-independent (PREFER it for HTML & PDF embedding and whenever the diagram may be reused/zoomed); png = raster, rendered at high DPI (best for DOCX, which can't embed SVG); pdf = standalone. Default: svg.",
+                },
+                "scale": {
+                    "type": "number",
+                    "description": "PNG/PDF only: device-pixel-ratio multiplier for resolution (1–5, default 3 = high-DPI/retina-crisp). Raise to 4–5 for very dense charts that must stay legible when printed; ignored for svg (vector).",
+                },
+                "width": {
+                    "type": "integer",
+                    "description": "PNG/PDF only: base canvas width in px before scaling (400–6000, default 1600). Increase for wide org charts so labels don't cramp; ignored for svg.",
                 },
                 "title": {
                     "type": "string",

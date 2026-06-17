@@ -99,12 +99,14 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   any non-`.txt` attachment.
 - `write_document(path, content, format, style?)` — produce docx/pdf/pptx/xlsx
   from markdown; embeds `![alt](file)` images (docx/pptx/pdf) → pair with
-  render_diagram for reports/slides with diagrams. `style=<preset>` applies an
-  editable style (fonts/colors/layout + running header/footer/logo) from
-  `agents/<agent>/skills/doc-styles/<preset>.yaml` (e.g. `corporate`) —
-  deterministic, model just writes markdown. Header/footer text supports
-  `{page}`/`{date}` tokens; the logo + footer render on docx/pdf pages and pptx
-  slides.
+  render_diagram for reports/slides with diagrams. Formats: **.docx/.xlsx/.pptx/
+  .pdf/.html** (html = self-contained styled web report, images inlined as
+  base64 — ALWAYS use write_document, not write_file, for HTML reports so the
+  preset is applied). `style=<preset>` applies an editable style (fonts/colors/
+  layout + running header/footer/logo) from `agents/<agent>/skills/doc-styles/
+  <preset>.yaml` (e.g. `corporate`) — deterministic, model just writes markdown.
+  Header/footer text supports `{page}`/`{date}` tokens; the logo + footer render
+  on docx/pdf pages, pptx slides, and the html header/footer bands.
 - `edit_document(path, ...)` — structural edit
 
 ## Memory (MemPalace, direct — not MCP)

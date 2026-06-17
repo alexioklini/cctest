@@ -335,6 +335,20 @@ def tool_render_diagram(args: dict) -> str:
     if bg not in ("transparent", "white"):
         bg = "white"
     title = (args.get("title") or "").strip()
+    # Raster resolution: mmdc defaults to scale=1 → small, blurry, unusable PNGs
+    # (esp. wide org charts). Render at high DPI so the image is crisp on screen
+    # and reusable in documents. `scale` (1–5) is the device-pixel-ratio multiplier;
+    # `width` is the base CSS width before scaling. SVG is vector → unaffected.
+    try:
+        scale = float(args.get("scale") or 3)
+    except (TypeError, ValueError):
+        scale = 3
+    scale = max(1.0, min(scale, 5.0))
+    try:
+        width = int(args.get("width") or 1600)
+    except (TypeError, ValueError):
+        width = 1600
+    width = max(400, min(width, 6000))
 
     mmdc = _mmdc_invocation()
     if not mmdc:
@@ -371,6 +385,9 @@ def tool_render_diagram(args: dict) -> str:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(code)
         cmd = mmdc + ["-i", tmp_in, "-o", save_path, "-t", theme, "-b", bg]
+        # High-DPI raster (PNG); also widen PDF. SVG ignores these (vector).
+        if fmt in ("png", "pdf"):
+            cmd += ["-s", str(scale), "-w", str(width)]
         env = dict(os.environ)
         # Puppeteer needs a writable home for its cache in the launchd sandbox.
         env.setdefault("HOME", os.path.expanduser("~"))

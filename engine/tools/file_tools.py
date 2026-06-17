@@ -648,6 +648,167 @@ def _make_pdf_hdrftr_cb(style: dict, pagesize, margin, inch, hexcolor):
     return _cb
 
 
+def _html_inline_md(text: str) -> str:
+    """Convert the inline-markdown subset (bold/italic, `code`, links) to HTML,
+    escaping the rest. Mirrors what the docx/pdf branches handle."""
+    import html as _html
+    out = _html.escape(text)
+    out = re.sub(r'\*\*\*(.+?)\*\*\*', r'<strong><em>\1</em></strong>', out)
+    out = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', out)
+    out = re.sub(r'\*(.+?)\*', r'<em>\1</em>', out)
+    out = re.sub(r'`([^`]+?)`', r'<code>\1</code>', out)
+    out = re.sub(r'\[([^\]]+)\]\((https?://[^)\s]+)\)',
+                 r'<a href="\2">\1</a>', out)
+    return out
+
+
+def _html_logo_data_uri(logo_path: str) -> str:
+    """Read a logo image into a base64 data URI (so the HTML is self-contained)."""
+    import base64
+    import mimetypes
+    try:
+        ctype = mimetypes.guess_type(logo_path)[0] or "image/png"
+        with open(logo_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        return f"data:{ctype};base64,{b64}"
+    except Exception:
+        return ""
+
+
+def _render_markdown_html(content: str, style: dict, doc_dir: str) -> str:
+    """Render markdown → a self-contained, styled HTML document applying the
+    preset (fonts/colors/sizes/table colors + header/footer/logo). Deterministic
+    — same subset as the docx/pdf branches; the model just writes plain markdown.
+    Embedded `![alt](file)` images become base64 <img> so the file travels alone.
+    {date} resolves; {page} works only when PRINTED (CSS @page counter)."""
+    import html as _html
+    import base64
+    import mimetypes
+    f = style.get("fonts") or {}
+    sz = style.get("sizes") or {}
+    c = style.get("colors") or {}
+    hdr = style.get("header") or {}
+    ftr = style.get("footer") or {}
+    logo = style.get("logo") or {}
+    logo_path = _resolve_style_logo(style)
+    logo_pos = (logo.get("position") or "header").lower()
+    logo_uri = _html_logo_data_uri(logo_path) if logo_path else ""
+
+    def _logo_img(where):
+        if not (logo_uri and logo_pos == where and logo_pos != "none"):
+            return ""
+        a = (logo.get("align") or "right").lower()
+        w = float(logo.get("width_inch") or 1.2)
+        css = f"max-height:{w * 24:.0f}px;width:auto;"
+        if a == "center":
+            css += "display:block;margin:0 auto;"
+        else:
+            css += f"float:{a};"
+        return f'<img class="doc-logo" src="{logo_uri}" alt="" style="{css}">'
+
+    def _band(spec, where):
+        txt = _hdrftr_text(spec.get("text"), page=True)
+        if where == "footer" and spec.get("page_numbers") and "{page}" not in txt:
+            txt = (txt + "  " if txt else "") + "Seite {page}"
+        # {page} → a print-only CSS counter span; on screen it shows nothing.
+        parts = txt.split("{page}")
+        html_txt = _html.escape(parts[0])
+        for seg in parts[1:]:
+            html_txt += '<span class="pagenum"></span>' + _html.escape(seg)
+        logo_html = _logo_img(where)
+        if not (html_txt.strip() or logo_html):
+            return ""
+        align = spec.get("align") or ("center" if where == "footer" else "left")
+        size = spec.get("font_size") or 9
+        col = spec.get("color") or "#666666"
+        return (f'<div class="doc-{where}" style="text-align:{_html.escape(str(align))};'
+                f'font-size:{float(size):.0f}pt;color:{_html.escape(str(col))}">'
+                f'{logo_html}{html_txt}</div>')
+
+    # ── body: reuse the same line-walk as the other branches ──
+    body = []
+    lines = content.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m_img = _MD_IMAGE_RE.match(line)
+        if m_img:
+            src = _resolve_doc_image(m_img.group(2), doc_dir)
+            if src:
+                try:
+                    ct = mimetypes.guess_type(src)[0] or "image/png"
+                    with open(src, "rb") as fh:
+                        uri = f"data:{ct};base64,{base64.b64encode(fh.read()).decode('ascii')}"
+                    body.append(f'<p class="figure"><img src="{uri}" '
+                                f'alt="{_html.escape(m_img.group(1))}"></p>')
+                except Exception:
+                    body.append(f'<p>[Bild: {_html.escape(m_img.group(1) or m_img.group(2))}]</p>')
+            else:
+                body.append(f'<p>[Bild nicht gefunden: {_html.escape(m_img.group(2))}]</p>')
+            i += 1
+            continue
+        m_h = re.match(r'^(#{1,6})\s+(.*)', line)
+        if m_h:
+            lvl = len(m_h.group(1))
+            body.append(f'<h{lvl}>{_html_inline_md(m_h.group(2))}</h{lvl}>')
+            i += 1
+            continue
+        if "|" in line and i + 1 < len(lines) and re.match(r'^\|[\s\-:|]+\|', lines[i + 1]):
+            rows = []
+            while i < len(lines) and "|" in lines[i]:
+                stripped = lines[i].strip().strip("|")
+                if not re.match(r'^[\s\-:|]+$', stripped):
+                    rows.append([cell.strip() for cell in stripped.split("|")])
+                i += 1
+            if rows:
+                thead = "".join(f"<th>{_html_inline_md(cell)}</th>" for cell in rows[0])
+                tbody = "".join(
+                    "<tr>" + "".join(f"<td>{_html_inline_md(cell)}</td>" for cell in r) + "</tr>"
+                    for r in rows[1:])
+                body.append(f'<table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>')
+            continue
+        stripped = line.strip()
+        if stripped:
+            body.append(f'<p>{_html_inline_md(stripped)}</p>')
+        i += 1
+
+    fb = _html.escape(f.get("body") or "Calibri")
+    fh = _html.escape(f.get("heading") or f.get("body") or "Calibri")
+    fm = _html.escape(f.get("mono") or "Consolas")
+    css = f"""
+    @page {{ margin: 2cm; }}
+    body {{ font-family: '{fb}', Arial, sans-serif; color: {c.get('body', '#222')};
+      font-size: {sz.get('body', 11)}pt; line-height: 1.5; max-width: 820px;
+      margin: 0 auto; padding: 24px; background: #fff; }}
+    h1,h2,h3,h4,h5,h6 {{ font-family: '{fh}', Arial, sans-serif;
+      color: {c.get('heading', '#1F3864')}; line-height: 1.2; margin: 1.1em 0 .4em; }}
+    h1 {{ font-size: {sz.get('h1', 20)}pt; }} h2 {{ font-size: {sz.get('h2', 16)}pt; }}
+    h3 {{ font-size: {sz.get('h3', 13)}pt; }}
+    a {{ color: {c.get('accent', '#2E74B5')}; }}
+    code {{ font-family: '{fm}', monospace; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }}
+    p.figure {{ text-align: center; }} p.figure img {{ max-width: 100%; height: auto; }}
+    table {{ border-collapse: collapse; width: 100%; margin: 12px 0; }}
+    th, td {{ border: 1px solid #ddd; padding: 5px 9px; text-align: left; }}
+    th {{ background: {c.get('table_header_bg', '#1F3864')};
+      color: {c.get('table_header_text', '#FFFFFF')}; }}
+    tbody tr:nth-child(even) {{ background: #fafafa; }}
+    .doc-header {{ border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 20px; overflow: hidden; }}
+    .doc-footer {{ border-top: 1px solid #eee; padding-top: 8px; margin-top: 28px; overflow: hidden; }}
+    .pagenum::after {{ content: ""; }}
+    @media print {{ .pagenum::after {{ content: counter(page); }} }}
+    """
+    header_band = _band(hdr, "header")
+    footer_band = _band(ftr, "footer")
+    title = ""
+    m_title = re.search(r'^#\s+(.+)$', content, flags=re.MULTILINE)
+    if m_title:
+        title = _html.escape(m_title.group(1).strip())
+    return (f'<!DOCTYPE html>\n<html lang="de">\n<head>\n<meta charset="UTF-8">\n'
+            f'<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+            f'<title>{title or "Dokument"}</title>\n<style>{css}</style>\n</head>\n<body>\n'
+            f'{header_band}\n' + "\n".join(body) + f'\n{footer_band}\n</body>\n</html>\n')
+
+
 def _docx_align(name: str):
     """Map 'left|center|right' → docx WD_ALIGN_PARAGRAPH (default LEFT)."""
     from docx.enum.text import WD_ALIGN_PARAGRAPH as _A
@@ -1020,8 +1181,16 @@ def tool_write_document(args: dict) -> str:
             else:
                 doc_pdf.build(story)
 
+        elif ext in (".html", ".htm"):
+            # Self-contained styled HTML applying the preset (fonts/colors/sizes/
+            # table colors + header/footer/logo); markdown body, images inlined
+            # as base64. Same deterministic styling path as docx/pdf/pptx.
+            html_doc = _render_markdown_html(content, _style, _doc_dir)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(html_doc)
+
         else:
-            return _err(f"write_document: unsupported format '{ext}'. Supported: .docx, .xlsx, .pptx, .pdf")
+            return _err(f"write_document: unsupported format '{ext}'. Supported: .docx, .xlsx, .pptx, .pdf, .html")
 
         size = os.path.getsize(path)
         agent = get_request_context().current_agent or _brain._current_agent
