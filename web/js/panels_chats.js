@@ -258,6 +258,13 @@ function updateStatusBar() {
 function scrollToBottom() {
   const el = document.getElementById('messages-scroll');
   if (el) {
+    // Pin synchronously FIRST so there's no painted intermediate frame. During
+    // streaming, renderMessages() replaces the whole turn-group node when a new
+    // tool card is added; that momentarily shrinks scrollHeight and the browser
+    // clamps scrollTop toward the top. Setting scrollTop now (same JS turn,
+    // before paint) corrects it so the view never visibly jumps up. The rAF
+    // follow-up catches any late layout (images/iframes/markdown reflow).
+    el.scrollTop = el.scrollHeight;
     requestAnimationFrame(() => {
       el.scrollTop = el.scrollHeight;
       updateScrollAnchors();
