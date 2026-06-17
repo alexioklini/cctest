@@ -46,7 +46,20 @@ async function sendMessage() {
     if (projAgent && projAgent !== state.activeAgentId) {
       selectAgent(projAgent);
     }
+    // newChat() resets composer state — including state._pendingFiles /
+    // _pendingImages (sessions.js). When the user attaches a file on the
+    // PROJECT-LANDING composer and hits send, that wipe runs BEFORE we capture
+    // filesToSend below, so the attachment is silently dropped and the LLM
+    // never sees it (the turn answers from the project wing only). The composer
+    // text survives because it's already read into `text` above; the files are
+    // not — so snapshot them across newChat() and restore. (chat-input/welcome
+    // composers don't call newChat() here, so they were never affected.)
+    const _carryFiles = state._pendingFiles ? [...state._pendingFiles] : [];
+    const _carryImages = state._pendingImages ? [...state._pendingImages] : [];
     newChat();
+    state._pendingFiles = _carryFiles;
+    state._pendingImages = _carryImages;
+    if (typeof renderFilePreviews === 'function') renderFilePreviews();
   }
 
   const chat = state.ensureAgentChat(state.activeAgentId);

@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // File drag & drop (read native file path)
   readDroppedFile: (filePath) => ipcRenderer.invoke('read-dropped-file', filePath),
+  // Recursively read a dropped folder (or single file) into pending entries
+  readDroppedFolder: (rootPath) => ipcRenderer.invoke('read-dropped-folder', rootPath),
 
   // Menu events
   onNewChat: (cb) => ipcRenderer.on('menu-new-chat', () => cb()),

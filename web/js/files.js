@@ -317,17 +317,134 @@ function removePendingFile(idx) {
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
   });
+  // Read a single browser File into a pending-file entry. Shared by the
+  // top-level drop path and the recursive directory walk so a file dragged
+  // in inside a folder gets the same empty/truncated guards (and the same
+  // toasts) as one dropped directly. Returns a Promise that resolves when
+  // the entry is pushed (or rejected with a toast already shown).
+  function pushDroppedFile(file) {
+    return new Promise((resolve) => {
+      // Same empty / truncated-read guards as handleFileSelect — see
+      // the comment there for the failure mode this prevents.
+      if (file.size === 0) {
+        showToast(`${file.name} ist leer — nicht angehängt`, true);
+        resolve();
+        return;
+      }
+      const isImage = file.type.startsWith('image/');
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const result = ev.target.result || '';
+        const commaIdx = result.indexOf(',');
+        const b64 = commaIdx >= 0 ? result.slice(commaIdx + 1) : '';
+        if (!b64) {
+          showToast(`${file.name} konnte nicht gelesen werden — nicht angehängt`, true);
+          resolve();
+          return;
+        }
+        const decodedLen = Math.floor(b64.length * 3 / 4);
+        if (decodedLen < file.size * 0.5) {
+          showToast(`${file.name} unvollständig gelesen (${decodedLen} / ${file.size} Bytes) — nicht angehängt`, true);
+          resolve();
+          return;
+        }
+        const entry = {
+          name: file.name,
+          type: file.type || 'application/octet-stream',
+          data: b64,
+          encoding: 'base64',
+          preview: isImage ? result : null,
+          scan: { state: 'pending' },
+        };
+        state._pendingFiles.push(entry);
+        renderFilePreviews();
+        updateSendButton();
+        schedulePIIBadgeUpdate();
+        scanPendingAttachment(entry);
+        resolve();
+      };
+      reader.onerror = () => {
+        showToast(`${file.name} konnte nicht gelesen werden: ${reader.error?.message || 'unbekannt'}`, true);
+        resolve();
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Recursively collect every File under a browser FileSystemEntry
+  // (webkitGetAsEntry result). Directories are walked depth-first;
+  // readEntries returns at most ~100 entries per call, so we drain it in a
+  // loop until it yields an empty batch. Symlink loops are not a concern —
+  // the drag-drop FileSystem API never exposes them.
+  function collectEntryFiles(entry) {
+    return new Promise((resolve) => {
+      if (entry.isFile) {
+        entry.file((file) => resolve([file]), () => resolve([]));
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        const all = [];
+        const readBatch = () => {
+          reader.readEntries(async (batch) => {
+            if (!batch.length) {
+              const nested = await Promise.all(all.map(collectEntryFiles));
+              resolve(nested.flat());
+              return;
+            }
+            all.push(...batch);
+            readBatch();
+          }, () => resolve([]));
+        };
+        readBatch();
+      } else {
+        resolve([]);
+      }
+    });
+  }
+
   document.addEventListener('drop', async (e) => {
     e.preventDefault();
     dragCounter = 0;
     overlay.style.display = 'none';
-    const files = e.dataTransfer?.files;
-    if (!files?.length) return;
 
-    for (const file of files) {
-      if (window.electronAPI?.readDroppedFile && file.path) {
-        const result = await window.electronAPI.readDroppedFile(file.path);
-        if (result && !result.error) {
+    // The DataTransferItemList and its entries are only valid synchronously
+    // within the drop handler — capture webkitGetAsEntry()/file.path now,
+    // before any await, or they go stale. We snapshot both so the async
+    // work below operates on plain references that survive the event.
+    const items = e.dataTransfer?.items;
+    const captured = [];
+    if (items?.length) {
+      for (const item of items) {
+        if (item.kind !== 'file') continue;
+        const file = item.getAsFile();
+        const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+        // file.path (Electron) is the real filesystem path and is the only
+        // way to tell a dropped folder from a file there — entry is null in
+        // Electron's renderer for the drag-drop FileSystem API.
+        captured.push({ file, entry, path: file?.path || (entry ? null : '') });
+      }
+    } else if (e.dataTransfer?.files?.length) {
+      // Fallback for browsers that don't expose .items (rare).
+      for (const file of e.dataTransfer.files) captured.push({ file, entry: null, path: file.path || '' });
+    }
+    if (!captured.length) return;
+
+    for (const { file, entry, path: fsPath } of captured) {
+      // Electron: native path is present. Folders need a recursive walk in
+      // the main process (readDroppedFile reads a single file and errors on
+      // a directory), so route through readDroppedFolder when available.
+      if (window.electronAPI?.readDroppedFile && fsPath) {
+        let results = null;
+        if (window.electronAPI.readDroppedFolder) {
+          results = await window.electronAPI.readDroppedFolder(fsPath);
+        }
+        // readDroppedFolder returns an array (file → 1 entry, dir → N,
+        // empty/too-big → []). Without it, fall back to single-file read.
+        if (!Array.isArray(results)) {
+          const single = await window.electronAPI.readDroppedFile(fsPath);
+          results = single && !single.error ? [single] : [];
+        }
+        for (const result of results) {
+          if (!result || result.error) continue;
           result.scan = { state: 'pending' };
           state._pendingFiles.push(result);
           renderFilePreviews();
@@ -335,49 +452,15 @@ function removePendingFile(idx) {
           schedulePIIBadgeUpdate();
           scanPendingAttachment(result);
         }
-      } else {
-        // Same empty / truncated-read guards as handleFileSelect — see
-        // the comment there for the failure mode this prevents. Keeps
-        // the drop and file-picker paths symmetric so a Brain user who
-        // drags in a corrupted file gets the same toast as one who
-        // picks it.
-        if (file.size === 0) {
-          showToast(`${file.name} ist leer — nicht angehängt`, true);
-          continue;
-        }
-        const isImage = file.type.startsWith('image/');
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          const result = ev.target.result || '';
-          const commaIdx = result.indexOf(',');
-          const b64 = commaIdx >= 0 ? result.slice(commaIdx + 1) : '';
-          if (!b64) {
-            showToast(`${file.name} konnte nicht gelesen werden — nicht angehängt`, true);
-            return;
-          }
-          const decodedLen = Math.floor(b64.length * 3 / 4);
-          if (decodedLen < file.size * 0.5) {
-            showToast(`${file.name} unvollständig gelesen (${decodedLen} / ${file.size} Bytes) — nicht angehängt`, true);
-            return;
-          }
-          const entry = {
-            name: file.name,
-            type: file.type || 'application/octet-stream',
-            data: b64,
-            encoding: 'base64',
-            preview: isImage ? result : null,
-            scan: { state: 'pending' },
-          };
-          state._pendingFiles.push(entry);
-          renderFilePreviews();
-          updateSendButton();
-          schedulePIIBadgeUpdate();
-          scanPendingAttachment(entry);
-        };
-        reader.onerror = () => {
-          showToast(`${file.name} konnte nicht gelesen werden: ${reader.error?.message || 'unbekannt'}`, true);
-        };
-        reader.readAsDataURL(file);
+        continue;
+      }
+      // Browser: walk directories via the FileSystem entry; fall back to the
+      // plain File when no entry is available.
+      if (entry) {
+        const files = await collectEntryFiles(entry);
+        for (const f of files) await pushDroppedFile(f);
+      } else if (file) {
+        await pushDroppedFile(file);
       }
     }
   });

@@ -47,17 +47,19 @@ class DocumentParser:
 
     @staticmethod
     def parse_pdf(path: str) -> str:
-        """Parse PDF to text using pymupdf."""
-        try:
-            import fitz  # pymupdf
-        except ImportError:
-            raise ImportError("Install pymupdf for PDF support: pip3 install pymupdf")
-        doc = fitz.open(path)
-        pages = []
-        for page in doc:
-            pages.append(page.get_text())
-        doc.close()
-        return "\n\n".join(pages)
+        """Parse PDF to markdown. Thin shim over the unified doc_convert
+        pipeline (pymupdf4llm/fitz → OCR for image-only scans) so project
+        ingestion extracts text EXACTLY like chat attachments (read_document)
+        and input-folder mining — same single choke point. Previously this
+        called bare fitz.get_text(), which returned nothing for scanned PDFs
+        and never reached OCR, so a scanned PDF failed the whole project
+        import. caps=False = full fidelity (no row/cell cap), matching the
+        read_document path."""
+        from engine.doc_convert import _do_extract
+        text, _backend, err = _do_extract(path, caps=False)
+        if err:
+            raise RuntimeError(err)
+        return text
 
     @staticmethod
     def parse_docx(path: str) -> str:
@@ -143,6 +145,18 @@ class DocumentParser:
         implementation shared with read_document and project mining."""
         from engine.doc_convert import _do_extract
         text, _backend, err = _do_extract(path, slides=slides)
+        if err:
+            raise RuntimeError(err)
+        return text
+
+    @staticmethod
+    def parse_email(path: str) -> str:
+        """Parse .eml/.msg to markdown. Thin shim over the unified doc_convert
+        pipeline (stdlib _extract_eml / _extract_msg) so email attachments
+        ingest into a project exactly like they read in chat. Without this,
+        .eml/.msg hit the 'Unsupported format' ValueError → HTTP 400."""
+        from engine.doc_convert import _do_extract
+        text, _backend, err = _do_extract(path)
         if err:
             raise RuntimeError(err)
         return text
@@ -268,6 +282,8 @@ class DocumentParser:
             ".xlsx": ("xlsx", DocumentParser.parse_xlsx),
             ".xls": ("xlsx", DocumentParser.parse_xlsx),
             ".pptx": ("pptx", DocumentParser.parse_pptx),
+            ".eml": ("email", DocumentParser.parse_email),
+            ".msg": ("email", DocumentParser.parse_email),
             ".csv": ("csv", DocumentParser.parse_csv),
             ".tsv": ("csv", DocumentParser.parse_csv),
             ".png": ("image", DocumentParser.parse_image),

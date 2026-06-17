@@ -37,29 +37,32 @@ function register(getMainWindow) {
     return { data: png.toString('base64'), type: 'image/png', width: img.getSize().width, height: img.getSize().height };
   });
 
-  ipcMain.handle('read-dropped-file', async (_event, filePath) => {
+  const mimeMap = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+    '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp',
+    '.pdf': 'application/pdf', '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.csv': 'text/csv', '.txt': 'text/plain', '.md': 'text/markdown',
+    '.json': 'application/json', '.xml': 'application/xml',
+    '.py': 'text/x-python', '.js': 'text/javascript', '.ts': 'text/typescript',
+    '.html': 'text/html', '.css': 'text/css',
+  };
+
+  // Read one file off disk into the same pending-file shape the renderer
+  // pushes onto state._pendingFiles. Returns { error } on failure so the
+  // caller can skip it without aborting a whole folder.
+  function readFileEntry(filePath) {
     try {
       const stat = fs.statSync(filePath);
       if (stat.size > 50 * 1024 * 1024) return { error: 'File too large (>50MB)' };
       const data = fs.readFileSync(filePath);
-      const name = path.basename(filePath);
       const ext = path.extname(filePath).toLowerCase();
-      const mimeMap = {
-        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-        '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp',
-        '.pdf': 'application/pdf', '.doc': 'application/msword',
-        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        '.csv': 'text/csv', '.txt': 'text/plain', '.md': 'text/markdown',
-        '.json': 'application/json', '.xml': 'application/xml',
-        '.py': 'text/x-python', '.js': 'text/javascript', '.ts': 'text/typescript',
-        '.html': 'text/html', '.css': 'text/css',
-      };
       const type = mimeMap[ext] || 'application/octet-stream';
       const isImage = type.startsWith('image/');
       return {
-        name,
+        name: path.basename(filePath),
         type,
         data: data.toString('base64'),
         encoding: 'base64',
@@ -68,6 +71,35 @@ function register(getMainWindow) {
     } catch (e) {
       return { error: e.message };
     }
+  }
+
+  ipcMain.handle('read-dropped-file', async (_event, filePath) => readFileEntry(filePath));
+
+  // Walk a dropped path: a folder is recursed into (depth-first), returning
+  // every readable file under it; a plain file returns a single-element
+  // array. Mirrors the browser webkitGetAsEntry walk so dragging a folder
+  // attaches its files recursively in both the desktop app and the browser.
+  ipcMain.handle('read-dropped-folder', async (_event, rootPath) => {
+    const out = [];
+    const walk = (p) => {
+      let stat;
+      try { stat = fs.statSync(p); } catch { return; }
+      if (stat.isDirectory()) {
+        let names;
+        try { names = fs.readdirSync(p); } catch { return; }
+        // Skip dotfiles/dirs (.git, .DS_Store, …) — dragging a project
+        // folder should attach its content, not VCS/OS cruft.
+        for (const name of names) {
+          if (name.startsWith('.')) continue;
+          walk(path.join(p, name));
+        }
+      } else if (stat.isFile()) {
+        const entry = readFileEntry(p);
+        if (entry && !entry.error) out.push(entry);
+      }
+    };
+    walk(rootPath);
+    return out;
   });
 }
 

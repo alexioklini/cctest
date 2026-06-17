@@ -124,9 +124,12 @@ wiederverwendet, sonst neu generiert) und füllt ihn ein.
 
 **Anhänge**: 📎 klicken oder Dateien ins Eingabefeld ziehen. Unterstützt:
 Bilder, PDF, docx, xlsx, pptx, eml/msg, epub, txt/md, csv/tsv, json,
-Quellcode (py/js/ts/go/rs/…), zip. Das Modell erhält Bilder direkt, wenn
-es Vision hat; alles andere wird serverseitig zu Markdown konvertiert und
-mit `read_document` gelesen.
+Quellcode (py/js/ts/go/rs/…), zip. Du kannst auch ganze **Ordner** ins
+Eingabefeld ziehen — sie werden rekursiv aufgelöst und alle enthaltenen
+Dateien einzeln angehängt (versteckte Dateien und `.git`-Verzeichnisse
+werden übersprungen). Das Modell erhält Bilder direkt, wenn es Vision hat;
+alles andere wird serverseitig zu Markdown konvertiert und mit
+`read_document` gelesen.
 
 **Modelle**: über das Modell-Badge in der Statusleiste oder im Eingabefeld
 wechseln. Lokale Modelle bleiben auf dem Gerät; Cloud-Modelle gehen an den

@@ -309,7 +309,12 @@ hits the wall). Every result is tagged `fetch_method`
 ## Document extraction (read_document + mining)
 
 One pipeline (`engine.doc_convert._do_extract`) serves chat read_document,
-project mining, PII scan, and classification. Per file type it tries
+project mining, PII scan, classification, AND project file upload/ingestion
+(`IngestManager.ingest_file` → `DocumentParser.parse_*` are thin shims over
+`_do_extract` — including `parse_pdf`, fixed 9.157.1; before that PDF used bare
+fitz with no OCR, so a scanned PDF failed the whole project import, and
+`.eml/.msg` weren't accepted at all). So an uploaded project file extracts
+EXACTLY like a chat attachment. Per file type it tries
 **markitdown first** OR goes straight to Brain's own `_extract_*`. That split is
 **config-driven** (was a hardcoded constant): `config.json →
 conversion.markitdown_exts` (editable per type in Settings → Service-Modelle).
@@ -328,6 +333,11 @@ reads in 0.1s (chat 4aad5750: a 37-page list; web_fetch returned EMPTY). So the
 in-process extractors are bounded by `_PDF_EXTRACT_TIMEOUT_SECS` (60s) via
 `_run_with_timeout` (daemon thread — signal.alarm is main-thread-only). Chain:
 **pymupdf4llm → (timeout OR empty) → fitz get_text → (empty = true scan) → OCR.**
+"Empty" here also counts a pymupdf4llm output that is ONLY its image-placeholder
+lines (`**==> picture [W x H] intentionally omitted <==**`) — a scanned page emits
+one per embedded image (100+), so the raw line count looks substantial but holds
+zero text; `_pymupdf4llm_is_blank()` strips those before the emptiness check so
+image-only PDFs actually reach OCR (fixed 9.157.1).
 markitdown is deliberately SKIPPED here — it bottoms out on pdfminer just like
 pymupdf4llm (≈same hang on the same input) AND gives no quality fitz can't
 deliver faster, so falling to it just doubled the stall. fitz is called DIRECTLY

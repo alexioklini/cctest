@@ -770,6 +770,26 @@ def _extract_pdf(path: str, *, pages: str | None = None,
     return text + "\n", None
 
 
+def _pymupdf4llm_is_blank(md: str) -> bool:
+    """True if pymupdf4llm output carries no real text — only its image
+    placeholder lines (`**==> picture [W x H] intentionally omitted <==**`)
+    and blank lines. An image-only/scanned PDF emits ONE such placeholder per
+    embedded image fragment (a scanned page is often 100+ images), so the raw
+    line count looks substantial even though there is zero extractable text.
+    Without this, the `splitlines() <= 1` emptiness check below sees hundreds
+    of placeholder lines, declares the doc non-empty, and the caller never
+    reaches the OCR fallback. Stripping placeholders first lets a genuinely
+    image-only PDF be detected as scanned → OCR runs."""
+    for line in md.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("**==>") and "intentionally omitted" in s and s.endswith("<==**"):
+            continue
+        return False
+    return True
+
+
 def _extract_pdf_pymupdf4llm(path: str, *, pages: str | None = None) -> tuple[str, str | None]:
     """PDF → markdown via pymupdf4llm (a fitz wrapper). Renders tables + layout
     to GitHub-flavoured markdown far better than markitdown on structured docs
@@ -805,7 +825,7 @@ def _extract_pdf_pymupdf4llm(path: str, *, pages: str | None = None) -> tuple[st
             kwargs = {"pages": idxs} if page_sel is not None else {}
             md = pymupdf4llm.to_markdown(path, **kwargs)
             md = (md or "").strip()
-            if len(md.splitlines()) <= 1:
+            if len(md.splitlines()) <= 1 or _pymupdf4llm_is_blank(md):
                 return "", None   # scanned/empty → caller's OCR path
             return md + "\n", None
         # Per-page with live progress. The OVERALL timeout is owned by the
@@ -829,7 +849,7 @@ def _extract_pdf_pymupdf4llm(path: str, *, pages: str | None = None) -> tuple[st
                 parts.append(pmd)
             done += 1
         md = "\n".join(p for p in parts if p).strip()
-        if len(md.splitlines()) <= 1:
+        if len(md.splitlines()) <= 1 or _pymupdf4llm_is_blank(md):
             return "", None
         return md + "\n", None
     except _ExtractTimeout:
