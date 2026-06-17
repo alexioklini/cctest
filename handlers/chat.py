@@ -949,7 +949,11 @@ def make_artifact_event_callback(session_id: str):
     # e783c08a regression). Forward them through too.
     _ARTIFACT_EVENTS = ("file_created", "artifact_updated")
     _PASSTHROUGH_EVENTS = ("user_input_needed", "user_input_received",
-                           "file_upload_needed")
+                           "file_upload_needed",
+                           # Generic live tool progress (report_tool_progress):
+                           # phase/%/page-i-of-N for the running tool card.
+                           # Display-only — never persisted.
+                           "tool_progress")
 
     def _cb(event_type, data):
         if event_type not in _ARTIFACT_EVENTS and event_type not in _PASSTHROUGH_EVENTS:

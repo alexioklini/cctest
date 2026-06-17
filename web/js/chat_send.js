@@ -566,6 +566,27 @@ function buildStreamCallbacks(chat, isActive) {
       tool_output: (d) => {
         // Live tool output streaming
       },
+      // Generic live tool progress (report_tool_progress): phase label + optional
+      // % / page-i-of-N for the running tool. Stash the latest on the matching
+      // live tool_call row (by tool_use_id; fall back to the most recent running
+      // tool) so the tool card can show "Extrahiere mit pymupdf4llm · 32%" etc.
+      // Display-only — never persisted (the result + backend badge are durable).
+      tool_progress: (d) => {
+        const tuid = d.tool_use_id;
+        let row = null;
+        if (tuid) row = chat.messages.find(m => m.role === 'tool_call' && m.tool_use_id === tuid);
+        if (!row) {
+          // No id match — attach to the most recent tool_call without a result yet.
+          for (let i = chat.messages.length - 1; i >= 0; i--) {
+            const m = chat.messages[i];
+            if (m.role === 'tool_call') { row = m; break; }
+          }
+        }
+        if (!row) return;
+        row._progress = { phase: d.phase || '', pct: (d.pct == null ? null : d.pct),
+                          note: d.note || '', current: d.current, total: d.total };
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
+      },
       // ── Transparent anonymisation synthetic tool-call rows ──
       // Server emits these to give the user a visible record of "your data
       // was anonymised before sending" / "the reply was de-anonymised". They

@@ -168,6 +168,49 @@ def get_request_context() -> RequestContext:
     return _active_ctx()
 
 
+def report_tool_progress(*, phase: str = "", pct: float | None = None,
+                         note: str = "", current: int | None = None,
+                         total: int | None = None) -> None:
+    """Emit a LIVE progress update for the currently-dispatching tool call.
+
+    Generic, reusable by ANY tool: while a (synchronous) tool runs, call this to
+    push a `tool_progress` event into the session LiveStream so the chat view's
+    live tool card shows a phase label + optional % bar — e.g. a PDF read going
+    'pymupdf4llm Seite 12/37 (32%)' → 'Wechsle zu fitz' → 'OCR 5/37'. Works
+    during the blocking dispatch because the event flows out on the SSE queue
+    (a different thread drains it).
+
+    All fields optional: `phase` (short label), `pct` (0–100; derived from
+    current/total when not given), `note` (extra detail), `current`/`total`
+    (e.g. page i of N). Best-effort + silent: no event_callback (mining /
+    background / non-chat callers) → no-op; never raises into the tool.
+
+    Auto-tagged with the dispatch thread's `tool_use_id` so the client targets
+    the right card. Live-only — never persisted (the final result + any backend
+    badge carry the durable record).
+    """
+    try:
+        ctx = _active_ctx()
+        cb = getattr(ctx, "event_callback", None)
+        if cb is None:
+            return
+        if pct is None and total:
+            try:
+                pct = max(0.0, min(100.0, (float(current or 0) / float(total)) * 100.0))
+            except (TypeError, ValueError, ZeroDivisionError):
+                pct = None
+        cb("tool_progress", {
+            "tool_use_id": getattr(ctx, "tool_use_id", None),
+            "phase": phase,
+            "pct": (round(pct, 1) if isinstance(pct, (int, float)) else None),
+            "note": note,
+            "current": current,
+            "total": total,
+        })
+    except Exception:
+        pass
+
+
 @contextmanager
 def request_context(**overrides):
     """Enter a NESTED request context with `overrides` applied; reset on exit.

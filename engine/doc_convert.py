@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Iterable
@@ -38,6 +39,59 @@ from typing import Iterable
 from engine.context import get_request_context
 
 EXTRACT_SUBDIR = ".brain-extracted"
+
+# Hard wall-clock cap for an in-process PDF text extractor (pymupdf4llm / fitz /
+# pdfplumber). Some large, table-dense PDFs make pymupdf4llm's layout analysis
+# run for MINUTES at 100% CPU (observed: a 37-page struck-off-companies list
+# that plain fitz.get_text reads in 0.1s). Those extractors run in worker
+# threads, so signal.alarm can't guard them (SIGALRM is main-thread only) — we
+# run the call in a daemon thread and abandon it on timeout, falling through to
+# the next/faster engine. The abandoned thread keeps burning CPU until it
+# finishes, but it no longer blocks the turn.
+_PDF_EXTRACT_TIMEOUT_SECS = 60
+# PDFs with more than this many pages are extracted PER PAGE (live progress +
+# per-page timeout); smaller ones use one fast whole-doc call (no progress, no
+# ~2x per-page overhead). Small docs finish sub-second so progress isn't needed.
+_PDF_PERPAGE_THRESHOLD = 8
+# Per-page layout-analysis cap in the per-page path — a single pathological page
+# is skipped rather than hanging the whole document.
+_PDF_PERPAGE_TIMEOUT_SECS = 15
+
+
+class _ExtractTimeout(Exception):
+    pass
+
+
+def _extract_progress(phase: str, *, pct: float | None = None,
+                      current: int | None = None, total: int | None = None,
+                      note: str = "") -> None:
+    """Thin wrapper over the generic report_tool_progress for the extraction
+    chain — phase = the active backend ('pymupdf4llm' / 'fitz' / 'OCR' / …)."""
+    from engine.context import report_tool_progress
+    report_tool_progress(phase=phase, pct=pct, current=current, total=total, note=note)
+
+
+def _run_with_timeout(fn, timeout_secs: float):
+    """Run `fn()` in a daemon thread; return its result, or raise
+    _ExtractTimeout if it doesn't finish within `timeout_secs`. The worker
+    thread is NOT killed (Python can't) — it's abandoned (daemon) so the
+    process can still exit; the caller falls back to a faster path."""
+    box: dict = {}
+
+    def _target():
+        try:
+            box["result"] = fn()
+        except BaseException as e:  # capture so the caller sees the real error
+            box["error"] = e
+
+    t = threading.Thread(target=_target, daemon=True)
+    t.start()
+    t.join(timeout_secs)
+    if t.is_alive():
+        raise _ExtractTimeout(f"extractor exceeded {timeout_secs:.0f}s")
+    if "error" in box:
+        raise box["error"]
+    return box.get("result")
 
 SUPPORTED_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".xlsm", ".xls", ".xlsb",
                   ".csv", ".tsv", ".eml", ".msg", ".epub", ".zip"}
@@ -725,21 +779,97 @@ def _extract_pdf_pymupdf4llm(path: str, *, pages: str | None = None) -> tuple[st
     NOTE: pymupdf4llm/PyMuPDF is AGPL-3.0 (Artifex)."""
     try:
         import pymupdf4llm  # type: ignore
+        import fitz  # type: ignore
     except ImportError:
         return "", "pymupdf4llm not installed (pip install pymupdf4llm)"
     page_sel = _parse_index_selection(pages)
-    kwargs = {}
-    if page_sel is not None:
-        # pymupdf4llm wants 0-based page numbers; our selection is 1-based.
-        kwargs["pages"] = sorted(p - 1 for p in page_sel if p >= 1)
+    # Page list (0-based) to process; None → all pages.
     try:
-        md = pymupdf4llm.to_markdown(path, **kwargs)
+        doc = fitz.open(path)
+        n_total = doc.page_count
+    except Exception as e:
+        return "", f"pymupdf4llm open: {type(e).__name__}: {e}"
+    if page_sel is not None:
+        idxs = sorted(p - 1 for p in page_sel if 1 <= p <= n_total)
+    else:
+        idxs = list(range(n_total))
+
+    # Small docs (<= threshold): one fast whole-doc call — no per-page overhead,
+    # finishes in well under a second, progress isn't worth the ~2x cost.
+    # Larger docs: per-page so we can (a) emit real page-i/N % progress and
+    # (b) bound each page's layout analysis individually, so one pathological
+    # page can't hang the whole read. Both produce equivalent markdown.
+    try:
+        if len(idxs) <= _PDF_PERPAGE_THRESHOLD:
+            doc.close()
+            kwargs = {"pages": idxs} if page_sel is not None else {}
+            md = pymupdf4llm.to_markdown(path, **kwargs)
+            md = (md or "").strip()
+            if len(md.splitlines()) <= 1:
+                return "", None   # scanned/empty → caller's OCR path
+            return md + "\n", None
+        # Per-page with live progress. The OVERALL timeout is owned by the
+        # caller's _run_with_timeout wrapper (it raises _ExtractTimeout straight
+        # to _do_extract, which then switches to fitz) — so we do NOT swallow a
+        # systematically-slow doc here; we just bound EACH page so one bad page
+        # doesn't stall the whole read, and let the outer timeout handle a doc
+        # that's slow across the board.
+        parts = []
+        done = 0
+        for i in idxs:
+            _extract_progress("pymupdf4llm", current=done + 1, total=len(idxs),
+                              note=f"Seite {i + 1}")
+            try:
+                pmd = _run_with_timeout(
+                    lambda i=i: pymupdf4llm.to_markdown(doc, pages=[i], show_progress=False),
+                    _PDF_PERPAGE_TIMEOUT_SECS)
+            except _ExtractTimeout:
+                pmd = ""  # one slow page — skip; outer timeout catches a slow doc
+            if pmd:
+                parts.append(pmd)
+            done += 1
+        md = "\n".join(p for p in parts if p).strip()
+        if len(md.splitlines()) <= 1:
+            return "", None
+        return md + "\n", None
+    except _ExtractTimeout:
+        raise  # MUST propagate so _do_extract switches to fitz (not markitdown)
     except Exception as e:
         return "", f"pymupdf4llm: {type(e).__name__}: {e}"
-    md = (md or "").strip()
-    if len(md.splitlines()) <= 1:
-        return "", None   # scanned/empty → let the caller try OCR
-    return md + "\n", None
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+
+
+def _extract_pdf_fitz_fast(path: str, *, pages: str | None = None) -> tuple[str, str | None]:
+    """Fastest possible PDF text read: bare `page.get_text()` per page, no table
+    reconstruction. Used as the timeout fallback when pymupdf4llm/pdfplumber
+    hang on a big PDF that nonetheless has a clean text layer (the 4aad5750
+    case). Returns (text, error); empty text + None = no text layer (→ OCR)."""
+    try:
+        import fitz  # type: ignore
+    except ImportError:
+        return "", "PyMuPDF (fitz) not installed"
+    page_sel = _parse_index_selection(pages)
+    try:
+        doc = fitz.open(path)
+    except Exception as e:
+        return "", f"fitz open: {type(e).__name__}: {e}"
+    parts = []
+    sel = [i for i in range(1, doc.page_count + 1)
+           if page_sel is None or i in page_sel]
+    try:
+        for n, i in enumerate(sel, 1):
+            if len(sel) > _PDF_PERPAGE_THRESHOLD:
+                _extract_progress("fitz", current=n, total=len(sel),
+                                  note=f"Seite {i}")
+            parts.append(doc[i - 1].get_text() or "")
+    finally:
+        doc.close()
+    text = "\n".join(p for p in parts if p).strip()
+    return (text + "\n", None) if text else ("", None)
 
 
 def _pdf_engine() -> str:
@@ -1337,6 +1467,39 @@ def _adhoc_cache_path(src: str, mtime: int, size: int) -> str:
     return os.path.join(ADHOC_CACHE_DIR, hashlib.sha256(key).hexdigest() + ".md")
 
 
+def _pdf_ocr_or_empty(src: str) -> tuple[str, str, str | None]:
+    """OCR a PDF that produced NO text from every text extractor (genuine
+    image-only scan). Returns (text, backend, error). Routing by
+    config.json -> ocr.engine: mistral_ocr (cloud) | local_vision (local) |
+    auto (cloud→local) | none (→ empty marker). Shared by both the normal
+    end-of-chain path and the pymupdf4llm-timeout→fitz-empty path."""
+    ocr_cfg = _ocr_config()
+    engine = ocr_cfg["engine"]
+    ocr_text = ""
+    ocr_err = ""
+    pages = 0
+    backend = ""
+    if engine in ("mistral_ocr", "auto"):
+        _extract_progress("OCR", note="Gescanntes PDF — Cloud-OCR")
+        ocr_text, ocr_err, pages = _extract_with_mistral_ocr(src)
+        if ocr_text:
+            backend = f"mistral-ocr ({pages}p)"
+    if not ocr_text and engine in ("local_vision", "auto"):
+        _extract_progress("OCR", note="Gescanntes PDF — lokales Vision-Modell")
+        local_text, local_err, local_pages = _extract_with_local_vision(src)
+        if local_text:
+            ocr_text = local_text
+            pages = local_pages
+            backend = f"local-vision ({pages}p)"
+        else:
+            ocr_err = ocr_err or local_err or "no ocr engine produced output"
+    if ocr_text:
+        return ocr_text, backend, None
+    if engine != "none" and ocr_err:
+        print(f"[doc-convert] OCR fallback failed for {src}: {ocr_err}", flush=True)
+    return "", "fitz/legacy", None
+
+
 def _do_extract(src: str, *, use_markitdown: bool = True,
                 caps: bool = True, sheet: str | None = None,
                 slides: str | None = None, pages: str | None = None,
@@ -1366,11 +1529,52 @@ def _do_extract(src: str, *, use_markitdown: bool = True,
     # _extract_pdf path. Tried BEFORE markitdown so the choice actually wins;
     # falls through to markitdown/fitz on empty/error (e.g. scanned → OCR).
     if ext == ".pdf" and _pdf_engine() == "pymupdf4llm":
-        p_text, p_err = _extract_pdf_pymupdf4llm(src, pages=pages)
-        if not p_err and p_text:
+        # SELF-CONTAINED pdf chain — deterministic fallback order:
+        #   pymupdf4llm (tables/layout)  → on TIMEOUT or EMPTY →
+        #   fitz get_text (fast, text layer)  → on EMPTY (true scan) →
+        #   OCR.
+        # markitdown is deliberately NOT in this path: it's slower AND worse on
+        # the same PDFs (it bottoms out on pdfminer just like pymupdf4llm), so
+        # falling to it after a pymupdf4llm timeout reproduced the original
+        # 60s+ stall (chat 4aad5750). fitz is the correct next step.
+        _timed_out = False
+        p_text, p_err = "", None
+        try:
+            p_text, p_err = _run_with_timeout(
+                lambda: _extract_pdf_pymupdf4llm(src, pages=pages),
+                _PDF_EXTRACT_TIMEOUT_SECS)
+        except _ExtractTimeout:
+            _timed_out = True
+        if not _timed_out and not p_err and p_text:
             return p_text, "pymupdf4llm", None
-        # empty (scanned) or dep missing → fall through to the normal chain
+        if p_err and not _timed_out:
+            # Hard dep/error from pymupdf4llm (e.g. not installed) — let the
+            # generic chain (markitdown / fitz legacy) handle it below.
+            pass
+        else:
+            # Timeout OR empty result from pymupdf4llm on a (likely) text PDF →
+            # bare fitz get_text. Reads the text layer in well under a second on
+            # the very PDFs that hang pymupdf4llm.
+            if _timed_out:
+                print(f"[doc-convert] pymupdf4llm timed out after "
+                      f"{_PDF_EXTRACT_TIMEOUT_SECS}s on {src} — bare fitz read",
+                      flush=True)
+            _extract_progress("fitz", note="Wechsel zu fitz (Textebene)")
+            # Call fitz DIRECTLY (no _run_with_timeout wrapper): bare get_text is
+            # inherently fast (sub-second even for dozens of pages) and releases
+            # the GIL in its C core, so it makes progress even while the
+            # abandoned (timed-out) pymupdf4llm daemon thread is still grinding.
+            # Wrapping it in another daemon-thread timeout let that CPU-bound
+            # pymupdf4llm thread starve it → fitz wrongly came back empty → OCR.
+            f_text, f_err = _extract_pdf_fitz_fast(src, pages=pages)
+            if not f_err and f_text:
+                return f_text, "fitz/fast", None
+            if f_err:
+                return "", "", f_err
+            # fitz found no text layer → genuine scan → OCR.
+            return _pdf_ocr_or_empty(src)
     if md_enabled and ext in _markitdown_exts() and not (ext == ".pdf" and _pdf_engine() == "fitz"):
+        _extract_progress("markitdown", note="Extrahiere mit markitdown")
         text, err = _extract_with_markitdown(src)
         if not err and text:
             return text, "markitdown", None
@@ -1387,7 +1591,22 @@ def _do_extract(src: str, *, use_markitdown: bool = True,
         extractor_kwargs = {"pages": pages, "include_tables": include_tables,
                             "emit_meta": emit_meta, "page_marker": page_marker}
     try:
-        text, err = extractor(src, **extractor_kwargs)
+        if ext == ".pdf":
+            # Guard the fitz/pdfplumber path too (pdfplumber table detection can
+            # hang on dense tables). On timeout, drop to a bare fitz get_text —
+            # the fastest possible read of the text layer — before considering
+            # the PDF "empty" (which would wrongly route a text PDF to OCR).
+            try:
+                text, err = _run_with_timeout(
+                    lambda: extractor(src, **extractor_kwargs),
+                    _PDF_EXTRACT_TIMEOUT_SECS)
+            except _ExtractTimeout:
+                print(f"[doc-convert] PDF extractor timed out after "
+                      f"{_PDF_EXTRACT_TIMEOUT_SECS}s on {src} — bare fitz read",
+                      flush=True)
+                text, err = _extract_pdf_fitz_fast(src, pages=pages)
+        else:
+            text, err = extractor(src, **extractor_kwargs)
     except Exception as e:
         return "", "", f"{type(e).__name__}: {e}"
     if err:
@@ -1397,39 +1616,9 @@ def _do_extract(src: str, *, use_markitdown: bool = True,
     if text:
         return text, "fitz/legacy", None
 
-    # Empty output from both markitdown and per-format extractor. For PDFs,
-    # try OCR — this is the scanned-image-only case where markitdown sees
-    # rendered glyphs as pictures, fitz finds no text layer, but the page
-    # is full of readable text to a vision model.
+    # Empty output from every text extractor → genuine image-only PDF → OCR.
     if ext == ".pdf":
-        ocr_cfg = _ocr_config()
-        engine = ocr_cfg["engine"]
-        # Routing matrix:
-        #   mistral_ocr   → cloud only, fail → empty marker
-        #   local_vision  → local only, fail → empty marker
-        #   auto          → cloud first, on failure (timeout / config /
-        #                   PII block) → local fallback
-        ocr_text = ""
-        ocr_err = ""
-        pages = 0
-        backend = ""
-        if engine in ("mistral_ocr", "auto"):
-            ocr_text, ocr_err, pages = _extract_with_mistral_ocr(src)
-            if ocr_text:
-                backend = f"mistral-ocr ({pages}p)"
-        if not ocr_text and engine in ("local_vision", "auto"):
-            local_text, local_err, local_pages = _extract_with_local_vision(src)
-            if local_text:
-                ocr_text = local_text
-                pages = local_pages
-                backend = f"local-vision ({pages}p)"
-            else:
-                ocr_err = ocr_err or local_err or "no ocr engine produced output"
-        if ocr_text:
-            return ocr_text, backend, None
-        if engine != "none" and ocr_err:
-            print(f"[doc-convert] OCR fallback failed for {src}: {ocr_err}",
-                  flush=True)
+        return _pdf_ocr_or_empty(src)
     return "", "fitz/legacy", None
 
 

@@ -509,8 +509,15 @@ def _fetch_as_file_result(raw: bytes, ext: str, final_url: str, status: int,
             return None
         if len(text) > max_length:
             text = text[:max_length] + "\n... (truncated)"
+        # Surface the ACTUAL extraction backend (pymupdf4llm / fitz/legacy /
+        # markitdown / mistral-ocr / local-vision) as the fetch_method so the
+        # chat view's badge shows HOW the PDF/doc was read — e.g. an OCR'd scan
+        # vs a clean text-layer read. Prefix with `document:` so it stays
+        # recognisable as a binary-doc fetch.
+        _bk = (_backend or "").strip()
+        method = f"document:{_bk}" if _bk else "document"
         return {"url": final_url, "status": status, "length": len(text),
-                "content": text, "fetch_method": "document"}
+                "content": text, "fetch_method": method}
     except Exception:
         return None
     finally:
@@ -598,6 +605,11 @@ def tool_web_fetch(args: dict) -> str:
                 return _ok(_ac)
 
     try:
+        from engine.context import report_tool_progress
+        try:
+            report_tool_progress(phase="Abrufen", note=urllib.parse.urlparse(url).netloc or url)
+        except Exception:
+            pass
         req_headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -666,6 +678,10 @@ def tool_web_fetch(args: dict) -> str:
                             for seg in ("/consent", "/tcf/", "cookie", "/datenschutz/zustimmung"))
         _thin = len(usable.strip()) < 600
         if is_html and method == "GET" and not body and (_thin or _consent_wall):
+            try:
+                report_tool_progress(phase="Rendern", note="Headless-Browser (JS-Seite)")
+            except Exception:
+                pass
             rendered = _brain._crawl4ai_render(final_url)
             _md = (rendered.get("markdown") or "").strip()
             # Only take the render if it's an improvement — a longer body than

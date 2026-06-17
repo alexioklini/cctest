@@ -320,12 +320,33 @@ markitdown (no own extractor).
 **PDF has its own engine** (`conversion.pdf_engine`, default **pymupdf4llm**):
 `pymupdf4llm` (a fitz wrapper — renders tables/layout to clean markdown, best on
 financial reports; verified on the WPB Konzernbilanz) | `markitdown` | `fitz`
-(plain `page.get_text`, flat). The chosen engine runs BEFORE markitdown for
-`.pdf`, falling through to markitdown→fitz→OCR on empty (scanned) / missing dep,
-so the scanned-PDF OCR path is unaffected. Backend tag `pymupdf4llm`. LICENSE:
-pymupdf4llm/PyMuPDF is AGPL-3.0 (Artifex) — fitz was already in use, so no new
-exposure. (docling — MIT, ~300MB PDF model — under eval as an alternative;
-datalab-to/marker deferred: OpenRAIL-M + 3-5GB VRAM.)
+(plain `page.get_text`, flat). Backend tag = the engine that produced the text.
+
+**Timeout + deterministic fallback (pymupdf4llm path):** pymupdf4llm's layout
+analysis can hang for MINUTES at 100% CPU on a big, table-dense PDF that fitz
+reads in 0.1s (chat 4aad5750: a 37-page list; web_fetch returned EMPTY). So the
+in-process extractors are bounded by `_PDF_EXTRACT_TIMEOUT_SECS` (60s) via
+`_run_with_timeout` (daemon thread — signal.alarm is main-thread-only). Chain:
+**pymupdf4llm → (timeout OR empty) → fitz get_text → (empty = true scan) → OCR.**
+markitdown is deliberately SKIPPED here — it bottoms out on pdfminer just like
+pymupdf4llm (≈same hang on the same input) AND gives no quality fitz can't
+deliver faster, so falling to it just doubled the stall. fitz is called DIRECTLY
+(not wrapped) so the abandoned, still-grinding pymupdf4llm daemon thread can't
+GIL-starve it. Large PDFs (>8 pp) run pymupdf4llm PER PAGE (live page-i/N
+progress + per-page 15s cap); small ones use one fast whole-doc call. (markitdown
+is still the primary path for `.docx/.pptx/.epub/.zip` and when pdf_engine is
+explicitly set to `markitdown`.) LICENSE: pymupdf4llm/PyMuPDF is AGPL-3.0
+(Artifex) — fitz was already in use, so no new exposure.
+
+**Live tool progress** (`engine.context.report_tool_progress(phase, pct?,
+current/total?, note)`): any tool can emit a `tool_progress` SSE (auto-tagged
+with the dispatch `tool_use_id`) → the live tool card shows a phase label +
+optional % bar while it runs (cleared by `tool_result`). Display-only, never
+persisted; allow-listed in `make_artifact_event_callback`. Consumers: PDF
+extraction (pymupdf4llm/fitz/OCR page i/N + phase switches), web_fetch
+(Abrufen/Rendern), python_exec/execute_command (Läuft). The final extraction
+BACKEND is also shown as a durable badge (read_document `backend` field;
+web_fetch `fetch_method=document:<backend>`).
 
 **Truncation invariants** (the fc3fa95b 561k-token incident): mining fetches
 web-urls with `max_length=10_000_000` (mining → disk + chunked embedding, NOT an

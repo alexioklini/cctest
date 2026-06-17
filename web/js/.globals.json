@@ -129,6 +129,7 @@
     "_feedbackScrollToMessage": "writable",
     "_fetchAttachmentBody": "writable",
     "_fetchAttachReviewStates": "writable",
+    "_fetchMethodDisplay": "writable",
     "_fileToBase64": "writable",
     "_fmtDuration": "writable",
     "_fmtElapsed": "writable",

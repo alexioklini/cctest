@@ -1794,6 +1794,11 @@ def tool_execute_command(args: dict) -> str:
         env["LINES"] = "50"
 
         shell_cmd, shell_flag = _build_shell_command(command)
+        try:
+            from engine.context import report_tool_progress
+            report_tool_progress(phase="Läuft", note=(command or "").split()[0] if command else "Befehl")
+        except Exception:
+            pass
         proc = subprocess.Popen(
             shell_cmd, shell=shell_flag, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL, cwd=cwd, env=env,
@@ -2090,6 +2095,11 @@ def tool_python_exec(args: dict) -> str:
 
     _proc_key = None
     try:
+        try:
+            from engine.context import report_tool_progress
+            report_tool_progress(phase="Läuft", note="Python-Skript")
+        except Exception:
+            pass
         proc = subprocess.Popen(
             [sys.executable, script_path],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,

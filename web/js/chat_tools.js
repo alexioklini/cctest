@@ -378,9 +378,41 @@ function _isToolResultStub(s) {
 function _extractFetchMethod(toolName, resultStr) {
   if (toolName !== 'web_fetch' || typeof resultStr !== 'string') return '';
   try {
-    const m = resultStr.match(/"fetch_method"\s*:\s*"(crawl4ai|markitdown|raw)"/);
+    // Capture ANY fetch_method value, not just the HTML ones: also
+    // `document:<backend>` (pymupdf4llm/fitz/markitdown/mistral-ocr/…),
+    // `image`, `academic`, plus optional `+abstract` suffix.
+    // (read_document shows its backend via the separate backendBadge on the
+    // tool-line — see buildToolResultBlock callers — so it's not handled here.)
+    const m = resultStr.match(/"fetch_method"\s*:\s*"([^"]+)"/);
     return m ? m[1] : '';
   } catch (e) { return ''; }
+}
+
+// Human label + tooltip for a fetch_method value (handles the `document:<backend>`
+// shape so a PDF read shows e.g. "PDF · pymupdf4llm" / "PDF · OCR").
+function _fetchMethodDisplay(fm) {
+  if (!fm) return { label: '', tip: '' };
+  if (fm.startsWith('document:')) {
+    const bk = fm.slice('document:'.length);
+    const tip = {
+      'pymupdf4llm': 'PDF mit Textebene gelesen (pymupdf4llm — Tabellen/Layout)',
+      'fitz/legacy': 'PDF mit Textebene gelesen (fitz — schneller Fallback)',
+      'markitdown': 'Dokument via markitdown extrahiert',
+    }[bk] || (bk.startsWith('mistral-ocr') ? `Gescanntes PDF per Cloud-OCR gelesen (${bk})`
+            : bk.startsWith('local-vision') ? `Gescanntes PDF per lokalem Vision-Modell gelesen (${bk})`
+            : `Dokument extrahiert (${bk})`);
+    const isOcr = bk.startsWith('mistral-ocr') || bk.startsWith('local-vision');
+    const label = isOcr ? `Dok · OCR` : `Dok · ${bk.replace('/legacy', '')}`;
+    return { label, tip };
+  }
+  const tip = {
+    crawl4ai: 'In einem Headless-Browser gerendert (Seite benötigt JavaScript)',
+    markitdown: 'HTML zu Markdown konvertiert',
+    raw: 'Rohinhalt, keine Konvertierung',
+    image: 'Bild per Vision-Modell beschrieben',
+    academic: 'Wissenschaftliches PDF (Volltext) extrahiert',
+  }[fm] || '';
+  return { label: fm, tip };
 }
 
 function buildToolResultBlock(toolName, args, resultStr, toolUseId) {
@@ -413,14 +445,14 @@ function buildToolResultBlock(toolName, args, resultStr, toolUseId) {
   });
   const langBadge = lang ? `<span class="tool-result-lang">${esc(lang)}</span>` : '';
   const sizeBadge = `<span class="tool-result-lang">${formatBytes(fullLen)}</span>`;
-  // Fetch-method badge (web_fetch only): how the content reached the LLM.
-  const _fmTip = {
-    crawl4ai: 'In einem Headless-Browser gerendert (Seite benötigt JavaScript)',
-    markitdown: 'HTML zu Markdown konvertiert',
-    raw: 'Rohinhalt, keine Konvertierung',
-  }[fetchMethod] || '';
-  const fetchBadge = fetchMethod
-    ? `<span class="tool-result-fetch-badge" data-fm="${fetchMethod}" title="${esc(_fmTip)}">${esc(fetchMethod)}</span>`
+  // Fetch/extraction-method badge: how the content reached the LLM. For
+  // web_fetch it's the fetch path (crawl4ai/markitdown/raw/document:<backend>/
+  // image/academic); for read_document it's the extraction backend (so a PDF
+  // read shows e.g. "Dok · pymupdf4llm" or "Dok · OCR"). Both come from the
+  // same _do_extract backend string.
+  const _fmDisp = _fetchMethodDisplay(fetchMethod);
+  const fetchBadge = _fmDisp.label
+    ? `<span class="tool-result-fetch-badge" data-fm="${esc(fetchMethod)}" title="${esc(_fmDisp.tip)}">${esc(_fmDisp.label)}</span>`
     : '';
   const expandLabel = truncatedInitial ? 'Vollständig anzeigen' : 'Aufklappen';
   const expandBtn = `<button type="button" class="tool-result-btn" data-tres-expand="${id}" onclick="event.stopPropagation(); expandToolResult('${id}', this)">${expandLabel}</button>`;
@@ -633,10 +665,12 @@ function renderToolCall(msg, idx) {
     if (bm) {
       const b = bm[1];
       let label, title;
-      if (b.startsWith('markitdown')) { label = 'markitdown'; title = 'Extrahiert via markitdown (Primärpfad)'; }
-      else if (b.includes('ocr') || b.includes('vision')) { label = 'OCR'; title = `Extrahiert via OCR (${b})`; }
-      else { label = 'fallback'; title = `Extrahiert via interner Fallback (${b})`; }
-      backendBadge = `<span class="tool-badge-backend" title="${title}">${label}</span>`;
+      if (b.includes('ocr') || b.includes('vision')) { label = 'OCR'; title = `Gescanntes Dokument via OCR gelesen (${b})`; }
+      else if (b.startsWith('pymupdf4llm')) { label = 'pymupdf4llm'; title = 'PDF mit Textebene gelesen (pymupdf4llm — Tabellen/Layout)'; }
+      else if (b.startsWith('fitz')) { label = 'fitz'; title = 'PDF mit Textebene gelesen (fitz — schneller Pfad/Fallback)'; }
+      else if (b.startsWith('markitdown')) { label = 'markitdown'; title = 'Extrahiert via markitdown'; }
+      else { label = b || 'extract'; title = `Extrahiert via ${b}`; }
+      backendBadge = `<span class="tool-badge-backend" title="${esc(title)}">${esc(label)}</span>`;
     }
   }
   // Parallel badge: shown when 2+ tool_calls share the same tool_round
@@ -653,6 +687,23 @@ function renderToolCall(msg, idx) {
   // result stay one click away in the Aktivitäts-Panel.
   const preview = '';
   const actId = msg.tool_use_id || ('tc-' + (msg._seq || idx));
+  // Live progress (report_tool_progress): phase label + optional % bar, shown
+  // ONLY while the tool is still running (no result yet). Cleared automatically
+  // once tool_result lands (hasResult → not rendered). Display-only.
+  let progressHtml = '';
+  if (!hasResult && msg._progress) {
+    const p = msg._progress;
+    const pctNum = (typeof p.pct === 'number') ? Math.max(0, Math.min(100, p.pct)) : null;
+    const label = [p.phase, p.note].filter(Boolean).join(' · ')
+      + (pctNum != null ? ` · ${Math.round(pctNum)}%` : '')
+      + (pctNum == null && p.total ? ` · ${p.current || 0}/${p.total}` : '');
+    const bar = pctNum != null
+      ? `<span class="tool-progress-bar"><span class="tool-progress-fill" style="width:${pctNum}%"></span></span>`
+      : '';
+    progressHtml = label
+      ? `<span class="tool-progress" title="${esc(label)}">${bar}<span class="tool-progress-label">${esc(label)}</span></span>`
+      : '';
+  }
   return `
     <div class="tool-line${hasResult ? ' has-result' : ''}" title="Im Aktivitäts-Panel öffnen"
          onclick="openActivityEntry('${esc(actId)}')">
@@ -660,6 +711,7 @@ function renderToolCall(msg, idx) {
       <span class="tool-name">${desc}</span>
       ${workerBadge}${parallelBadge}${backendBadge}
       ${timing}
+      ${progressHtml}
       ${preview}
     </div>
   `;
