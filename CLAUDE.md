@@ -129,7 +129,7 @@ Each run = immutable `schedule_history` row (id=run_id) + synthetic `session_id=
 
 ## Next-Prompt Suggestions
 
-`GET /v1/sessions/<id>/next-prompt` after each turn → dimmed placeholder. Reuses session model + history, `tools=False`, tiny `max_tokens`. **Real cost** — "near-free via prompt cache" claim is dead post-v7.2.0.
+`GET /v1/sessions/<id>/next-prompt` after each turn → dimmed placeholder. Reuses session model + history, `tools=False`, tiny `max_tokens`. **Real cost** — "near-free via prompt cache" claim is dead post-v7.2.0. **Cached per in-memory Session** (`session._next_prompt_cache = {sig, text}`, sig = msg-count + tail + caveman mode; v9.154.2): a repeat call for the same conversation returns the cached text (`cached:true`) with NO LLM call — so it's free across page reloads + the on-demand Tab path; a new turn changes the sig → regenerate; `?force=1` bypasses. Also fetched ON DEMAND when the user presses Tab on an empty composer with no ghost (v9.154.1).
 
 ## Model Management
 

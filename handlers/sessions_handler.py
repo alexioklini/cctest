@@ -8,6 +8,24 @@ import time
 import brain as engine
 
 
+def _next_prompt_cache_sig(session) -> str:
+    """Cheap signature of the conversation state for the next-prompt cache. Changes
+    whenever a turn is added (count) or the tail message changes, plus the caveman
+    mode (it shapes the suggestion's style). A matching sig ⇒ the cached suggestion
+    is still valid; a new turn ⇒ regenerate."""
+    try:
+        msgs = session.messages or []
+        n = len(msgs)
+        last = msgs[-1] if msgs else {}
+        last_role = last.get("role", "") if isinstance(last, dict) else ""
+        last_c = last.get("content", "") if isinstance(last, dict) else ""
+        last_len = len(last_c) if isinstance(last_c, str) else 0
+        cm = int(getattr(session, "caveman_mode", 0) or 0)
+        return f"{n}:{last_role}:{last_len}:{cm}"
+    except Exception:
+        return ""
+
+
 def _backfill_orphan_artifacts(sid: str) -> None:
     """Safety net: register any file in this session's artifact folder that
     has no matching `artifacts` row.
@@ -177,7 +195,14 @@ class SessionsHandlerMixin:
         suggestion for the composer ghost-text. Synchronous: calls the LLM using the
         session's current messages (or an override model) and returns the text.
         Returns {"suggestion": "..."} or {"suggestion": null} when disabled/empty.
+
+        Cached per Session (in-memory, survives page reloads while the server is
+        up): the result is keyed by a cheap conversation signature (message count
+        + last message). A repeat call for the same conversation state returns the
+        cached text WITHOUT a new LLM call; a new turn changes the signature and
+        forces regeneration. `?force=1` bypasses the cache.
         """
+        from urllib.parse import urlparse, parse_qs
         parts = path.split("/")
         sid = parts[3]
         if self._session_access_check(sid) is None:
@@ -191,14 +216,29 @@ class SessionsHandlerMixin:
             if not cfg.get("enabled", True):
                 self._send_json({"suggestion": None, "config": cfg})
                 return
+            force = parse_qs(urlparse(self.path).query).get("force", ["0"])[0] in ("1", "true")
+            sig = _next_prompt_cache_sig(session)
+            cached = getattr(session, "_next_prompt_cache", None)
+            if (not force and cached and cached.get("sig") == sig
+                    and cached.get("text")):
+                self._send_json({
+                    "suggestion": cached["text"],
+                    "model_used": (cfg.get("model") or session.model),
+                    "config": cfg, "cached": True,
+                })
+                return
             # Set thread-local agent context so LLM call picks up the right config
             with engine.request_context():
                 engine.get_request_context().current_agent = engine.AgentConfig(session.agent_id)
                 text = engine.generate_next_prompt_suggestion(session)
+            # Cache the result against the signature captured BEFORE the call (the
+            # conversation didn't change during a read-only suggestion call).
+            if text:
+                session._next_prompt_cache = {"sig": sig, "text": text}
             self._send_json({
                 "suggestion": text,
                 "model_used": (cfg.get("model") or session.model),
-                "config": cfg,
+                "config": cfg, "cached": False,
             })
         except Exception as e:
             self._send_json({"suggestion": None, "error": str(e)}, 500)

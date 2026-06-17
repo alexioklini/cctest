@@ -50,7 +50,10 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
 - `GET /v1/sessions/<sid>/next-prompt` — model-suggested follow-up (composer
   ghost-text). Auto-fetched after a turn; ALSO fetched on demand when the user
   presses **Tab** on an empty composer with no ghost showing (reuse precomputed,
-  else generate + fill — v9.154.1)
+  else generate + fill — v9.154.1). **Cached per Session** (in-memory, keyed by a
+  conversation signature: msg-count + tail + caveman mode) so a repeat call for
+  the same conversation returns `{suggestion, cached:true}` with NO LLM call; a
+  new turn regenerates; `?force=1` bypasses (v9.154.2).
 - `GET /v1/sessions/<sid>/warmup` / `/warmup-status` — warm-pool state
 - `POST /v1/sessions/<sid>/warmup` — manually trigger warmup
 - `POST /v1/sessions/<sid>/audio-overview` — generate a two-host podcast (.mp3)
