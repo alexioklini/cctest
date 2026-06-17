@@ -1472,9 +1472,12 @@ TOOL_DEFINITIONS = [
             "PROFESSIONAL REPORTS: this is the way to put good-looking, data-accurate "
             "diagrams into a report. Workflow — call render_diagram to produce the image, "
             "then embed it in the document you build with write_document (PDF/DOCX/HTML) or "
-            "Markdown: use SVG for crisp HTML/PDF, PNG for DOCX. For a quick in-CHAT diagram "
-            "(no file needed) just write a ```mermaid fenced block instead — the chat renders "
-            "it live. Use render_diagram when you need a FILE (report, download, embedding)."
+            "Markdown. The default format is PNG (high-DPI), which embeds correctly in "
+            "EVERY target — PDF, DOCX and HTML — so just take the default for reports; "
+            "SVG is NOT embeddable in PDF or DOCX (only choose format=svg for an HTML-only "
+            "report where vector zoom matters). For a quick in-CHAT diagram (no file needed) "
+            "just write a ```mermaid fenced block instead — the chat renders it live. Use "
+            "render_diagram when you need a FILE (report, download, embedding)."
         ),
         "input_schema": {
             "type": "object",
@@ -1486,15 +1489,15 @@ TOOL_DEFINITIONS = [
                 "format": {
                     "type": "string",
                     "enum": ["svg", "png", "pdf"],
-                    "description": "Output format. svg = crisp/scalable, resolution-independent (PREFER it for HTML & PDF embedding and whenever the diagram may be reused/zoomed); png = raster, rendered at high DPI (best for DOCX, which can't embed SVG); pdf = standalone. Default: svg.",
+                    "description": "Output format. DEFAULT png = raster at high DPI (scale 4 / width 2000), embeds correctly in PDF, DOCX AND HTML — use it for any report/document. svg = vector, crisp/zoomable but NOT embeddable in PDF or DOCX (only for HTML-only reports). pdf = standalone diagram file. Default: png.",
                 },
                 "scale": {
                     "type": "number",
-                    "description": "PNG/PDF only: device-pixel-ratio multiplier for resolution (1–5, default 3 = high-DPI/retina-crisp). Raise to 4–5 for very dense charts that must stay legible when printed; ignored for svg (vector).",
+                    "description": "PNG/PDF only: device-pixel-ratio multiplier for resolution (1–5, default 4 = high-DPI/print-crisp). Raise to 5 for very dense charts that must stay legible when printed; ignored for svg (vector).",
                 },
                 "width": {
                     "type": "integer",
-                    "description": "PNG/PDF only: base canvas width in px before scaling (400–6000, default 1600). Increase for wide org charts so labels don't cramp; ignored for svg.",
+                    "description": "PNG/PDF only: base canvas width in px before scaling (400–6000, default 2000). Increase for wide org charts so labels don't cramp; ignored for svg.",
                 },
                 "title": {
                     "type": "string",

@@ -1048,7 +1048,12 @@ def tool_write_document(args: dict) -> str:
                 img_match = _MD_IMAGE_RE.match(line)
                 if img_match:
                     img_path = _resolve_doc_image(img_match.group(2), _doc_dir)
-                    if img_path:
+                    if img_path and img_path.lower().endswith(".svg"):
+                        # python-docx can't embed SVG. Mirror the pdf branch's
+                        # explicit guidance instead of a silent broken caption.
+                        doc.add_paragraph(
+                            f"[Bild {img_match.group(2)} — für DOCX bitte als PNG rendern (render_diagram format=png)]")
+                    elif img_path:
                         try:
                             from docx.shared import Inches
                             doc.add_picture(img_path, width=Inches(6.0))

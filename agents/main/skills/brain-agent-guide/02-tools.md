@@ -358,9 +358,12 @@ write/exec tool is deliberately excluded.
   text). For org charts/flowcharts/structure/timeline/sequence/ER/gantt/etc.
   Returns `path` + `embed` snippets. **For a chat-only diagram**, just write an
   inline ` ```mermaid ` block (rendered live, no tool). **For a report/
-  presentation**: `render_diagram` (PNG for docx/pdf, SVG for HTML) → then embed
-  the file via `write_document` `![title](file.png)`. write_document embeds
-  `![](file)` images as real pictures in docx/pptx/pdf.
+  presentation**: `render_diagram` → then embed the file via `write_document`
+  `![title](file.png)`. Default format is **PNG** (high-DPI, scale 4 / width
+  2000) and embeds in PDF, DOCX AND HTML — take the default for reports. SVG is
+  available (`format=svg`) but embeds in HTML ONLY (the PDF/DOCX writers cannot
+  place an SVG → emit a "render as PNG" placeholder). write_document embeds
+  `![](file)` PNG/JPG images as real pictures in docx/pptx/pdf.
 
 ## Nodes (distributed compute)
 

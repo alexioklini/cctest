@@ -316,7 +316,14 @@ def tool_render_diagram(args: dict) -> str:
     code = (args.get("code") or "").strip()
     if not code:
         return _err("render_diagram: 'code' (Mermaid source) is required")
-    fmt = (args.get("format") or "svg").lower().lstrip(".")
+    # Default PNG (not SVG): a rendered SVG can NOT be embedded into the PDF or
+    # DOCX writers (reportlab rejects SVG; python-docx add_picture can't read it)
+    # and there is no reliable server-side SVG→PNG converter here (fitz mangles
+    # Mermaid's CSS/foreignObject text; mermaid-cli won't re-ingest a finished
+    # SVG; cairosvg/rsvg not installed). A high-DPI PNG embeds everywhere — PDF,
+    # DOCX and HTML — so it is the safe universal default. SVG stays available
+    # for HTML-only reports where vector zoom matters (explicit format=svg).
+    fmt = (args.get("format") or "png").lower().lstrip(".")
     if fmt not in _DIAGRAM_FORMATS:
         return _err(f"render_diagram: format must be one of {_DIAGRAM_FORMATS}")
     # Theme/background: explicit arg wins; else inherit from the named doc style's
@@ -336,18 +343,20 @@ def tool_render_diagram(args: dict) -> str:
         bg = "white"
     title = (args.get("title") or "").strip()
     # Raster resolution: mmdc defaults to scale=1 → small, blurry, unusable PNGs
-    # (esp. wide org charts). Render at high DPI so the image is crisp on screen
-    # and reusable in documents. `scale` (1–5) is the device-pixel-ratio multiplier;
-    # `width` is the base CSS width before scaling. SVG is vector → unaffected.
+    # (esp. wide org charts). Since PNG is now the default and lands in printed
+    # PDFs/DOCX, render at high DPI by default so the image is crisp on screen,
+    # in print, and reusable in documents. `scale` (1–5) is the device-pixel-
+    # ratio multiplier; `width` is the base CSS width before scaling. SVG is
+    # vector → unaffected by both.
     try:
-        scale = float(args.get("scale") or 3)
+        scale = float(args.get("scale") or 4)
     except (TypeError, ValueError):
-        scale = 3
+        scale = 4
     scale = max(1.0, min(scale, 5.0))
     try:
-        width = int(args.get("width") or 1600)
+        width = int(args.get("width") or 2000)
     except (TypeError, ValueError):
-        width = 1600
+        width = 2000
     width = max(400, min(width, 6000))
 
     mmdc = _mmdc_invocation()
@@ -423,6 +432,17 @@ def tool_render_diagram(args: dict) -> str:
         "html": (f'<img src="{file_name}" alt="{alt}">' if fmt != "svg"
                  else f'<!-- inline the SVG file contents here, or: --> <img src="{file_name}" alt="{alt}">'),
     }
+    note = ("Diagram saved as an artifact. To embed it in a document you are "
+            "creating: Markdown → use the embed.markdown snippet; HTML → embed.html "
+            "(for SVG you may inline the file's contents for crispness); PDF/DOCX "
+            "via write_document → reference this file as an image.")
+    if fmt == "svg":
+        # The model explicitly overrode the PNG default. Warn loudly: SVG embeds
+        # in HTML only — the PDF/DOCX writers can't place it (they emit a "render
+        # as PNG" placeholder instead). Re-render with format=png for those.
+        note += (" WARNING: this is an SVG — it embeds in HTML ONLY. write_document "
+                 "CANNOT embed an SVG into a PDF or DOCX; if this diagram goes into a "
+                 "PDF/DOCX report, call render_diagram again with format=png.")
     return _ok({
         "status": "rendered",
         "path": save_path,
@@ -430,8 +450,5 @@ def tool_render_diagram(args: dict) -> str:
         "format": fmt,
         "size_kb": size_kb,
         "embed": embed,
-        "note": ("Diagram saved as an artifact. To embed it in a document you are "
-                 "creating: Markdown → use the embed.markdown snippet; HTML → embed.html "
-                 "(for SVG you may inline the file's contents for crispness); PDF/DOCX "
-                 "via write_document → reference this file as an image."),
+        "note": note,
     })
