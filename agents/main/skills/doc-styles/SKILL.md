@@ -3,7 +3,7 @@ name: Document Styles
 description: Editable per-format style presets (fonts, colors, layout) that write_document and render_diagram apply DETERMINISTICALLY when creating .docx/.pptx/.pdf files and diagrams. Not interpreted by the model — Python reads the YAML and sets the styling, so output looks consistent regardless of model strength.
 metadata:
   type: doc-style
-  version: 1.2.0
+  version: 1.2.1
 ---
 
 # Document Styles
@@ -36,10 +36,14 @@ like Mistral reliable).
   (`{page}` → live Word PAGE field) + logo picture.
 - **pdf**: page size + margins + heading/body colors (reportlab); header/footer
   text + page number + logo drawn on every page via an onPage canvas callback.
-- **html**: a self-contained styled document — body/heading fonts+sizes+colors,
-  accent links, table header colors, header/footer bands + base64-embedded logo
-  ({date} resolves; {page} via a print-only CSS counter). Always create HTML
-  reports with `write_document` (not raw `write_file`) so the preset is applied.
+- **html**: a self-contained styled document. `content` may be **markdown**
+  (rendered with the full preset — body/heading fonts+sizes+colors, accent links,
+  table header colors) OR **raw HTML** (a full `<html>` doc is auto-detected and
+  written through as-is, NOT escaped; its own CSS is kept). Either way local
+  `<img src="file">` / `![](file)` images are inlined as base64 and the preset's
+  header/footer bands + logo are added ({date} resolves; {page} via a print-only
+  CSS counter). Always create HTML reports with `write_document` (not raw
+  `write_file`) so the preset chrome is applied.
 - **pptx**: title/body run colors per slide; the logo (any non-`none`
   `position`) is placed as a corner image and the footer text + page band is
   drawn on every slide.

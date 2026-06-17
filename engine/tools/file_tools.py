@@ -675,6 +675,74 @@ def _html_logo_data_uri(logo_path: str) -> str:
         return ""
 
 
+def _looks_like_html(content: str) -> bool:
+    """Heuristic: is `content` already an HTML document (vs markdown)? True when
+    it opens with a doctype/<html>, or carries block-level HTML structure (head/
+    body/several tags). Avoids markdown-escaping raw HTML the model handed us."""
+    head = (content or "").lstrip()[:2000].lower()
+    if head.startswith("<!doctype html") or head.startswith("<html"):
+        return True
+    if "<html" in head or "<body" in head or "<head" in head:
+        return True
+    # Fallback: many block tags → it's HTML, not markdown that happens to have one.
+    return len(re.findall(r'</?(?:div|p|table|section|header|footer|h[1-6]|ul|ol|li|span|article|main|style|script)\b', head)) >= 4
+
+
+def _html_inline_local_imgs(content: str, doc_dir: str) -> str:
+    """Rewrite <img src="localfile"> / <img src='localfile'> to base64 data URIs
+    (so the HTML is self-contained + the diagram travels with it). Leaves http(s)/
+    data: srcs untouched. Best-effort — an unresolvable src stays as-is."""
+    def repl(m):
+        quote = m.group(1)
+        src = m.group(2)
+        if src.startswith(("http://", "https://", "data:")):
+            return m.group(0)
+        resolved = _resolve_doc_image(src, doc_dir)
+        if not resolved:
+            return m.group(0)
+        uri = _html_logo_data_uri(resolved)  # generic image→data-uri reader
+        return f'src={quote}{uri}{quote}' if uri else m.group(0)
+    return re.sub(r'''src=(["'])([^"']+)\1''', repl, content)
+
+
+def _finalize_raw_html(content: str, style: dict, doc_dir: str) -> str:
+    """Write raw HTML through (NOT markdown), but make it portable + on-brand:
+    inline local <img> as base64, and inject the preset's header/footer/logo
+    bands just inside <body> (and the supporting CSS into <head>) when present.
+    If there's no <body>, the content is returned with images inlined only."""
+    out = _html_inline_local_imgs(content, doc_dir)
+    # Build the same header/footer/logo bands the markdown path produces. Reuse
+    # _render_markdown_html on an empty body to harvest the band markup + CSS.
+    hdr = style.get("header") or {}
+    ftr = style.get("footer") or {}
+    logo = style.get("logo") or {}
+    has_chrome = (str(hdr.get("text") or "").strip() or str(ftr.get("text") or "").strip()
+                  or ftr.get("page_numbers") or _resolve_style_logo(style))
+    if not has_chrome or not re.search(r'<body[^>]*>', out, re.IGNORECASE):
+        return out
+    scaffold = _render_markdown_html("", style, doc_dir)
+    m_css = re.search(r'<style>(.*?)</style>', scaffold, re.DOTALL)
+    m_hdr = re.search(r'(<div class="doc-header".*?</div>)', scaffold, re.DOTALL)
+    m_ftr = re.search(r'(<div class="doc-footer".*?</div>)', scaffold, re.DOTALL)
+    # Inject the band CSS into <head> (so .doc-header/.doc-footer/.pagenum work),
+    # scoped to those classes so it doesn't fight the document's own styling.
+    if m_css and re.search(r'</head>', out, re.IGNORECASE):
+        band_css = ("\n.doc-header{border-bottom:1px solid #eee;padding-bottom:8px;margin-bottom:20px;overflow:hidden}"
+                    ".doc-footer{border-top:1px solid #eee;padding-top:8px;margin-top:28px;overflow:hidden}"
+                    ".doc-header img,.doc-footer img{vertical-align:middle}"
+                    ".pagenum::after{content:\"\"}@media print{.pagenum::after{content:counter(page)}}\n")
+        out = re.sub(r'</head>', f'<style>{band_css}</style></head>', out, count=1, flags=re.IGNORECASE)
+    if m_hdr:
+        band = m_hdr.group(1)
+        out = re.sub(r'(<body[^>]*>)', lambda mm: mm.group(1) + "\n" + band,
+                     out, count=1, flags=re.IGNORECASE)
+    if m_ftr:
+        band = m_ftr.group(1)
+        out = re.sub(r'</body>', lambda mm: band + "\n</body>",
+                     out, count=1, flags=re.IGNORECASE)
+    return out
+
+
 def _render_markdown_html(content: str, style: dict, doc_dir: str) -> str:
     """Render markdown → a self-contained, styled HTML document applying the
     preset (fonts/colors/sizes/table colors + header/footer/logo). Deterministic
@@ -1182,10 +1250,18 @@ def tool_write_document(args: dict) -> str:
                 doc_pdf.build(story)
 
         elif ext in (".html", ".htm"):
-            # Self-contained styled HTML applying the preset (fonts/colors/sizes/
-            # table colors + header/footer/logo); markdown body, images inlined
-            # as base64. Same deterministic styling path as docx/pdf/pptx.
-            html_doc = _render_markdown_html(content, _style, _doc_dir)
+            # Two content modes, auto-detected:
+            #  • RAW HTML (the model passed a full <html> document) → write it
+            #    through, only inlining local <img src> as base64 + injecting the
+            #    preset's header/footer/logo bands so the file is portable + on-
+            #    brand. (Treating raw HTML as markdown would escape every tag and
+            #    show the source as text — the v9.152.0 bug.)
+            #  • MARKDOWN → render to a self-contained styled HTML document
+            #    applying the full preset (fonts/colors/sizes/tables + chrome).
+            if _looks_like_html(content):
+                html_doc = _finalize_raw_html(content, _style, _doc_dir)
+            else:
+                html_doc = _render_markdown_html(content, _style, _doc_dir)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(html_doc)
 
