@@ -39,14 +39,15 @@ TOOL_DEFINITIONS = [
             "Create a new file or overwrite an existing file with the given content. "
             "Creates parent directories automatically if they don't exist. "
             "Use a RELATIVE filename (e.g. `report.docx`) so the file lands in the "
-            "session's artifact folder and auto-promotes to the Artifacts panel; "
-            "do NOT write to an absolute path (it won't appear there) unless the "
-            "user explicitly gave you one."
+            "session's artifact folder and auto-promotes to the Artifacts panel. "
+            "WRITES ARE RESTRICTED TO THE ARTIFACT FOLDER: an absolute path, or a "
+            "relative path containing '..', that resolves OUTSIDE it is REFUSED with "
+            "an error — pass a plain relative filename, never an absolute path."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "File path to write to"},
+                "path": {"type": "string", "description": "Relative filename for the output (lands in your session artifact folder). Absolute paths and '..' escapes are refused."},
                 "content": {"type": "string", "description": "The full content to write to the file"},
                 "node": {"type": "string", "description": "Remote node name or 'tag:NAME' to execute on a remote node instead of locally"},
             },
@@ -852,7 +853,7 @@ TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Output file path (extension determines format)"},
+                "path": {"type": "string", "description": "Relative output filename, extension picks the format (e.g. `report.html`). It lands in your session artifact folder; absolute paths and '..' escapes are REFUSED."},
                 "content": {"type": "string", "description": "Markdown content to convert into the document"},
                 "style": {"type": "string", "description": "Optional style preset name (a file in the agent's skills/doc-styles/, e.g. 'corporate') — sets fonts/colors/layout deterministically. Omit for the built-in default look."},
             },

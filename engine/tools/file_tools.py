@@ -165,47 +165,18 @@ def tool_write_file(args: dict) -> str:
     path = args.get("path", "")
     content = args.get("content", "")
     try:
-        path = os.path.expanduser(path)
-        # Resolve the session's artifact dir (when in a chat) so we can both
-        # default relative paths into it AND warn on an absolute path that
-        # lands outside it.
-        session_id = get_request_context().current_session_id
-        agent = get_request_context().current_agent or _brain._current_agent
-        artifact_dir = ""
-        if session_id and agent:
-            folder = _get_artifact_session_folder(session_id)
-            artifact_dir = os.path.join(_brain.AGENTS_DIR, agent.agent_id, "artifacts", folder)
-        was_absolute = os.path.isabs(path)
-        if not was_absolute:
-            # Default relative paths to artifacts session folder during chat
-            if artifact_dir:
-                os.makedirs(artifact_dir, exist_ok=True)
-                path = os.path.join(artifact_dir, path)
-            else:
-                path = os.path.abspath(path)
+        # Hard guard: the resolved write path MUST be inside the session artifact
+        # folder (relative names default into it; absolute / .. escapes refused).
+        path, err = _enforce_artifact_path(path, "write_file")
+        if err:
+            return err
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w") as f:
             f.write(content)
         size = os.path.getsize(path)
         agent = get_request_context().current_agent or _brain._current_agent
         _brain._after_file_write(path, "created", agent.agent_id if agent else "main")
-        result = {"path": path, "size": size, "status": "written"}
-        # Warn when an ABSOLUTE path was written outside the artifact folder —
-        # it won't appear in the Artifacts panel. (Relative paths always land
-        # inside, so only the absolute case can stray.)
-        if was_absolute and artifact_dir:
-            try:
-                if not os.path.realpath(path).startswith(os.path.realpath(artifact_dir)):
-                    result["warning"] = (
-                        "Wrote to an absolute path OUTSIDE your session artifact "
-                        "folder — this file does NOT appear in the Artifacts panel "
-                        "and the user cannot see or download it. Re-save with a "
-                        "RELATIVE filename (e.g. `report.docx`) so it lands in your "
-                        "artifact folder, unless the user explicitly asked for "
-                        "this absolute path.")
-            except OSError:
-                pass
-        return _ok(result)
+        return _ok({"path": path, "size": size, "status": "written"})
     except Exception as e:
         return _err(f"write_file: {e}")
 
@@ -968,9 +939,12 @@ def tool_write_document(args: dict) -> str:
     content = args.get("content", "")
     _style = _load_doc_style(args.get("style", ""))
     try:
-        path = os.path.expanduser(path)
-        if not os.path.isabs(path):
-            path = os.path.abspath(path)
+        # Hard guard: resolved path MUST be inside the session artifact folder
+        # (relative names default into it; absolute / .. escapes refused). This
+        # also fixes the old relative→repo-root default.
+        path, err = _enforce_artifact_path(path, "write_document")
+        if err:
+            return err
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         ext = os.path.splitext(path)[1].lower()
         _doc_dir = os.path.dirname(path) or "."
@@ -1874,6 +1848,62 @@ def _stray_write_warning(text: str, artifact_dir: str | None) -> str:
         f"`report.docx`) so it lands in your artifact folder — unless the user "
         f"explicitly asked for that absolute path."
     )
+
+
+def _resolve_artifact_dir():
+    """Return (artifact_dir, agent_id) for the current chat/scheduled session, or
+    (None, agent_id) when there's no session context (CLI one-shots / warmup).
+    The artifact dir is the ONLY folder a file-writing tool may write into."""
+    import brain as _brain
+    session_id = get_request_context().current_session_id
+    agent = get_request_context().current_agent or _brain._current_agent
+    agent_id = agent.agent_id if agent else "main"
+    if session_id and agent:
+        folder = _get_artifact_session_folder(session_id)
+        return os.path.join(_brain.AGENTS_DIR, agent_id, "artifacts", folder), agent_id
+    return None, agent_id
+
+
+def _path_within(child: str, parent: str) -> bool:
+    """True if `child` is `parent` or lives underneath it (boundary-safe — uses
+    realpath + a separator guard so /x/artifacts-evil ≠ inside /x/artifacts)."""
+    try:
+        c = os.path.realpath(child)
+        p = os.path.realpath(parent)
+    except OSError:
+        return False
+    return c == p or c.startswith(p + os.sep)
+
+
+def _enforce_artifact_path(raw_path: str, tool: str):
+    """Resolve a model-supplied write path to its FINAL location and require it to
+    be inside the session artifact folder. Returns (final_path, error_or_None):
+
+      • relative input → joined into the artifact dir (the intended default).
+      • absolute (or relative that escapes via ..) input → must already resolve
+        inside the artifact dir, else an error is returned and the write is
+        REFUSED (no file is written). Covers both absolute AND relative paths —
+        the check is on the RESOLVED path, not the literal.
+      • no session context (CLI/warmup) → no artifact dir to enforce against;
+        fall back to abspath, no restriction.
+
+    This is the hard block: writing anywhere but the artifact folder is not
+    allowed, so the user always sees/downloads what the agent produced.
+    """
+    p = os.path.expanduser(raw_path or "")
+    artifact_dir, _ = _resolve_artifact_dir()
+    if not artifact_dir:
+        # No chat/scheduled session — nothing to scope to; keep prior behavior.
+        return (p if os.path.isabs(p) else os.path.abspath(p)), None
+    os.makedirs(artifact_dir, exist_ok=True)
+    final = p if os.path.isabs(p) else os.path.join(artifact_dir, p)
+    if not _path_within(final, artifact_dir):
+        return None, _err(
+            f"{tool}: writing outside your session artifact folder is not allowed. "
+            f"The path '{raw_path}' resolves outside it. Use a RELATIVE filename "
+            f"(just `name.ext`, e.g. `report.html`) so the file lands in your "
+            f"artifact folder — do NOT pass an absolute path or one with '..'.")
+    return final, None
 
 
 def _append_to_tool_result(res_json: str, suffix: str) -> str:

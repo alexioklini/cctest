@@ -81,7 +81,10 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
 
 - `read_file(path, start_line?, end_line?)` — read text file, optional line range
 - `write_file(path, content, mode?)` — create/overwrite; relative paths land
-  in the session's artifact folder
+  in the session's artifact folder. Writes are HARD-RESTRICTED to that folder:
+  an absolute path or a relative `..` escape that resolves outside it is REFUSED
+  with an error (v9.153.0). Same restriction on `write_document`. (CLI/warmup
+  with no session: unrestricted fallback.)
 - `edit_file(path, old_string, new_string, replace_all?)` — exact-string edit
 - `list_directory(path, recursive?)` — ls
 - `search_files(root, pattern, ...)` — grep / find
