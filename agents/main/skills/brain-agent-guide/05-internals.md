@@ -329,10 +329,18 @@ financial reports; verified on the WPB Konzernbilanz) | `markitdown` | `fitz`
 
 **Timeout + deterministic fallback (pymupdf4llm path):** pymupdf4llm's layout
 analysis can hang for MINUTES at 100% CPU on a big, table-dense PDF that fitz
-reads in 0.1s (chat 4aad5750: a 37-page list; web_fetch returned EMPTY). So the
-in-process extractors are bounded by `_PDF_EXTRACT_TIMEOUT_SECS` (60s) via
-`_run_with_timeout` (daemon thread — signal.alarm is main-thread-only). Chain:
-**pymupdf4llm → (timeout OR empty) → fitz get_text → (empty = true scan) → OCR.**
+reads in 0.1s (chat 4aad5750: a 37-page list; web_fetch returned EMPTY). The
+analysis is CPU-bound and UNINTERRUPTIBLE from Python — a daemon-thread timeout
+can only *abandon* it, leaving it to peg a core indefinitely (the 9.156.x "server
+down": one web-fetched PDF froze a chat turn for minutes while the server stayed
+HTTP-reachable for light GETs). So pymupdf4llm now runs in a HARD-KILLABLE
+SUBPROCESS (`_pymupdf4llm_subprocess`): `subprocess.run(timeout=_PDF_EXTRACT_TIMEOUT_SECS=60)`
+SIGKILLs the child on timeout and RECLAIMS the CPU. `_do_extract` calls
+`_extract_pdf_pymupdf4llm` directly (the subprocess is the single timeout
+authority; it raises `_ExtractTimeout` → fitz). ONE whole-doc subprocess call for
+all sizes (~1.8s for 18 pp; the old per-page loop spawned N subprocesses ≈8.6s —
+pure overhead now that the whole call is bounded). Chain:
+**pymupdf4llm (subprocess) → (timeout OR empty) → fitz get_text → (empty = true scan) → OCR.**
 "Empty" here also counts a pymupdf4llm output that is ONLY its image-placeholder
 lines (`**==> picture [W x H] intentionally omitted <==**`) — a scanned page emits
 one per embedded image (100+), so the raw line count looks substantial but holds
@@ -340,12 +348,11 @@ zero text; `_pymupdf4llm_is_blank()` strips those before the emptiness check so
 image-only PDFs actually reach OCR (fixed 9.157.1).
 markitdown is deliberately SKIPPED here — it bottoms out on pdfminer just like
 pymupdf4llm (≈same hang on the same input) AND gives no quality fitz can't
-deliver faster, so falling to it just doubled the stall. fitz is called DIRECTLY
-(not wrapped) so the abandoned, still-grinding pymupdf4llm daemon thread can't
-GIL-starve it. Large PDFs (>8 pp) run pymupdf4llm PER PAGE (live page-i/N
-progress + per-page 15s cap); small ones use one fast whole-doc call. (markitdown
-is still the primary path for `.docx/.pptx/.epub/.zip` and when pdf_engine is
-explicitly set to `markitdown`.) LICENSE: pymupdf4llm/PyMuPDF is AGPL-3.0
+deliver faster, so falling to it just doubled the stall. The fitz/pdfplumber
+LEGACY path (when `pdf_engine` != pymupdf4llm) keeps its thread-based
+`_run_with_timeout` (different extractor; bare fitz is GIL-releasing + sub-second).
+(markitdown is still the primary path for `.docx/.pptx/.epub/.zip` and when
+pdf_engine is explicitly set to `markitdown`.) LICENSE: pymupdf4llm/PyMuPDF is AGPL-3.0
 (Artifex) — fitz was already in use, so no new exposure.
 
 **Live tool progress** (`engine.context.report_tool_progress(phase, pct?,

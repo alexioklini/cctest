@@ -49,13 +49,10 @@ EXTRACT_SUBDIR = ".brain-extracted"
 # the next/faster engine. The abandoned thread keeps burning CPU until it
 # finishes, but it no longer blocks the turn.
 _PDF_EXTRACT_TIMEOUT_SECS = 60
-# PDFs with more than this many pages are extracted PER PAGE (live progress +
-# per-page timeout); smaller ones use one fast whole-doc call (no progress, no
-# ~2x per-page overhead). Small docs finish sub-second so progress isn't needed.
+# PDFs with more than this many pages get a coarse progress ping before the
+# (single, whole-doc) pymupdf4llm subprocess call, and per-page progress in the
+# fitz fallback. Smaller docs extract sub-second so progress isn't needed.
 _PDF_PERPAGE_THRESHOLD = 8
-# Per-page layout-analysis cap in the per-page path — a single pathological page
-# is skipped rather than hanging the whole document.
-_PDF_PERPAGE_TIMEOUT_SECS = 15
 
 
 class _ExtractTimeout(Exception):
@@ -790,6 +787,86 @@ def _pymupdf4llm_is_blank(md: str) -> bool:
     return True
 
 
+# Worker script run in a child process to extract one PDF (or a page subset)
+# via pymupdf4llm. Kept as a -c string (no separate file to ship/maintain).
+# Reads a JSON job from stdin {path, idxs|null, out}, writes the markdown to
+# the `out` temp file, prints a one-line JSON status to stdout. Runs in its OWN
+# process so the parent can SIGKILL it on timeout and RECLAIM the CPU — a plain
+# daemon-thread timeout only abandons the thread, which keeps grinding at 100%
+# on pathological PDFs (the v9.156.x incident: one web-fetched PDF pegged a core
+# for minutes after the 60s timeout, starving the chat turn).
+_PYMUPDF4LLM_WORKER = r"""
+import sys, json
+job = json.load(sys.stdin)
+try:
+    import pymupdf4llm
+    kwargs = {}
+    if job.get("idxs") is not None:
+        kwargs["pages"] = job["idxs"]
+    md = pymupdf4llm.to_markdown(job["path"], **kwargs)
+    with open(job["out"], "w", encoding="utf-8") as f:
+        f.write(md or "")
+    print(json.dumps({"ok": True}))
+except Exception as e:
+    print(json.dumps({"ok": False, "err": "%s: %s" % (type(e).__name__, e)}))
+"""
+
+
+def _pymupdf4llm_subprocess(path: str, idxs: list[int] | None,
+                            timeout_secs: float) -> tuple[str, str | None]:
+    """Run pymupdf4llm.to_markdown in a child process, hard-killed on timeout.
+
+    `idxs` = 0-based page indices to extract, or None for the whole document.
+    Returns (markdown, error). On timeout returns ("", "<timeout reason>") — the
+    child is SIGKILLed by subprocess.run so its CPU is reclaimed immediately
+    (unlike the thread-based _run_with_timeout, which can only abandon the
+    still-grinding worker). Mirrors _extract_with_markitdown's contract so the
+    caller's fallback chain (→ fitz → OCR) is unchanged.
+    """
+    import sys
+    import tempfile
+    out_fd, out_path = tempfile.mkstemp(suffix=".md", prefix="pmupdf4llm-")
+    os.close(out_fd)
+    try:
+        job = json.dumps({"path": path, "idxs": idxs, "out": out_path})
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", _PYMUPDF4LLM_WORKER],
+                input=job.encode("utf-8"),
+                capture_output=True,
+                timeout=timeout_secs,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            # subprocess.run has already killed the child here — CPU reclaimed.
+            return "", f"pymupdf4llm exceeded {timeout_secs:.0f}s (killed)"
+        except OSError as e:
+            return "", f"pymupdf4llm spawn failed: {type(e).__name__}: {e}"
+        if proc.returncode != 0:
+            err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+            return "", f"pymupdf4llm worker exit {proc.returncode}: {err[:200]}"
+        # Parse the worker's status line (last line of stdout).
+        status = {}
+        try:
+            line = (proc.stdout or b"").decode("utf-8", errors="replace").strip().splitlines()
+            if line:
+                status = json.loads(line[-1])
+        except (ValueError, IndexError):
+            pass
+        if not status.get("ok"):
+            return "", f"pymupdf4llm: {status.get('err', 'worker produced no status')}"
+        try:
+            with open(out_path, "r", encoding="utf-8") as f:
+                return f.read(), None
+        except OSError as e:
+            return "", f"pymupdf4llm read output failed: {type(e).__name__}: {e}"
+    finally:
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+
+
 def _extract_pdf_pymupdf4llm(path: str, *, pages: str | None = None) -> tuple[str, str | None]:
     """PDF → markdown via pymupdf4llm (a fitz wrapper). Renders tables + layout
     to GitHub-flavoured markdown far better than markitdown on structured docs
@@ -798,15 +875,17 @@ def _extract_pdf_pymupdf4llm(path: str, *, pages: str | None = None) -> tuple[st
     caller's OCR path). Missing dep / failure → error so the caller falls back.
     NOTE: pymupdf4llm/PyMuPDF is AGPL-3.0 (Artifex)."""
     try:
-        import pymupdf4llm  # type: ignore
         import fitz  # type: ignore
     except ImportError:
         return "", "pymupdf4llm not installed (pip install pymupdf4llm)"
     page_sel = _parse_index_selection(pages)
-    # Page list (0-based) to process; None → all pages.
+    # Page list (0-based) to process; None → all pages. fitz.open is a fast,
+    # GIL-releasing read just to count pages and pick the branch — the heavy
+    # pymupdf4llm layout analysis runs in the subprocess below.
     try:
         doc = fitz.open(path)
         n_total = doc.page_count
+        doc.close()
     except Exception as e:
         return "", f"pymupdf4llm open: {type(e).__name__}: {e}"
     if page_sel is not None:
@@ -814,53 +893,34 @@ def _extract_pdf_pymupdf4llm(path: str, *, pages: str | None = None) -> tuple[st
     else:
         idxs = list(range(n_total))
 
-    # Small docs (<= threshold): one fast whole-doc call — no per-page overhead,
-    # finishes in well under a second, progress isn't worth the ~2x cost.
-    # Larger docs: per-page so we can (a) emit real page-i/N % progress and
-    # (b) bound each page's layout analysis individually, so one pathological
-    # page can't hang the whole read. Both produce equivalent markdown.
-    try:
-        if len(idxs) <= _PDF_PERPAGE_THRESHOLD:
-            doc.close()
-            kwargs = {"pages": idxs} if page_sel is not None else {}
-            md = pymupdf4llm.to_markdown(path, **kwargs)
-            md = (md or "").strip()
-            if len(md.splitlines()) <= 1 or _pymupdf4llm_is_blank(md):
-                return "", None   # scanned/empty → caller's OCR path
-            return md + "\n", None
-        # Per-page with live progress. The OVERALL timeout is owned by the
-        # caller's _run_with_timeout wrapper (it raises _ExtractTimeout straight
-        # to _do_extract, which then switches to fitz) — so we do NOT swallow a
-        # systematically-slow doc here; we just bound EACH page so one bad page
-        # doesn't stall the whole read, and let the outer timeout handle a doc
-        # that's slow across the board.
-        parts = []
-        done = 0
-        for i in idxs:
-            _extract_progress("pymupdf4llm", current=done + 1, total=len(idxs),
-                              note=f"Seite {i + 1}")
-            try:
-                pmd = _run_with_timeout(
-                    lambda i=i: pymupdf4llm.to_markdown(doc, pages=[i], show_progress=False),
-                    _PDF_PERPAGE_TIMEOUT_SECS)
-            except _ExtractTimeout:
-                pmd = ""  # one slow page — skip; outer timeout catches a slow doc
-            if pmd:
-                parts.append(pmd)
-            done += 1
-        md = "\n".join(p for p in parts if p).strip()
-        if len(md.splitlines()) <= 1 or _pymupdf4llm_is_blank(md):
-            return "", None
-        return md + "\n", None
-    except _ExtractTimeout:
-        raise  # MUST propagate so _do_extract switches to fitz (not markitdown)
-    except Exception as e:
-        return "", f"pymupdf4llm: {type(e).__name__}: {e}"
-    finally:
-        try:
-            doc.close()
-        except Exception:
-            pass
+    # pymupdf4llm.to_markdown runs in ONE child process (hard-killable on
+    # timeout) instead of a daemon thread — see _pymupdf4llm_subprocess. The
+    # layout analysis is CPU-bound and uninterruptible from Python, so the old
+    # thread-based _run_with_timeout could only ABANDON a runaway, leaving it to
+    # peg a core indefinitely (the v9.156.x freeze). A subprocess timeout SIGKILLs
+    # the child and reclaims the CPU.
+    #
+    # A single whole-doc call handles all sizes: measured ~1.8s for an 18-page
+    # doc, vs ~8.6s if each page were its own subprocess (spawn overhead ×N).
+    # The old per-page loop existed to bound a single pathological page and to
+    # emit page-i/N progress; subprocess isolation already bounds the WHOLE call
+    # (one timeout, one kill), so the per-page spawning was pure overhead. We
+    # keep a coarse progress ping for big docs so the UI isn't silent.
+    if len(idxs) > _PDF_PERPAGE_THRESHOLD:
+        _extract_progress("pymupdf4llm", note=f"{len(idxs)} Seiten — Layout-Analyse")
+    sub_idxs = idxs if page_sel is not None else None
+    md, err = _pymupdf4llm_subprocess(path, sub_idxs, _PDF_EXTRACT_TIMEOUT_SECS)
+    if err:
+        # Timeout → propagate as _ExtractTimeout so _do_extract switches to fitz
+        # (not markitdown); other (hard) errors return as a plain error for the
+        # same fallback.
+        if "exceeded" in err:
+            raise _ExtractTimeout(err)
+        return "", err
+    md = (md or "").strip()
+    if len(md.splitlines()) <= 1 or _pymupdf4llm_is_blank(md):
+        return "", None   # scanned/empty → caller's OCR path
+    return md + "\n", None
 
 
 def _extract_pdf_fitz_fast(path: str, *, pages: str | None = None) -> tuple[str, str | None]:
@@ -1559,10 +1619,14 @@ def _do_extract(src: str, *, use_markitdown: bool = True,
         # 60s+ stall (chat 4aad5750). fitz is the correct next step.
         _timed_out = False
         p_text, p_err = "", None
+        # Call DIRECTLY — no _run_with_timeout wrapper. _extract_pdf_pymupdf4llm
+        # now runs pymupdf4llm in a hard-killable subprocess that owns the
+        # timeout and raises _ExtractTimeout itself; a second thread-based
+        # timeout on top would double the per-page budget and abandon a thread
+        # that's only blocked in subprocess.run. The subprocess is the single
+        # timeout authority, and it SIGKILLs the runaway (reclaiming the CPU).
         try:
-            p_text, p_err = _run_with_timeout(
-                lambda: _extract_pdf_pymupdf4llm(src, pages=pages),
-                _PDF_EXTRACT_TIMEOUT_SECS)
+            p_text, p_err = _extract_pdf_pymupdf4llm(src, pages=pages)
         except _ExtractTimeout:
             _timed_out = True
         if not _timed_out and not p_err and p_text:
@@ -1577,15 +1641,12 @@ def _do_extract(src: str, *, use_markitdown: bool = True,
             # the very PDFs that hang pymupdf4llm.
             if _timed_out:
                 print(f"[doc-convert] pymupdf4llm timed out after "
-                      f"{_PDF_EXTRACT_TIMEOUT_SECS}s on {src} — bare fitz read",
+                      f"{_PDF_EXTRACT_TIMEOUT_SECS}s on {src} — bare fitz read "
+                      f"(subprocess killed)",
                       flush=True)
             _extract_progress("fitz", note="Wechsel zu fitz (Textebene)")
-            # Call fitz DIRECTLY (no _run_with_timeout wrapper): bare get_text is
-            # inherently fast (sub-second even for dozens of pages) and releases
-            # the GIL in its C core, so it makes progress even while the
-            # abandoned (timed-out) pymupdf4llm daemon thread is still grinding.
-            # Wrapping it in another daemon-thread timeout let that CPU-bound
-            # pymupdf4llm thread starve it → fitz wrongly came back empty → OCR.
+            # Call fitz DIRECTLY: bare get_text is inherently fast (sub-second
+            # even for dozens of pages) and releases the GIL in its C core.
             f_text, f_err = _extract_pdf_fitz_fast(src, pages=pages)
             if not f_err and f_text:
                 return f_text, "fitz/fast", None
