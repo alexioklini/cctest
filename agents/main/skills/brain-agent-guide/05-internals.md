@@ -356,6 +356,17 @@ source — no stale/old-version noise.
 This is a DIFFERENT mechanism from project `web_urls` (mined into the
 project wing/KG by the project-sync daemon) — do not merge them.
 
+**Project-sync cadence + restart gate.** The daemon runs its first pass ~25s
+after boot, then sleeps `mempalace.project_sync.interval_seconds` (default
+21600s/6h) between cycles. It keeps no in-memory clock, so to stop a RESTART from
+re-triggering a not-yet-due sync it gates each SCHEDULED project on
+`sync_log.last_completed_at(project_id)` (newest `state='idle'` run in
+`project_sync_runs`): if `now - last_completed < interval`, skip this cycle. A
+manual "Sync now" always runs; a never-synced project always runs;
+error/cancelled runs don't count (they retry next pass). So the interval now
+survives restarts (v9.153.1). [The April 2026 change only removed the destructive
+startup-WIPE — the incremental boot pass was never disabled until this gate.]
+
 **Project `web_urls` refresh is cost-gated** (not re-fetched every cycle).
 Per-URL state lives in `web-urls/.fetch-state.json`. A URL is (A) SKIPPED with
 no network if its on-disk copy is younger than `project_sync.web_url_refresh_seconds`

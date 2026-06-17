@@ -1791,6 +1791,21 @@ def _project_sync_loop(srv):
                         print(f"[project-sync] skip {agent_id}/{proj_name}: "
                               f"no project id", flush=True)
                         continue
+                    # Due-gate: skip a SCHEDULED pass when this project's last
+                    # successful sync is still within the interval. This makes the
+                    # interval survive a server RESTART (the loop runs its first
+                    # pass immediately on boot + keeps no in-memory clock, so
+                    # without this every restart re-triggered a full pass). Manual
+                    # "Sync now" (is_manual) always runs; a never-synced project
+                    # (last=None) always runs.
+                    if not is_manual:
+                        _last = _sync_log.last_completed_at(chats_db_path, project_id)
+                        if _last is not None and (time.time() - _last) < interval:
+                            _age = int(time.time() - _last)
+                            print(f"[project-sync] skip {agent_id}/{proj_name}: "
+                                  f"not due ({_age}s since last sync < {interval}s "
+                                  f"interval)", flush=True)
+                            continue
                     wing = _project_wing(project_id)
                     # Per-project KG method/profile override (project.json) for
                     # the _run_kg_for closure this iteration. Empty = inherit the

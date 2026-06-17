@@ -168,6 +168,28 @@ def get_runs(chats_db_path: str, project_id: str, limit: int = 20) -> list[dict]
         return []
 
 
+def last_completed_at(chats_db_path: str, project_id: str) -> float | None:
+    """Epoch seconds of this project's most recent SUCCESSFULLY-finished sync run,
+    or None if it has never completed one. Used to gate scheduled passes so a
+    server restart doesn't re-trigger a not-yet-due sync (the interval survives
+    restarts). A successful pass finishes 'idle' (the daemon's success state,
+    incl. dedup-only cycles that filed nothing); 'error'/'cancelled'/unfinished
+    don't count, so those retry on the next pass."""
+    _maybe_ensure(chats_db_path)
+    try:
+        with _db(chats_db_path) as con:
+            row = con.execute(
+                "SELECT finished_at FROM project_sync_runs "
+                "WHERE project_id=? AND state='idle' AND finished_at IS NOT NULL "
+                "ORDER BY finished_at DESC LIMIT 1",
+                (project_id,),
+            ).fetchone()
+            return float(row["finished_at"]) if row and row["finished_at"] else None
+    except Exception as e:
+        print(f"[sync_log] last_completed_at failed: {e}", flush=True)
+        return None
+
+
 def log_purge_actions(chats_db_path: str, run_id: int, actions: list[dict]):
     """Append purge action records to log.purge_actions for a full-resync run.
 
