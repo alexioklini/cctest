@@ -2521,14 +2521,41 @@ const _DOC_STYLE_FIELDS = [
     { path: 'mermaid.theme',      label: 'Theme',       type: 'choice', choices: ['default', 'dark', 'forest', 'neutral'] },
     { path: 'mermaid.background', label: 'Hintergrund', type: 'text', ph: 'white' },
   ]},
+  // Header / footer / logo apply to .docx + .pdf (page header & footer) and, for
+  // the logo + footer text, to .pptx slides. {page} / {date} tokens in the text
+  // render the live page number / current date. Empty text/logo = nothing drawn.
+  { group: 'Kopfzeile', icon: '🔝', fields: [
+    { path: 'header.text',      label: 'Text ({page}/{date})', type: 'text', ph: 'z.B. Firmenname  {date}', full: true },
+    { path: 'header.align',     label: 'Ausrichtung', type: 'choice', choices: ['left', 'center', 'right'] },
+    { path: 'header.font_size', label: 'Größe (pt)',  type: 'num', min: 6, max: 24 },
+    { path: 'header.color',     label: 'Farbe',       type: 'color' },
+  ]},
+  { group: 'Fußzeile', icon: '🔻', fields: [
+    { path: 'footer.text',         label: 'Text ({page}/{date})', type: 'text', ph: 'z.B. Vertraulich', full: true },
+    { path: 'footer.align',        label: 'Ausrichtung', type: 'choice', choices: ['left', 'center', 'right'] },
+    { path: 'footer.font_size',    label: 'Größe (pt)',  type: 'num', min: 6, max: 24 },
+    { path: 'footer.color',        label: 'Farbe',       type: 'color' },
+    { path: 'footer.page_numbers', label: 'Seitenzahlen', type: 'bool' },
+  ]},
+  { group: 'Logo', icon: '🖼️', fields: [
+    { path: 'logo.__upload',   label: 'Logo-Bild', type: 'logo', full: true },
+    { path: 'logo.position',   label: 'Position',  type: 'choice', choices: ['header', 'footer', 'slide', 'none'] },
+    { path: 'logo.align',      label: 'Ausrichtung', type: 'choice', choices: ['left', 'center', 'right'] },
+    { path: 'logo.width_inch', label: 'Breite (inch)', type: 'num', min: 0.3, max: 6, step: 0.1 },
+  ]},
 ];
 
 function _dsGet(obj, path) {
   return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
 
+// Pending logo upload state for the editor: base64 data + ext when the user
+// picks a new file, the existing filename when editing, and a remove flag.
+let _dsLogo = { data: null, ext: '', file: '', remove: false };
+
 function docStyleNew() {
   const defaults = (state._docStyles && state._docStyles.defaults) || {};
+  _dsLogo = { data: null, ext: '', file: '', remove: false };
   _docStyleRenderEditor('', { name: '', description: '', ...defaults });
 }
 
@@ -2538,6 +2565,8 @@ async function docStyleEdit(name) {
     // `parsed` is the preset deep-merged over defaults (full shape). Fall back
     // to defaults if the server is old and didn't send it.
     const parsed = d.parsed || (state._docStyles && state._docStyles.defaults) || {};
+    // Seed logo state from the saved preset so the preview shows the existing logo.
+    _dsLogo = { data: null, ext: '', file: ((parsed.logo || {}).file || ''), remove: false };
     _docStyleRenderEditor(d.name || name, parsed);
   } catch (e) { showToast('Laden fehlgeschlagen: ' + (e.message || e), true); }
 }
@@ -2549,10 +2578,28 @@ function _docStyleRenderEditor(name, data) {
   const fieldHtml = (f) => {
     const v = _dsGet(data, f.path);
     const id = fid(f.path);
+    const span = f.full ? 'grid-column:1/-1;' : '';
     const lbl = `<label style="font-size:11px;color:var(--text-300);display:block;margin-bottom:3px">${esc(f.label)}</label>`;
+    if (f.type === 'logo') {
+      // File picker + thumbnail + remove. The actual bytes live in _dsLogo;
+      // the saved YAML's logo.file is derived at save time from the preset name.
+      const hasFile = !!_dsLogo.file;
+      const thumb = _dsLogo.data
+        ? _dsLogo.data
+        : (hasFile ? ('/v1/doc-styles?logo=' + encodeURIComponent(_dsLogo.file)) : '');
+      return `<div style="${span}">${lbl}
+        <div style="display:flex;align-items:center;gap:10px">
+          <img id="ds-logo-thumb" src="${esc(thumb)}" alt=""
+               style="height:40px;max-width:140px;object-fit:contain;border:1px solid var(--border-200);border-radius:5px;background:#fff;${thumb ? '' : 'display:none'}">
+          <input type="file" accept="image/*" onchange="_docStyleLogoPick(this)"
+                 style="font-size:12px;color:var(--text-200)">
+          <button type="button" class="btn-secondary" style="padding:3px 8px;font-size:11px;color:var(--error);${(thumb ? '' : 'display:none')}"
+                  id="ds-logo-remove" onclick="_docStyleLogoRemove()">Entfernen</button>
+        </div></div>`;
+    }
     if (f.type === 'color') {
       const hex = (typeof v === 'string' && v) ? v : '#000000';
-      return `<div>${lbl}<div style="display:flex;align-items:center;gap:6px">
+      return `<div style="${span}">${lbl}<div style="display:flex;align-items:center;gap:6px">
         <input type="color" id="${id}" data-ds-path="${f.path}" data-ds-type="color" value="${esc(hex)}"
           oninput="document.getElementById('${id}-hex').value=this.value;_docStylePreview()"
           style="width:34px;height:28px;padding:0;border:1px solid var(--border-200);border-radius:5px;background:none;cursor:pointer">
@@ -2562,18 +2609,18 @@ function _docStyleRenderEditor(name, data) {
       </div></div>`;
     }
     if (f.type === 'num') {
-      return `<div>${lbl}<input type="number" id="${id}" data-ds-path="${f.path}" data-ds-type="num"
+      return `<div style="${span}">${lbl}<input type="number" id="${id}" data-ds-path="${f.path}" data-ds-type="num"
         value="${v ?? ''}" ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''} step="${f.step || 1}"
         oninput="_docStylePreview()"
         style="width:100%;padding:4px 6px;font-size:13px;border:1px solid var(--border-200);border-radius:5px;background:var(--bg-000);color:var(--text-100)"></div>`;
     }
     if (f.type === 'bool') {
-      return `<div style="display:flex;align-items:center;gap:8px;padding-top:18px">
+      return `<div style="${span}display:flex;align-items:center;gap:8px;padding-top:18px">
         <input type="checkbox" id="${id}" data-ds-path="${f.path}" data-ds-type="bool" ${v ? 'checked' : ''} onchange="_docStylePreview()">
         <label for="${id}" style="font-size:12px;color:var(--text-200);cursor:pointer">${esc(f.label)}</label></div>`;
     }
     if (f.type === 'choice') {
-      return `<div>${lbl}<select id="${id}" data-ds-path="${f.path}" data-ds-type="choice" onchange="_docStylePreview()"
+      return `<div style="${span}">${lbl}<select id="${id}" data-ds-path="${f.path}" data-ds-type="choice" onchange="_docStylePreview()"
         style="width:100%;padding:4px 6px;font-size:13px;border:1px solid var(--border-200);border-radius:5px;background:var(--bg-000);color:var(--text-100)">
         ${f.choices.map(c => `<option value="${esc(c)}" ${v === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></div>`;
     }
@@ -2581,13 +2628,13 @@ function _docStyleRenderEditor(name, data) {
       const FONTS = ['Calibri', 'Arial', 'Helvetica', 'Times New Roman', 'Georgia', 'Garamond', 'Verdana', 'Tahoma', 'Cambria', 'Consolas', 'Courier New', 'Roboto', 'Open Sans', 'Lato'];
       const cur = typeof v === 'string' ? v : '';
       const known = FONTS.includes(cur);
-      return `<div>${lbl}<input list="ds-fontlist" id="${id}" data-ds-path="${f.path}" data-ds-type="text"
+      return `<div style="${span}">${lbl}<input list="ds-fontlist" id="${id}" data-ds-path="${f.path}" data-ds-type="text"
         value="${esc(cur)}" oninput="_docStylePreview()" placeholder="Schriftname"
         style="width:100%;padding:4px 6px;font-size:13px;border:1px solid var(--border-200);border-radius:5px;background:var(--bg-000);color:var(--text-100)">
         ${known ? '' : ''}</div>`;
     }
     // text
-    return `<div>${lbl}<input type="text" id="${id}" data-ds-path="${f.path}" data-ds-type="text"
+    return `<div style="${span}">${lbl}<input type="text" id="${id}" data-ds-path="${f.path}" data-ds-type="text"
       value="${esc(typeof v === 'string' ? v : (v ?? ''))}" placeholder="${esc(f.ph || '')}" oninput="_docStylePreview()"
       style="width:100%;padding:4px 6px;font-size:13px;border:1px solid var(--border-200);border-radius:5px;background:var(--bg-000);color:var(--text-100)"></div>`;
   };
@@ -2631,6 +2678,40 @@ function _docStyleRenderEditor(name, data) {
   _docStylePreview();
 }
 
+// Logo file picked in the editor → read as base64, stash in _dsLogo, refresh.
+function _docStyleLogoPick(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { showToast('Logo zu groß (max 5 MB)', true); input.value = ''; return; }
+  const m = (file.name.match(/\.[a-z0-9]+$/i) || ['.png'])[0].toLowerCase();
+  const reader = new FileReader();
+  reader.onload = () => {
+    _dsLogo = { data: reader.result, ext: m, file: _dsLogo.file, remove: false };
+    const thumb = document.getElementById('ds-logo-thumb');
+    if (thumb) { thumb.src = reader.result; thumb.style.display = ''; }
+    const rm = document.getElementById('ds-logo-remove'); if (rm) rm.style.display = '';
+    _docStylePreview();
+  };
+  reader.readAsDataURL(file);
+}
+
+function _docStyleLogoRemove() {
+  _dsLogo = { data: null, ext: '', file: '', remove: true };
+  const thumb = document.getElementById('ds-logo-thumb'); if (thumb) { thumb.src = ''; thumb.style.display = 'none'; }
+  const rm = document.getElementById('ds-logo-remove'); if (rm) rm.style.display = 'none';
+  _docStylePreview();
+}
+
+// Derive the logo filename that will be saved for a preset (matches the server's
+// <slug>.logo<ext> naming). Empty if no logo is set / it was removed.
+function _docStyleLogoFile() {
+  if (_dsLogo.remove) return '';
+  const slug = ((document.getElementById('doc-style-name')?.value || '').trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '')) || 'neu';
+  if (_dsLogo.data) return `${slug}.logo${_dsLogo.ext || '.png'}`;
+  return _dsLogo.file || '';
+}
+
 // Read every form field back into a nested style object keyed by the field paths.
 function _docStyleCollect() {
   const out = {};
@@ -2648,6 +2729,11 @@ function _docStyleCollect() {
     for (let i = 0; i < keys.length - 1; i++) o = (o[keys[i]] = o[keys[i]] || {});
     o[keys[keys.length - 1]] = v;
   });
+  // The logo file isn't a plain form field (it's an upload) — inject its name so
+  // _load_doc_style finds <slug>.logo<ext> next to the preset on disk.
+  const lf = _docStyleLogoFile();
+  if (lf) { out.logo = out.logo || {}; out.logo.file = lf; }
+  else if (out.logo) { delete out.logo.file; if (!Object.keys(out.logo).length) delete out.logo; }
   return out;
 }
 
@@ -2685,7 +2771,23 @@ function _docStylePreview() {
   const s = _docStyleCollect();
   const c = s.colors || {}, f = s.fonts || {}, sz = s.sizes || {};
   const fb = f.body || 'Calibri', fh = f.heading || fb, fm = f.mono || 'Consolas';
+  // Header / footer / logo bands (mirror what the doc tools draw on each page).
+  const hdr = s.header || {}, ftr = s.footer || {}, logo = s.logo || {};
+  const tok = t => String(t || '').replace('{page}', '1').replace('{date}', new Date().toISOString().slice(0, 10));
+  const logoSrc = _dsLogo.remove ? '' : (_dsLogo.data || (_dsLogo.file ? '/v1/doc-styles?logo=' + encodeURIComponent(_dsLogo.file) : ''));
+  const logoPos = (logo.position || 'header').toLowerCase();
+  const logoImg = (where) => (logoSrc && logoPos === where && logoPos !== 'none')
+    ? `<img src="${esc(logoSrc)}" style="height:${Math.min(28, (logo.width_inch || 1.2) * 14)}px;max-width:90px;object-fit:contain;float:${esc((logo.align || 'right') === 'center' ? 'none' : (logo.align || 'right'))};${(logo.align === 'center') ? 'display:block;margin:0 auto' : ''}">` : '';
+  const band = (spec, where, withPage) => {
+    let txt = tok(spec.text);
+    if (where === 'footer' && spec.page_numbers && !String(spec.text || '').includes('{page}'))
+      txt = (txt ? txt + '  ' : '') + 'Seite 1';
+    if (!txt && !logoImg(where)) return '';
+    return `<div style="font-family:'${esc(fb)}',sans-serif;font-size:${(spec.font_size || 9)}px;color:${esc(spec.color || '#666')};text-align:${esc(spec.align || (where === 'footer' ? 'center' : 'left'))};padding:4px 14px;border-${where === 'header' ? 'bottom' : 'top'}:1px solid #eee;overflow:hidden">${logoImg(where)}${esc(txt)}</div>`;
+  };
   box.innerHTML = `
+    <div style="background:#fff">
+    ${band(hdr, 'header', true)}
     <div style="padding:12px 14px;background:#fff">
       <div style="font-family:'${esc(fh)}',sans-serif;color:${esc(c.heading || '#1F3864')};font-size:${(sz.h1 || 20)}px;font-weight:700;line-height:1.15">Überschrift 1</div>
       <div style="font-family:'${esc(fh)}',sans-serif;color:${esc(c.heading || '#1F3864')};font-size:${(sz.h2 || 16)}px;font-weight:700;margin-top:6px">Überschrift 2</div>
@@ -2697,6 +2799,8 @@ function _docStylePreview() {
             <th style="background:${esc(c.table_header_bg || '#1F3864')};color:${esc(c.table_header_text || '#fff')};padding:3px 6px;text-align:left;border:1px solid #ddd">Spalte B</th></tr>
         <tr><td style="color:${esc(c.body || '#222')};padding:3px 6px;border:1px solid #ddd">Zeile 1</td><td style="color:${esc(c.body || '#222')};padding:3px 6px;border:1px solid #ddd">Wert</td></tr>
       </table>
+    </div>
+    ${band(ftr, 'footer', true)}
     </div>`;
   const yp = document.getElementById('doc-style-yaml-preview');
   if (yp) {
@@ -2711,8 +2815,11 @@ async function docStyleSave() {
   const desc = document.getElementById('doc-style-desc')?.value || '';
   if (!name) { showToast('Name erforderlich', true); return; }
   const yamlText = _docStyleToYaml(name, desc, _docStyleCollect());
+  const payload = { name, yaml: yamlText };
+  if (_dsLogo.data) { payload.logo_data = _dsLogo.data; payload.logo_ext = _dsLogo.ext || '.png'; }
+  else if (_dsLogo.remove) { payload.logo_remove = true; }
   try {
-    await API.post('/v1/doc-styles', { name, yaml: yamlText });
+    await API.post('/v1/doc-styles', payload);
     showToast('Stil gespeichert');
     const C = document.getElementById('general-tab-content');
     if (C) await _genTab_doc_styles(C);

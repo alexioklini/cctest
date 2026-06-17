@@ -46,3 +46,28 @@ pptx:
 mermaid:
   theme: neutral         # default | dark | forest | neutral
   background: white
+
+# Running page header (docx + pdf). `text` supports {page} and {date} tokens.
+# Leave text empty (and logo.position != header) for no header.
+header:
+  text: ""               # e.g. "ACME GmbH  {date}"
+  align: left            # left | center | right
+  font_size: 9
+  color: "#666666"
+
+# Running page footer (docx + pdf; text + page-number band also on pptx slides).
+footer:
+  text: ""               # e.g. "Vertraulich"
+  align: center
+  font_size: 9
+  color: "#666666"
+  page_numbers: false    # true → append a live page number
+
+# Logo image. Upload it in the GUI editor (stored as <name>.logo.<ext> next to
+# this file); `file` then references that basename. position picks where it sits:
+# header / footer (docx+pdf+pptx) or slide (pptx corner) or none.
+logo:
+  file: ""               # e.g. "corporate.logo.png"
+  width_inch: 1.2
+  align: right           # left | center | right
+  position: header       # header | footer | slide | none

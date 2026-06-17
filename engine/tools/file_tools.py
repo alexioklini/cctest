@@ -414,6 +414,13 @@ _DEFAULT_DOC_STYLE = {
     "pptx": {"title_color": "#1F3864", "body_color": "#222222",
              "accent": "#2E74B5", "background": "#FFFFFF"},
     "mermaid": {"theme": "default", "background": "white"},
+    # Running header/footer + logo, applied to paginated formats (docx/pdf) and,
+    # for the logo + footer text, to pptx slides. Empty text/file = not rendered.
+    # `text` supports {page} and {date} tokens (page-number / current date).
+    "header": {"text": "", "align": "left", "font_size": 9, "color": "#666666"},
+    "footer": {"text": "", "align": "center", "font_size": 9,
+               "color": "#666666", "page_numbers": False},
+    "logo": {"file": "", "width_inch": 1.2, "align": "right", "position": "header"},
 }
 
 
@@ -474,6 +481,255 @@ def _resolve_doc_image(src: str, doc_dir: str) -> str | None:
     return None
 
 
+def _resolve_style_logo(style: dict) -> str | None:
+    """Resolve a doc-style preset's logo image to an existing path.
+    `logo.file` is a bare filename stored alongside the preset YAML
+    (agents/<agent>/skills/doc-styles/<file>), uploaded via the GUI editor.
+    Returns the absolute path or None (missing / empty / not found)."""
+    import brain as _brain
+    fn = ((style.get("logo") or {}).get("file") or "").strip()
+    if not fn:
+        return None
+    try:
+        agent = get_request_context().current_agent or _brain._current_agent
+        agent_id = agent.agent_id if agent else "main"
+        p = os.path.join(_brain.AGENTS_DIR, agent_id, "skills", "doc-styles",
+                         os.path.basename(fn))
+        return p if os.path.isfile(p) else None
+    except Exception:
+        return None
+
+
+def _hdrftr_text(raw: str, *, page: bool = False) -> str:
+    """Substitute {date} (and strip {page} for renderers that inject the page
+    number as a field/canvas draw separately). `page=True` leaves {page} for the
+    caller to handle; otherwise removes it. Returns '' for falsy input."""
+    import datetime
+    s = str(raw or "")
+    if not s:
+        return ""
+    s = s.replace("{date}", datetime.date.today().isoformat())
+    if not page:
+        s = s.replace("{page}", "")
+    return s
+
+
+def _apply_pptx_logo_footer(prs, style: dict):
+    """Place the preset's logo (any non-'none' position → a corner image) and
+    footer text band on every slide of a presentation. Slides have no native
+    page header/footer, so this draws plain shapes; {page} → slide number."""
+    from pptx.util import Inches, Pt, Emu
+    from pptx.dml.color import RGBColor as _PRGB
+    from pptx.enum.text import PP_ALIGN
+    logo = style.get("logo") or {}
+    ftr = style.get("footer") or {}
+    logo_path = _resolve_style_logo(style)
+    show_logo = bool(logo_path) and (logo.get("position") or "header").lower() != "none"
+    ftr_text = str(ftr.get("text") or "").strip()
+    page_nums = bool(ftr.get("page_numbers"))
+    if not (show_logo or ftr_text or page_nums):
+        return
+    sw, sh = prs.slide_width, prs.slide_height
+    margin = Inches(0.3)
+    f_align = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER,
+               "right": PP_ALIGN.RIGHT}.get((ftr.get("align") or "center").lower(),
+                                            PP_ALIGN.CENTER)
+    f_col = _hex_rgb(ftr.get("color"))
+    f_size = float(ftr.get("font_size") or 9)
+    for idx, slide in enumerate(prs.slides, start=1):
+        if show_logo:
+            try:
+                w = Inches(float(logo.get("width_inch") or 1.2))
+                a = (logo.get("align") or "right").lower()
+                top = margin if (logo.get("position") or "header").lower() != "footer" \
+                    else sh - margin - w
+                x = margin if a == "left" else (sw - margin - w if a == "right"
+                                                else int((sw - w) / 2))
+                slide.shapes.add_picture(logo_path, x, top, width=w)
+            except Exception:
+                pass
+        f_raw = ftr_text
+        if page_nums and "{page}" not in f_raw:
+            f_raw = (f_raw + "  Folie {page}").strip() if f_raw else "Folie {page}"
+        if f_raw:
+            try:
+                txt = _hdrftr_text(f_raw, page=True).replace("{page}", str(idx))
+                box = slide.shapes.add_textbox(margin, sh - Inches(0.45),
+                                               sw - 2 * margin, Inches(0.35))
+                tf = box.text_frame
+                tf.word_wrap = False
+                p = tf.paragraphs[0]
+                p.alignment = f_align
+                run = p.add_run(); run.text = txt
+                run.font.size = Pt(f_size)
+                if f_col:
+                    run.font.color.rgb = _PRGB(*f_col)
+            except Exception:
+                pass
+
+
+def _make_pdf_hdrftr_cb(style: dict, pagesize, margin, inch, hexcolor):
+    """Build a reportlab onPage(canvas, doc) callback drawing the preset's running
+    header/footer text (with {page}/{date} tokens) + logo on every page. Returns
+    None if the preset has no header/footer/logo to render."""
+    hdr = style.get("header") or {}
+    ftr = style.get("footer") or {}
+    logo = style.get("logo") or {}
+    logo_path = _resolve_style_logo(style)
+    logo_pos = (logo.get("position") or "header").lower()
+    hdr_text = str(hdr.get("text") or "").strip()
+    ftr_text = str(ftr.get("text") or "").strip()
+    page_nums = bool(ftr.get("page_numbers"))
+    has_logo = bool(logo_path) and logo_pos in ("header", "footer")
+    if not (hdr_text or ftr_text or page_nums or has_logo):
+        return None
+    pw, ph = pagesize
+    left, right = margin, pw - margin
+
+    def _xpos(align, text_w):
+        a = (align or "left").lower()
+        if a == "center":
+            return (left + right) / 2 - text_w / 2
+        if a == "right":
+            return right - text_w
+        return left
+
+    def _draw_text(canvas, spec, raw, y, page_num):
+        txt = _hdrftr_text(raw, page=True).replace("{page}", str(page_num))
+        if not txt:
+            return
+        size = float(spec.get("font_size") or 9)
+        canvas.setFont("Helvetica", size)
+        col = spec.get("color")
+        if col:
+            try:
+                canvas.setFillColor(hexcolor(col))
+            except Exception:
+                pass
+        tw = canvas.stringWidth(txt, "Helvetica", size)
+        canvas.drawString(_xpos(spec.get("align"), tw), y, txt)
+
+    def _draw_logo(canvas, y_baseline, in_header):
+        if not has_logo:
+            return
+        try:
+            from reportlab.lib.utils import ImageReader
+            img = ImageReader(logo_path)
+            iw, ih = img.getSize()
+            w = float(logo.get("width_inch") or 1.2) * inch
+            h = w * (ih / iw) if iw else w
+            a = (logo.get("align") or "right").lower()
+            x = left if a == "left" else (right - w if a == "right"
+                                          else (left + right) / 2 - w / 2)
+            # Header logo grows upward from the header baseline; footer downward.
+            y = y_baseline if in_header else (y_baseline - h)
+            canvas.drawImage(img, x, y, width=w, height=h,
+                             preserveAspectRatio=True, mask="auto")
+        except Exception:
+            pass
+
+    def _cb(canvas, doc):
+        canvas.saveState()
+        pn = canvas.getPageNumber()
+        hy = ph - margin + 0.25 * inch   # header baseline, inside top margin
+        fy = margin - 0.35 * inch        # footer baseline, inside bottom margin
+        if hdr_text:
+            _draw_text(canvas, hdr, hdr_text, hy, pn)
+        f_raw = ftr_text
+        if page_nums and "{page}" not in f_raw:
+            f_raw = (f_raw + "  Seite {page}").strip() if f_raw else "Seite {page}"
+        if f_raw:
+            _draw_text(canvas, ftr, f_raw, fy, pn)
+        if logo_pos == "header":
+            _draw_logo(canvas, hy, in_header=True)
+        elif logo_pos == "footer":
+            _draw_logo(canvas, fy, in_header=False)
+        canvas.restoreState()
+    return _cb
+
+
+def _docx_align(name: str):
+    """Map 'left|center|right' → docx WD_ALIGN_PARAGRAPH (default LEFT)."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH as _A
+    return {"left": _A.LEFT, "center": _A.CENTER, "right": _A.RIGHT}.get(
+        (name or "left").lower(), _A.LEFT)
+
+
+def _docx_add_page_field(paragraph):
+    """Append a Word PAGE field (live page number) to a paragraph run.
+    python-docx has no field API, so emit the field XML directly."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    run = paragraph.add_run()
+    fld_begin = OxmlElement("w:fldChar"); fld_begin.set(qn("w:fldCharType"), "begin")
+    instr = OxmlElement("w:instrText"); instr.set(qn("xml:space"), "preserve")
+    instr.text = "PAGE"
+    fld_end = OxmlElement("w:fldChar"); fld_end.set(qn("w:fldCharType"), "end")
+    run._r.append(fld_begin); run._r.append(instr); run._r.append(fld_end)
+
+
+def _docx_fill_hdrftr(container, spec: dict, *, logo_path, logo_spec, page_token: bool):
+    """Populate a docx header/footer container (section.header/footer) with the
+    preset text (+{page}/{date} tokens), alignment, size, color, and optional
+    logo picture. `container` is a _Header/_Footer; reuses its first paragraph."""
+    from docx.shared import Pt, RGBColor, Inches
+    para = container.paragraphs[0] if container.paragraphs else container.add_paragraph()
+    para.alignment = _docx_align(spec.get("align"))
+    size = spec.get("font_size"); col = _hex_rgb(spec.get("color"))
+    text = str(spec.get("text") or "")
+    # Logo first (so a left/center logo sits before the text run).
+    if logo_path:
+        try:
+            w = float((logo_spec or {}).get("width_inch") or 1.2)
+            para.alignment = _docx_align((logo_spec or {}).get("align"))
+            para.add_run().add_picture(logo_path, width=Inches(w))
+            if text:
+                para.add_run("  ")
+        except Exception:
+            pass
+    # Text, splitting on {page} so the page field renders live.
+    segments = text.split("{page}") if page_token else [_hdrftr_text(text)]
+    for idx, seg in enumerate(segments):
+        seg = _hdrftr_text(seg) if page_token else seg
+        if seg:
+            r = para.add_run(seg)
+            if size:
+                r.font.size = Pt(float(size))
+            if col:
+                r.font.color.rgb = RGBColor(*col)
+        if page_token and idx < len(segments) - 1:
+            _docx_add_page_field(para)
+
+
+def _apply_docx_header_footer(doc, style: dict, doc_dir: str):
+    """Apply preset header/footer/logo to every section of a docx."""
+    hdr = style.get("header") or {}
+    ftr = style.get("footer") or {}
+    logo = style.get("logo") or {}
+    logo_path = _resolve_style_logo(style)
+    logo_pos = (logo.get("position") or "header").lower()
+    has_hdr = bool(str(hdr.get("text") or "").strip()) or (logo_path and logo_pos == "header")
+    # Footer renders if it has text, page numbers, or holds the logo.
+    ftr_text = str(ftr.get("text") or "").strip()
+    has_ftr = bool(ftr_text) or bool(ftr.get("page_numbers")) or (logo_path and logo_pos == "footer")
+    if not (has_hdr or has_ftr):
+        return
+    for sec in doc.sections:
+        if has_hdr:
+            _docx_fill_hdrftr(sec.header, hdr,
+                              logo_path=logo_path if logo_pos == "header" else None,
+                              logo_spec=logo, page_token=True)
+        if has_ftr:
+            # Auto-append a page number if page_numbers is on and {page} absent.
+            f_spec = dict(ftr)
+            if ftr.get("page_numbers") and "{page}" not in str(f_spec.get("text") or ""):
+                base = str(f_spec.get("text") or "").strip()
+                f_spec["text"] = (base + "  Seite {page}").strip() if base else "Seite {page}"
+            _docx_fill_hdrftr(sec.footer, f_spec,
+                              logo_path=logo_path if logo_pos == "footer" else None,
+                              logo_spec=logo, page_token=True)
+
+
 def tool_write_document(args: dict) -> str:
     """Create documents from markdown content. Markdown ![alt](file) image
     references are EMBEDDED (docx/pptx/pdf) — pair with render_diagram to put
@@ -518,6 +774,12 @@ def tool_write_document(args: dict) -> str:
                             _hs.font.color.rgb = RGBColor(*_hc)
                     except KeyError:
                         pass
+            except Exception:
+                pass
+            # Running header / footer + logo (deterministic). python-docx exposes
+            # section.header/footer paragraphs; the page-number is a Word field.
+            try:
+                _apply_docx_header_footer(doc, _style, _doc_dir)
             except Exception:
                 pass
             lines = content.split("\n")
@@ -678,6 +940,10 @@ def tool_write_document(args: dict) -> str:
                                 pass
             for _sl in prs.slides:
                 _style_slide(_sl)
+            try:
+                _apply_pptx_logo_footer(prs, _style)
+            except Exception:
+                pass
             prs.save(path)
 
         elif ext == ".pdf":
@@ -748,7 +1014,11 @@ def tool_write_document(args: dict) -> str:
                     line = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', line)
                     line = re.sub(r'\*(.+?)\*', r'<i>\1</i>', line)
                     story.append(Paragraph(line, styles["Normal"]))
-            doc_pdf.build(story)
+            _pdf_cb = _make_pdf_hdrftr_cb(_style, _psize, _marg, _rl_inch, _RLHex)
+            if _pdf_cb:
+                doc_pdf.build(story, onFirstPage=_pdf_cb, onLaterPages=_pdf_cb)
+            else:
+                doc_pdf.build(story)
 
         else:
             return _err(f"write_document: unsupported format '{ext}'. Supported: .docx, .xlsx, .pptx, .pdf")

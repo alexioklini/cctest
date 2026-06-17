@@ -495,10 +495,15 @@ Once a feedback row exists, user and admin exchange short one-line messages
   deep-merged over the defaults, full shape — what the form editor reads).
   `POST /v1/doc-styles {name, yaml}` validates the YAML parses to a dict, writes
   `agents/main/skills/doc-styles/<slug>.yaml` (name sanitised, no traversal);
-  `{name, delete:true}` removes it. Presets set fonts/colors/layout that
-  write_document + render_diagram apply (style="<name>"). Powers Settings →
-  Allgemein → **Dokument-Stile** (a WYSIWYG form editor — color pickers, font
-  dropdowns, live preview — that builds the YAML; storage stays YAML on disk).
+  `{name, delete:true}` removes it (incl. its logo file). A **logo** can be
+  uploaded with the same POST: `{logo_data:<base64>, logo_ext:".png"}` writes
+  `<slug>.logo.<ext>` next to the preset (≤5 MB, png/jpg/gif/bmp/webp);
+  `{logo_remove:true}` deletes any. `GET /v1/doc-styles?logo=<file>` serves the
+  stored logo image (for the editor preview). Presets set fonts/colors/layout +
+  **running header/footer/logo** that write_document + render_diagram apply
+  (style="<name>"). Powers Settings → Allgemein → **Dokument-Stile** (a WYSIWYG
+  form editor — color pickers, font dropdowns, header/footer/logo controls, live
+  preview — that builds the YAML; storage stays YAML on disk).
 - `GET /v1/services` — daemon status (mempalace-miner, chat-sync, …)
 - `GET /v1/services/log?name=&lines=` — tail a service log
 - `POST /v1/services/telegram` / `/services/server` — start/stop/restart.

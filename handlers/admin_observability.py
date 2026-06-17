@@ -1182,7 +1182,26 @@ class AdminObservabilityHandlers:
         from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(self.path).query)
         name = (qs.get("name", [""])[0] or "").strip()
+        logo = (qs.get("logo", [""])[0] or "").strip()
         try:
+            if logo:
+                # Serve a preset's uploaded logo image (for the editor preview).
+                fn = os.path.basename(logo)
+                p = os.path.join(base, fn)
+                if not os.path.isfile(p):
+                    self._send_json({"error": "logo not found"}, 404)
+                    return
+                import mimetypes
+                ctype = mimetypes.guess_type(p)[0] or "application/octet-stream"
+                with open(p, "rb") as f:
+                    data = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if name:
                 # whitelist: basename only, must be an existing .yaml in the dir
                 safe = os.path.basename(name)
@@ -1246,10 +1265,16 @@ class AdminObservabilityHandlers:
         path = os.path.join(base, f"{slug}.yaml")
         try:
             if body.get("delete"):
+                import glob as _glob
                 for fn in (f"{slug}.yaml", f"{slug}.yml"):
                     p = os.path.join(base, fn)
                     if os.path.isfile(p):
                         os.remove(p)
+                for old in _glob.glob(os.path.join(base, f"{slug}.logo.*")):
+                    try:
+                        os.remove(old)
+                    except OSError:
+                        pass
                 self._send_json({"ok": True, "deleted": slug})
                 return
             text = body.get("yaml") or ""
@@ -1259,9 +1284,40 @@ class AdminObservabilityHandlers:
                 self._send_json({"error": "YAML muss ein Objekt (key: value) sein"}, 400)
                 return
             os.makedirs(base, exist_ok=True)
+            # Optional logo upload: {logo_data: <base64>, logo_ext: ".png"} writes
+            # <slug>.logo.<ext> next to the preset; {logo_remove:true} deletes any.
+            # The YAML's logo.file must reference the resulting basename.
+            import glob as _glob
+            logo_data = body.get("logo_data")
+            if body.get("logo_remove") or logo_data:
+                for old in _glob.glob(os.path.join(base, f"{slug}.logo.*")):
+                    try:
+                        os.remove(old)
+                    except OSError:
+                        pass
+            logo_file = ""
+            if logo_data:
+                import base64
+                ext = os.path.splitext(str(body.get("logo_ext") or ".png"))[1].lower() or ".png"
+                if ext not in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
+                    self._send_json({"error": "Logo: nur PNG/JPG/GIF/BMP/WEBP"}, 400)
+                    return
+                if "," in logo_data:          # strip a data: URI prefix if present
+                    logo_data = logo_data.split(",", 1)[1]
+                try:
+                    raw_logo = base64.b64decode(logo_data)
+                except Exception:
+                    self._send_json({"error": "Logo: ungültige Base64-Daten"}, 400)
+                    return
+                if len(raw_logo) > 5 * 1024 * 1024:
+                    self._send_json({"error": "Logo zu groß (max 5 MB)"}, 400)
+                    return
+                logo_file = f"{slug}.logo{ext}"
+                with open(os.path.join(base, logo_file), "wb") as lf:
+                    lf.write(raw_logo)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
-            self._send_json({"ok": True, "name": slug})
+            self._send_json({"ok": True, "name": slug, "logo_file": logo_file})
         except yaml.YAMLError as e:
             self._send_json({"error": f"YAML-Fehler: {e}"}, 400)
         except Exception as e:

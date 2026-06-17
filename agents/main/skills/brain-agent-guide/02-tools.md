@@ -100,8 +100,11 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
 - `write_document(path, content, format, style?)` — produce docx/pdf/pptx/xlsx
   from markdown; embeds `![alt](file)` images (docx/pptx/pdf) → pair with
   render_diagram for reports/slides with diagrams. `style=<preset>` applies an
-  editable style (fonts/colors/layout) from `agents/<agent>/skills/doc-styles/
-  <preset>.yaml` (e.g. `corporate`) — deterministic, model just writes markdown.
+  editable style (fonts/colors/layout + running header/footer/logo) from
+  `agents/<agent>/skills/doc-styles/<preset>.yaml` (e.g. `corporate`) —
+  deterministic, model just writes markdown. Header/footer text supports
+  `{page}`/`{date}` tokens; the logo + footer render on docx/pdf pages and pptx
+  slides.
 - `edit_document(path, ...)` — structural edit
 
 ## Memory (MemPalace, direct — not MCP)

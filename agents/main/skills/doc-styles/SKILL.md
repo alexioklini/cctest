@@ -3,7 +3,7 @@ name: Document Styles
 description: Editable per-format style presets (fonts, colors, layout) that write_document and render_diagram apply DETERMINISTICALLY when creating .docx/.pptx/.pdf files and diagrams. Not interpreted by the model — Python reads the YAML and sets the styling, so output looks consistent regardless of model strength.
 metadata:
   type: doc-style
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # Document Styles
@@ -22,13 +22,23 @@ like Mistral reliable).
   (heading/body/accent/table_header_*), `docx` (table_style/heading_bold),
   `pdf` (page_size letter|a4, margin_inch), `pptx` (title_color/body_color/
   accent/background), `mermaid` (theme default|dark|forest|neutral, background).
+- **Header / footer / logo** (running page chrome):
+  - `header` / `footer`: `text` (supports `{page}` / `{date}` tokens), `align`
+    (left|center|right), `font_size` (pt), `color`. `footer.page_numbers: true`
+    appends a live page number.
+  - `logo`: `file` (basename of an image next to the preset — upload it in the
+    GUI editor), `width_inch`, `align`, `position` (header|footer|slide|none).
 - Unknown keys are ignored; missing keys fall back to built-in defaults.
 
 ## How it reaches the file
 - **docx**: Normal + Heading 1-3 styles get the fonts/sizes/colors; tables get
-  `docx.table_style`.
-- **pdf**: page size + margins + heading/body colors (reportlab).
-- **pptx**: title/body run colors per slide.
+  `docx.table_style`; every section's header/footer gets the running text
+  (`{page}` → live Word PAGE field) + logo picture.
+- **pdf**: page size + margins + heading/body colors (reportlab); header/footer
+  text + page number + logo drawn on every page via an onPage canvas callback.
+- **pptx**: title/body run colors per slide; the logo (any non-`none`
+  `position`) is placed as a corner image and the footer text + page band is
+  drawn on every slide.
 - **diagrams**: `render_diagram(style=…)` inherits `mermaid.theme/background` so
   charts match the document they're embedded in.
 
