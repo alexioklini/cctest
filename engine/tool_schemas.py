@@ -855,7 +855,7 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "path": {"type": "string", "description": "Relative output filename, extension picks the format (e.g. `report.html`). It lands in your session artifact folder; absolute paths and '..' escapes are REFUSED."},
                 "content": {"type": "string", "description": "Markdown content to convert into the document"},
-                "style": {"type": "string", "description": "Optional style preset name (a file in the agent's skills/doc-styles/, e.g. 'corporate') — sets fonts/colors/layout deterministically. Omit for the built-in default look."},
+                "style": {"type": "string", "description": "Style preset name (a file in the agent's skills/doc-styles/, e.g. 'corporate') — sets fonts/colors/layout + header/footer/logo deterministically. PREFER passing this for any report/document so the output is on-brand. If omitted, a DEFAULT preset is applied automatically (project's, the global default, or 'corporate') — so do NOT hand-write your own CSS/styling; write PLAIN MARKDOWN content and let the preset style it. (For .html, raw HTML you pass is kept as-is and only gains the header/footer/logo; markdown gets the full preset — so markdown+style gives the most consistent result.)"},
             },
             "required": ["path", "content"],
         },

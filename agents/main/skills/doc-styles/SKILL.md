@@ -3,7 +3,7 @@ name: Document Styles
 description: Editable per-format style presets (fonts, colors, layout) that write_document and render_diagram apply DETERMINISTICALLY when creating .docx/.pptx/.pdf files and diagrams. Not interpreted by the model — Python reads the YAML and sets the styling, so output looks consistent regardless of model strength.
 metadata:
   type: doc-style
-  version: 1.2.1
+  version: 1.3.0
 ---
 
 # Document Styles
@@ -14,6 +14,14 @@ created with `write_document(..., style="<name>")` — `.docx` / `.pptx` / `.pdf
 loads that preset and applies its fonts / colors / layout in code. The model only writes plain markdown and
 names the preset — it never has to reason about styling (keeps weaker models
 like Mistral reliable).
+
+**A default preset is applied even when the model OMITS `style=`** (v9.154.0):
+resolution is explicit `style=` → the project's `doc_style` (project.json) →
+`config.json doc_styles.default` → `corporate` (if present) → built-in look. So
+a report is on-brand by default; the model should still write PLAIN MARKDOWN (not
+hand-rolled CSS) so the preset can style it. (For `.html`, raw HTML the model
+passes is kept as-is and only gains the header/footer/logo; markdown gets the
+full preset — so markdown + a named style is the most consistent.)
 
 ## Editing / adding a preset
 - Copy `corporate.yaml`, rename, edit the values (hex colors `#RRGGBB`, sizes in

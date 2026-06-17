@@ -395,6 +395,57 @@ _DEFAULT_DOC_STYLE = {
 }
 
 
+def _doc_style_dir(agent_id: str) -> str:
+    import brain as _brain
+    return os.path.join(_brain.AGENTS_DIR, agent_id, "skills", "doc-styles")
+
+
+def _preset_exists(name: str, agent_id: str) -> bool:
+    if not name:
+        return False
+    base = _doc_style_dir(agent_id)
+    return any(os.path.isfile(os.path.join(base, f"{name}.{e}")) for e in ("yaml", "yml"))
+
+
+def _resolve_default_style(explicit: str) -> str:
+    """Pick the style preset NAME to apply to a document. Resolution order:
+      1. explicit `style` arg from the tool call (the model named one) — wins.
+      2. the current project's `doc_style` (project.json), if in a project.
+      3. config.json → doc_styles.default (global default preset).
+      4. 'corporate' if that preset file exists (sensible built-in default).
+      5. '' → built-in look (no preset).
+    This is why a report is styled even when the model OMITS style= (the common
+    case): the tool applies a default rather than the bare built-in look."""
+    import brain as _brain
+    explicit = (explicit or "").strip()
+    if explicit:
+        return explicit
+    agent = get_request_context().current_agent or _brain._current_agent
+    agent_id = agent.agent_id if agent else "main"
+    # 2. project preset
+    try:
+        proj_name = get_request_context().project
+        if proj_name:
+            proj = _brain.ProjectManager.get_project(agent_id, proj_name)
+            cand = ((proj or {}).get("doc_style") or "").strip()
+            if cand and _preset_exists(cand, agent_id):
+                return cand
+    except Exception:
+        pass
+    # 3. global config default
+    try:
+        cfg_default = ((_brain._server_config().get("doc_styles") or {}).get("default") or "").strip()
+        if cfg_default and _preset_exists(cfg_default, agent_id):
+            return cfg_default
+    except Exception:
+        pass
+    # 4. corporate, if present
+    if _preset_exists("corporate", agent_id):
+        return "corporate"
+    # 5. built-in
+    return ""
+
+
 def _load_doc_style(name: str):
     """Load a document style preset (agents/<agent>/skills/doc-styles/<name>.yaml),
     deep-merged over the built-in defaults so callers always get the full shape.
@@ -937,7 +988,11 @@ def tool_write_document(args: dict) -> str:
     import brain as _brain
     path = args.get("path", "")
     content = args.get("content", "")
-    _style = _load_doc_style(args.get("style", ""))
+    # Resolve the preset to apply — explicit style= wins, else a sensible default
+    # (project/global/'corporate') so output is styled even when the model omits
+    # style= (the common case). _load_doc_style('') would give the bare built-in.
+    _style_name = _resolve_default_style(args.get("style", ""))
+    _style = _load_doc_style(_style_name)
     try:
         # Hard guard: resolved path MUST be inside the session artifact folder
         # (relative names default into it; absolute / .. escapes refused). This

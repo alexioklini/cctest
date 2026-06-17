@@ -108,6 +108,9 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   preset is applied). `style=<preset>` applies an editable style (fonts/colors/
   layout + running header/footer/logo) from `agents/<agent>/skills/doc-styles/
   <preset>.yaml` (e.g. `corporate`) — deterministic, model just writes markdown.
+  A DEFAULT preset applies even when style= is omitted (project `doc_style` →
+  config `doc_styles.default` → `corporate` → built-in), so output is on-brand by
+  default (v9.154.0).
   Header/footer text supports `{page}`/`{date}` tokens; the logo + footer render
   on docx/pdf pages, pptx slides, and the html header/footer bands.
 - `edit_document(path, ...)` — structural edit
