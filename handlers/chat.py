@@ -2654,6 +2654,26 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         msg_metadata["auto_route"] = _ar_meta
                     if _partial_tools:
                         msg_metadata["tools"] = _sanitize_partial_tools(_partial_tools)
+                    # Per-round answer-text split for chronological display:
+                    # when the model produced visible answer text across MULTIPLE
+                    # rounds (interleaved with tool calls), persist the per-round
+                    # segments {round, text} so the renderer can interleave them
+                    # with the tool cards (text → tool → text) instead of dumping
+                    # all tools above one monolithic answer. Display-only — the
+                    # canonical `reply` (joined whole) stays the message content,
+                    # so history/wire are unaffected and old clients still show
+                    # the full text. Only stored when there's a real split (>1
+                    # segment); a single-segment turn renders content as before.
+                    try:
+                        _segs = _result.get("text_segments") or []
+                        if len(_segs) > 1:
+                            msg_metadata["text_rounds"] = [
+                                {"round": int(s.get("round", 0) or 0),
+                                 "text": s.get("text", "") or ""}
+                                for s in _segs if (s.get("text") or "").strip()
+                            ]
+                    except Exception:
+                        pass
                     # Leftover thinking deltas that never got a thinking_done (truncated
                     # stream / error before flush). Persist as a fallback thinking row
                     # rather than losing the content.
@@ -2907,6 +2927,10 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         "tokens_out": _usage_totals["tokens_out"],
                         "last_tokens_in": _usage_totals["last_tokens_in"],
                     }
+                    # Per-round answer-text split → client reconstructs the
+                    # chronological text↔tool interleave on reload (display-only).
+                    if msg_metadata.get("text_rounds"):
+                        done_data["text_rounds"] = msg_metadata["text_rounds"]
                     if session_cost is not None:
                         done_data["cost"] = session_cost
                     # GDPR highlight payload — UI marks each restored span

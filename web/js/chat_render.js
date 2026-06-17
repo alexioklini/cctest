@@ -501,6 +501,14 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
       bodyItems.push({ kind: 'privacy', sortTs: ts, item: { idx, m } });
       continue;
     }
+    // Inter-round answer-text segment → render as answer text inline at its
+    // chronological slot (the text the model emitted before a tool call). This
+    // is what makes the turn read text → tool → text instead of all tools above
+    // one answer block.
+    if (m.role === 'assistant_segment') {
+      bodyItems.push({ kind: 'text', sortTs: sortKey(m), item: { idx, m } });
+      continue;
+    }
     // Real activity items: only those before the response.
     if (i >= scanEnd) continue;
     if (!isActivity(m)) continue;
@@ -563,6 +571,9 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
       bodyHtml += renderMessage(entry.item.m, entry.item.idx);
     } else if (entry.kind === 'tool') {
       bodyHtml += renderMessage(entry.item.m, entry.item.idx);
+    } else if (entry.kind === 'text') {
+      // Inter-round answer-text segment — render as an assistant bubble inline.
+      bodyHtml += renderAssistantSegment(entry.item.m.content || '');
     } else if (entry.kind === 'privacy') {
       // Emit the whole privacy block once, at the first privacy row's position.
       if (!privacyEmitted) { bodyHtml += privacyBlockHtml(); privacyEmitted = true; }
@@ -763,6 +774,14 @@ async function redoTurnAsGdprMode(idx, mode) {
   if (input) { input.value = userText; sendMessage(); }
 }
 
+// Render an inter-round answer-text segment as a plain assistant bubble — just
+// the markdown body, no stats/actions/citation chrome (those belong to the
+// turn's final assistant message). Used by renderTurnBody's chronological
+// interleave so text the model emitted before a tool call shows in place.
+function renderAssistantSegment(content) {
+  const md = renderMarkdown(typeof content === 'string' ? content : '');
+  return `<div class="msg-turn msg-turn-assistant msg-turn-segment"><div class="msg-assistant msg-content">${md}</div></div>`;
+}
 function renderAssistantMessage(msg, idx) {
   const content = typeof msg.content === 'string' ? msg.content : '';
   // GDPR highlight overlay is gated by the composer toggle. When off

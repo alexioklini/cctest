@@ -59,6 +59,28 @@ sidecar → `POST /v1/tools/call` to Brain → dispatch → result returned.
   `streaming_text` gets promoted to a persisted message tagged
   `*(Server restart — turn lost)*`.
 
+## Multi-round answer text — accumulate + chronological interleave
+
+- The sidecar loop ACCUMULATES visible answer text across rounds
+  (`text_segments` → `final_text = "\n\n".join(...)`). Interleaved-reasoning
+  models (e.g. mistral-medium) emit answer text in several rounds
+  (text → tool → text); overwriting per round would drop the early text
+  (the old 7d44ab98 bug). `_visible_text` still strips whitespace/`<eos>`
+  junk so a junk final round can't clobber a real answer.
+- The split is surfaced as `summary.text_segments` `[{round,text}]` →
+  persisted on the assistant turn as `metadata.text_rounds` (display-only,
+  wire-stripped; the message `content` stays the full joined reply for
+  history). The chat view interleaves answer-text segments with tool cards
+  in `_seq` order so a turn renders text → tool → text exactly as it ran
+  (not all tools above one answer block). LIVE: `_commitStreamingSegment`
+  freezes the current streamed text as an `assistant_segment` row on each
+  tool call. RELOAD: `sessions.js` rebuilds the same rows from
+  `metadata.text_rounds` (one shared `_seq` counter for segments+tools).
+  `assistant_segment` is client-only — never persisted, never on the wire.
+- NOTE: mistral-medium via CLIProxyAPI emits NO separate thinking blocks
+  (no `thinking_done` → no `thinking` rows persisted); that's a
+  provider-format gap, not a data-loss bug.
+
 ## Provider routing
 
 `resolve_provider_for_model(model)` is the **single source of truth** for

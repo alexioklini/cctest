@@ -369,6 +369,20 @@ async function sendMessage() {
  *  was reopened (API.attachStream). `streamGen` is snapshotted so a stale
  *  reconnect can't clobber a newer turn. */
 function _nextSeq(chat) { chat._msgSeq = (chat._msgSeq || 0) + 1; return chat._msgSeq; }
+
+// Freeze the current live streaming text as a committed 'assistant_segment' row
+// at the next _seq, so a following tool call renders AFTER this text (text →
+// tool → text chronological flow). Clears chat.streamingText so the next run
+// starts a fresh bubble. No-op when nothing has streamed yet. The committed
+// segments are display-only (wire-filtered like thinking/tool rows); the turn's
+// final assistant message still carries the full joined reply for history.
+function _commitStreamingSegment(chat) {
+  const t = (chat.streamingText || '').trim();
+  if (!t) return;
+  chat.messages.push({ role: 'assistant_segment', content: chat.streamingText,
+                       _ts: Date.now(), _seq: _nextSeq(chat) });
+  chat.streamingText = '';
+}
 function buildStreamCallbacks(chat, isActive) {
   const streamGen = chat._streamGen;
   return {
@@ -465,6 +479,15 @@ function buildStreamCallbacks(chat, isActive) {
         const last = chat.messages[chat.messages.length - 1];
         const isNewToolCall = !(last && last.role === 'tool_call' && last.tool_use_id && d.tool_use_id && last.tool_use_id === d.tool_use_id);
         if (isNewToolCall) {
+          // Chronological interleave: a tool call CLOSES the current answer-text
+          // run. Commit whatever streamed so far as a frozen text-segment row at
+          // this _seq, then start a fresh streaming bubble after the tool — so
+          // the turn renders text → tool → text in the order it happened
+          // (instead of all tools shoved above one answer block). Wire-safe:
+          // 'assistant_segment' rows are never sent to the model (sidecar_proxy
+          // only forwards user/assistant); the final joined reply remains the
+          // canonical assistant message for history.
+          _commitStreamingSegment(chat);
           chat.messages.push({ role: 'tool_call', name: d.name, args: d.args || {}, tool_use_id: d.tool_use_id || null, tool_round: d.tool_round ?? null, _ts: Date.now(), _seq: _nextSeq(chat) });
           _activityAutoUpdate(chat, currentTurnNum(chat), 'add');
           // Surface the activity pill as soon as the first tool runs (live),
@@ -893,11 +916,26 @@ function buildStreamCallbacks(chat, isActive) {
       },
       done: (d) => {
         console.log('[SSE] done event received', {textLen: (d.text||'').length, tokens: d.tokens, model: d.model, msgCount: chat.messages.length});
+        // Chronological interleave: if we committed 'assistant_segment' rows
+        // mid-turn (text → tool → text), the final assistant message must hold
+        // ONLY the trailing run (chat.streamingText) — NOT d.text (the full
+        // joined reply), which would duplicate the already-committed segments on
+        // screen. The server persists the full reply as the message content for
+        // history + tags metadata.text_rounds; on reload we reconstruct the
+        // segment rows from that. Live keeps the committed rows + this last run.
+        const _hasLiveSegments = chat.messages.some(
+          m => m && m.role === 'assistant_segment');
+        const _finalContent = _hasLiveSegments
+          ? (chat.streamingText || '')
+          : (d.text || chat.streamingText);
         // Finalize assistant message (always update data)
         const assistantMsg = {
           role: 'assistant',
-          content: d.text || chat.streamingText,
+          content: _finalContent,
         };
+        if (_hasLiveSegments && Array.isArray(d.text_rounds) && d.text_rounds.length) {
+          assistantMsg.metadata = { text_rounds: d.text_rounds };
+        }
         if (d.tokens) chat.totalTokens = d.tokens;
         if (d.max_context) chat.maxContext = d.max_context;
         // Auto routing: keep the composer on "Auto" (the user re-routes every

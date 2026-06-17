@@ -575,6 +575,13 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
     rounds: list[dict] = []
     tool_calls_total = 0
     tool_events: list[dict] = []
+    # Visible answer-text segments, one per round that produced readable text.
+    # Joined into final_text so interleaved-reasoning models (visible text across
+    # multiple rounds) don't lose their early segments. See the accumulation site.
+    # text_round_segments keeps the per-round split {round, text} for the client
+    # to interleave with tool cards chronologically (display-only).
+    text_segments: list[str] = []
+    text_round_segments: list[dict] = []
     final_text = ""
     final_stop_reason = ""
     # Empty-reply nudges: some models (notably gemma-4 on oMLX) sometimes end
@@ -675,17 +682,23 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
 
         round_text = "\n".join(p for p in round_text_parts if p)
         round_stop_reason = getattr(final_msg, "stop_reason", "") or ""
-        # Only update `final_text` when this round produced something the
-        # caller can actually read. Whitespace-only payloads (gemma-4 emits
-        # `\n` placeholders before a tool_use block when it's in tool-spam
-        # mode) and bare EOS tokens (gemma-4-e4b on oMLX emits `<eos>`
-        # verbatim as text instead of as stop signal) are worse than no
-        # payload — they overwrite a real answer from an earlier round and
-        # the chat worker renders them as empty assistant text. `_visible_text`
-        # strips both classes; if it returns "", treat the round as empty.
+        # ACCUMULATE visible answer text across rounds — do NOT overwrite.
+        # Interleaved-reasoning models (e.g. mistral-medium via CLIProxyAPI)
+        # narrate visible answer text in EARLY rounds, then call more tools,
+        # then conclude in the final round. The user sees every round's text
+        # stream live (each text_delta is emitted), so persisting only the LAST
+        # round's text silently drops the beginning of the answer (observed in
+        # chat 7d44ab98: the leading Excel-column output vanished from the saved
+        # reply). We append each round's visible text instead. Whitespace-only
+        # payloads (gemma-4 `\n` placeholders before a tool_use) and bare EOS
+        # tokens (gemma-4-e4b `<eos>` as text) collapse to "" via _visible_text
+        # and are skipped, so the junk-clobber problem the old overwrite guarded
+        # against stays handled.
         round_visible = _visible_text(round_text)
         if round_visible:
-            final_text = round_visible
+            text_segments.append(round_visible)
+            text_round_segments.append({"round": round_no, "text": round_visible})
+            final_text = "\n\n".join(text_segments)
 
         # Append the assistant turn to messages (full content list, including tool_use).
         # Anthropic rejects empty content blocks on subsequent rounds, so a
@@ -729,8 +742,11 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
         if not tool_uses:
             # Same whitespace + EOS-token guard as above — don't clobber an
             # earlier real answer with a final-round `\n` or `<eos>` placeholder.
+            # `final_text` was already extended with this round's text by the
+            # accumulation block above (when round_visible was truthy), so here
+            # we just record the stop reason + finish — NOT re-assign final_text
+            # to round_visible (that would drop the earlier segments again).
             if round_visible:
-                final_text = round_visible
                 final_stop_reason = round_stop_reason
                 break
             # Empty terminating round: model ended without text and without
@@ -757,7 +773,10 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
             break
 
         if cancel_event is not None and cancel_event.is_set():
-            final_text = round_text
+            # Keep the accumulated segments (this round's visible text was
+            # already appended above); don't overwrite with this round's raw
+            # text, which may be empty on a tool-only round and would wipe the
+            # earlier answer the user already saw.
             final_stop_reason = "cancelled"
             emit("cancelled", {"round": round_no, "phase": "post_round"})
             break
@@ -844,6 +863,11 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
 
     summary = {
         "final_text": final_text,
+        # Per-round visible answer-text segments (display-only): lets the client
+        # interleave answer text with tool cards chronologically (text → tool →
+        # text). final_text is the joined whole (history/wire); this is the split.
+        # Each entry: {round, text}. One entry per round that produced text.
+        "text_segments": text_round_segments,
         "stop_reason": final_stop_reason,
         "rounds": len(rounds),
         "tool_calls_total": tool_calls_total,

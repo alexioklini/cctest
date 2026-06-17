@@ -751,6 +751,8 @@ def run_turn(
         "tool_calls_total": final_summary.get("tool_calls_total", 0),
         "usage_total": final_summary.get("usage_total", {}) or {},
         "tool_events": final_summary.get("tool_events", []) or [],
+        # Per-round answer-text split for chronological display interleaving.
+        "text_segments": final_summary.get("text_segments", []) or [],
         "cancelled": cancelled,
         "error": error_msg,
         "turn_id": turn_id,

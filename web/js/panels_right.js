@@ -499,7 +499,10 @@ function _referencesByTurn() {
   if (!chat?.messages) return out;
   const citedBasenames = new Set();
   for (const msg of chat.messages) {
-    if (msg.role === 'assistant' && msg.content) {
+    // Include assistant_segment rows: with chronological interleave the early
+    // answer text (and its citations) lives in segment rows, not the final
+    // assistant message, so scanning only 'assistant' would miss those cites.
+    if ((msg.role === 'assistant' || msg.role === 'assistant_segment') && msg.content) {
       for (const k of extractCitedBasenamesFromText(msg.content)) citedBasenames.add(k);
     }
   }
@@ -837,7 +840,10 @@ function collectChatReferences() {
   // `[Quelle: <basename>...]` marker matching its basename.
   const citedBasenames = new Set();
   for (const msg of chat.messages) {
-    if (msg.role === 'assistant' && msg.content) {
+    // Include assistant_segment rows: with chronological interleave the early
+    // answer text (and its citations) lives in segment rows, not the final
+    // assistant message, so scanning only 'assistant' would miss those cites.
+    if ((msg.role === 'assistant' || msg.role === 'assistant_segment') && msg.content) {
       for (const k of extractCitedBasenamesFromText(msg.content)) citedBasenames.add(k);
     }
   }

@@ -214,10 +214,15 @@ async function openSession(sessionId, agentId) {
         // after its call. Assistant ids are monotonic across turns, so the
         // panel's cross-turn newest-first sort is correct too.
         const _toolKeyBase = (Number(msg.id) || 0) - 1;
-        let _toolFrac = 0;
+        // ONE shared monotonic fraction for BOTH tool rows AND answer-text
+        // segments, so emission order == sort order in renderTurnBody (separate
+        // counters would sort all segments before all tools — the reload
+        // interleave bug). Step 0.001 per item; results sit at +0.0005.
+        let _frac = 0;
         const emitTools = (tools) => {
           for (const t of tools) {
-            _toolFrac += 0.001;
+            _frac += 0.001;
+            const _toolFrac = _frac;
             const _seq = _toolKeyBase + _toolFrac;
             // duration_ms is the real server-measured execution time (the _ts
             // values here are synthetic sort keys, NOT wall-clock, so the
@@ -244,22 +249,66 @@ async function openSession(sessionId, agentId) {
             }
           }
         };
-        // Interleave: for each pending thinking row, emit it, then emit any tools
-        // whose tool_round matches (or is <= the thinking row's round — catches
-        // legacy data where tools had no round number stamped yet).
+        // Per-round answer-text segments (chronological text↔tool interleave).
+        // metadata.text_rounds = [{round, text}] — when present (model produced
+        // visible text across multiple rounds), each segment becomes an
+        // 'assistant_segment' display row woven in BEFORE that round's tools, so
+        // the turn reads text → tool → text exactly as it streamed. The FINAL
+        // round's text stays the assistant message's own content (rendered last),
+        // so we emit segments for every round EXCEPT the final one. Wire-safe:
+        // assistant_segment rows are display-only (never sent to the model).
+        const textByRound = new Map();
+        const _trs = Array.isArray(meta.text_rounds) ? meta.text_rounds : [];
+        let _lastSegRound = -1;
+        for (const s of _trs) {
+          const r = (s.round !== null && s.round !== undefined) ? s.round : -1;
+          if (r > _lastSegRound) _lastSegRound = r;
+        }
+        for (const s of _trs) {
+          const r = (s.round !== null && s.round !== undefined) ? s.round : -1;
+          if (r === _lastSegRound) continue;  // final round = the assistant content itself
+          if (!textByRound.has(r)) textByRound.set(r, []);
+          textByRound.get(r).push(s.text || '');
+        }
+        const emitTextSegs = (r) => {
+          const segs = textByRound.get(r);
+          if (!segs) return;
+          for (const txt of segs) {
+            if (!(txt || '').trim()) continue;
+            _frac += 0.001;  // shared counter → segment sorts before this round's tools (emitted next)
+            const _seq = _toolKeyBase + _frac;
+            expanded.push({ role: 'assistant_segment', content: txt, _seq, _ts: _seq });
+          }
+          textByRound.delete(r);
+        };
+        // Interleave: for each pending thinking row, emit it, then this round's
+        // answer-text segment, then this round's tools.
         for (const tm of pendingThinking) {
           expanded.push(tm);
           const tr = tm.metadata?.tool_round;
-          if (tr !== null && tr !== undefined && toolsByRound.has(tr)) {
-            emitTools(toolsByRound.get(tr));
-            emittedRounds.add(tr);
+          if (tr !== null && tr !== undefined) {
+            emitTextSegs(tr);
+            if (toolsByRound.has(tr)) {
+              emitTools(toolsByRound.get(tr));
+              emittedRounds.add(tr);
+            }
           }
         }
         pendingThinking = [];
-        // Any tool bucket not yet emitted (rounds without a matching thinking row,
-        // or tools tagged with unknown/legacy tool_round = -1) — append after.
-        for (const [r, tools] of toolsByRound) {
-          if (!emittedRounds.has(r)) emitTools(tools);
+        // Any round with text/tools not yet emitted (rounds without a matching
+        // thinking row, or legacy -1) — weave text then tools, in round order.
+        const _remRounds = new Set([...textByRound.keys(), ...toolsByRound.keys()].filter(r => !emittedRounds.has(r)));
+        for (const r of [..._remRounds].sort((a, b) => a - b)) {
+          emitTextSegs(r);
+          if (toolsByRound.has(r) && !emittedRounds.has(r)) { emitTools(toolsByRound.get(r)); emittedRounds.add(r); }
+        }
+        // With segments woven in above, the assistant message must show ONLY the
+        // FINAL round's text — otherwise its content (the full joined reply
+        // persisted for history) would duplicate the segment rows on screen.
+        if (_trs.length > 1 && _lastSegRound >= 0) {
+          const _finalSeg = _trs.filter(s => ((s.round ?? -1) === _lastSegRound))
+            .map(s => s.text || '').join('\n\n');
+          if (_finalSeg.trim()) msg.content = _finalSeg;
         }
         if (meta.thinking) msg._thinking = meta.thinking;
         if (meta.thinking_summary) msg._thinkingSummary = meta.thinking_summary;
