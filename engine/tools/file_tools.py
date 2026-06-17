@@ -1207,10 +1207,12 @@ def tool_write_document(args: dict) -> str:
         elif ext == ".pdf":
             try:
                 from reportlab.lib.pagesizes import letter, A4
-                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as _RLImage
-                from reportlab.lib.styles import getSampleStyleSheet
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as _RLImage, Table as _RLTable, TableStyle as _RLTableStyle
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle as _RLParaStyle
                 from reportlab.lib.units import inch as _rl_inch
                 from reportlab.lib.colors import HexColor as _RLHex
+                from reportlab.lib import colors as _rl_colors
+                from reportlab.lib.enums import TA_LEFT as _RL_TA_LEFT
             except ImportError:
                 return _err("Install reportlab: pip3 install reportlab")
             _psize = A4 if str(_style["pdf"].get("page_size", "letter")).lower() == "a4" else letter
@@ -1231,11 +1233,69 @@ def tool_write_document(args: dict) -> str:
                         styles[_hn].textColor = _RLHex(_hc)
             except Exception:
                 pass
+            # Inline markdown (**bold**/*italic*) → reportlab mini-HTML markup.
+            def _pdf_inline(_s):
+                _s = re.sub(r'\*\*\*(.+?)\*\*\*', r'<b><i>\1</i></b>', _s)
+                _s = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', _s)
+                _s = re.sub(r'\*(.+?)\*', r'<i>\1</i>', _s)
+                return _s
+
+            # A cell paragraph style so long cell text wraps inside the column
+            # instead of overflowing (reportlab Table needs flowables to wrap).
+            _cell_style = _RLParaStyle(
+                "TableCell", parent=styles["Normal"],
+                fontSize=max(7, int(_style["sizes"]["body"]) - 2), leading=max(9, int(_style["sizes"]["body"])),
+                alignment=_RL_TA_LEFT)
+            _hdr_text_hex = _style["colors"].get("table_header_text", "#FFFFFF")
+            _hdr_cell_style = _RLParaStyle(
+                "TableHeaderCell", parent=_cell_style, textColor=_RLHex(_hdr_text_hex))
+            _hdr_bg_hex = _style["colors"].get("table_header_bg") or _style["colors"].get("heading", "#1F3864")
+            _grid_hex = _style["colors"].get("accent", "#999999")
+
             story = []
-            for line in content.split("\n"):
-                line = line.strip()
+            lines = content.split("\n")
+            i = 0
+            while i < len(lines):
+                raw = lines[i]
+                line = raw.strip()
                 if not line:
                     story.append(Spacer(1, 12))
+                    i += 1
+                    continue
+                # Markdown table: a "|...|" line immediately followed by a
+                # "|---|---|" separator. Mirrors the docx table detection so
+                # the PDF shows real tables instead of literal pipe text.
+                if "|" in line and i + 1 < len(lines) and re.match(r'^\|[\s\-:|]+\|', lines[i + 1].strip()):
+                    table_rows = []
+                    while i < len(lines) and "|" in lines[i]:
+                        body = lines[i].strip().strip("|")
+                        if not re.match(r'^[\s\-:|]+$', body):  # skip the |---| separator row
+                            table_rows.append([c.strip() for c in body.split("|")])
+                        i += 1
+                    if table_rows:
+                        max_cols = max(len(r) for r in table_rows)
+                        data = []
+                        for ri, row_data in enumerate(table_rows):
+                            cells = []
+                            cstyle = _hdr_cell_style if ri == 0 else _cell_style
+                            for ci in range(max_cols):
+                                val = row_data[ci] if ci < len(row_data) else ""
+                                cells.append(Paragraph(_pdf_inline(val) or "&nbsp;", cstyle))
+                            data.append(cells)
+                        avail_w = _psize[0] - 2 * _marg
+                        tbl = _RLTable(data, colWidths=[avail_w / max_cols] * max_cols, repeatRows=1)
+                        tbl.setStyle(_RLTableStyle([
+                            ("BACKGROUND", (0, 0), (-1, 0), _RLHex(_hdr_bg_hex)),
+                            ("GRID", (0, 0), (-1, -1), 0.5, _RLHex(_grid_hex)),
+                            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_rl_colors.white, _rl_colors.HexColor("#F2F4F8")]),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                            ("TOPPADDING", (0, 0), (-1, -1), 3),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                        ]))
+                        story.append(tbl)
+                        story.append(Spacer(1, 12))
                     continue
                 # Embedded image (e.g. a render_diagram chart). reportlab can't
                 # place an SVG directly — PNG/JPG embed; SVG falls back to a note
@@ -1259,6 +1319,7 @@ def tool_write_document(args: dict) -> str:
                         story.append(Paragraph(
                             f"[Bild {img_match.group(2)} — für PDF bitte als PNG rendern (render_diagram format=png)]",
                             styles["Normal"]))
+                    i += 1
                     continue
                 heading_match = re.match(r'^(#{1,6})\s+(.*)', line)
                 if heading_match:
@@ -1268,10 +1329,8 @@ def tool_write_document(args: dict) -> str:
                         style_name = "Heading1"
                     story.append(Paragraph(heading_match.group(2), styles[style_name]))
                 else:
-                    line = re.sub(r'\*\*\*(.+?)\*\*\*', r'<b><i>\1</i></b>', line)
-                    line = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', line)
-                    line = re.sub(r'\*(.+?)\*', r'<i>\1</i>', line)
-                    story.append(Paragraph(line, styles["Normal"]))
+                    story.append(Paragraph(_pdf_inline(line), styles["Normal"]))
+                i += 1
             _pdf_cb = _make_pdf_hdrftr_cb(_style, _psize, _marg, _rl_inch, _RLHex)
             if _pdf_cb:
                 doc_pdf.build(story, onFirstPage=_pdf_cb, onLaterPages=_pdf_cb)
