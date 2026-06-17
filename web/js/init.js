@@ -616,15 +616,25 @@ document.addEventListener('keydown', (e) => {
 // Tab / ArrowRight to accept next-prompt ghost-text suggestion (chat input only)
 document.addEventListener('keydown', function(e) {
   if (e.target?.id !== 'chat-input') return;
-  if (!NextPrompt.active()) return;
   const input = e.target;
-  // Tab accepts + edits; ArrowRight accepts only when cursor is at end of an empty input
+  // Tab on an EMPTY input: accept the ghost text if shown, OTHERWISE reuse the
+  // precomputed suggestion or generate one on demand (the user wants a prompt
+  // even though none is currently displayed). Shift+Tab keeps native focus nav.
   if (e.key === 'Tab' && !e.shiftKey) {
     if (input.value.length === 0) {
       e.preventDefault();
-      NextPrompt.accept({ submit: false });
+      if (NextPrompt.active()) {
+        NextPrompt.accept({ submit: false });
+      } else {
+        NextPrompt.requestOnDemand();
+      }
     }
-  } else if (e.key === 'ArrowRight') {
+    return;
+  }
+  // The rest only matter when a ghost suggestion is currently showing.
+  if (!NextPrompt.active()) return;
+  if (e.key === 'ArrowRight') {
+    // Accept only when cursor is at end of an empty input.
     if (input.value.length === 0) {
       e.preventDefault();
       NextPrompt.accept({ submit: false });

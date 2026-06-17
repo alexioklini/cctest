@@ -1175,6 +1175,7 @@ const NextPrompt = {
   _suggestion: null,
   _origPlaceholder: null,
   _fetchToken: 0,
+  _onDemandPending: false,
 
   _input() {
     return document.getElementById('chat-input');
@@ -1236,6 +1237,48 @@ const NextPrompt = {
       if (text) this.set(text);
     } catch (e) {
       // Silent — suggestions are best-effort
+    }
+  },
+
+  // User pressed Tab on an EMPTY input with no ghost-text showing — either the
+  // suggestion was never computed, or they dismissed it and changed their mind.
+  // Reuse the precomputed suggestion if it's still around, otherwise generate
+  // one on demand and FILL the input (they explicitly asked, so don't just
+  // re-show a ghost placeholder). Returns true if a request was kicked off /
+  // satisfied, false if nothing could be done.
+  async requestOnDemand() {
+    const input = this._input();
+    if (!input || input.value.length > 0) return false;
+    // 1) Reuse a precomputed suggestion that's still in hand.
+    if (this._suggestion) return this.accept({ submit: false });
+    // 2) Generate on demand. Guard against repeat Tabs while in flight.
+    if (this._onDemandPending) return true;
+    const sessionId = state.activeChat?.sessionId;
+    if (!sessionId) return false;
+    this._onDemandPending = true;
+    const token = ++this._fetchToken;
+    if (this._origPlaceholder == null) this._origPlaceholder = input.placeholder || '';
+    input.placeholder = 'Vorschlag wird erzeugt…';
+    input.classList.add('suggestion-loading');
+    try {
+      const data = await API.get(`/v1/sessions/${encodeURIComponent(sessionId)}/next-prompt`);
+      // Stale (newer fetch) or session changed while waiting → bail.
+      if (token !== this._fetchToken || state.activeChat?.sessionId !== sessionId) return false;
+      const text = (data?.suggestion || '').trim();
+      if (!text) return false;
+      // The user may have started typing while we waited — don't stomp it.
+      if (input.value.length > 0) { this.set(text); return false; }
+      this._suggestion = text;
+      return this.accept({ submit: false });
+    } catch (e) {
+      return false;
+    } finally {
+      this._onDemandPending = false;
+      input.classList.remove('suggestion-loading');
+      // Restore the original placeholder if nothing replaced it.
+      if (!this._suggestion && this._origPlaceholder != null) {
+        input.placeholder = this._origPlaceholder;
+      }
     }
   },
 };

@@ -47,7 +47,10 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
   (returns `{messages, streaming: bool, streaming_text, streaming_meta}`)
 - `GET /v1/sessions/<sid>/inspect` — diagnostic dump (admin)
 - `GET /v1/sessions/<sid>/files` — attachments + artifacts
-- `GET /v1/sessions/<sid>/next-prompt` — model-suggested follow-up
+- `GET /v1/sessions/<sid>/next-prompt` — model-suggested follow-up (composer
+  ghost-text). Auto-fetched after a turn; ALSO fetched on demand when the user
+  presses **Tab** on an empty composer with no ghost showing (reuse precomputed,
+  else generate + fill — v9.154.1)
 - `GET /v1/sessions/<sid>/warmup` / `/warmup-status` — warm-pool state
 - `POST /v1/sessions/<sid>/warmup` — manually trigger warmup
 - `POST /v1/sessions/<sid>/audio-overview` — generate a two-host podcast (.mp3)

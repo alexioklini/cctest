@@ -114,6 +114,14 @@ Tippen, `Enter` drücken (Shift+Enter für Zeilenumbruch) oder den
 Senden-Knopf klicken. Während das Modell antwortet, wird der Senden-Knopf
 zum Stopp-Knopf.
 
+**Prompt-Vorschlag (Tab)**: Nach jeder Antwort schlägt das Modell eine
+mögliche nächste Frage vor — sie erscheint als ausgegrauter Platzhaltertext
+im Eingabefeld. Mit `Tab` (oder `→` bei leerem Feld) wird der Vorschlag
+übernommen, `Esc` verwirft ihn. Ist gerade kein Vorschlag zu sehen (noch
+keiner berechnet oder vorher verworfen), erzeugt ein Druck auf `Tab` im
+**leeren** Eingabefeld einen Vorschlag auf Anfrage (bereits berechneter wird
+wiederverwendet, sonst neu generiert) und füllt ihn ein.
+
 **Anhänge**: 📎 klicken oder Dateien ins Eingabefeld ziehen. Unterstützt:
 Bilder, PDF, docx, xlsx, pptx, eml/msg, epub, txt/md, csv/tsv, json,
 Quellcode (py/js/ts/go/rs/…), zip. Das Modell erhält Bilder direkt, wenn

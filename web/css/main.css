@@ -623,6 +623,13 @@ textarea { resize: none; }
   opacity: 0.75;
 }
 
+/* On-demand suggestion generation (Tab on empty input, none precomputed). */
+.composer-input.suggestion-loading::placeholder {
+  color: var(--text-400);
+  font-style: italic;
+  opacity: 0.6;
+}
+
 .composer-footer {
   display: flex;
   align-items: center;
