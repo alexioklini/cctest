@@ -1005,14 +1005,19 @@ function showArtifactList() {
         <span class="alc-versions">v${verCount}</span>
       </div>`;
   };
-  // Bucket by producing turn. message_idx==null → ungrouped (turn 0).
-  // Server's message_idx is an index into the persisted message list; the
-  // client unshifts a synthetic `compacted` divider at index 0 after an LCM
-  // compaction, so shift by +1 to realign before mapping to a turn.
-  const idxShift = (chat.messages && chat.messages[0]?.role === 'compacted') ? 1 : 0;
+  // Bucket by producing turn. The server's `message_idx` IS the 1-based turn
+  // ordinal ("Anfrage N") of the producing turn — NOT an array position — so
+  // it's used directly. (It must not be mapped via turnNumForMessageIdx: the
+  // client's chat.messages expands the in-memory tool_call/tool_result rows,
+  // which never reach the DB, so a positional index would drift turn-by-turn
+  // and collapse later artifacts into early turns.) message_idx==null → turn 0
+  // ('Ohne Zuordnung'), which also catches legacy pre-fix rows that still hold
+  // the old positional value (best-effort: those may land in a stray bucket).
+  const turnNums = new Set((typeof listTurns === 'function' ? listTurns() : []).map(t => t.turnNum));
   const byTurn = {};
   for (const a of filtered) {
-    const tn = (a.message_idx == null) ? 0 : (turnNumForMessageIdx(a.message_idx + idxShift) || 0);
+    let tn = (a.message_idx == null) ? 0 : a.message_idx;
+    if (tn !== 0 && !turnNums.has(tn)) tn = 0;  // out-of-range (legacy) → ungrouped
     (byTurn[tn] = byTurn[tn] || []).push(a);
   }
   renderTurnGroupedPane(document.getElementById('artifact-turn-groups'), 'artifacts', {

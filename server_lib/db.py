@@ -2833,29 +2833,31 @@ class ChatDB:
     @staticmethod
     @_db_safe(default=None)
     def artifact_message_idx(session_id):
-        """0-based array position of the most recent user message in this
-        session — the anchor of the turn currently producing artifacts.
+        """1-based TURN ORDINAL of the turn currently producing artifacts =
+        the count of user/human messages in this session so far.
 
         Artifacts are written mid-turn, before the assistant reply is
-        persisted, so the latest user message already on disk is the
-        producing turn's opening message. The client builds its message
-        array ordered by id, so this position maps to a turn via
-        `turnNumForMessageIdx`. Returns None when no user message exists
-        yet (the caller stores NULL, the client falls back to 'ungrouped').
+        persisted, so the latest user message already on disk opens the
+        producing turn; its ordinal among all user messages IS the turn
+        number the chat view shows ("Anfrage N"). Returns None when no user
+        message exists yet (caller stores NULL → client 'ungrouped').
+
+        NOTE: this is deliberately a turn ordinal, NOT an array position.
+        A position would be meaningless on the client, whose `chat.messages`
+        expands the in-memory tool_call/tool_result exchanges into rows that
+        never reach the DB — so the persisted-list position and the client
+        array index diverge (badly, and worse for later turns). The client
+        groups artifacts by this ordinal directly (no positional re-derive).
+        The DB column is still named `message_idx` for back-compat; legacy
+        rows hold the old positional value and fall into 'ungrouped' or a
+        best-effort bucket — acceptable for pre-fix artifacts.
         """
         with _db_conn() as conn:
-            row = conn.execute(
-                "SELECT id FROM messages WHERE session_id = ? AND role IN ('user','human') "
-                "ORDER BY id DESC LIMIT 1",
+            cnt = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ? AND role IN ('user','human')",
                 (session_id,)
             ).fetchone()
-            if not row:
-                return None
-            pos = conn.execute(
-                "SELECT COUNT(*) FROM messages WHERE session_id = ? AND id <= ?",
-                (session_id, row[0])
-            ).fetchone()
-            return (int(pos[0]) - 1) if pos and pos[0] else None
+            return int(cnt[0]) if cnt and cnt[0] else None
 
     @staticmethod
     @_db_safe(default=None)

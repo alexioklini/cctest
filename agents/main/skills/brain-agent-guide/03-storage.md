@@ -189,7 +189,11 @@ Team CRUD + ACL grants (which agents/models a team or user can access).
 ### chats.db → artifacts / artifact_versions
 `artifacts(id, session_id, path, role(intermediate|output), mime, size,
 created_at, …)`. `artifact_versions(artifact_id, version, content_blob,
-size, created_at)` — 5MB cap per version.
+size, created_at, message_idx)` — 5MB cap per version. `message_idx` is the
+**1-based producing-turn number** ("Anfrage N") used by the right-panel
+artifact grouping (count of user messages at write time — NOT an array
+position; a position would drift on the client, whose message array expands
+the in-memory tool rows that never reach the DB).
 
 ### chats.db → active_turns
 `session_id TEXT PK, turn_id TEXT, model TEXT, started_at REAL`.
