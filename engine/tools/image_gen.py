@@ -301,6 +301,83 @@ def _mmdc_invocation() -> list:
     return [node, cli]
 
 
+def _mix_hex(hex_a: str, hex_b: str, t: float) -> str:
+    """Linear blend of two #rrggbb colors (t=0 → a, t=1 → b). Used to derive a
+    palette (light fills, mid tones) from the preset's two brand colors."""
+    try:
+        a = hex_a.lstrip("#"); b = hex_b.lstrip("#")
+        ar, ag, ab = int(a[0:2], 16), int(a[2:4], 16), int(a[4:6], 16)
+        br, bg_, bb = int(b[0:2], 16), int(b[2:4], 16), int(b[4:6], 16)
+        r = round(ar + (br - ar) * t); g = round(ag + (bg_ - ag) * t); bl = round(ab + (bb - ab) * t)
+        return f"#{max(0,min(255,r)):02x}{max(0,min(255,g)):02x}{max(0,min(255,bl)):02x}"
+    except Exception:
+        return hex_b
+
+
+def _mermaid_theme_config(style: dict) -> dict | None:
+    """Build a Mermaid init config (theme='base' + themeVariables) from a doc-style
+    preset so diagrams carry the document's BRAND colors + font instead of
+    Mermaid's generic pastel defaults. Returns None when the preset has no usable
+    colors (caller then falls back to the named built-in theme).
+
+    Maps the preset's two brand colors (accent + heading) and body color/font
+    onto the Mermaid theme variables that actually move the needle: node fills/
+    borders/text, edge/line color, and a 6-step pie palette derived by blending
+    heading→accent→white so slices stay on-brand and distinguishable.
+    """
+    colors = (style or {}).get("colors") or {}
+    fonts = (style or {}).get("fonts") or {}
+    accent = colors.get("accent")
+    heading = colors.get("heading") or accent
+    body = colors.get("body") or "#222222"
+    if not accent and not heading:
+        return None
+    accent = accent or heading
+    heading = heading or accent
+    font = fonts.get("body") or "Helvetica"
+    # Node fill: a light tint of the accent (blend toward white) so dark text reads.
+    node_fill = _mix_hex(accent, "#ffffff", 0.82)
+    node_fill2 = _mix_hex(accent, "#ffffff", 0.70)
+    node_fill3 = _mix_hex(accent, "#ffffff", 0.90)
+    # Pie/series palette: heading → accent → light, 6 steps, dark→light so a
+    # legend reads top-to-bottom and adjacent slices stay distinct.
+    pie = [
+        heading,
+        accent,
+        _mix_hex(accent, "#ffffff", 0.35),
+        _mix_hex(accent, "#ffffff", 0.58),
+        _mix_hex(accent, "#ffffff", 0.78),
+        _mix_hex(heading, "#ffffff", 0.50),
+    ]
+    tv = {
+        "fontFamily": f"{font}, Helvetica, Arial, sans-serif",
+        "fontSize": "16px",
+        "primaryColor": node_fill,
+        "primaryBorderColor": heading,
+        "primaryTextColor": body,
+        "secondaryColor": node_fill2,
+        "secondaryBorderColor": accent,
+        "secondaryTextColor": body,
+        "tertiaryColor": node_fill3,
+        "tertiaryBorderColor": accent,
+        "tertiaryTextColor": body,
+        "lineColor": accent,
+        "textColor": body,
+        "titleColor": heading,
+        # Pie-specific knobs (Mermaid reads pieN + stroke/title vars).
+        "pieStrokeColor": heading,
+        "pieStrokeWidth": "1px",
+        "pieOuterStrokeColor": heading,
+        "pieOuterStrokeWidth": "1px",
+        "pieTitleTextSize": "18px",
+        "pieSectionTextColor": "#ffffff",
+        "pieLegendTextSize": "15px",
+    }
+    for _i, _c in enumerate(pie, start=1):
+        tv[f"pie{_i}"] = _c
+    return {"theme": "base", "themeVariables": tv}
+
+
 def tool_render_diagram(args: dict) -> str:
     """Render a Mermaid diagram to a real image artifact (SVG/PNG/PDF).
 
@@ -328,13 +405,25 @@ def tool_render_diagram(args: dict) -> str:
         return _err(f"render_diagram: format must be one of {_DIAGRAM_FORMATS}")
     # Theme/background: explicit arg wins; else inherit from the named doc style's
     # mermaid block so diagrams match the document they'll be embedded in.
+    # Load the FULL preset (not just its mermaid sub-block) so we can derive a
+    # brand themeVariables config from colors+fonts — the generic built-in themes
+    # (default/neutral/forest) ignore brand color entirely, which is why default
+    # diagrams look cheap. A preset is resolved even when none is named, so report
+    # diagrams pick up the corporate look by default (mirrors write_document's
+    # _resolve_default_style); pass style="" / a non-existent name to opt out.
     _style_mermaid = {}
-    if args.get("style"):
-        try:
-            from engine.tools.file_tools import _load_doc_style
-            _style_mermaid = (_load_doc_style(args.get("style")) or {}).get("mermaid", {}) or {}
-        except Exception:
-            _style_mermaid = {}
+    _full_style = {}
+    try:
+        from engine.tools.file_tools import _load_doc_style, _resolve_default_style
+        _style_name = args.get("style")
+        if _style_name is None:
+            _style_name = _resolve_default_style("")
+        if _style_name:
+            _full_style = _load_doc_style(_style_name) or {}
+            _style_mermaid = _full_style.get("mermaid", {}) or {}
+    except Exception:
+        _full_style = {}
+        _style_mermaid = {}
     theme = (args.get("theme") or _style_mermaid.get("theme") or "default").lower()
     if theme not in ("default", "dark", "forest", "neutral"):
         theme = "default"
@@ -387,13 +476,30 @@ def tool_render_diagram(args: dict) -> str:
         save_path = os.path.join(artifact_dir, file_name)
         _n += 1
 
+    # Brand theming: when NO explicit theme arg was given and the preset carries
+    # colors, render with a derived themeVariables config (theme='base') so nodes/
+    # edges/pie slices use the document's brand palette + font. An explicit theme
+    # arg (default/dark/forest/neutral) wins and uses mmdc's -t built-in instead.
+    _mm_config = None
+    if not args.get("theme"):
+        _mm_config = _mermaid_theme_config(_full_style)
+
     # mmdc reads a source file; spill the code to a tempfile.
     tmp_in = None
+    tmp_conf = None
     try:
         fd, tmp_in = tempfile.mkstemp(suffix=".mmd", prefix="brain-diagram-")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(code)
-        cmd = mmdc + ["-i", tmp_in, "-o", save_path, "-t", theme, "-b", bg]
+        cmd = mmdc + ["-i", tmp_in, "-o", save_path, "-b", bg]
+        if _mm_config:
+            import json as _json
+            fd2, tmp_conf = tempfile.mkstemp(suffix=".json", prefix="brain-mmconf-")
+            with os.fdopen(fd2, "w", encoding="utf-8") as cf:
+                _json.dump(_mm_config, cf)
+            cmd += ["-c", tmp_conf]
+        else:
+            cmd += ["-t", theme]
         # High-DPI raster (PNG); also widen PDF. SVG ignores these (vector).
         if fmt in ("png", "pdf"):
             cmd += ["-s", str(scale), "-w", str(width)]
@@ -417,11 +523,12 @@ def tool_render_diagram(args: dict) -> str:
     except Exception as e:
         return _err(f"render_diagram: {type(e).__name__}: {e}")
     finally:
-        if tmp_in:
-            try:
-                os.remove(tmp_in)
-            except OSError:
-                pass
+        for _tmp in (tmp_in, tmp_conf):
+            if _tmp:
+                try:
+                    os.remove(_tmp)
+                except OSError:
+                    pass
 
     brain._after_file_write(save_path, "created", agent_id_local)
     size_kb = os.path.getsize(save_path) // 1024
