@@ -604,8 +604,15 @@ class IngestManager:
         for f in existing:
             os.remove(os.path.join(ingest_dir, f))
 
-        # Chunk
-        chunks = DocumentChunker.chunk(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        # Chunk. min_chunk_size=1 (not the 100-token/400-char default) so a
+        # SHORT but legitimate document (a note, a chat-protocol template like
+        # "Chatprotokoll für: …\nNotizen:", a one-line memo) still produces one
+        # chunk instead of being silently dropped. The 400-char floor was meant
+        # to discard junk fragments, but it also threw away real short files →
+        # "No content extracted" on a document that clearly HAS text. A truly
+        # empty extraction (0 chars) still yields 0 chunks → the error below.
+        chunks = DocumentChunker.chunk(text, chunk_size=chunk_size,
+                                       chunk_overlap=chunk_overlap, min_chunk_size=1)
         if not chunks:
             return {"error": "No content extracted from document"}
 

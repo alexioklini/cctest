@@ -22,6 +22,10 @@ agents/
                                #   name with its extension dropped; NNN = chunk
                                #   index). Legacy ingests kept the older
                                #   ingest-<hash>-NNN.md scheme and still resolve.
+                               #   Ingest min_chunk_size=1 → even a very short
+                               #   real document (a note/template, < 400 chars)
+                               #   is stored as one chunk; only a 0-char
+                               #   extraction is rejected (v9.160.8).
         web-urls/              # mined project web_urls, one .md per URL named
                                #   <url-slug>_<YYYY-MM-DD-HHMM>.md (a -<hash8>
                                #   is inserted before the _ ONLY when two URLs
