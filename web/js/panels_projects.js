@@ -722,7 +722,11 @@ function pickProjectFolder(input) {
   const entries = files
     .filter(f => !f.name.startsWith('.'))   // skip dotfiles/OS cruft
     .map(f => ({ file: f, relPath: f.webkitRelativePath || f.name }));
-  confirmProjectFolderImport(entries);
+  // The browser ALREADY showed its native "upload N files?" dialog for the
+  // webkitdirectory picker, so our own confirm here would be a redundant second
+  // dialog — go straight to the progress dialog. (Drag-drop has NO native
+  // prompt, so that path keeps confirmProjectFolderImport.)
+  addProjectFolderFiles(entries);
 }
 
 async function deleteProjectFile(agentId, projectName, sourceHash) {
