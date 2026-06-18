@@ -342,10 +342,15 @@ async function _ptFillFiles(agentId, projectName) {
     for (const d of docs) {
       const id = d.source_hash || '';
       const st = _ptItemState('attachment', id);
+      // source may be a relative path ("Kunde-A/Bericht.pdf") for folder
+      // imports — show only the basename, keep the full path as tooltip.
+      const full = d.source || d.name || 'Dokument';
+      const label = String(full).replace(/\\/g, '/').split('/').pop() || full;
       ids.push(id);
-      byId[id] = _ptItemRow('files', id, d.source || d.name || 'Dokument', _PT_ICON.file, st,
+      byId[id] = _ptItemRow('files', id, label, _PT_ICON.file, st,
         `deleteProjectFile('${esc(agentId)}','${esc(projectName)}','${esc(id)}')`,
         {
+          title: full,
           actions: _ptReviewBadge(d.review),
           ctx: `ptReviewMenu(event, {agentId:'${esc(agentId)}',project:'${esc(projectName)}',sourceHash:'${esc(id)}'})`,
         });

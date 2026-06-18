@@ -504,7 +504,7 @@ async function loadProjectFiles(agentId, projectName) {
 // Ingest ONE file into the project corpus. Returns the parsed server result
 // (with .source_hash on success, or .error). Shared by the flat upload and the
 // folder-structure upload so both hit the identical /ingest path.
-async function _ingestOneProjectFile(agentId, projectName, file) {
+async function _ingestOneProjectFile(agentId, projectName, file, relPath) {
   // Auth header is required — the global /v1/* gate rejects anonymous POST.
   // Don't set Content-Type; the browser inserts the multipart boundary.
   const token = localStorage.getItem('auth-token') || '';
@@ -512,11 +512,14 @@ async function _ingestOneProjectFile(agentId, projectName, file) {
   const formData = new FormData();
   // For a folder upload, file.name carries the FULL relative path
   // ("Sub/Datei.pdf"); send only the basename as the multipart filename so the
-  // server's source_hash (= filename stem) is clean. The folder structure is
-  // preserved separately via source_groups. (The server also basenames
-  // defensively, so this is belt-and-suspenders.)
+  // server's temp-write path is safe. The folder structure is preserved
+  // separately via source_groups. (The server also basenames defensively.)
   const baseName = (file.name || 'datei').replace(/\\/g, '/').split('/').pop() || 'datei';
   formData.append('file', file, baseName);
+  // For a folder import, also send the relative path so two same-named files in
+  // different groups get DISTINCT source keys server-side (else the second
+  // overwrites the first — same stem). Single-file uploads omit it.
+  if (relPath && relPath !== baseName) formData.append('rel_path', relPath);
   const resp = await fetch(`${BASE_URL}/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/ingest`, {
     method: 'POST', headers, body: formData,
   });
@@ -707,7 +710,7 @@ async function addProjectFolderFiles(entries) {
     const dispName = relPath || file.name;
     _folderImportProgressUpdate(done, total, dispName, failures.length);
     try {
-      const result = await _ingestOneProjectFile(agentId, projectName, file);
+      const result = await _ingestOneProjectFile(agentId, projectName, file, relPath);
       if (result.error) {
         failures.push({ name: dispName, reason: result.error });
       } else if (!result.source_hash) {

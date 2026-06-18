@@ -26,6 +26,9 @@ agents/
                                #   real document (a note/template, < 400 chars)
                                #   is stored as one chunk; only a 0-char
                                #   extraction is rejected (v9.160.8).
+                               #   Folder import sends rel_path so same-named
+                               #   files in different groups get distinct keys
+                               #   (Bericht / Bericht-2), no overwrite (v9.160.9).
         web-urls/              # mined project web_urls, one .md per URL named
                                #   <url-slug>_<YYYY-MM-DD-HHMM>.md (a -<hash8>
                                #   is inserted before the _ ONLY when two URLs

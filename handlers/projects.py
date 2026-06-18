@@ -1287,9 +1287,17 @@ class ProjectsHandlerMixin:
             tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else []
             chunk_size = int(form_fields.get("chunk_size", "1500"))
             chunk_overlap = int(form_fields.get("chunk_overlap", "200"))
+            # A folder import sends rel_path ("Kunde-A/Bericht.pdf") so two
+            # same-named files in different groups get distinct source keys
+            # (the filename itself is basenamed above for safety, losing the
+            # path). Strip any leading "/" or ".." defensively. Absent → the
+            # plain basename (single-file upload, unchanged).
+            rel_path = (form_fields.get("rel_path", "") or "").replace("\\", "/").strip()
+            rel_path = "/".join(p for p in rel_path.split("/") if p and p != "..")
             result = engine.IngestManager.ingest_file(
                 agent_id, tmp_path, project_name=project_name,
                 tags=tags, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+                source_name=(rel_path or None),
             )
             # Auto-review the uploaded file synchronously BEFORE the temp file
             # is deleted, keyed by the resulting source_hash so the ingested

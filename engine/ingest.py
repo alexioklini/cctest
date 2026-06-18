@@ -554,11 +554,19 @@ class IngestManager:
     def ingest_file(agent_id: str, file_path: str,
                     project_name: str | None = None,
                     tags: list[str] | None = None,
-                    chunk_size: int = 1500, chunk_overlap: int = 200) -> dict:
-        """Parse, chunk, and store a file as ingested memory chunks."""
+                    chunk_size: int = 1500, chunk_overlap: int = 200,
+                    source_name: str | None = None) -> dict:
+        """Parse, chunk, and store a file as ingested memory chunks.
+
+        `source_name` overrides the recorded source (default: the temp file's
+        basename). A folder import passes the RELATIVE PATH ("Kunde-A/x.pdf")
+        here so two same-named files in different groups get DISTINCT source
+        keys (_source_key disambiguates by full source string → `-2` suffix);
+        without it both collapse to the same key and the second overwrites the
+        first."""
         if not os.path.exists(file_path):
             return {"error": f"File not found: {file_path}"}
-        source_name = os.path.basename(file_path)
+        source_name = source_name or os.path.basename(file_path)
         try:
             text, source_type = DocumentParser.parse(file_path)
         except (ImportError, ValueError) as e:
