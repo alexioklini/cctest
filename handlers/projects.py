@@ -1265,6 +1265,18 @@ class ProjectsHandlerMixin:
         if not filename or file_data is None:
             return {"error": "No file uploaded"}
 
+        # A folder upload (webkitdirectory / drag-dropped folder) sends the
+        # browser-set multipart filename as the RELATIVE PATH, e.g.
+        # "ATLANTIC Trading/Kündigungsschreiben.pdf". Keep only the basename for
+        # the temp file — os.path.join(tmp_dir, "<sub>/<name>") would point at a
+        # non-existent subdir and crash the whole upload (FileNotFoundError),
+        # and a leading "/" or ".." would be a path-traversal risk. The folder
+        # STRUCTURE is preserved separately client-side via source_groups, not
+        # via this filename. Handle both / and \ separators defensively.
+        filename = os.path.basename(filename.replace("\\", "/")).strip()
+        if not filename:
+            return {"error": "No file uploaded"}
+
         # Save to temp file with original filename preserved
         tmp_dir = tempfile.mkdtemp()
         tmp_path = os.path.join(tmp_dir, filename)

@@ -510,7 +510,13 @@ async function _ingestOneProjectFile(agentId, projectName, file) {
   const token = localStorage.getItem('auth-token') || '';
   const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
   const formData = new FormData();
-  formData.append('file', file);
+  // For a folder upload, file.name carries the FULL relative path
+  // ("Sub/Datei.pdf"); send only the basename as the multipart filename so the
+  // server's source_hash (= filename stem) is clean. The folder structure is
+  // preserved separately via source_groups. (The server also basenames
+  // defensively, so this is belt-and-suspenders.)
+  const baseName = (file.name || 'datei').replace(/\\/g, '/').split('/').pop() || 'datei';
+  formData.append('file', file, baseName);
   const resp = await fetch(`${BASE_URL}/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/ingest`, {
     method: 'POST', headers, body: formData,
   });
