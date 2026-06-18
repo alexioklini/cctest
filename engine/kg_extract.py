@@ -455,6 +455,56 @@ def _invalidate_source_in_kg(palace_path: str, chats_db_path: str,
     return triples_deleted, progress_deleted
 
 
+def _purge_orphan_kg_sources(palace_path: str, chats_db_path: str,
+                             palace_wing: str, source_prefix: str,
+                             adapter_name: str,
+                             log_prefix: str = "[kg-extract]") -> int:
+    """Drawer-INDEPENDENT orphan sweep: delete KG triples whose ABSOLUTE
+    `source_file` (under `source_prefix`) no longer exists on disk.
+
+    The per-source loop in run_kg_post_pass already purges a source whose file
+    is gone — but ONLY for sources that still have drawers (it iterates drawers
+    grouped by source_file). When a project file is DELETED in the UI, its
+    drawers are purged too, so that source never appears in the loop and its
+    triples orphan forever (observed: 230 triples from removed legacy
+    `ingest-*.md` files lingering after a project was emptied + re-mined).
+    This sweep runs BEFORE extraction, scoped to (source_prefix, adapter), and
+    only ever deletes triples whose absolute on-disk path is missing — synthetic
+    sources (no leading '/') are never touched. Returns triples deleted."""
+    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
+    if not source_prefix or not os.path.isfile(kg_path):
+        return 0
+    # Collect distinct source_files in scope.
+    conn = sqlite3.connect(kg_path, timeout=10, check_same_thread=False)
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(triples)")}
+        frag, params = _anchored_prefix_sql("source_file", source_prefix)
+        sql = f"SELECT DISTINCT source_file FROM triples WHERE {frag}"
+        if "adapter_name" in cols and adapter_name:
+            sql += " AND adapter_name = ?"
+            params = list(params) + [adapter_name]
+        sources = [r[0] for r in conn.execute(sql, params)]
+    finally:
+        conn.close()
+    total = 0
+    for sf in sources:
+        # Only purge ABSOLUTE paths that are missing — never synthetic sources
+        # (wiki/<id>, session/...#turn) which don't live on disk.
+        if not sf or not sf.startswith("/") or os.path.exists(sf):
+            continue
+        try:
+            t_del, p_del = _invalidate_source_in_kg(
+                palace_path, chats_db_path, palace_wing, sf, adapter_name)
+            total += t_del
+            if t_del or p_del:
+                print(f"{log_prefix} orphan sweep purged {sf}: "
+                      f"triples={t_del} progress={p_del}", flush=True)
+        except Exception as e:
+            print(f"{log_prefix} orphan sweep {sf} failed: "
+                  f"{type(e).__name__}: {e}", flush=True)
+    return total
+
+
 def _log_start(db_path: str, palace_wing: str, adapter_name: str,
                source_prefix: str, profile: str, model: str) -> int:
     init_kg_progress_schema(db_path)
@@ -891,6 +941,17 @@ def run_kg_post_pass(
     init_kg_progress_schema(chats_db_path)
     log_id = _log_start(chats_db_path, wing, adapter_name, source_prefix,
                         profile_name, model)
+
+    # Drawer-independent orphan sweep: drop triples whose source file was
+    # deleted (and whose drawers are therefore already gone, so the per-source
+    # loop below would never visit them). Scoped to (source_prefix, adapter);
+    # only deletes absolute paths missing on disk. Best-effort.
+    try:
+        _purge_orphan_kg_sources(palace_path, chats_db_path, wing,
+                                 source_prefix, adapter_name, log_prefix)
+    except Exception as e:
+        print(f"{log_prefix} orphan sweep failed: "
+              f"{type(e).__name__}: {e}", flush=True)
 
     result = RunResult(log_id=log_id)
     t0 = time.time()

@@ -405,7 +405,14 @@ starts empty. On send the enabled entries ride as `body.web_urls_to_fetch`.
 
 No version history is kept for project sources: a CHANGED file is re-mined
 (content-hash dedup) and its KG triples invalidated (`_invalidate_source_in_kg`
-on mtime/size shift); a DELETED file's drawers are purged by `_is_stale_src`
+on mtime/size shift). KG triples for a DELETED file are dropped two ways: the
+per-source loop purges a gone file that still has drawers, AND a drawer-
+INDEPENDENT orphan sweep (`_purge_orphan_kg_sources`, run at the start of
+`run_kg_post_pass`, scoped to source_prefix+adapter) drops triples whose
+absolute source_file no longer exists — covering the case where the file's
+drawers were already purged (UI delete), so the per-source loop never sees it
+(without the sweep those triples orphan forever → "0 files but N relations").
+A DELETED file's drawers are purged by `_is_stale_src`
 — which flags a drawer stale when its source_file is outside every current
 input-folder/pdir prefix OR is an absolute path whose file no longer exists
 (covers a single deleted file in a still-configured folder; synthetic markers
