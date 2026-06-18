@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.160.9"
+VERSION = "9.161.0"
 VERSION_DATE = "2026-06-18"
 CHANGELOG = [
+    ("9.161.0", "2026-06-18", "feat(projekte: CODE MODE): neuer per-Projekt-Schalter 'Code Mode'. Ist er an, nutzt das Projekt KEIN Projektgedächtnis/MemPalace und KEINEN Ingest — stattdessen arbeitet es direkt in einem vom Nutzer gewählten ARBEITSVERZEICHNIS (meist der Code-Ordner): das Modell liest/bearbeitet/erzeugt Dateien dort, der Chat-cwd IST das Arbeitsverzeichnis (nicht der Session-Artifact-Ordner). Ein BRAIN.md im Wurzelverzeichnis dient als Projektspeicher (reines Markdown, NIE gemined) und wird verbatim in den System-Prompt injiziert. Der Befehl 'init' (Button in den Projekteinstellungen ODER einfach 'init' im Chat tippen) lässt das Modell das Verzeichnis erkunden und BRAIN.md schreiben/aktualisieren — agentisch in EINEM Lauf (selektiv Schlüsseldateien lesen, wie Claude Codes /init), nicht pro-Datei. NEUE Felder project.json: code_mode (bool) + working_dir (string, validiert: muss existieren) — in update_project-Whitelist + list_projects/get_project. SEAMS: (1) engine/context.py: RequestContext.working_dir. (2) brain.apply_domain_context: bei code_mode setzt es ctx.working_dir + schließt die MemPalace-Tools aus (mempalace_query, save_chat_to_memory, mempalace_get_drawer, mempalace_list_drawers, read_document); File-/Code-/Web-Tools bleiben. (3) engine/tools/file_tools.py: _resolve_artifact_dir bevorzugt working_dir als Schreib-Root; execute_command/python_exec-cwd ebenso; NEU _resolve_under_cwd löst RELATIVE Pfade in read_file/list_directory/search_files unter working_dir auf (vorher os.path.abspath = Prozess-cwd = Repo-Root → der init-Agent las versehentlich das brain-agent-Repo statt des Arbeitsverzeichnisses; gefixt + verifiziert). Non-code-mode unverändert (Prozess-cwd-Fallback). (4) engine/prompt_build.py: bei code_mode ein CODE-MODE-Block (working_dir als cwd, read/edit/run dort, KEIN mempalace_query) + BRAIN.md-Inhalt als 'PROJECT MEMORY (BRAIN.md)'; sonst Hinweis, 'init' auszuführen; Instructions gelten weiter; Cache-Key um working_dir+BRAIN.md-mtime erweitert; Artifact-Folder-Preamble unterdrückt. (5) handlers/sidecar_proxy.background_call: tool_context trägt working_dir (aus dem Request-Context) → Hintergrund-File-Tools schreiben dorthin. (6) server_lib/tool_mcp._apply_context: working_dir im per-Tool-Call-Context-Rebuild. (7) handlers/projects.py POST .../init + engine/code_init.py: agentischer background_call (purpose=interactive, max_rounds=40, cwd=working_dir) der BRAIN.md schreibt; In-flight-Guard gegen Doppelstart. (8) UI: Code-Mode-Sektion (Toggle + Verzeichnis-Picker über den /v1/files/tree-Browser + 'BRAIN.md generieren'-Button); bei code_mode wird die Quellen-/Ingest-Sektion ausgeblendet. VERIFIZIERT live end-to-end: Test-Repo angelegt, code_mode+working_dir gesetzt, init → BRAIN.md (24KB) im Arbeitsverzeichnis geschrieben, beschreibt das ECHTE Test-Repo (nach dem _resolve_under_cwd-Fix; vorher fälschlich das brain-agent-Repo); System-Prompt zeigt CODE-MODE-Block + BRAIN.md, keine MemPalace-Prosa; exclude_tools korrekt; non-code-mode-Regression geprüft (Prozess-cwd unverändert). py_compile aller Module OK; js_gate PASS (net-globals 1416→1421). Brain-Neustart nötig. Skill 05/06 nachgezogen."),
     ("9.160.9", "2026-06-18", "fix(gleichnamige dateien aus verschiedenen gruppen kollidierten beim ingest): zwei Dateien mit GLEICHEM Namen in verschiedenen Quellgruppen (z.B. 'Kunde-A/Bericht.pdf' + 'Kunde-B/Bericht.pdf') bekamen denselben source_hash (= Dateiname-Stem) → die zweite ÜBERSCHRIEB die erste in ingested/ (echter Datenverlust, nicht nur Anzeige), und beide teilten sich eine Status-Bullet + eine Gruppen-Zuordnung. Gemeldet als 'die farbige Bullet prüft nur den Dateinamen'. URSACHE: der Ordner-Import sendet aus Sicherheitsgründen nur den BASENAME als Multipart-filename (v9.160.1, gegen Path-Traversal/Crash), und der Server leitet source==basename ab → _source_key sieht 'gleiche Quelle' → reuse key statt Disambiguierung. FIX (3 Stellen): (1) der Client (_ingestOneProjectFile) sendet beim Ordner-Import zusätzlich ein rel_path-Multipart-Feld ('Kunde-A/Bericht.pdf'); (2) der Multipart-Handler liest rel_path (führende '/'+'..' defensiv entfernt) und gibt es als source_name an IngestManager.ingest_file (neuer optionaler Parameter); (3) _source_key disambiguiert über den vollständigen source-String → der zweite Bericht wird 'Bericht-2'. So bekommt jede Datei einen EINDEUTIGEN source_hash → eigene Status-Bullet, eigene Gruppen-Zuordnung, keine Überschreibung. Der Anzeigename im Tree bleibt der Basename ('Bericht.pdf', voller Pfad als Tooltip); Single-File-Upload (kein rel_path) unverändert. VERIFIZIERT live: Kunde-A/Bericht.txt→hash 'Bericht', Kunde-B/Bericht.txt→hash 'Bericht-2', ZWEI Dateien in ingested/ (vorher eine), docs-API listet beide getrennt. py_compile + node --check OK; js_gate PASS (globals unverändert). Brain-Neustart nötig (engine/handler-Änderung). Skill 03 nachgezogen."),
     ("9.160.8", "2026-06-18", "fix(kurze dokumente wurden beim ingest verworfen): eine kurze, aber LEGITIME Datei ('Chatprotokoll für: KO ABACO OVERSEAS H.\\nNotizen:', 51 Zeichen, korrekt extrahiert) ließ sich nicht importieren — Fehler 'Kein Text extrahierbar'. URSACHE war NICHT die Extraktion (die lieferte den vollen Text), sondern der CHUNKER-MINDESTWERT: DocumentChunker.chunk nutzt per Default min_chunk_size=100 Tokens = 400 Zeichen; _store_chunks rief es OHNE Override → ein 51-Zeichen-Dokument ergab 0 Chunks → {'error':'No content extracted'}. Der 400-Zeichen-Floor war als Müllfragment-Filter gedacht, verwarf aber echte kurze Dateien (Notizzettel, Vorlagen, Einzeiler-Memos). FIX (engine/ingest.py): _store_chunks ruft chunk() jetzt mit min_chunk_size=1 → jede Datei mit echtem Text wird als mindestens 1 Chunk gespeichert; eine wirklich leere Extraktion (0 Zeichen) ergibt weiter 0 Chunks → derselbe ehrliche Fehler. VERIFIZIERT am gemeldeten PDF: vorher 0 Chunks; nachher chunks:1, Inhalt = 'Chatprotokoll für: KO ABACO OVERSEAS H. Notizen:'. py_compile OK. Brain-Neustart nötig (engine-Änderung). Betrifft alle Projekt-Uploads + den agent-level Ingest. Skill 03 nachgezogen (Chunk-Datei-Beschreibung)."),
     ("9.160.7", "2026-06-18", "fix(pdf-extraktion: leere Markdown-Header täuschten 'hat Inhalt' vor → fitz-Fallback griff nicht): ein PDF MIT echter Textebene (Wiener-Privatbank-Kündigungsschreiben, 1 Seite, 1578 Zeichen per fitz) ließ sich NICHT importieren — Fehler 'Kein Text extrahierbar'. URSACHE: pymupdf4llm (Default-Backend) lieferte für dieses PDF nur 77 Zeichen MÜLL — eine Folge LEERER Markdown-Header ('## ' ohne Text) + ein '**==> picture … intentionally omitted <==**'-Platzhalter — statt des echten Textes. Die Blank-Erkennung _pymupdf4llm_is_blank ignorierte zwar Leerzeilen + Bild-Platzhalter, NICHT aber leere Header → die erste '## '-Zeile galt als 'echter Inhalt' → is_blank=False → der fitz/OCR-Fallback in _do_extract feuerte NIE → 77 Zeichen < 400 (Chunker-Minimum) → 'No content extracted'. FIX (engine/doc_convert.py): _pymupdf4llm_is_blank behandelt jetzt auch reine Header-Marker ohne Text (s.lstrip('#').strip()=='') als leer; ein Header MIT Text ('## Vertrag') bleibt echter Inhalt (keine Regression). Damit erkennt die Funktion den 77-Zeichen-Müll als blank → _do_extract fällt auf fitz zurück → liefert die vollen 1578 Zeichen (backend fitz/fast). VERIFIZIERT am gemeldeten PDF: vorher pymupdf4llm 77 Zeichen, is_blank=False; nachher is_blank=True → fitz/fast 1579 Zeichen echter Brieftext; '## Vertrag'-Header weiterhin nicht-blank; Live-Ingest ins Projekt erfolgreich (chunks:1). py_compile OK. Brain-Neustart nötig (engine-Änderung). Betrifft ALLE Extraktionspfade (read_document, Projekt-Mining, Eingabeordner), nicht nur den Upload. Skill 05 nachgezogen."),
@@ -4660,6 +4661,8 @@ class ProjectManager:
                 "description": cfg.get("description", ""),
                 "instructions": cfg.get("instructions", ""),
                 "instruction_files": cfg.get("instruction_files", []) or [],
+                "code_mode": bool(cfg.get("code_mode", False)),
+                "working_dir": cfg.get("working_dir", "") or "",
                 "research_mode": _project_research_mode(cfg),
                 "icon": cfg.get("icon", "folder"),
                 "image": cfg.get("image", ""),
@@ -4818,9 +4821,20 @@ class ProjectManager:
                        "extra_member_user_ids", "excluded_user_ids",
                        "research_mode", "web_urls", "disable_web_search",
                        "source_groups", "kg_method", "kg_profile", "doc_style",
-                       "instruction_files"):
+                       "instruction_files", "code_mode", "working_dir"):
                 if k in updates:
                     cfg[k] = updates[k]
+            # Code Mode: project works directly in a user-specified working
+            # directory (read/edit/run files there) instead of MemPalace. Coerce
+            # to a stable shape + validate the dir exists so a bad payload can't
+            # point the agent's cwd at a non-existent path.
+            if "code_mode" in updates:
+                cfg["code_mode"] = bool(updates["code_mode"])
+            if "working_dir" in updates:
+                _wd = os.path.expanduser(str(updates.get("working_dir") or "").strip())
+                if _wd and not os.path.isdir(_wd):
+                    return {"error": f"Working dir does not exist: {_wd}"}
+                cfg["working_dir"] = _wd
             # Per-project KG override: method (llm|rules) + profile
             # (normative|generic). Empty string = inherit the global default
             # (config.json mempalace.kg). Coerce to a safe shape so the
@@ -6201,6 +6215,7 @@ def apply_domain_context(*, agent_id: str, project: str = "",
     #    chat's Websuche-basket lockout), then add the 3 web tools when the
     #    project has `disable_web_search` set. Model-independent enforcement.
     _excl = set(base_exclude_tools or [])
+    ctx.working_dir = None
     if proj_name:
         try:
             _pcfg = ProjectManager.get_project(agent_id, proj_name)
@@ -6208,6 +6223,17 @@ def apply_domain_context(*, agent_id: str, project: str = "",
             _pcfg = None
         if _pcfg and _pcfg.get("disable_web_search"):
             _excl |= {"web_fetch", "exa_search", "searxng_search"}
+        # Code Mode: point file tools at the project's working directory and
+        # remove the MemPalace tools (this project doesn't use project memory —
+        # the model reads/edits files directly in working_dir + reads BRAIN.md
+        # from the system prompt). File/code/web tools stay live.
+        if _pcfg and _pcfg.get("code_mode"):
+            _wd = (_pcfg.get("working_dir") or "").strip()
+            if _wd and os.path.isdir(_wd):
+                ctx.working_dir = _wd
+            _excl |= {"mempalace_query", "save_chat_to_memory",
+                      "mempalace_get_drawer", "mempalace_list_drawers",
+                      "read_document"}
     ctx.exclude_tools = list(_excl) if _excl else None
 
 
@@ -6226,6 +6252,7 @@ def build_tool_context(*, session_id: str, agent_id: str, user_id: str = "",
         "user_id": user_id or "",
         "team_ids": list(ctx.current_team_ids or []),
         "project": ctx.project or "",
+        "working_dir": ctx.working_dir or "",
         "note_context": ctx.note_context,
         "workflow_run_id": ctx.workflow_run_id or "",
         "plan_mode": bool(ctx.plan_mode),

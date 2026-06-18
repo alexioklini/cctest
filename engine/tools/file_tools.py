@@ -44,6 +44,30 @@ from engine.tool_exec import (
 )
 
 
+def _cwd_base() -> str | None:
+    """The base directory a RELATIVE path should resolve against. In Code Mode
+    the request context carries `working_dir` → that's the base (so list/read/
+    search/glob operate inside the project's working directory, matching where
+    the file-writing tools land). Otherwise None → callers keep their existing
+    `os.path.abspath` (process cwd) behavior unchanged."""
+    try:
+        _wd = get_request_context().working_dir
+    except Exception:
+        _wd = None
+    return _wd if (_wd and os.path.isdir(_wd)) else None
+
+
+def _resolve_under_cwd(path: str) -> str:
+    """Expand `path` and, if relative, resolve it under the code-mode working
+    directory when one is active; else fall back to process-cwd abspath
+    (unchanged behavior for non-code-mode)."""
+    path = os.path.expanduser(path)
+    if os.path.isabs(path):
+        return path
+    base = _cwd_base()
+    return os.path.join(base, path) if base else os.path.abspath(path)
+
+
 def _read_matched_regions(md_path: str, matched: set, radius: int = 2):
     """Return the union of chunk windows around each matched chunk_index of
     md_path, joined in order with a marker at skipped gaps. None on any failure
@@ -123,9 +147,7 @@ def tool_read_file(args: dict) -> str:
     offset = args.get("offset", 1)
     limit = args.get("limit", 400)
     try:
-        path = os.path.expanduser(path)
-        if not os.path.isabs(path):
-            path = os.path.abspath(path)
+        path = _resolve_under_cwd(path)
         if not os.path.exists(path):
             return _err(
                 f"File not found: {path}. "
@@ -1533,9 +1555,7 @@ def tool_list_directory(args: dict) -> str:
     pattern = args.get("pattern")
     recursive = args.get("recursive", False)
     try:
-        path = os.path.expanduser(path)
-        if not os.path.isabs(path):
-            path = os.path.abspath(path)
+        path = _resolve_under_cwd(path)
 
         if pattern:
             if recursive or "**" in pattern:
@@ -1580,9 +1600,7 @@ def tool_search_files(args: dict) -> str:
     case_insensitive = args.get("case_insensitive", False)
     max_results = args.get("max_results", 50)
     try:
-        path = os.path.expanduser(path)
-        if not os.path.isabs(path):
-            path = os.path.abspath(path)
+        path = _resolve_under_cwd(path)
 
         flags = re.IGNORECASE if case_insensitive else 0
         regex = re.compile(pattern, flags)
@@ -1748,16 +1766,17 @@ def tool_execute_command(args: dict) -> str:
         if cwd:
             cwd = os.path.expanduser(cwd)
         else:
-            # Default cwd = session artifact folder (matches python_exec) so
+            # Default cwd = the session write root: the code-mode working_dir if
+            # set, else the session artifact folder (matches python_exec) so
             # outputs land in the Artifacts panel without the model having to
-            # guess the path. Falls back to Brain's cwd when there's no
-            # session (background jobs, etc.).
-            session_id = get_request_context().current_session_id
-            agent = get_request_context().current_agent or _brain._current_agent
-            if session_id and agent:
-                folder = _get_artifact_session_folder(session_id)
-                cwd = os.path.join(_brain.AGENTS_DIR, agent.agent_id, "artifacts", folder)
-                os.makedirs(cwd, exist_ok=True)
+            # guess the path. Falls back to Brain's cwd when there's no session.
+            _wr, _ = _resolve_artifact_dir()
+            if _wr:
+                cwd = _wr
+                try:
+                    os.makedirs(cwd, exist_ok=True)
+                except OSError:
+                    pass
 
         # Snapshot artifact folder if cwd lands inside it — files appearing
         # post-exec auto-register as artifacts (mirrors tool_python_exec). We
@@ -1975,10 +1994,19 @@ def _stray_write_warning(text: str, artifact_dir: str | None) -> str:
 
 
 def _resolve_artifact_dir():
-    """Return (artifact_dir, agent_id) for the current chat/scheduled session, or
+    """Return (write_root, agent_id) for the current chat/scheduled session, or
     (None, agent_id) when there's no session context (CLI one-shots / warmup).
-    The artifact dir is the ONLY folder a file-writing tool may write into."""
+    The write_root is the ONLY folder a file-writing tool may write into.
+
+    Code Mode: when the request context carries a `working_dir` (set by
+    apply_domain_context for a code_mode project), THAT is the write root — the
+    agent reads/edits/creates files directly in the user's working directory
+    instead of the session artifact folder."""
     import brain as _brain
+    _wd = get_request_context().working_dir
+    if _wd and os.path.isdir(_wd):
+        agent = get_request_context().current_agent or _brain._current_agent
+        return _wd, (agent.agent_id if agent else "main")
     session_id = get_request_context().current_session_id
     agent = get_request_context().current_agent or _brain._current_agent
     agent_id = agent.agent_id if agent else "main"
@@ -2058,12 +2086,12 @@ def tool_python_exec(args: dict) -> str:
     max_output = _cfg.get("max_output_chars", 50000)
     venv_path = _cfg.get("venv_path", "")
 
-    # Working dir = session artifact folder so files written by code become artifacts
-    session_id = get_request_context().current_session_id
-    agent = get_request_context().current_agent or _brain._current_agent
-    if session_id and agent:
-        folder = _get_artifact_session_folder(session_id)
-        work_dir = os.path.join(_brain.AGENTS_DIR, agent.agent_id, "artifacts", folder)
+    # Working dir = the session write root: the code-mode working_dir if set,
+    # else the session artifact folder (so files written by code become
+    # artifacts). Falls back to a temp dir when there's no session context.
+    _wr, _ = _resolve_artifact_dir()
+    if _wr:
+        work_dir = _wr
     else:
         import tempfile
         work_dir = os.path.join(tempfile.gettempdir(), "brain-pyexec")

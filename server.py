@@ -613,6 +613,14 @@ def _project_sync_request(agent_id: str, project_name: str,
     _project_sync_wakeup.set()
 
 
+def _project_init_run(agent_id: str, project_name: str, working_dir: str,
+                      user_id: str = ""):
+    """Kick off the Code-Mode 'init' worker (walk working_dir → write BRAIN.md).
+    Delegates to engine.code_init; returns whether a new run started."""
+    from engine import code_init
+    return code_init.run_init(agent_id, project_name, working_dir, user_id)
+
+
 def _project_sync_cancel_request(project_id: str):
     with _project_sync_lock:
         _project_sync_cancel.add(project_id)
@@ -2090,6 +2098,8 @@ class BrainAgentHandler(
             self._handle_research_deep(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/instruction-files"):
             self._handle_project_instruction_file_upload(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/init"):
+            self._handle_project_init(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/ingest" in path:
             self._handle_project_ingest(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):

@@ -1165,6 +1165,35 @@ class ProjectsHandlerMixin:
         self._send_json({"status": "ok", "filename": filename,
                          "converted": converted, "instruction_files": files})
 
+    def _handle_project_init(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/init — Code Mode only.
+
+        Runs an agentic background turn whose cwd is the project's working_dir:
+        the agent explores the directory (read/list/grep) and writes a BRAIN.md
+        summary at its root. BRAIN.md then serves as the project's plain-markdown
+        memory (injected into the system prompt; never mined). Returns
+        immediately ({status:'generating'}); the worker runs in a thread."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        if not project.get("code_mode"):
+            self._send_json({"error": "init is only available in Code Mode projects"}, 400)
+            return
+        wd = (project.get("working_dir") or "").strip()
+        if not wd or not os.path.isdir(wd):
+            self._send_json({"error": "Project has no valid working directory"}, 400)
+            return
+        user = getattr(self, "_auth_user", _auth_mod.SYNTHETIC_ADMIN)
+        uid = user.get("id") or ""
+        _srv()._project_init_run(agent_id, proj_name, wd, uid)
+        self._send_json({"status": "generating", "working_dir": wd,
+                         "brain_md": os.path.join(wd, "BRAIN.md")})
+
     def _handle_project_instruction_file_delete(self, path: str):
         """DELETE /v1/agents/{id}/projects/{name}/instruction-files/{filename}"""
         agent_id = self._parse_agent_from_path(path)

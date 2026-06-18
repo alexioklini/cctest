@@ -555,7 +555,39 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           </div>
         </div>
       </div>
-      <div class="project-panel-section">
+      <div class="project-panel-section" id="project-codemode-section">
+        <div class="project-panel-section-header">
+          <span class="project-panel-section-title">Code Mode</span>
+        </div>
+        <div class="project-panel-section-body">
+          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;line-height:1.4">
+            <input type="checkbox" id="project-codemode-checkbox"
+                   onchange="toggleProjectCodeMode(this.checked)"
+                   style="margin-top:2px;flex-shrink:0">
+            <span><strong>Code Mode</strong> — direkt in einem Arbeitsverzeichnis arbeiten</span>
+          </label>
+          <div class="project-panel-help">
+            Statt Dateien ins Projektgedächtnis einzulesen, arbeitet das Projekt
+            direkt in einem von dir gewählten Verzeichnis (meist dein Code-Ordner):
+            das Modell liest, bearbeitet und erzeugt Dateien dort. Kein
+            MemPalace, kein Ingest. Der Befehl <code>init</code> durchgeht das
+            Verzeichnis und schreibt eine <code>BRAIN.md</code>-Zusammenfassung,
+            die als Projektgedächtnis dient (reines Markdown, nicht gemined).
+          </div>
+          <div id="project-codemode-wd-wrap" style="display:none;margin-top:10px">
+            <div style="font-size:12px;color:var(--text-400);margin-bottom:4px">Arbeitsverzeichnis</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div id="project-codemode-wd" style="flex:1;font-family:var(--font-mono);font-size:12px;color:var(--text-200);background:var(--bg-100);border:1px solid var(--border-100);border-radius:6px;padding:7px 10px;word-break:break-all">—</div>
+              <button class="btn-secondary" type="button" onclick="pickProjectWorkingDir()">Ordner wählen</button>
+            </div>
+            <button class="btn-secondary" type="button" style="margin-top:10px" onclick="runProjectInit()">
+              BRAIN.md generieren / aktualisieren (init)
+            </button>
+            <div class="project-panel-help" id="project-codemode-init-status" style="margin-top:6px"></div>
+          </div>
+        </div>
+      </div>
+      <div class="project-panel-section" id="project-sources-section">
         <div class="project-panel-section-header">
           <span class="project-panel-section-title">Quellen</span>
         </div>

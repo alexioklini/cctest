@@ -946,6 +946,9 @@ def background_call(
         "user_id": _user_id,
         "team_ids": [],
         "project": project,
+        # Code-mode working dir (if the caller set it on the request context via
+        # apply_domain_context) so background file tools write into working_dir.
+        "working_dir": engine.get_request_context().working_dir or "",
         "note_context": None,
         "workflow_run_id": "",
         "plan_mode": False,

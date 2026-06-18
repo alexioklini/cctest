@@ -61,6 +61,9 @@ class RequestContext:
     _fallback_model_used: object = None
     # --- project mode ---
     research_mode_override: object = None
+    # Code-mode working directory: when set (project.code_mode), file tools use
+    # this as their cwd/write-root instead of the session artifact folder.
+    working_dir: object = None
     # --- chat / stream ---
     event_callback: object = None
     note_context: object = None

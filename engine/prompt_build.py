@@ -123,7 +123,17 @@ def _build_system_prompt(include_memory_summary: bool = True,
     _proj_key = get_request_context().project or ""
     _rmo_key = get_request_context().research_mode_override
     _rmo_key = "n" if _rmo_key is None else ("t" if _rmo_key else "f")
-    cache_key = f"{session_id}:{include_memory_summary}:{purpose}:{_atn_key}:{_proj_key}:{_rmo_key}"
+    # Code mode switches the whole project block (working_dir + BRAIN.md content
+    # instead of MemPalace prose), so it must be in the cache key. Fold in the
+    # working_dir + BRAIN.md mtime so a re-init (BRAIN.md rewrite) invalidates.
+    _wd_key = get_request_context().working_dir or ""
+    if _wd_key:
+        try:
+            _bm = os.path.join(_wd_key, "BRAIN.md")
+            _wd_key = f"{_wd_key}@{int(os.path.getmtime(_bm)) if os.path.isfile(_bm) else 0}"
+        except OSError:
+            pass
+    cache_key = f"{session_id}:{include_memory_summary}:{purpose}:{_atn_key}:{_proj_key}:{_rmo_key}:{_wd_key}"
     cached = _system_prompt_cache.get(cache_key)
     if cached and (_time.time() - cached[1]) < _SYSTEM_PROMPT_CACHE_TTL:
         return _apply_system_prompt_postprocess(
@@ -301,183 +311,235 @@ def _build_system_prompt(include_memory_summary: bool = True,
             )
             if proj_desc:
                 system_instruction += f" {proj_desc}"
-            # Web-locked projects: the 3 web tools are removed (disable_web_search,
-            # applied in apply_domain_context). Make the boundary HONEST — the
-            # model can ONLY reach the curated, mined project sources (each web
-            # source is a single fetched page, not a crawl), so a thin answer must
-            # read as "this is the limited curated corpus", not implied exhaustive
-            # web analysis. Stable per project ⇒ KV-cache-safe (project is in the
-            # cache key; same value every turn).
-            if proj_cfg.get("disable_web_search"):
+            _code_mode = bool(proj_cfg.get("code_mode"))
+            _code_wd = (proj_cfg.get("working_dir") or "").strip()
+          # ── CODE MODE: work directly in working_dir, no MemPalace ──
+            if _code_mode and _code_wd and os.path.isdir(_code_wd):
                 system_instruction += (
-                    "\nCLOSED CORPUS: Live web access is disabled for this project. "
-                    "You can answer ONLY from the project's curated, inspected sources "
-                    "(its memory + documents; each web source is a single saved page, "
-                    "not a crawl of the wider site). You CANNOT search the web or fetch "
-                    "new pages. If the curated sources do not cover the question, say so "
-                    "plainly and state what is missing — do NOT fill the gap with general "
-                    "knowledge or imply a broader web analysis than the corpus supports."
+                    "\nCODE MODE: This project does NOT use a project memory / "
+                    "MemPalace. You work directly in the project's working "
+                    f"directory:\n  {_code_wd}\n"
+                    "Read, edit, create, and run files THERE (it is your working "
+                    "directory — relative paths resolve to it; execute_command and "
+                    "python_exec run there). Use read_file/list/grep/glob to "
+                    "explore the tree and its subdirectories for information; do "
+                    "NOT call mempalace_query (it is disabled for this project). "
+                    "Write outputs into the working directory with relative paths, "
+                    "not into a separate artifact folder.\n"
                 )
-            try:
-                _kg_enabled_for_prompt = bool(
-                    (_brain._load_mempalace_config().get("kg") or {}).get(
-                        "enabled", True))
-            except Exception:
-                _kg_enabled_for_prompt = True
-            # research_mode resolution: per-session override (sticky, set
-            # from composer / session settings) wins; otherwise the
-            # project's own `research_mode` (with legacy migration in
-            # _project_research_mode). Surfaced on _thread_local so the
-            # chat handler's citation validator + re-round read the same
-            # value without recomputing.
-            # The per-project research_mode flag (+ its per-session override) is
-            # the MANUAL control — honoured ONLY in keyword-classifier mode. Under
-            # LLM/hybrid mode the citation discipline is applied DYNAMICALLY from
-            # the effective tool set (handlers/chat.py, a wire-only preamble), so
-            # the flag is disabled and must NOT also inject via the system prompt
-            # (would double it + break the warm-pool KV prefix per-project).
-            if _brain.classifier_is_llm():
-                _research_mode = False
-            else:
-                _rm_override = get_request_context().research_mode_override
-                if _rm_override is None:
-                    _research_mode = bool(proj_cfg.get("research_mode", False))
+                # BRAIN.md (if present at the working-dir root) IS the project
+                # memory in code mode: plain markdown, never mined. Injected
+                # verbatim so the model has the repo summary up front.
+                _brain_md = os.path.join(_code_wd, "BRAIN.md")
+                if os.path.isfile(_brain_md):
+                    try:
+                        with open(_brain_md, "r", errors="replace") as _bf:
+                            _bmd = _bf.read().strip()
+                    except OSError:
+                        _bmd = ""
+                    if _bmd:
+                        system_instruction += (
+                            "\nPROJECT MEMORY (BRAIN.md — the working directory's "
+                            "summary; treat as authoritative project context):\n"
+                            f"{_bmd}\n\n"
+                        )
                 else:
-                    _research_mode = bool(_rm_override)
-            # The dynamic counts + the on-disk input-folder list moved out
-            # of the system prompt into a per-session first-user-turn preamble
-            # (see _project_preamble_text() called from send_message round 0).
-            # Keeps this block KV-cache-stable across warm-pool sessions and
-            # avoids re-billing the index on every fresh project chat.
-            #
-            # research_mode gates the strict retrieval/refusal regime:
-            # forced 3-step flow, REFUSE-on-error, KG decision rules,
-            # citation discipline. Non-research projects (build/codegen
-            # that USES indexed content) get a softer variant — memory
-            # is available, use it when relevant — so the model can
-            # consume project facts as inputs without being forced to
-            # quote-and-cite everything it produces.
-            # Soft project-info block — gives the model the context that
-            # this is a project chat with its own memory store. Detailed
-            # tool-usage guidance (3-step flow, KG decision rule,
-            # read_document how-to, BINARY DOCUMENTS) lives in the per-tool
-            # `tool_settings` descriptions and renders only when the
-            # corresponding tools are in the active set. Brain only ships
-            # project info from the prompt now — the tools speak for
-            # themselves.
-            if _research_mode:
-                system_instruction += (
-                    "\nPROJECT MEMORY:\n"
-                    "This project has a dedicated, isolated memory store. "
-                    "BEFORE answering ANY question that could draw on "
-                    "project knowledge — the user's documents, files in "
-                    "their input folders, facts they previously told you, "
-                    "project decisions — you MUST consult the project's "
-                    "memory tools first. Do not guess or rely on general "
-                    "knowledge when the project may have specifics. The "
-                    "memory tools' own descriptions (mempalace_query, "
-                    "read_document, mempalace_kg_search) carry the "
-                    "detailed retrieval flow and citation rules.\n\n"
-                )
-            else:
-                # Soft variant for non-research projects (research_mode=False).
-                # research_mode is DECOUPLED into two concerns: (1) the
-                # retrieval hint "use the project's own sources first" and
-                # (2) the strict output discipline (REFUSE-on-empty +
-                # mandatory citations). research_mode gates ONLY (2). (1)
-                # must hold whenever the owner curated sources — it makes no
-                # sense to specify files/folders/URLs for a project and then
-                # have a task ignore them and free-search the web instead
-                # (the v9.30.x webnews bug: a project with two curated URLs
-                # had research_mode off, so the task ran searxng+web_fetch and
-                # never touched the mined project memory).
-                _has_sources = bool(
-                    (proj_cfg.get("web_urls") or [])
-                    or (proj_cfg.get("input_folders") or []))
-                if _has_sources:
-                    # Curated sources exist → prefer them over the open web,
-                    # but without the strict refuse/cite regime.
                     system_instruction += (
-                        "\nPROJECT MEMORY:\n"
-                        "This project has its own curated sources (uploaded "
-                        "documents, input folders, and/or web URLs) mined into "
-                        "a dedicated, isolated memory store. For any request "
-                        "that could draw on those sources, query the project "
-                        "memory FIRST (`mempalace_query`) and prefer what it "
-                        "returns over an open web search — the owner curated "
-                        "these sources on purpose. Only fall back to the web "
-                        "tools (`web_fetch`/`searxng_search`/`exa_search`) when "
-                        "the project memory genuinely lacks what's needed (e.g. "
-                        "fresher information than what was last synced). You are "
-                        "NOT required to quote-and-cite or to refuse when memory "
-                        "is empty — that strict regime is the Research mode.\n\n"
+                        "No BRAIN.md exists yet in the working directory. If the "
+                        "user asks to 'init' (or to summarise/index the project), "
+                        "explore the working directory and write a BRAIN.md at its "
+                        "root summarising structure, key files, and how to work in "
+                        "it.\n\n"
                     )
+                # Owner instructions still apply in code mode.
+                _ci = (proj_cfg.get("instructions") or "").strip()
+                if _ci:
+                    system_instruction += (
+                        "PROJECT INSTRUCTIONS (set by the user for this project):\n"
+                        f"{_ci}\n\n"
+                    )
+            # The MemPalace machinery below (web-lockout prose, research mode,
+            # project-memory blocks, instructions, instruction_files) runs ONLY
+            # for non-code-mode projects. Code mode handled its instructions
+            # above and uses no project memory.
+            if not _code_mode:
+                # Web-locked projects: the 3 web tools are removed (disable_web_search,
+                # applied in apply_domain_context). Make the boundary HONEST — the
+                # model can ONLY reach the curated, mined project sources (each web
+                # source is a single fetched page, not a crawl), so a thin answer must
+                # read as "this is the limited curated corpus", not implied exhaustive
+                # web analysis. Stable per project ⇒ KV-cache-safe (project is in the
+                # cache key; same value every turn).
+                if proj_cfg.get("disable_web_search"):
+                    system_instruction += (
+                        "\nCLOSED CORPUS: Live web access is disabled for this project. "
+                        "You can answer ONLY from the project's curated, inspected sources "
+                        "(its memory + documents; each web source is a single saved page, "
+                        "not a crawl of the wider site). You CANNOT search the web or fetch "
+                        "new pages. If the curated sources do not cover the question, say so "
+                        "plainly and state what is missing — do NOT fill the gap with general "
+                        "knowledge or imply a broader web analysis than the corpus supports."
+                    )
+                try:
+                    _kg_enabled_for_prompt = bool(
+                        (_brain._load_mempalace_config().get("kg") or {}).get(
+                            "enabled", True))
+                except Exception:
+                    _kg_enabled_for_prompt = True
+                # research_mode resolution: per-session override (sticky, set
+                # from composer / session settings) wins; otherwise the
+                # project's own `research_mode` (with legacy migration in
+                # _project_research_mode). Surfaced on _thread_local so the
+                # chat handler's citation validator + re-round read the same
+                # value without recomputing.
+                # The per-project research_mode flag (+ its per-session override) is
+                # the MANUAL control — honoured ONLY in keyword-classifier mode. Under
+                # LLM/hybrid mode the citation discipline is applied DYNAMICALLY from
+                # the effective tool set (handlers/chat.py, a wire-only preamble), so
+                # the flag is disabled and must NOT also inject via the system prompt
+                # (would double it + break the warm-pool KV prefix per-project).
+                if _brain.classifier_is_llm():
+                    _research_mode = False
                 else:
-                    # No curated sources — purely soft hint.
+                    _rm_override = get_request_context().research_mode_override
+                    if _rm_override is None:
+                        _research_mode = bool(proj_cfg.get("research_mode", False))
+                    else:
+                        _research_mode = bool(_rm_override)
+                # The dynamic counts + the on-disk input-folder list moved out
+                # of the system prompt into a per-session first-user-turn preamble
+                # (see _project_preamble_text() called from send_message round 0).
+                # Keeps this block KV-cache-stable across warm-pool sessions and
+                # avoids re-billing the index on every fresh project chat.
+                #
+                # research_mode gates the strict retrieval/refusal regime:
+                # forced 3-step flow, REFUSE-on-error, KG decision rules,
+                # citation discipline. Non-research projects (build/codegen
+                # that USES indexed content) get a softer variant — memory
+                # is available, use it when relevant — so the model can
+                # consume project facts as inputs without being forced to
+                # quote-and-cite everything it produces.
+                # Soft project-info block — gives the model the context that
+                # this is a project chat with its own memory store. Detailed
+                # tool-usage guidance (3-step flow, KG decision rule,
+                # read_document how-to, BINARY DOCUMENTS) lives in the per-tool
+                # `tool_settings` descriptions and renders only when the
+                # corresponding tools are in the active set. Brain only ships
+                # project info from the prompt now — the tools speak for
+                # themselves.
+                if _research_mode:
                     system_instruction += (
                         "\nPROJECT MEMORY:\n"
                         "This project has a dedicated, isolated memory store. "
-                        "Call `mempalace_query` whenever the user's request "
-                        "could plausibly draw on the project's indexed "
-                        "documents, input folders, or prior facts. The tool's "
-                        "own description carries the search and read flow "
-                        "details — do not refuse to help when memory has "
-                        "nothing to offer; fall back to general capability "
-                        "and the user's own input as you normally would.\n\n"
+                        "BEFORE answering ANY question that could draw on "
+                        "project knowledge — the user's documents, files in "
+                        "their input folders, facts they previously told you, "
+                        "project decisions — you MUST consult the project's "
+                        "memory tools first. Do not guess or rely on general "
+                        "knowledge when the project may have specifics. The "
+                        "memory tools' own descriptions (mempalace_query, "
+                        "read_document, mempalace_kg_search) carry the "
+                        "detailed retrieval flow and citation rules.\n\n"
                     )
-        # Research-mode disciplines: REFUSAL + PRECISION + CITATION rules
-        # that gate the strict retrieval/refusal regime. Emitted by Brain
-        # directly when research_mode is on — NOT folded into the owner's
-        # editable Instructions field. Owner instructions remain a purely
-        # additive layer regardless of mode.
-        if _research_mode:
-            _disc = _brain.render_research_mode_disciplines()
-            if _disc:
-                system_instruction += (
-                    "RESEARCH MODE DISCIPLINES (refusal, precision, citation):\n"
-                    f"{_disc}\n\n"
-                )
-        # Inject project Instructions verbatim if the owner has set them.
-        # Instructions are purely additive owner-supplied guidance — they
-        # are NOT used as a fallback for the citation/refusal disciplines.
-        # When `instructions` is empty, no synthetic block is appended.
-        proj_instructions = (proj_cfg.get("instructions") or "").strip()
-        if proj_instructions:
-            system_instruction += (
-                "PROJECT INSTRUCTIONS (set by the user for this project):\n"
-                f"{proj_instructions}\n\n"
-            )
-        # Supplementary instruction files: owner-uploaded explanatory docs that
-        # ride ALONGSIDE the instructions. NEVER mined into memory — the model
-        # is given their disk paths here and reads them on demand with
-        # read_document (same concept as chat attachments). We list paths, not
-        # content, so this block stays small + KV-cache-stable per project
-        # regardless of file size. Binary uploads have a pre-built .md companion
-        # under .brain-extracted/, but read_document resolves the original path
-        # to it automatically, so we list the originals.
-        _instr_files = proj_cfg.get("instruction_files") or []
-        if _instr_files:
-            _idir = _brain.ProjectManager._instruction_files_dir(
-                agent_id, active_project)
-            _listing = []
-            for _f in _instr_files:
-                _fn = (_f or {}).get("filename") if isinstance(_f, dict) else None
-                if not _fn:
-                    continue
-                _abs = os.path.join(_idir, _fn)
-                if os.path.isfile(_abs):
-                    _listing.append(f"  - {_abs}")
-            if _listing:
-                system_instruction += (
-                    "PROJECT INSTRUCTION FILES (supplementary reference material "
-                    "the owner attached to this project):\n"
-                    "These files complement the instructions above. They are NOT "
-                    "in your memory — read the relevant one(s) with the "
-                    "read_document tool whenever a request could draw on them, "
-                    "the same way you would read a chat attachment. Do not guess "
-                    "their contents.\n"
-                    + "\n".join(_listing) + "\n\n"
-                )
+                else:
+                    # Soft variant for non-research projects (research_mode=False).
+                    # research_mode is DECOUPLED into two concerns: (1) the
+                    # retrieval hint "use the project's own sources first" and
+                    # (2) the strict output discipline (REFUSE-on-empty +
+                    # mandatory citations). research_mode gates ONLY (2). (1)
+                    # must hold whenever the owner curated sources — it makes no
+                    # sense to specify files/folders/URLs for a project and then
+                    # have a task ignore them and free-search the web instead
+                    # (the v9.30.x webnews bug: a project with two curated URLs
+                    # had research_mode off, so the task ran searxng+web_fetch and
+                    # never touched the mined project memory).
+                    _has_sources = bool(
+                        (proj_cfg.get("web_urls") or [])
+                        or (proj_cfg.get("input_folders") or []))
+                    if _has_sources:
+                        # Curated sources exist → prefer them over the open web,
+                        # but without the strict refuse/cite regime.
+                        system_instruction += (
+                            "\nPROJECT MEMORY:\n"
+                            "This project has its own curated sources (uploaded "
+                            "documents, input folders, and/or web URLs) mined into "
+                            "a dedicated, isolated memory store. For any request "
+                            "that could draw on those sources, query the project "
+                            "memory FIRST (`mempalace_query`) and prefer what it "
+                            "returns over an open web search — the owner curated "
+                            "these sources on purpose. Only fall back to the web "
+                            "tools (`web_fetch`/`searxng_search`/`exa_search`) when "
+                            "the project memory genuinely lacks what's needed (e.g. "
+                            "fresher information than what was last synced). You are "
+                            "NOT required to quote-and-cite or to refuse when memory "
+                            "is empty — that strict regime is the Research mode.\n\n"
+                        )
+                    else:
+                        # No curated sources — purely soft hint.
+                        system_instruction += (
+                            "\nPROJECT MEMORY:\n"
+                            "This project has a dedicated, isolated memory store. "
+                            "Call `mempalace_query` whenever the user's request "
+                            "could plausibly draw on the project's indexed "
+                            "documents, input folders, or prior facts. The tool's "
+                            "own description carries the search and read flow "
+                            "details — do not refuse to help when memory has "
+                            "nothing to offer; fall back to general capability "
+                            "and the user's own input as you normally would.\n\n"
+                        )
+                # Research-mode disciplines: REFUSAL + PRECISION + CITATION rules
+                # that gate the strict retrieval/refusal regime. Emitted by Brain
+                # directly when research_mode is on — NOT folded into the owner's
+                # editable Instructions field. Owner instructions remain a purely
+                # additive layer regardless of mode.
+                if _research_mode:
+                    _disc = _brain.render_research_mode_disciplines()
+                    if _disc:
+                        system_instruction += (
+                            "RESEARCH MODE DISCIPLINES (refusal, precision, citation):\n"
+                            f"{_disc}\n\n"
+                        )
+                # Inject project Instructions verbatim if the owner has set them.
+                # Instructions are purely additive owner-supplied guidance — they
+                # are NOT used as a fallback for the citation/refusal disciplines.
+                # When `instructions` is empty, no synthetic block is appended.
+                proj_instructions = (proj_cfg.get("instructions") or "").strip()
+                if proj_instructions:
+                    system_instruction += (
+                        "PROJECT INSTRUCTIONS (set by the user for this project):\n"
+                        f"{proj_instructions}\n\n"
+                    )
+                # Supplementary instruction files: owner-uploaded explanatory docs that
+                # ride ALONGSIDE the instructions. NEVER mined into memory — the model
+                # is given their disk paths here and reads them on demand with
+                # read_document (same concept as chat attachments). We list paths, not
+                # content, so this block stays small + KV-cache-stable per project
+                # regardless of file size. Binary uploads have a pre-built .md companion
+                # under .brain-extracted/, but read_document resolves the original path
+                # to it automatically, so we list the originals.
+                _instr_files = proj_cfg.get("instruction_files") or []
+                if _instr_files:
+                    _idir = _brain.ProjectManager._instruction_files_dir(
+                        agent_id, active_project)
+                    _listing = []
+                    for _f in _instr_files:
+                        _fn = (_f or {}).get("filename") if isinstance(_f, dict) else None
+                        if not _fn:
+                            continue
+                        _abs = os.path.join(_idir, _fn)
+                        if os.path.isfile(_abs):
+                            _listing.append(f"  - {_abs}")
+                    if _listing:
+                        system_instruction += (
+                            "PROJECT INSTRUCTION FILES (supplementary reference material "
+                            "the owner attached to this project):\n"
+                            "These files complement the instructions above. They are NOT "
+                            "in your memory — read the relevant one(s) with the "
+                            "read_document tool whenever a request could draw on them, "
+                            "the same way you would read a chat attachment. Do not guess "
+                            "their contents.\n"
+                            + "\n".join(_listing) + "\n\n"
+                        )
 
     # Inject note context for AI-assisted note editing
     note_context = get_request_context().note_context
@@ -790,6 +852,11 @@ def _artifact_folder_preamble_text(agent_id: str, session_id: str) -> str:
     context belongs. Returns "" when there's no session.
     """
     if not session_id:
+        return ""
+    # Code mode: the system prompt already states the working directory as the
+    # cwd, and file tools write THERE (not the artifact folder). Emitting the
+    # artifact-folder pointer here would contradict that — suppress it.
+    if get_request_context().working_dir:
         return ""
     _folder = os.path.join(
         _brain.AGENTS_DIR, agent_id, "artifacts",

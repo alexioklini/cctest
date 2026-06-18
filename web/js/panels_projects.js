@@ -364,6 +364,17 @@ async function loadProjectDetail(agentId, projectName) {
     if (disableWebCb) {
       disableWebCb.checked = !!project.disable_web_search;
     }
+    // Code Mode: toggle + working-dir display; when on, the project works
+    // directly in working_dir (no MemPalace) → hide the Sources tree + ingest UI.
+    const cmCb = document.getElementById('project-codemode-checkbox');
+    const cmWrap = document.getElementById('project-codemode-wd-wrap');
+    const cmWd = document.getElementById('project-codemode-wd');
+    const srcSection = document.getElementById('project-sources-section');
+    const isCode = !!project.code_mode;
+    if (cmCb) cmCb.checked = isCode;
+    if (cmWrap) cmWrap.style.display = isCode ? '' : 'none';
+    if (cmWd) cmWd.textContent = project.working_dir || '— (noch kein Verzeichnis gewählt)';
+    if (srcSection) srcSection.style.display = isCode ? 'none' : '';
     // Per-project KG method/profile overrides (empty = inherit the global
     // default). Profile is inert under the rule-based method (generic only).
     const kgMethodSel = document.getElementById('project-kg-method');
@@ -1453,6 +1464,117 @@ async function toggleProjectDisableWeb(enabled) {
     showToast('Einstellung konnte nicht geändert werden', true);
     const cb = document.getElementById('project-disable-web-checkbox');
     if (cb) cb.checked = !enabled;
+  }
+}
+
+// ── Code Mode ──────────────────────────────────────────────────────────────
+async function toggleProjectCodeMode(enabled) {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  try {
+    await API.updateProject(agentId, projectName, { code_mode: !!enabled });
+    if (state._projectDetail) state._projectDetail.code_mode = !!enabled;
+    // Re-render the detail so the working-dir picker + Sources visibility update.
+    const wrap = document.getElementById('project-codemode-wd-wrap');
+    const src = document.getElementById('project-sources-section');
+    if (wrap) wrap.style.display = enabled ? '' : 'none';
+    if (src) src.style.display = enabled ? 'none' : '';
+    showToast(enabled ? 'Code Mode aktiviert — wähle ein Arbeitsverzeichnis'
+                      : 'Code Mode deaktiviert');
+  } catch (e) {
+    showToast('Einstellung konnte nicht geändert werden', true);
+    const cb = document.getElementById('project-codemode-checkbox');
+    if (cb) cb.checked = !enabled;
+  }
+}
+
+// Filesystem-browser picker for the code-mode working directory. Reuses the
+// same /v1/files/tree backend as the input-folder picker.
+function pickProjectWorkingDir() {
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.style.zIndex = '10001';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="sched-modal" style="max-width:600px">
+    <h2>Arbeitsverzeichnis wählen</h2>
+    <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">Wähle den Ordner, in dem dieses Projekt arbeitet (meist dein Code-Verzeichnis). Das Modell liest, bearbeitet und erzeugt Dateien direkt darin.</div>
+    <div id="pwd-crumbs" style="font-family:var(--font-mono);font-size:12px;color:var(--text-300);padding:6px 10px;background:var(--bg-100);border-radius:6px;margin-bottom:8px;word-break:break-all">…</div>
+    <div id="pwd-list" style="max-height:340px;overflow-y:auto;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)"></div>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Abbrechen</button>
+      <button class="sched-create-btn" onclick="_pwdSelect()">Dieses Verzeichnis verwenden</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  _pwdLoad('');
+}
+
+async function _pwdLoad(path) {
+  const crumbs = document.getElementById('pwd-crumbs');
+  const list = document.getElementById('pwd-list');
+  if (!crumbs || !list) return;
+  list.innerHTML = '<div style="padding:14px;color:var(--text-400);text-align:center">Wird geladen …</div>';
+  try {
+    const data = await API.get(`/v1/files/tree?path=${encodeURIComponent(path)}&depth=0`);
+    if (data.error) { list.innerHTML = `<div style="padding:14px;color:var(--error)">${esc(data.error)}</div>`; return; }
+    const cur = data.path || path || '/';
+    window._pwdPath = cur;
+    crumbs.textContent = cur;
+    const dirs = (data.tree || []).filter(n => n.type === 'dir');
+    const parent = (cur && cur !== '/') ? cur.replace(/\/[^\/]+\/?$/, '') || '/' : null;
+    let html = '';
+    if (parent !== null) {
+      html += `<div onclick="_pwdLoad('${esc(parent)}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border-100);font-family:var(--font-mono);font-size:12px;color:var(--text-300)">↑ ..</div>`;
+    }
+    if (!dirs.length) {
+      html += '<div style="padding:14px;color:var(--text-400);text-align:center;font-size:12px">(keine Unterordner)</div>';
+    } else {
+      for (const d of dirs) {
+        html += `<div onclick="_pwdLoad('${esc(d.path)}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border-100);font-family:var(--font-mono);font-size:12px;color:var(--text-200)"><span style="color:var(--text-400)">📁</span> ${esc(d.name)}</div>`;
+      }
+    }
+    list.innerHTML = html;
+  } catch(e) {
+    list.innerHTML = `<div style="padding:14px;color:var(--error)">${esc(e.message)}</div>`;
+  }
+}
+
+async function _pwdSelect() {
+  const path = window._pwdPath || '';
+  if (!path) { showToast('Kein Verzeichnis ausgewählt', true); return; }
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  try {
+    const res = await API.updateProject(agentId, projectName, { working_dir: path });
+    if (res && res.error) { showToast(res.error, true); return; }
+    if (state._projectDetail) state._projectDetail.working_dir = path;
+    const wd = document.getElementById('project-codemode-wd');
+    if (wd) wd.textContent = path;
+    document.querySelector('.sched-modal-overlay')?.remove();
+    showToast('Arbeitsverzeichnis gesetzt');
+  } catch (e) {
+    showToast('Verzeichnis konnte nicht gesetzt werden: ' + (e.message || e), true);
+  }
+}
+
+async function runProjectInit() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  const statusEl = document.getElementById('project-codemode-init-status');
+  if (!state._projectDetail?.working_dir) {
+    showToast('Erst ein Arbeitsverzeichnis wählen', true);
+    return;
+  }
+  try {
+    const res = await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/init`, {});
+    if (res && res.error) { showToast(res.error, true); return; }
+    if (statusEl) statusEl.innerHTML = '⏳ BRAIN.md wird im Hintergrund generiert — das kann je nach Projektgröße eine Weile dauern. Sie erscheint danach im Arbeitsverzeichnis.';
+    showToast('init gestartet — BRAIN.md wird generiert');
+  } catch (e) {
+    showToast('init fehlgeschlagen: ' + (e.message || e), true);
   }
 }
 

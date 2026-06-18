@@ -116,6 +116,7 @@ def _apply_context(ctx: dict) -> None:
     tl.current_user_id = ctx.get("user_id") or ""
     tl.current_team_ids = list(ctx.get("team_ids") or [])
     tl.project = ctx.get("project") or ""
+    tl.working_dir = ctx.get("working_dir") or None
     tl.note_context = ctx.get("note_context") or None
     tl.workflow_run_id = ctx.get("workflow_run_id") or ""
     tl.plan_mode = bool(ctx.get("plan_mode", False))
@@ -247,7 +248,7 @@ def handle_tools_call(handler) -> None:
         "args": {...},
         "context": {
           "session_id", "agent_id", "user_id", "team_ids", "project",
-          "note_context", "workflow_run_id", "plan_mode",
+          "working_dir", "note_context", "workflow_run_id", "plan_mode",
           "research_mode_override", "execution_overrides",
           "attachment_image_model", "model", "caveman_chat", "caveman_system"
         },

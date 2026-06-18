@@ -429,6 +429,28 @@ source — no stale/old-version noise.
 This is a DIFFERENT mechanism from project `web_urls` (mined into the
 project wing/KG by the project-sync daemon) — do not merge them.
 
+**Code Mode (project.code_mode + working_dir).** A per-project toggle that
+turns the project into a working-directory agent instead of a MemPalace-backed
+one. When on: NO ingest / NO MemPalace; the chat's cwd IS the project's
+`working_dir` (a user-picked path, validated to exist). File tools read/edit/
+create THERE — `apply_domain_context` sets `ctx.working_dir` and excludes the
+MemPalace tools (mempalace_query, save_chat_to_memory, mempalace_get_drawer,
+mempalace_list_drawers, read_document); `_resolve_artifact_dir` + execute_command/
+python_exec cwd prefer working_dir, and `_resolve_under_cwd` (file_tools.py)
+resolves RELATIVE paths in read_file/list_directory/search_files under
+working_dir (non-code-mode keeps process-cwd abspath). `BRAIN.md` at the
+working-dir root is the project memory — plain markdown, NEVER mined, injected
+verbatim into the system prompt (`_build_system_prompt` code-mode branch;
+cache-key folds working_dir + BRAIN.md mtime). `init` (POST
+…/projects/<name>/init, or the user typing "init" in chat) runs an agentic
+background turn (engine/code_init.py → background_call purpose=interactive,
+cwd=working_dir) that explores the dir and writes BRAIN.md — one agentic pass
+(selective key-file reads, like Claude Code's /init), not per-file. working_dir
+flows to the sidecar's per-tool-call context via tool_context. UI: a Code Mode
+section (toggle + /v1/files/tree dir picker + "generate BRAIN.md" button); the
+Sources/ingest tree is hidden when code_mode is on. Reversible (toggling off
+keeps any prior ingested files on disk, just unused).
+
 **Source-group context stamped into drawers (per-customer separation).** When an
 ingested file is assigned to a virtual source group (`project.json`
 `source_groups.files.assign`: source_hash → group_id — e.g. one group per
