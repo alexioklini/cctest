@@ -316,8 +316,11 @@ aufklappen (schreibgeschützt — die Ordnerstruktur ist fest). Du kannst
 bis zu 3 Ebenen) und Elemente per **Ziehen & Ablegen** hineinsortieren;
 mit Cmd/Strg-Klick mehrere gleichartige Elemente auswählen und gemeinsam
 ziehen (Esc hebt die Auswahl auf). Gruppen sind typgebunden (eine Datei-
-Gruppe nimmt nur Dateien). Eine Gruppe aufzulösen löscht NUR die virtuelle
-Gruppierung, nie die Quellen. Der Baum startet eingeklappt; den Aufklapp-
+Gruppe nimmt nur Dateien). Pro Gruppe gibt es zwei Lösch-Aktionen: **✕**
+löst NUR die virtuelle Gruppierung auf (die Quellen bleiben, wandern zur
+übergeordneten Ebene); **🗑️** löscht die Gruppe samt allen Untergruppen UND
+allen darin enthaltenen Dokumenten/Ordnern/Web-Adressen dauerhaft (mit
+Bestätigung samt Anzahl). Der Baum startet eingeklappt; den Aufklapp-
 Zustand merkt sich der Browser pro Projekt.
 
 **Recherche-Modus** — wie er gesteuert wird, hängt vom Auto-Routing-Modus ab

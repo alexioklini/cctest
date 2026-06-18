@@ -190,7 +190,8 @@ function _ptRenderGrouped(type, itemIds, itemsHtmlById) {
         <span class="pt-actions">
           ${canNest ? `<button class="pt-act" onclick="event.stopPropagation(); ptCreateGroup('${type}','${esc(g.id)}')" title="Untergruppe">＋</button>` : ''}
           <button class="pt-act" onclick="event.stopPropagation(); ptRenameGroup('${type}','${esc(g.id)}')" title="Umbenennen">✎</button>
-          <button class="pt-act" onclick="event.stopPropagation(); ptDeleteGroup('${type}','${esc(g.id)}')" title="Gruppe auflösen">✕</button>
+          <button class="pt-act" onclick="event.stopPropagation(); ptDeleteGroup('${type}','${esc(g.id)}')" title="Gruppe auflösen (Inhalte bleiben erhalten)">✕</button>
+          <button class="pt-act" onclick="event.stopPropagation(); ptDeleteGroupWithContents('${type}','${esc(g.id)}')" title="Gruppe inkl. aller enthaltenen Dokumente löschen">🗑️</button>
         </span>
       </div>
       <div class="pt-children pt-groupbody" data-group-body="${esc(g.id)}" style="${open ? '' : 'display:none'}">${inner || '<div class="pt-empty">Leer — Elemente hierher ziehen.</div>'}</div>
@@ -544,6 +545,102 @@ async function ptDeleteGroup(type, gid) {
   // Clean empty-string assignments (root) for tidiness.
   for (const k of Object.keys(b.assign)) { if (!b.assign[k]) delete b.assign[k]; }
   await _ptSaveGroups();
+  _ptRefreshType(type);
+}
+
+// Collect a group + ALL its descendant subgroups (ids), recursively.
+function _ptGroupSubtreeIds(groups, gid) {
+  const ids = [gid];
+  const kids = groups.filter(x => (x.parent || '') === gid);
+  for (const k of kids) ids.push(..._ptGroupSubtreeIds(groups, k.id));
+  return ids;
+}
+
+// "Gruppe inkl. Inhalte löschen": removes the group, every nested subgroup,
+// AND every document/folder/URL assigned anywhere in that subtree. This
+// DELETES the underlying sources (unlike ptDeleteGroup, which only dissolves
+// the virtual grouping). Confirmation shows the count first.
+async function ptDeleteGroupWithContents(type, gid) {
+  const b = _ptEnsureBucket(type);
+  const g = b.groups.find(x => x.id === gid);
+  if (!g) return;
+  const subtree = new Set(_ptGroupSubtreeIds(b.groups, gid));
+  // Member ids assigned to any group in the subtree (files: source_hash;
+  // folders: path; urls: the url string).
+  const memberIds = Object.keys(b.assign).filter(k => subtree.has(b.assign[k]));
+  const labelType = type === 'files' ? 'Dokument(e)' : type === 'folders' ? 'Ordner' : 'Web-Adresse(n)';
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.style.zIndex = '10001';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  const subgroupCount = subtree.size - 1;
+  overlay.innerHTML = `<div class="sched-modal" style="max-width:520px">
+    <h2 style="display:flex;align-items:center;gap:8px">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#d33" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      Gruppe „${esc(g.name)}" inkl. Inhalte löschen?
+    </h2>
+    <div style="font-size:13px;color:var(--text-300);line-height:1.5;margin:8px 0 16px">
+      Dauerhaft entfernt werden:
+      <ul style="margin:8px 0 0;padding-left:18px">
+        <li><strong>${memberIds.length}</strong> ${esc(labelType)}</li>
+        ${subgroupCount > 0 ? `<li>diese Gruppe + <strong>${subgroupCount}</strong> Untergruppe(n)</li>` : `<li>diese Gruppe</li>`}
+      </ul>
+      <div style="margin-top:10px">Die zugehörigen Quellen werden aus dem Projekt und seinem Speicher gelöscht. Das lässt sich nicht rückgängig machen.</div>
+    </div>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Abbrechen</button>
+      <button class="sched-create-btn" style="background:#d33;border-color:#d33" onclick="_ptConfirmDeleteGroupWithContents('${esc(type)}','${esc(gid)}')">Endgültig löschen</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function _ptConfirmDeleteGroupWithContents(type, gid) {
+  document.querySelector('.sched-modal-overlay')?.remove();
+  const agentId = state._projectDetailAgent || 'main';
+  const projectName = state._projectDetailName || '';
+  if (!agentId || !projectName) return;
+  const b = _ptEnsureBucket(type);
+  const g = b.groups.find(x => x.id === gid);
+  if (!g) return;
+  const subtree = new Set(_ptGroupSubtreeIds(b.groups, gid));
+  const memberIds = Object.keys(b.assign).filter(k => subtree.has(b.assign[k]));
+
+  // Delete the underlying sources per type. Best-effort per item; a failure is
+  // toasted but doesn't abort the rest.
+  let failed = 0;
+  if (type === 'files') {
+    for (const sourceHash of memberIds) {
+      try {
+        await API.del(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/docs/${encodeURIComponent(sourceHash)}`);
+      } catch (e) { failed++; }
+    }
+  } else if (type === 'folders') {
+    // input-folders delete is index-based; resolve each path→current index
+    // fresh before each delete (indices shift as we remove).
+    for (const path of memberIds) {
+      try {
+        const data = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/input-folders`);
+        const list = (data && (data.folders || data.input_folders)) || [];
+        const idx = list.findIndex(f => (f.path || '') === path);
+        if (idx >= 0) await API.del(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/input-folders/${idx}`);
+      } catch (e) { failed++; }
+    }
+  } else if (type === 'urls') {
+    // web_urls: drop the matching urls in one save.
+    const remaining = (state._projectDetail?.web_urls || []).filter(u => !memberIds.includes(u.url));
+    try {
+      if (typeof _saveProjectWebUrls === 'function') await _saveProjectWebUrls(remaining);
+      else { if (state._projectDetail) state._projectDetail.web_urls = remaining;
+             await API.updateProject(agentId, projectName, { web_urls: remaining }); }
+    } catch (e) { failed += memberIds.length; }
+  }
+
+  // Drop the subtree groups + their assignments from source_groups.
+  b.groups = b.groups.filter(x => !subtree.has(x.id));
+  for (const k of Object.keys(b.assign)) { if (subtree.has(b.assign[k])) delete b.assign[k]; }
+  await _ptSaveGroups();
+  showToast(failed ? `Gruppe gelöscht, ${failed} Element(e) fehlgeschlagen` : 'Gruppe inkl. Inhalte gelöscht');
   _ptRefreshType(type);
 }
 

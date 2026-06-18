@@ -1494,15 +1494,22 @@ class ProjectsHandlerMixin:
 
     def _handle_agent_ingested_delete(self, path: str):
         """DELETE /v1/agents/{id}/ingested/{hash}"""
+        from urllib.parse import unquote
         agent_id = self._parse_agent_from_path(path)
         parts = path.split("/")
-        source_hash = parts[-1] if len(parts) >= 5 else ""
+        # URL-decode the hash segment (source_hash = filename stem, may contain
+        # non-ASCII) so a stem like "Übersicht" matches; and treat a no-op
+        # delete as 404 rather than a false success. (Same fix as the project
+        # doc-delete handler.)
+        source_hash = unquote(parts[-1]) if len(parts) >= 5 else ""
         if not agent_id or not source_hash:
             self._send_json({"error": "Missing agent or source hash"}, 400)
             return
         result = engine.IngestManager.delete_ingested(agent_id, source_hash)
         if "error" in result:
             self._send_json(result, 404)
+        elif not result.get("deleted"):
+            self._send_json({"error": "document not found", **result}, 404)
         else:
             self._send_json(result)
 
@@ -1981,17 +1988,26 @@ class ProjectsHandlerMixin:
 
     def _handle_project_doc_delete(self, path: str):
         """DELETE /v1/agents/{id}/projects/{name}/docs/{hash}"""
+        from urllib.parse import unquote
         agent_id = self._parse_agent_from_path(path)
         proj_name = self._parse_project_from_path(path)
         parts = path.split("/")
-        source_hash = parts[-1] if len(parts) >= 8 else ""
+        # The hash segment is URL-encoded on the wire — a source_hash now equals
+        # the filename stem, which can contain non-ASCII (e.g. "Übersicht" →
+        # %C3%9C). Without unquote the stored stem never matches → 0 deleted but
+        # a false 200 ("said deleted, still there"). Decode before matching.
+        source_hash = unquote(parts[-1]) if len(parts) >= 8 else ""
         if not agent_id or not proj_name or not source_hash:
             self._send_json({"error": "Missing parameters"}, 400)
             return
         if self._project_access_check(agent_id, proj_name, require_manage=True) is None:
             return
         result = engine.IngestManager.delete_ingested(agent_id, source_hash, project_name=proj_name)
+        # delete_ingested returns deleted=0 (no error key) when nothing matched —
+        # surface that as a 404 so the client doesn't claim success on a no-op.
         if "error" in result:
             self._send_json(result, 404)
+        elif not result.get("deleted"):
+            self._send_json({"error": "document not found", **result}, 404)
         else:
             self._send_json(result)
