@@ -552,6 +552,84 @@ async function uploadProjectFiles(files) {
 // server sanitiser) and assign each ingested source_hash to its leaf group.
 // Existing groups are reused by (parent,name) so re-adding the same folder
 // doesn't duplicate the tree.
+// Entry point for both folder-import paths (picker + drag-drop). Shows a real
+// confirmation dialog (not a browser confirm) summarising the import, then runs
+// addProjectFolderFiles on accept. `entries` = [{file, relPath}].
+function confirmProjectFolderImport(entries) {
+  entries = (entries || []).filter(e => e && e.file);
+  if (!entries.length) return;
+  // Count distinct top-level folders + nesting for the summary.
+  const folders = new Set();
+  for (const e of entries) {
+    const parts = String(e.relPath || e.file.name).split('/').filter(Boolean);
+    if (parts.length > 1) folders.add(parts[0]);
+  }
+  const totalBytes = entries.reduce((s, e) => s + (e.file.size || 0), 0);
+  const mb = (totalBytes / (1024 * 1024));
+  const sizeStr = mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(totalBytes / 1024))} KB`;
+  // Stash for the confirm handler (avoids serialising File objects into HTML).
+  window._pendingFolderImport = entries;
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.style.zIndex = '10001';
+  overlay.onclick = e => { if (e.target === overlay) { overlay.remove(); window._pendingFolderImport = null; } };
+  overlay.innerHTML = `<div class="sched-modal" style="max-width:520px">
+    <h2 style="display:flex;align-items:center;gap:8px">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      Ordner importieren?
+    </h2>
+    <div style="font-size:13px;color:var(--text-300);line-height:1.6;margin:8px 0 16px">
+      Es werden <strong>${entries.length}</strong> Datei(en)${folders.size ? ` aus <strong>${folders.size}</strong> Ordner(n)` : ''} (${esc(sizeStr)}) in dieses Projekt importiert.
+      Die Ordnerstruktur wird als <strong>Gruppen</strong> übernommen.
+      <div style="margin-top:8px;color:var(--text-400)">Die Dateien werden in den Projektspeicher aufgenommen (gemined).</div>
+    </div>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove(); window._pendingFolderImport=null">Abbrechen</button>
+      <button class="sched-create-btn" onclick="this.closest('.sched-modal-overlay').remove(); addProjectFolderFiles(window._pendingFolderImport); window._pendingFolderImport=null">Importieren</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+// Build / update / close a single progress modal for the folder import (replaces
+// the overlapping per-file toasts). Includes an Abort button: the loop checks
+// window._folderImportAborted between files and stops cleanly.
+function _folderImportProgressOpen(total) {
+  window._folderImportAborted = false;
+  let ov = document.getElementById('folder-import-progress');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'folder-import-progress';
+    ov.className = 'sched-modal-overlay';
+    ov.style.zIndex = '10002';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = `<div class="sched-modal" style="max-width:480px">
+    <h2>Ordner wird importiert …</h2>
+    <div style="font-size:13px;color:var(--text-300);margin:8px 0">
+      <div id="fip-current" style="font-family:var(--font-mono);font-size:12px;color:var(--text-400);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:10px">Wird vorbereitet …</div>
+      <div style="height:8px;background:var(--bg-100);border-radius:4px;overflow:hidden;border:1px solid var(--border-100)">
+        <div id="fip-bar" style="height:100%;width:0%;background:var(--accent-500,#4a9eff);transition:width .15s"></div>
+      </div>
+      <div id="fip-count" style="margin-top:8px;text-align:right;color:var(--text-400)">0 / ${total}</div>
+    </div>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" id="fip-abort" onclick="window._folderImportAborted=true; this.disabled=true; this.textContent='Wird abgebrochen …'">Abbrechen</button>
+    </div>
+  </div>`;
+}
+function _folderImportProgressUpdate(done, total, name, failed) {
+  const bar = document.getElementById('fip-bar');
+  const cnt = document.getElementById('fip-count');
+  const cur = document.getElementById('fip-current');
+  if (bar) bar.style.width = `${Math.round((done / Math.max(1, total)) * 100)}%`;
+  if (cnt) cnt.textContent = `${done} / ${total}${failed ? ` · ${failed} fehlgeschlagen` : ''}`;
+  if (cur && name) cur.textContent = name;
+}
+function _folderImportProgressClose() {
+  document.getElementById('folder-import-progress')?.remove();
+}
+
 async function addProjectFolderFiles(entries) {
   entries = (entries || []).filter(e => e && e.file);
   if (!entries.length) return;
@@ -593,30 +671,44 @@ async function addProjectFolderFiles(entries) {
     return leaf;
   }
 
-  let ok = 0, failed = 0;
+  const total = entries.length;
+  _folderImportProgressOpen(total);
+  let ok = 0, failed = 0, done = 0, aborted = false;
   for (const { file, relPath } of entries) {
+    if (window._folderImportAborted) { aborted = true; break; }
     // Split "MyFolder/sub/report.pdf" → dir segments ["MyFolder","sub"].
     const parts = String(relPath || file.name).split('/').filter(Boolean);
     const dirSegs = parts.slice(0, -1);
+    _folderImportProgressUpdate(done, total, relPath || file.name, failed);
     try {
-      showToast(`${file.name} wird hochgeladen …`);
       const result = await _ingestOneProjectFile(agentId, projectName, file);
-      if (result.error || !result.source_hash) { failed++; continue; }
-      const leaf = ensureGroupChain(dirSegs);
-      if (leaf) bucket.assign[result.source_hash] = leaf;
-      ok++;
+      if (result.error || !result.source_hash) { failed++; }
+      else {
+        const leaf = ensureGroupChain(dirSegs);
+        if (leaf) bucket.assign[result.source_hash] = leaf;
+        ok++;
+      }
     } catch(e) {
       failed++;
     }
+    done++;
+    _folderImportProgressUpdate(done, total, relPath || file.name, failed);
   }
 
-  // Persist the groups once, then refresh the tree.
+  // Persist the groups for whatever was imported so far (an aborted run keeps
+  // the files it already ingested, correctly grouped — nothing is rolled back).
   try {
     await API.updateProject(agentId, projectName, { source_groups: state._projectDetail.source_groups });
   } catch(e) {
     showToast('Gruppierung konnte nicht gespeichert werden: ' + (e.message || e), true);
   }
-  showToast(`Ordner hinzugefügt: ${ok} Datei(en)${failed ? `, ${failed} fehlgeschlagen` : ''}`);
+  _folderImportProgressClose();
+  window._folderImportAborted = false;
+  if (aborted) {
+    showToast(`Import abgebrochen — ${ok} von ${total} Datei(en) importiert${failed ? `, ${failed} fehlgeschlagen` : ''}`);
+  } else {
+    showToast(`Ordner importiert: ${ok} Datei(en)${failed ? `, ${failed} fehlgeschlagen` : ''}`);
+  }
   loadProjectFiles(agentId, projectName);
   if (typeof renderProjectSourceTree === 'function') renderProjectSourceTree();
 }
@@ -630,7 +722,7 @@ function pickProjectFolder(input) {
   const entries = files
     .filter(f => !f.name.startsWith('.'))   // skip dotfiles/OS cruft
     .map(f => ({ file: f, relPath: f.webkitRelativePath || f.name }));
-  addProjectFolderFiles(entries);
+  confirmProjectFolderImport(entries);
 }
 
 async function deleteProjectFile(agentId, projectName, sourceHash) {
@@ -1353,13 +1445,52 @@ async function _saveProjectWebUrls(urls) {
 }
 
 function addProjectWebUrl() {
-  let url = (prompt('Web-Adresse hinzufügen (wird als Wissensquelle eingelesen):') || '').trim();
-  if (!url) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.style.zIndex = '10001';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="sched-modal" style="max-width:520px">
+    <h2 style="display:flex;align-items:center;gap:8px">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      Web-Adresse hinzufügen
+    </h2>
+    <div style="font-size:13px;color:var(--text-300);line-height:1.5;margin:8px 0 14px">
+      Die Seite wird frisch abgerufen und als Wissensquelle in dieses Projekt eingelesen.
+    </div>
+    <label style="display:block;font-size:12px;color:var(--text-400);margin-bottom:4px">Adresse (URL)</label>
+    <input id="pwu-url" type="text" placeholder="https://example.com/seite" autocomplete="off"
+      style="width:100%;padding:8px 10px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100);color:var(--text-100);font-size:13px;margin-bottom:12px"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();_pwuConfirm();}">
+    <label style="display:block;font-size:12px;color:var(--text-400);margin-bottom:4px">Bezeichnung (optional)</label>
+    <input id="pwu-title" type="text" placeholder="leer lassen für die Domain" autocomplete="off"
+      style="width:100%;padding:8px 10px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100);color:var(--text-100);font-size:13px"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();_pwuConfirm();}">
+    <div id="pwu-err" style="color:#d33;font-size:12px;margin-top:8px;display:none"></div>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Abbrechen</button>
+      <button class="sched-create-btn" onclick="_pwuConfirm()">Hinzufügen</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => document.getElementById('pwu-url')?.focus(), 50);
+}
+
+function _pwuConfirm() {
+  const urlEl = document.getElementById('pwu-url');
+  const titleEl = document.getElementById('pwu-title');
+  const errEl = document.getElementById('pwu-err');
+  if (!urlEl) return;
+  let url = (urlEl.value || '').trim();
+  if (!url) { if (errEl) { errEl.textContent = 'Bitte eine Adresse eingeben.'; errEl.style.display = 'block'; } return; }
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-  const title = (prompt('Optionale Bezeichnung (leer lassen für die Domain):') || '').trim();
+  const title = (titleEl?.value || '').trim();
   const urls = (state._projectDetail?.web_urls || []).slice();
-  if (urls.some(u => u.url === url)) { showToast('Diese Adresse ist bereits hinterlegt'); return; }
+  if (urls.some(u => u.url === url)) {
+    if (errEl) { errEl.textContent = 'Diese Adresse ist bereits hinterlegt.'; errEl.style.display = 'block'; }
+    return;
+  }
   urls.push({ url, title });
+  document.querySelector('.sched-modal-overlay')?.remove();
   _saveProjectWebUrls(urls);
 }
 

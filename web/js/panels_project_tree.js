@@ -843,8 +843,8 @@ async function ptDrop(ev) {
         entries.push({ file, relPath: file.name });
       }
     }
-    if (entries.length && typeof addProjectFolderFiles === 'function') {
-      await addProjectFolderFiles(entries);
+    if (entries.length && typeof confirmProjectFolderImport === 'function') {
+      confirmProjectFolderImport(entries);
     }
     return;
   }

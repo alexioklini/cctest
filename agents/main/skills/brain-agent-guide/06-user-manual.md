@@ -274,8 +274,14 @@ Codebasen, Forschungspapiere, …).
 2. Benennen. Optional: Beschreibung und Bild.
 3. **Eingabeordner** — auf Verzeichnisse zeigen, die eingespeist werden
    sollen. Rekursiv- + Auto-Sync-Flags pro Ordner.
-4. **Hochladen** — Dateien über die Projektseite (Multipart-Drag&Drop).
-5. **Web-Adressen** — eine Liste von URLs, die das Projekt frisch abruft
+4. **Hochladen** — Einzeldateien über das ＋ im Dateien-Zweig, oder einen
+   ganzen **Ordner** über das 📁 (bzw. per Drag&Drop auf den Dateien-Zweig).
+   Ein Ordner-Import zeigt zuerst einen Bestätigungsdialog (Anzahl Dateien/
+   Ordner/Größe), dann einen Fortschrittsdialog mit Balken und einem
+   **Abbrechen**-Button (bereits importierte Dateien bleiben erhalten); die
+   Unterordner-Struktur wird als Gruppen übernommen.
+5. **Web-Adressen** — über das ＋ im Web-Adressen-Zweig öffnet sich ein Dialog
+   (Adresse + optionale Bezeichnung). Eine Liste von URLs, die das Projekt frisch abruft
    und ins Projektgedächtnis + KG einspeist (per crawl4ai gerendert, also
    auch JS-Seiten). Anderer Mechanismus als die Websuche im Chat. Zeigt eine
    Web-Adresse auf eine **Datei** (PDF, DOCX, XLSX …) statt auf eine Webseite,
