@@ -520,7 +520,31 @@ async function _ingestOneProjectFile(agentId, projectName, file) {
   const resp = await fetch(`${BASE_URL}/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/ingest`, {
     method: 'POST', headers, body: formData,
   });
-  return resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+  const body = await resp.json().catch(() => null);
+  // Always surface a readable reason on failure: prefer the server's own error
+  // string (translated for the common cases), else map the HTTP status.
+  if (!resp.ok || (body && body.error)) {
+    const raw = (body && body.error)
+      || (resp.status === 413 ? 'Datei zu groß'
+        : resp.status === 415 ? 'Dateityp nicht unterstützt'
+        : `HTTP ${resp.status}`);
+    return { error: _ingestReasonDe(raw) };
+  }
+  return body || { error: `HTTP ${resp.status}` };
+}
+
+// Translate the common server-side ingest error strings into something a German
+// UI user understands; unknown strings pass through verbatim.
+function _ingestReasonDe(raw) {
+  const s = String(raw || '');
+  if (/no content extracted/i.test(s)) return 'Kein Text extrahierbar (leer, gescanntes Bild ohne OCR, oder zu kurz)';
+  if (/unsupported format/i.test(s)) {
+    const m = s.match(/unsupported format:\s*(\S+)/i);
+    return `Dateityp nicht unterstützt${m ? ` (${m[1].replace(/[.,]$/, '')})` : ''}`;
+  }
+  if (/file not found/i.test(s)) return 'Datei nicht gefunden';
+  if (/too large/i.test(s)) return 'Datei zu groß';
+  return s;
 }
 
 async function uploadProjectFiles(files) {
@@ -673,26 +697,31 @@ async function addProjectFolderFiles(entries) {
 
   const total = entries.length;
   _folderImportProgressOpen(total);
-  let ok = 0, failed = 0, done = 0, aborted = false;
+  let ok = 0, done = 0, aborted = false;
+  const failures = [];   // [{name, reason}]
   for (const { file, relPath } of entries) {
     if (window._folderImportAborted) { aborted = true; break; }
     // Split "MyFolder/sub/report.pdf" → dir segments ["MyFolder","sub"].
     const parts = String(relPath || file.name).split('/').filter(Boolean);
     const dirSegs = parts.slice(0, -1);
-    _folderImportProgressUpdate(done, total, relPath || file.name, failed);
+    const dispName = relPath || file.name;
+    _folderImportProgressUpdate(done, total, dispName, failures.length);
     try {
       const result = await _ingestOneProjectFile(agentId, projectName, file);
-      if (result.error || !result.source_hash) { failed++; }
-      else {
+      if (result.error) {
+        failures.push({ name: dispName, reason: result.error });
+      } else if (!result.source_hash) {
+        failures.push({ name: dispName, reason: 'kein Inhalt extrahiert' });
+      } else {
         const leaf = ensureGroupChain(dirSegs);
         if (leaf) bucket.assign[result.source_hash] = leaf;
         ok++;
       }
     } catch(e) {
-      failed++;
+      failures.push({ name: dispName, reason: (e && e.message) || 'Netzwerkfehler' });
     }
     done++;
-    _folderImportProgressUpdate(done, total, relPath || file.name, failed);
+    _folderImportProgressUpdate(done, total, dispName, failures.length);
   }
 
   // Persist the groups for whatever was imported so far (an aborted run keeps
@@ -702,15 +731,57 @@ async function addProjectFolderFiles(entries) {
   } catch(e) {
     showToast('Gruppierung konnte nicht gespeichert werden: ' + (e.message || e), true);
   }
-  _folderImportProgressClose();
   window._folderImportAborted = false;
-  if (aborted) {
-    showToast(`Import abgebrochen — ${ok} von ${total} Datei(en) importiert${failed ? `, ${failed} fehlgeschlagen` : ''}`);
-  } else {
-    showToast(`Ordner importiert: ${ok} Datei(en)${failed ? `, ${failed} fehlgeschlagen` : ''}`);
-  }
   loadProjectFiles(agentId, projectName);
   if (typeof renderProjectSourceTree === 'function') renderProjectSourceTree();
+  // Turn the progress modal into a result/status view — keeps it open so the
+  // user sees the outcome, especially WHICH files failed and WHY. If everything
+  // succeeded and nothing was skipped, just close with a toast (no need to
+  // block on an all-green result).
+  if (!failures.length && !aborted) {
+    _folderImportProgressClose();
+    showToast(`Ordner importiert: ${ok} Datei(en)`);
+  } else {
+    _folderImportShowResult({ ok, total, aborted, failures });
+  }
+}
+
+// Replace the progress modal body with a final status: counts + a scrollable
+// list of failed files with their reason. Stays open until the user closes it.
+function _folderImportShowResult({ ok, total, aborted, failures }) {
+  const ov = document.getElementById('folder-import-progress');
+  if (!ov) {
+    // Modal was dismissed somehow — fall back to a toast.
+    showToast(`${ok}/${total} importiert${failures.length ? `, ${failures.length} fehlgeschlagen` : ''}`);
+    return;
+  }
+  const failHtml = failures.length ? `
+    <div style="margin-top:12px">
+      <div style="font-size:12px;color:var(--text-300);margin-bottom:6px"><strong>${failures.length}</strong> nicht importiert:</div>
+      <div style="max-height:240px;overflow-y:auto;border:1px solid var(--border-100);border-radius:6px">
+        ${failures.map(f => `
+          <div style="padding:7px 10px;border-bottom:1px solid var(--border-100);font-size:12px">
+            <div style="font-family:var(--font-mono);color:var(--text-200);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(f.name)}">${esc(f.name)}</div>
+            <div style="color:#d33;margin-top:2px">${esc(f.reason)}</div>
+          </div>`).join('')}
+      </div>
+    </div>` : '';
+  ov.innerHTML = `<div class="sched-modal" style="max-width:520px">
+    <h2 style="display:flex;align-items:center;gap:8px">
+      ${aborted
+        ? `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#e0a000" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>Import abgebrochen`
+        : failures.length
+          ? `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#e0a000" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Import abgeschlossen (mit Hinweisen)`
+          : `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#2a9d3a" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Import abgeschlossen`}
+    </h2>
+    <div style="font-size:13px;color:var(--text-300);margin:8px 0">
+      <strong>${ok}</strong> von <strong>${total}</strong> Datei(en) importiert${aborted ? ' (abgebrochen)' : ''}.
+      ${failHtml}
+    </div>
+    <div class="sched-modal-actions">
+      <button class="sched-create-btn" onclick="document.getElementById('folder-import-progress')?.remove()">Schließen</button>
+    </div>
+  </div>`;
 }
 
 // Folder-picker handler: a <input type="file" webkitdirectory> yields a flat

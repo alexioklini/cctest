@@ -276,10 +276,14 @@ Codebasen, Forschungspapiere, …).
    sollen. Rekursiv- + Auto-Sync-Flags pro Ordner.
 4. **Hochladen** — Einzeldateien über das ＋ im Dateien-Zweig, oder einen
    ganzen **Ordner** über das 📁 (bzw. per Drag&Drop auf den Dateien-Zweig).
-   Ein Ordner-Import zeigt zuerst einen Bestätigungsdialog (Anzahl Dateien/
-   Ordner/Größe), dann einen Fortschrittsdialog mit Balken und einem
-   **Abbrechen**-Button (bereits importierte Dateien bleiben erhalten); die
-   Unterordner-Struktur wird als Gruppen übernommen.
+   Ein Ordner-Import (per Drag&Drop) zeigt zuerst einen Bestätigungsdialog
+   (Anzahl Dateien/Ordner/Größe; beim 📁-Picker entfällt der, weil der Browser
+   selbst schon fragt), dann einen Fortschrittsdialog mit Balken und einem
+   **Abbrechen**-Button (bereits importierte Dateien bleiben erhalten). Am Ende
+   erscheint ein **Status** — bei Fehlern bleibt der Dialog offen und listet,
+   welche Dateien nicht importiert werden konnten und warum (z. B. „Kein Text
+   extrahierbar", „Dateityp nicht unterstützt"). Die Unterordner-Struktur wird
+   als Gruppen übernommen.
 5. **Web-Adressen** — über das ＋ im Web-Adressen-Zweig öffnet sich ein Dialog
    (Adresse + optionale Bezeichnung). Eine Liste von URLs, die das Projekt frisch abruft
    und ins Projektgedächtnis + KG einspeist (per crawl4ai gerendert, also
