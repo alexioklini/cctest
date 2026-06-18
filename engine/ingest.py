@@ -1,7 +1,7 @@
 """engine/ingest.py — document/ingest pipeline (refactor E3).
 
 Extracted from brain.py. Owns the four cohesive classes that parse documents
-to text, chunk them, persist them as `ingest-*.md` chunk files, and auto-ingest
+to text, chunk them, persist them as `<stem>__NNN.md` chunk files, and auto-ingest
 watched folders:
 
   - `DocumentParser`  — format-detect → plain-text/markdown. The office/tabular
@@ -10,8 +10,9 @@ watched folders:
     image/svg/url) are self-contained stdlib/Pillow/fitz parsers.
   - `DocumentChunker` — paragraph/sentence/word chunking with section-header
     preservation + overlap. Pure (re + stdlib only).
-  - `IngestManager`   — parse → chunk → write `ingest-<hash>-NNN.md` with
-    frontmatter under `agents/<agent>/[projects/<proj>/]ingested/`; list/delete.
+  - `IngestManager`   — parse → chunk → write `<stem>__NNN.md` (stem = the
+    original source filename, extension dropped) with frontmatter under
+    `agents/<agent>/[projects/<proj>/]ingested/`; list/delete.
   - `IngestWatcher`   — background poll loop over agent.json `ingest_watch` +
     project.json `watch_folders`, mtime/size-diffing into an `ingest_registry.json`.
 
@@ -405,8 +406,131 @@ class IngestManager:
 
     @staticmethod
     def _source_hash(source: str) -> str:
-        """6-char hash of source name/URL."""
+        """6-char hash of source name/URL.
+
+        Retained for the legacy chunk-filename scheme and as a uniqueness
+        fallback when a sanitized stem would otherwise be empty. The on-disk
+        chunk filename + grouping key is now stem-based — see `_source_key`.
+        """
         return hashlib.sha256(source.encode()).hexdigest()[:6]
+
+    # ── Stem-based chunk naming ──────────────────────────────────────────
+    # Chunk files are named `<key>__NNN.md`, where `<key>` is a filesystem-safe
+    # rendering of the ORIGINAL source filename (extension dropped). The key
+    # doubles as the public `source_hash` group key returned by list_ingested
+    # and consumed by the delete endpoints, the data-review reviewer, the
+    # project-sync daemon (per-upload grouping + drawer-count + KG scoping),
+    # and the project-tree UI. `__` (double underscore) separates key from the
+    # 3-digit chunk index; the sanitizer guarantees the key never contains it,
+    # so `_key_from_filename` can split unambiguously.
+
+    @staticmethod
+    def _safe_stem(source: str) -> str:
+        """Sanitize a source name/URL into a filesystem-safe filename stem.
+
+        Drops the directory + extension, keeps the original characters as far
+        as they're safe (letters/digits/`.`/`-`/space → space-to-`_`), collapses
+        runs, and strips the `__` separator so it can't collide with the index
+        delimiter. Falls back to the 6-char source hash when nothing usable
+        survives (e.g. a URL of pure punctuation)."""
+        base = os.path.basename(source.rstrip("/")) or source
+        stem = os.path.splitext(base)[0]
+        # Allow word chars, dot and hyphen; turn whitespace into underscore.
+        stem = re.sub(r"\s+", "_", stem.strip())
+        stem = re.sub(r"[^\w.\-]", "_", stem, flags=re.UNICODE)
+        stem = re.sub(r"_+", "_", stem).strip("_.")
+        # `__` is the reserved key/index delimiter — collapse any in the stem.
+        stem = stem.replace("__", "_")
+        if not stem:
+            return f"src-{IngestManager._source_hash(source)}"
+        return stem
+
+    @staticmethod
+    def _source_key(ingest_dir: str, source: str) -> str:
+        """Resolve the unique group key (== filename stem) for `source` in
+        `ingest_dir`. Reuses the key of an existing ingest of the SAME source
+        (so re-ingest overwrites in place); otherwise derives a fresh stem and
+        disambiguates against a different source already holding that stem."""
+        wanted = IngestManager._safe_stem(source)
+        existing: dict[str, str] = {}  # key -> source recorded in frontmatter
+        try:
+            for fname in os.listdir(ingest_dir):
+                key = IngestManager._key_from_filename(fname)
+                if not key or key in existing:
+                    continue
+                src = IngestManager._read_chunk_source(
+                    os.path.join(ingest_dir, fname))
+                existing[key] = src
+        except OSError:
+            pass
+        # Re-ingest of the same source → reuse its key.
+        for key, src in existing.items():
+            if src == source:
+                return key
+        # Fresh source. Disambiguate if the wanted stem is taken by another.
+        if wanted not in existing:
+            return wanted
+        n = 2
+        while f"{wanted}-{n}" in existing:
+            n += 1
+        return f"{wanted}-{n}"
+
+    @staticmethod
+    def _chunk_filename(key: str, idx: int) -> str:
+        """Chunk filename for a group key + chunk index."""
+        return f"{key}__{idx:03d}.md"
+
+    @staticmethod
+    def chunk_filename_prefix(ingest_dir: str, key: str) -> str:
+        """Filename prefix shared by all chunks of `key`. Joined with the
+        ingest dir, this is the `source_file` prefix the project-sync daemon
+        uses to count drawers + scope KG extraction per upload.
+
+        New scheme → `<key>__`; legacy scheme → `ingest-<key>-`. Resolved by
+        inspecting which scheme the key's chunks are actually stored under, so
+        both coexist during the transition."""
+        new_prefix = f"{key}__"
+        legacy_prefix = f"ingest-{key}-"
+        try:
+            for fname in os.listdir(ingest_dir):
+                if fname.startswith(new_prefix):
+                    return new_prefix
+                if fname.startswith(legacy_prefix) and fname.endswith(".md"):
+                    return legacy_prefix
+        except OSError:
+            pass
+        return new_prefix
+
+    @staticmethod
+    def _key_from_filename(fname: str) -> str | None:
+        """Reverse of `_chunk_filename`. Tolerates the legacy
+        `ingest-<hash>-NNN.md` scheme so pre-existing chunks still group/list/
+        delete. Returns None for non-chunk files."""
+        if not fname.endswith(".md"):
+            return None
+        stem = fname[:-3]
+        if "__" in stem:
+            key, _, tail = stem.rpartition("__")
+            if key and tail.isdigit():
+                return key
+            return None
+        # Legacy: ingest-<hash>-NNN.md → key was the <hash> segment.
+        if fname.startswith("ingest-"):
+            parts = fname.split("-", 2)
+            if len(parts) >= 2 and parts[1]:
+                return parts[1]
+        return None
+
+    @staticmethod
+    def _read_chunk_source(fpath: str) -> str:
+        """Read the `source:` frontmatter value from a chunk file."""
+        import brain as _brain
+        try:
+            with open(fpath, "r") as f:
+                fm, _ = _brain._parse_frontmatter(f.read(800))
+            return fm.get("source", "")
+        except Exception:
+            return ""
 
     @staticmethod
     def _ingest_dir(agent_id: str, project_name: str | None = None) -> str:
@@ -464,14 +588,19 @@ class IngestManager:
                       source: str, source_type: str, text: str,
                       tags: list[str] | None = None,
                       chunk_size: int = 1500, chunk_overlap: int = 200) -> dict:
-        """Chunk text and write as ingest-*.md files with frontmatter."""
+        """Chunk text and write as `<stem>__NNN.md` files with frontmatter.
+
+        The chunk filename preserves the original source filename (extension
+        dropped); `key` is that stem and doubles as the public `source_hash`
+        group key. See `_source_key`."""
         import brain as _brain
-        src_hash = IngestManager._source_hash(source)
         ingest_dir = IngestManager._ingest_dir(agent_id, project_name)
+        key = IngestManager._source_key(ingest_dir, source)
         collection = IngestManager._collection_name(agent_id, project_name)
 
-        # Delete existing chunks for this source (re-ingest)
-        existing = [f for f in os.listdir(ingest_dir) if f.startswith(f"ingest-{src_hash}-") and f.endswith(".md")]
+        # Delete existing chunks for this source (re-ingest) — both schemes.
+        existing = [f for f in os.listdir(ingest_dir)
+                    if IngestManager._key_from_filename(f) == key]
         for f in existing:
             os.remove(os.path.join(ingest_dir, f))
 
@@ -499,23 +628,24 @@ class IngestManager:
             # Build related links
             related_lines = []
             if idx > 0:
-                prev_file = f"ingest-{src_hash}-{idx - 1:03d}.md"
+                prev_file = IngestManager._chunk_filename(key, idx - 1)
                 related_lines.append(f"  - file: {prev_file}\n    type: prev_chunk")
             if idx < total - 1:
-                next_file = f"ingest-{src_hash}-{idx + 1:03d}.md"
+                next_file = IngestManager._chunk_filename(key, idx + 1)
                 related_lines.append(f"  - file: {next_file}\n    type: next_chunk")
             if idx != 0:
-                first_file = f"ingest-{src_hash}-000.md"
+                first_file = IngestManager._chunk_filename(key, 0)
                 related_lines.append(f"  - file: {first_file}\n    type: same_source")
             related_yaml = ""
             if related_lines:
                 related_yaml = "related:\n" + "\n".join(related_lines) + "\n"
 
-            filename = f"ingest-{src_hash}-{idx:03d}.md"
+            filename = IngestManager._chunk_filename(key, idx)
             md_content = f"""---
 title: {_brain._yaml_escape(title)}
 source: {_brain._yaml_escape(source)}
 source_type: {source_type}
+source_hash: {key}
 ingested_at: "{now}"
 chunk_index: {idx}
 total_chunks: {total}
@@ -535,7 +665,7 @@ tags:
         return {
             "source": source,
             "source_type": source_type,
-            "source_hash": src_hash,
+            "source_hash": key,
             "chunks": len(chunks),
             "words": word_count,
             "files": files_written,
@@ -551,10 +681,11 @@ tags:
         ingest_dir = IngestManager._ingest_dir(agent_id, project_name)
         if not os.path.isdir(ingest_dir):
             return []
-        # Group by source hash
+        # Group by source key (filename stem; frontmatter source_hash wins).
         groups: dict[str, dict] = {}
         for fname in os.listdir(ingest_dir):
-            if not fname.startswith("ingest-") or not fname.endswith(".md"):
+            src_hash = IngestManager._key_from_filename(fname)
+            if not src_hash:
                 continue
             fpath = os.path.join(ingest_dir, fname)
             try:
@@ -564,7 +695,7 @@ tags:
             except Exception:
                 continue
             source = fm.get("source", "unknown")
-            src_hash = fname.split("-")[1] if "-" in fname else "?"
+            src_hash = fm.get("source_hash") or src_hash
             if src_hash not in groups:
                 groups[src_hash] = {
                     "source": source,
@@ -595,12 +726,12 @@ tags:
         deleted = 0
         source_name = ""
         for fname in os.listdir(ingest_dir):
-            if fname.startswith(f"ingest-{source_hash}-") and fname.endswith(".md"):
+            if IngestManager._key_from_filename(fname) == source_hash:
                 if not source_name:
                     fpath = os.path.join(ingest_dir, fname)
                     try:
                         with open(fpath, "r") as f:
-                            fm, _ = _brain._parse_frontmatter(f.read(500))
+                            fm, _ = _brain._parse_frontmatter(f.read(800))
                         source_name = fm.get("source", "unknown")
                     except Exception:
                         pass

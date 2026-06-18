@@ -1375,6 +1375,149 @@ def _sync_project_web_urls(pdir, web_urls):
     return folder
 
 
+# Marker line stamped into an ingested chunk's BODY so every mined drawer
+# carries its source's virtual-group path verbatim — e.g. a query about
+# "Kunde A" gets back chunks visibly tagged "[Projekt-Gruppe: Kunde A / …]" and
+# the LLM never confuses them with Kunde B. Stable prefix so we can detect +
+# strip our own prior lines on re-group without touching the real content.
+_GROUP_PREFIX_MARK = "> [Projekt-Gruppe:"
+
+# The miner re-chunks each file with an ~800-char sliding window (no per-chunk
+# header carry), preferring to break on blank lines. So a SINGLE head marker
+# only rides chunk 0 — later chunks of a long file would lose the customer
+# context. To make EVERY resulting drawer self-identify, we repeat the marker
+# before each paragraph AND, within an over-long paragraph, every
+# _GROUP_REINJECT_CHARS at a whitespace boundary (well under the chunk window so
+# each window catches at least one marker). Kept below 800 with margin.
+_GROUP_REINJECT_CHARS = 600
+
+
+def _resolve_group_path(groups_by_id, gid):
+    """Walk the parent chain of group `gid` → 'Top / Sub / Leaf' (root-first).
+    Cycle-safe (the on-disk shape is already sanitised, but be defensive)."""
+    parts = []
+    seen = set()
+    while gid and gid not in seen:
+        seen.add(gid)
+        g = groups_by_id.get(gid)
+        if not g:
+            break
+        name = (g.get("name") or "").strip()
+        if name:
+            parts.append(name)
+        gid = (g.get("parent") or "").strip()
+    parts.reverse()
+    return " / ".join(parts)
+
+
+def _strip_group_markers(body):
+    """Remove every marker line we previously injected (so re-group replaces,
+    not stacks) plus the blank line that follows each. Leaves real content."""
+    out = []
+    lines = body.split("\n")
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith(_GROUP_PREFIX_MARK):
+            i += 1
+            # swallow exactly one trailing blank separator if present
+            if i < len(lines) and lines[i].strip() == "":
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out)
+
+
+def _inject_group_markers(body, marker):
+    """Prepend `marker` before each paragraph; additionally re-emit it inside
+    any paragraph longer than _GROUP_REINJECT_CHARS at a whitespace boundary, so
+    the miner's ~800-char chunks each begin with the customer context."""
+    clean = _strip_group_markers(body).strip()
+    if not clean:
+        return f"{marker}\n"
+    paras = re.split(r'\n\s*\n', clean)
+    out_paras = []
+    for para in paras:
+        para = para.strip()
+        if not para:
+            continue
+        if len(para) <= _GROUP_REINJECT_CHARS:
+            out_paras.append(f"{marker}\n\n{para}")
+            continue
+        # Long single paragraph: slice at whitespace near the interval, marker
+        # before each slice.
+        pieces = []
+        pos = 0
+        while pos < len(para):
+            end = min(pos + _GROUP_REINJECT_CHARS, len(para))
+            if end < len(para):
+                sp = para.rfind(" ", pos + _GROUP_REINJECT_CHARS // 2, end)
+                if sp > pos:
+                    end = sp
+            pieces.append(para[pos:end].strip())
+            pos = end
+        out_paras.append("\n\n".join(f"{marker}\n\n{pc}" for pc in pieces if pc))
+    return "\n\n".join(out_paras) + "\n"
+
+
+def _apply_group_prefixes(ingested_dir, project):
+    """Before mining, stamp each ingested chunk file's BODY with its source's
+    virtual-group path (from project.json source_groups.files). The marker
+    becomes part of the drawer text — repeated densely enough that EVERY chunk
+    the miner produces self-identifies its group/customer — so mempalace_query
+    results never let the LLM confuse Kunde A with Kunde B. Idempotent: rewrites
+    only when the desired body differs from what's there (mtime stays put
+    otherwise, so the miner's mtime-gated skip keeps incremental sync cheap).
+    Re-grouping a file in the UI changes its assign → next sync rewrites the
+    markers → the miner re-mines that file with the new context.
+
+    Files not assigned to any group get NO marker (and any stale marker from a
+    prior grouping is stripped). Best-effort per file — an unreadable/oddly
+    shaped chunk is skipped, never fatal to the sync."""
+    sg = (project.get("source_groups") or {}).get("files") or {}
+    assign = sg.get("assign") or {}
+    groups_by_id = {g.get("id"): g for g in (sg.get("groups") or []) if isinstance(g, dict)}
+    try:
+        names = os.listdir(ingested_dir)
+    except OSError:
+        return
+    for fn in names:
+        key = engine.IngestManager._key_from_filename(fn)
+        if not key:
+            continue
+        gid = assign.get(key)
+        path = _resolve_group_path(groups_by_id, gid) if gid else ""
+        marker = f"{_GROUP_PREFIX_MARK} {path}]" if path else ""
+        fpath = os.path.join(ingested_dir, fn)
+        try:
+            with open(fpath, "r") as f:
+                content = f.read()
+        except OSError:
+            continue
+        # Split frontmatter (--- … ---) from body so the marker rides in the
+        # BODY, never inside the YAML header.
+        head, body = "", content
+        if content.startswith("---"):
+            end = content.find("\n---", 3)
+            if end != -1:
+                nl = content.find("\n", end + 1)
+                if nl != -1:
+                    head = content[:nl + 1]
+                    body = content[nl + 1:]
+        if marker:
+            new_body = "\n" + _inject_group_markers(body, marker)
+        else:
+            # Ungrouped → strip any markers we may have left previously.
+            new_body = "\n" + _strip_group_markers(body).strip() + "\n"
+        new_content = head + new_body
+        if new_content != content:
+            try:
+                with open(fpath, "w") as f:
+                    f.write(new_content)
+            except OSError:
+                continue
+
+
 def _project_sync_loop(srv):
     from engine import sync_log as _sync_log
     mcfg = engine._load_mempalace_config()
@@ -1980,10 +2123,9 @@ def _project_sync_loop(srv):
                             # the user uploaded" rather than internal chunks.
                             seen_hashes: set = set()
                             for fn in os.listdir(ingested_dir_pre):
-                                if fn.startswith("ingest-") and fn.endswith(".md"):
-                                    parts_fn = fn.split("-", 2)
-                                    if len(parts_fn) >= 2:
-                                        seen_hashes.add(parts_fn[1])
+                                k = engine.IngestManager._key_from_filename(fn)
+                                if k:
+                                    seen_hashes.add(k)
                             cycle_ingested_file_count = len(seen_hashes)
                             cycle_total_files += cycle_ingested_file_count
                         except OSError:
@@ -2040,20 +2182,20 @@ def _project_sync_loop(srv):
                             cycle_processed_files=cycle_processed_files)
 
                     # 1. Manual attachments — `ingested/` mined into project wing.
-                    #    Each chunk file is named ingest-<src_hash>-<idx>.md;
-                    #    we group by src_hash so each upload appears as one item.
+                    #    Each chunk file is named <stem>__<idx>.md (stem = the
+                    #    original upload filename, == the group key); we group by
+                    #    that key so each upload appears as one item.
                     ingested_dir = os.path.join(pdir, "ingested")
                     if os.path.isdir(ingested_dir):
                         folders_seen += 1
-                        # Discover all unique source hashes in the folder so we
+                        # Discover all unique source keys in the folder so we
                         # can mark each as "syncing" before mining begins.
                         hashes: set[str] = set()
                         try:
                             for fn in os.listdir(ingested_dir):
-                                if fn.startswith("ingest-") and fn.endswith(".md"):
-                                    parts_fn = fn.split("-", 2)
-                                    if len(parts_fn) >= 2:
-                                        hashes.add(parts_fn[1])
+                                k = engine.IngestManager._key_from_filename(fn)
+                                if k:
+                                    hashes.add(k)
                         except OSError:
                             pass
                         for h in hashes:
@@ -2061,6 +2203,17 @@ def _project_sync_loop(srv):
                                 state="syncing",
                                 last_run_started=started_at)
                         if _ensure_mempalace_yaml(ingested_dir, wing):
+                            # Stamp each chunk's body with its virtual-group path
+                            # (source_groups.files) BEFORE mining, so every mined
+                            # drawer self-identifies its group/customer in the
+                            # text. Idempotent + mtime-gated (only rewrites on a
+                            # real change) so it composes with the miner's
+                            # mtime-skip and doesn't churn the corpus.
+                            try:
+                                _apply_group_prefixes(ingested_dir, project)
+                            except Exception as e:
+                                print(f"[project-sync.group] {ingested_dir}: "
+                                      f"{type(e).__name__}: {e}", flush=True)
                             # PDF/DOCX → .md pre-mine pass. The /ingested
                             # upload flow normally pre-chunks PDFs already,
                             # but covering this branch makes the daemon
@@ -2145,12 +2298,14 @@ def _project_sync_loop(srv):
                                 datetime.timezone.utc).isoformat()
                             # Authoritative count per source: pull all wing
                             # drawers whose source_file references the chunk
-                            # files belonging to this hash. Miner mines from
+                            # files belonging to this key. Miner mines from
                             # the chunk file, so source_file ends with
-                            # ingest-<hash>-<idx>.md.
+                            # <key>__<idx>.md (legacy: ingest-<hash>-<idx>.md).
                             for h in hashes:
                                 cnt = _count_wing_drawers_by_source(
-                                    wing, f"ingest-{h}-")
+                                    wing,
+                                    engine.IngestManager.chunk_filename_prefix(
+                                        ingested_dir, h))
                                 _set_item("attachment", h,
                                     state=("error" if ingest_err else "indexed"),
                                     last_run_finished=finished_at_attach,
@@ -2161,16 +2316,19 @@ def _project_sync_loop(srv):
                             # call covers them all in one pass.
                             _bump_processed(len(hashes))
                             # KG extraction post-pass for each ingested
-                            # attachment hash. Drawers carry source_file
-                            # like .../ingested/ingest-<hash>-<idx>.md, so
-                            # we can scope precisely per attachment.
+                            # attachment key. Drawers carry source_file
+                            # like .../ingested/<key>__<idx>.md (legacy:
+                            # ingest-<hash>-<idx>.md), so we can scope
+                            # precisely per attachment.
                             for h in hashes:
                                 if ingest_err:
                                     continue
                                 _run_kg_for(
                                     wing=wing,
                                     source_prefix=os.path.join(
-                                        ingested_dir, f"ingest-{h}-"),
+                                        ingested_dir,
+                                        engine.IngestManager.chunk_filename_prefix(
+                                            ingested_dir, h)),
                                     item_set_fn=_set_item,
                                     item_kind="attachment", item_id=h)
                                 if _run_id:

@@ -81,6 +81,10 @@ function register(getMainWindow) {
   // attaches its files recursively in both the desktop app and the browser.
   ipcMain.handle('read-dropped-folder', async (_event, rootPath) => {
     const out = [];
+    // relPath is rooted at the dropped folder's basename so the renderer can
+    // mirror the structure into project groups (e.g. "MyFolder/sub/x.pdf").
+    // A dropped single file gets a bare basename. Older renderers ignore it.
+    const rootDir = path.dirname(rootPath);
     const walk = (p) => {
       let stat;
       try { stat = fs.statSync(p); } catch { return; }
@@ -95,7 +99,10 @@ function register(getMainWindow) {
         }
       } else if (stat.isFile()) {
         const entry = readFileEntry(p);
-        if (entry && !entry.error) out.push(entry);
+        if (entry && !entry.error) {
+          entry.relPath = path.relative(rootDir, p).split(path.sep).join('/');
+          out.push(entry);
+        }
       }
     };
     walk(rootPath);

@@ -416,6 +416,25 @@ source — no stale/old-version noise.
 This is a DIFFERENT mechanism from project `web_urls` (mined into the
 project wing/KG by the project-sync daemon) — do not merge them.
 
+**Source-group context stamped into drawers (per-customer separation).** When an
+ingested file is assigned to a virtual source group (`project.json`
+`source_groups.files.assign`: source_hash → group_id — e.g. one group per
+customer, built by the folder-upload picker/drop or manual grouping in the
+source tree), the project-sync daemon stamps the group's FULL path into the
+file's body BEFORE mining (`_apply_group_prefixes` in `server_daemons.py`, run
+just before `mp_miner.mine` on `ingested/`). A marker line
+`> [Projekt-Gruppe: Kunde A / Verträge]` is repeated densely (before each
+paragraph + every ~600 chars inside long paragraphs, well under the miner's
+~800-char chunk window) so EVERY resulting drawer carries it — a
+`mempalace_query` hit then self-identifies its group and the LLM never conflates
+Kunde A with Kunde B. Patch-free (no mempalace-venv change): the marker lives in
+the drawer TEXT, not a queryable metadata field, so there's no query-time filter
+or UI selector — the context rides the content. Idempotent + mtime-gated:
+rewrites only when the desired marker differs (so the miner's mtime-skip is
+preserved); re-grouping a file changes `assign` → next sync rewrites the marker
+→ that file is re-mined with the new context. Ungrouped files get NO marker
+(and any stale marker from a prior grouping is stripped).
+
 **Project-sync cadence + restart gate.** The daemon runs its first pass ~25s
 after boot, then sleeps `mempalace.project_sync.interval_seconds` (default
 21600s/6h) between cycles. It keeps no in-memory clock, so to stop a RESTART from

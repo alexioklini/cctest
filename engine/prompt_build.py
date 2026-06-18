@@ -447,6 +447,37 @@ def _build_system_prompt(include_memory_summary: bool = True,
                 "PROJECT INSTRUCTIONS (set by the user for this project):\n"
                 f"{proj_instructions}\n\n"
             )
+        # Supplementary instruction files: owner-uploaded explanatory docs that
+        # ride ALONGSIDE the instructions. NEVER mined into memory — the model
+        # is given their disk paths here and reads them on demand with
+        # read_document (same concept as chat attachments). We list paths, not
+        # content, so this block stays small + KV-cache-stable per project
+        # regardless of file size. Binary uploads have a pre-built .md companion
+        # under .brain-extracted/, but read_document resolves the original path
+        # to it automatically, so we list the originals.
+        _instr_files = proj_cfg.get("instruction_files") or []
+        if _instr_files:
+            _idir = _brain.ProjectManager._instruction_files_dir(
+                agent_id, active_project)
+            _listing = []
+            for _f in _instr_files:
+                _fn = (_f or {}).get("filename") if isinstance(_f, dict) else None
+                if not _fn:
+                    continue
+                _abs = os.path.join(_idir, _fn)
+                if os.path.isfile(_abs):
+                    _listing.append(f"  - {_abs}")
+            if _listing:
+                system_instruction += (
+                    "PROJECT INSTRUCTION FILES (supplementary reference material "
+                    "the owner attached to this project):\n"
+                    "These files complement the instructions above. They are NOT "
+                    "in your memory — read the relevant one(s) with the "
+                    "read_document tool whenever a request could draw on them, "
+                    "the same way you would read a chat attachment. Do not guess "
+                    "their contents.\n"
+                    + "\n".join(_listing) + "\n\n"
+                )
 
     # Inject note context for AI-assisted note editing
     note_context = get_request_context().note_context

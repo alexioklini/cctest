@@ -501,37 +501,130 @@ async function loadProjectFiles(agentId, projectName) {
   }
 }
 
+// Ingest ONE file into the project corpus. Returns the parsed server result
+// (with .source_hash on success, or .error). Shared by the flat upload and the
+// folder-structure upload so both hit the identical /ingest path.
+async function _ingestOneProjectFile(agentId, projectName, file) {
+  // Auth header is required — the global /v1/* gate rejects anonymous POST.
+  // Don't set Content-Type; the browser inserts the multipart boundary.
+  const token = localStorage.getItem('auth-token') || '';
+  const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+  const formData = new FormData();
+  formData.append('file', file);
+  const resp = await fetch(`${BASE_URL}/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/ingest`, {
+    method: 'POST', headers, body: formData,
+  });
+  return resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+}
+
 async function uploadProjectFiles(files) {
   if (!files || !files.length) return;
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
   if (!agentId || !projectName) return;
 
-  // Auth header is required — the global /v1/* gate rejects anonymous POST.
-  // Don't set Content-Type; the browser inserts the multipart boundary.
-  const token = localStorage.getItem('auth-token') || '';
-  const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
   for (const file of files) {
     try {
-      const formData = new FormData();
-      formData.append('file', file);
       showToast(`${file.name} wird hochgeladen …`);
-      const resp = await fetch(`${BASE_URL}/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/ingest`, {
-        method: 'POST',
-        headers,
-        body: formData,
-      });
-      const result = await resp.json().catch(() => ({error: `HTTP ${resp.status}`}));
-      if (!resp.ok || result.error) {
-        showToast(`Fehler: ${result.error || resp.statusText}`);
-      } else {
-        showToast(`${file.name} hochgeladen`);
-      }
+      const result = await _ingestOneProjectFile(agentId, projectName, file);
+      if (result.error) showToast(`Fehler: ${result.error}`);
+      else showToast(`${file.name} hochgeladen`);
     } catch(e) {
       showToast(`${file.name} konnte nicht hochgeladen werden`);
     }
   }
   loadProjectFiles(agentId, projectName);
+}
+
+// Ingest a set of files that came from a dropped/picked FOLDER, preserving the
+// folder structure as virtual source-groups (the "Gruppen" the project tree
+// already supports). Each entry is { file, relPath } where relPath is the path
+// from the dropped root, e.g. "MyFolder/sub/report.pdf". Files ingest via the
+// same /ingest path as a single upload; afterwards we mirror each file's
+// directory chain into source_groups.files.groups (depth-capped at the tree's
+// 3-level limit; deeper dirs collapse onto the level-3 group, matching the
+// server sanitiser) and assign each ingested source_hash to its leaf group.
+// Existing groups are reused by (parent,name) so re-adding the same folder
+// doesn't duplicate the tree.
+async function addProjectFolderFiles(entries) {
+  entries = (entries || []).filter(e => e && e.file);
+  if (!entries.length) return;
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  if (!state._projectDetail) return;
+
+  const MAX_DEPTH = (typeof _PT_MAX_DEPTH === 'number') ? _PT_MAX_DEPTH : 3;
+
+  // Ensure the files bucket exists on the in-memory project detail.
+  if (!state._projectDetail.source_groups) state._projectDetail.source_groups = {};
+  if (!state._projectDetail.source_groups.files) state._projectDetail.source_groups.files = { groups: [], assign: {} };
+  const bucket = state._projectDetail.source_groups.files;
+  if (!bucket.groups) bucket.groups = [];
+  if (!bucket.assign) bucket.assign = {};
+
+  const mintId = (typeof _ptNewGroupId === 'function')
+    ? _ptNewGroupId
+    : () => 'g' + Math.random().toString(36).slice(2, 10);
+
+  // Resolve (or create) the group chain for a list of directory segments,
+  // returning the leaf group id ('' = root for a file at the folder root).
+  // Caps at MAX_DEPTH groups — extra-deep segments are dropped so the file
+  // lands in the deepest allowed group rather than an invalid one.
+  function ensureGroupChain(segs) {
+    let parent = '';
+    let leaf = '';
+    const limited = segs.slice(0, MAX_DEPTH);
+    for (const name of limited) {
+      let g = bucket.groups.find(x => (x.parent || '') === parent && x.name === name);
+      if (!g) {
+        g = { id: mintId(), name: name, parent: parent, order: bucket.groups.length };
+        bucket.groups.push(g);
+      }
+      parent = g.id;
+      leaf = g.id;
+    }
+    return leaf;
+  }
+
+  let ok = 0, failed = 0;
+  for (const { file, relPath } of entries) {
+    // Split "MyFolder/sub/report.pdf" → dir segments ["MyFolder","sub"].
+    const parts = String(relPath || file.name).split('/').filter(Boolean);
+    const dirSegs = parts.slice(0, -1);
+    try {
+      showToast(`${file.name} wird hochgeladen …`);
+      const result = await _ingestOneProjectFile(agentId, projectName, file);
+      if (result.error || !result.source_hash) { failed++; continue; }
+      const leaf = ensureGroupChain(dirSegs);
+      if (leaf) bucket.assign[result.source_hash] = leaf;
+      ok++;
+    } catch(e) {
+      failed++;
+    }
+  }
+
+  // Persist the groups once, then refresh the tree.
+  try {
+    await API.updateProject(agentId, projectName, { source_groups: state._projectDetail.source_groups });
+  } catch(e) {
+    showToast('Gruppierung konnte nicht gespeichert werden: ' + (e.message || e), true);
+  }
+  showToast(`Ordner hinzugefügt: ${ok} Datei(en)${failed ? `, ${failed} fehlgeschlagen` : ''}`);
+  loadProjectFiles(agentId, projectName);
+  if (typeof renderProjectSourceTree === 'function') renderProjectSourceTree();
+}
+
+// Folder-picker handler: a <input type="file" webkitdirectory> yields a flat
+// FileList where each File carries .webkitRelativePath ("Folder/sub/x.pdf").
+function pickProjectFolder(input) {
+  const files = input && input.files ? Array.from(input.files) : [];
+  input.value = '';
+  if (!files.length) return;
+  const entries = files
+    .filter(f => !f.name.startsWith('.'))   // skip dotfiles/OS cruft
+    .map(f => ({ file: f, relPath: f.webkitRelativePath || f.name }));
+  addProjectFolderFiles(entries);
 }
 
 async function deleteProjectFile(agentId, projectName, sourceHash) {
@@ -1035,6 +1128,24 @@ function editProjectInstructions() {
         placeholder="z. B. Du bist ein hilfsbereiter Assistent für unser Marketing-Team. Antworte stets in einem professionellen Ton..."
       >${esc(project?.instructions || '')}</textarea>
       <div class="instr-preview-pane" id="project-instructions-preview" style="display:none"></div>
+
+      <div style="margin-top:18px;border-top:1px solid var(--border-100);padding-top:14px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:4px">Begleitdateien</div>
+        <p style="font-size:12px;color:var(--text-400);margin:0 0 10px">
+          Erläuternde Dateien, die die Anweisungen ergänzen (z. B. ein Styleguide,
+          eine Vorlage, eine Begriffsliste). Sie werden <strong>nicht</strong> in
+          die Projekt-Erinnerung aufgenommen — der Assistent bekommt ihren
+          Speicherort genannt und liest sie bei Bedarf eigenständig
+          (wie einen Chat-Anhang). Beliebige Dateitypen, max. 25 MB pro Datei.
+        </p>
+        <div id="project-instr-files-list" style="margin-bottom:10px"></div>
+        <input type="file" id="project-instr-file-input" style="display:none"
+          onchange="uploadProjectInstructionFile(this)">
+        <button class="btn-secondary" type="button"
+          onclick="document.getElementById('project-instr-file-input').click()">
+          Datei hochladen
+        </button>
+      </div>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border-100)">
       <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Abbrechen</button>
@@ -1043,7 +1154,62 @@ function editProjectInstructions() {
   `;
   overlay.appendChild(content);
   document.body.appendChild(overlay);
+  renderProjectInstructionFiles(project?.instruction_files || []);
   setTimeout(() => document.getElementById('project-instructions-textarea')?.focus(), 100);
+}
+
+function renderProjectInstructionFiles(files) {
+  const el = document.getElementById('project-instr-files-list');
+  if (!el) return;
+  const list = files || [];
+  if (!list.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-400)">Noch keine Begleitdateien.</div>';
+    return;
+  }
+  el.innerHTML = list.map(f => {
+    const fn = (f && f.filename) || '';
+    const kb = f && f.size ? ` · ${Math.max(1, Math.round(f.size / 1024))} KB` : '';
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border:1px solid var(--border-100);border-radius:6px;margin-bottom:6px">
+      <span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📎 ${esc(fn)}<span style="color:var(--text-400)">${esc(kb)}</span></span>
+      <button class="btn-icon" title="Entfernen" onclick="deleteProjectInstructionFile('${esc(fn).replace(/'/g, "\\'")}')">&times;</button>
+    </div>`;
+  }).join('');
+}
+
+async function uploadProjectInstructionFile(input) {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  const file = input && input.files && input.files[0];
+  if (!agentId || !projectName || !file) return;
+  if (file.size > 25 * 1024 * 1024) {
+    alert('Datei zu groß (max. 25 MB).');
+    input.value = '';
+    return;
+  }
+  try {
+    const res = await API.uploadProjectInstructionFile(agentId, projectName, file);
+    if (res && res.error) { alert('Upload fehlgeschlagen: ' + res.error); return; }
+    if (state._projectDetail) state._projectDetail.instruction_files = res.instruction_files || [];
+    renderProjectInstructionFiles((res && res.instruction_files) || []);
+  } catch (e) {
+    alert('Upload fehlgeschlagen: ' + e);
+  } finally {
+    input.value = '';
+  }
+}
+
+async function deleteProjectInstructionFile(filename) {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName || !filename) return;
+  try {
+    const res = await API.deleteProjectInstructionFile(agentId, projectName, filename);
+    if (res && res.error) { alert('Löschen fehlgeschlagen: ' + res.error); return; }
+    if (state._projectDetail) state._projectDetail.instruction_files = res.instruction_files || [];
+    renderProjectInstructionFiles((res && res.instruction_files) || []);
+  } catch (e) {
+    alert('Löschen fehlgeschlagen: ' + e);
+  }
 }
 
 function switchInstrTab(mode) {

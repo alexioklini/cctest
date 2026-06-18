@@ -289,6 +289,20 @@ Codebasen, Forschungspapiere, …).
    importiert; keine rekursive Suche).
 6. **Projektmodus** / **Recherche**-Umschalter — siehe unten.
 
+**Projekt-Anweisungen + Begleitdateien**: Über **Anweisungen bearbeiten**
+öffnet sich ein Dialog mit dem Freitext-Feld (Hinweise, an die sich das
+Projekt in jeder Antwort hält — Tonfall, Sprache, Formatvorgaben; Markdown +
+Vorschau). Darunter der Bereich **Begleitdateien**: hier lassen sich
+ergänzende Dateien hochladen (Styleguide, Vorlage, Begriffsliste, erläuternde
+Unterlagen — beliebige Typen, max. 25 MB/Datei). **Wichtiger Unterschied zu
+hochgeladenen Projektdateien (Schritt 4):** Begleitdateien werden **NICHT**
+ins Projektgedächtnis aufgenommen/gemined. Sie funktionieren wie ein
+Chat-Anhang — der Assistent bekommt ihren Speicherort genannt und liest die
+jeweils passende bei Bedarf eigenständig, verlässt sich also direkt auf die
+**Datei** statt auf eine Gedächtnis-Suche. Nutze sie für Material, das die
+Anweisungen ergänzt und wörtlich vorliegen soll; nutze Schritt 4 / Eingabe-
+ordner für einen durchsuchbaren Dokumentkorpus.
+
 Die Hilfe auf der Projekt-Einstellungsseite ist ein aufklappbarer
 „Hilfe"-Bereich.
 

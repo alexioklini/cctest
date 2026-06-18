@@ -1041,6 +1041,164 @@ class ProjectsHandlerMixin:
         else:
             self._send_json(result)
 
+    # ----- Supplementary instruction files (read-on-demand, NEVER mined) -----
+    # Owner-uploaded explanatory docs that complement the project Instructions.
+    # Stored under <project>/instruction-files/; the system prompt lists their
+    # disk paths so the model reads them with read_document on demand (same
+    # concept as chat attachments). Distinct from ingested/ (which IS mined).
+
+    _MAX_INSTRUCTION_FILE_BYTES = 25 * 1024 * 1024  # 25 MB/file (attachment-class)
+
+    def _handle_project_instruction_files_list(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/instruction-files"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        if self._project_access_check(agent_id, proj_name) is None:
+            return
+        cfg = engine.ProjectManager.get_project(agent_id, proj_name) or {}
+        self._send_json({"instruction_files": cfg.get("instruction_files", []) or []})
+
+    def _handle_project_instruction_file_upload(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/instruction-files — multipart.
+        Saves the file under instruction-files/, pre-builds its .md companion
+        (so read_document resolves binaries cleanly), and records it in
+        project.json. NEVER mined into memory."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        if self._project_access_check(agent_id, proj_name, require_manage=True) is None:
+            return
+        ctype = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in ctype:
+            self._send_json({"error": "multipart/form-data required"}, 400)
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0:
+            self._send_json({"error": "No content"}, 400)
+            return
+        if length > self._MAX_INSTRUCTION_FILE_BYTES + 8192:
+            self._send_json({"error": "file too large (max 25 MB)"}, 413)
+            return
+        body = self.rfile.read(length)
+        boundary = None
+        for part in ctype.split(";"):
+            part = part.strip()
+            if part.startswith("boundary="):
+                boundary = part[len("boundary="):].strip('"')
+                break
+        if not boundary:
+            self._send_json({"error": "No boundary in Content-Type"}, 400)
+            return
+        filename = None
+        file_data = None
+        for part in body.split(f"--{boundary}".encode()):
+            if b"Content-Disposition" not in part:
+                continue
+            if b"\r\n\r\n" not in part:
+                continue
+            head, part_body = part.split(b"\r\n\r\n", 1)
+            if part_body.endswith(b"\r\n"):
+                part_body = part_body[:-2]
+            head_text = head.decode("utf-8", errors="replace")
+            if 'name="file"' not in head_text:
+                continue
+            for line in head_text.split("\r\n"):
+                if "filename=" in line:
+                    filename = line.split("filename=", 1)[1].strip().strip('";')
+                    break
+            file_data = part_body
+            break
+        # Keep only the basename — defends against path traversal in the
+        # multipart filename.
+        filename = os.path.basename(filename or "").strip()
+        if not filename or file_data is None:
+            self._send_json({"error": "No file uploaded"}, 400)
+            return
+        if len(file_data) > self._MAX_INSTRUCTION_FILE_BYTES:
+            self._send_json({"error": "file too large (max 25 MB)"}, 413)
+            return
+
+        idir = engine.ProjectManager._instruction_files_dir(agent_id, proj_name)
+        try:
+            os.makedirs(idir, exist_ok=True)
+        except OSError as e:
+            self._send_json({"error": f"mkdir failed: {e}"}, 500)
+            return
+        dest = os.path.join(idir, filename)
+        try:
+            with open(dest, "wb") as f:
+                f.write(file_data)
+        except OSError as e:
+            self._send_json({"error": f"save failed: {e}"}, 500)
+            return
+
+        # Pre-build the .md companion for binaries so the model's first
+        # read_document is instant. Best-effort — text files need nothing, and
+        # a conversion failure must not block the upload (the model can still
+        # read the original). pdir is the project root so the companion lands
+        # in the daemon-standard .brain-extracted/ layout.
+        converted = False
+        try:
+            from engine import doc_convert as _dc
+            pdir = engine.ProjectManager._project_dir(agent_id, proj_name)
+            md_path, err = _dc.convert_one(dest, project_root=pdir)
+            converted = bool(md_path and not err)
+        except Exception as _e:
+            print(f"[instruction_files] companion build failed: {_e}", flush=True)
+
+        # Record in project.json (dedup by filename — re-upload replaces).
+        cfg = engine.ProjectManager.get_project(agent_id, proj_name) or {}
+        files = [f for f in (cfg.get("instruction_files") or [])
+                 if isinstance(f, dict) and f.get("filename") != filename]
+        files.append({
+            "filename": filename,
+            "size": len(file_data),
+            "added_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        })
+        engine.ProjectManager.update_project(
+            agent_id, proj_name, {"instruction_files": files})
+        self._send_json({"status": "ok", "filename": filename,
+                         "converted": converted, "instruction_files": files})
+
+    def _handle_project_instruction_file_delete(self, path: str):
+        """DELETE /v1/agents/{id}/projects/{name}/instruction-files/{filename}"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        if self._project_access_check(agent_id, proj_name, require_manage=True) is None:
+            return
+        parts = path.split("/")
+        # /v1/agents/{id}/projects/{name}/instruction-files/{filename}
+        fname = ""
+        if len(parts) >= 8:
+            from urllib.parse import unquote
+            fname = os.path.basename(unquote(parts[7]).strip())
+        if not fname:
+            self._send_json({"error": "Missing filename"}, 400)
+            return
+        idir = engine.ProjectManager._instruction_files_dir(agent_id, proj_name)
+        dest = os.path.join(idir, fname)
+        try:
+            if os.path.isfile(dest):
+                os.unlink(dest)
+        except OSError as e:
+            self._send_json({"error": f"delete failed: {e}"}, 500)
+            return
+        cfg = engine.ProjectManager.get_project(agent_id, proj_name) or {}
+        files = [f for f in (cfg.get("instruction_files") or [])
+                 if isinstance(f, dict) and f.get("filename") != fname]
+        engine.ProjectManager.update_project(
+            agent_id, proj_name, {"instruction_files": files})
+        self._send_json({"status": "deleted", "filename": fname,
+                         "instruction_files": files})
+
     def _handle_multipart_ingest(self, agent_id: str, project_name) -> dict:
         """Parse multipart/form-data upload and ingest the file."""
         content_type = self.headers.get("Content-Type", "")

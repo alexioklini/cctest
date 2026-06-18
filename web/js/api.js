@@ -198,6 +198,15 @@ class API {
   static getProject(agent, name) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`); }
   static updateProject(agent, name, cfg) { return this.put(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`, cfg); }
   static deleteProject(agent, name) { return this.del(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`); }
+  static listProjectInstructionFiles(agent, name) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-files`); }
+  static async uploadProjectInstructionFile(agent, name, file) {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    const h = {}; const t = localStorage.getItem('auth-token'); if (t) h['Authorization'] = `Bearer ${t}`;
+    const r = await fetch(`${BASE_URL}/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-files`, { method: 'POST', headers: h, body: fd });
+    return r.json();
+  }
+  static deleteProjectInstructionFile(agent, name, filename) { return this.del(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-files/${encodeURIComponent(filename)}`); }
 
   // Costs
   static getCosts(hours, agent) {

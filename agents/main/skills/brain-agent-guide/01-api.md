@@ -187,7 +187,14 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `POST .../projects/<name>/sync-now` — trigger immediate sync
 - `POST .../projects/<name>/full-resync` — wipe wing + re-mine
 - `POST .../projects/<name>/sync-cancel` — abort live sync
-- `POST .../projects/<name>/ingest` — upload files (multipart)
+- `POST .../projects/<name>/ingest` — upload files (multipart) → mined into the wing
+- `GET .../projects/<name>/instruction-files` — list supplementary instruction
+  files (owner docs that complement the project instructions; NEVER mined — the
+  model reads them on demand with read_document, like a chat attachment)
+- `POST .../projects/<name>/instruction-files` — upload one (multipart, any type,
+  max 25 MB; manage-gated). Stored under instruction-files/, binaries get a .md
+  companion; recorded in project.json instruction_files[]
+- `DELETE .../projects/<name>/instruction-files/<filename>` — remove one (manage)
 - `GET .../projects/<name>/image` — project thumbnail
 - `POST .../projects/<name>/generate` — generate a grounded output from the
   project's sources. Body `{kind: study_guide|briefing|faq|timeline|audio_overview,

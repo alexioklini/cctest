@@ -15,14 +15,26 @@ agents/
       <slug>/SKILL.md
     projects/                  # per-project folder
       <project_name>/
-        project.json           # id, instructions, research_mode,
-                               # input_folders, sync_status
-        ingested/              # uploaded files (ingest-<hash>-NNN.md)
+        project.json           # id, instructions, instruction_files,
+                               # research_mode, input_folders, sync_status
+        ingested/              # uploaded files, one chunk per file named
+                               #   <original-filename-stem>__NNN.md (the source
+                               #   name with its extension dropped; NNN = chunk
+                               #   index). Legacy ingests kept the older
+                               #   ingest-<hash>-NNN.md scheme and still resolve.
         web-urls/              # mined project web_urls, one .md per URL named
                                #   <url-slug>_<YYYY-MM-DD-HHMM>.md (a -<hash8>
                                #   is inserted before the _ ONLY when two URLs
                                #   slugify the same). timestamp = last CONTENT
                                #   change/mine; file kept when content unchanged
+        instruction-files/     # supplementary instruction files: owner-uploaded
+                               #   docs (any type) that complement project.json
+                               #   `instructions`. NEVER mined — the system prompt
+                               #   lists their disk paths and the model reads them
+                               #   on demand with read_document (like a chat
+                               #   attachment). Tracked in project.json
+                               #   instruction_files[{filename,size,added_at}];
+                               #   binaries get a .brain-extracted/ .md companion.
         .trash/                # soft-deleted
     artifacts/                 # turn output dir tree
       <YYYY-MM-DD>_<sid_prefix>/   # one folder per chat session

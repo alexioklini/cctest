@@ -1669,6 +1669,8 @@ class BrainAgentHandler(
             self._handle_project_folder_tree(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/web-url-states" in path:
             self._handle_project_web_url_states(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/instruction-files"):
+            self._handle_project_instruction_files_list(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/docs" in path:
             self._handle_project_docs(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/input-folders"):
@@ -2086,6 +2088,8 @@ class BrainAgentHandler(
             self._handle_research_search(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/research/deep"):
             self._handle_research_deep(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/instruction-files"):
+            self._handle_project_instruction_file_upload(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/ingest" in path:
             self._handle_project_ingest(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):
@@ -2183,6 +2187,8 @@ class BrainAgentHandler(
             self._handle_project_artifact_delete(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/input-folders/" in path:
             self._handle_project_input_folders_delete(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/instruction-files/" in path:
+            self._handle_project_instruction_file_delete(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/image"):
             self._handle_project_image_delete(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path:

@@ -294,6 +294,7 @@ function _ptTypeNode(type, label, p) {
   const icon = type === 'files' ? _PT_ICON.files : type === 'folders' ? _PT_ICON.folders : _PT_ICON.urls;
   const addAction = type === 'files'
     ? `<label class="pt-act" title="Dateien hinzufügen" onclick="event.stopPropagation()">＋<input type="file" multiple style="display:none" onchange="uploadProjectFiles(this.files)"></label>`
+      + `<label class="pt-act" title="Ordner hinzufügen (Struktur als Gruppen übernommen)" onclick="event.stopPropagation()">📁<input type="file" webkitdirectory directory multiple style="display:none" onchange="pickProjectFolder(this)"></label>`
     : type === 'folders'
       ? `<button class="pt-act" onclick="event.stopPropagation(); addProjectInputFolder()" title="Ordner hinzufügen">＋</button>`
       : `<button class="pt-act" onclick="event.stopPropagation(); discoverProjectWebLinks()" title="Verlinkte Dokumente auf diesen Seiten finden">${_PT_ICON.link || '🔗'}</button><button class="pt-act" onclick="event.stopPropagation(); addProjectWebUrl()" title="Web-Adresse hinzufügen">＋</button>`;
@@ -640,9 +641,25 @@ function ptDragEnd() {
     .forEach(t => t.classList.remove('pt-droparmed', 'pt-dropover'));
 }
 
+// True when a drag carries OS files (from the desktop) rather than an internal
+// item re-group. Such a drop onto the Dateien branch ingests the files (and,
+// for a folder, preserves structure as groups).
+function _ptIsOsFileDrag(ev) {
+  const t = ev.dataTransfer && ev.dataTransfer.types;
+  return !!(t && (Array.from(t).includes('Files')));
+}
+
 // Delegated dragover/drop on the tree container (set up once in renderProjectSourceTree).
 function ptDragOver(ev) {
   const tgt = ev.target.closest('[data-droptarget]');
+  // OS-file drop onto the Dateien branch → allow (ingest path).
+  if (tgt && tgt.dataset.type === 'files' && !state._ptDrag && _ptIsOsFileDrag(ev)) {
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'copy';
+    document.querySelectorAll('#project-source-tree .pt-dropover').forEach(t => t.classList.remove('pt-dropover'));
+    tgt.classList.add('pt-dropover');
+    return;
+  }
   const d = state._ptDrag;
   if (!tgt || !d || tgt.dataset.type !== d.type) return;
   ev.preventDefault();
@@ -651,8 +668,90 @@ function ptDragOver(ev) {
   tgt.classList.add('pt-dropover');
 }
 
+// Recursively collect { file, relPath } under a browser FileSystemEntry,
+// rooting relPath at the dropped entry's own name so a folder's structure is
+// preserved. readEntries returns ~100 entries/call, so drain it in a loop.
+function _ptCollectEntryFiles(entry, prefix) {
+  return new Promise((resolve) => {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isFile) {
+      entry.file((file) => resolve([{ file, relPath: rel }]), () => resolve([]));
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const all = [];
+      const readBatch = () => {
+        reader.readEntries(async (batch) => {
+          if (!batch.length) {
+            const nested = await Promise.all(all.map(e => _ptCollectEntryFiles(e, rel)));
+            resolve(nested.flat());
+            return;
+          }
+          all.push(...batch);
+          readBatch();
+        }, () => resolve([]));
+      };
+      readBatch();
+    } else {
+      resolve([]);
+    }
+  });
+}
+
 async function ptDrop(ev) {
   const tgt = ev.target.closest('[data-droptarget]');
+  // ── OS-file / folder drop onto the Dateien branch → ingest with structure ──
+  if (tgt && tgt.dataset.type === 'files' && !state._ptDrag && _ptIsOsFileDrag(ev)) {
+    ev.preventDefault();
+    document.querySelectorAll('#project-source-tree .pt-dropover').forEach(t => t.classList.remove('pt-dropover'));
+    // The DataTransferItemList + entries are only valid synchronously — snapshot
+    // webkitGetAsEntry()/file.path before any await (same rule as files.js).
+    const items = ev.dataTransfer && ev.dataTransfer.items;
+    const captured = [];
+    if (items && items.length) {
+      for (const item of items) {
+        if (item.kind !== 'file') continue;
+        const file = item.getAsFile();
+        const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+        captured.push({ file, entry, path: (file && file.path) || (entry ? null : '') });
+      }
+    } else if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) {
+      for (const file of ev.dataTransfer.files) captured.push({ file, entry: null, path: (file && file.path) || '' });
+    }
+    const entries = [];
+    for (const { file, entry, path: fsPath } of captured) {
+      // Electron: native path present; recurse folders in the main process.
+      if (window.electronAPI && window.electronAPI.readDroppedFile && fsPath) {
+        let results = null;
+        if (window.electronAPI.readDroppedFolder) {
+          results = await window.electronAPI.readDroppedFolder(fsPath);
+        }
+        if (!Array.isArray(results)) {
+          const single = await window.electronAPI.readDroppedFile(fsPath);
+          results = single && !single.error ? [single] : [];
+        }
+        // Electron entries are {name,data,...}; relPath may be absent on an
+        // older preload → fall back to the bare name (flat, still ingests).
+        for (const r of results) {
+          if (!r || r.error) continue;
+          const f = _ptElectronEntryToFile(r);
+          if (f) entries.push({ file: f, relPath: r.relPath || r.name });
+        }
+        continue;
+      }
+      // Browser: walk via FileSystem entry (preserves structure); else bare file.
+      if (entry) {
+        const walked = await _ptCollectEntryFiles(entry, '');
+        for (const w of walked) entries.push(w);
+      } else if (file) {
+        entries.push({ file, relPath: file.name });
+      }
+    }
+    if (entries.length && typeof addProjectFolderFiles === 'function') {
+      await addProjectFolderFiles(entries);
+    }
+    return;
+  }
+  // ── Internal item re-group (existing behavior) ──
   const d = state._ptDrag;
   if (!tgt || !d || tgt.dataset.type !== d.type) { ptDragEnd(); return; }
   ev.preventDefault();
@@ -665,6 +764,19 @@ async function ptDrop(ev) {
   if (state._ptSelected) state._ptSelected.clear();
   await _ptSaveGroups();
   _ptRefreshType(d.type);
+}
+
+// Convert an Electron read-dropped entry {name,type,data(base64)} into a File
+// object so the ingest upload path is identical to the browser one.
+function _ptElectronEntryToFile(r) {
+  try {
+    const bin = atob(r.data || '');
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new File([bytes], r.name, { type: r.type || 'application/octet-stream' });
+  } catch (e) {
+    return null;
+  }
 }
 
 // ─── GDPR/Classification review context menu (right-click a tree node) ───────
