@@ -372,11 +372,19 @@ async function loadProjectDetail(agentId, projectName) {
     // project: hide the Code Mode section entirely. No toggle (immutable mode).
     const cmSection = document.getElementById('project-codemode-section');
     const cmWd = document.getElementById('project-codemode-wd');
-    const srcSection = document.getElementById('project-sources-section');
     const isCode = !!project.code_mode;
     if (cmSection) cmSection.style.display = isCode ? '' : 'none';
     if (cmWd) cmWd.textContent = project.working_dir || '— (noch kein Verzeichnis gewählt)';
-    if (srcSection) srcSection.style.display = isCode ? 'none' : '';
+    // In code mode there is no MemPalace/ingest, so the project-mode, sources,
+    // knowledge-graph and storage/sync sections are all irrelevant → hide them.
+    ['project-mode-section', 'project-sources-section',
+     'project-kg-section', 'project-sync-section'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = isCode ? 'none' : '';
+    });
+    // Code project → show its working-directory file tree (refreshed here on
+    // open; also after each turn via the post-turn hook).
+    if (isCode && typeof refreshCodeWorkingTree === 'function') refreshCodeWorkingTree();
     // Per-project KG method/profile overrides (empty = inherit the global
     // default). Profile is inert under the rule-based method (generic only).
     const kgMethodSel = document.getElementById('project-kg-method');
@@ -1537,6 +1545,7 @@ async function _pwdSelect() {
     const wd = document.getElementById('project-codemode-wd');
     if (wd) wd.textContent = path;
     document.querySelector('.sched-modal-overlay')?.remove();
+    if (typeof refreshCodeWorkingTree === 'function') refreshCodeWorkingTree();
     showToast('Arbeitsverzeichnis gesetzt');
   } catch (e) {
     showToast('Verzeichnis konnte nicht gesetzt werden: ' + (e.message || e), true);

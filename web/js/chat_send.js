@@ -1082,6 +1082,14 @@ function buildStreamCallbacks(chat, isActive) {
           // gathered this turn appear (streaming events only refreshed it
           // opportunistically; references no longer auto-open the pane).
           try { if (typeof refreshRightPanelContent === 'function') refreshRightPanelContent(); } catch (e) {}
+          // Code-mode project: the turn may have created/edited files in the
+          // working directory → refresh its file tree if the project detail is open.
+          try {
+            if (state._projectDetail && state._projectDetail.code_mode
+                && typeof refreshCodeWorkingTree === 'function') {
+              refreshCodeWorkingTree();
+            }
+          } catch (e) {}
         }
 
         // Desktop notification when window not focused

@@ -1414,34 +1414,40 @@ class ProjectsHandlerMixin:
             self._send_json({"error": "path is required"}, 400)
             return
         # Security: the requested folder MUST be one of the project's configured
-        # input folders (or a descendant) — never an arbitrary disk path.
-        configured = [(f.get("path") or "") for f in (project.get("input_folders") or [])
-                      if isinstance(f, dict)]
+        # input folders (or a descendant) — OR, for a code-mode project, the
+        # project's working_dir (or a descendant). Never an arbitrary disk path.
+        allowed = [(f.get("path") or "") for f in (project.get("input_folders") or [])
+                   if isinstance(f, dict)]
+        _code_mode = bool(project.get("code_mode"))
+        if _code_mode and (project.get("working_dir") or "").strip():
+            allowed.append(project["working_dir"].strip())
         real = os.path.realpath(folder)
         if not any(real == os.path.realpath(c) or real.startswith(os.path.realpath(c) + os.sep)
-                   for c in configured if c):
-            self._send_json({"error": "Folder is not an input folder of this project"}, 403)
+                   for c in allowed if c):
+            self._send_json({"error": "Folder is not within this project's sources"}, 403)
             return
         if not os.path.isdir(real):
             self._send_json({"error": "Folder not found on disk"}, 404)
             return
-        # Which source_files are indexed in this project's wing.
-        try:
-            palace_path = (engine._load_mempalace_config() or {}).get("palace_path", "")
-        except Exception:
-            palace_path = ""
-        wing = _project_wing(project.get("id") or "")
-        indexed = engine.indexed_source_files_for_wing(palace_path, wing) if palace_path else set()
-
-        # Per-file KG state (triples / GDPR-skipped) from the extraction cursor,
-        # so each file shows mined+kg / mined / skipped / not-mined honestly.
+        # Code-mode folders carry no MemPalace state (no ingest) — skip the wing
+        # lookups entirely; the tree just shows the real files.
+        indexed = set()
         kg_states = {}
-        try:
-            from engine import kg_extract as _kg
-            chats_db = os.path.join(engine.AGENTS_DIR, "main", "chats.db")
-            kg_states = _kg.kg_source_states_for_wing(chats_db, wing)
-        except Exception:
-            kg_states = {}
+        if not _code_mode:
+            try:
+                palace_path = (engine._load_mempalace_config() or {}).get("palace_path", "")
+            except Exception:
+                palace_path = ""
+            wing = _project_wing(project.get("id") or "")
+            indexed = engine.indexed_source_files_for_wing(palace_path, wing) if palace_path else set()
+            # Per-file KG state (triples / GDPR-skipped) from the extraction
+            # cursor, so each file shows mined+kg / mined / skipped / not-mined.
+            try:
+                from engine import kg_extract as _kg
+                chats_db = os.path.join(engine.AGENTS_DIR, "main", "chats.db")
+                kg_states = _kg.kg_source_states_for_wing(chats_db, wing)
+            except Exception:
+                kg_states = {}
 
         # Walk the folder (depth-bounded) → nested {name,type,children|state}.
         _SKIP = {".brain-extracted", ".git", "__pycache__", ".DS_Store"}

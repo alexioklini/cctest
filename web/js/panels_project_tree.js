@@ -470,6 +470,48 @@ function _ptRenderFolderTree(nodes) {
   }).join('');
 }
 
+// Code-mode variant: render the working-directory tree WITHOUT MemPalace status
+// dots / KG / review badges (a code project has no project memory — files are
+// just files). Same collapse/expand interaction (ptToggleRealDir).
+function _ptRenderCodeTree(nodes) {
+  if (!nodes || !nodes.length) return '<div class="pt-empty">Leer.</div>';
+  return nodes.map(n => {
+    if (n.type === 'dir') {
+      return `<div class="pt-branch pt-realdir">
+        <div class="pt-row pt-realrow" onclick="ptToggleRealDir(this)">
+          ${_ptCaret(false)}
+          <span class="pt-icon">${_PT_ICON.folders}</span>
+          <span class="pt-label">${esc(n.name)}</span>
+        </div>
+        <div class="pt-children" style="display:none">${_ptRenderCodeTree(n.children || [])}</div>
+      </div>`;
+    }
+    return `<div class="pt-row pt-realfile" title="${esc(n.path || n.name)}">
+      <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
+      <span class="pt-label">${esc(n.name)}</span>
+    </div>`;
+  }).join('');
+}
+
+// Load + render the code-mode project's working directory tree. Called when the
+// project detail opens and after each turn (files may have changed).
+async function refreshCodeWorkingTree() {
+  const host = document.getElementById('project-codemode-tree');
+  if (!host) return;
+  const agentId = state._projectDetailAgent || 'main';
+  const projectName = state._projectDetailName || '';
+  const wd = state._projectDetail && state._projectDetail.working_dir;
+  if (!wd) { host.innerHTML = '<div class="pt-empty">Kein Arbeitsverzeichnis gewählt.</div>'; return; }
+  host.innerHTML = '<div class="pt-loading">Lädt…</div>';
+  try {
+    const data = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/folder-tree?path=${encodeURIComponent(wd)}`);
+    if (data.error) { host.innerHTML = `<div class="pt-empty">${esc(data.error)}</div>`; return; }
+    host.innerHTML = _ptRenderCodeTree(data.tree || []);
+  } catch (e) {
+    host.innerHTML = '<div class="pt-empty">Verzeichnis konnte nicht geladen werden.</div>';
+  }
+}
+
 function ptToggleRealDir(rowEl) {
   const branch = rowEl.closest('.pt-branch');
   const children = branch && branch.querySelector('.pt-children');

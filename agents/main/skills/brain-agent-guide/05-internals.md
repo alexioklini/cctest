@@ -452,7 +452,11 @@ code_mode+working_dir, and code_mode is NOT in the update_project whitelist
 (immutable; working_dir stays editable). UI: code projects render a distinct
 `</>` glyph + "Code-Projekt" label in the overview; the detail panel shows a
 Code Mode section (working-dir /v1/files/tree picker + "generate BRAIN.md"
-button) only for code projects, and hides the Sources/ingest tree.
+button + a recursive collapse/expand file tree of the working_dir, refreshed on
+open / dir-set / init / after each turn) only for code projects, and hides ALL
+the MemPalace-only sections (Projektmodus, Quellen/ingest, Wissensgraph, Speicher
+& Abgleich). The folder-tree endpoint allows a code project's working_dir (or
+descendants) and skips the wing/KG status lookups there.
 
 **Source-group context stamped into drawers (per-customer separation).** When an
 ingested file is assigned to a virtual source group (`project.json`
