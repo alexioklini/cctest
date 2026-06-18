@@ -8939,3 +8939,16 @@ code, pre, .tool-result-pre, .wf-card-fname, .font-mono {
   background: var(--bg-200); color: var(--text-100); border: 1px solid var(--border-100);
   font-family: var(--font-ui); cursor: pointer; margin-top: 6px;
 }
+
+/* Code-Mode working-directory right-panel pane: split tree (top) / viewer (bottom). */
+.workdir-pane { display:flex; flex-direction:column; height:100%; }
+.workdir-tree-area { flex:0 0 40%; min-height:120px; overflow:auto; border-bottom:1px solid var(--border-100); padding:8px; }
+.workdir-tree-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+.workdir-view-area { flex:1 1 60%; display:flex; flex-direction:column; min-height:0; }
+.workdir-view-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-bottom:1px solid var(--border-100); }
+.workdir-view-meta { font-size:11px; color:var(--text-400); font-family:var(--font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workdir-view-body { flex:1 1 auto; overflow:auto; min-height:0; }
+.workdir-view-empty { padding:16px; color:var(--text-400); font-size:13px; text-align:center; }
+.workdir-view-body img { max-width:100%; height:auto; display:block; }
+.workdir-view-body iframe { width:100%; height:100%; border:0; }
+.pt-realfile.pt-selected { background:var(--sidebar-hover); }

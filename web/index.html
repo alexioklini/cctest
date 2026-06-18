@@ -1409,6 +1409,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <svg class="right-panel-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
         <span class="right-panel-tab-badge" id="tab-badge-bgtasks">0</span>
       </button>
+      <button class="right-panel-tab" data-tab="workdir" onclick="selectRightTab('workdir')" title="Arbeitsverzeichnis" id="right-panel-tab-workdir" style="display:none">
+        <svg class="right-panel-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      </button>
     </div>
     <button class="right-panel-close-btn" onclick="closeRightPanel(true)" title="Schließen">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -1499,6 +1502,31 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
   <div class="right-tab-pane" id="tab-pane-bgtasks">
     <div class="bgtasks-content" id="bgtasks-content">
       <div class="bgtasks-empty" id="bgtasks-empty">Keine Hintergrundaufgaben</div>
+    </div>
+  </div>
+
+  <!-- Working-directory pane (Code Mode): top = recursive file tree,
+       bottom = inline file renderer + status line + download. -->
+  <div class="right-tab-pane" id="tab-pane-workdir">
+    <div class="workdir-pane">
+      <div class="workdir-tree-area">
+        <div class="workdir-tree-head">
+          <span style="font-size:12px;color:var(--text-400)">Arbeitsverzeichnis</span>
+          <button class="pt-act" type="button" title="Aktualisieren" onclick="refreshWorkdirPanelTree()">⟳</button>
+        </div>
+        <div id="workdir-panel-tree" class="project-source-tree"></div>
+      </div>
+      <div class="workdir-view-area">
+        <div class="workdir-view-head" id="workdir-view-head" style="display:none">
+          <div class="workdir-view-meta" id="workdir-view-meta"></div>
+          <button class="pt-act" type="button" id="workdir-download-btn" title="Herunterladen" onclick="downloadWorkdirFile()">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
+        </div>
+        <div id="workdir-view-body" class="workdir-view-body">
+          <div class="workdir-view-empty">Datei links auswählen, um sie anzuzeigen.</div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1622,6 +1650,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/panels_websuche.js"></script>
 <script src="js/panels_background.js"></script>
 <script src="js/panels_artifacts.js"></script>
+<script src="js/panels_workdir.js"></script>
 <script src="js/panels_studio.js"></script>
 <script src="js/panels_research.js"></script>
 <script src="js/panels_wiki.js"></script>

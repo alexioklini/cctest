@@ -139,11 +139,15 @@ function refreshRightPanelContent() {
   // it up and the poll starts.
   if (typeof loadBackgroundTasks === 'function') loadBackgroundTasks();
   if (!state.rightPanelOpen) return;
+  // Code-mode chat: show the Arbeitsverzeichnis tab + hide the MemPalace-only
+  // tabs (artifacts/references/websuche). No-op in normal chats.
+  if (typeof updateWorkdirTabVisibility === 'function') updateWorkdirTabVisibility();
   const tab = state.rightPanelTab;
   if (tab === 'attachments') renderAttachmentsPane();
   else if (tab === 'references') renderReferencesPane();
   else if (tab === 'artifacts' && !state.activeArtifactId) showArtifactList();
   else if (tab === 'bgtasks' && typeof renderBackgroundTasksPane === 'function') renderBackgroundTasksPane();
+  else if (tab === 'workdir' && typeof renderWorkdirPane === 'function') renderWorkdirPane();
   if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);
 }
 
@@ -173,6 +177,7 @@ function switchRightTab(tabName) {
     if (typeof _bgLiveReconcile === 'function') _bgLiveReconcile();
     renderBackgroundTasksPane();
   }
+  if (tabName === 'workdir' && typeof renderWorkdirPane === 'function') renderWorkdirPane();
   updateRightPanelBadges();
   // Re-apply the active-turn focus to the freshly rendered pane.
   if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);

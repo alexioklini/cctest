@@ -460,7 +460,14 @@ descendants) and skips the wing/KG status lookups there. The grounded-answer /
 citation discipline (+ its validator) is SKIPPED in code mode — chat.py checks
 `get_request_context().working_dir` before the discipline branch; a code project
 has no curated sources to cite, and read_file/list/search are work tools, not
-grounding-retrieval (was wrongly flagging "N von M ohne Quellenangabe").
+grounding-retrieval (was wrongly flagging "N von M ohne Quellenangabe"). The
+chat RIGHT PANEL in a code-mode chat shows Anhänge + Aktivität +
+**Arbeitsverzeichnis** (artifacts/references/websuche hidden via
+updateWorkdirTabVisibility, panels_workdir.js): split pane — recursive
+working_dir tree on top, inline file viewer below (text/code hljs, md rendered,
+img blob, pdf iframe) + size/mtime status line + download. folder-tree returns
+size+mtime per file; /v1/files/download's _validate_file_path also allows a code
+project's working_dir.
 
 **Source-group context stamped into drawers (per-customer separation).** When an
 ingested file is assigned to a virtual source group (`project.json`

@@ -1499,9 +1499,17 @@ class ProjectsHandlerMixin:
                                  "children": _walk(fp, depth + 1)})
                 elif os.path.isfile(fp):
                     st = _state_for(fp)
+                    # size + mtime for the file-status line (code-mode tree).
+                    try:
+                        _stt = os.stat(fp)
+                        _size = int(_stt.st_size)
+                        _mtime = int(_stt.st_mtime)
+                    except OSError:
+                        _size = _mtime = 0
                     # `state` kept (legacy string) for back-compat; `mined`/`kg`
                     # are the new per-doc fields the project view reads.
                     kids.append({"name": name, "type": "file", "path": fp,
+                                 "size": _size, "mtime": _mtime,
                                  "state": st["mined"], "mined": st["mined"],
                                  "kg": st["kg"], "skip_reason": st["skip_reason"],
                                  "review": _review_for(fp)})

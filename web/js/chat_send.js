@@ -1090,6 +1090,12 @@ function buildStreamCallbacks(chat, isActive) {
               refreshCodeWorkingTree();
             }
           } catch (e) {}
+          // Same for the right-panel Arbeitsverzeichnis tab in a code-mode chat.
+          try {
+            if (state.rightPanelTab === 'workdir' && typeof refreshWorkdirPanelTree === 'function') {
+              refreshWorkdirPanelTree();
+            }
+          } catch (e) {}
         }
 
         // Desktop notification when window not focused

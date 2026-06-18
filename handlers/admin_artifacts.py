@@ -1350,6 +1350,14 @@ class AdminArtifactsHandlers:
                         root = os.path.realpath(os.path.expanduser(p))
                         if resolved.startswith(root):
                             return resolved
+                    # Code-mode projects: the working_dir is the user-explicit
+                    # root the project operates in → serve files from there too.
+                    if proj.get("code_mode"):
+                        wd = (proj.get("working_dir") or "").strip()
+                        if wd:
+                            wdroot = os.path.realpath(os.path.expanduser(wd))
+                            if resolved == wdroot or resolved.startswith(wdroot + os.sep):
+                                return resolved
         except Exception:
             pass
         return None
