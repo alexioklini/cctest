@@ -621,6 +621,18 @@ def _project_init_run(agent_id: str, project_name: str, working_dir: str,
     return code_init.run_init(agent_id, project_name, working_dir, user_id)
 
 
+def _project_init_status(agent_id: str, project_name: str):
+    """Latest Code-Mode init run state for this project (or None)."""
+    from engine import code_init
+    return code_init.get_status(agent_id, project_name)
+
+
+def _project_init_cancel(agent_id: str, project_name: str) -> bool:
+    """Cancel an in-flight Code-Mode init. True if one was running."""
+    from engine import code_init
+    return code_init.cancel(agent_id, project_name)
+
+
 def _project_sync_cancel_request(project_id: str):
     with _project_sync_lock:
         _project_sync_cancel.add(project_id)
@@ -1341,16 +1353,24 @@ class BrainAgentHandler(
 
     def _parse_agent_from_path(self, path: str) -> str:
         """Extract agent_id from /v1/agents/{id}/..."""
+        from urllib.parse import unquote
         parts = path.split("/")
         if len(parts) >= 4:
-            return parts[3]
+            # The path segment is still percent-encoded (path = self.path), so a
+            # non-ASCII or spaced id arrives as e.g. %C3%BC — decode it back to
+            # the on-disk name.
+            return unquote(parts[3])
         return ""
 
     def _parse_project_from_path(self, path: str) -> str:
         """Extract project name from /v1/agents/{id}/projects/{name}/..."""
+        from urllib.parse import unquote
         parts = path.split("/")
         if len(parts) >= 6:
-            return parts[5]
+            # Decode the percent-encoded segment (project names may contain
+            # non-ASCII like 'ü' → %C3%BC, or spaces → %20). Without this the
+            # lookup uses the literal encoded string and 404s.
+            return unquote(parts[5])
         return ""
 
     def _session_access_check(self, sid: str, *, require_manage: bool = False) -> dict | None:
@@ -1673,6 +1693,8 @@ class BrainAgentHandler(
             self._handle_mcp_registry()
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes" in path:
             self._handle_notes(path, "GET")
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/init-status"):
+            self._handle_project_init_status(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/folder-tree" in path:
             self._handle_project_folder_tree(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/web-url-states" in path:
@@ -2100,6 +2122,8 @@ class BrainAgentHandler(
             self._handle_project_instruction_file_upload(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/init"):
             self._handle_project_init(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/init-cancel"):
+            self._handle_project_init_cancel(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/ingest" in path:
             self._handle_project_ingest(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):

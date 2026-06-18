@@ -383,8 +383,16 @@ async function loadProjectDetail(agentId, projectName) {
       if (el) el.style.display = isCode ? 'none' : '';
     });
     // Code project → show its working-directory file tree (refreshed here on
-    // open; also after each turn via the post-turn hook).
-    if (isCode && typeof refreshCodeWorkingTree === 'function') refreshCodeWorkingTree();
+    // open; also after each turn via the post-turn hook) and start polling for
+    // init progress + auto-refresh on file changes. Non-code projects stop any
+    // leftover poller.
+    if (isCode) {
+      if (typeof refreshCodeWorkingTree === 'function') refreshCodeWorkingTree();
+      _renderInitStatus({ state: 'idle' });
+      if (typeof startCodeModePoll === 'function') startCodeModePoll();
+    } else if (typeof stopCodeModePoll === 'function') {
+      stopCodeModePoll();
+    }
     // Per-project KG method/profile overrides (empty = inherit the global
     // default). Profile is inert under the rule-based method (generic only).
     const kgMethodSel = document.getElementById('project-kg-method');
@@ -1588,7 +1596,6 @@ async function runProjectInit() {
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
   if (!agentId || !projectName) return;
-  const statusEl = document.getElementById('project-codemode-init-status');
   if (!state._projectDetail?.working_dir) {
     showToast('Erst ein Arbeitsverzeichnis wählen', true);
     return;
@@ -1596,10 +1603,95 @@ async function runProjectInit() {
   try {
     const res = await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/init`, {});
     if (res && res.error) { showToast(res.error, true); return; }
-    if (statusEl) statusEl.innerHTML = '⏳ BRAIN.md wird im Hintergrund generiert — das kann je nach Projektgröße eine Weile dauern. Sie erscheint danach im Arbeitsverzeichnis.';
     showToast('init gestartet — BRAIN.md wird generiert');
+    _renderInitStatus({ state: 'generating', elapsed: 0 });
+    startCodeModePoll();   // immediately switch to fast (running) cadence
   } catch (e) {
     showToast('init fehlgeschlagen: ' + (e.message || e), true);
+  }
+}
+
+async function cancelProjectInit() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  try {
+    await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/init-cancel`, {});
+    showToast('init wird abgebrochen…');
+    _pollCodeModeOnce();   // refresh status promptly
+  } catch (e) {
+    showToast('Abbruch fehlgeschlagen: ' + (e.message || e), true);
+  }
+}
+
+// Render the init progress line. `st` = {state, elapsed, error}. While
+// generating, show a spinner + elapsed time + a Cancel button; on terminal
+// states show the outcome.
+function _renderInitStatus(st) {
+  const el = document.getElementById('project-codemode-init-status');
+  if (!el) return;
+  const s = (st && st.state) || 'idle';
+  const secs = Math.round(st && st.elapsed || 0);
+  const t = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+  if (s === 'generating') {
+    el.innerHTML =
+      `<span class="codeinit-spin" aria-hidden="true"></span>` +
+      `<span>BRAIN.md wird generiert… <span style="color:var(--text-400)">(${t})</span></span>` +
+      `<button class="btn-secondary codeinit-cancel" type="button" onclick="cancelProjectInit()">Abbrechen</button>`;
+    el.style.display = 'flex';
+  } else if (s === 'done') {
+    el.innerHTML = `✓ BRAIN.md generiert <span style="color:var(--text-400)">(${t})</span>`;
+    el.style.display = 'block';
+  } else if (s === 'cancelled') {
+    el.innerHTML = '⃠ init abgebrochen.';
+    el.style.display = 'block';
+  } else if (s === 'error') {
+    el.innerHTML = `⚠ init fehlgeschlagen: ${esc((st && st.error) || 'Unbekannter Fehler')}`;
+    el.style.display = 'block';
+  } else {
+    el.innerHTML = '';
+    el.style.display = 'none';
+  }
+}
+
+// ── Code-mode polling: drives BOTH the init progress display AND auto-refresh
+// of the working-dir file tree. One interval; cadence speeds up while an init
+// is running (status changes fast) and slows when idle (only watching files).
+async function _pollCodeModeOnce() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName || !state._projectDetail?.code_mode) return false;
+  let running = false;
+  try {
+    const st = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/init-status`);
+    // Guard: the detail panel may have switched projects mid-request.
+    if (state._projectDetailName !== projectName) return false;
+    running = st && st.state === 'generating';
+    // Don't clobber a fresh terminal banner with 'idle' once a run has ended.
+    if (st && st.state !== 'idle') _renderInitStatus(st);
+    state._codeInitLastState = st && st.state;
+  } catch (e) { /* transient — keep polling */ }
+  // Auto-refresh the file tree (silent: only re-renders on a real change).
+  try { await refreshCodeWorkingTree({ silent: true }); } catch (e) {}
+  return running;
+}
+
+function startCodeModePoll() {
+  stopCodeModePoll();
+  if (!state._projectDetail?.code_mode) return;
+  const tick = async () => {
+    const running = await _pollCodeModeOnce();
+    // Running init → poll fast (progress + files churn). Idle → slow watch.
+    const next = running ? 1500 : 4000;
+    state._codeModePollTimer = setTimeout(tick, next);
+  };
+  tick();
+}
+
+function stopCodeModePoll() {
+  if (state._codeModePollTimer) {
+    clearTimeout(state._codeModePollTimer);
+    state._codeModePollTimer = null;
   }
 }
 

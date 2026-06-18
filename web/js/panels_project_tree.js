@@ -473,17 +473,19 @@ function _ptRenderFolderTree(nodes) {
 // Code-mode variant: render the working-directory tree WITHOUT MemPalace status
 // dots / KG / review badges (a code project has no project memory — files are
 // just files). Same collapse/expand interaction (ptToggleRealDir).
-function _ptRenderCodeTree(nodes) {
+function _ptRenderCodeTree(nodes, openDirs) {
   if (!nodes || !nodes.length) return '<div class="pt-empty">Leer.</div>';
+  openDirs = openDirs || new Set();
   return nodes.map(n => {
     if (n.type === 'dir') {
+      const isOpen = openDirs.has(n.path || '');
       return `<div class="pt-branch pt-realdir">
         <div class="pt-row pt-realrow" onclick="ptToggleRealDir(this)">
-          ${_ptCaret(false)}
+          ${_ptCaret(isOpen)}
           <span class="pt-icon">${_PT_ICON.folders}</span>
-          <span class="pt-label">${esc(n.name)}</span>
+          <span class="pt-label pt-realdir-path" data-path="${esc(n.path || '')}">${esc(n.name)}</span>
         </div>
-        <div class="pt-children" style="display:none">${_ptRenderCodeTree(n.children || [])}</div>
+        <div class="pt-children" style="display:${isOpen ? '' : 'none'}">${_ptRenderCodeTree(n.children || [], openDirs)}</div>
       </div>`;
     }
     return `<div class="pt-row pt-realfile" title="${esc(n.path || n.name)}">
@@ -495,20 +497,60 @@ function _ptRenderCodeTree(nodes) {
 
 // Load + render the code-mode project's working directory tree. Called when the
 // project detail opens and after each turn (files may have changed).
-async function refreshCodeWorkingTree() {
+// Stable signature of a code tree (path|size|mtime per file, recursive) so a
+// poll can re-render ONLY when files were added / modified / deleted.
+function _ptCodeTreeSig(nodes) {
+  const parts = [];
+  const walk = (ns) => (ns || []).forEach(n => {
+    if (n.type === 'dir') { parts.push('d:' + (n.path || n.name)); walk(n.children || []); }
+    else parts.push('f:' + (n.path || n.name) + ':' + (n.size || 0) + ':' + (n.mtime || 0));
+  });
+  walk(nodes);
+  return parts.join('\n');
+}
+
+// Set of currently-open dir paths in the rendered code tree, so a re-render
+// keeps the user's expansion state instead of collapsing everything.
+function _ptCodeTreeOpenDirs(host) {
+  const open = new Set();
+  if (!host) return open;
+  host.querySelectorAll('.pt-realdir').forEach(branch => {
+    const kids = branch.querySelector(':scope > .pt-children');
+    const lbl = branch.querySelector(':scope > .pt-row .pt-realdir-path');
+    if (kids && lbl && kids.style.display !== 'none') open.add(lbl.dataset.path || '');
+  });
+  return open;
+}
+
+async function refreshCodeWorkingTree(opts) {
+  opts = opts || {};
   const host = document.getElementById('project-codemode-tree');
   if (!host) return;
   const agentId = state._projectDetailAgent || 'main';
   const projectName = state._projectDetailName || '';
   const wd = state._projectDetail && state._projectDetail.working_dir;
-  if (!wd) { host.innerHTML = '<div class="pt-empty">Kein Arbeitsverzeichnis gewählt.</div>'; return; }
-  host.innerHTML = '<div class="pt-loading">Lädt…</div>';
+  if (!wd) {
+    host.innerHTML = '<div class="pt-empty">Kein Arbeitsverzeichnis gewählt.</div>';
+    state._codeTreeSig = '';
+    return;
+  }
+  // Silent polls keep the existing tree on screen (no "Lädt…" flicker).
+  if (!opts.silent) host.innerHTML = '<div class="pt-loading">Lädt…</div>';
   try {
     const data = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/folder-tree?path=${encodeURIComponent(wd)}`);
-    if (data.error) { host.innerHTML = `<div class="pt-empty">${esc(data.error)}</div>`; return; }
-    host.innerHTML = _ptRenderCodeTree(data.tree || []);
+    if (data.error) {
+      if (!opts.silent) host.innerHTML = `<div class="pt-empty">${esc(data.error)}</div>`;
+      return;
+    }
+    const tree = data.tree || [];
+    const sig = _ptCodeTreeSig(tree);
+    // No change since last render → leave the DOM (and expansion state) alone.
+    if (opts.silent && sig === state._codeTreeSig) return;
+    const openDirs = _ptCodeTreeOpenDirs(host);
+    host.innerHTML = _ptRenderCodeTree(tree, openDirs);
+    state._codeTreeSig = sig;
   } catch (e) {
-    host.innerHTML = '<div class="pt-empty">Verzeichnis konnte nicht geladen werden.</div>';
+    if (!opts.silent) host.innerHTML = '<div class="pt-empty">Verzeichnis konnte nicht geladen werden.</div>';
   }
 }
 

@@ -8,6 +8,8 @@ function navigateTo(view, opts) {
   closeMobileSidebar();
   // Stop project-sync polling whenever we leave the project-detail view.
   if (view !== 'project-detail') stopProjectSyncPoll();
+  // Stop code-mode init/file-tree polling when leaving project-detail.
+  if (view !== 'project-detail' && typeof stopCodeModePoll === 'function') stopCodeModePoll();
 
   // Hide all views
   document.getElementById('welcome-view').style.display = 'none';

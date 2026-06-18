@@ -315,7 +315,13 @@ Chat einfach `init` schreiben). `init` lässt das Modell das Verzeichnis erkunde
 und eine **BRAIN.md** im Wurzelverzeichnis schreiben — eine Zusammenfassung
 (analog CLAUDE.md), die künftig als Projektgedächtnis dient (reines Markdown,
 wird nicht gemined). Existiert eine BRAIN.md, wird ihr Inhalt dem Modell bei
-jeder Antwort mitgegeben.
+jeder Antwort mitgegeben. Während `init` läuft, zeigt die Code-Mode-Sektion einen
+**Fortschrittsanzeiger** (Spinner + verstrichene Zeit) mit einem
+**Abbrechen**-Knopf; danach erscheint der Ausgang (✓ generiert / abgebrochen /
+Fehler). Der **Datei-Baum des Arbeitsverzeichnisses** darunter aktualisiert sich
+**von selbst**, sobald Dateien angelegt, geändert oder gelöscht werden (z. B.
+während `init` oder einer Chat-Antwort) — kein manuelles Neuladen nötig (der
+⟳-Knopf bleibt für eine sofortige Aktualisierung).
 
 **Projekt-Anweisungen + Begleitdateien**: Über **Anweisungen bearbeiten**
 öffnet sich ein Dialog mit dem Freitext-Feld (Hinweise, an die sich das

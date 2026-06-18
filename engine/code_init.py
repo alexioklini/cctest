@@ -17,6 +17,8 @@ agent can't reach project memory (there is none in code mode).
 from __future__ import annotations
 
 import threading
+import time
+import uuid
 
 from engine.context import request_context
 
@@ -42,14 +44,54 @@ _INIT_PROMPT = (
     "aktualisiere sie. Antworte am Ende nur mit einer kurzen Bestätigung."
 )
 
-# Per-(agent,project) in-flight guard so a double-click doesn't run two inits.
-_running: set[tuple[str, str]] = set()
+# Per-(agent,project) run state so the UI can show progress + cancel. One entry
+# per project; a new run replaces the prior terminal entry. While `status` is
+# "generating" a worker thread is in flight and `turn_id` targets its sidecar
+# cancel. Terminal states ("done"/"error"/"cancelled") linger so the UI can show
+# the outcome until the next run starts. `_lock` guards all of it.
+_runs: dict[tuple[str, str], dict] = {}
 _lock = threading.Lock()
 
 
 def is_running(agent_id: str, project_name: str) -> bool:
     with _lock:
-        return (agent_id, project_name) in _running
+        r = _runs.get((agent_id, project_name))
+        return bool(r and r.get("status") == "generating")
+
+
+def get_status(agent_id: str, project_name: str) -> dict | None:
+    """Snapshot of the latest run for this project (or None if never run this
+    process). Includes `elapsed` (seconds) computed at read time."""
+    with _lock:
+        r = _runs.get((agent_id, project_name))
+        if not r:
+            return None
+        out = dict(r)
+    out.pop("turn_id", None)  # internal; never leak to the client
+    started = out.get("started_at") or 0
+    ended = out.get("ended_at") or 0
+    ref = ended if ended else time.time()
+    out["elapsed"] = round(max(0.0, ref - started), 1) if started else 0.0
+    return out
+
+
+def cancel(agent_id: str, project_name: str) -> bool:
+    """Request cancellation of an in-flight init. Returns True if a running init
+    was found and a cancel was dispatched to the sidecar."""
+    with _lock:
+        r = _runs.get((agent_id, project_name))
+        if not r or r.get("status") != "generating":
+            return False
+        r["cancel_requested"] = True
+        turn_id = r.get("turn_id") or ""
+    if turn_id:
+        try:
+            from handlers import sidecar_proxy
+            sidecar_proxy.cancel_turn(turn_id)
+        except Exception as e:
+            print(f"[code-init] cancel dispatch failed: {type(e).__name__}: {e}",
+                  flush=True)
+    return True
 
 
 def run_init(agent_id: str, project_name: str, working_dir: str,
@@ -57,19 +99,43 @@ def run_init(agent_id: str, project_name: str, working_dir: str,
     """Spawn the init worker thread. Returns False if one is already running for
     this project (caller can report 'already in progress')."""
     key = (agent_id, project_name)
+    turn_id = uuid.uuid4().hex
     with _lock:
-        if key in _running:
+        cur = _runs.get(key)
+        if cur and cur.get("status") == "generating":
             return False
-        _running.add(key)
+        _runs[key] = {
+            "status": "generating",
+            "started_at": time.time(),
+            "ended_at": 0,
+            "turn_id": turn_id,
+            "working_dir": working_dir,
+            "error": "",
+            "cancel_requested": False,
+        }
     t = threading.Thread(
-        target=_worker, args=(agent_id, project_name, working_dir, user_id, model),
+        target=_worker,
+        args=(agent_id, project_name, working_dir, user_id, model, turn_id),
         daemon=True, name=f"code-init-{project_name}")
     t.start()
     return True
 
 
+def _finish(key: tuple[str, str], status: str, error: str = ""):
+    with _lock:
+        r = _runs.get(key)
+        if not r:
+            return
+        # A cancel that landed wins over a same-instant 'done'.
+        if r.get("cancel_requested") and status != "cancelled":
+            status = "cancelled"
+        r["status"] = status
+        r["ended_at"] = time.time()
+        r["error"] = error
+
+
 def _worker(agent_id: str, project_name: str, working_dir: str,
-            user_id: str, model: str):
+            user_id: str, model: str, turn_id: str):
     key = (agent_id, project_name)
     try:
         from handlers import sidecar_proxy
@@ -79,6 +145,7 @@ def _worker(agent_id: str, project_name: str, working_dir: str,
         _model = (model or "").strip() or _brain._background_model_default()
         if not _model:
             print(f"[code-init] {agent_id}/{project_name}: no model available", flush=True)
+            _finish(key, "error", "no model available")
             return
         # Project-scoped context. apply_domain_context reads the project's
         # code_mode config and sets working_dir (→ file tools cwd) + excludes the
@@ -89,7 +156,8 @@ def _worker(agent_id: str, project_name: str, working_dir: str,
             get_request_context().current_agent = _brain.AgentConfig(agent_id)
             _brain.apply_domain_context(agent_id=agent_id, project=project_name,
                                         user_id=user_id or "")
-            sidecar_proxy.background_call(
+            # Pre-minted turn_id so cancel() can target this run's sidecar turn.
+            result = sidecar_proxy.background_call(
                 messages=[{"role": "user", "content": _INIT_PROMPT}],
                 model=_model,
                 system_prompt=(
@@ -102,10 +170,14 @@ def _worker(agent_id: str, project_name: str, working_dir: str,
                 user_id=user_id or "",
                 max_rounds=40,
                 cost_purpose="code_init",
-            )
+                turn_id=turn_id,
+            ) or {}
+        err = (result.get("error") or "").strip()
+        if err:
+            _finish(key, "error", err)
+        else:
+            _finish(key, "done")
     except Exception as e:
         print(f"[code-init] {agent_id}/{project_name} failed: "
               f"{type(e).__name__}: {e}", flush=True)
-    finally:
-        with _lock:
-            _running.discard(key)
+        _finish(key, "error", f"{type(e).__name__}: {e}")

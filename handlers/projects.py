@@ -1194,6 +1194,43 @@ class ProjectsHandlerMixin:
         self._send_json({"status": "generating", "working_dir": wd,
                          "brain_md": os.path.join(wd, "BRAIN.md")})
 
+    def _handle_project_init_status(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/init-status — Code Mode only.
+
+        Returns the latest init run's progress so the UI can show a spinner and
+        a cancel button: {state: idle|generating|done|error|cancelled, elapsed,
+        error?}. `idle` = no run has been started this server process."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        if self._project_access_check(agent_id, proj_name) is None:
+            return
+        st = _srv()._project_init_status(agent_id, proj_name)
+        if not st:
+            self._send_json({"state": "idle"})
+            return
+        self._send_json({
+            "state": st.get("status") or "idle",
+            "elapsed": st.get("elapsed") or 0,
+            "error": st.get("error") or "",
+            "working_dir": st.get("working_dir") or "",
+        })
+
+    def _handle_project_init_cancel(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/init-cancel — Code Mode only."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        if self._project_access_check(agent_id, proj_name, require_manage=True) is None:
+            return
+        ok = _srv()._project_init_cancel(agent_id, proj_name)
+        self._send_json({"status": "cancelling" if ok else "not_running",
+                         "cancelled": ok})
+
     def _handle_project_instruction_file_delete(self, path: str):
         """DELETE /v1/agents/{id}/projects/{name}/instruction-files/{filename}"""
         agent_id = self._parse_agent_from_path(path)
@@ -1451,6 +1488,15 @@ class ProjectsHandlerMixin:
 
         # Walk the folder (depth-bounded) → nested {name,type,children|state}.
         _SKIP = {".brain-extracted", ".git", "__pycache__", ".DS_Store"}
+        # Code-mode trees auto-refresh on a poll, so additionally skip heavy /
+        # vendored dirs (node_modules, venvs, build output) to keep the walk
+        # cheap. NOT applied to ingest folders — those may legitimately contain
+        # ingested files under dist/build, and aren't polled.
+        if _code_mode:
+            _SKIP = _SKIP | {
+                "node_modules", ".venv", "venv", ".mypy_cache", ".pytest_cache",
+                ".next", "dist", "build", ".cache", "target", ".gradle",
+                ".idea", ".tox", ".ruff_cache"}
 
         # Review badge state per file (GDPR/classification reviewer). Keyed by
         # the file's real path for project_path-kind reviews. Cheap DB reads.

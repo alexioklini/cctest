@@ -236,6 +236,21 @@ streaming call, per-USER history, fixed read-only tool set. See
   running|done|error|cancelled, phase, progress, budget, report_output_id,
   proposed[], coverage_note}`. The report is a `project_outputs` row in Studio.
 - `POST .../projects/<name>/research/runs/<run_id>/cancel` — cooperative cancel.
+- `GET .../projects/<name>/folder-tree?path=<abs>` — read-only subtree of an
+  ingested input folder OR (Code Mode) the project's working_dir. Each file node
+  carries `name/path/size/mtime` (+ MemPalace `mined`/`kg` state for non-code).
+  Code-Mode walks additionally skip heavy/vendored dirs (node_modules/.venv/dist/
+  build/target/…) so the poll-driven auto-refresh stays cheap.
+- `POST .../projects/<name>/init` — Code Mode only: run one agentic background
+  turn whose cwd is the working_dir; it explores the tree and writes a `BRAIN.md`
+  summary at the root (the project's plain-markdown memory). Returns immediately
+  `{status:"generating"}`. Manage-gated. One run per project at a time.
+- `GET .../projects/<name>/init-status` — Code Mode only: latest init run state
+  for the progress display → `{state: idle|generating|done|error|cancelled,
+  elapsed, error?}`. `idle` = no run started this server process.
+- `POST .../projects/<name>/init-cancel` — Code Mode only: abort an in-flight
+  init (cancels the run's sidecar turn) → `{status: cancelling|not_running,
+  cancelled}`. Manage-gated.
 - `GET .../ingested` — list ingested files under an agent
 
 ## Scheduler

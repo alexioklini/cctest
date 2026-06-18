@@ -3746,6 +3746,20 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 .project-detail-panel.help-on .project-panel-help { display: block; }
 
+/* Code-mode init progress line (#project-codemode-init-status). Shown via inline
+   display set by _renderInitStatus, independent of the help-on toggle. */
+#project-codemode-init-status { align-items: center; gap: 8px; }
+.codeinit-spin {
+  display: inline-block;
+  width: 13px; height: 13px;
+  border: 2px solid var(--border-200, var(--border-100));
+  border-top-color: var(--accent-500, var(--text-200));
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+.codeinit-cancel { margin-left: auto; padding: 2px 10px; font-size: 11px; }
+
 /* Instructions section — capped height with vertical scroll so long
    default disciplines (~4KB markdown) don't push attachments + input
    folders below the fold. Markdown rendered via renderMarkdown(). */
