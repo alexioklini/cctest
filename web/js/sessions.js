@@ -175,6 +175,13 @@ async function openSession(sessionId, agentId) {
     // would carry a wrong body.project.
     chat.project = data.project || '';
     state.currentProject = chat.project || null;
+    // Pre-warm the code-mode project info (cached) so the right panel can gate
+    // its tabs synchronously when opened — and refresh tab visibility once known.
+    if (state.currentProject && typeof _workdirActiveProject === 'function') {
+      _workdirActiveProject().then(() => {
+        try { if (typeof updateWorkdirTabVisibility === 'function') updateWorkdirTabVisibility(); } catch (_) {}
+      });
+    }
 
     // Reconstruct tool blocks from metadata and extract per-message fields.
     // Order requirement: thinking(round N) → tools_of_round(N) → thinking(N+1) → ... → assistant.

@@ -58,11 +58,18 @@ function openRightPanel(tab) {
   state.rightPanelOpen = true;
   // Any explicit open re-arms auto-open for subsequent new refs/artifacts.
   state.userClosedRightPanel = false;
+  // Code-mode chat: gate the tab set (show Arbeitsverzeichnis, hide
+  // artifacts/references/websuche) BEFORE picking the tab so a hidden tab
+  // isn't chosen. No-op in normal chats.
+  if (typeof updateWorkdirTabVisibility === 'function') updateWorkdirTabVisibility();
+  const _codeChat = (typeof _workdirIsCodeChat === 'function') && _workdirIsCodeChat();
   // Tab selection priority: explicit arg (e.g. artifact auto-open) wins;
   // else the user's last chosen tab if they've picked one this session;
-  // else the first tab that has data; else fall back to attachments.
+  // else the first tab that has data; else fall back to attachments. In a
+  // code chat, default to the working-directory tab.
   const chosen = tab
     || (state.userPickedTab ? state.rightPanelTab : null)
+    || (_codeChat ? 'workdir' : null)
     || firstTabWithData()
     || 'attachments';
   switchRightTab(chosen);
