@@ -95,9 +95,12 @@ function renderProjectsList() {
     // Treat the type-default emoji as "no custom icon" → render line-art glyph.
     const rawIcon = (p.icon && p.icon.length <= 4) ? p.icon : '';
     const customIcon = (rawIcon && rawIcon !== '📁') ? rawIcon : '';
+    // Code projects get a distinct </> glyph in the overview (unless the owner
+    // set a custom emoji icon).
+    const codeGlyphSvg = '<svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
     const glyphHtml = customIcon
       ? esc(customIcon)
-      : (window.Favourites?.typeGlyphSvg?.('project', 44) || '');
+      : (p.code_mode ? codeGlyphSvg : (window.Favourites?.typeGlyphSvg?.('project', 44) || ''));
     const artClass = hasImage ? 'project-card-art has-image' : 'project-card-art';
     const artStyle = hasImage
       ? `style="background-image:url('${esc(imgUrl)}');background-size:cover;background-position:center"`
@@ -116,7 +119,7 @@ function renderProjectsList() {
       <div class="project-card-info">
         <div class="project-card-title"${titleAttr}>${esc(displayName)}</div>
         <div class="project-card-meta">
-          <span class="project-card-type">Projekt</span>
+          <span class="project-card-type">${p.code_mode ? 'Code-Projekt' : 'Projekt'}</span>
           ${timeAgo ? `<span>· ${esc(timeAgo)}</span>` : ''}
         </div>
       </div>
@@ -364,15 +367,14 @@ async function loadProjectDetail(agentId, projectName) {
     if (disableWebCb) {
       disableWebCb.checked = !!project.disable_web_search;
     }
-    // Code Mode: toggle + working-dir display; when on, the project works
-    // directly in working_dir (no MemPalace) → hide the Sources tree + ingest UI.
-    const cmCb = document.getElementById('project-codemode-checkbox');
-    const cmWrap = document.getElementById('project-codemode-wd-wrap');
+    // Code Mode is fixed at creation. For a code project: show the Code Mode
+    // section (working-dir + init), hide the Sources/ingest tree. For a normal
+    // project: hide the Code Mode section entirely. No toggle (immutable mode).
+    const cmSection = document.getElementById('project-codemode-section');
     const cmWd = document.getElementById('project-codemode-wd');
     const srcSection = document.getElementById('project-sources-section');
     const isCode = !!project.code_mode;
-    if (cmCb) cmCb.checked = isCode;
-    if (cmWrap) cmWrap.style.display = isCode ? '' : 'none';
+    if (cmSection) cmSection.style.display = isCode ? '' : 'none';
     if (cmWd) cmWd.textContent = project.working_dir || '— (noch kein Verzeichnis gewählt)';
     if (srcSection) srcSection.style.display = isCode ? 'none' : '';
     // Per-project KG method/profile overrides (empty = inherit the global
@@ -1468,26 +1470,8 @@ async function toggleProjectDisableWeb(enabled) {
 }
 
 // ── Code Mode ──────────────────────────────────────────────────────────────
-async function toggleProjectCodeMode(enabled) {
-  const agentId = state._projectDetailAgent;
-  const projectName = state._projectDetailName;
-  if (!agentId || !projectName) return;
-  try {
-    await API.updateProject(agentId, projectName, { code_mode: !!enabled });
-    if (state._projectDetail) state._projectDetail.code_mode = !!enabled;
-    // Re-render the detail so the working-dir picker + Sources visibility update.
-    const wrap = document.getElementById('project-codemode-wd-wrap');
-    const src = document.getElementById('project-sources-section');
-    if (wrap) wrap.style.display = enabled ? '' : 'none';
-    if (src) src.style.display = enabled ? 'none' : '';
-    showToast(enabled ? 'Code Mode aktiviert — wähle ein Arbeitsverzeichnis'
-                      : 'Code Mode deaktiviert');
-  } catch (e) {
-    showToast('Einstellung konnte nicht geändert werden', true);
-    const cb = document.getElementById('project-codemode-checkbox');
-    if (cb) cb.checked = !enabled;
-  }
-}
+// (Code Mode is fixed at creation — there is no toggle. The detail panel only
+// exposes the working-dir picker + init for an existing code project.)
 
 // Filesystem-browser picker for the code-mode working directory. Reuses the
 // same /v1/files/tree backend as the input-folder picker.
@@ -1557,6 +1541,38 @@ async function _pwdSelect() {
   } catch (e) {
     showToast('Verzeichnis konnte nicht gesetzt werden: ' + (e.message || e), true);
   }
+}
+
+// Working-dir picker used DURING create (stores into a window flag instead of
+// PUTting to a project that doesn't exist yet). Reuses the same _pwdLoad browser.
+function _createProjectPickWd() {
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.style.zIndex = '10002';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="sched-modal" style="max-width:600px">
+    <h2>Arbeitsverzeichnis wählen</h2>
+    <div id="pwd-crumbs" style="font-family:var(--font-mono);font-size:12px;color:var(--text-300);padding:6px 10px;background:var(--bg-100);border-radius:6px;margin-bottom:8px;word-break:break-all">…</div>
+    <div id="pwd-list" style="max-height:340px;overflow-y:auto;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)"></div>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Abbrechen</button>
+      <button class="sched-create-btn" onclick="_createProjectWdSelect()">Dieses Verzeichnis verwenden</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  _pwdLoad('');
+}
+
+function _createProjectWdSelect() {
+  const path = window._pwdPath || '';
+  if (!path) { showToast('Kein Verzeichnis ausgewählt', true); return; }
+  window._createProjectWorkingDir = path;
+  const el = document.getElementById('create-project-wd');
+  if (el) el.textContent = path;
+  // Close only the picker overlay (the topmost), not the create modal.
+  document.querySelectorAll('.sched-modal-overlay').forEach(o => {
+    if (o.querySelector('#pwd-list')) o.remove();
+  });
 }
 
 async function runProjectInit() {
@@ -1890,7 +1906,10 @@ function _renderMemberPicker(opts) {
     </div>`;
 }
 
-async function showCreateProjectModal() {
+async function showCreateProjectModal(codeMode) {
+  codeMode = !!codeMode;
+  window._createProjectCodeMode = codeMode;
+  window._createProjectWorkingDir = '';
   const agentId = state.activeAgentId || 'main';
   const authed = !!(state.authUser && state.authEnabled);
   if (authed) await _ensureUserDirectory();
@@ -1907,14 +1926,25 @@ async function showCreateProjectModal() {
   content.style.maxWidth = '520px';
   content.innerHTML = `
     <div class="modal-header">
-      <span class="modal-title">Neues Projekt</span>
+      <span class="modal-title">${codeMode ? 'Neues Code-Projekt' : 'Neues Projekt'}</span>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
     </div>
     <div class="modal-body" style="padding:16px">
+      ${codeMode ? `<div class="project-panel-help" style="margin-bottom:12px">
+        <strong>Code-Projekt:</strong> arbeitet direkt in einem Verzeichnis (kein
+        Projektgedächtnis/Ingest). Der Modus ist fest und kann später nicht
+        geändert werden.</div>` : ''}
       <div class="project-modal-field">
         <label class="project-modal-label">Projektname</label>
         <input class="project-modal-input" id="create-project-name" placeholder="Mein Projekt" autofocus>
       </div>
+      ${codeMode ? `<div class="project-modal-field">
+        <label class="project-modal-label">Arbeitsverzeichnis</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div id="create-project-wd" style="flex:1;font-family:var(--font-mono);font-size:12px;color:var(--text-300);background:var(--bg-100);border:1px solid var(--border-100);border-radius:6px;padding:7px 10px;word-break:break-all">— (optional, später wählbar)</div>
+          <button class="btn-secondary" type="button" onclick="_createProjectPickWd()">Wählen</button>
+        </div>
+      </div>` : ''}
       <div class="project-modal-field">
         <label class="project-modal-label">Beschreibung (optional)</label>
         <textarea class="project-modal-input" id="create-project-desc" rows="3" style="resize:vertical"
@@ -2030,6 +2060,10 @@ async function createProject() {
   if (visibility === 'team' && !teamId) { showToast('Wählen Sie ein Team für ein team-gebundenes Projekt'); return; }
 
   const body = { name, description: desc || '' };
+  if (window._createProjectCodeMode) {
+    body.code_mode = true;
+    if (window._createProjectWorkingDir) body.working_dir = window._createProjectWorkingDir;
+  }
   if (visibility) body.visibility = visibility;
   if (teamId) body.owner_team_id = teamId;
   if (ownerId) body.owner_user_id = ownerId;

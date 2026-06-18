@@ -299,21 +299,23 @@ Codebasen, Forschungspapiere, …).
    importiert; keine rekursive Suche).
 6. **Projektmodus** / **Recherche**-Umschalter — siehe unten.
 
-**Code Mode** (Projekt-Einstellung): Ein Schalter, der das Projekt grundlegend
-anders arbeiten lässt. Statt Dateien ins Projektgedächtnis (MemPalace)
-einzulesen, arbeitet das Projekt direkt in einem von dir gewählten
-**Arbeitsverzeichnis** (meist dein Code-Ordner): das Modell liest, bearbeitet
-und erzeugt Dateien dort, und Befehle/Code laufen in diesem Verzeichnis (nicht
-im Artifact-Ordner). Es gibt dann **kein** Ingest und **kein** Projektgedächtnis
-— die Quellen-/Ingest-Ansicht wird ausgeblendet; Projekt-Anweisungen gelten
-weiter. Vorgehen: Code Mode anhaken → über **Ordner wählen** das
-Arbeitsverzeichnis setzen → **BRAIN.md generieren (init)** klicken (oder im Chat
-einfach `init` schreiben). `init` lässt das Modell das Verzeichnis erkunden und
-eine **BRAIN.md** im Wurzelverzeichnis schreiben — eine Zusammenfassung (analog
-CLAUDE.md), die künftig als Projektgedächtnis dient (reines Markdown, wird nicht
-gemined). Existiert eine BRAIN.md, wird ihr Inhalt dem Modell bei jeder Antwort
-mitgegeben. Der Schalter ist umkehrbar — beim Ausschalten bleiben bereits
-eingelesene Dateien erhalten (nur ungenutzt).
+**Code-Projekt** (eigener Projekttyp): In der Projektübersicht gibt es zwei
+Knöpfe — **Neues Projekt** und **Neues Code-Projekt**. Ein Code-Projekt arbeitet
+grundlegend anders: statt Dateien ins Projektgedächtnis (MemPalace) einzulesen,
+arbeitet es direkt in einem von dir gewählten **Arbeitsverzeichnis** (meist dein
+Code-Ordner) — das Modell liest, bearbeitet und erzeugt Dateien dort, und
+Befehle/Code laufen in diesem Verzeichnis (nicht im Artifact-Ordner). Es gibt
+**kein** Ingest und **kein** Projektgedächtnis; die Quellen-/Ingest-Ansicht
+entfällt, Projekt-Anweisungen gelten weiter. **Der Typ ist fest** und kann
+nachträglich nicht mehr geändert werden (er wird beim Anlegen gewählt). In der
+Übersicht haben Code-Projekte ein eigenes `</>`-Symbol. Vorgehen: **Neues
+Code-Projekt** → beim Anlegen (oder später in den Einstellungen) das
+**Arbeitsverzeichnis** wählen → **BRAIN.md generieren (init)** klicken (oder im
+Chat einfach `init` schreiben). `init` lässt das Modell das Verzeichnis erkunden
+und eine **BRAIN.md** im Wurzelverzeichnis schreiben — eine Zusammenfassung
+(analog CLAUDE.md), die künftig als Projektgedächtnis dient (reines Markdown,
+wird nicht gemined). Existiert eine BRAIN.md, wird ihr Inhalt dem Modell bei
+jeder Antwort mitgegeben.
 
 **Projekt-Anweisungen + Begleitdateien**: Über **Anweisungen bearbeiten**
 öffnet sich ein Dialog mit dem Freitext-Feld (Hinweise, an die sich das

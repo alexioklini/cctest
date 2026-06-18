@@ -446,10 +446,13 @@ cache-key folds working_dir + BRAIN.md mtime). `init` (POST
 background turn (engine/code_init.py → background_call purpose=interactive,
 cwd=working_dir) that explores the dir and writes BRAIN.md — one agentic pass
 (selective key-file reads, like Claude Code's /init), not per-file. working_dir
-flows to the sidecar's per-tool-call context via tool_context. UI: a Code Mode
-section (toggle + /v1/files/tree dir picker + "generate BRAIN.md" button); the
-Sources/ingest tree is hidden when code_mode is on. Reversible (toggling off
-keeps any prior ingested files on disk, just unused).
+flows to the sidecar's per-tool-call context via tool_context. code_mode is FIXED AT CREATION — two
+overview buttons ("Neues Projekt" / "Neues Code-Projekt"); create_project reads
+code_mode+working_dir, and code_mode is NOT in the update_project whitelist
+(immutable; working_dir stays editable). UI: code projects render a distinct
+`</>` glyph + "Code-Projekt" label in the overview; the detail panel shows a
+Code Mode section (working-dir /v1/files/tree picker + "generate BRAIN.md"
+button) only for code projects, and hides the Sources/ingest tree.
 
 **Source-group context stamped into drawers (per-customer separation).** When an
 ingested file is assigned to a virtual source group (`project.json`
