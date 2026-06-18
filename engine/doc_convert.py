@@ -783,6 +783,16 @@ def _pymupdf4llm_is_blank(md: str) -> bool:
             continue
         if s.startswith("**==>") and "intentionally omitted" in s and s.endswith("<==**"):
             continue
+        # Empty markdown headers: pymupdf4llm sometimes emits a run of bare
+        # "##" / "###" lines (heading markers with NO text) for a PDF whose
+        # real text it failed to lift — strip them too, else the first such
+        # line reads as "real content" and the fitz/OCR fallback never fires
+        # (observed on a Wiener-Privatbank termination letter: pymupdf4llm gave
+        # only empty "##" headers + one picture placeholder = 77 chars of junk,
+        # while fitz lifted the full 1578-char text). A header WITH text
+        # ("## Vertrag") is still real content → returns False as before.
+        if s.lstrip("#").strip() == "":
+            continue
         return False
     return True
 

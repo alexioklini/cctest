@@ -345,7 +345,13 @@ pure overhead now that the whole call is bounded). Chain:
 lines (`**==> picture [W x H] intentionally omitted <==**`) — a scanned page emits
 one per embedded image (100+), so the raw line count looks substantial but holds
 zero text; `_pymupdf4llm_is_blank()` strips those before the emptiness check so
-image-only PDFs actually reach OCR (fixed 9.157.1).
+image-only PDFs actually reach OCR (fixed 9.157.1). It ALSO strips empty
+markdown headers (bare `##`/`###` with no text) — pymupdf4llm sometimes emits a
+run of those for a text-PDF whose body it failed to lift, and without this the
+first such line read as "real content" so the fitz fallback never fired (fixed
+9.160.7: a Wiener-Privatbank letter gave 77 chars of empty headers + a picture
+placeholder while fitz lifted the full 1578-char text). A header WITH text stays
+real content.
 markitdown is deliberately SKIPPED here — it bottoms out on pdfminer just like
 pymupdf4llm (≈same hang on the same input) AND gives no quality fitz can't
 deliver faster, so falling to it just doubled the stall. The fitz/pdfplumber
