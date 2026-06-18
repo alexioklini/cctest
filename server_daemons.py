@@ -1580,6 +1580,88 @@ def _project_sync_loop(srv):
     # correct (the loop is single-threaded per project).
     _cur_project_kg: dict = {}
 
+    def _parse_drawers_filed(mine_stdout: str) -> int:
+        """Pull the integer from the miner's 'Drawers filed: N' summary line."""
+        for line in mine_stdout.splitlines():
+            s = line.strip()
+            if s.startswith("Drawers filed"):
+                try:
+                    return int(s.split(":")[-1].strip().split()[0])
+                except Exception:
+                    return 0
+        return 0
+
+    def _mine_batched(folder: str, wing: str, agent_name: str, *,
+                      progress_cb=None, batch_size: int = 25) -> int:
+        """Mine `folder` into `wing` in batches so the UI sees STEADY progress.
+
+        mp_miner.mine() over a whole folder is one opaque blocking call that
+        emits nothing until done — a big project then shows a frozen "syncing"
+        for minutes. Instead we pre-scan the file list and feed it to mine() in
+        `batch_size` chunks (mine accepts a `files=` subset), calling
+        `progress_cb(done, total, drawers_so_far)` after each batch.
+
+        Progress is reported in DOCUMENTS, not chunk files: one uploaded doc is
+        split into several `<key>__<idx>.md` chunks, so a 258-doc project has
+        ~547 chunk files — counting chunks would show a misleading total. We map
+        each file to its document key (IngestManager._key_from_filename) and
+        report distinct-keys-seen / distinct-keys-total. The miner is idempotent
+        + mtime-cursored, so batching changes nothing about the result — only the
+        feedback cadence. Returns total drawers filed. Holds _palace_write_lock
+        per batch (not across the whole mine) so other daemons interleave."""
+        try:
+            files = mp_miner.scan_project(folder, respect_gitignore=False)
+        except Exception as e:
+            print(f"[project-sync] scan_project failed {folder}: "
+                  f"{type(e).__name__}: {e}", flush=True)
+            files = None
+        if not files:
+            # Fall back to a whole-folder mine (empty/scan-failed) so behaviour
+            # never regresses below the original single call.
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), _palace_write_lock:
+                mp_miner.mine(project_dir=folder, palace_path=palace_path,
+                              wing_override=wing, agent=agent_name,
+                              respect_gitignore=False)
+            return _parse_drawers_filed(buf.getvalue())
+
+        def _doc_key(fp):
+            # Map a chunk file path to its uploaded-document key; fall back to
+            # the path itself for non-chunk files (so they still count as 1 doc).
+            try:
+                k = engine.IngestManager._key_from_filename(os.path.basename(fp))
+            except Exception:
+                k = None
+            return k or fp
+
+        total_docs = len({_doc_key(f) for f in files})
+        seen_docs: set = set()
+        filed = 0
+        if progress_cb:
+            try: progress_cb(0, total_docs, 0)
+            except Exception: pass
+        for i in range(0, len(files), batch_size):
+            batch = files[i:i + batch_size]
+            buf = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf), _palace_write_lock:
+                    mp_miner.mine(project_dir=folder, palace_path=palace_path,
+                                  wing_override=wing, agent=agent_name,
+                                  respect_gitignore=False, files=batch)
+                filed += _parse_drawers_filed(buf.getvalue())
+            except SystemExit:
+                pass
+            except Exception as e:
+                print(f"[project-sync] mine batch failed {folder} "
+                      f"[{i}:{i+len(batch)}]: {type(e).__name__}: {e}",
+                      flush=True)
+            for f in batch:
+                seen_docs.add(_doc_key(f))
+            if progress_cb:
+                try: progress_cb(len(seen_docs), total_docs, filed)
+                except Exception: pass
+        return filed
+
     def _run_kg_for(wing: str, source_prefix: str, item_set_fn,
                     item_kind: str, item_id: str):
         """Run the KG extraction post-pass scoped to (wing, source_prefix).
@@ -1642,6 +1724,21 @@ def _project_sync_loop(srv):
                         kg_chunks_total=_kg_chunks_total[0],
                         kg_started_at=_kg_started_at,
                         kg_triples_live=info.get("running_total", 0))
+                    # Per-CHUNK live tick so the top-level KG counter advances
+                    # smoothly WITHIN a document too (not just once per doc), and
+                    # keeps moving even when a chunk yields 0 triples. The shared
+                    # cross-document totals live on srv._project_sync_live via the
+                    # loop below; here we just bump the in-flight chunk delta.
+                    try:
+                        base = int(srv._project_sync_live_status(
+                            agent_id, proj_name).get("kg_done_base") or 0)
+                        srv._project_sync_set_live(
+                            agent_id, proj_name,
+                            state="syncing", mining_phase="kg",
+                            kg_done=base + _kg_chunks_done[0],
+                            kg_triples_live=info.get("running_total", 0))
+                    except Exception:
+                        pass
 
             item_set_fn(item_kind, item_id,
                 kg_state="extracting",
@@ -1817,6 +1914,35 @@ def _project_sync_loop(srv):
         except Exception:
             return 0
 
+    def _count_wing_drawers_by_prefixes(wing: str, prefixes: list) -> dict:
+        """Count drawers per source_file prefix with ONE wing fetch.
+
+        _count_wing_drawers_by_source does a full-wing `col.get` + Python filter
+        per call; calling it once per uploaded doc (258×) on a 6994-drawer wing
+        meant ~1.8M metadata rows pulled from the backend between indexing and
+        KG — the project then sat for many minutes before KG could start. This
+        fetches the wing's source_files ONCE and counts every prefix against
+        that single snapshot. Returns {prefix: count}. Falls back to 0s on
+        error so callers degrade (counts are display-only, never gate KG)."""
+        out = {p: 0 for p in prefixes}
+        try:
+            col = _get_drawers_col(palace_path, create=False)
+            if not col:
+                return out
+            got = col.get(where={"wing": wing}, include=["metadatas"])
+            metas = got.get("metadatas") or []
+            anchored = [(p, p.rstrip(os.sep), p.rstrip(os.sep) + os.sep)
+                        for p in prefixes]
+            for m in metas:
+                sf = (m or {}).get("source_file") or ""
+                for p, pfx, pfx_child in anchored:
+                    if sf == pfx or sf.startswith(pfx_child):
+                        out[p] += 1
+                        break
+            return out
+        except Exception:
+            return out
+
     def _count_wing_drawers_total(wing: str) -> int:
         try:
             col = _get_drawers_col(palace_path, create=False)
@@ -1911,6 +2037,12 @@ def _project_sync_loop(srv):
 
             cycle_filed = 0
             for agent_id, proj_name in ordered:
+                # Defined before the try so the finally can always close an open
+                # run row — even if start_run or any early step raises. Without
+                # this, an exception between start_run and finish_run left the
+                # run stuck in state='running' forever (orphaned phantom mines).
+                _run_id = None
+                _run_finished = False
                 try:
                     # Manual "Sync now" overrides per-folder auto_sync gating —
                     # the user is explicitly asking, so skipping their non-auto
@@ -2260,25 +2392,28 @@ def _project_sync_loop(srv):
                                     chats_db_path, _run_id, "indexing",
                                     folder=ingested_dir)
                             _index_t0 = time.time()
-                            buf = io.StringIO()
                             try:
-                                with contextlib.redirect_stdout(buf), _palace_write_lock:
-                                    mp_miner.mine(
-                                        project_dir=ingested_dir,
-                                        palace_path=palace_path,
-                                        wing_override=wing,
-                                        agent="brain-project-sync",
-                                        respect_gitignore=False,
-                                    )
-                                for line in buf.getvalue().splitlines():
-                                    s = line.strip()
-                                    if s.startswith("Drawers filed"):
-                                        try:
-                                            ingest_filed = int(
-                                                s.split(":")[-1].strip().split()[0])
-                                        except Exception:
-                                            pass
-                                        break
+                                # Batched mine → steady UI progress. Push a live
+                                # mining_done/total counter after each batch so
+                                # the client polling /sync-status sees the bar
+                                # advance instead of a frozen "syncing".
+                                def _mine_prog(done, total, filed):
+                                    srv._project_sync_set_live(
+                                        agent_id, proj_name,
+                                        state="syncing",
+                                        mining_phase="indexing",
+                                        mining_done=done,
+                                        mining_total=total,
+                                        mining_drawers=filed)
+                                    if _run_id:
+                                        _sync_log.step_update(
+                                            chats_db_path, _run_id, "indexing",
+                                            folder=ingested_dir,
+                                            files_done=done, files_total=total,
+                                            drawers_created=filed)
+                                ingest_filed = _mine_batched(
+                                    ingested_dir, wing, "brain-project-sync",
+                                    progress_cb=_mine_prog)
                             except SystemExit:
                                 pass
                             except Exception as e:
@@ -2296,16 +2431,18 @@ def _project_sync_loop(srv):
                             files_filed += ingest_filed
                             finished_at_attach = datetime.datetime.now(
                                 datetime.timezone.utc).isoformat()
-                            # Authoritative count per source: pull all wing
-                            # drawers whose source_file references the chunk
-                            # files belonging to this key. Miner mines from
-                            # the chunk file, so source_file ends with
-                            # <key>__<idx>.md (legacy: ingest-<hash>-<idx>.md).
+                            # Authoritative count per source: drawers whose
+                            # source_file references the chunk files for each
+                            # key (source_file ends <key>__<idx>.md). ONE wing
+                            # fetch for all keys (was 258 full-wing scans → a
+                            # multi-minute stall before KG on big wings).
+                            _pfx_by_h = {
+                                h: engine.IngestManager.chunk_filename_prefix(
+                                    ingested_dir, h) for h in hashes}
+                            _counts = _count_wing_drawers_by_prefixes(
+                                wing, list(_pfx_by_h.values()))
                             for h in hashes:
-                                cnt = _count_wing_drawers_by_source(
-                                    wing,
-                                    engine.IngestManager.chunk_filename_prefix(
-                                        ingested_dir, h))
+                                cnt = _counts.get(_pfx_by_h[h], 0)
                                 _set_item("attachment", h,
                                     state=("error" if ingest_err else "indexed"),
                                     last_run_finished=finished_at_attach,
@@ -2320,6 +2457,23 @@ def _project_sync_loop(srv):
                             # like .../ingested/<key>__<idx>.md (legacy:
                             # ingest-<hash>-<idx>.md), so we can scope
                             # precisely per attachment.
+                            #
+                            # Project-wide KG progress for the UI: total =
+                            # drawers in the wing (what KG iterates across all
+                            # docs); kg_done_base accumulates completed drawers
+                            # ACROSS documents (the per-chunk callback adds the
+                            # in-flight document's delta on top). started_at →
+                            # ETA. This makes the counter monotonic + show a real
+                            # X/total + ETA, instead of a per-doc value that
+                            # reset to ~0 each document.
+                            if not ingest_err:
+                                _kg_total_units = _count_wing_drawers_total(wing)
+                                srv._project_sync_set_live(
+                                    agent_id, proj_name,
+                                    state="syncing", mining_phase="kg",
+                                    kg_done=0, kg_done_base=0,
+                                    kg_total=_kg_total_units,
+                                    kg_started_at=time.time())
                             for h in hashes:
                                 if ingest_err:
                                     continue
@@ -2331,6 +2485,22 @@ def _project_sync_loop(srv):
                                             ingested_dir, h)),
                                     item_set_fn=_set_item,
                                     item_kind="attachment", item_id=h)
+                                # Fold this document's completed drawers into the
+                                # cross-document base so the next doc's per-chunk
+                                # ticks continue from here (monotonic).
+                                try:
+                                    _ia = item_states.get(
+                                        _item_key("attachment", h)) or {}
+                                    _done_doc = int(_ia.get("kg_chunks_done") or 0)
+                                    _cur = srv._project_sync_live_status(
+                                        agent_id, proj_name)
+                                    _new_base = int(_cur.get("kg_done_base") or 0) + _done_doc
+                                    srv._project_sync_set_live(
+                                        agent_id, proj_name,
+                                        state="syncing", mining_phase="kg",
+                                        kg_done_base=_new_base, kg_done=_new_base)
+                                except Exception:
+                                    pass
                                 if _run_id:
                                     _it_a = item_states.get(
                                         _item_key("attachment", h)) or {}
@@ -2723,6 +2893,7 @@ def _project_sync_loop(srv):
                                 ).get("started_at", time.time()), 1),
                             "errors": [last_error] if last_error else [],
                         })
+                        _run_finished = True
                     srv._project_sync_clear_live(agent_id, proj_name)
                     cycle_filed += files_filed
                 except Exception as _pe:
@@ -2737,6 +2908,22 @@ def _project_sync_loop(srv):
                     except Exception:
                         pass
                     continue
+                finally:
+                    # Always close an open run row. If the body raised before the
+                    # normal finish_run (or start_run succeeded but a later step
+                    # threw), the run would otherwise stay 'running' forever and
+                    # surface as a phantom "mining in progress". Mark it 'error'.
+                    if _run_id and not _run_finished:
+                        try:
+                            _sync_log.finish_run(
+                                chats_db_path, _run_id, "error",
+                                {"final_state": "error",
+                                 "errors": ["sync run did not complete "
+                                            "(closed by finally guard)"]})
+                        except Exception as _fe:
+                            print(f"[project-sync] finally finish_run failed "
+                                  f"(run={_run_id}): {type(_fe).__name__}: {_fe}",
+                                  flush=True)
 
             print(f"[project-sync] cycle: filed={cycle_filed} "
                   f"projects={len(pairs)} requested={len(requested)}", flush=True)

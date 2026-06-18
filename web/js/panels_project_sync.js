@@ -315,17 +315,36 @@ async function refreshProjectSyncStatus(agentId, projectName) {
       // Live progress: P/T file count + ETA from elapsed-rate. cycle_total_files
       // is from a cheap pre-walk and may overshoot the miner's filtered file
       // count — that's deliberate (better than the bar getting stuck at 100%).
-      const proc = Number(st.cycle_processed_files || 0);
-      const tot = Number(st.cycle_total_files || 0);
+      // Prefer the fine-grained PHASE counters the daemon pushes after each
+      // mine batch / KG chunk (mining_done/total during indexing, kg_done/total
+      // during KG) so the bar advances steadily instead of sitting at the
+      // start-of-cycle pre-walk number. Falls back to the cycle counters.
+      let proc = Number(st.cycle_processed_files || 0);
+      let tot = Number(st.cycle_total_files || 0);
+      let phaseWord = '';
+      let unit = 'Dateien';
+      // Per-phase start time (epoch seconds OR ISO string) for the ETA.
+      let phaseStart = st.started_at || st.last_run_started || '';
+      if (st.mining_phase === 'kg' && Number(st.kg_total || 0) > 0) {
+        proc = Number(st.kg_done || 0); tot = Number(st.kg_total || 0);
+        phaseWord = 'KG-Extraktion'; unit = '';
+        if (st.kg_started_at) phaseStart = st.kg_started_at;
+      } else if (st.mining_phase === 'indexing' && Number(st.mining_total || 0) > 0) {
+        proc = Number(st.mining_done || 0); tot = Number(st.mining_total || 0);
+        phaseWord = 'Indexierung'; unit = 'Dokumente';
+      }
       let progress = '';
       if (tot > 0) progress = ` ${proc}/${tot}`;
       // ETA: extrapolate from elapsed wall time and processed share. Only
-      // show once we've made meaningful progress (>=5%) so an early 0/N
-      // doesn't claim "ETA 12 days".
+      // show once we've made meaningful progress (>=3%) so an early 0/N
+      // doesn't claim "ETA 12 days". phaseStart may be epoch-seconds (float)
+      // or an ISO string — normalise to ms.
       let eta = '';
-      const startedAt = st.started_at || st.last_run_started || '';
-      if (startedAt && proc > 0 && tot > 0 && proc / tot >= 0.05) {
-        const elapsedMs = Math.max(0, Date.now() - new Date(startedAt).getTime());
+      let startedMs = 0;
+      if (typeof phaseStart === 'number') startedMs = phaseStart * 1000;
+      else if (phaseStart) { const t = new Date(phaseStart).getTime(); if (!isNaN(t)) startedMs = t; }
+      if (startedMs && proc > 0 && tot > 0 && proc / tot >= 0.03) {
+        const elapsedMs = Math.max(0, Date.now() - startedMs);
         const remainMs = elapsedMs * (tot - proc) / proc;
         if (remainMs > 1000 && remainMs < 1000 * 60 * 60 * 48) {
           const remainSec = Math.floor(remainMs / 1000);
@@ -335,8 +354,12 @@ async function refreshProjectSyncStatus(agentId, projectName) {
           eta = ` · ETA ${etaStr}`;
         }
       }
-      const cur = st.current_folder ? ` (${st.current_folder.split('/').pop()})` : '';
-      label = `Speicher: synchronisiert${progress} Dateien${eta}${cur}`;
+      // Build label per phase: "Speicher: KG-Extraktion 235/6994 · ETA 4m" or
+      // "Speicher: Indexierung 168/258 Dokumente · ETA 2m". When no phase
+      // counter is live yet, fall back to the generic Dateien count.
+      const headWord = phaseWord || 'synchronisiert';
+      const unitStr = unit ? ` ${unit}` : '';
+      label = `Speicher: ${headWord}${progress}${unitStr}${eta}`;
       chip.title = 'Synchronisierung läuft';
       const sublabelElSync = document.getElementById('project-sync-sublabel');
       if (sublabelElSync) sublabelElSync.textContent = '';

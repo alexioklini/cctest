@@ -3734,6 +3734,21 @@ def main():
     except Exception as e:
         print(f"[startup-purge] empty-session purge failed: {type(e).__name__}: {e}", flush=True)
 
+    # One-shot startup: close any project-sync run left in state='running'.
+    # Only ONE such run can be live at a time (single daemon thread), so on
+    # boot every 'running' row is a leftover (crash/restart, or pre-finally-fix
+    # orphan) that otherwise shows as a phantom "mining in progress" forever.
+    try:
+        from engine import sync_log as _sl
+        chats_db = os.path.join(engine.AGENTS_DIR, "main", "chats.db")
+        n_orphan = _sl.reconcile_orphans(chats_db)
+        if n_orphan:
+            print(f"[startup-purge] closed {n_orphan} orphaned project-sync "
+                  f"run(s) stuck in 'running'", flush=True)
+    except Exception as e:
+        print(f"[startup-purge] sync-run reconcile failed: "
+              f"{type(e).__name__}: {e}", flush=True)
+
     # One-shot startup: backfill `sessions.project_id` from the legacy
     # `sessions.project` (directory name) column. Resolves each unique
     # (agent_id, project_name) pair to the project.json `id` field via

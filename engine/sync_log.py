@@ -150,6 +150,30 @@ def cancel_run(chats_db_path: str, run_id: int):
         print(f"[sync_log] cancel_run failed (run={run_id}): {e}", flush=True)
 
 
+def reconcile_orphans(chats_db_path: str) -> int:
+    """Close any run still in state='running' — a process can only have ONE
+    live project-sync run at a time (single daemon thread), so on boot every
+    'running' row is a leftover from a crash / restart / pre-finally-fix orphan.
+    Mark them 'error' with finished_at=now so the UI stops showing phantom
+    "mining in progress". Returns the number of rows closed. Idempotent.
+    Safe to call at boot — the daemon hasn't started its first run yet."""
+    try:
+        with _lock, _db(chats_db_path) as con:
+            cur = con.execute(
+                "UPDATE project_sync_runs "
+                "SET finished_at=COALESCE(finished_at, ?), state='error', "
+                "summary=json_set(COALESCE(NULLIF(summary,''),'{}'), "
+                "'$.final_state','error','$.reconciled',1) "
+                "WHERE state='running'",
+                (time.time(),),
+            )
+            con.commit()
+            return cur.rowcount or 0
+    except Exception as e:
+        print(f"[sync_log] reconcile_orphans failed: {e}", flush=True)
+        return 0
+
+
 def get_runs(chats_db_path: str, project_id: str, limit: int = 20) -> list[dict]:
     _maybe_ensure(chats_db_path)
     try:
