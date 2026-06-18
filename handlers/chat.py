@@ -2464,8 +2464,18 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 # honouring admin per-section opt-out). Ground truth, not the
                 # static default set. Stashed on the request context; the
                 # metadata-build block folds it into auto_route.
+                # Code Mode: the project has NO project memory / curated sources
+                # — the model reads files in the working directory to DO work, not
+                # to ground a cited answer. The grounded-answer / citation
+                # discipline (and its validator) make no sense here and were
+                # wrongly flagging "N von M ohne Quellenangabe" (chat 4866f92e).
+                # working_dir is set on the context only for code-mode projects.
+                _code_mode_chat = bool(engine.get_request_context().working_dir)
                 _discipline_meta = None
-                if engine.classifier_is_llm():
+                if _code_mode_chat:
+                    session._citation_discipline_active = False
+                    _discipline_meta = {"active": False, "trigger": "code_mode"}
+                elif engine.classifier_is_llm():
                     _grounding = engine.turn_has_retrieval_tools(_active_tool_names)
                     session._citation_discipline_active = bool(_grounding)
                     if _grounding:

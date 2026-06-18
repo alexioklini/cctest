@@ -456,7 +456,11 @@ button + a recursive collapse/expand file tree of the working_dir, refreshed on
 open / dir-set / init / after each turn) only for code projects, and hides ALL
 the MemPalace-only sections (Projektmodus, Quellen/ingest, Wissensgraph, Speicher
 & Abgleich). The folder-tree endpoint allows a code project's working_dir (or
-descendants) and skips the wing/KG status lookups there.
+descendants) and skips the wing/KG status lookups there. The grounded-answer /
+citation discipline (+ its validator) is SKIPPED in code mode — chat.py checks
+`get_request_context().working_dir` before the discipline branch; a code project
+has no curated sources to cite, and read_file/list/search are work tools, not
+grounding-retrieval (was wrongly flagging "N von M ohne Quellenangabe").
 
 **Source-group context stamped into drawers (per-customer separation).** When an
 ingested file is assigned to a virtual source group (`project.json`
