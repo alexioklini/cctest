@@ -430,23 +430,49 @@ def per_core_cpu():
     return pct
 
 
+def memory_breakdown():
+    """Activity-Monitor-style memory accounting from vm_stat (page-level).
+
+    'Memory Used' = app (anonymous, non-purgeable) + wired + compressed.
+    Crucially this COUNTS the compressor, so a loaded-but-paged-out model still
+    shows up — top's PhysMem 'used' only counts resident pages and made the
+    System Memory gauge read as if vLLM wasn't loaded.
+    """
+    out = _run(["vm_stat"])
+    pg = 16384
+    m = re.search(r"page size of (\d+)", out)
+    if m:
+        pg = int(m.group(1))
+
+    def pages(label):
+        mm = re.search(rf"{re.escape(label)}:\s+(\d+)", out)
+        return int(mm.group(1)) * pg if mm else 0
+
+    wired = pages("Pages wired down")
+    compressed = pages("Pages occupied by compressor")
+    anon = pages("Anonymous pages")
+    purgeable = pages("Pages purgeable")
+    app = max(0, anon - purgeable)          # app (anonymous) memory, ex-purgeable
+    used = app + wired + compressed         # == Activity Monitor "Memory Used"
+    total = int(_sysctl("hw.memsize") or 0)
+    cached = max(0, total - used - pages("Pages free"))  # file cache + reclaimable
+    return {"used": used, "app": app, "wired": wired,
+            "compressed": compressed, "cached": cached, "total": total}
+
+
 def cpu_mem_stats():
     out = _run(["top", "-l", "1", "-n", "0"])
     cpu = 0.0
-    mem_used = 0
     load = [0.0, 0.0, 0.0]
     for line in out.splitlines():
         m = re.search(r"CPU usage:\s*([\d.]+)% user,\s*([\d.]+)% sys,\s*([\d.]+)% idle", line)
         if m:
             cpu = round(100.0 - float(m.group(3)), 1)
-        m = re.search(r"PhysMem:\s*([\d.]+)([MGT]) used", line)
-        if m:
-            val, unit = float(m.group(1)), m.group(2)
-            mem_used = int(val * {"M": 1024**2, "G": 1024**3, "T": 1024**4}[unit])
         m = re.search(r"Load Avg:\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)", line)
         if m:
             load = [float(m.group(i)) for i in (1, 2, 3)]
-    return {"cpu": cpu, "mem_used": mem_used, "load": load}
+    mb = memory_breakdown()
+    return {"cpu": cpu, "mem_used": mb["used"], "mem_detail": mb, "load": load}
 
 
 def swap_stats():
@@ -743,7 +769,8 @@ def collect():
         "cpu": cm["cpu"],
         "cores": per_core_cpu(),
         "load": cm["load"],
-        "mem": {"used": cm["mem_used"], "total": host["memsize"]},
+        "mem": {"used": cm["mem_used"], "total": host["memsize"],
+                "detail": cm.get("mem_detail", {})},
         "swap": swap_stats(),
         "thermal": thermal_level(),
         "pressure": memory_pressure(),
@@ -1267,6 +1294,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
         <canvas id="memgauge" width="170" height="110"></canvas>
         <div class="gval"><span id="memval">0</span><small style="font-size:16px"> GB</small></div>
         <div class="gsub"><span id="memavail">0</span> GB available</div>
+        <div class="gsub" id="membreak" style="margin-top:4px;font-size:11px"></div>
       </div>
       <div class="cbox">
         <div class="axis" id="memaxis">0 GB</div>
@@ -1503,7 +1531,7 @@ function renderInstancePanels(insts){
     let mem="";
     if(m && m.gpu_total>0){
       const wG=m.weights/GB, kvG=m.kv_other/GB, totG=m.gpu_total/GB;
-      mem=`<div class="memhdr">Unified / Metal memory — <b>${totG.toFixed(2)} GB</b></div>
+      mem=`<div class="memhdr">Unified / Metal memory allocated — <b>${totG.toFixed(2)} GB</b> <span style="color:#8a8a8a">(incl. paged-out)</span></div>
         <div class="membar-track"><div class="seg" style="background:linear-gradient(90deg,var(--green-dim),var(--green));width:${wG/totG*100}%"></div><div class="seg" style="background:linear-gradient(90deg,#7a5a00,var(--amber));width:${kvG/totG*100}%"></div></div>
         <div class="memlegend"><span><span class="pip" style="background:var(--green)"></span>weights ${wG.toFixed(2)} GB</span>
         <span><span class="pip" style="background:var(--amber)"></span>KV + activations ${kvG.toFixed(2)} GB</span></div>`;
@@ -1529,9 +1557,14 @@ async function tick(){
   const mu=d.mem.used/GB, mt=d.mem.total/GB, mp=mt?mu/mt*100:0;
   gauge("memgauge",mp,gcol(mp));
   document.getElementById("memval").textContent=mu.toFixed(2);
-  document.getElementById("memavail").textContent=mt.toFixed(0);
+  document.getElementById("memavail").textContent=(mt-mu).toFixed(0);
   document.getElementById("memaxis").textContent=mt.toFixed(2)+" GB";
   push(H.mem,mu); spark("memchart",H.mem,mt);
+  const det=d.mem.detail||{};
+  if(det.total){
+    document.getElementById("membreak").textContent=
+      `app ${(det.app/GB).toFixed(1)} · wired ${(det.wired/GB).toFixed(1)} · compressed ${(det.compressed/GB).toFixed(1)} GB`;
+  }
 
   // --- GPU gauge + chart ---
   const gu=d.gpu.util;
