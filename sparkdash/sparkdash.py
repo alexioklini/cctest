@@ -149,6 +149,58 @@ def thermal_level():
     return {"label": "Nominal", "level": 0, "speed_limit": 100}
 
 
+def top_processes(n=15):
+    """Top processes by CPU. Returns pid, cpu%, mem%, rss bytes, command leaf."""
+    out = _run(["ps", "-axo", "pid,pcpu,pmem,rss,comm", "-r"], timeout=5)
+    rows = []
+    for line in out.splitlines()[1:]:  # skip header
+        parts = line.split(None, 4)
+        if len(parts) < 5:
+            continue
+        pid, pcpu, pmem, rss, comm = parts
+        try:
+            rows.append({
+                "pid": int(pid),
+                "cpu": float(pcpu.replace(",", ".")),
+                "mem": float(pmem.replace(",", ".")),
+                "rss": int(rss) * 1024,
+                "name": comm.split("/")[-1],
+            })
+        except ValueError:
+            continue
+        if len(rows) >= n:
+            break
+    return rows
+
+
+def file_systems():
+    """Mounted real volumes (skips synthetic system mounts)."""
+    out = _run(["df", "-k"], timeout=5)
+    fs = []
+    for line in out.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 9:
+            continue
+        dev, blocks, used, avail, cap, _iused, _ifree, _ip, mount = parts[:9]
+        if not dev.startswith("/dev/"):
+            continue
+        # keep root + Data, drop the read-only system snapshots/helpers
+        if mount.startswith("/System/Volumes/") and mount != "/System/Volumes/Data":
+            continue
+        try:
+            fs.append({
+                "mount": mount,
+                "device": dev,
+                "total": int(blocks) * 1024,
+                "used": int(used) * 1024,
+                "avail": int(avail) * 1024,
+                "pct": int(cap.rstrip("%")),
+            })
+        except ValueError:
+            continue
+    return fs
+
+
 def memory_pressure():
     """Honest memory health: system-wide free %, mapped to a 0-3 level.
 
@@ -310,6 +362,8 @@ def collect(vllm_url):
         "swap": swap_stats(),
         "thermal": thermal_level(),
         "pressure": memory_pressure(),
+        "processes": top_processes(15),
+        "filesystems": file_systems(),
         "vllm": vstats,
         "vllm_mem": vllm_memory(vstats.get("model") if vstats.get("up") else None),
     }
@@ -519,7 +573,20 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .resources{padding:0}
   .restab{display:flex;align-items:center;gap:8px;padding:14px 18px;border-bottom:1px solid var(--line)}
   .restab .chip{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:14px;padding:7px 14px;border-radius:8px}
+  .restab .chip{cursor:pointer;user-select:none}
+  .restab .chip:hover{color:var(--text)}
   .restab .chip.active{background:var(--panel2);color:var(--text)}
+  table.act td.lft,table.act th.lft{text-align:left}
+  .fsitem{padding:14px 0;border-bottom:1px solid #1a1a1a}
+  .fsitem:last-child{border-bottom:none}
+  .fsitem .top{display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px}
+  .fsitem .mount{font-weight:600}
+  .fsitem .dev{color:var(--muted);font-size:12px;font-family:ui-monospace,Menlo,monospace}
+  .fsitem .nums{color:var(--muted);font-size:13px}
+  .fsbar{height:10px;border-radius:5px;background:#0c0c0c;border:1px solid var(--line);overflow:hidden}
+  .fsbar>span{display:block;height:100%;background:linear-gradient(90deg,var(--green-dim),var(--green))}
+  .fsbar>span.warn{background:linear-gradient(90deg,#7a5a00,var(--amber))}
+  .fsbar>span.crit{background:linear-gradient(90deg,#7a1d00,var(--red))}
   .section{padding:14px 18px;border-bottom:1px solid var(--line)}
   .section h4{margin:0 0 10px;font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}
   .section h4::before{content:"▾";color:var(--muted);font-size:12px}
@@ -613,39 +680,64 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <!-- RIGHT COLUMN: Resources panel -->
   <div class="card resources">
     <div class="restab">
-      <span class="chip">☰ Processes</span>
-      <span class="chip active">◷ Resources</span>
-      <span class="chip">▣ File Systems</span>
+      <span class="chip" data-view="processes" onclick="switchView('processes')">☰ Processes</span>
+      <span class="chip active" data-view="resources" onclick="switchView('resources')">◷ Resources</span>
+      <span class="chip" data-view="filesystems" onclick="switchView('filesystems')">▣ File Systems</span>
     </div>
-    <div class="section">
-      <h4>CPU</h4>
-      <div class="graphwrap"><canvas id="cpugraph"></canvas></div>
-      <div class="ticks"><span>1 min</span><span>50 secs</span><span>40 secs</span><span>30 secs</span><span>20 secs</span><span>10 secs</span></div>
-      <div class="corelegend" id="corelegend"></div>
-    </div>
-    <div class="section">
-      <h4>Memory and Swap</h4>
-      <div class="graphwrap"><canvas id="memswapgraph"></canvas></div>
-      <div class="ticks"><span>1 min</span><span>50 secs</span><span>40 secs</span><span>30 secs</span><span>20 secs</span><span>10 secs</span></div>
-      <div class="memrow">
-        <div class="item"><div class="h"><span class="pip" style="background:var(--green)"></span>Memory</div>
-          <div class="d" id="memline">—</div></div>
-        <div class="item"><div class="h"><span class="pip" style="background:var(--blue)"></span>Swap</div>
-          <div class="d" id="swapline">—</div></div>
-        <div class="item"><div class="h"><span class="pip" id="prespip" style="background:var(--green)"></span>Pressure</div>
-          <div class="d" id="presline">—</div></div>
+
+    <!-- RESOURCES view -->
+    <div id="view-resources">
+      <div class="section">
+        <h4>CPU</h4>
+        <div class="graphwrap"><canvas id="cpugraph"></canvas></div>
+        <div class="ticks"><span>1 min</span><span>50 secs</span><span>40 secs</span><span>30 secs</span><span>20 secs</span><span>10 secs</span></div>
+        <div class="corelegend" id="corelegend"></div>
+      </div>
+      <div class="section">
+        <h4>Memory and Swap</h4>
+        <div class="graphwrap"><canvas id="memswapgraph"></canvas></div>
+        <div class="ticks"><span>1 min</span><span>50 secs</span><span>40 secs</span><span>30 secs</span><span>20 secs</span><span>10 secs</span></div>
+        <div class="memrow">
+          <div class="item"><div class="h"><span class="pip" style="background:var(--green)"></span>Memory</div>
+            <div class="d" id="memline">—</div></div>
+          <div class="item"><div class="h"><span class="pip" style="background:var(--blue)"></span>Swap</div>
+            <div class="d" id="swapline">—</div></div>
+          <div class="item"><div class="h"><span class="pip" id="prespip" style="background:var(--green)"></span>Pressure</div>
+            <div class="d" id="presline">—</div></div>
+        </div>
+      </div>
+      <div class="section" style="border-bottom:none">
+        <h4>vLLM Memory (Unified / Metal)</h4>
+        <div class="membar-track"><div class="seg" id="seg_w" style="width:0%"></div><div class="seg" id="seg_kv" style="width:0%"></div></div>
+        <div class="memrow" style="margin-top:14px">
+          <div class="item"><div class="h"><span class="pip" style="background:var(--green)"></span>Model weights</div>
+            <div class="d" id="ml_w">—</div></div>
+          <div class="item"><div class="h"><span class="pip" style="background:var(--amber)"></span>KV cache + activations</div>
+            <div class="d" id="ml_kv">—</div></div>
+          <div class="item"><div class="h"><span class="pip" style="background:var(--muted)"></span>GPU total</div>
+            <div class="d" id="ml_tot">—</div></div>
+        </div>
       </div>
     </div>
-    <div class="section" style="border-bottom:none">
-      <h4>vLLM Memory (Unified / Metal)</h4>
-      <div class="membar-track"><div class="seg" id="seg_w" style="width:0%"></div><div class="seg" id="seg_kv" style="width:0%"></div></div>
-      <div class="memrow" style="margin-top:14px">
-        <div class="item"><div class="h"><span class="pip" style="background:var(--green)"></span>Model weights</div>
-          <div class="d" id="ml_w">—</div></div>
-        <div class="item"><div class="h"><span class="pip" style="background:var(--amber)"></span>KV cache + activations</div>
-          <div class="d" id="ml_kv">—</div></div>
-        <div class="item"><div class="h"><span class="pip" style="background:var(--muted)"></span>GPU total</div>
-          <div class="d" id="ml_tot">—</div></div>
+
+    <!-- PROCESSES view -->
+    <div id="view-processes" style="display:none">
+      <div class="section" style="border-bottom:none">
+        <h4>Top Processes <span class="hint" style="font-weight:400;color:var(--muted);font-size:12px">(by CPU)</span></h4>
+        <div class="actlog" style="max-height:430px">
+          <table class="act">
+            <thead><tr><th>PID</th><th>Process</th><th>CPU %</th><th>Mem %</th><th>RSS</th></tr></thead>
+            <tbody id="procbody"><tr class="idle"><td colspan="5">loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- FILE SYSTEMS view -->
+    <div id="view-filesystems" style="display:none">
+      <div class="section" style="border-bottom:none">
+        <h4>File Systems</h4>
+        <div id="fsbody"><div class="d" style="color:var(--muted)">loading…</div></div>
       </div>
     </div>
   </div>
@@ -823,7 +915,36 @@ async function tick(){
     document.getElementById("v_ptot").textContent=fmt(v.total_prompt_tokens);
   } else { document.getElementById("vllmmodel").textContent="● engine offline"; }
 
+  // --- Processes table ---
+  const procs=d.processes||[];
+  const pb=document.getElementById("procbody");
+  if(pb){ pb.innerHTML = procs.length ? procs.map(p=>
+    `<tr class="busy"><td>${p.pid}</td><td class="lft">${p.name}</td>`
+    +`<td>${p.cpu.toFixed(1)}</td><td>${p.mem.toFixed(1)}</td>`
+    +`<td>${(p.rss/1024/1024).toFixed(0)} MB</td></tr>`).join("")
+    : '<tr class="idle"><td colspan="5">no data</td></tr>'; }
+
+  // --- File systems ---
+  const fss=d.filesystems||[];
+  const fb=document.getElementById("fsbody");
+  if(fb){ fb.innerHTML = fss.length ? fss.map(f=>{
+    const cls=f.pct>=90?"crit":f.pct>=75?"warn":"";
+    return `<div class="fsitem"><div class="top"><div><span class="mount">${f.mount}</span> `
+      +`<span class="dev">${f.device}</span></div>`
+      +`<div class="nums">${(f.used/GB).toFixed(1)} / ${(f.total/GB).toFixed(0)} GB · ${f.pct}%</div></div>`
+      +`<div class="fsbar"><span class="${cls}" style="width:${f.pct}%"></span></div></div>`;
+  }).join("") : '<div class="d" style="color:var(--muted)">no data</div>'; }
+
   document.getElementById("uptime").textContent=d.host.model+" · "+d.host.chip+" · "+d.host.uptime;
+}
+
+function switchView(name){
+  ["resources","processes","filesystems"].forEach(v=>{
+    document.getElementById("view-"+v).style.display = v===name ? "" : "none";
+  });
+  document.querySelectorAll(".restab .chip").forEach(c=>{
+    c.classList.toggle("active", c.dataset.view===name);
+  });
 }
 
 async function tickActivity(){
@@ -843,6 +964,10 @@ async function tickActivity(){
       +`<td>${r.gpu_mem_gb!=null?r.gpu_mem_gb.toFixed(1)+" GB":"—"}</td></tr>`;
   }).join("");
 }
+
+// honor #processes / #filesystems deep-links
+const _hv=(location.hash||"").replace("#","");
+if(["processes","filesystems","resources"].includes(_hv)) switchView(_hv);
 
 tick(); tickActivity();
 setInterval(tick,2000); setInterval(tickActivity,3000);
