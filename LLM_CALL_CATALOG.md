@@ -1,139 +1,242 @@
-# LLM / Model Call Catalog — every use-case, consolidated
+# LLM / Model Call Catalog
 
-Generated 2026-06-20 from live code + `config.json`. Consolidated so you can see **what shares a knob and what shares a model**.
+Every LLM/model use-case in brain-agent: what the user does, what they get, which setting controls it, the GUI location, and the current model. Reflects **v9.173.0** (live values 2026-06-20).
 
----
-
-## TL;DR — the 5 knobs that actually decide a chat-LLM model
-
-| # | Config knob | GUI location | Current model | Drives these use-cases |
-|---|---|---|---|---|
-| **A** | `default_model` | Service-Modelle → *Server-Standardmodell* | **mistral-medium-3.5** | Fallback chat model; Brainy/background floor |
-| **B** | `classifier_model` | Service-Modelle → *Prompt-Klassifikation* | **mistral-small** | Auto-route prompt classifier (+ per-turn tool-gating) |
-| **C** | `chat_summary_model` | Service-Modelle → *Chat-Zusammenfassung* | **Lokal-M4 / Qwen2.5-7B** | Chat summary · ALL 5 wiki ops · user-profile daemon · Studio fallback |
-| **D** | `background_task_model` | Service-Modelle → *Fan-out-Hintergrundmodell* | **mistral-small** | Fan-out / detached background sub-tasks |
-| **E** | `mempalace.kg.extraction_model` | Service-Modelle → *KG-Extraktion* | **mistral-small** | Knowledge-graph triple extraction |
-
-Everything else either: pins **the session model** (interactive chat, next-prompt, delegate), falls back to **`_background_model_default()`** (= cheapest enabled model, when its own knob is unset), or uses a **specialized non-chat model** (OCR/TTS/STT/embeddings/reranker/NER — see §4).
-
-> **Note on B/C:** these were ONE knob until v9.164.0 (today). `_resolve_classifier_model()` now reads **B first**, falls back to **C**, then to cheapest/local. So if B is ever unset, the classifier silently rides on C again.
+After this session's decomposition, **every background LLM task has its own dedicated model knob** — no more silent sharing. Most live in **Settings → Service-Modelle** (a slot grid that renders + saves generically).
 
 ---
 
-## §1 — Interactive & user-facing chat LLM calls
+## A. Interactive / user-facing chat
 
-| Use-case | Call site | Model = which knob | Fallback chain | cost_purpose |
-|---|---|---|---|---|
-| **Interactive chat turn** | `handlers/chat.py` worker → `sidecar_proxy.run_turn` | `session.model` (agent-pinned, OR auto-routed at turn 0 / per-turn) | sidecar ACL/quota → `_fallback_model_used`; quota `force_local` → knob (F); GDPR → knob (G) | `chat` |
-| **Auto-route model pick** (the "Auto" picker) | `resolve_auto_model_for_task` → `_resolve_auto_model_tiered` | benchmark-rank by task-type tier (reasoning/default/fast) × complexity | never-empty: top-priority enabled model | (part of `chat`) |
-| **Auto-route classifier** (the JSON routing call) | `brain.classify_task_structured` :10282 | **B** `classifier_model` | B → **C** → cheapest/local; **fail-open to keyword classifier** on error | `auto_route_classify` |
-| **Per-turn tool-gating** (concrete-model sessions) | same `classify_task_structured` | **B** (same call) | same | `auto_route_classify` |
-| **next-prompt suggestion** | `brain.generate_next_prompt_suggestion` :5433 | **session.model** (or agent override) | GDPR → abort returns None | `next_prompt` |
-| **/v1/refine — Polish & Engineer** | `handlers/admin_artifacts._handle_refine` | request arg → `tools_config.refinement.model` → `_background_model_default()` | GDPR swap-to-local | `refine` |
-| **Soul/Persona editor chat** | same handler (purpose=soul) | same as refine | same | `soul_chat` |
-| **Brainy helpdesk chat** | `sidecar_proxy.helpdesk_call` :1076 | `helpdesk.model` = **mistral-small** | → `default_model` (A) | `helpdesk` |
-| **Brainy search-term extraction** | `handlers/helpdesk.py` :193 | `helpdesk.model` | same | `helpdesk` |
+### 1. Send a chat message (main turn)
+- **Does:** types + sends a message in a chat / project chat.
+- **Gets:** streamed assistant reply with tools.
+- **Setting:** per-chat model picker. New chats default to `default_model`.
+- **GUI:** chat composer dropdown · default = Service-Modelle → *Server-Standardmodell*.
+- **Model:** per-chat; default **mistral-medium-3.5**.
+- **Fallbacks:** sidecar ACL/quota swap · quota force_local (off) · GDPR swap → gemma-4-26B.
 
-**Auto-route classifier mode** = `auto_route.classifier_mode` (GUI: Server → Auto-Routing). Currently **`llm`**. (`keywords` = no LLM; `hybrid` = keywords first, LLM on miss.)
+### 2. "Auto" model selection
+- **Does:** sets the chat model to ✨ Auto (Cloud/Lokal).
+- **Gets:** best-fit model picked per message by task tier × complexity.
+- **Setting:** `auto_route.classifier_mode` (keywords / **llm** / hybrid).
+- **GUI:** Settings → Server → *Auto-Routing*.
 
----
+### 3. Auto-route prompt classifier (the routing call behind #2)
+- **Does:** indirect — fires on Auto-routing + per-turn tool-gating.
+- **Gets:** structured `{task_types, tools, complexity}` driving model tier + tools.
+- **Setting:** `classifier_model` → cheapest/local fallback (no longer rides chat_summary).
+- **GUI:** Service-Modelle → *Prompt-Klassifikation (Auto-Routing)*.
+- **Model:** **mistral-small** · cost_purpose `auto_route_classify`.
 
-## §2 — Background / daemon chat LLM calls (the `background_call` seam)
+### 4. Next-prompt suggestion
+- **Does:** finishes a turn / presses Tab on empty composer.
+- **Gets:** a ghosted follow-up prompt suggestion.
+- **Setting:** `next_prompt_model` (empty = the chat's current model).
+- **GUI:** Service-Modelle → *Nächster-Prompt-Vorschlag (leer = Chat-Modell)*.
+- **Model:** **M4 7B** · cost_purpose `next_prompt`.
 
-> All route through `sidecar_proxy.background_call` → **one `cost_log` row each** (even $0). GDPR-gated where noted.
+### 5. Refine prompt (✨ Refine — Polish / Engineer)
+- **Does:** clicks Refine on the composer (also Soul editor, profile-field).
+- **Gets:** rewritten composer/soul/bio text.
+- **Setting:** `refinement.model` (request arg wins; else default).
+- **GUI:** Settings → Tools → refinement → model.
+- **Model:** **M4 7B** · cost_purpose `refine` / `soul_chat`. GDPR-gated.
 
-### Shares knob **C** (`chat_summary_model` = Lokal-M4 7B) — the "small background model"
-| Use-case | Call site | Fallback | cost_purpose | GDPR |
-|---|---|---|---|---|
-| Chat summary (sidebar synopsis) | `handlers/chat.py` :1147 | → `_background_model_default()` | `chat_summary` | yes |
-| Wiki auto-tagging | `engine/wiki_store.py` :112 | → bg-default → `[]` | `wiki` | no |
-| Wiki page summarization | `engine/wiki_gen.py` :83 | → bg-default | `wiki` | no |
-| Wiki podcast script | `engine/wiki_gen.py` :134 | → bg-default | `wiki` | no |
-| Wiki diff-merge re-wikify | `engine/wiki_store.py` :640 | → bg-default | `wiki` | no |
-| Wiki chat→page organize | `engine/wiki_store.py` :764 | → bg-default | `wiki` | no |
-| User-profile daemon | `server.py` :3305 | → bg-default → prior profile | `user_profile` | yes |
-| Studio outputs (study guide/briefing/FAQ/timeline) | `engine/output_gen.py` :212 | bg-default OR C | `studio` | — |
-
-### Shares knob **E** (`kg.extraction_model` = mistral-small)
-| KG triple extraction | `engine/kg_extract.py` :687 | GDPR-swap → passed model | `kg_extract` | yes |
-
-### Uses `_background_model_default()` (cheapest enabled — no own knob)
-| Use-case | Call site | cost_purpose |
-|---|---|---|
-| Audio Overview dialogue script | `engine/audio_overview.py` :354 | `audio_overview` |
-| Code-graph summaries | `engine/code_graph.py` :1003 | `code_graph_summary` |
-| Code-mode init | `engine/code_init.py` :160 | `code_init` |
-| LCM summarize / condense / recall | `brain.py` :7867 / :7965 / :8319 | `lcm_summarize` / `lcm_condense` / `lcm_recall` |
-| Deep Research loop | `engine/deep_research.py` :193 | `deep_research` |
-
-### Pins the session/task/subagent model (not a global knob)
-| Use-case | Call site | cost_purpose |
-|---|---|---|
-| Detached background task | `engine/background_tasks.py` :288 | `background_task` (tool-purpose `interactive`) |
-| Fan-out sub-tasks | (fan-out join) | uses **D** `background_task_model` |
-| Delegate to subagent | `brain.py` :6703 | `delegate_task` (subagent's own model) |
-| `ask_llm` tool | `engine/tools/ask_tools.py` :118 | `ask_llm` |
-| Citation re-round | (chat.py, direct `run_turn_blocking`) | `citation_reround` |
-
-### ⚠️ Orphaned knob
-| `mempalace.chat_sync.classifier.model` = **Lokal-M4 7B** | The `_MEMORY_CLASSIFIER_PROMPT` call (brain.py:9503, `cost_purpose=memory_classifier`) still EXISTS, but its **driving daemon is retired** (`server_daemons.py:591` — "wiki is the sole feeder"). So this knob currently drives nothing live. **Candidate to remove/ignore.** |
+### 6. Brainy helpdesk bot (🧠)
+- **Does:** asks the floating Brainy buddy about brain-agent itself.
+- **Gets:** read-only helpdesk reply (+ a search-term extraction sub-call).
+- **Setting:** `helpdesk.model` → default fallback.
+- **GUI:** Settings → Tools → Brainy tab (model + max-rounds + system prompt).
+- **Model:** **mistral-small** · cost_purpose `helpdesk`.
 
 ---
 
-## §3 — Two cross-cutting model-SWAP mechanisms (apply on top of any of the above)
+## B. Memory / wiki / knowledge
 
-| # | Mechanism | Knob | GUI | Current target | Effect |
-|---|---|---|---|---|---|
-| **F** | Quota `force_local` | `quotas.enforce_red` + `quotas.default_local_fallback_model` | Settings → Quotas | mode `warn_only`; target **EMPTY** | If mode were `force_local`, swaps over-quota user's model → target. Empty target ⇒ no-op. |
-| **G** | GDPR / classification swap-to-local | `gdpr_scanner.default_local_fallback_model` · `classification_scanner.default_local_fallback_model` | Settings → GDPR / Classification | both **gemma-4-26B** | On PII/classification hit (policy=swap), background/chat model → gemma-4-26B (local). Single seam `gdpr_pick_model_for_background`. |
+### 7. Chat summary (sidebar synopsis)
+- **Does:** nothing — auto after each turn.
+- **Gets:** the one-line summary under each chat in the sidebar.
+- **Setting:** `chat_summary_model` (**now exclusive** to this — was shared).
+- **GUI:** Service-Modelle → *Chat-Zusammenfassung* (also Server tab).
+- **Model:** **M4 7B** · cost_purpose `chat_summary`. GDPR-gated.
 
-> GDPR/classification detection itself is **pure code** (regex + spaCy NER), NOT an LLM — see §4.
+### 8. Auto-memory gate (Auto mode: should this chat go to the wiki?)
+- **Does:** sets a chat's memory toggle to **Auto**.
+- **Gets:** an LLM judges the whole conversation SAVE/SKIP; only memorable chats (fact/preference/decision/reference) get wikified. "On" mode always files; "Off" never.
+- **Setting:** `wiki_gate_model` (empty = background default). Fail-open.
+- **GUI:** Service-Modelle → *Wiki-Auto-Gate (Auto-Memory: merken?)*.
+- **Model:** **M4 7B** · cost_purpose `wiki_gate`. GDPR-gated. *(Successor to the removed per-turn memory classifier — now per-SESSION + wiki-aware.)*
 
----
+### 9. Wiki operations (tagging · page summary · podcast script · diff-merge · chat→page)
+- **Does:** memorizes a chat ("merken"), or auto-fed wiki pages from chats/Studio/profile; generates page summaries/podcasts.
+- **Gets:** organized wiki pages, auto-tags, generated summaries/audio.
+- **Setting:** `wiki_model` (empty = background default).
+- **GUI:** Service-Modelle → *Wiki (Tags/Zusammenfassung/Podcast/Merge)*.
+- **Model:** **mistral-small** · cost_purpose `wiki`.
 
-## §4 — Specialized (non-chat-LLM) model calls
+### 10. User-profile daemon
+- **Does:** nothing — daily background per user.
+- **Gets:** an auto-maintained user-context profile (+ a wiki "Profil & Aktivität" page) from recent chat history.
+- **Setting:** `user_profile_model` (empty = background default).
+- **GUI:** Service-Modelle → *Nutzerprofil-Daemon*.
+- **Model:** **M4 7B** · cost_purpose `user_profile`. GDPR-gated.
 
-| Use-case | Type | Knob | Current model | Billing |
-|---|---|---|---|---|
-| **Embeddings** (MemPalace) | MLX embedding, in-process | mempalace venv (not in config.json) | `embeddinggemma-300m` (MLX) | none ($0, local) |
-| **Reranker** (MemPalace query) | cross-encoder, in-process | `mempalace.reranker.model` | `BAAI/bge-reranker-v2-m3` | none ($0, local) |
-| **OCR — cloud** | specialized OCR | `ocr.model` (engine=`mistral_ocr`) | `mistral-ocr-latest` | `log_ocr`, per-page |
-| **OCR — local** | vision chat model | `ocr.local_vision_model` (engine=`local_vision`) | `gemma-4-26B` | `log_ocr`, $0 |
-| **Image-describe** (non-vision attachments) | vision chat model | `attachments.image_model` | `mistral-medium-3.5` | inline chat cost |
-| **TTS / Audio voices / read-aloud** | Voxtral TTS | `tool_settings.text_to_speech.default_model` | Voxtral (Mistral `/audio/speech`) | `log_tts` / Mistral |
-| **STT / transcription** | Whisper (local) OR Voxtral (cloud) | `tool_settings.transcribe_audio.default_model` | whisper-* (local, $0) or voxtral (cloud) | $0 or Mistral |
-| **Language detection** | lingua (offline) + LLM fallback | lingua primary; LLM = `_background_model_default()` | lingua; mistral-small fallback | `lang_detect` |
-| **GDPR PII detection** | **pure code** (regex + spaCy NER) | `gdpr_scanner` rules | spaCy `de_core_news_md` | none (no LLM) |
-| **Document classification (ARL)** | **pure code** (regex/keywords) | `classification_scanner` | — | none (no LLM) |
+### 11. Knowledge-graph triple extraction (+ closet regen)
+- **Does:** indirect — project-sync mines input folders.
+- **Gets:** `{subject,predicate,object}` triples in the project KG; regenerated closets.
+- **Setting:** `mempalace.kg.extraction_model` (drives both extraction + closet regen).
+- **GUI:** Settings → Knowledge-Graph · Service-Modelle → *KG-Extraktion*.
+- **Model:** **mistral-small** · cost_purpose `kg_extract`. GDPR-gated.
 
----
-
-## §5 — Translation (its own knob group)
-
-All via `background_call`, GDPR-gated (pseudonymizes source). Knob: `tool_settings.translation.default_model`; tone-rewrite falls back to `tool_settings.refinement.model`.
-
-| Use-case | Call site | cost_purpose |
-|---|---|---|
-| Text translate | `server_lib/translate/text.py` :143 | `translate_text` |
-| Text tone rewrite | `text.py` :181 | `translate_text_rewrite` |
-| Document translate (chunked) | `server_lib/translate/document.py` :240 | `translate_document` |
-| Document tone rewrite | `document.py` :199 | `translate_document_rewrite` |
-| Language detect (fallback) | `server_lib/translate/detect.py` :95 | `lang_detect` |
-
----
-
-## §6 — Misc
-
-| Use-case | Knob | Current model |
-|---|---|---|
-| **Telegram frontend** chat | `telegram.model` | **claude-opus-4-6** |
+### 12. Lossless Context Manager (compaction: summarize / condense / recall)
+- **Does:** clicks ✂️ in the status bar on a long chat.
+- **Gets:** older messages hierarchically compacted (still searchable).
+- **Setting:** none of its own — uses the **chat's `session.model`**.
+- **GUI:** none (just the ✂️ trigger + ≥60% warning banner).
+- **Model:** the active chat's model · cost_purpose `lcm_summarize`/`lcm_condense`/`lcm_recall`. GDPR-gated.
 
 ---
 
-## What's the SAME (consolidation summary)
+## C. Project outputs / research
 
-- **mistral-small** is the single model behind: classifier (B), fan-out (D), KG extraction (E), helpdesk (Brainy), lang-detect fallback. → 5 jobs, but **3 separate knobs** (B, D, E) + 2 derived.
-- **Lokal-M4 7B** (knob C) is behind: chat summary + **all 5 wiki ops** + user-profile + Studio fallback. → one knob, ~8 jobs. *Plus* the orphaned chat-sync classifier knob (dead).
-- **mistral-medium-3.5** is: `default_model` (A) AND `attachments.image_model`. → 2 distinct knobs, same model today.
-- **gemma-4-26B** is: GDPR swap target (G) AND classification swap target (G) AND local OCR. → 3 jobs, all local-fallback flavored.
-- **`_background_model_default()` = cheapest enabled model** is the silent fallback for ~8 background jobs whose own knob is unset (audio, code-graph, code-init, LCM ×3, deep-research) — so they all move together if the cheapest model changes.
+### 13. Studio outputs (study guide / briefing / FAQ / timeline)
+- **Does:** clicks a preset in a project's Studio tab.
+- **Gets:** a generated cited markdown report.
+- **Setting:** `studio_model` (empty = background default).
+- **GUI:** Service-Modelle → *Studio (Projekt-Outputs)*.
+- **Model:** **mistral-small** · cost_purpose `studio`.
+
+### 14. Deep Research (agentic research loop)
+- **Does:** clicks 🔍 Research (Deep/Fast) with a topic + budget.
+- **Gets:** multi-step search→fetch→verify→synthesize → cited report into Studio.
+- **Setting:** `deep_research_model` (empty = background default).
+- **GUI:** Service-Modelle → *Deep Research (Recherche-Loop)*.
+- **Model:** **mistral-medium-3.5** (stronger — does verification/synthesis) · cost_purpose `deep_research`. GDPR-gated.
+
+### 15. Audio Overview (podcast) + read-aloud
+- **Does:** clicks 🎧 podcast (project/chat) or 🔊 read-aloud.
+- **Gets:** a two-host dialogue script → stitched .mp3.
+- **Setting (script LLM):** `audio_overview_model` (empty = background default).
+  **Setting (TTS voice):** `text_to_speech.default_model` (Voxtral).
+- **GUI:** Service-Modelle → *Audio Overview (Podcast-Skript)* + *Text-to-Speech*.
+- **Models:** script **mistral-small** (cost_purpose `audio_overview`) · voice **voxtral-mini-tts-latest** (`log_tts`).
+
+### 16. Code-graph summaries
+- **Does:** indirect — when the code-structure graph builds/updates.
+- **Gets:** one-line NL summaries per function/class for code search.
+- **Setting:** `code_graph_model` (empty = background default).
+- **GUI:** Service-Modelle → *Code-Graph (Symbol-Zusammenfassungen)*.
+- **Model:** **M4 7B** · cost_purpose `code_graph_summary`.
+
+---
+
+## D. Tasks / delegation
+
+### 17. Scheduled tasks (recurring/cron runs)
+- **Does:** creates a scheduled task (prompt + cron + optional model).
+- **Gets:** a headless agentic turn at fire time → schedule_history run.
+- **Setting:** per-task model → agent `preferred_model` → default → opus last-resort.
+- **GUI:** Schedule create/edit UI (per-task model dropdown).
+- **Model:** per-task; empty → mistral-medium · cost_purpose `scheduled`.
+
+### 18. Delegation (`delegate_task`)
+- **Does:** indirect — agent hands a sub-task to another agent.
+- **Gets:** the target agent runs it; result returns to the caller.
+- **Setting:** tool arg → **target agent's `preferred_model`** → default.
+- **GUI:** Settings → Agents (per-agent model).
+- **Model:** per target agent · cost_purpose `delegate_task`. GDPR-gated.
+
+### 19. Background tasks / fan-out
+- **Does:** indirect — agent decomposes + offloads parallel leaf sub-tasks.
+- **Gets:** leaf tasks on a (cheaper) offload model; results joined.
+- **Setting:** per-model `models.<id>.background_task_model` (+ top-level `background_task_model`; `auto` = classify each leaf).
+- **GUI:** Settings → Models → ⚙ per model (*Fan-out-Modell*) + Service-Modelle → *Fan-out-Hintergrundmodell*.
+- **Model:** top-level **mistral-small** · cost_purpose `background_task`.
+
+### 20. `ask_llm` tool
+- **Does:** indirect — agent/workflow one-shot LLM call (no agentic loop).
+- **Gets:** a single response.
+- **Setting:** arg → workflow MODEL header → workflow agent → `refinement.model` → default.
+- **GUI:** none standalone (caller/workflow specifies).
+- **Model:** caller-dependent · cost_purpose `ask_llm`.
+
+---
+
+## E. Translation
+
+### 21. Translation (text / document / rewrite / language-detect)
+- **Does:** translates text or an uploaded document (optional tone-rewrite).
+- **Gets:** translated (+ polished) text; language auto-detected first.
+- **Settings:** `translation.default_model` · tone-rewrite → `refinement.model` · lang-detect = **lingua offline first**, LLM fallback only on low confidence → `translation.detection_fallback_model`.
+- **GUI:** Service-Modelle → *Übersetzung* (also Tools tab).
+- **Models:** translate **mistral-small** · rewrite **M4 7B** · detect-fallback **M4 7B** *(was a dead model, fixed v9.170.0)*. cost_purpose `translate_text`/`translate_document`/`…_rewrite`/`lang_detect`. GDPR-gated.
+
+---
+
+## F. Specialized (non-chat) models
+
+### 22. OCR (scanned PDFs / images)
+- **Does:** uploads/mines a scanned doc with no text layer.
+- **Setting:** `ocr.engine` (mistral_ocr / local_vision / auto) + `ocr.model` + `ocr.local_vision_model`.
+- **GUI:** Service-Modelle → OCR block.
+- **Models:** **mistral-ocr-latest** (cloud, $0.001/page via `log_ocr`) / **gemma-4-26B** (local vision).
+
+### 23. Image-describe (non-vision-model attachments)
+- **Does:** attaches an image to a text-only model.
+- **Setting:** `attachments.image_model`.
+- **GUI:** Settings → Server → Bildmodell.
+- **Model:** **mistral-medium-3.5** (vision chat).
+
+### 24. Speech-to-text / transcription
+- **Setting:** `transcribe_audio.default_model`.
+- **GUI:** Service-Modelle → *Transkription (STT)*.
+- **Model:** **voxtral-mini-latest** (cloud) or whisper-* (local, $0).
+
+### 25. Text-to-speech
+- **Setting:** `text_to_speech.default_model`.
+- **GUI:** Service-Modelle → *Text-to-Speech*.
+- **Model:** **voxtral-mini-tts-latest** (`log_tts`). Drives podcast voices + read-aloud.
+
+### 26. MemPalace reranker (retrieval, local cross-encoder — NOT an LLM)
+- **Setting:** `mempalace.reranker.model`.
+- **GUI:** Settings → MemPalace.
+- **Model:** **BAAI/bge-reranker-v2-m3** ($0, local).
+
+### 27. Embeddings (MemPalace, MLX — NOT an LLM)
+- **Setting:** MemPalace venv config (NOT brain config.json — venv-level).
+- **GUI:** none (changing it needs a venv patch + re-mine).
+- **Model:** **embeddinggemma-300m** (MLX, $0, local).
+
+---
+
+## G. Cross-cutting swaps + misc
+
+### 28. GDPR / classification swap-to-local
+- **Does:** on PII / classified-document detection (policy=swap), the active model is swapped to a local one. *(Detection itself is pure regex + spaCy NER — no LLM.)*
+- **Setting:** `gdpr_scanner.default_local_fallback_model` · `classification_scanner.default_local_fallback_model`.
+- **GUI:** Settings → GDPR / Classification.
+- **Model:** **gemma-4-26B** (both).
+
+### 29. Quota force_local
+- **Setting:** `quotas.enforce_red` + `quotas.default_local_fallback_model`.
+- **GUI:** Settings → Quotas.
+- **State:** mode `warn_only`; target **empty** → no-op unless configured.
+
+### 30. Telegram frontend
+- **Setting:** `telegram.model`.
+- **Model:** **claude-opus-4-6**.
+
+---
+
+## Consolidation — what shares a model
+
+- **M4 7B (local):** next-prompt, chat summary, user-profile, code-graph, wiki-gate, refine, translation-rewrite, lang-detect-fallback. *(The cheap-local workhorse.)*
+- **mistral-small:** classifier, wiki, KG, studio, audio-script, fan-out, translation, Brainy.
+- **mistral-medium-3.5:** default_model, image-describe, deep-research.
+- **gemma-4-26B (local):** GDPR swap, classification swap, local OCR.
+- **Voxtral:** TTS + STT.
+- **Empty knob → `_background_model_default()` = `default_model` (mistral-medium).**
+
+## Removed this session
+- The per-turn **memory classifier** (`classify_chat_for_memory`) + its orphaned `mempalace.chat_sync.classifier.model` knob — dead since the chat-sync daemon was retired (wiki is the sole feeder). Replaced by the **Auto-memory gate** (#8).
