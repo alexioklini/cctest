@@ -1538,7 +1538,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .cfgtab .badge{font-size:10px;color:var(--muted);margin-left:5px}
   .cfgpane{display:none;padding:18px 2px}
   .cfgpane.active{display:block}
-  .cfgpane.curated{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .cfgpane.curated{grid-template-columns:1fr 1fr;gap:16px}
+  .cfgpane.curated.active{display:grid}
   .ff{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
   .ff .fl{font-size:13px;color:var(--text);display:flex;align-items:center;gap:8px}
   .ff .fl code{color:var(--green);font-size:11px;font-family:ui-monospace,Menlo,monospace;font-weight:400}
