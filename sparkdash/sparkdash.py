@@ -8,11 +8,14 @@ Self-contained, stdlib only (no pip install). Run ON the Mac mini:
 
 Metrics are read locally:
   * GPU utilization + allocated unified memory  -> ioreg IOAccelerator PerformanceStatistics
-  * CPU usage + memory + load                   -> top -l 1 / sysctl / vm_stat
-  * thermal pressure                            -> pmset -g therm (no sudo)
-  * vLLM serving stats                          -> Prometheus /metrics on the vLLM port
+  * Per-core + aggregate CPU                     -> host_processor_info (ctypes, no sudo)
+  * Memory + swap                                -> top / sysctl vm.swapusage
+  * thermal pressure                             -> pmset -g therm (no sudo)
+  * vLLM serving stats                           -> Prometheus /metrics on the vLLM port
 """
 import argparse
+import ctypes
+import ctypes.util
 import json
 import re
 import subprocess
@@ -34,8 +37,7 @@ def _run(cmd, timeout=4):
 
 
 def _sysctl(key):
-    out = _run(["sysctl", "-n", key]).strip()
-    return out
+    return _run(["sysctl", "-n", key]).strip()
 
 
 def host_info():
@@ -43,13 +45,14 @@ def host_info():
         "model": _sysctl("hw.model") or "Mac",
         "chip": _sysctl("machdep.cpu.brand_string") or "Apple Silicon",
         "ncpu": int(_sysctl("hw.ncpu") or 0),
+        "pcore": int(_sysctl("hw.perflevel0.logicalcpu") or 0),
+        "ecore": int(_sysctl("hw.perflevel1.logicalcpu") or 0),
         "memsize": int(_sysctl("hw.memsize") or 0),
         "uptime": _run(["uptime"]).strip(),
     }
 
 
 def gpu_stats():
-    """GPU utilization % and allocated unified memory (bytes) from ioreg."""
     out = _run(["ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator"])
     util = mem = 0
     m = re.search(r'"Device Utilization %"=(\d+)', out)
@@ -61,8 +64,51 @@ def gpu_stats():
     return {"util": util, "alloc_mem": mem}
 
 
+# --- per-core CPU via host_processor_info (no sudo) -------------------------
+
+_PROCESSOR_CPU_LOAD_INFO = 2
+_CPU_STATE_MAX = 4  # user, system, idle, nice
+_libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+_libc.mach_host_self.restype = ctypes.c_uint
+_prev_core_ticks = None  # list of (user+sys+nice, total) per core
+
+
+def _read_core_ticks():
+    host = _libc.mach_host_self()
+    ncpu = ctypes.c_uint(0)
+    info = ctypes.POINTER(ctypes.c_int)()
+    cnt = ctypes.c_uint(0)
+    r = _libc.host_processor_info(host, _PROCESSOR_CPU_LOAD_INFO,
+                                  ctypes.byref(ncpu), ctypes.byref(info),
+                                  ctypes.byref(cnt))
+    if r != 0:
+        return []
+    n = ncpu.value
+    out = []
+    for c in range(n):
+        base = c * _CPU_STATE_MAX
+        user, system, idle, nice = (info[base + i] for i in range(4))
+        busy = user + system + nice
+        out.append((busy, busy + idle))
+    return out
+
+
+def per_core_cpu():
+    """Returns list of per-core busy % since last call (delta-based)."""
+    global _prev_core_ticks
+    cur = _read_core_ticks()
+    pct = []
+    if _prev_core_ticks and len(_prev_core_ticks) == len(cur):
+        for (pb, pt), (cb, ct) in zip(_prev_core_ticks, cur):
+            dtot = ct - pt
+            pct.append(round((cb - pb) / dtot * 100, 1) if dtot > 0 else 0.0)
+    else:
+        pct = [0.0] * len(cur)
+    _prev_core_ticks = cur
+    return pct
+
+
 def cpu_mem_stats():
-    """CPU usage %, used/total memory, load averages from top + sysctl."""
     out = _run(["top", "-l", "1", "-n", "0"])
     cpu = 0.0
     mem_used = 0
@@ -81,20 +127,25 @@ def cpu_mem_stats():
     return {"cpu": cpu, "mem_used": mem_used, "load": load}
 
 
+def swap_stats():
+    out = _run(["sysctl", "-n", "vm.swapusage"])
+    used = total = 0
+    m = re.search(r"total\s*=\s*([\d.]+)M.*used\s*=\s*([\d.]+)M", out)
+    if m:
+        total = int(float(m.group(1)) * 1024**2)
+        used = int(float(m.group(2)) * 1024**2)
+    return {"used": used, "total": total}
+
+
 def thermal_level():
-    """Best-effort thermal status without sudo. Returns a label + 0-3 level."""
     out = _run(["pmset", "-g", "therm"])
-    # CPU_Scheduler_Limit / CPU_Speed_Limit < 100 indicates throttling.
     m = re.search(r"CPU_Speed_Limit\s*=\s*(\d+)", out)
     if m:
         limit = int(m.group(1))
-        if limit >= 100:
-            return {"label": "Nominal", "level": 0, "speed_limit": limit}
-        if limit >= 75:
-            return {"label": "Fair", "level": 1, "speed_limit": limit}
-        if limit >= 50:
-            return {"label": "Serious", "level": 2, "speed_limit": limit}
-        return {"label": "Critical", "level": 3, "speed_limit": limit}
+        label = ("Nominal" if limit >= 100 else "Fair" if limit >= 75
+                 else "Serious" if limit >= 50 else "Critical")
+        level = (0 if limit >= 100 else 1 if limit >= 75 else 2 if limit >= 50 else 3)
+        return {"label": label, "level": level, "speed_limit": limit}
     return {"label": "Nominal", "level": 0, "speed_limit": 100}
 
 
@@ -109,8 +160,6 @@ _VLLM_GAUGES = {
     "vllm:prefix_cache_queries_total": "prefix_queries",
     "vllm:prefix_cache_hits_total": "prefix_hits",
 }
-
-# previous counter snapshot for rate computation
 _prev = {"t": None, "prompt_tokens": 0.0, "generation_tokens": 0.0}
 
 
@@ -119,7 +168,6 @@ def vllm_stats(base_url):
         raw = urlopen(base_url.rstrip("/") + "/metrics", timeout=3).read().decode()
     except (URLError, OSError):
         return {"up": False}
-
     vals = {}
     model = None
     for line in raw.splitlines():
@@ -127,16 +175,14 @@ def vllm_stats(base_url):
             continue
         for metric, key in _VLLM_GAUGES.items():
             if line.startswith(metric + "{") or line.startswith(metric + " "):
-                m = re.search(r'model_name="([^"]+)"', line)
-                if m:
-                    model = m.group(1)
-                num = line.rsplit(" ", 1)[-1]
+                mm = re.search(r'model_name="([^"]+)"', line)
+                if mm:
+                    model = mm.group(1)
                 try:
-                    vals[key] = float(num)
+                    vals[key] = float(line.rsplit(" ", 1)[-1])
                 except ValueError:
                     pass
                 break
-
     now = time.time()
     gen_tps = prompt_tps = 0.0
     if _prev["t"] is not None:
@@ -147,7 +193,6 @@ def vllm_stats(base_url):
     _prev.update(t=now,
                  prompt_tokens=vals.get("prompt_tokens", 0.0),
                  generation_tokens=vals.get("generation_tokens", 0.0))
-
     pq = vals.get("prefix_queries", 0.0)
     ph = vals.get("prefix_hits", 0.0)
     return {
@@ -171,13 +216,12 @@ def collect(vllm_url):
     return {
         "ts": time.time(),
         "host": host,
-        "gpu": {
-            "util": gpu["util"],
-            "alloc_mem": gpu["alloc_mem"],
-        },
+        "gpu": {"util": gpu["util"], "alloc_mem": gpu["alloc_mem"]},
         "cpu": cm["cpu"],
+        "cores": per_core_cpu(),
         "load": cm["load"],
         "mem": {"used": cm["mem_used"], "total": host["memsize"]},
+        "swap": swap_stats(),
         "thermal": thermal_level(),
         "vllm": vllm_stats(vllm_url),
     }
@@ -191,7 +235,7 @@ class Handler(BaseHTTPRequestHandler):
     vllm_url = "http://127.0.0.1:8012"
 
     def log_message(self, *a):
-        pass  # quiet
+        pass
 
     def _send(self, code, body, ctype):
         data = body.encode() if isinstance(body, str) else body
@@ -216,190 +260,277 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>DGX Spark · System Dashboard</title>
+<title>Your DGX Dashboard</title>
 <style>
   :root{
-    --bg:#0b0f0c; --panel:#121712; --panel2:#0e130e; --line:#1d271d;
-    --green:#76b900; --green-dim:#4d7a00; --text:#e6efe6; --muted:#7e8c7e;
-    --red:#e0533d; --amber:#e0a93d;
+    --bg:#0a0a0a; --panel:#161616; --panel2:#1c1c1c; --line:#2a2a2a;
+    --green:#76b900; --green-dim:#4d7a00; --text:#e8e8e8; --muted:#8a8a8a;
+    --red:#e0533d; --amber:#e0a93d; --blue:#3a6ea5;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:
-       radial-gradient(1200px 600px at 80% -10%, #15391544, transparent 60%),
-       var(--bg);
-       color:var(--text);font-family:"SF Pro Display",-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:"SF Pro Display",-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
        -webkit-font-smoothing:antialiased}
-  header{display:flex;align-items:center;gap:14px;padding:20px 28px;border-bottom:1px solid var(--line)}
-  .logo{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.5px;font-size:18px}
-  .logo .mark{width:14px;height:14px;background:var(--green);border-radius:3px;box-shadow:0 0 14px var(--green)}
-  .sub{color:var(--muted);font-size:13px}
-  .spacer{flex:1}
-  .pill{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:5px 12px}
-  .pill b{color:var(--green)}
+  header{padding:18px 28px 0}
+  .welcome{color:var(--muted);font-size:15px}
+  .title{font-size:30px;font-weight:700;margin:2px 0 0}
+  nav{display:flex;gap:26px;margin-top:14px;border-bottom:1px solid var(--line);padding-bottom:0}
+  nav a{color:var(--muted);text-decoration:none;font-size:15px;padding-bottom:12px;position:relative}
+  nav a.active{color:var(--text)}
+  nav a.active::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--green)}
+  .livepill{margin-left:auto;font-size:12px;color:var(--muted)}
   .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);
-       box-shadow:0 0 8px var(--green);margin-right:6px;vertical-align:middle}
+       box-shadow:0 0 8px var(--green);margin-right:6px}
   .dot.off{background:var(--red);box-shadow:0 0 8px var(--red)}
-  main{padding:24px 28px;max-width:1200px;margin:0 auto}
-  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
-  .tile{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
-        border-radius:16px;padding:20px 22px;position:relative;overflow:hidden}
-  .tile h3{margin:0 0 4px;font-size:13px;font-weight:600;color:var(--muted);
-           text-transform:uppercase;letter-spacing:1.2px}
-  .tile .big{font-size:42px;font-weight:700;line-height:1.1;margin-top:6px}
-  .tile .big small{font-size:18px;color:var(--muted);font-weight:500}
-  .tile .meta{color:var(--muted);font-size:13px;margin-top:6px}
-  .bar{height:8px;border-radius:6px;background:#0a0d0a;margin-top:16px;overflow:hidden;border:1px solid var(--line)}
-  .bar>span{display:block;height:100%;background:linear-gradient(90deg,var(--green-dim),var(--green));
-            border-radius:6px;transition:width .5s ease}
-  .bar>span.warn{background:linear-gradient(90deg,#7a5a00,var(--amber))}
-  .bar>span.crit{background:linear-gradient(90deg,#7a1d00,var(--red))}
-  /* radial gauge */
-  .gauge{display:flex;align-items:center;gap:22px}
-  .ring{--p:0;--col:var(--green);width:118px;height:118px;border-radius:50%;flex:none;
-        background:conic-gradient(var(--col) calc(var(--p)*1%), #18211833 0);
-        display:grid;place-items:center;position:relative;transition:--p .6s}
-  .ring::before{content:"";position:absolute;inset:11px;border-radius:50%;background:var(--panel)}
-  .ring .v{position:relative;font-size:26px;font-weight:700}
-  .ring .v small{font-size:13px;color:var(--muted)}
-  .span2{grid-column:span 2}
-  .vllm{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:6px}
-  .stat{background:#0a0d0a;border:1px solid var(--line);border-radius:12px;padding:14px}
-  .stat .l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.8px}
-  .stat .n{font-size:26px;font-weight:700;margin-top:6px}
-  .stat .n small{font-size:13px;color:var(--muted);font-weight:500}
+  main{display:grid;grid-template-columns:430px 1fr;gap:18px;padding:22px 28px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px}
+  /* LEFT: gauge + chart pairs */
+  .leftcol{display:flex;flex-direction:column;gap:18px}
+  .gpair{display:grid;grid-template-columns:1fr 1fr;gap:0;padding:0;overflow:hidden}
+  .gbox{padding:18px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .gbox h3{margin:0 0 10px;font-size:15px;font-weight:600}
+  .cbox{padding:14px 16px;border-left:1px solid var(--line);display:flex;flex-direction:column}
+  .cbox .axis{color:var(--muted);font-size:12px}
+  .cbox canvas{width:100%;flex:1;min-height:120px}
+  .gval{font-size:30px;font-weight:700;margin-top:-46px;text-align:center}
+  .gsub{color:var(--muted);font-size:13px;text-align:center;margin-top:36px}
+  /* RIGHT: GNOME system monitor style */
+  .resources{padding:0}
+  .restab{display:flex;align-items:center;gap:8px;padding:14px 18px;border-bottom:1px solid var(--line)}
+  .restab .chip{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:14px;padding:7px 14px;border-radius:8px}
+  .restab .chip.active{background:var(--panel2);color:var(--text)}
+  .section{padding:14px 18px;border-bottom:1px solid var(--line)}
+  .section h4{margin:0 0 10px;font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .section h4::before{content:"▾";color:var(--muted);font-size:12px}
+  .graphwrap{position:relative}
+  .graphwrap canvas{width:100%;height:120px;display:block}
+  .ticks{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-top:4px}
+  .corelegend{display:grid;grid-template-columns:repeat(4,1fr);gap:4px 18px;margin-top:12px}
+  .core{display:flex;align-items:center;gap:8px;font-size:13px}
+  .core .sw{width:26px;height:13px;border-radius:3px;flex:none}
+  .core .nm{color:var(--text)}
+  .core .pc{color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
+  .memrow{display:flex;gap:60px;margin-top:12px}
+  .memrow .item{font-size:14px}
+  .memrow .item .h{font-weight:600;display:flex;align-items:center;gap:8px}
+  .memrow .item .h .pip{width:10px;height:10px;border-radius:50%}
+  .memrow .item .d{color:var(--muted);font-size:13px;margin-top:3px}
+  /* vLLM strip */
+  .vllm{grid-column:1 / -1;padding:18px 22px}
+  .vllm h4{margin:0 0 4px;font-size:15px;font-weight:600}
   .model{font-size:13px;color:var(--green);margin-bottom:14px;font-family:ui-monospace,Menlo,monospace}
-  footer{color:var(--muted);font-size:12px;text-align:center;padding:18px}
-  @media(max-width:780px){.grid{grid-template-columns:1fr}.span2{grid-column:span 1}.vllm{grid-template-columns:repeat(2,1fr)}}
+  .vgrid{display:grid;grid-template-columns:repeat(8,1fr);gap:12px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .stat .l{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+  .stat .n{font-size:22px;font-weight:700;margin-top:5px}
+  .stat .n small{font-size:12px;color:var(--muted);font-weight:500}
+  footer{color:var(--muted);font-size:12px;text-align:center;padding:0 0 22px}
+  @media(max-width:1100px){main{grid-template-columns:1fr}.vgrid{grid-template-columns:repeat(4,1fr)}}
 </style>
 </head>
 <body>
 <header>
-  <div class="logo"><span class="mark"></span> DGX <span style="color:var(--green)">SPARK</span></div>
-  <span class="sub" id="hostsub">System Dashboard</span>
-  <div class="spacer"></div>
-  <span class="pill" id="modelpill">—</span>
-  <span class="pill"><span class="dot" id="livedot"></span><span id="livetxt">live</span></span>
+  <div class="welcome">👋 Welcome</div>
+  <div class="title">Your DGX Dashboard</div>
+  <nav>
+    <a class="active">Home</a><a>Settings</a><a>Docs ↗</a><a>Forums ↗</a><a>Resources ↗</a>
+    <span class="livepill"><span class="dot" id="livedot"></span><span id="livetxt">live</span></span>
+  </nav>
 </header>
 <main>
-  <div class="grid">
-    <!-- GPU -->
-    <div class="tile">
-      <h3>GPU Utilization</h3>
-      <div class="gauge">
-        <div class="ring" id="gpuring"><div class="v"><span id="gpuval">0</span><small>%</small></div></div>
-        <div>
-          <div class="meta">Apple GPU · Metal</div>
-          <div class="big" style="font-size:26px"><span id="gpumem">0</span><small> GB allocated</small></div>
-          <div class="meta">unified memory in use by GPU</div>
-        </div>
+  <!-- LEFT COLUMN: gauge + sparkline pairs -->
+  <div class="leftcol">
+    <div class="card gpair">
+      <div class="gbox">
+        <h3>System Memory</h3>
+        <canvas id="memgauge" width="170" height="110"></canvas>
+        <div class="gval"><span id="memval">0</span><small style="font-size:16px"> GB</small></div>
+        <div class="gsub"><span id="memavail">0</span> GB available</div>
+      </div>
+      <div class="cbox">
+        <div class="axis" id="memaxis">0 GB</div>
+        <canvas id="memchart"></canvas>
       </div>
     </div>
-    <!-- Unified memory -->
-    <div class="tile">
-      <h3>Unified Memory</h3>
-      <div class="big"><span id="memused">0</span><small> / <span id="memtotal">0</span> GB</small></div>
-      <div class="meta" id="mempct">0% used</div>
-      <div class="bar"><span id="membar" style="width:0%"></span></div>
-    </div>
-    <!-- CPU -->
-    <div class="tile">
-      <h3>CPU Utilization</h3>
-      <div class="big"><span id="cpuval">0</span><small> %</small></div>
-      <div class="meta" id="loadtxt">load — — —</div>
-      <div class="bar"><span id="cpubar" style="width:0%"></span></div>
-    </div>
-    <!-- Thermal -->
-    <div class="tile">
-      <h3>Thermal / Power</h3>
-      <div class="big" id="thermlabel" style="font-size:34px">Nominal</div>
-      <div class="meta" id="thermmeta">CPU speed limit 100%</div>
-      <div class="bar"><span id="thermbar" style="width:8%"></span></div>
-    </div>
-    <!-- vLLM panel -->
-    <div class="tile span2">
-      <h3>vLLM Inference Engine</h3>
-      <div class="model" id="vllmmodel">—</div>
-      <div class="vllm">
-        <div class="stat"><div class="l">Running</div><div class="n" id="v_run">0</div></div>
-        <div class="stat"><div class="l">Waiting</div><div class="n" id="v_wait">0</div></div>
-        <div class="stat"><div class="l">Generation</div><div class="n"><span id="v_tps">0</span><small> tok/s</small></div></div>
-        <div class="stat"><div class="l">KV Cache</div><div class="n"><span id="v_kv">0</span><small> %</small></div></div>
-        <div class="stat"><div class="l">Prompt</div><div class="n"><span id="v_ptps">0</span><small> tok/s</small></div></div>
-        <div class="stat"><div class="l">Prefix Hit</div><div class="n"><span id="v_prefix">0</span><small> %</small></div></div>
-        <div class="stat"><div class="l">Gen tokens</div><div class="n" id="v_gentot" style="font-size:20px">0</div></div>
-        <div class="stat"><div class="l">Prompt tokens</div><div class="n" id="v_ptot" style="font-size:20px">0</div></div>
+    <div class="card gpair">
+      <div class="gbox">
+        <h3>GPU Utilization</h3>
+        <canvas id="gpugauge" width="170" height="110"></canvas>
+        <div class="gval"><span id="gpuval">0</span><small style="font-size:16px"> %</small></div>
+        <div class="gsub"><span id="gpumem">0</span> GB allocated</div>
+      </div>
+      <div class="cbox">
+        <div class="axis">100%</div>
+        <canvas id="gpuchart"></canvas>
       </div>
     </div>
   </div>
-  <footer id="uptime">—</footer>
+
+  <!-- RIGHT COLUMN: Resources panel -->
+  <div class="card resources">
+    <div class="restab">
+      <span class="chip">☰ Processes</span>
+      <span class="chip active">◷ Resources</span>
+      <span class="chip">▣ File Systems</span>
+    </div>
+    <div class="section">
+      <h4>CPU</h4>
+      <div class="graphwrap"><canvas id="cpugraph"></canvas></div>
+      <div class="ticks"><span>1 min</span><span>50 secs</span><span>40 secs</span><span>30 secs</span><span>20 secs</span><span>10 secs</span></div>
+      <div class="corelegend" id="corelegend"></div>
+    </div>
+    <div class="section">
+      <h4>Memory and Swap</h4>
+      <div class="graphwrap"><canvas id="memswapgraph"></canvas></div>
+      <div class="ticks"><span>1 min</span><span>50 secs</span><span>40 secs</span><span>30 secs</span><span>20 secs</span><span>10 secs</span></div>
+      <div class="memrow">
+        <div class="item"><div class="h"><span class="pip" style="background:var(--green)"></span>Memory</div>
+          <div class="d" id="memline">—</div></div>
+        <div class="item"><div class="h"><span class="pip" style="background:var(--blue)"></span>Swap</div>
+          <div class="d" id="swapline">—</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- vLLM full-width strip -->
+  <div class="card vllm">
+    <h4>vLLM Inference Engine</h4>
+    <div class="model" id="vllmmodel">—</div>
+    <div class="vgrid">
+      <div class="stat"><div class="l">Running</div><div class="n" id="v_run">0</div></div>
+      <div class="stat"><div class="l">Waiting</div><div class="n" id="v_wait">0</div></div>
+      <div class="stat"><div class="l">Generation</div><div class="n"><span id="v_tps">0</span><small> t/s</small></div></div>
+      <div class="stat"><div class="l">Prompt</div><div class="n"><span id="v_ptps">0</span><small> t/s</small></div></div>
+      <div class="stat"><div class="l">KV Cache</div><div class="n"><span id="v_kv">0</span><small> %</small></div></div>
+      <div class="stat"><div class="l">Prefix Hit</div><div class="n"><span id="v_prefix">0</span><small> %</small></div></div>
+      <div class="stat"><div class="l">Gen tok</div><div class="n" id="v_gentot" style="font-size:18px">0</div></div>
+      <div class="stat"><div class="l">Prompt tok</div><div class="n" id="v_ptot" style="font-size:18px">0</div></div>
+    </div>
+  </div>
 </main>
+<footer id="uptime">—</footer>
+
 <script>
 const GB = 1024**3;
-const fmt = n => n>=1e9 ? (n/1e9).toFixed(2)+"B" : n>=1e6 ? (n/1e6).toFixed(1)+"M" : n>=1e3 ? (n/1e3).toFixed(1)+"K" : ""+n;
-function cls(p){ return p>=90?"crit":p>=70?"warn":""; }
-function ringcol(p){ return p>=90?"var(--red)":p>=70?"var(--amber)":"var(--green)"; }
+const N = 60;                       // history points (~2min at 2s)
+const fmt = n => n>=1e9?(n/1e9).toFixed(2)+"B":n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?(n/1e3).toFixed(1)+"K":""+n;
+const CORE_COLORS = ["#e0533d","#e08a3d","#e0c23d","#a9e03d","#5fe03d","#3de08a","#3de0c2","#3da9e0","#3d6ee0","#8a3de0","#c23de0","#e03da9"];
+
+// rolling history buffers
+const H = { mem:[], gpu:[], mempct:[], swappct:[], cores:[] };
+function push(arr,v){ arr.push(v); if(arr.length>N) arr.shift(); }
+
+function dpr(c){ const r=window.devicePixelRatio||1; const w=c.clientWidth,h=c.clientHeight;
+  if(c.width!==w*r||c.height!==h*r){c.width=w*r;c.height=h*r;} const x=c.getContext("2d"); x.setTransform(r,0,0,r,0,0); return x; }
+
+// half-donut gauge
+function gauge(id,pct,color){
+  const c=document.getElementById(id),x=c.getContext("2d");
+  const w=c.width,h=c.height,cx=w/2,cy=h-6,rad=Math.min(w/2,h)-12,lw=16;
+  x.clearRect(0,0,w,h);
+  x.lineCap="round"; x.lineWidth=lw;
+  x.beginPath(); x.arc(cx,cy,rad,Math.PI,2*Math.PI); x.strokeStyle="#333"; x.stroke();
+  const end=Math.PI+(pct/100)*Math.PI;
+  x.beginPath(); x.arc(cx,cy,rad,Math.PI,end); x.strokeStyle=color; x.stroke();
+}
+function gcol(p){ return p>=90?"#e0533d":p>=70?"#e0a93d":"#76b900"; }
+
+// area sparkline (single series, blue like DGX)
+function spark(id,data,max){
+  const c=document.getElementById(id),x=dpr(c),w=c.clientWidth,h=c.clientHeight;
+  x.clearRect(0,0,w,h);
+  if(data.length<2) return;
+  const step=w/(N-1), y=v=>h-4-(Math.min(v,max)/max)*(h-8);
+  x.beginPath();
+  data.forEach((v,i)=>{ const px=i*step,py=y(v); i?x.lineTo(px,py):x.moveTo(px,py); });
+  x.lineTo((data.length-1)*step,h); x.lineTo(0,h); x.closePath();
+  x.fillStyle="rgba(58,110,165,.35)"; x.fill();
+  x.beginPath();
+  data.forEach((v,i)=>{ const px=i*step,py=y(v); i?x.lineTo(px,py):x.moveTo(px,py); });
+  x.strokeStyle="#5b9bd5"; x.lineWidth=1.5; x.stroke();
+}
+
+// multi-line graph (per-core) with gridlines + right axis
+function multiline(id,series,colors,max){
+  const c=document.getElementById(id),x=dpr(c),w=c.clientWidth,h=c.clientHeight;
+  x.clearRect(0,0,w,h);
+  // grid
+  x.strokeStyle="#262626"; x.lineWidth=1; x.fillStyle="#8a8a8a"; x.font="10px sans-serif";
+  [0,.5,1].forEach(f=>{ const py=4+f*(h-8); x.beginPath(); x.moveTo(0,py); x.lineTo(w-32,py); x.stroke();
+    x.fillText(Math.round((1-f)*max)+(max===100?" %":""), w-28, py+3); });
+  [0,.2,.4,.6,.8].forEach(f=>{ const px=f*(w-32); x.beginPath(); x.moveTo(px,4); x.lineTo(px,h-4); x.stroke(); });
+  const step=(w-32)/(N-1), y=v=>4+(1-Math.min(v,max)/max)*(h-8);
+  series.forEach((data,si)=>{ if(data.length<2) return;
+    x.beginPath(); data.forEach((v,i)=>{ const px=i*step,py=y(v); i?x.lineTo(px,py):x.moveTo(px,py); });
+    x.strokeStyle=colors[si%colors.length]; x.lineWidth=1.2; x.stroke();
+  });
+}
 
 async function tick(){
   let d;
-  try{ d = await (await fetch("/api/metrics",{cache:"no-store"})).json(); }
+  try{ d=await (await fetch("/api/metrics",{cache:"no-store"})).json(); }
   catch(e){ document.getElementById("livedot").classList.add("off");
             document.getElementById("livetxt").textContent="offline"; return; }
   document.getElementById("livedot").classList.remove("off");
   document.getElementById("livetxt").textContent="live";
 
-  // header
-  document.getElementById("hostsub").textContent = d.host.chip + " · " + d.host.ncpu + " cores";
+  // --- System Memory gauge + chart ---
+  const mu=d.mem.used/GB, mt=d.mem.total/GB, mp=mt?mu/mt*100:0;
+  gauge("memgauge",mp,gcol(mp));
+  document.getElementById("memval").textContent=mu.toFixed(2);
+  document.getElementById("memavail").textContent=mt.toFixed(0);
+  document.getElementById("memaxis").textContent=mt.toFixed(2)+" GB";
+  push(H.mem,mu); spark("memchart",H.mem,mt);
 
-  // GPU
-  const gu = d.gpu.util;
-  const ring = document.getElementById("gpuring");
-  ring.style.setProperty("--p", gu);
-  ring.style.setProperty("--col", ringcol(gu));
-  document.getElementById("gpuval").textContent = gu;
-  document.getElementById("gpumem").textContent = (d.gpu.alloc_mem/GB).toFixed(1);
+  // --- GPU gauge + chart ---
+  const gu=d.gpu.util;
+  gauge("gpugauge",gu,gcol(gu));
+  document.getElementById("gpuval").textContent=gu;
+  document.getElementById("gpumem").textContent=(d.gpu.alloc_mem/GB).toFixed(1);
+  push(H.gpu,gu); spark("gpuchart",H.gpu,100);
 
-  // Unified memory
-  const mu = d.mem.used/GB, mt = d.mem.total/GB, mp = mt? mu/mt*100 : 0;
-  document.getElementById("memused").textContent = mu.toFixed(1);
-  document.getElementById("memtotal").textContent = mt.toFixed(0);
-  document.getElementById("mempct").textContent = mp.toFixed(0)+"% used";
-  const mb = document.getElementById("membar");
-  mb.style.width = mp+"%"; mb.className = cls(mp);
-
-  // CPU
-  document.getElementById("cpuval").textContent = d.cpu;
-  document.getElementById("loadtxt").textContent = "load " + d.load.map(x=>x.toFixed(2)).join("  ");
-  const cb = document.getElementById("cpubar");
-  cb.style.width = Math.min(100,d.cpu)+"%"; cb.className = cls(d.cpu);
-
-  // Thermal
-  document.getElementById("thermlabel").textContent = d.thermal.label;
-  document.getElementById("thermmeta").textContent = "CPU speed limit "+d.thermal.speed_limit+"%";
-  const tb = document.getElementById("thermbar");
-  const tlvl = [8,40,70,100][d.thermal.level];
-  tb.style.width = tlvl+"%"; tb.className = d.thermal.level>=3?"crit":d.thermal.level>=1?"warn":"";
-
-  // vLLM
-  const v = d.vllm, pill=document.getElementById("modelpill");
-  if(v.up){
-    document.getElementById("vllmmodel").textContent = "● "+v.model+"   (max_model_len served)";
-    pill.innerHTML = "<b>"+v.model+"</b>";
-    document.getElementById("v_run").textContent = v.running;
-    document.getElementById("v_wait").textContent = v.waiting;
-    document.getElementById("v_tps").textContent = v.gen_tps;
-    document.getElementById("v_ptps").textContent = v.prompt_tps;
-    document.getElementById("v_kv").textContent = v.kv_cache;
-    document.getElementById("v_prefix").textContent = v.prefix_hit_rate;
-    document.getElementById("v_gentot").textContent = fmt(v.total_gen_tokens);
-    document.getElementById("v_ptot").textContent = fmt(v.total_prompt_tokens);
-  } else {
-    document.getElementById("vllmmodel").textContent = "● engine offline";
-    pill.textContent = "vLLM offline";
+  // --- per-core CPU graph + legend ---
+  const cores=d.cores||[];
+  if(H.cores.length!==cores.length) H.cores=cores.map(()=>[]);
+  cores.forEach((v,i)=>push(H.cores[i],v));
+  multiline("cpugraph",H.cores,CORE_COLORS,100);
+  const leg=document.getElementById("corelegend");
+  if(leg.children.length!==cores.length){
+    leg.innerHTML=cores.map((_,i)=>{
+      const kind = i<d.host.pcore ? "P" : "E";
+      return `<div class="core"><span class="sw" style="background:${CORE_COLORS[i%CORE_COLORS.length]}"></span>`
+        +`<span class="nm">CPU${i+1} <span style="color:#8a8a8a">${kind}</span></span><span class="pc" id="cpc${i}">0%</span></div>`;
+    }).join("");
   }
+  cores.forEach((v,i)=>{ const el=document.getElementById("cpc"+i); if(el) el.textContent=v.toFixed(0)+"%"; });
 
-  document.getElementById("uptime").textContent = d.host.model + " · " + d.host.uptime;
+  // --- Memory and Swap graph ---
+  const sp=d.swap, su=sp.used/GB, st=sp.total/GB, spct=st?su/st*100:0;
+  push(H.mempct,mp); push(H.swappct,spct);
+  multiline("memswapgraph",[H.mempct,H.swappct],["#76b900","#5b9bd5"],100);
+  document.getElementById("memline").textContent=
+    `${mu.toFixed(1)} GB (${mp.toFixed(1)}%) of ${mt.toFixed(1)} GB`;
+  document.getElementById("swapline").textContent=
+    `${su.toFixed(2)} GB (${spct.toFixed(1)}%) of ${st.toFixed(1)} GB`;
+
+  // --- vLLM ---
+  const v=d.vllm;
+  if(v.up){
+    document.getElementById("vllmmodel").textContent="● "+v.model;
+    document.getElementById("v_run").textContent=v.running;
+    document.getElementById("v_wait").textContent=v.waiting;
+    document.getElementById("v_tps").textContent=v.gen_tps;
+    document.getElementById("v_ptps").textContent=v.prompt_tps;
+    document.getElementById("v_kv").textContent=v.kv_cache;
+    document.getElementById("v_prefix").textContent=v.prefix_hit_rate;
+    document.getElementById("v_gentot").textContent=fmt(v.total_gen_tokens);
+    document.getElementById("v_ptot").textContent=fmt(v.total_prompt_tokens);
+  } else { document.getElementById("vllmmodel").textContent="● engine offline"; }
+
+  document.getElementById("uptime").textContent=d.host.model+" · "+d.host.chip+" · "+d.host.uptime;
 }
-tick(); setInterval(tick, 2000);
+tick(); setInterval(tick,2000);
+window.addEventListener("resize",()=>tick());
 </script>
 </body>
 </html>
