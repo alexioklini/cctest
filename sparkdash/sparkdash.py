@@ -25,11 +25,20 @@ from urllib.request import urlopen
 from urllib.error import URLError
 
 # ---------------------------------------------------------------------------
-# Config + shared token
+# Config + username/password auth (PBKDF2, stdlib only)
 # ---------------------------------------------------------------------------
+import hashlib
+import hmac
+import secrets
+import http.cookies
+
 _CONFIG_FILE = os.path.expanduser("~/sparkdash.json")
 _INSTANCES_FILE = os.path.expanduser("~/sparkdash-instances.json")
+_SESSIONS_FILE = os.path.expanduser("~/sparkdash-sessions.json")
 _VENV_DEFAULT = os.path.expanduser("~/.venv-vllm-metal/bin/vllm")
+_PBKDF2_ITERS = 240_000
+_SESSION_TTL = 30 * 24 * 3600  # 30 days
+_config_lock = threading.Lock()
 
 
 def _load_config():
@@ -40,9 +49,101 @@ def _load_config():
         return {}
 
 
-def auth_token():
-    """Shared token required for mutating endpoints. env wins over config."""
-    return os.environ.get("SPARKDASH_TOKEN") or _load_config().get("token") or ""
+def _save_config(cfg):
+    with _config_lock:
+        tmp = _CONFIG_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(cfg, f, indent=2)
+        os.replace(tmp, _CONFIG_FILE)
+        os.chmod(_CONFIG_FILE, 0o600)
+
+
+def auth_configured():
+    return bool(_load_config().get("auth", {}).get("hash"))
+
+
+def _hash_password(password, salt):
+    return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt),
+                               _PBKDF2_ITERS).hex()
+
+
+def set_credentials(username, password):
+    """First-run setup: store username + salted PBKDF2 hash. No plaintext."""
+    salt = secrets.token_hex(16)
+    cfg = _load_config()
+    cfg["auth"] = {
+        "username": username,
+        "salt": salt,
+        "hash": _hash_password(password, salt),
+        "iterations": _PBKDF2_ITERS,
+    }
+    cfg.pop("token", None)  # retire the old shared-token scheme
+    _save_config(cfg)
+
+
+def verify_credentials(username, password):
+    auth = _load_config().get("auth", {})
+    if not auth.get("hash"):
+        return False
+    if username != auth.get("username"):
+        return False
+    calc = hashlib.pbkdf2_hmac("sha256", password.encode(),
+                               bytes.fromhex(auth["salt"]),
+                               auth.get("iterations", _PBKDF2_ITERS)).hex()
+    return hmac.compare_digest(calc, auth["hash"])
+
+
+# --- sessions (in-memory + persisted so logins survive restart) ------------
+_sessions = {}          # token -> expiry epoch
+_sessions_lock = threading.Lock()
+
+
+def _load_sessions():
+    try:
+        with open(_SESSIONS_FILE) as f:
+            data = json.load(f)
+        now = time.time()
+        return {t: e for t, e in data.items() if e > now}
+    except (OSError, ValueError):
+        return {}
+
+
+def _persist_sessions():
+    try:
+        tmp = _SESSIONS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(_sessions, f)
+        os.replace(tmp, _SESSIONS_FILE)
+        os.chmod(_SESSIONS_FILE, 0o600)
+    except OSError:
+        pass
+
+
+def new_session():
+    token = secrets.token_urlsafe(32)
+    with _sessions_lock:
+        _sessions[token] = time.time() + _SESSION_TTL
+        _persist_sessions()
+    return token
+
+
+def valid_session(token):
+    if not token:
+        return False
+    with _sessions_lock:
+        exp = _sessions.get(token)
+        if exp and exp > time.time():
+            return True
+        if exp:  # expired
+            _sessions.pop(token, None)
+            _persist_sessions()
+    return False
+
+
+def drop_session(token):
+    with _sessions_lock:
+        if _sessions.pop(token, None) is not None:
+            _persist_sessions()
 
 
 # ---------------------------------------------------------------------------
@@ -727,14 +828,19 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    _extra_set_cookie = None
+
     def _send(self, code, body, ctype="application/json"):
         data = body.encode() if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Sparkdash-Token")
+        # same-origin only; credentials ride a cookie so no wildcard CORS
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        if self._extra_set_cookie:
+            self.send_header("Set-Cookie", self._extra_set_cookie)
+            self._extra_set_cookie = None
         self.end_headers()
         self.wfile.write(data)
 
@@ -745,18 +851,37 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError):
             return None
 
+    def _session_token(self):
+        raw = self.headers.get("Cookie", "")
+        if not raw:
+            return None
+        try:
+            c = http.cookies.SimpleCookie(raw)
+            return c["sparkdash_session"].value if "sparkdash_session" in c else None
+        except Exception:
+            return None
+
     def _authed(self):
-        """True if no token is configured (open) or the header matches."""
-        tok = auth_token()
-        if not tok:
+        """Authed if no credentials are configured yet (so setup is reachable),
+        or a valid session cookie is present."""
+        if not auth_configured():
             return True
-        return self.headers.get("X-Sparkdash-Token", "") == tok
+        return valid_session(self._session_token())
 
     def _require_auth(self):
         if not self._authed():
-            self._send(401, json.dumps({"error": "invalid or missing token"}))
+            self._send(401, json.dumps({"error": "login required"}))
             return False
         return True
+
+    def _set_session_cookie(self, token):
+        c = http.cookies.SimpleCookie()
+        c["sparkdash_session"] = token
+        c["sparkdash_session"]["max-age"] = _SESSION_TTL
+        c["sparkdash_session"]["path"] = "/"
+        c["sparkdash_session"]["httponly"] = True
+        c["sparkdash_session"]["samesite"] = "Lax"
+        self._extra_set_cookie = c["sparkdash_session"].OutputString()
 
     # --- validation shared by create/edit ---
     def _validate_instance(self, body, existing_name=None):
@@ -804,14 +929,41 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(recent_activity(80)))
         elif self.path.startswith("/api/instances"):
             self._send(200, json.dumps(instances_status()))
-        elif self.path.startswith("/api/auth-required"):
-            self._send(200, json.dumps({"required": bool(auth_token())}))
+        elif self.path.startswith("/api/auth-status"):
+            self._send(200, json.dumps({"configured": auth_configured(),
+                                        "authed": self._authed()}))
         elif self.path in ("/", "/index.html"):
             self._send(200, INDEX_HTML, "text/html; charset=utf-8")
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
     def do_POST(self):
+        # --- auth routes (no session required) ---
+        if self.path.rstrip("/") == "/api/setup":
+            if auth_configured():
+                return self._send(403, json.dumps({"error": "already configured"}))
+            body = self._json_body() or {}
+            u = (body.get("username") or "").strip()
+            p = body.get("password") or ""
+            if len(u) < 3 or len(p) < 6:
+                return self._send(400, json.dumps({"error": "username ≥3 and password ≥6 chars"}))
+            set_credentials(u, p)
+            tok = new_session()
+            self._set_session_cookie(tok)
+            return self._send(200, json.dumps({"ok": True}))
+        if self.path.rstrip("/") == "/api/login":
+            body = self._json_body() or {}
+            if verify_credentials((body.get("username") or "").strip(),
+                                  body.get("password") or ""):
+                tok = new_session()
+                self._set_session_cookie(tok)
+                return self._send(200, json.dumps({"ok": True}))
+            return self._send(401, json.dumps({"error": "invalid credentials"}))
+        if self.path.rstrip("/") == "/api/logout":
+            drop_session(self._session_token())
+            return self._send(200, json.dumps({"ok": True}))
+
+        # --- everything below requires a valid session ---
         if not self._require_auth():
             return
         # /api/instances/<name>/start | /stop
@@ -1150,14 +1302,31 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <!-- ===================== SETTINGS PAGE ===================== -->
 <div id="page-settings" style="display:none">
   <main style="display:block">
+
+    <!-- LOGIN / SETUP gate (shown when not authed) -->
+    <div id="authgate" class="card" style="display:none;max-width:380px;margin:40px auto;padding:26px 28px">
+      <h4 id="authtitle" style="margin:0 0 4px;font-size:18px">Sign in</h4>
+      <div id="authsub" class="hint" style="color:var(--muted);font-size:13px;margin-bottom:18px">Enter your SparkDash credentials.</div>
+      <div class="form" style="grid-template-columns:1fr">
+        <label>Username<input id="a_user" autocomplete="username"/></label>
+        <label>Password<input id="a_pass" type="password" autocomplete="current-password"/></label>
+        <label id="a_pass2row" class="wide" style="display:none">Confirm password<input id="a_pass2" type="password"/></label>
+      </div>
+      <div style="margin-top:18px">
+        <button class="btn primary" id="authbtn" onclick="doAuth()">Sign in</button>
+        <span id="authmsg" style="margin-left:12px;font-size:13px"></span>
+      </div>
+    </div>
+
+    <!-- MANAGER (shown when authed) -->
+    <div id="manager" style="display:none">
     <div class="card" style="padding:20px 24px;margin-bottom:18px">
-      <h4 style="margin:0 0 4px;font-size:16px">vLLM-metal Instances</h4>
-      <div class="hint" style="color:var(--muted);font-size:13px">Start/stop, edit, and add served models supervised by SparkDash on this host.</div>
-      <div id="authrow" style="margin-top:14px;display:none">
-        <span style="font-size:13px;color:var(--muted)">Control token</span>
-        <input id="tokfield" type="password" placeholder="X-Sparkdash-Token" style="margin-left:8px"/>
-        <button class="btn" onclick="saveToken()">Save</button>
-        <span id="tokstate" style="font-size:12px;margin-left:8px;color:var(--muted)"></span>
+      <div style="display:flex;align-items:center">
+        <div>
+          <h4 style="margin:0 0 4px;font-size:16px">vLLM-metal Instances</h4>
+          <div class="hint" style="color:var(--muted);font-size:13px">Start/stop, edit, and add served models supervised by SparkDash on this host.</div>
+        </div>
+        <button class="btn" style="margin-left:auto" onclick="doLogout()">Sign out</button>
       </div>
       <div id="instlist" style="margin-top:16px">loading…</div>
     </div>
@@ -1183,6 +1352,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
         <span id="formmsg" style="margin-left:12px;font-size:13px"></span>
       </div>
     </div>
+    </div><!-- /manager -->
   </main>
 </div>
 
@@ -1380,36 +1550,63 @@ async function tickActivity(){
 }
 
 // ===================== SETTINGS / INSTANCE MANAGER =====================
-let TOKEN = localStorage.getItem("sparkdash_token") || "";
-let editing = null;   // instance name being edited, or null
+let editing = null;        // instance name being edited, or null
+let needsSetup = false;    // true when no credentials configured yet
 
 function showPage(p){
   document.getElementById("page-home").style.display = p==="home"?"":"none";
   document.getElementById("page-settings").style.display = p==="settings"?"":"none";
   document.getElementById("nav-home").classList.toggle("active", p==="home");
   document.getElementById("nav-settings").classList.toggle("active", p==="settings");
-  if(p==="settings") loadInstances();
+  if(p==="settings") refreshAuthUI();
 }
 
-function authHeaders(){
-  const h = {"Content-Type":"application/json"};
-  if(TOKEN) h["X-Sparkdash-Token"]=TOKEN;
-  return h;
-}
-function saveToken(){
-  TOKEN = document.getElementById("tokfield").value.trim();
-  localStorage.setItem("sparkdash_token", TOKEN);
-  document.getElementById("tokstate").textContent = TOKEN ? "saved" : "cleared";
+const authHeaders = () => ({"Content-Type":"application/json"});  // cookie carries auth
+
+async function refreshAuthUI(){
+  let s;
+  try{ s = await (await fetch("/api/auth-status",{cache:"no-store"})).json(); }
+  catch(e){ return; }
+  needsSetup = !s.configured;
+  const gate=document.getElementById("authgate"), mgr=document.getElementById("manager");
+  // Show the manager only when credentials EXIST and the session is valid.
+  // First-run (not configured) always shows the setup gate, even though the
+  // server treats requests as open until an account is created.
+  if(s.configured && s.authed){
+    gate.style.display="none"; mgr.style.display=""; loadInstances();
+  } else {
+    mgr.style.display="none"; gate.style.display="";
+    document.getElementById("authtitle").textContent = needsSetup ? "Create admin account" : "Sign in";
+    document.getElementById("authsub").textContent = needsSetup
+      ? "First-run setup — choose a username and password."
+      : "Enter your SparkDash credentials.";
+    document.getElementById("a_pass2row").style.display = needsSetup ? "" : "none";
+    document.getElementById("authbtn").textContent = needsSetup ? "Create account" : "Sign in";
+    document.getElementById("authmsg").textContent="";
+  }
 }
 
-async function checkAuth(){
-  try{
-    const r = await (await fetch("/api/auth-required")).json();
-    if(r.required){
-      document.getElementById("authrow").style.display="";
-      document.getElementById("tokfield").value=TOKEN;
-    }
-  }catch(e){}
+async function doAuth(){
+  const u=document.getElementById("a_user").value.trim();
+  const p=document.getElementById("a_pass").value;
+  const msg=document.getElementById("authmsg"); msg.style.color="var(--red)";
+  if(needsSetup){
+    const p2=document.getElementById("a_pass2").value;
+    if(p!==p2){ msg.textContent="passwords don't match"; return; }
+    if(u.length<3||p.length<6){ msg.textContent="username ≥3, password ≥6"; return; }
+    const r=await fetch("/api/setup",{method:"POST",headers:authHeaders(),body:JSON.stringify({username:u,password:p})});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok){ refreshAuthUI(); } else { msg.textContent=j.error||"setup failed"; }
+  } else {
+    const r=await fetch("/api/login",{method:"POST",headers:authHeaders(),body:JSON.stringify({username:u,password:p})});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok){ document.getElementById("a_pass").value=""; refreshAuthUI(); }
+    else { msg.textContent=j.error||"login failed"; }
+  }
+}
+async function doLogout(){
+  await fetch("/api/logout",{method:"POST",headers:authHeaders()});
+  refreshAuthUI();
 }
 
 async function loadInstances(){
@@ -1445,6 +1642,7 @@ async function loadInstances(){
 async function ctl(name, action){
   const r = await fetch(`/api/instances/${name}/${action}`,{method:"POST",headers:authHeaders()});
   const j = await r.json().catch(()=>({}));
+  if(r.status===401){ refreshAuthUI(); return; }
   if(!r.ok){ alert("Failed: "+(j.error||j.msg||r.status)); }
   setTimeout(loadInstances, 600);
 }
@@ -1509,7 +1707,6 @@ async function removeInstance(name){
   if(!r.ok){ const j=await r.json().catch(()=>({})); alert("Failed: "+(j.error||r.status)); }
   loadInstances();
 }
-checkAuth();
 
 // honor deep-links: #settings page, or #processes/#filesystems sub-tab
 const _hv=(location.hash||"").replace("#","");
@@ -1530,13 +1727,14 @@ def main():
     ap.add_argument("--port", type=int, default=8013)
     ap.add_argument("--host", default="0.0.0.0")
     args = ap.parse_args()
+    _sessions.update(_load_sessions())
     # supervise instances: restore autostart ones, then watchdog + activity tail
     supervisor.restore_on_boot()
     threading.Thread(target=supervisor._watchdog, daemon=True).start()
     threading.Thread(target=_activity_tailer, daemon=True).start()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    tok = "token set" if auth_token() else "NO TOKEN (control endpoints OPEN)"
-    print(f"SparkDash on http://{args.host}:{args.port}  · auth: {tok}")
+    auth = "configured" if auth_configured() else "NOT SET (first-run setup needed)"
+    print(f"SparkDash on http://{args.host}:{args.port}  · auth: {auth}")
     srv.serve_forever()
 
 
