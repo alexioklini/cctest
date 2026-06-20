@@ -1766,6 +1766,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .omlx-b{font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:6px;background:#222;color:var(--muted)}
   .omlx-b.loaded{background:rgba(118,185,0,.18);color:var(--green)}
   .omlx-b.loading{background:rgba(224,169,61,.18);color:var(--amber)}
+  .omlx-b.def{background:rgba(58,110,165,.20);color:var(--blue)}
   .obtn{border:1px solid var(--line);background:#222;color:var(--text);border-radius:7px;padding:5px 12px;font-size:12px;cursor:pointer}
   .obtn.start:hover{border-color:var(--green);color:var(--green)}
   .obtn.stop:hover{border-color:var(--red);color:var(--red)}
@@ -2230,10 +2231,11 @@ async function renderOmlxPanel(){
       <div class="omlx-models">`+_omlxModels.map(m=>{
         const sz = m.actual_size||m.estimated_size; const szTxt = sz?(sz/GB).toFixed(1)+"G":"";
         const badge = m.loaded?`<span class="omlx-b loaded">loaded</span>`:(m.is_loading?`<span class="omlx-b loading">loading…</span>`:`<span class="omlx-b">idle</span>`);
+        const defTag = (m.id===st.default_model)?`<span class="omlx-b def">default</span>`:"";
         const btn = m.loaded
           ? `<button class="obtn stop" onclick="omlxAction('${m.id}','unload')">Unload</button>`
           : `<button class="obtn start" onclick="omlxAction('${m.id}','load')">Load</button>`;
-        return `<div class="omlx-row"><span class="om-id">${m.id}</span>${badge}<span class="om-sz">${szTxt}</span>${btn}</div>`;
+        return `<div class="omlx-row"><span class="om-id">${m.id}</span>${defTag}${badge}<span class="om-sz">${szTxt}</span>${btn}</div>`;
       }).join("")+`</div>`;
     }
   }
@@ -2274,10 +2276,17 @@ async function renderOmlxPanel(){
       cache=`<div class="memhdr" style="margin-top:14px">KV / SSD Cache <span style="color:var(--amber)">— ${c.error}</span></div>`;
     }
   }
+  // oMLX is a MULTI-model server — the header shows what's actually LOADED now
+  // (not the static default_model, which can differ from the serving one and is
+  // already listed below). The full roster with load state is in the Models
+  // section. Default is shown there as a tag, not here.
+  const loaded = (up && (st.loaded_models||[]).length)
+    ? (st.loaded_models.length>1 ? st.loaded_models.length+" models loaded" : st.loaded_models[0])
+    : (up ? "no model loaded" : "");
   wrap.innerHTML=`<div class="card vllm omlx">
     <div class="ihdr"><span class="idot" style="background:${dot}"></span>
       <span class="iname">oMLX</span>
-      <span class="imodel">${up?(st.default_model||""):""}</span>
+      <span class="imodel">${loaded}</span>
       <span class="istate">${(st.base_url||"").replace(/^https?:\/\//,"")} · ${state}${st.version?" · v"+st.version:""}</span></div>
     ${stats}${cache}${models}</div>`;
 }
