@@ -349,6 +349,116 @@ def get_vllm_flags(venv=None, force=False):
 
 
 # ---------------------------------------------------------------------------
+# oMLX integration — monitor + control the oMLX inference server alongside
+# vllm-metal. oMLX is a separate native app (not a SparkDash-supervised child
+# process) exposing an OpenAI-ish API on localhost:8000. SparkDash PROXIES its
+# status/model endpoints (read) and load/unload (control) using the inference
+# API key, so the dashboard shows oMLX next to the vllm instances. Configurable
+# via ~/sparkdash.json: {"omlx": {"base_url": "...", "api_key": "..."}}.
+# oMLX is kept (not replaced by vllm-metal) because its SSD-tiered KV cache
+# serves the large contexts the GDPR/fallback role needs — vllm-metal reserves
+# KV in RAM and caps out far lower on this box.
+# ---------------------------------------------------------------------------
+_OMLX_DEFAULT_BASE = "http://localhost:8000"
+_OMLX_DEFAULT_KEY = "brain"
+
+
+def _omlx_cfg():
+    cfg = _load_config().get("omlx", {}) or {}
+    return (
+        (cfg.get("base_url") or _OMLX_DEFAULT_BASE).rstrip("/"),
+        cfg.get("api_key") or _OMLX_DEFAULT_KEY,
+        bool(cfg.get("enabled", True)),
+    )
+
+
+def _omlx_request(path, method="GET", body=None, timeout=8):
+    """Call the oMLX API with the inference key. Returns (ok, data|error)."""
+    import urllib.request
+    base, key, enabled = _omlx_cfg()
+    if not enabled:
+        return False, {"error": "oMLX disabled in sparkdash config"}
+    url = base + path
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Authorization", f"Bearer {key}")
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        raw = urllib.request.urlopen(req, timeout=timeout).read().decode()
+        return True, (json.loads(raw) if raw else {})
+    except Exception as e:
+        return False, {"error": f"{type(e).__name__}: {e}"}
+
+
+def omlx_status():
+    """Top-level oMLX server status (mirrors the instances_status shape enough
+    for the dashboard to render it as a peer of the vllm instances)."""
+    base, _, enabled = _omlx_cfg()
+    if not enabled:
+        return {"enabled": False, "up": False, "base_url": base}
+    ok, st = _omlx_request("/api/status")
+    if not ok:
+        return {"enabled": True, "up": False, "base_url": base,
+                "error": st.get("error")}
+    return {
+        "enabled": True,
+        "up": True,
+        "base_url": base,
+        "version": st.get("version"),
+        "uptime_seconds": st.get("uptime_seconds"),
+        "models_discovered": st.get("models_discovered"),
+        "models_loaded": st.get("models_loaded"),
+        "models_loading": st.get("models_loading"),
+        "default_model": st.get("default_model"),
+        "loaded_models": st.get("loaded_models") or [],
+        "active_requests": st.get("active_requests"),
+        "waiting_requests": st.get("waiting_requests"),
+        "total_requests": st.get("total_requests"),
+        "avg_prefill_tps": st.get("avg_prefill_tps"),
+        "avg_generation_tps": st.get("avg_generation_tps"),
+        "cache_efficiency": st.get("cache_efficiency"),
+        "model_memory_used": st.get("model_memory_used"),
+        "model_memory_used_formatted": st.get("model_memory_used_formatted"),
+    }
+
+
+def omlx_models():
+    """Per-model load state from oMLX (/v1/models/status)."""
+    ok, data = _omlx_request("/v1/models/status")
+    if not ok:
+        return {"error": data.get("error"), "models": []}
+    out = []
+    for m in data.get("models", []):
+        out.append({
+            "id": m.get("id"),
+            "loaded": m.get("loaded"),
+            "is_loading": m.get("is_loading"),
+            "pinned": m.get("pinned"),
+            "engine_type": m.get("engine_type"),
+            "model_type": m.get("model_type"),
+            "estimated_size": m.get("estimated_size"),
+            "actual_size": m.get("actual_size"),
+        })
+    return {
+        "models": out,
+        "loaded_count": data.get("loaded_count"),
+        "model_count": data.get("model_count"),
+        "current_model_memory": data.get("current_model_memory"),
+    }
+
+
+def omlx_load(model_id):
+    return _omlx_request(f"/v1/models/{model_id}/load", method="POST",
+                         body={}, timeout=180)
+
+
+def omlx_unload(model_id):
+    return _omlx_request(f"/v1/models/{model_id}/unload", method="POST",
+                         body={}, timeout=30)
+
+
+# ---------------------------------------------------------------------------
 # Hugging Face Hub model search (proxy) + vllm-metal version/update
 # ---------------------------------------------------------------------------
 def hf_search(query, limit=25, mlx_only=True):
@@ -1280,6 +1390,10 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.startswith("/api/vllm-update-status"):
             with _update_lock:
                 self._send(200, json.dumps(dict(_update_state)))
+        elif self.path.startswith("/api/omlx/status"):
+            self._send(200, json.dumps(omlx_status()))
+        elif self.path.startswith("/api/omlx/models"):
+            self._send(200, json.dumps(omlx_models()))
         elif self.path.startswith("/api/hf/search"):
             from urllib.parse import urlparse, parse_qs
             q = parse_qs(urlparse(self.path).query)
@@ -1337,6 +1451,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, json.dumps({"error": "no such instance"}))
             ok, msg = (supervisor.start if action == "start" else supervisor.stop)(name)
             return self._send(200 if ok else 500, json.dumps({"ok": ok, "msg": msg}))
+        # /api/omlx/models/<id>/(load|unload)  — proxy oMLX model control
+        m = re.match(r"^/api/omlx/models/(.+)/(load|unload)$", self.path)
+        if m:
+            model_id, action = m.group(1), m.group(2)
+            ok, data = (omlx_load if action == "load" else omlx_unload)(model_id)
+            return self._send(200 if ok else 502,
+                              json.dumps({"ok": ok, **(data if isinstance(data, dict) else {"data": data})}))
         # /api/instances  (create)
         if self.path.rstrip("/") == "/api/instances":
             body = self._json_body()
@@ -1478,6 +1599,18 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .memlegend{display:flex;gap:24px;margin-top:10px;font-size:13px;color:var(--muted)}
   .memlegend .pip{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px}
   .vgrid{display:grid;grid-template-columns:repeat(8,1fr);gap:12px}
+  /* oMLX model rows */
+  .card.omlx .iname{color:var(--blue)}
+  .omlx-models{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+  .omlx-row{display:flex;align-items:center;gap:12px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+  .omlx-row .om-id{font-size:13px;font-family:ui-monospace,Menlo,monospace}
+  .omlx-row .om-sz{color:var(--muted);font-size:12px;margin-left:auto}
+  .omlx-b{font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:6px;background:#222;color:var(--muted)}
+  .omlx-b.loaded{background:rgba(118,185,0,.18);color:var(--green)}
+  .omlx-b.loading{background:rgba(224,169,61,.18);color:var(--amber)}
+  .obtn{border:1px solid var(--line);background:#222;color:var(--text);border-radius:7px;padding:5px 12px;font-size:12px;cursor:pointer}
+  .obtn.start:hover{border-color:var(--green);color:var(--green)}
+  .obtn.stop:hover{border-color:var(--red);color:var(--red)}
   .stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px}
   .stat .l{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
   .stat .n{font-size:22px;font-weight:700;margin-top:5px}
@@ -1656,6 +1789,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
 
   <!-- vLLM instances: one full-width panel per instance -->
   <div id="instpanels"></div>
+
+  <!-- oMLX server: status + per-model load control -->
+  <div id="omlxpanel"></div>
 
   <!-- Inference activity log -->
   <div class="card activity">
@@ -1866,6 +2002,72 @@ function renderInstancePanels(insts){
         <span class="istate">:${i.port} · ${state}${i.pid?" · pid "+i.pid:""}</span></div>
       ${stats}${mem}</div>`;
   }).join("");
+}
+
+// oMLX server panel: server status + per-model load/unload control. oMLX is a
+// separate native app (not a SparkDash child process) kept for its SSD-tiered
+// KV cache (large contexts the GDPR/fallback role needs). Polled from
+// /api/omlx/status + /api/omlx/models.
+let _omlxModels=[];
+async function renderOmlxPanel(){
+  const wrap=document.getElementById("omlxpanel");
+  if(!wrap) return;
+  let st;
+  try{ st=await (await fetch("/api/omlx/status",{cache:"no-store"})).json(); }
+  catch(e){ return; }
+  if(st && st.enabled===false){ wrap.innerHTML=""; return; }
+  const up = st && st.up;
+  const dot = up ? "var(--green)" : "var(--muted)";
+  const state = up ? "serving" : (st&&st.error?"unreachable":"down");
+  let stats="";
+  if(up){
+    const memF = st.model_memory_used_formatted || (st.model_memory_used?(st.model_memory_used/GB).toFixed(2)+" GB":"–");
+    stats=`<div class="vgrid">
+      <div class="stat"><div class="l">Loaded</div><div class="n">${st.models_loaded}<small>/${st.models_discovered}</small></div></div>
+      <div class="stat"><div class="l">Active</div><div class="n">${st.active_requests||0}</div></div>
+      <div class="stat"><div class="l">Waiting</div><div class="n">${st.waiting_requests||0}</div></div>
+      <div class="stat"><div class="l">Generation</div><div class="n">${(st.avg_generation_tps||0).toFixed(1)}<small> t/s</small></div></div>
+      <div class="stat"><div class="l">Prefill</div><div class="n">${(st.avg_prefill_tps||0).toFixed(1)}<small> t/s</small></div></div>
+      <div class="stat"><div class="l">Cache eff</div><div class="n">${((st.cache_efficiency||0)*100).toFixed(0)}<small> %</small></div></div>
+      <div class="stat"><div class="l">Model mem</div><div class="n" style="font-size:18px">${memF}</div></div>
+      <div class="stat"><div class="l">Uptime</div><div class="n" style="font-size:18px">${st.uptime_seconds?Math.floor(st.uptime_seconds/60)+"m":"–"}</div></div>
+    </div>`;
+  } else {
+    stats=`<div style="color:var(--muted);font-size:13px;padding:6px 0">${st&&st.error?("oMLX unreachable — "+st.error):"oMLX not running"}</div>`;
+  }
+  // model list with load/unload buttons (only when up)
+  let models="";
+  if(up){
+    try{ const md=await (await fetch("/api/omlx/models",{cache:"no-store"})).json(); _omlxModels=md.models||[]; }catch(e){}
+    if(_omlxModels.length){
+      models=`<div class="memhdr" style="margin-top:10px">Models <span style="color:#8a8a8a">(${st.default_model||""} = default · load/unload to manage memory)</span></div>
+      <div class="omlx-models">`+_omlxModels.map(m=>{
+        const sz = m.actual_size||m.estimated_size; const szTxt = sz?(sz/GB).toFixed(1)+"G":"";
+        const badge = m.loaded?`<span class="omlx-b loaded">loaded</span>`:(m.is_loading?`<span class="omlx-b loading">loading…</span>`:`<span class="omlx-b">idle</span>`);
+        const btn = m.loaded
+          ? `<button class="obtn stop" onclick="omlxAction('${m.id}','unload')">Unload</button>`
+          : `<button class="obtn start" onclick="omlxAction('${m.id}','load')">Load</button>`;
+        return `<div class="omlx-row"><span class="om-id">${m.id}</span>${badge}<span class="om-sz">${szTxt}</span>${btn}</div>`;
+      }).join("")+`</div>`;
+    }
+  }
+  wrap.innerHTML=`<div class="card vllm omlx">
+    <div class="ihdr"><span class="idot" style="background:${dot}"></span>
+      <span class="iname">oMLX</span>
+      <span class="imodel">${up?(st.default_model||""):""}</span>
+      <span class="istate">${(st.base_url||"").replace(/^https?:\/\//,"")} · ${state}${st.version?" · v"+st.version:""}</span></div>
+    ${stats}${models}</div>`;
+}
+
+async function omlxAction(modelId, action){
+  if(!confirm(`${action} oMLX model ${modelId}?`)) return;
+  try{
+    const r=await fetch(`/api/omlx/models/${encodeURIComponent(modelId)}/${action}`,{method:"POST",headers:authHeaders()});
+    if(r.status===401){ refreshAuthUI(); return; }
+    const j=await r.json();
+    if(!j.ok) alert(`${action} failed: ${j.error||JSON.stringify(j)}`);
+  }catch(e){ alert(`${action} error: ${e}`); }
+  renderOmlxPanel();
 }
 
 async function tick(){
@@ -2288,8 +2490,8 @@ const _hv=(location.hash||"").replace("#","");
 if(_hv==="settings") showPage("settings");
 else if(["processes","filesystems","resources"].includes(_hv)) switchView(_hv);
 
-tick(); tickActivity();
-setInterval(tick,2000); setInterval(tickActivity,3000);
+tick(); tickActivity(); renderOmlxPanel();
+setInterval(tick,2000); setInterval(tickActivity,3000); setInterval(renderOmlxPanel,4000);
 window.addEventListener("resize",()=>tick());
 </script>
 </body>
