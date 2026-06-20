@@ -3012,9 +3012,18 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 session._last_wiki_sync_at = now
                                 _wsid = sid
 
-                                def _auto_wiki(_s=_wsid):
+                                _mem_mode = int(getattr(session, "save_to_memory", 0) or 0)
+
+                                def _auto_wiki(_s=_wsid, _mode=_mem_mode):
                                     try:
                                         from engine import wiki_store as _wiki
+                                        # Auto mode (2): an LLM gate decides if the
+                                        # conversation is worth saving. On mode (1):
+                                        # always file. (Successor to the retired
+                                        # per-turn memory classifier.)
+                                        if _mode == 2 and not _wiki.wiki_worth_saving(_s):
+                                            print(f"[auto-wiki] {_s[:8]} gated: SKIP (not memorable)", flush=True)
+                                            return
                                         _wiki.wiki_from_chat(_s)
                                     except Exception as _e:
                                         print(f"[auto-wiki] {_s[:8]} failed: {_e}", flush=True)

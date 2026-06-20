@@ -43,6 +43,7 @@ _USE_CASE_LABELS = {
     "delegate_task": "Delegation",
     "ask_llm": "ask_llm-Tool",
     "auto_route_classify": "Auto-Routing-Klassifikation",
+    "wiki_gate": "Wiki-Auto-Gate (merken?)",
     "soul_chat": "Soul-Editor",
     "workflow": "Workflow",
     "studio": "Studio",

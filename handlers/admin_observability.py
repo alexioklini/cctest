@@ -923,6 +923,7 @@ class AdminObservabilityHandlers:
         ("next_prompt_model", "Nächster-Prompt-Vorschlag (leer = Chat-Modell)", "config", None),
         ("wiki_model", "Wiki (Tags/Zusammenfassung/Podcast/Merge)", "config", None),
         ("user_profile_model", "Nutzerprofil-Daemon", "config", None),
+        ("wiki_gate_model", "Wiki-Auto-Gate (Auto-Memory: merken?)", "config", None),
         ("studio_model", "Studio (Projekt-Outputs)", "config", None),
         ("audio_overview_model", "Audio Overview (Podcast-Skript)", "config", None),
         ("code_graph_model", "Code-Graph (Symbol-Zusammenfassungen)", "config", None),
@@ -959,6 +960,7 @@ class AdminObservabilityHandlers:
             "next_prompt_model": cfg.get("next_prompt_model", "") or "",
             "wiki_model": cfg.get("wiki_model", "") or "",
             "user_profile_model": cfg.get("user_profile_model", "") or "",
+            "wiki_gate_model": cfg.get("wiki_gate_model", "") or "",
             "studio_model": cfg.get("studio_model", "") or "",
             "audio_overview_model": cfg.get("audio_overview_model", "") or "",
             "code_graph_model": cfg.get("code_graph_model", "") or "",
@@ -1118,6 +1120,8 @@ class AdminObservabilityHandlers:
                 cfg["wiki_model"] = _validate_model(body["wiki_model"])
             if "user_profile_model" in body:
                 cfg["user_profile_model"] = _validate_model(body["user_profile_model"])
+            if "wiki_gate_model" in body:
+                cfg["wiki_gate_model"] = _validate_model(body["wiki_gate_model"])
             if "studio_model" in body:
                 cfg["studio_model"] = _validate_model(body["studio_model"])
             if "audio_overview_model" in body:

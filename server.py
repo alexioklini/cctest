@@ -3453,6 +3453,7 @@ def main():
     server_config["audio_overview_model"] = file_config.get("audio_overview_model", "") or ""
     server_config["code_graph_model"] = file_config.get("code_graph_model", "") or ""
     server_config["deep_research_model"] = file_config.get("deep_research_model", "") or ""
+    server_config["wiki_gate_model"] = file_config.get("wiki_gate_model", "") or ""
     server_config["auto_route"] = file_config.get("auto_route", {}) or {}
     server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}
     server_config["classification"] = file_config.get("classification", {}) or {}

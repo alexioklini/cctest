@@ -692,6 +692,87 @@ def upsert_from_source(scope, title, source_text, source, source_ref,
                        source_ref=source_ref, agent_id=agent_id)
 
 
+_WIKI_GATE_PROMPT = (
+    "You decide whether a conversation is worth saving to the user's long-term "
+    "knowledge wiki. Save it ONLY if it contains something durable and worth "
+    "recalling later: a fact about the user or their work, a stated preference, "
+    "a decision or plan, or a reference (a resource/tool/project/document). "
+    "Do NOT save pure small talk, greetings, one-off lookups with no lasting "
+    "value, or exchanges the assistant refused. "
+    "Reply with ONLY one word: SAVE or SKIP."
+)
+
+
+def wiki_worth_saving(session_id) -> bool:
+    """Auto-mode gate: should this conversation be auto-filed into the wiki?
+
+    A small LLM judges the whole session (SAVE/SKIP). Used ONLY by the chat
+    worker's Auto memory mode (save_to_memory == 2) — On mode (== 1) always
+    files. This is the wiki-era successor to the retired per-turn memory
+    classifier: per-SESSION (the wiki page is per-session) + wiki-aware.
+
+    Fail-OPEN (returns True) on any error/empty reply so a gate hiccup never
+    silently drops a conversation the user expected to be remembered.
+
+    Model: dedicated `wiki_gate_model` knob, else `_background_model_default`.
+    """
+    import brain as _brain
+    from server_lib.db import ChatDB
+    from handlers import sidecar_proxy
+
+    try:
+        msgs = ChatDB.mempalace_load_new_messages(session_id, 0) or []
+        parts = []
+        for m in msgs:
+            role = (m.get("role") or "").strip()
+            if role not in ("user", "assistant"):
+                continue
+            content = m.get("content")
+            text = content if isinstance(content, str) else str(content)
+            if text.strip():
+                parts.append(f"{role.upper()}: {text.strip()[:2000]}")
+        if not parts:
+            return False  # nothing to save
+        convo = "\n\n".join(parts)[:16000]
+
+        model = ""
+        try:
+            _sc = _brain._server_config() or {}
+            _gm = (_sc.get("wiki_gate_model") or "").strip()
+            if _gm and _brain._is_model_available(_gm):
+                model = _gm
+        except Exception:
+            pass
+        if not model:
+            model = _brain._background_model_default()
+        if not model:
+            return True  # no model to judge → fail open (file it)
+
+        try:
+            _m, (_c,), _deanon = _brain.gdpr_pick_model_for_background(
+                model, [convo], purpose="wiki_gate")
+            model = _m
+            convo = _c
+        except _brain.GDPRBlockedError:
+            return False  # blocked content → don't auto-file
+        except Exception:
+            pass
+
+        res = sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": convo}],
+            model=model, system_prompt=_WIKI_GATE_PROMPT,
+            session_id=session_id, cost_purpose="wiki_gate", max_tokens=8,
+        )
+        reply = (res.get("reply") or "").strip().lower()
+        if "<think>" in reply and "</think>" in reply:
+            reply = reply.split("</think>", 1)[1].strip()
+        # Look for SKIP explicitly; default to SAVE (fail open).
+        return "skip" not in reply.split()[:3] if reply else True
+    except Exception as e:
+        print(f"[wiki-gate] {str(session_id)[:8]} error: {e} — failing open (save)", flush=True)
+        return True
+
+
 def wiki_from_chat(session_id, turn_ids=None, scope=None):
     """Memorize a chat into the wiki: gather the selected turns (or all), LLM-
     organize them into a clean topic-titled page, and upsert by source_ref=
