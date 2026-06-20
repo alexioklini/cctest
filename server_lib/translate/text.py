@@ -156,7 +156,11 @@ def translate_text(text: str, target_lang: str, *,
     if tone:
         try:
             tcfg = brain.get_tool_config() or {}
-            rewrite_model = ((tcfg.get("refinement") or {}).get("model") or "").strip()
+            # Dedicated translation tone-rewrite model (v9.174.0), split from the
+            # prompt-refinement knob. Empty -> refinement.model -> translation model.
+            rewrite_model = ((tcfg.get("translation") or {}).get("rewrite_model") or "").strip()
+            if not rewrite_model:
+                rewrite_model = ((tcfg.get("refinement") or {}).get("model") or "").strip()
         except Exception:
             rewrite_model = ""
         rewrite_model = rewrite_model or chosen_model

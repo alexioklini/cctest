@@ -147,11 +147,14 @@ def _build_rewrite_chunk_system_prompt(lang: str, tone: str) -> str:
 
 
 def _resolve_rewrite_model(fallback: str) -> str:
-    """Prefer refinement model for tone rewrites; fall back to translation model."""
+    """Tone-rewrite model: dedicated translation.rewrite_model (v9.174.0) →
+    refinement.model → the passed translation-model fallback."""
     try:
         import brain
         tcfg = brain.get_tool_config() or {}
-        m = ((tcfg.get("refinement") or {}).get("model") or "").strip()
+        m = ((tcfg.get("translation") or {}).get("rewrite_model") or "").strip()
+        if not m:
+            m = ((tcfg.get("refinement") or {}).get("model") or "").strip()
         if m:
             return m
     except Exception:
