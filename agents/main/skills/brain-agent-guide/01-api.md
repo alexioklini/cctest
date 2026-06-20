@@ -505,7 +505,8 @@ Once a feedback row exists, user and admin exchange short one-line messages
   `installed` is the pip-install date (dist-info RECORD mtime), NOT a live PyPI
   check. Powers Settings → Allgemein → **Bibliotheken**.
 - `GET /v1/services/models` — admin: every service-model slot (default,
-  chat-summary, fan-out, KG-extraction, TTS, transcribe) + OCR, each with a
+  chat-summary, **classifier** (Prompt-Klassifikation/Auto-Routing), fan-out,
+  KG-extraction, TTS, transcribe) + OCR, each with a
   resolve status (`ok`/`unset`/`missing`/`disabled`) + the dropdown option
   lists. Also returns a `conversion` block: the per-file-type extractor
   **matrix** (`{ext, markitdown, own_extractor}`) + `markitdown_available` +

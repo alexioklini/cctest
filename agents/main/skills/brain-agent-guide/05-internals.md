@@ -116,9 +116,13 @@ Smart (Cloud) but keeps Smart (Lokal) (its pool already guarantees a local pick)
 shim returning only the purpose string):
 - `keywords` — regex keyword heuristics (`classify_task_purpose`); zero cost/latency.
 - `llm` — a **structured** LLM analysis (`classify_task_structured`, via
-  `sidecar_proxy.background_call`, `max_tokens=200`, 25s timeout) on the
-  `chat_summary_model` if set (Settings → Server → Zusammenfassungen), else the
-  cheapest/local model; **falls back to keywords** on None/error/timeout.
+  `sidecar_proxy.background_call`, `max_tokens=200`, 25s timeout) on the model
+  `_resolve_classifier_model()` picks: the dedicated `classifier_model` knob if
+  set+enabled (Settings → Service-Modelle → **Prompt-Klassifikation**), else
+  `chat_summary_model`, else the cheapest/local model; **falls back to keywords**
+  on None/error/timeout. (The split lets the classifier run on a fast/accurate
+  cloud model while summaries stay on a local model — same-knob meant flipping
+  one moved both.)
 - `hybrid` — keywords first, structured LLM only when keywords find no strong signal.
 
 The structured analysis returns JSON `{task_types[], tools[], complexity,

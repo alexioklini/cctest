@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.163.8"
-VERSION_DATE = "2026-06-18"
+VERSION = "9.164.0"
+VERSION_DATE = "2026-06-19"
 CHANGELOG = [
+    ("9.164.0", "2026-06-19", "feat(models): eigenes Modell-Setting fuer die Prompt-Klassifikation (Auto-Routing), getrennt vom Chat-Zusammenfassungsmodell. PROBLEM: _resolve_classifier_model() las bisher NUR chat_summary_model — derselbe Knopf trieb den Auto-Route-Promptklassifikator UND die Chat-Synopse (+ Wiki-Tagging + Profil-Daemon). Wer den Klassifikator auf ein anderes Modell legen wollte (Bench-Ergebnis: cloud mistral-small klassifiziert schneller UND akkurater — 100% memory-routing @0.55s vs lokal Qwen-7B 100%@1.82s, Qwen-3B 85%@1.10s), zog damit zwangslaeufig die Zusammenfassung mit um. FIX: neuer optionaler Top-Level-Knopf classifier_model; _resolve_classifier_model() prueft ihn ZUERST (bekannt+enabled), faellt sonst auf chat_summary_model und dann auf das guenstigste/lokale Modell zurueck (Default-Verhalten unveraendert, wenn nie gesetzt). Verdrahtet an allen Stellen: Boot-Loader (server.py seedet server_config['classifier_model']), Setter /v1/services/server (eigener validierter Block) UND der unified Service-Modelle-Panel (/v1/services/models: neuer Slot 'Prompt-Klassifikation (Auto-Routing)' zwischen Chat-Zusammenfassung und Fan-out — Read+Write+GUI-Render automatisch ueber die Slot-Registry). LIVE so gesetzt: classifier_model=CLIProxyAPI/mistral-small-latest, chat_summary_model=Lokal-M4/Qwen2.5-7B-Instruct-4bit — Klassifikator wieder auf Cloud, Zusammenfassung/Wiki/Profil zurueck auf den lokalen M4-7B (frueheres Verhalten wiederhergestellt). py_compile OK (brain.py + beide Handler + server.py); Service-Modelle-GET zeigt beide Slots status=ok. Neustart noetig (Boot-Loader liest classifier_model)."),
     ("9.163.8", "2026-06-18", "fix(closet-regen: haengender LLM-HTTP-Call legte den MemPalace-Daemon lahm): nach Abschluss der KG-Extraktion blieb der project-sync-Run fuer immer in 'running' — der Thread haing 30+ min in sock_recv (resp.read()) im Closet-Regen-LLM-Call; der generische mempalace-miner blockierte dahinter am _palace_write_lock. URSACHE: closet_llm.py nutzt urlopen(timeout=60), aber dieser Timeout begrenzt nur die LEERLAUF-Luecken zwischen Socket-Ops — CLIProxyAPI trickelt SSE/Keepalive-Bytes, die den Per-Op-Timer staendig zuruecksetzen, sodass resp.read() bei stehendem Upstream NIE abbricht. FIX (VENV-PATCH, [[project_mempalace_venv_patches]] Patch 4, gitignored → nach jedem mempalace-Upgrade neu): harte Wall-Clock-Deadline HTTP_TOTAL_DEADLINE_S=90 — ein threading.Timer schliesst den Response-Socket zwangsweise, der blockierte read() wirft sofort, die bestehende 3-fach-Retry-/Return-Logik greift. Gleiche Klasse wie der PDF-Subprozess-Timeout-Fix: ein blockierender Call OHNE erzwungene Gesamt-Deadline verkeilt einen Thread, den Python nicht killen kann → Recovery brauchte einen Neustart. KG-LLM-Pfad (ueber sidecar background_call, timeout_s=1800) hat eine endliche Decke, geringeres Risiko, NICHT gepatcht. Daemon erholt sich jetzt selbst statt zu verkeilen. Neustart noetig (raeumt den haengenden Socket)."),
     ("9.163.7", "2026-06-18", "fix(project-sync: KG-Fortschritt zeigte keine echte Zahl/kein ETA): die KG-Phase zeigte nur 'KG-Extraktion' und bewegte sich sichtbar nur, wenn ein Chunk neue Tripel lieferte — bei 0-Tripel-Chunks stand sie scheinbar still, ohne X/Total und ohne ETA. URSACHE: der Top-Level-Live-Zaehler bekam kg_done=_kg_chunks_done (PRO Dokument, je _run_kg_for-Aufruf auf 0 zurueckgesetzt) und kg_total blieb 0. FIX (server_daemons.py): projekt-weiter MONOTONER Zaehler — vor der KG-Schleife kg_total=_count_wing_drawers_total(wing) + kg_started_at; ein kg_done_base akkumuliert fertige Drawer ueber Dokumente HINWEG, der Per-Chunk-Callback addiert das laufende Doc-Delta obendrauf (zaehlt also auch bei 0 Tripeln weiter). FRONTEND (panels_project_sync.js): KG-Zweig zeigt 'KG-Extraktion X/Total · ETA Ym'; ETA nutzt kg_started_at (akzeptiert Epoch-Float ODER ISO), Schwelle 3%. Indexierungs-Label zeigt 'Dokumente'. js_gate PASS (globals unveraendert; smoke gruen). py_compile OK. Greift beim naechsten Neustart + Frontend-Refresh."),
     ("9.163.6", "2026-06-18", "fix(project-sync: KG startete nach dem Mining minutenlang nicht — 258x Full-Wing-Scan dazwischen): nach Abschluss des Minings (mining=547/547) blieb der Sync-Run minuten- bis >12min in 'running' zwischen dem 'indexing'- und dem 'kg'-Schritt haengen, KG-Cursor eingefroren, kein neuer kg_extraction_log-Run. URSACHE: die per-Dokument-Drawer-Zaehlschleife rief _count_wing_drawers_by_source EINMAL PRO DOKUMENT (258x) auf, und jede dieser Funktionen macht ein VOLLES col.get(where=wing, include=metadatas) + Python-Filter — auf einem 6994-Drawer-Wing also ~1.8 Mio Metadaten-Zeilen aus Qdrant, bevor die KG-Schleife ueberhaupt erreicht wird (verschaerft durch den parallel laufenden generischen mempalace-miner, der Qdrant mit Hallway-/Tunnel-Rebuilds belastet). Der Kommentar nahm 'wings are typically small' an — hier falsch. FIX: NEU _count_wing_drawers_by_prefixes(wing, prefixes) holt die Wing-source_files EINMAL und zaehlt alle Praefixe gegen diesen einen Snapshot (258 Fetches → 1). Zaehlungen sind reine Anzeige (gaten KG nie), daher Fallback auf 0 bei Fehler. KG startet damit unmittelbar nach dem Mining. py_compile OK. Server-Neustart noetig, damit der Fix greift."),
@@ -10103,17 +10104,14 @@ _TASK_TOOL_GROUPS: dict[str, tuple[str, ...]] = {
 _TASK_TOOLS = tuple(_TASK_TOOL_GROUPS.keys())
 
 _STRUCTURED_CLASSIFY_SYSTEM = (
-    "You are a task analyzer for an AI agent router. Read the user's message and "
-    "return a SINGLE JSON object (no prose, no markdown fence) describing the task "
-    "so a controller can pick the best model and tools.\n\n"
-    "Schema (all fields required):\n"
-    '{\n'
-    '  "task_types": [string, ...],   // 1-3 from the TASK TYPES list, most important first\n'
-    '  "tools": [string, ...],         // from the TOOLS list — EVERY tool the task plausibly needs (see WHEN rules)\n'
-    '  "complexity": "low"|"medium"|"high",\n'
-    '  "reasoning": string             // <=12 words, why\n'
-    '}\n\n'
-    "TASK TYPES (use these exact words):\n"
+    # Forced-tool mode: the `route` tool's input_schema already enforces the JSON
+    # shape + enums, so this prompt carries ONLY the semantic steering (which
+    # task_types / which tools). The old JSON-mechanics prose (schema block,
+    # "return only JSON", the reasoning field) was redundant under tool_choice
+    # and — on the decode-bound local M4 — pure latency. Pick task_types and
+    # tools from the lists below; set complexity low|medium|high.
+    "You are a task analyzer for an AI agent router. Classify the user's message.\n\n"
+    "TASK TYPES (1-3, most important first; use these exact words):\n"
     "  coding        — write/fix/debug/refactor code, scripts, configs\n"
     "  math          — calculation, numeric/statistical reasoning, proofs\n"
     "  research      — gather/compare information from many sources, investigate\n"
@@ -10166,25 +10164,32 @@ _STRUCTURED_CLASSIFY_SYSTEM = (
     '  "Refactor this function to be async" → tools:["files","code_graph"]\n'
     '  "Erstelle ein Bild einer Berglandschaft im Sonnenuntergang" → tools:["image_gen"]\n'
     '  "Erstelle ein Organigramm der Konzernstruktur aus den Unterlagen" → tools:["memory","diagram"]\n'
-    '  "Erstelle die Diagramme nochmal neu, diesmal als PNG" → tools:["diagram"]  // chart file = render_diagram, NOT image_gen\n\n'
-    "Return ONLY the JSON object."
+    '  "Erstelle die Diagramme nochmal neu, diesmal als PNG" → tools:["diagram"]  // chart file = render_diagram, NOT image_gen'
 )
 
 
 def _resolve_classifier_model() -> str:
-    """Pick the model used for background classification calls.
+    """Pick the model used for the auto-route prompt classifier.
 
-    Reuse the chat-summary model when set (the "small background model" knob,
-    Settings -> Server -> Zusammenfassungen) — one setting for all tiny
-    background calls. Unset/disabled -> cheapest/local (the prior default).
+    Own knob `classifier_model` wins when set+enabled (Settings -> Server ->
+    Zusammenfassungen, the "Prompt-Klassifikation" field). Falls back to
+    `chat_summary_model` (the shared "small background model" knob) so existing
+    installs that never set a classifier model keep the old behaviour. Both
+    unset/disabled -> cheapest/local (the prior default).
+
+    The two were split because the classifier and the chat-summary task have
+    different sweet spots: the classifier wants the fastest+most-accurate small
+    model (cloud mistral-small won the bench), while the summary can stay on the
+    local M4 7B. Same-knob meant flipping one moved both.
     """
     try:
         _sc = _server_config()
-        _csm = (_sc.get("chat_summary_model") or "").strip()
-        # Must be a KNOWN model (missing -> {} -> reject) AND enabled.
-        _mcfg = (_models_config or {}).get(_csm)
-        if _csm and _mcfg and _mcfg.get("enabled", True):
-            return _csm
+        for _key in ("classifier_model", "chat_summary_model"):
+            _m = (_sc.get(_key) or "").strip()
+            # Must be a KNOWN model (missing -> {} -> reject) AND enabled.
+            _mcfg = (_models_config or {}).get(_m)
+            if _m and _mcfg and _mcfg.get("enabled", True):
+                return _m
     except Exception:
         pass
     return _resolve_auto_model_tiered(None)  # cheapest/local
@@ -10264,17 +10269,22 @@ def classify_task_structured(message: str) -> dict | None:
                         "items": {"type": "string", "enum": sorted(_TASK_TOOL_GROUPS.keys())},
                     },
                     "complexity": {"type": "string", "enum": ["low", "medium", "high"]},
-                    "reasoning": {"type": "string"},
                 },
                 "required": ["task_types", "tools", "complexity"],
             },
         }
+        # No `reasoning` field: it was only surfaced in the auto-route badge,
+        # never used for routing, and on the local M4 model the free-text string
+        # roughly DOUBLED the decode tokens (48→24) and latency (3.2s→1.85s) —
+        # decode is the bottleneck on a 7B over the M4's ~120GB/s. max_tokens
+        # capped tight (valid output is <24 tokens) so a runaway can't stall the
+        # turn the user is waiting on.
         _res = sidecar_proxy.background_call(
             messages=[{"role": "user", "content": message[:4000]}],
             model=classifier_model,
             system_prompt=_STRUCTURED_CLASSIFY_SYSTEM,
             cost_purpose="auto_route_classify",
-            max_tokens=200,
+            max_tokens=64,
             max_rounds=1,
             timeout_s=25.0,
             forced_tool=_route_tool,

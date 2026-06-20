@@ -532,6 +532,35 @@ class AdminConfigHandlers:
                 return
             result["chat_summary_model"] = csm
 
+        # --- Classifier model ---
+        # The auto-route PROMPT classifier (forced-tool routing JSON). Split
+        # from chat_summary_model so the fast/accurate small model that wins the
+        # classify bench (cloud mistral-small) can differ from the summary model
+        # (local M4 7B). Empty = fall back to chat_summary_model, then auto-pick.
+        if "classifier_model" in body:
+            clm = str(body["classifier_model"] or "").strip()
+            if clm:
+                mcfg = (engine._models_config or {}).get(clm) or {}
+                if not mcfg.get("enabled"):
+                    self._send_json({"error": f"classifier_model: unknown or disabled model '{clm}'"}, 400)
+                    return
+            server_config["classifier_model"] = clm
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                if clm:
+                    config["classifier_model"] = clm
+                else:
+                    config.pop("classifier_model", None)
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            result["classifier_model"] = clm
+
         # --- Auto-route classifier mode ---
         # How the composer's "Auto" model picker (and fan-out's
         # background_task_model="auto") classifies intent: keyword heuristics

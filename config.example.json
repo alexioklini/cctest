@@ -55,6 +55,22 @@
       ],
       "is_local": false,
       "_comment": "Direct Mistral REST for image generation tool (api.mistral.ai/v1/agents+conversations+files). Not used for chat — CLIProxyAPI handles that."
+    },
+    "Lokal-M4": {
+      "base_url": "http://192.168.1.214:8012/v1",
+      "type": "anthropic",
+      "api_key": "YOUR_API_KEY",
+      "default_model": "",
+      "max_concurrent": 8,
+      "api_keys": [
+        {
+          "name": "default",
+          "key": "YOUR_API_KEY",
+          "usage": "preferred"
+        }
+      ],
+      "is_local": true,
+      "_comment": "vllm-metal on Mac mini M4 (192.168.1.214:8012). Serves native Anthropic /v1/messages; sidecar talks to it DIRECTLY (no CLIProxyAPI). Local bg-task model = Qwen2.5-7B-Instruct-4bit. max_concurrent 8 per the c=8 sweep. launchd: com.brain-agent.vllm-metal on the M4."
     }
   },
   "ocr": {
@@ -2434,6 +2450,125 @@
       "provider": "mistral-direct",
       "profile": "balanced",
       "_caps_canonical": true
+    },
+    "diffusiongemma-26B-A4B-it-OptiQ-4bit": {
+      "enabled": true,
+      "shortname": "diffusiongemma-26B-A4B-it-OptiQ-4bit",
+      "display_name": "diffusiongemma-26B-A4B-it-OptiQ-4bit",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true
+    },
+    "gemma-4-12B-it-OptiQ-4bit": {
+      "enabled": true,
+      "shortname": "gemma-4-12B-it-OptiQ-4bit",
+      "display_name": "gemma-4-12B-it-OptiQ-4bit",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true
+    },
+    "gemma-4-12B-it-qat-OptiQ-4bit": {
+      "enabled": true,
+      "shortname": "gemma-4-12B-it-qat-OptiQ-4bit",
+      "display_name": "gemma-4-12B-it-qat-OptiQ-4bit",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true
+    },
+    "Lokal-M4/Qwen2.5-7B-Instruct-4bit": {
+      "enabled": true,
+      "shortname": "Qwen2.5-7B (M4)",
+      "display_name": "Qwen2.5-7B Instruct 4bit (M4 local)",
+      "icon": "🐎",
+      "priority": 34,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {
+        "temperature": 0.2,
+        "top_p": 0.85
+      },
+      "raw_formats": [],
+      "provider": "Lokal-M4",
+      "base_model_id": "Qwen2.5-7B-Instruct-4bit",
+      "profile": "speed",
+      "is_local": true,
+      "warmup": false,
+      "_caps_canonical": true,
+      "description": "Lokales Hintergrund-Modell (vllm-metal auf dem M4) — Kurz-Tasks: Refine, Soul-Chat, Memory-Klassifikation. Tool-Parser hermes.",
+      "parallel_tool_calls": false
+    },
+    "Qwen2.5-7B-Instruct-4bit": {
+      "enabled": true,
+      "shortname": "Qwen2.5-7B-Instruct-4bit",
+      "display_name": "Qwen2.5-7B-Instruct-4bit",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Lokal-M4",
+      "profile": "speed",
+      "_caps_canonical": true
     }
   },
   "nodes": {},
@@ -2484,7 +2619,7 @@
       "closet_content_head_chars": 5000,
       "classifier": {
         "enabled": true,
-        "model": "CLIProxyAPI/mistral-medium-3.5",
+        "model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit",
         "categories_to_file": [
           "fact",
           "preference",
@@ -4037,7 +4172,7 @@
     "precision": "**PRECISION DISCIPLINE — no plausible-sounding filler**:\nWhen the retrieved source does not give a concrete value (interval, frequency, threshold, count, deadline, length, duration), write `nicht spezifiziert` — never substitute a plausible default like 'regelmäßig', 'häufig', 'sofort', 'kürzer', 'mindestens X Zeichen', 'alle 12 Monate', 'mindestens jährlich'. If you use any qualifying adverb or comparative ('regelmäßig', 'häufiger', 'kürzer', 'sofort', 'zeitnah', 'angemessen'), the very next characters must be a wörtliches Zitat (`> \"...\"`) from the retrieved text proving the source actually says that. No quote → drop the qualifier. Typical phrasing remembered from training data is NOT a source.",
     "citation": "**CITATION DISCIPLINE — per-claim, not per-block**:\nEVERY factual sentence and EVERY bullet point that came from a retrieved source must carry its OWN reference right after the claim, in the form [Quelle: <kurzer Quellenname> — \"<wörtliches Zitat 10-25 Wörter>\"]. One citation at the end of a 5-bullet list is INSUFFICIENT — the reader cannot tell which bullet came from which source, and uncited bullets are where paraphrase drift and fabrication slip in. Treat each bullet as an independent claim that must stand on its own with its own quote. A bullet with only a citation and no claim, or a claim with no citation, is not correct. This applies to PROSE too: a summary/FAZIT sentence that packs several facts (\"Bilanzsumme +5,8%, Barreserve +43%, CET1 28,13%\") needs a citation for EACH fact, not one at the end of the paragraph — split it or append a bracket per figure ([Quelle: … — \"+5,8%-quote\"] [Quelle: … — \"+43%-quote\"]). Every number you state must be traceable to a verbatim quote.\nTABLES are NOT exempt — a table is a dense block of claims, and one citation under the whole table is INSUFFICIENT for the same reason a single citation under a bullet list is. When you present retrieved data as a markdown table, add a final \"Quelle\" column and put the per-row reference ([Quelle: <name> — \"<wörtliches Zitat>\"]) in EVERY row whose figures came from a source. If several rows share one verbatim quote (e.g. a whole balance-sheet table copied from one passage), cite that quote in the first row and write \"s.o.\" (siehe oben) in the following rows' Quelle cells so it is explicit they share the source — never leave a data row's Quelle cell empty. Every relevant column's figures must be traceable: if the 2025 and 2024 columns come from different passages, the row's Quelle cell carries both brackets. A derived/computed column (e.g. a Δ you calculated) needs no quote — mark its origin once in a note under the table (\"Δ = eigene Berechnung\").\nIf you cannot find a verbatim quote in the retrieved source that supports a specific claim — DELETE that claim. Do not write claims you cannot cite. A shorter, fully-cited answer is always preferable to a longer answer with uncited statements.\nThe verbatim quote (10-25 words, copied EXACTLY from the retrieved text) is mandatory — it lets the user find and verify the statement in the original. Without a quote the citation is unverifiable.\nSource naming: use a short, recognisable source name — a document's filename (without any path or extracted-companion suffix) or, for a web source, its title or domain. Add a locator only when it is genuinely present in the retrieved text (e.g. `Page N`, `Slide N`, `Sheet \"Name\"`, or a section number the source itself prints). NEVER invent paragraph or section numbers — a locator you did not see in the text is a fabrication. If no clean locator exists, the verbatim quote alone is sufficient.\nMultiple sources for one claim → repeat the bracket: [Quelle: A — \"...\"] [Quelle: B — \"...\"]."
   },
-  "chat_summary_model": "CLIProxyAPI/mistral-small-latest",
+  "chat_summary_model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit",
   "classification": {
     "keywords": {
       "internal": [
@@ -4108,5 +4243,6 @@
   "auto_route": {
     "classifier_mode": "llm"
   },
-  "background_task_model": "CLIProxyAPI/mistral-small-latest"
+  "background_task_model": "CLIProxyAPI/mistral-small-latest",
+  "classifier_model": "CLIProxyAPI/mistral-small-latest"
 }

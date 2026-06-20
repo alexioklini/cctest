@@ -919,6 +919,7 @@ class AdminObservabilityHandlers:
     _SERVICE_MODEL_SLOTS = [
         ("default_model", "Server-Standardmodell", "config", None),
         ("chat_summary_model", "Chat-Zusammenfassung", "config", None),
+        ("classifier_model", "Prompt-Klassifikation (Auto-Routing)", "config", None),
         ("background_task_model", "Fan-out-Hintergrundmodell", "config", None),
         ("kg_extraction_model", "KG-Extraktion", "config", None),
         ("tts_model", "Text-to-Speech", "tools", "tts"),
@@ -946,6 +947,7 @@ class AdminObservabilityHandlers:
         values = {
             "default_model": cfg.get("default_model", "") or "",
             "chat_summary_model": cfg.get("chat_summary_model", "") or "",
+            "classifier_model": cfg.get("classifier_model", "") or "",
             "background_task_model": cfg.get("background_task_model", "") or "",
             "kg_extraction_model": kg.get("extraction_model", "") or "",
             "tts_model": (tool_cfg.get("text_to_speech") or {}).get("default_model", "") or "",
@@ -1092,6 +1094,8 @@ class AdminObservabilityHandlers:
                 cfg["default_model"] = _validate_model(body["default_model"])
             if "chat_summary_model" in body:
                 cfg["chat_summary_model"] = _validate_model(body["chat_summary_model"])
+            if "classifier_model" in body:
+                cfg["classifier_model"] = _validate_model(body["classifier_model"])
             if "background_task_model" in body:
                 cfg["background_task_model"] = _validate_model(body["background_task_model"])
             if "kg_extraction_model" in body:
