@@ -3150,6 +3150,20 @@ _PROFILE_SYSTEM_PROMPT = (
     "You maintain a user-context profile that an AI assistant reads at the "
     "start of every chat. Output ONLY the profile in Markdown, nothing else "
     "— no preface, no commentary, no JSON, no code fences.\n\n"
+    # GROUNDING is stated FIRST and emphatically: small local models (M4 7B)
+    # otherwise pad sections with plausible-sounding but invented background
+    # ("years of experience", "deep expertise in …") that was never said.
+    # Leading with this + the explicit CAPTURE clause keeps the local model
+    # grounded AND stops it dropping stated preferences (verified 5/5 clean on
+    # M4 7B; cloud was already correct and is unchanged).
+    "GROUNDING (most important): Use ONLY facts the user actually stated in the "
+    "chat samples. Do NOT invent background, experience, expertise, or history "
+    "that was not explicitly said. If a section has no explicit evidence, its "
+    "body MUST be exactly `_(none)_`. Inventing one fact makes the whole "
+    "profile wrong.\n"
+    "CAPTURE: Any preference, decision, or working style the user explicitly "
+    "states ('I prefer X', 'always do Y') IS an explicit fact — record it "
+    "(usually under Work context and/or Long-term background).\n\n"
     + _PROFILE_SECTION_INSTRUCTIONS +
     "\nHARD RULES:\n"
     "- Never invent facts. If you don't have evidence, leave the section as "
