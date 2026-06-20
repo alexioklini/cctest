@@ -339,6 +339,21 @@ _STATS_RE = re.compile(
     r"GPU KV cache usage:\s*([\d.]+)%.*?"
     r"Prefix cache hit rate:\s*([\d.]+)%")
 
+# vLLM access line: `127.0.0.1:55827 - "POST /v1/chat/completions HTTP/1.1" 200 OK`
+_ACCESS_RE = re.compile(
+    r'(\d+\.\d+\.\d+\.\d+):\d+ - "POST (/v1/(?:chat/completions|completions))')
+
+# pending client requests seen since the last stats line was recorded
+_pending_clients = []
+
+
+def _ip_label(ip):
+    """Human label for a client IP. 127.0.0.1 == local (SSH/self); any other
+    address is a LAN client — most likely the brain-agent server."""
+    if ip in ("127.0.0.1", "::1", "localhost"):
+        return "localhost (SSH/self)"
+    return f"brain-agent? ({ip})"
+
 
 def _parse_stats_line(line):
     m = _STATS_RE.search(line)
@@ -357,8 +372,9 @@ def _parse_stats_line(line):
 
 
 def _activity_tailer():
-    """Background thread: follow the vLLM log, record non-idle engine-stats
-    events to memory + a rolling JSONL file (with current GPU memory)."""
+    """Background thread: follow the vLLM log. ONE row per actual LLM call
+    (a POST /v1/chat/completions or /v1/completions access line), enriched with
+    the engine throughput from the next stats sample. Persisted to JSONL."""
     # seed from existing activity file so the panel isn't empty after restart
     try:
         with open(_ACTIVITY_FILE) as f:
@@ -369,6 +385,9 @@ def _activity_tailer():
                     pass
     except OSError:
         pass
+
+    # the call awaiting throughput enrichment from the next stats line
+    awaiting = None
 
     pos = 0
     try:
@@ -386,27 +405,40 @@ def _activity_tailer():
                     chunk = f.read()
                     pos = f.tell()
                 for line in chunk.splitlines():
-                    ev = _parse_stats_line(line)
-                    if not ev:
+                    # --- an actual LLM call: one row ---
+                    am = _ACCESS_RE.search(line)
+                    if am:
+                        ip, ep = am.group(1), am.group(2)
+                        wall = _run(["date", "+%m-%d %H:%M:%S"]).strip()
+                        ev = {
+                            "ts": wall,
+                            "client": _ip_label(ip),
+                            "ip": ip,
+                            "endpoint": ep,
+                            "gen_tps": 0.0, "prompt_tps": 0.0,
+                            "kv_cache": 0.0, "prefix_hit": 0.0,
+                            "gpu_mem_gb": round(gpu_stats()["alloc_mem"] / 1024**3, 2),
+                        }
+                        with _activity_lock:
+                            _activity.append(ev)
+                        try:
+                            with open(_ACTIVITY_FILE, "a") as wf:
+                                wf.write(json.dumps(ev) + "\n")
+                        except OSError:
+                            pass
+                        awaiting = ev   # enrich with throughput from next stats
                         continue
-                    # only record when something happened (skip idle zero rows,
-                    # but always keep the first row after activity to mark the end)
-                    busy = ev["running"] or ev["waiting"] or ev["gen_tps"] > 0 or ev["prompt_tps"] > 0
-                    if not busy:
-                        if _activity and _activity[-1].get("busy"):
-                            ev["busy"] = False
-                        else:
-                            continue
-                    else:
-                        ev["busy"] = True
-                    ev["gpu_mem_gb"] = round(gpu_stats()["alloc_mem"] / 1024**3, 2)
-                    with _activity_lock:
-                        _activity.append(ev)
-                    try:
-                        with open(_ACTIVITY_FILE, "a") as wf:
-                            wf.write(json.dumps(ev) + "\n")
-                    except OSError:
-                        pass
+                    # --- a stats line: enrich the most recent call's speed ---
+                    st = _parse_stats_line(line)
+                    if st and awaiting is not None:
+                        with _activity_lock:
+                            awaiting["gen_tps"] = max(awaiting["gen_tps"], st["gen_tps"])
+                            awaiting["prompt_tps"] = max(awaiting["prompt_tps"], st["prompt_tps"])
+                            awaiting["kv_cache"] = max(awaiting["kv_cache"], st["kv_cache"])
+                            awaiting["prefix_hit"] = st["prefix_hit"]
+                        # done enriching once the engine returns to idle
+                        if not (st["running"] or st["gen_tps"] > 0):
+                            awaiting = None
         except Exception:
             pass
         time.sleep(2)
@@ -535,6 +567,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
   .badge.run{background:#1f3a00;color:var(--green)}
   .badge.idle{background:#222;color:var(--muted)}
+  .cl{display:inline-block;padding:2px 7px;border-radius:5px;font-size:11px}
+  .cl.local{background:#16263a;color:#7fb3e0}
+  .cl.remote{background:#3a2a16;color:var(--amber)}
+  .cl.none{color:#555}
   footer{color:var(--muted);font-size:12px;text-align:center;padding:0 0 22px}
   @media(max-width:1100px){main{grid-template-columns:1fr}.vgrid{grid-template-columns:repeat(4,1fr)}}
 </style>
@@ -635,14 +671,14 @@ INDEX_HTML = r"""<!DOCTYPE html>
 
   <!-- Inference activity log -->
   <div class="card activity">
-    <h4>Inference Activity <span class="hint">(vLLM engine stats · newest first · logged to ~/sparkdash-activity.jsonl)</span></h4>
+    <h4>Inference Activity <span class="hint">(one row per LLM call · newest first · logged to ~/sparkdash-activity.jsonl)</span></h4>
     <div class="actlog">
       <table class="act">
         <thead><tr>
-          <th>Time</th><th>State</th><th>Gen t/s</th><th>Prompt t/s</th>
-          <th>Running</th><th>Waiting</th><th>KV %</th><th>Prefix %</th><th>GPU mem</th>
+          <th>Time</th><th>Client</th><th>Endpoint</th><th>Gen t/s</th><th>Prompt t/s</th>
+          <th>KV %</th><th>Prefix %</th><th>GPU mem</th>
         </tr></thead>
-        <tbody id="actbody"><tr class="idle"><td colspan="9">waiting for activity…</td></tr></tbody>
+        <tbody id="actbody"><tr class="idle"><td colspan="8">no LLM calls recorded yet</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -798,13 +834,14 @@ async function tickActivity(){
   try{ rows=await (await fetch("/api/activity",{cache:"no-store"})).json(); }
   catch(e){ return; }
   const body=document.getElementById("actbody");
-  if(!rows.length){ body.innerHTML='<tr class="idle"><td colspan="9">no activity recorded yet</td></tr>'; return; }
+  if(!rows.length){ body.innerHTML='<tr class="idle"><td colspan="8">no LLM calls recorded yet</td></tr>'; return; }
   body.innerHTML = rows.slice().reverse().map(r=>{
-    const cls = r.busy ? "busy" : "idle";
-    const badge = r.busy ? '<span class="badge run">running</span>' : '<span class="badge idle">idle</span>';
-    return `<tr class="${cls}"><td>${r.ts}</td><td>${badge}</td>`
+    const isLocal = r.ip==="127.0.0.1";
+    const cl = `<span class="cl ${isLocal?"local":"remote"}">${r.client}</span>`;
+    const ep = (r.endpoint||"").replace("/v1/","");
+    return `<tr class="busy"><td>${r.ts}</td><td style="text-align:left">${cl}</td>`
+      +`<td style="text-align:left;color:#8a8a8a">${ep}</td>`
       +`<td>${r.gen_tps.toFixed(1)}</td><td>${r.prompt_tps.toFixed(1)}</td>`
-      +`<td>${r.running}</td><td>${r.waiting}</td>`
       +`<td>${r.kv_cache.toFixed(1)}</td><td>${r.prefix_hit.toFixed(1)}</td>`
       +`<td>${r.gpu_mem_gb!=null?r.gpu_mem_gb.toFixed(1)+" GB":"—"}</td></tr>`;
   }).join("");
