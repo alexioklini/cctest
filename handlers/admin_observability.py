@@ -929,10 +929,13 @@ class AdminObservabilityHandlers:
         ("code_graph_model", "Code-Graph (Symbol-Zusammenfassungen)", "config", None),
         ("deep_research_model", "Deep Research (Recherche-Loop)", "config", None),
         ("translation_model", "Übersetzung", "tools", None),
+        ("translation_rewrite_model", "Übersetzung – Ton-Glättung", "tools", None),
+        ("translation_detect_fallback_model", "Übersetzung – Spracherkennung (LLM-Fallback)", "tools", None),
         ("background_task_model", "Fan-out-Hintergrundmodell", "config", None),
         ("kg_extraction_model", "KG-Extraktion", "config", None),
         ("tts_model", "Text-to-Speech", "tools", "tts"),
         ("transcribe_model", "Transkription (STT)", "tools", "audio"),
+        ("telegram_model", "Telegram-Frontend", "config-nested", None),
     ]
 
     def _service_models_read(self):
@@ -969,13 +972,17 @@ class AdminObservabilityHandlers:
             "kg_extraction_model": kg.get("extraction_model", "") or "",
             "tts_model": (tool_cfg.get("text_to_speech") or {}).get("default_model", "") or "",
             "transcribe_model": (tool_cfg.get("transcribe_audio") or {}).get("default_model", "") or "",
+            "telegram_model": (cfg.get("telegram") or {}).get("model", "") or "",
             "translation_model": (tool_cfg.get("translation") or {}).get("default_model", "") or "",
+            "translation_rewrite_model": (tool_cfg.get("translation") or {}).get("rewrite_model", "") or "",
+            "translation_detect_fallback_model": (tool_cfg.get("translation") or {}).get("detection_fallback_model", "") or "",
         }
         ocr = cfg.get("ocr") or {}
         ocr_block = {
             "engine": ocr.get("engine", "none"),
             "provider": ocr.get("provider", "") or "",
             "model": ocr.get("model", "") or "",
+            "local_vision_model": ocr.get("local_vision_model", "") or "",
         }
         return cfg, values, ocr_block
 
@@ -1128,6 +1135,8 @@ class AdminObservabilityHandlers:
                 cfg["audio_overview_model"] = _validate_model(body["audio_overview_model"])
             if "code_graph_model" in body:
                 cfg["code_graph_model"] = _validate_model(body["code_graph_model"])
+            if "telegram_model" in body:
+                cfg.setdefault("telegram", {})["model"] = _validate_model(body["telegram_model"])
             if "deep_research_model" in body:
                 cfg["deep_research_model"] = _validate_model(body["deep_research_model"])
             if "background_task_model" in body:
@@ -1154,6 +1163,8 @@ class AdminObservabilityHandlers:
                     ocr["provider"] = p
                 if "model" in o:
                     ocr["model"] = str(o["model"] or "").strip()
+                if "local_vision_model" in o:
+                    ocr["local_vision_model"] = str(o["local_vision_model"] or "").strip()
 
             # Conversion matrix: which extensions are markitdown-first, + the
             # tool-result budget knobs. Validated against the formats that have
@@ -1191,6 +1202,17 @@ class AdminObservabilityHandlers:
                 tr = dict((_brain.get_tool_config().get("translation") or {}))
                 tr["default_model"] = _validate_model(body["translation_model"])
                 tool_updates["translation"] = tr
+            if "translation_rewrite_model" in body:
+                tr2 = dict(tool_updates.get("translation")
+                           or (_brain.get_tool_config().get("translation") or {}))
+                tr2["rewrite_model"] = _validate_model(body["translation_rewrite_model"])
+                tool_updates["translation"] = tr2
+            if "translation_detect_fallback_model" in body:
+                tr3 = dict(tool_updates.get("translation")
+                           or (_brain.get_tool_config().get("translation") or {}))
+                # Empty is valid (lingua-only detection, no LLM fallback).
+                tr3["detection_fallback_model"] = _validate_model(body["translation_detect_fallback_model"])
+                tool_updates["translation"] = tr3
 
             with open(config_path, "w") as f:
                 json.dump(cfg, f, indent=2)

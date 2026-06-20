@@ -2347,8 +2347,16 @@ async function _genTab_service_models(C) {
           <input type="text" class="form-input" id="svc-ocr-model" value="${esc(ocr.model || '')}" placeholder="z.B. mistral-ocr-latest"${dis}>
         </div>
         <div style="font-size:11px;color:var(--text-400);margin-left:210px;margin-top:-4px">
-          <b>none</b>: OCR aus. <b>mistral_ocr</b>: Cloud-OCR-Endpoint. <b>local_vision</b>: lokales Vision-LLM
-          (Modell unter <code>ocr.local_vision_model</code>). <b>auto</b>: Cloud zuerst, bei Fehler/PII lokal.</div>
+          <b>none</b>: OCR aus. <b>mistral_ocr</b>: Cloud-OCR-Endpoint. <b>local_vision</b>: lokales Vision-LLM.
+          <b>auto</b>: Cloud zuerst, bei Fehler/PII lokal.</div>
+      </div>
+      <div id="svc-ocr-local" style="${G('10px')}">
+        <div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center">
+          <label style="font-size:12px;color:var(--text-300)">Lokales Vision-Modell</label>
+          <input type="text" class="form-input" id="svc-ocr-local-vision-model" value="${esc(ocr.local_vision_model || '')}" placeholder="z.B. gemma-4-26B-A4B-it-MLX-4bit"${dis}>
+        </div>
+        <div style="font-size:11px;color:var(--text-400);margin-left:210px;margin-top:-4px">
+          Genutzt bei Engine <b>local_vision</b> oder als lokaler Fallback bei <b>auto</b>.</div>
       </div>
     </div>
 
@@ -2415,8 +2423,11 @@ function _svcOcrEngineToggle() {
   const eng = document.getElementById('svc-ocr-engine');
   const cloud = document.getElementById('svc-ocr-cloud');
   if (!eng || !cloud) return;
-  // provider/model only relevant for cloud OCR engines.
+  // provider/model only relevant for cloud OCR engines; local-vision model
+  // for the local_vision / auto engines.
   cloud.style.display = (eng.value === 'mistral_ocr' || eng.value === 'auto') ? '' : 'none';
+  const local = document.getElementById('svc-ocr-local');
+  if (local) local.style.display = (eng.value === 'local_vision' || eng.value === 'auto') ? '' : 'none';
 }
 
 async function saveServiceModels() {
@@ -2432,6 +2443,7 @@ async function saveServiceModels() {
     engine: document.getElementById('svc-ocr-engine')?.value || 'none',
     provider: document.getElementById('svc-ocr-provider')?.value || '',
     model: document.getElementById('svc-ocr-model')?.value || '',
+    local_vision_model: document.getElementById('svc-ocr-local-vision-model')?.value || '',
   };
   // Conversion matrix: which extensions are markitdown-first + the budget knobs.
   const mdExts = Array.from(document.querySelectorAll('.svc-conv-md:checked'))
