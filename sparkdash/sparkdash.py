@@ -1025,8 +1025,11 @@ _STATS_RE = re.compile(
     r"Prefix cache hit rate:\s*([\d.]+)%")
 
 # vLLM access line: `127.0.0.1:55827 - "POST /v1/chat/completions HTTP/1.1" 200 OK`
+# Track BOTH OpenAI (/v1/chat/completions, /v1/completions) AND Anthropic
+# (/v1/messages) — brain-agent calls local models via the native Anthropic
+# endpoint, so missing /v1/messages hid all brain-agent traffic from the log.
 _ACCESS_RE = re.compile(
-    r'(\d+\.\d+\.\d+\.\d+):\d+ - "POST (/v1/(?:chat/completions|completions))')
+    r'(\d+\.\d+\.\d+\.\d+):\d+ - "POST (/v1/(?:chat/completions|completions|messages))')
 
 # pending client requests seen since the last stats line was recorded
 _pending_clients = []
