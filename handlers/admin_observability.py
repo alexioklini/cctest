@@ -920,6 +920,11 @@ class AdminObservabilityHandlers:
         ("default_model", "Server-Standardmodell", "config", None),
         ("chat_summary_model", "Chat-Zusammenfassung", "config", None),
         ("classifier_model", "Prompt-Klassifikation (Auto-Routing)", "config", None),
+        ("next_prompt_model", "Nächster-Prompt-Vorschlag (leer = Chat-Modell)", "config", None),
+        ("wiki_model", "Wiki (Tags/Zusammenfassung/Podcast/Merge)", "config", None),
+        ("user_profile_model", "Nutzerprofil-Daemon", "config", None),
+        ("studio_model", "Studio (Projekt-Outputs)", "config", None),
+        ("audio_overview_model", "Audio Overview (Podcast-Skript)", "config", None),
         ("background_task_model", "Fan-out-Hintergrundmodell", "config", None),
         ("kg_extraction_model", "KG-Extraktion", "config", None),
         ("tts_model", "Text-to-Speech", "tools", "tts"),
@@ -948,6 +953,11 @@ class AdminObservabilityHandlers:
             "default_model": cfg.get("default_model", "") or "",
             "chat_summary_model": cfg.get("chat_summary_model", "") or "",
             "classifier_model": cfg.get("classifier_model", "") or "",
+            "next_prompt_model": cfg.get("next_prompt_model", "") or "",
+            "wiki_model": cfg.get("wiki_model", "") or "",
+            "user_profile_model": cfg.get("user_profile_model", "") or "",
+            "studio_model": cfg.get("studio_model", "") or "",
+            "audio_overview_model": cfg.get("audio_overview_model", "") or "",
             "background_task_model": cfg.get("background_task_model", "") or "",
             "kg_extraction_model": kg.get("extraction_model", "") or "",
             "tts_model": (tool_cfg.get("text_to_speech") or {}).get("default_model", "") or "",
@@ -1096,6 +1106,16 @@ class AdminObservabilityHandlers:
                 cfg["chat_summary_model"] = _validate_model(body["chat_summary_model"])
             if "classifier_model" in body:
                 cfg["classifier_model"] = _validate_model(body["classifier_model"])
+            if "next_prompt_model" in body:
+                cfg["next_prompt_model"] = _validate_model(body["next_prompt_model"])
+            if "wiki_model" in body:
+                cfg["wiki_model"] = _validate_model(body["wiki_model"])
+            if "user_profile_model" in body:
+                cfg["user_profile_model"] = _validate_model(body["user_profile_model"])
+            if "studio_model" in body:
+                cfg["studio_model"] = _validate_model(body["studio_model"])
+            if "audio_overview_model" in body:
+                cfg["audio_overview_model"] = _validate_model(body["audio_overview_model"])
             if "background_task_model" in body:
                 cfg["background_task_model"] = _validate_model(body["background_task_model"])
             if "kg_extraction_model" in body:

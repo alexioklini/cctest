@@ -82,7 +82,8 @@ def _suggest_tags(title: str, body_md: str) -> list:
     model = ""
     try:
         sc = _brain._server_config() or {}
-        m = (sc.get("chat_summary_model") or "").strip()
+        # Dedicated wiki model (split from chat_summary_model in v9.166.0).
+        m = (sc.get("wiki_model") or "").strip()
         if m and _brain._is_model_available(m):
             model = m
     except Exception:
@@ -616,7 +617,7 @@ def _diff_merge(existing_body: str, source_text: str, title: str) -> str:
     model = ""
     try:
         _sc = _brain._server_config() or {}
-        _csm = (_sc.get("chat_summary_model") or "").strip()
+        _csm = (_sc.get("wiki_model") or "").strip()  # dedicated wiki knob (v9.166.0)
         if _csm and _brain._is_model_available(_csm):
             model = _csm
     except Exception:
@@ -743,7 +744,7 @@ def wiki_from_chat(session_id, turn_ids=None, scope=None):
     model = ""
     try:
         _sc = _brain._server_config() or {}
-        _csm = (_sc.get("chat_summary_model") or "").strip()
+        _csm = (_sc.get("wiki_model") or "").strip()  # dedicated wiki knob (v9.166.0)
         if _csm and _brain._is_model_available(_csm):
             model = _csm
     except Exception:

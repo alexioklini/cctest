@@ -197,7 +197,16 @@ def _run_generation(*, output_id: str, agent_id: str, project_name: str, project
             return
 
         prompt = output_presets.build_prompt(kind, corpus, focus=focus, length=length)
-        model = _brain._background_model_default()
+        # Dedicated studio_model knob (v9.167.0); empty -> background default.
+        model = ""
+        try:
+            _sm = (_brain._server_config().get("studio_model") or "").strip()
+            if _sm and _brain._is_model_available(_sm):
+                model = _sm
+        except Exception:
+            pass
+        if not model:
+            model = _brain._background_model_default()
         if not model:
             ChatDB.update_project_output(
                 output_id, status="error",

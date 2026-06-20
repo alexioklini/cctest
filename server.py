@@ -3170,12 +3170,12 @@ _PROFILE_SYSTEM_PROMPT = (
 )
 
 def _profile_pick_model() -> str:
-    """Admin override (`chat_summary_model`, shared with per-chat synopsis)
-    wins; otherwise fall back to the server's default_model. No haiku /
-    cheapest heuristics — the admin picks the install default and we use
-    it. GDPR auto-fallback still applies on top via
-    gdpr_pick_model_for_background."""
-    configured = (server_config.get("chat_summary_model") or "").strip()
+    """Dedicated `user_profile_model` knob (split from the shared
+    chat_summary_model in v9.166.0 — chat summary is now exclusive) wins;
+    otherwise fall back to the server's default_model. No haiku / cheapest
+    heuristics — the admin picks the model and we use it. GDPR auto-fallback
+    still applies on top via gdpr_pick_model_for_background."""
+    configured = (server_config.get("user_profile_model") or "").strip()
     if configured and engine._is_model_available(configured):
         return configured
     return engine._background_model_default() or ""
@@ -3446,6 +3446,11 @@ def main():
     server_config["attachment_image_model"] = attachments_cfg.get("image_model", "")
     server_config["chat_summary_model"] = file_config.get("chat_summary_model", "") or ""
     server_config["classifier_model"] = file_config.get("classifier_model", "") or ""
+    server_config["next_prompt_model"] = file_config.get("next_prompt_model", "") or ""
+    server_config["wiki_model"] = file_config.get("wiki_model", "") or ""
+    server_config["user_profile_model"] = file_config.get("user_profile_model", "") or ""
+    server_config["studio_model"] = file_config.get("studio_model", "") or ""
+    server_config["audio_overview_model"] = file_config.get("audio_overview_model", "") or ""
     server_config["auto_route"] = file_config.get("auto_route", {}) or {}
     server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}
     server_config["classification"] = file_config.get("classification", {}) or {}

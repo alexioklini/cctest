@@ -53,7 +53,9 @@ def _bg_model():
     import brain as _brain
     try:
         sc = _brain._server_config() or {}
-        m = (sc.get("chat_summary_model") or "").strip()
+        # Dedicated wiki model knob (split from the shared chat_summary_model in
+        # v9.166.0 — chat summary is now exclusive). Empty = background default.
+        m = (sc.get("wiki_model") or "").strip()
         if m and _brain._is_model_available(m):
             return m
     except Exception:

@@ -339,7 +339,18 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
                 error="No sources found for this project — add files, web URLs, or run Research first.")
             return
 
-        model = _brain._background_model_default()
+        # Dedicated audio_overview_model knob (v9.168.0) for the dialogue-script
+        # LLM; empty -> background default. (The TTS voice model is separate:
+        # text_to_speech.default_model.)
+        model = ""
+        try:
+            _am = (_brain._server_config().get("audio_overview_model") or "").strip()
+            if _am and _brain._is_model_available(_am):
+                model = _am
+        except Exception:
+            pass
+        if not model:
+            model = _brain._background_model_default()
         if not model:
             ChatDB.update_project_output(output_id, status="error",
                                          error="No model available (set a server default model).")

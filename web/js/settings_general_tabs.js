@@ -2295,6 +2295,10 @@ async function _genTab_service_models(C) {
   const opts = d.model_options || [];
   const dis = isAdmin ? '' : ' disabled';
 
+  // Remember every backend-declared slot key so saveServiceModels() persists
+  // ALL of them generically (no hardcoded list to fall behind when a new slot
+  // like classifier_model / next_prompt_model is added server-side).
+  window._svcSlotKeys = (d.slots || []).map(s => s.key);
   const slotRows = (d.slots || []).map(s => {
     // capability hint for which models are appropriate (informational only).
     const capHint = s.capability ? ` <span style="${MONO}">benötigt: ${esc(s.capability)}</span>` : '';
@@ -2417,8 +2421,10 @@ function _svcOcrEngineToggle() {
 
 async function saveServiceModels() {
   const body = {};
-  ['default_model', 'chat_summary_model', 'background_task_model', 'kg_extraction_model',
-   'tts_model', 'transcribe_model'].forEach(k => {
+  // Persist EVERY slot the backend declared (window._svcSlotKeys, set at render),
+  // not a hardcoded subset — so newly-added slots save without a frontend edit.
+  (window._svcSlotKeys || ['default_model', 'chat_summary_model', 'background_task_model',
+   'kg_extraction_model', 'tts_model', 'transcribe_model']).forEach(k => {
     const el = document.getElementById('svc-' + k);
     if (el) body[k] = el.value || '';
   });

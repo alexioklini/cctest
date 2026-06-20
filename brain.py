@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.164.0"
-VERSION_DATE = "2026-06-19"
+VERSION = "9.168.0"
+VERSION_DATE = "2026-06-20"
 CHANGELOG = [
+    ("9.168.0", "2026-06-20", "feat(models): eigener audio_overview_model-Knopf fuer die Podcast-DIALOG-SKRIPT-Generierung (Audio Overview). engine/audio_overview.py nutzte hart _background_model_default() (=default_model) fuer den Zwei-Host-Skript-LLM. NEU: audio_overview_model zuerst (gesetzt+enabled), sonst Fallback default. Das TTS-Stimmenmodell ist UNVERAENDERT separat (text_to_speech.default_model, eigener Slot). Verdrahtet: boot-loader + Service-Modelle-Slot 'Audio Overview (Podcast-Skript)' (Read+Write+Label). LIVE: audio_overview_model=CLIProxyAPI/mistral-small-latest. py_compile OK; Neustart noetig."),
+    ("9.167.0", "2026-06-20", "feat(models): eigener studio_model-Knopf fuer Studio-Projekt-Outputs (Study Guide/Briefing/FAQ/Timeline). Bisher nutzte _run_generation (engine/output_gen.py) hart _background_model_default() (= default_model, mistral-medium) ohne eigene Einstellung/GUI. NEU: studio_model wird zuerst geprueft (gesetzt+enabled), sonst Fallback auf _background_model_default(). Verdrahtet: boot-loader (server.py) + Service-Modelle-Slot 'Studio (Projekt-Outputs)' (Read+Write+Label, GUI generisch). Betrifft NUR die Preset-Generierung; Deep Research teilt nur den save_report_output-Speicher-Seam, nicht das Modell. LIVE: studio_model=CLIProxyAPI/mistral-small-latest. py_compile OK; Neustart noetig (boot-loader)."),
+    ("9.166.0", "2026-06-20", "feat(models): chat_summary_model ist jetzt EXKLUSIV fuer die Chat-Synopse — alle bisherigen Mitnutzer bekamen eigene Knoepfe (No-Sharing-Regel). Der Knopf trieb bisher: Chat-Zusammenfassung + 5 Wiki-Operationen + Nutzerprofil-Daemon + (Classifier-Fallback). NEU getrennt: (1) wiki_model — alle Wiki-LLM-Calls (Auto-Tagging, Seiten-Zusammenfassung, Podcast-Skript, Diff-Merge, Chat→Seite); engine/wiki_store.py (3 Stellen) + engine/wiki_gen.py lesen jetzt wiki_model statt chat_summary_model. (2) user_profile_model — der Nutzerprofil-Daemon (server.py _profile_pick_model). (3) Classifier-Fallback auf chat_summary_model ENTFERNT (_resolve_classifier_model faellt jetzt direkt auf cheapest/local, nicht mehr auf die Synopse). Studio war NIE ein Mitnutzer (nutzt schon _background_model_default). Jeder neue Knopf leer = _background_model_default (= default_model), NICHT chat_summary. Verdrahtet: boot-loader (server.py) + 2 neue Service-Modelle-Slots (Read+Write+Label, GUI rendert+speichert generisch seit 9.165.0). LIVE: wiki_model=mistral-small, user_profile_model=Lokal-M4-7B, chat_summary_model=Lokal-M4-7B (nur noch Synopse). py_compile OK; Neustart noetig (boot-loader)."),
+    ("9.165.0", "2026-06-20", "feat(models): eigenes Modell-Setting fuer den Naechsten-Prompt-Vorschlag (leer = Chat-Modell) + GUI-Fix: Service-Modelle-Panel speichert jetzt ALLE Slots generisch. (1) NEU server-Knopf next_prompt_model: generate_next_prompt_suggestion() Praezedenz = agent.json next_prompt_suggestions.model → server next_prompt_model (wenn gesetzt+enabled) → Session-Modell (leer = bisheriges Verhalten, das Chat-Modell). Verdrahtet: boot-loader (server.py), Service-Modelle-Slot (Read+Write+Label). LIVE gesetzt auf Lokal-M4/Qwen2.5-7B (lokales 7B statt teurem Chat-Modell fuer den Wegwerf-Vorschlag). (2) GUI-FIX (wichtig): saveServiceModels() im Frontend hatte eine HARTCODIERTE Slot-Liste (default/chat_summary/background_task/kg/tts/transcribe) — neue Slots (classifier_model aus 9.164.0, jetzt next_prompt_model) wurden zwar GERENDERT, aber beim Speichern STILL verworfen. Jetzt: window._svcSlotKeys beim Render gesetzt (alle vom Backend gemeldeten slot.key), saveServiceModels iteriert generisch darueber → jeder kuenftige Slot speichert ohne Frontend-Edit. Damit hat classifier_model (9.164.0) ENDLICH ein funktionierendes GUI. js_gate gruen (5/5 smoke, eslint 0 Fehler); py_compile OK. Neustart noetig (boot-loader liest next_prompt_model)."),
     ("9.164.0", "2026-06-19", "feat(models): eigenes Modell-Setting fuer die Prompt-Klassifikation (Auto-Routing), getrennt vom Chat-Zusammenfassungsmodell. PROBLEM: _resolve_classifier_model() las bisher NUR chat_summary_model — derselbe Knopf trieb den Auto-Route-Promptklassifikator UND die Chat-Synopse (+ Wiki-Tagging + Profil-Daemon). Wer den Klassifikator auf ein anderes Modell legen wollte (Bench-Ergebnis: cloud mistral-small klassifiziert schneller UND akkurater — 100% memory-routing @0.55s vs lokal Qwen-7B 100%@1.82s, Qwen-3B 85%@1.10s), zog damit zwangslaeufig die Zusammenfassung mit um. FIX: neuer optionaler Top-Level-Knopf classifier_model; _resolve_classifier_model() prueft ihn ZUERST (bekannt+enabled), faellt sonst auf chat_summary_model und dann auf das guenstigste/lokale Modell zurueck (Default-Verhalten unveraendert, wenn nie gesetzt). Verdrahtet an allen Stellen: Boot-Loader (server.py seedet server_config['classifier_model']), Setter /v1/services/server (eigener validierter Block) UND der unified Service-Modelle-Panel (/v1/services/models: neuer Slot 'Prompt-Klassifikation (Auto-Routing)' zwischen Chat-Zusammenfassung und Fan-out — Read+Write+GUI-Render automatisch ueber die Slot-Registry). LIVE so gesetzt: classifier_model=CLIProxyAPI/mistral-small-latest, chat_summary_model=Lokal-M4/Qwen2.5-7B-Instruct-4bit — Klassifikator wieder auf Cloud, Zusammenfassung/Wiki/Profil zurueck auf den lokalen M4-7B (frueheres Verhalten wiederhergestellt). py_compile OK (brain.py + beide Handler + server.py); Service-Modelle-GET zeigt beide Slots status=ok. Neustart noetig (Boot-Loader liest classifier_model)."),
     ("9.163.8", "2026-06-18", "fix(closet-regen: haengender LLM-HTTP-Call legte den MemPalace-Daemon lahm): nach Abschluss der KG-Extraktion blieb der project-sync-Run fuer immer in 'running' — der Thread haing 30+ min in sock_recv (resp.read()) im Closet-Regen-LLM-Call; der generische mempalace-miner blockierte dahinter am _palace_write_lock. URSACHE: closet_llm.py nutzt urlopen(timeout=60), aber dieser Timeout begrenzt nur die LEERLAUF-Luecken zwischen Socket-Ops — CLIProxyAPI trickelt SSE/Keepalive-Bytes, die den Per-Op-Timer staendig zuruecksetzen, sodass resp.read() bei stehendem Upstream NIE abbricht. FIX (VENV-PATCH, [[project_mempalace_venv_patches]] Patch 4, gitignored → nach jedem mempalace-Upgrade neu): harte Wall-Clock-Deadline HTTP_TOTAL_DEADLINE_S=90 — ein threading.Timer schliesst den Response-Socket zwangsweise, der blockierte read() wirft sofort, die bestehende 3-fach-Retry-/Return-Logik greift. Gleiche Klasse wie der PDF-Subprozess-Timeout-Fix: ein blockierender Call OHNE erzwungene Gesamt-Deadline verkeilt einen Thread, den Python nicht killen kann → Recovery brauchte einen Neustart. KG-LLM-Pfad (ueber sidecar background_call, timeout_s=1800) hat eine endliche Decke, geringeres Risiko, NICHT gepatcht. Daemon erholt sich jetzt selbst statt zu verkeilen. Neustart noetig (raeumt den haengenden Socket)."),
     ("9.163.7", "2026-06-18", "fix(project-sync: KG-Fortschritt zeigte keine echte Zahl/kein ETA): die KG-Phase zeigte nur 'KG-Extraktion' und bewegte sich sichtbar nur, wenn ein Chunk neue Tripel lieferte — bei 0-Tripel-Chunks stand sie scheinbar still, ohne X/Total und ohne ETA. URSACHE: der Top-Level-Live-Zaehler bekam kg_done=_kg_chunks_done (PRO Dokument, je _run_kg_for-Aufruf auf 0 zurueckgesetzt) und kg_total blieb 0. FIX (server_daemons.py): projekt-weiter MONOTONER Zaehler — vor der KG-Schleife kg_total=_count_wing_drawers_total(wing) + kg_started_at; ein kg_done_base akkumuliert fertige Drawer ueber Dokumente HINWEG, der Per-Chunk-Callback addiert das laufende Doc-Delta obendrauf (zaehlt also auch bei 0 Tripeln weiter). FRONTEND (panels_project_sync.js): KG-Zweig zeigt 'KG-Extraktion X/Total · ETA Ym'; ETA nutzt kg_started_at (akzeptiert Epoch-Float ODER ISO), Schwelle 3%. Indexierungs-Label zeigt 'Dokumente'. js_gate PASS (globals unveraendert; smoke gruen). py_compile OK. Greift beim naechsten Neustart + Frontend-Refresh."),
@@ -5346,7 +5350,8 @@ def generate_next_prompt_suggestion(session) -> str | None:
     conversation so far. Returns the raw suggestion text, or None if disabled/unavailable.
 
     Reuses the session's current model by default; an override model can be set
-    via agent.json `next_prompt_suggestions.model`.
+    via agent.json `next_prompt_suggestions.model` or the server-level
+    `next_prompt_model` knob (Service-Modelle GUI; empty = chat model).
     """
     try:
         cfg = _get_next_prompt_config(session.agent_id)
@@ -5395,7 +5400,14 @@ def generate_next_prompt_suggestion(session) -> str | None:
 
         clean_msgs.append({"role": "user", "content": instruction})
 
+        # Model precedence: per-agent override (agent.json next_prompt_suggestions.model)
+        # → server-level knob `next_prompt_model` (Service-Modelle → Nächster-Prompt;
+        # empty = use the chat's current model, the default behaviour) → session model.
         override_model = (cfg.get("model") or "").strip()
+        if not override_model:
+            _npm = (_server_config().get("next_prompt_model") or "").strip()
+            if _npm and _is_model_available(_npm):
+                override_model = _npm
         model = override_model or session.model
         if not model:
             return None
@@ -10171,25 +10183,20 @@ _STRUCTURED_CLASSIFY_SYSTEM = (
 def _resolve_classifier_model() -> str:
     """Pick the model used for the auto-route prompt classifier.
 
-    Own knob `classifier_model` wins when set+enabled (Settings -> Server ->
-    Zusammenfassungen, the "Prompt-Klassifikation" field). Falls back to
-    `chat_summary_model` (the shared "small background model" knob) so existing
-    installs that never set a classifier model keep the old behaviour. Both
-    unset/disabled -> cheapest/local (the prior default).
+    Own knob `classifier_model` wins when set+enabled (Service-Modelle ->
+    "Prompt-Klassifikation"). Otherwise -> cheapest/local (the prior default).
 
-    The two were split because the classifier and the chat-summary task have
-    different sweet spots: the classifier wants the fastest+most-accurate small
-    model (cloud mistral-small won the bench), while the summary can stay on the
-    local M4 7B. Same-knob meant flipping one moved both.
+    No-sharing rule (v9.166.0): the classifier no longer falls back to
+    chat_summary_model — every background task has its own knob now, so a
+    chat-summary model change can't silently move classification.
     """
     try:
         _sc = _server_config()
-        for _key in ("classifier_model", "chat_summary_model"):
-            _m = (_sc.get(_key) or "").strip()
-            # Must be a KNOWN model (missing -> {} -> reject) AND enabled.
-            _mcfg = (_models_config or {}).get(_m)
-            if _m and _mcfg and _mcfg.get("enabled", True):
-                return _m
+        _m = (_sc.get("classifier_model") or "").strip()
+        # Must be a KNOWN model (missing -> {} -> reject) AND enabled.
+        _mcfg = (_models_config or {}).get(_m)
+        if _m and _mcfg and _mcfg.get("enabled", True):
+            return _m
     except Exception:
         pass
     return _resolve_auto_model_tiered(None)  # cheapest/local
