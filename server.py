@@ -3451,6 +3451,7 @@ def main():
     server_config["user_profile_model"] = file_config.get("user_profile_model", "") or ""
     server_config["studio_model"] = file_config.get("studio_model", "") or ""
     server_config["audio_overview_model"] = file_config.get("audio_overview_model", "") or ""
+    server_config["code_graph_model"] = file_config.get("code_graph_model", "") or ""
     server_config["auto_route"] = file_config.get("auto_route", {}) or {}
     server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}
     server_config["classification"] = file_config.get("classification", {}) or {}

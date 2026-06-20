@@ -925,6 +925,7 @@ class AdminObservabilityHandlers:
         ("user_profile_model", "Nutzerprofil-Daemon", "config", None),
         ("studio_model", "Studio (Projekt-Outputs)", "config", None),
         ("audio_overview_model", "Audio Overview (Podcast-Skript)", "config", None),
+        ("code_graph_model", "Code-Graph (Symbol-Zusammenfassungen)", "config", None),
         ("background_task_model", "Fan-out-Hintergrundmodell", "config", None),
         ("kg_extraction_model", "KG-Extraktion", "config", None),
         ("tts_model", "Text-to-Speech", "tools", "tts"),
@@ -958,6 +959,7 @@ class AdminObservabilityHandlers:
             "user_profile_model": cfg.get("user_profile_model", "") or "",
             "studio_model": cfg.get("studio_model", "") or "",
             "audio_overview_model": cfg.get("audio_overview_model", "") or "",
+            "code_graph_model": cfg.get("code_graph_model", "") or "",
             "background_task_model": cfg.get("background_task_model", "") or "",
             "kg_extraction_model": kg.get("extraction_model", "") or "",
             "tts_model": (tool_cfg.get("text_to_speech") or {}).get("default_model", "") or "",
@@ -1116,6 +1118,8 @@ class AdminObservabilityHandlers:
                 cfg["studio_model"] = _validate_model(body["studio_model"])
             if "audio_overview_model" in body:
                 cfg["audio_overview_model"] = _validate_model(body["audio_overview_model"])
+            if "code_graph_model" in body:
+                cfg["code_graph_model"] = _validate_model(body["code_graph_model"])
             if "background_task_model" in body:
                 cfg["background_task_model"] = _validate_model(body["background_task_model"])
             if "kg_extraction_model" in body:

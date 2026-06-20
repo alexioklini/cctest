@@ -4249,5 +4249,6 @@
   "wiki_model": "CLIProxyAPI/mistral-small-latest",
   "user_profile_model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit",
   "studio_model": "CLIProxyAPI/mistral-small-latest",
-  "audio_overview_model": "CLIProxyAPI/mistral-small-latest"
+  "audio_overview_model": "CLIProxyAPI/mistral-small-latest",
+  "code_graph_model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit"
 }

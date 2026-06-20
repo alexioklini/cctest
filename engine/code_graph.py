@@ -954,9 +954,17 @@ class CodeGraph:
         if not rows:
             return {"summarized": 0, "message": "All nodes already have summaries"}
 
-        # Resolve summary model — server default; admin picks the install's
-        # default and we use it (no haiku/cheapest heuristics).
-        model = _background_model_default()
+        # Dedicated code_graph_model knob (v9.169.0); empty -> background default.
+        model = ""
+        try:
+            import brain as _brain
+            _cg = (_brain._server_config().get("code_graph_model") or "").strip()
+            if _cg and _brain._is_model_available(_cg):
+                model = _cg
+        except Exception:
+            pass
+        if not model:
+            model = _background_model_default()
         if not model:
             return {"error": "No model available for summary generation"}
 
