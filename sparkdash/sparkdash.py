@@ -1274,6 +1274,70 @@ _ACCESS_RE = re.compile(
 # pending client requests seen since the last stats line was recorded
 _pending_clients = []
 
+# oMLX server.log lines (it's NOT a SparkDash-supervised instance, so it isn't in
+# the vllm-log tail loop — tailed separately so oMLX calls also appear here).
+#   2026-06-20 17:07:40,217 - omlx.server - INFO - [-] - Chat completion: 2 tokens
+#     in 1.12s (1.8 tok/s), prompt: 16, finish_reason=stop, ...
+#   2026-06-20 17:02:19,380 - omlx.server - WARNING - [-] - POST /v1/chat/completions
+#     → 401: Invalid API key
+_OMLX_COMPLETION_RE = re.compile(
+    r"(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d).*?(?:Chat |)[Cc]ompletion:\s*(\d+) tokens "
+    r"in ([\d.]+)s \(([\d.]+) tok/s\),\s*prompt:\s*(\d+)")
+_OMLX_ACCESS_RE = re.compile(
+    r"(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d).*?- (POST|GET) (/v1/\S+) → (\d+)")
+_OMLX_LOG_PATH = os.path.expanduser("~/.omlx/logs/server.log")
+
+
+def _omlx_log_ts(raw):
+    """'2026-06-20 17:07:40' -> '06-20 17:07:40' to match the vllm rows."""
+    return raw[5:] if len(raw) >= 19 else raw
+
+
+def _process_omlx_log_chunk(chunk):
+    """Parse new oMLX server.log text into activity rows tagged instance=oMLX.
+    A completion line is the real 'one row per call' signal (carries tps); a
+    non-2xx access line is surfaced too so failures are visible."""
+    for line in chunk.splitlines():
+        cm = _OMLX_COMPLETION_RE.search(line)
+        if cm:
+            ts, toks, secs, tps, prompt = cm.groups()
+            ev = {
+                "ts": _omlx_log_ts(ts), "instance": "oMLX",
+                "client": "local", "ip": "127.0.0.1",
+                "endpoint": "/v1/completion",
+                "gen_tps": float(tps), "prompt_tps": 0.0,
+                "kv_cache": 0.0, "prefix_hit": 0.0,
+                "gpu_mem_gb": round(gpu_stats()["alloc_mem"] / 1024**3, 2),
+            }
+            with _activity_lock:
+                _activity.append(ev)
+            try:
+                with open(_ACTIVITY_FILE, "a") as wf:
+                    wf.write(json.dumps(ev) + "\n")
+            except OSError:
+                pass
+            continue
+        am = _OMLX_ACCESS_RE.search(line)
+        if am:
+            ts, _method, ep, code = am.groups()
+            if code.startswith("2"):
+                continue  # success: the completion line already logged the call
+            ev = {
+                "ts": _omlx_log_ts(ts), "instance": "oMLX",
+                "client": "local", "ip": "127.0.0.1",
+                "endpoint": ep + " · " + code,
+                "gen_tps": 0.0, "prompt_tps": 0.0,
+                "kv_cache": 0.0, "prefix_hit": 0.0,
+                "gpu_mem_gb": round(gpu_stats()["alloc_mem"] / 1024**3, 2),
+            }
+            with _activity_lock:
+                _activity.append(ev)
+            try:
+                with open(_ACTIVITY_FILE, "a") as wf:
+                    wf.write(json.dumps(ev) + "\n")
+            except OSError:
+                pass
+
 
 def _ip_label(ip):
     """Just the client IP."""
@@ -1357,6 +1421,11 @@ def _activity_tailer():
             _tail_state[inst["name"]] = {"pos": os.path.getsize(lp), "awaiting": None}
         except OSError:
             _tail_state[inst["name"]] = {"pos": 0, "awaiting": None}
+    # oMLX server.log tailed too (separate parser; it's not a vllm instance)
+    try:
+        _tail_state["__omlx__"] = {"pos": os.path.getsize(_OMLX_LOG_PATH), "awaiting": None}
+    except OSError:
+        _tail_state["__omlx__"] = {"pos": 0, "awaiting": None}
 
     while True:
         try:
@@ -1376,6 +1445,22 @@ def _activity_tailer():
                         chunk = f.read()
                         state["pos"] = f.tell()
                     _process_log_chunk(name, chunk)
+            # tail oMLX's own log (only if monitoring is enabled)
+            _b, _k, _omlx_enabled = _omlx_cfg()
+            if _omlx_enabled:
+                st = _tail_state.setdefault("__omlx__", {"pos": 0, "awaiting": None})
+                try:
+                    size = os.path.getsize(_OMLX_LOG_PATH)
+                    if size < st["pos"]:
+                        st["pos"] = 0
+                    if size > st["pos"]:
+                        with open(_OMLX_LOG_PATH, "r", errors="replace") as f:
+                            f.seek(st["pos"])
+                            chunk = f.read()
+                            st["pos"] = f.tell()
+                        _process_omlx_log_chunk(chunk)
+                except OSError:
+                    pass
         except Exception:
             pass
         time.sleep(2)
