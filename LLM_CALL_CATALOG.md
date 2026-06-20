@@ -1,8 +1,8 @@
 # LLM / Model Call Catalog
 
-Every LLM/model use-case in brain-agent: what the user does, what they get, which setting controls it, the GUI location, and the current model. Reflects **v9.173.0** (live values 2026-06-20).
+Every LLM/model use-case in brain-agent: what the user does, what they get, which setting controls it, the GUI location, and the current model. Reflects **v9.175.0** (live values 2026-06-20).
 
-After this session's decomposition, **every background LLM task has its own dedicated model knob** — no more silent sharing. Most live in **Settings → Service-Modelle** (a slot grid that renders + saves generically).
+After this session's decomposition, **every background LLM task has its own dedicated model knob** — no more silent sharing. Most live in **Settings → Service-Modelle** (a slot grid that renders + saves generically). As of v9.175.0, **every model setting is GUI-configurable** — the sole exception is the deliberately venv-level MemPalace embeddings (#27).
 
 ---
 
@@ -168,9 +168,11 @@ After this session's decomposition, **every background LLM task has its own dedi
 ### 21. Translation (text / document / rewrite / language-detect)
 - **Does:** translates text or an uploaded document (optional tone-rewrite).
 - **Gets:** translated (+ polished) text; language auto-detected first.
-- **Settings:** `translation.default_model` · tone-rewrite → `refinement.model` · lang-detect = **lingua offline first**, LLM fallback only on low confidence → `translation.detection_fallback_model`.
-- **GUI:** Service-Modelle → *Übersetzung* (also Tools tab).
-- **Models:** translate **mistral-small** · rewrite **M4 7B** · detect-fallback **M4 7B** *(was a dead model, fixed v9.170.0)*. cost_purpose `translate_text`/`translate_document`/`…_rewrite`/`lang_detect`. GDPR-gated.
+- **Three independent model knobs (split v9.174.0):**
+  - **Main translate** — `translation.default_model`. GUI: Service-Modelle → *Übersetzung* (also Tools tab). Model: **mistral-small**.
+  - **Tone-rewrite** — `translation.rewrite_model` (own knob; empty → refinement → translation model). GUI: Service-Modelle → *Übersetzung – Ton-Glättung*. Model: **mistral-small** *(moved off the slow local 7B v9.174.0 — it's a foreground step the user waits on)*.
+  - **Language detect** — lingua **offline first**; LLM fallback only on low confidence → `translation.detection_fallback_model` (empty = lingua-only). GUI: Service-Modelle → *Übersetzung – Spracherkennung (LLM-Fallback)* (v9.175.0). Model: **M4 7B** *(was a dead model, fixed v9.170.0)*.
+- cost_purpose `translate_text`/`translate_document`/`…_rewrite`/`lang_detect`. GDPR-gated.
 
 ---
 
@@ -178,8 +180,8 @@ After this session's decomposition, **every background LLM task has its own dedi
 
 ### 22. OCR (scanned PDFs / images)
 - **Does:** uploads/mines a scanned doc with no text layer.
-- **Setting:** `ocr.engine` (mistral_ocr / local_vision / auto) + `ocr.model` + `ocr.local_vision_model`.
-- **GUI:** Service-Modelle → OCR block.
+- **Setting:** `ocr.engine` (mistral_ocr / local_vision / auto) + `ocr.model` (cloud) + `ocr.local_vision_model` (local).
+- **GUI:** Service-Modelle → OCR block — engine dropdown + cloud model + **local-vision model field** (shown for local_vision/auto, editable since v9.175.0).
 - **Models:** **mistral-ocr-latest** (cloud, $0.001/page via `log_ocr`) / **gemma-4-26B** (local vision).
 
 ### 23. Image-describe (non-vision-model attachments)
@@ -225,14 +227,15 @@ After this session's decomposition, **every background LLM task has its own dedi
 
 ### 30. Telegram frontend
 - **Setting:** `telegram.model`.
-- **Model:** **claude-opus-4-6**.
+- **GUI:** Service-Modelle → *Telegram-Frontend* (v9.175.0; was config-only).
+- **Model:** **claude-opus-4-6** *(shows `[missing]` in the slot — not an enabled model in this install; Telegram is disabled)*.
 
 ---
 
 ## Consolidation — what shares a model
 
-- **M4 7B (local):** next-prompt, chat summary, user-profile, code-graph, wiki-gate, refine, translation-rewrite, lang-detect-fallback. *(The cheap-local workhorse.)*
-- **mistral-small:** classifier, wiki, KG, studio, audio-script, fan-out, translation, Brainy.
+- **M4 7B (local):** next-prompt, chat summary, user-profile, code-graph, wiki-gate, refine (prompt), lang-detect-fallback. *(The cheap-local workhorse.)*
+- **mistral-small:** classifier, wiki, KG, studio, audio-script, fan-out, translation (main + tone-rewrite), Brainy.
 - **mistral-medium-3.5:** default_model, image-describe, deep-research.
 - **gemma-4-26B (local):** GDPR swap, classification swap, local OCR.
 - **Voxtral:** TTS + STT.
