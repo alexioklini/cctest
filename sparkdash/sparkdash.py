@@ -196,23 +196,248 @@ def instance_log_path(name):
     return os.path.expanduser(f"~/Library/Logs/vllm-{name}.log")
 
 
+# flags SparkDash owns directly — never take them from the generic args map
+_RESERVED_FLAGS = {"--host", "--port", "--served-model-name"}
+
+
 def build_vllm_args(inst):
-    """Translate a registry entry into the `vllm serve …` argv."""
+    """Translate a registry entry into the `vllm serve …` argv.
+
+    Identity (model/port/served-name/host) is fixed by SparkDash. Everything
+    else comes from the generic `args` map {flag: value}, where:
+      * value True            -> bare flag (--enforce-eager)
+      * value False/None/""   -> omitted (or --no-<flag> if it's a known bool)
+      * value scalar/str      -> --flag value
+    Legacy curated fields (max_num_seqs, etc.) are migrated into `args`.
+    """
     venv = inst.get("venv") or _VENV_DEFAULT
-    args = [venv, "serve", inst["model"],
+    argv = [venv, "serve", inst["model"],
             "--host", "0.0.0.0",
             "--port", str(inst["port"]),
             "--served-model-name", inst.get("served_name") or inst["model"]]
-    if inst.get("max_num_seqs"):
-        args += ["--max-num-seqs", str(inst["max_num_seqs"])]
-    if inst.get("max_model_len"):
-        args += ["--max-model-len", str(inst["max_model_len"])]
-    if inst.get("enable_tool_choice", True):
-        args += ["--enable-auto-tool-choice",
-                 "--tool-call-parser", inst.get("tool_parser") or "hermes"]
+
+    args = dict(inst.get("args") or {})
+    # migrate legacy curated fields into the generic map (back-compat)
+    if inst.get("max_num_seqs") and "--max-num-seqs" not in args:
+        args["--max-num-seqs"] = inst["max_num_seqs"]
+    if inst.get("max_model_len") and "--max-model-len" not in args:
+        args["--max-model-len"] = inst["max_model_len"]
+    if inst.get("enable_tool_choice", True) and "--enable-auto-tool-choice" not in args:
+        args["--enable-auto-tool-choice"] = True
+        args.setdefault("--tool-call-parser", inst.get("tool_parser") or "hermes")
+
+    for flag, val in args.items():
+        if not flag.startswith("--") or flag in _RESERVED_FLAGS:
+            continue
+        if val is True:
+            argv.append(flag)
+        elif val is False or val is None or val == "":
+            continue
+        else:
+            argv += [flag, str(val)]
+
+    # raw extra_args string still appended verbatim for anything not modeled
     for extra in (inst.get("extra_args") or "").split():
-        args.append(extra)
-    return args
+        argv.append(extra)
+    return argv
+
+
+# ---------------------------------------------------------------------------
+# vLLM flag schema — parsed from `vllm serve --help=all` (this exact build).
+# Drives the auto-generated Advanced settings form. Cached on disk.
+# ---------------------------------------------------------------------------
+_FLAGS_CACHE_FILE = os.path.expanduser("~/sparkdash-vllm-flags.json")
+_flags_cache = {"t": 0.0, "data": None}
+_FLAGS_TTL = 3600.0
+
+
+def _parse_vllm_flags(text):
+    """Parse `vllm serve --help=all` output into grouped flag schemas."""
+    lines = text.splitlines()
+    groups = []                      # [{group, desc, flags:[...]}]
+    cur = {"group": "General", "desc": "", "flags": []}
+    groups.append(cur)
+    i = 0
+    # a group header: column-0 word(s) ending with ':' that's not a flag
+    header_re = re.compile(r"^([A-Za-z][A-Za-z0-9 _/()-]*):\s*$")
+    flag_re = re.compile(r"^  (--[a-zA-Z0-9-]+|-[a-zA-Z])(.*)$")
+    while i < len(lines):
+        ln = lines[i]
+        hm = header_re.match(ln)
+        if hm and not ln.startswith("  "):
+            name = hm.group(1).strip()
+            if name.lower() not in ("usage", "positional arguments", "options"):
+                cur = {"group": name, "desc": "", "flags": []}
+                groups.append(cur)
+            i += 1
+            continue
+        fm = flag_re.match(ln)
+        if fm:
+            head = ln.strip()
+            # collect wrapped description (deeper-indented following lines)
+            desc_lines = []
+            # the flag line itself may carry an inline metavar/choices only
+            j = i + 1
+            while j < len(lines) and re.match(r"^ {6,}\S", lines[j]) and not flag_re.match(lines[j]):
+                desc_lines.append(lines[j].strip())
+                j += 1
+            desc = " ".join(desc_lines)
+            flag = _flag_from_head(head, desc)
+            if flag:
+                cur["flags"].append(flag)
+            i = j
+            continue
+        i += 1
+    return [g for g in groups if g["flags"]]
+
+
+def _flag_from_head(head, desc):
+    """Build a flag schema from its header line + description."""
+    # primary flag name
+    pm = re.match(r"(--[a-zA-Z0-9-]+|-[a-zA-Z])", head)
+    if not pm:
+        return None
+    name = pm.group(1)
+    if name in ("-h", "--help"):
+        return None
+    # default
+    default = None
+    dm = re.search(r"\(default:\s*(.*?)\)\s*$", desc)
+    if dm:
+        default = dm.group(1)
+        desc = desc[:dm.start()].strip()
+    # choices {a,b,c}
+    choices = None
+    cm = re.search(r"\{([^}]+)\}", head)
+    if cm:
+        choices = [c.strip() for c in cm.group(1).split(",")]
+    # boolean if a --no- variant is present
+    is_bool = ("--no-" in head) or (
+        not cm and not re.search(r"[A-Z_]{2,}", head.replace(name.upper(), "")))
+    # detect a value metavar (UPPER_CASE token) -> takes a value
+    has_value = bool(re.search(r"\b[A-Z][A-Z0-9_]+\b", head)) or bool(choices)
+    typ = "choice" if choices else ("bool" if (is_bool and not has_value) else "value")
+    return {"name": name, "type": typ, "choices": choices,
+            "default": default, "desc": desc.strip()}
+
+
+def get_vllm_flags(venv=None, force=False):
+    """Return parsed flag groups (cached on disk + in-memory)."""
+    now = time.time()
+    if not force and _flags_cache["data"] and now - _flags_cache["t"] < _FLAGS_TTL:
+        return _flags_cache["data"]
+    if not force:
+        try:
+            with open(_FLAGS_CACHE_FILE) as f:
+                data = json.load(f)
+            _flags_cache.update(t=now, data=data)
+            return data
+        except (OSError, ValueError):
+            pass
+    vllm = venv or _VENV_DEFAULT
+    out = _run([vllm, "serve", "--help=all"], timeout=40)
+    groups = _parse_vllm_flags(out)
+    data = {"groups": groups,
+            "count": sum(len(g["flags"]) for g in groups)}
+    try:
+        with open(_FLAGS_CACHE_FILE, "w") as f:
+            json.dump(data, f)
+    except OSError:
+        pass
+    _flags_cache.update(t=now, data=data)
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Hugging Face Hub model search (proxy) + vllm-metal version/update
+# ---------------------------------------------------------------------------
+def hf_search(query, limit=25, mlx_only=True):
+    """Search the HF Hub for text-generation models. No auth needed."""
+    from urllib.parse import quote
+    url = ("https://huggingface.co/api/models?"
+           f"search={quote(query)}&limit={int(limit)}"
+           "&filter=text-generation&sort=downloads&direction=-1")
+    try:
+        raw = urlopen(url, timeout=10).read().decode()
+        data = json.loads(raw)
+    except Exception as e:
+        return {"error": str(e), "models": []}
+    out = []
+    for m in data:
+        mid = m.get("id") or m.get("modelId") or ""
+        tags = m.get("tags", []) or []
+        low = mid.lower()
+        is_mlx = "mlx" in low or "mlx" in tags
+        if mlx_only and not is_mlx:
+            continue
+        quant = next((q for q in ("4bit", "8bit", "3bit", "6bit", "bf16", "fp16", "gguf", "awq", "gptq")
+                      if q in low), "")
+        out.append({
+            "id": mid,
+            "downloads": m.get("downloads", 0),
+            "likes": m.get("likes", 0),
+            "quant": quant,
+            "mlx": is_mlx,
+            "pipeline": m.get("pipeline_tag", ""),
+        })
+    return {"models": out, "query": query, "mlx_only": mlx_only}
+
+
+def vllm_version(venv=None):
+    """Installed vllm + vllm-metal versions via pip show (fast, offline)."""
+    vbin = venv or _VENV_DEFAULT
+    pip = os.path.join(os.path.dirname(vbin), "pip")
+    info = {}
+    for pkg in ("vllm", "vllm-metal"):
+        out = _run([pip, "show", pkg], timeout=10)
+        m = re.search(r"^Version:\s*(.+)$", out, re.M)
+        info[pkg] = m.group(1).strip() if m else None
+    return info
+
+
+def vllm_latest(pkg="vllm-metal"):
+    """Latest version on PyPI (network)."""
+    try:
+        raw = urlopen(f"https://pypi.org/pypi/{pkg}/json", timeout=10).read().decode()
+        return json.loads(raw).get("info", {}).get("version")
+    except Exception:
+        return None
+
+
+_update_state = {"running": False, "log": "", "rc": None}
+_update_lock = threading.Lock()
+
+
+def run_vllm_update(pkg="vllm-metal", venv=None):
+    """pip install -U the package in the venv; stream output into _update_state."""
+    with _update_lock:
+        if _update_state["running"]:
+            return False
+        _update_state.update(running=True, log="", rc=None)
+    vbin = venv or _VENV_DEFAULT
+    pip = os.path.join(os.path.dirname(vbin), "pip")
+
+    def _worker():
+        try:
+            p = subprocess.Popen([pip, "install", "-U", pkg],
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 text=True)
+            for line in p.stdout:
+                with _update_lock:
+                    _update_state["log"] += line
+            p.wait()
+            with _update_lock:
+                _update_state["rc"] = p.returncode
+        except Exception as e:
+            with _update_lock:
+                _update_state["log"] += f"\nERROR: {e}\n"
+                _update_state["rc"] = 1
+        finally:
+            with _update_lock:
+                _update_state["running"] = False
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -741,9 +966,7 @@ def instances_status():
             "model": inst.get("model"),
             "served_name": inst.get("served_name") or inst.get("model"),
             "autostart": bool(inst.get("autostart")),
-            "max_num_seqs": inst.get("max_num_seqs"),
-            "max_model_len": inst.get("max_model_len"),
-            "tool_parser": inst.get("tool_parser"),
+            "args": inst.get("args", {}),
             "extra_args": inst.get("extra_args", ""),
             "venv": inst.get("venv", ""),
             "supervised": running,
@@ -1006,16 +1229,25 @@ class Handler(BaseHTTPRequestHandler):
                     return None, f"instance '{name}' already exists"
                 if int(i["port"]) == port:
                     return None, f"port {port} already used by '{i['name']}'"
+        # generic flag map {flag: value}; drop reserved + empty entries
+        raw_args = body.get("args") or {}
+        args = {}
+        if isinstance(raw_args, dict):
+            for k, v in raw_args.items():
+                if not isinstance(k, str) or not k.startswith("--"):
+                    continue
+                if k in _RESERVED_FLAGS:
+                    continue
+                if v is False or v is None or v == "":
+                    continue
+                args[k] = v
         inst = {
             "name": name,
             "host": "local",
             "port": port,
             "model": body["model"].strip(),
             "served_name": (body.get("served_name") or body["model"]).strip(),
-            "max_num_seqs": body.get("max_num_seqs") or None,
-            "max_model_len": body.get("max_model_len") or None,
-            "enable_tool_choice": bool(body.get("enable_tool_choice", True)),
-            "tool_parser": (body.get("tool_parser") or "hermes").strip(),
+            "args": args,
             "extra_args": (body.get("extra_args") or "").strip(),
             "venv": (body.get("venv") or "").strip(),
             "autostart": bool(body.get("autostart", False)),
@@ -1035,6 +1267,25 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.startswith("/api/auth-status"):
             self._send(200, json.dumps({"configured": auth_configured(),
                                         "authed": self._authed()}))
+        elif self.path.startswith("/api/vllm-flags"):
+            force = "force=1" in self.path
+            self._send(200, json.dumps(get_vllm_flags(force=force)))
+        elif self.path.startswith("/api/vllm-version"):
+            installed = vllm_version()
+            self._send(200, json.dumps({"installed": installed,
+                                        "latest": vllm_latest("vllm-metal")}))
+        elif self.path.startswith("/api/vllm-update-status"):
+            with _update_lock:
+                self._send(200, json.dumps(dict(_update_state)))
+        elif self.path.startswith("/api/hf/search"):
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            query = (q.get("q", [""])[0]).strip()
+            mlx = q.get("mlx", ["1"])[0] != "0"
+            if not query:
+                self._send(400, json.dumps({"error": "q required"}))
+            else:
+                self._send(200, json.dumps(hf_search(query, mlx_only=mlx)))
         elif self.path in ("/", "/index.html"):
             self._send(200, INDEX_HTML, "text/html; charset=utf-8")
         else:
@@ -1069,6 +1320,12 @@ class Handler(BaseHTTPRequestHandler):
         # --- everything below requires a valid session ---
         if not self._require_auth():
             return
+        # /api/vllm-update  (pip install -U vllm-metal)
+        if self.path.rstrip("/") == "/api/vllm-update":
+            ok = run_vllm_update("vllm-metal")
+            return self._send(200 if ok else 409,
+                              json.dumps({"ok": ok,
+                                          "msg": "update started" if ok else "already running"}))
         # /api/instances/<name>/start | /stop
         m = re.match(r"^/api/instances/([^/]+)/(start|stop)$", self.path)
         if m:
@@ -1272,6 +1529,31 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .inst .acts{margin-left:auto;display:flex;gap:8px}
   .inst .live{font-size:12px;color:var(--muted);margin-top:8px}
   .inst .live b{color:var(--green)}
+  /* config tabs */
+  .cfgtabs{display:flex;flex-wrap:wrap;gap:6px;margin:18px 0 0;border-bottom:1px solid var(--line);padding-bottom:0}
+  .cfgtab{padding:8px 13px;font-size:13px;color:var(--muted);cursor:pointer;border-radius:8px 8px 0 0;position:relative;white-space:nowrap}
+  .cfgtab:hover{color:var(--text)}
+  .cfgtab.active{color:var(--text);background:#0e0e0e}
+  .cfgtab.active::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--green)}
+  .cfgtab .badge{font-size:10px;color:var(--muted);margin-left:5px}
+  .cfgpane{display:none;padding:18px 2px}
+  .cfgpane.active{display:block}
+  .cfgpane.curated{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .ff{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+  .ff .fl{font-size:13px;color:var(--text);display:flex;align-items:center;gap:8px}
+  .ff .fl code{color:var(--green);font-size:11px;font-family:ui-monospace,Menlo,monospace;font-weight:400}
+  .ff .fd{font-size:12px;color:var(--muted);line-height:1.45}
+  .ff.wide{grid-column:1 / -1}
+  .cfgsearch{width:100%;margin-bottom:14px}
+  .cfggrid{display:grid;grid-template-columns:1fr 1fr;gap:14px 22px}
+  .toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer}
+  /* modal */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;z-index:50;padding:60px 20px}
+  .modalbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;width:100%;max-width:720px}
+  .hfrow{display:flex;align-items:center;gap:12px;padding:11px 12px;border:1px solid var(--line);border-radius:9px;margin-bottom:8px}
+  .hfrow .hid{font-family:ui-monospace,Menlo,monospace;font-size:13px;flex:1;word-break:break-all}
+  .hfrow .tag{font-size:11px;padding:2px 7px;border-radius:5px;background:#1f3a00;color:var(--green)}
+  .hfrow .dl{font-size:12px;color:var(--muted);white-space:nowrap}
   @media(max-width:1100px){main{grid-template-columns:1fr}.vgrid{grid-template-columns:repeat(4,1fr)}}
 </style>
 </head>
@@ -1420,28 +1702,64 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <div id="instlist" style="margin-top:16px">loading…</div>
     </div>
 
+    <!-- runtime / updater card -->
+    <div class="card" style="padding:18px 24px;margin-bottom:18px">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div><h4 style="margin:0;font-size:15px">vLLM-metal runtime</h4>
+          <div class="hint" id="verline" style="color:var(--muted);font-size:13px;margin-top:4px">checking…</div></div>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <button class="btn" onclick="checkVersion()">Check for updates</button>
+          <button class="btn go" id="updbtn" onclick="doUpdate()">Update vllm-metal</button>
+        </div>
+      </div>
+      <pre id="updlog" style="display:none;margin-top:12px;max-height:220px;overflow:auto;background:#0c0c0c;border:1px solid var(--line);border-radius:8px;padding:12px;font-size:12px;white-space:pre-wrap"></pre>
+    </div>
+
+    <!-- instance config builder -->
     <div class="card" style="padding:20px 24px">
       <h4 style="margin:0 0 14px;font-size:16px" id="formtitle">Add Instance</h4>
+
+      <!-- identity (always visible) -->
       <div class="form">
         <label>Name <span class="req">*</span><input id="f_name" placeholder="qwen7b"/></label>
         <label>Port <span class="req">*</span><input id="f_port" type="number" placeholder="8012"/></label>
-        <label class="wide">Model (HF repo or path) <span class="req">*</span><input id="f_model" placeholder="mlx-community/Qwen2.5-7B-Instruct-4bit"/></label>
+        <label class="wide">Model (HF repo or local path) <span class="req">*</span>
+          <span style="display:flex;gap:8px"><input id="f_model" style="flex:1" placeholder="mlx-community/Qwen2.5-7B-Instruct-4bit"/>
+          <button class="btn" type="button" onclick="openHF()">🔍 Browse HF</button></span></label>
         <label class="wide">Served name<input id="f_served" placeholder="(defaults to model)"/></label>
-        <label>Max num seqs<input id="f_seqs" type="number" placeholder="8"/></label>
-        <label>Max model len<input id="f_mlen" type="number" placeholder="(model default)"/></label>
-        <label>Tool-call parser<input id="f_parser" placeholder="hermes"/></label>
-        <label class="chk"><input id="f_tools" type="checkbox" checked/> Enable auto tool choice</label>
         <label class="chk"><input id="f_autostart" type="checkbox"/> Autostart (boot + restart on crash)</label>
-        <label class="wide">Extra args<input id="f_extra" placeholder="--gpu-memory-utilization 0.9"/></label>
-        <label class="wide">venv vllm path<input id="f_venv" placeholder="(default ~/.venv-vllm-metal/bin/vllm)"/></label>
+        <label>venv vllm path<input id="f_venv" placeholder="(default ~/.venv-vllm-metal/bin/vllm)"/></label>
       </div>
-      <div style="margin-top:16px">
+
+      <!-- config tabs -->
+      <div class="cfgtabs" id="cfgtabs"></div>
+      <div id="cfgpanes"></div>
+
+      <div style="margin-top:18px">
         <button class="btn primary" onclick="submitInstance()" id="submitbtn">Add Instance</button>
         <button class="btn" onclick="resetForm()" id="cancelbtn" style="display:none">Cancel</button>
+        <button class="btn" type="button" onclick="toggleArgsPreview()">Preview command</button>
         <span id="formmsg" style="margin-left:12px;font-size:13px"></span>
+        <pre id="argspreview" style="display:none;margin-top:12px;background:#0c0c0c;border:1px solid var(--line);border-radius:8px;padding:12px;font-size:12px;white-space:pre-wrap;color:var(--green)"></pre>
       </div>
     </div>
     </div><!-- /manager -->
+
+  <!-- HF model browser modal -->
+  <div id="hfmodal" class="modal" style="display:none">
+    <div class="modalbox">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h4 style="margin:0;font-size:16px">Hugging Face model browser</h4>
+        <button class="btn" style="margin-left:auto" onclick="closeHF()">✕</button>
+      </div>
+      <div style="display:flex;gap:8px;margin:14px 0">
+        <input id="hfq" style="flex:1" placeholder="search models, e.g. Qwen2.5 7B" onkeydown="if(event.key==='Enter')runHF()"/>
+        <label class="chk" style="white-space:nowrap;color:var(--muted);font-size:13px"><input id="hfmlx" type="checkbox" checked/> MLX only</label>
+        <button class="btn primary" onclick="runHF()">Search</button>
+      </div>
+      <div id="hfresults" style="max-height:420px;overflow:auto">Search the Hub for a model to serve.</div>
+    </div>
+  </div>
   </main>
 </div>
 
@@ -1685,6 +2003,7 @@ async function refreshAuthUI(){
   // server treats requests as open until an account is created.
   if(s.configured && s.authed){
     gate.style.display="none"; mgr.style.display=""; loadInstances();
+    resetForm(); checkVersion();
   } else {
     mgr.style.display="none"; gate.style.display="";
     document.getElementById("authtitle").textContent = needsSetup ? "Create admin account" : "Sign in";
@@ -1758,48 +2077,129 @@ async function ctl(name, action){
   setTimeout(loadInstances, 600);
 }
 
-function fval(id){ return document.getElementById(id).value.trim(); }
+function fval(id){ const e=document.getElementById(id); return e?e.value.trim():""; }
+
+// ---- config form: schema-driven tabs ----
+let FLAGS=null;            // {groups:[{group,flags:[...]}], count}
+let FLAGMAP={};            // flag name -> schema
+// curated "Common" tab: the flags you actually tune, with rich help
+const COMMON=[
+  {f:"--gpu-memory-utilization", label:"GPU memory utilization", help:"Fraction of unified memory vLLM may use (KV cache pool size). Lower it to fit multiple models. e.g. 0.92"},
+  {f:"--max-model-len", label:"Max context length", help:"Maximum tokens (prompt+output) per request. Larger = more KV memory reserved."},
+  {f:"--max-num-seqs", label:"Max concurrent sequences", help:"Max requests batched together. Higher = more throughput + more memory."},
+  {f:"--kv-cache-dtype", label:"KV cache dtype (incl. TurboQuant)", help:"Quantize the KV cache to save memory. turboquant_* and fp8_* shrink KV at small quality cost."},
+  {f:"--quantization", label:"Weight quantization", help:"Weight quant method (awq, gptq, fp8, …). Usually auto-detected from the model."},
+  {f:"--dtype", label:"Compute dtype", help:"Model compute precision (auto/float16/bfloat16)."},
+  {f:"--tensor-parallel-size", label:"Tensor parallel size", help:"Split each layer across N devices. >1 needs multiple GPUs."},
+  {f:"--pipeline-parallel-size", label:"Pipeline parallel size", help:"Split layers into N stages across devices."},
+  {f:"--enforce-eager", label:"Enforce eager (no compile)", help:"Disable graph compilation. Slower but lower memory + faster startup."},
+  {f:"--enable-auto-tool-choice", label:"Enable auto tool choice", help:"Let the model emit tool calls (function calling)."},
+  {f:"--tool-call-parser", label:"Tool-call parser", help:"Parser format for tool calls (e.g. hermes). Required with auto tool choice."},
+  {f:"--enable-prefix-caching", label:"Prefix caching", help:"Reuse KV for shared prompt prefixes — big speedup for repeated system prompts."},
+];
+
+function widget(schema, val){
+  // returns an input element id'd by data-flag, prefilled from val
+  const f=schema.name;
+  const cur = (val!==undefined && val!==null) ? val : "";
+  if(schema.type==="bool"){
+    const on = cur===true||cur==="true"||cur===1;
+    return `<label class="toggle"><input type="checkbox" data-flag="${f}" ${on?"checked":""}/> enabled</label>`;
+  }
+  if(schema.type==="choice"){
+    const opts=["<option value=\"\">(default)</option>"].concat(
+      (schema.choices||[]).map(c=>`<option value="${c}" ${String(cur)===c?"selected":""}>${c}</option>`));
+    return `<select data-flag="${f}">${opts.join("")}</select>`;
+  }
+  return `<input data-flag="${f}" value="${cur===""?"":String(cur).replace(/"/g,'&quot;')}" placeholder="${schema.default&&schema.default!=='None'?schema.default:''}"/>`;
+}
+
+function fieldHTML(schema, val, label, help){
+  const def = (schema.default && schema.default!=="None") ? ` · default ${schema.default}` : "";
+  return `<div class="ff${schema.type==='value'&&!schema.choices?'':' '}"><div class="fl">${label||schema.name} <code>${schema.name}</code></div>`
+    +`${widget(schema,val)}`
+    +`<div class="fd">${(help||schema.desc||"").replace(/</g,"&lt;")}${def}</div></div>`;
+}
+
+function renderConfigTabs(args){
+  args=args||{};
+  const tabsEl=document.getElementById("cfgtabs"), panes=document.getElementById("cfgpanes");
+  if(!FLAGS){ tabsEl.innerHTML='<span class="hint" style="color:var(--muted);font-size:13px">loading vLLM flags…</span>'; return; }
+  // Common tab + one tab per group
+  const tabs=[{id:"common",label:"Common"}].concat(FLAGS.groups.map((g,idx)=>({id:"g"+idx,label:g.group,count:g.flags.length})));
+  tabsEl.innerHTML=tabs.map((t,i)=>`<div class="cfgtab ${i===0?'active':''}" data-tab="${t.id}" onclick="cfgTab('${t.id}')">${t.label}${t.count?`<span class="badge">${t.count}</span>`:''}</div>`).join("");
+  // panes
+  let html=`<div class="cfgpane curated active" id="pane-common">`;
+  COMMON.forEach(c=>{ const s=FLAGMAP[c.f]; if(s) html+=fieldHTML(s,args[c.f],c.label,c.help); });
+  html+=`</div>`;
+  FLAGS.groups.forEach((g,idx)=>{
+    html+=`<div class="cfgpane" id="pane-g${idx}">`
+      +`<input class="cfgsearch" placeholder="filter ${g.group} flags…" oninput="filterPane(this,'g${idx}')"/>`
+      +`<div class="cfggrid">`
+      +g.flags.map(s=>`<div class="ffwrap" data-name="${s.name}">${fieldHTML(s,args[s.name])}</div>`).join("")
+      +`</div></div>`;
+  });
+  panes.innerHTML=html;
+}
+function cfgTab(id){
+  document.querySelectorAll(".cfgtab").forEach(t=>t.classList.toggle("active",t.dataset.tab===id));
+  document.querySelectorAll(".cfgpane").forEach(p=>p.classList.toggle("active",p.id==="pane-"+id));
+}
+function filterPane(inp,gid){
+  const q=inp.value.toLowerCase();
+  document.querySelectorAll(`#pane-${gid} .ffwrap`).forEach(w=>{
+    w.style.display = w.dataset.name.toLowerCase().includes(q) ? "" : "none";
+  });
+}
+function collectArgs(){
+  const args={};
+  document.querySelectorAll("#cfgpanes [data-flag]").forEach(el=>{
+    const f=el.dataset.flag;
+    if(el.type==="checkbox"){ if(el.checked) args[f]=true; }
+    else { const v=el.value.trim(); if(v!=="") args[f]=v; }
+  });
+  return args;
+}
+async function ensureFlags(){
+  if(FLAGS) return;
+  try{ FLAGS=await (await fetch("/api/vllm-flags",{cache:"no-store"})).json(); }
+  catch(e){ FLAGS={groups:[],count:0}; }
+  FLAGMAP={}; FLAGS.groups.forEach(g=>g.flags.forEach(s=>FLAGMAP[s.name]=s));
+}
+
 function formBody(){
   return {
     name: fval("f_name"), port: parseInt(fval("f_port"))||0,
     model: fval("f_model"), served_name: fval("f_served"),
-    max_num_seqs: parseInt(fval("f_seqs"))||null,
-    max_model_len: parseInt(fval("f_mlen"))||null,
-    tool_parser: fval("f_parser")||"hermes",
-    enable_tool_choice: document.getElementById("f_tools").checked,
     autostart: document.getElementById("f_autostart").checked,
-    extra_args: fval("f_extra"), venv: fval("f_venv"),
+    venv: fval("f_venv"),
+    args: collectArgs(),
   };
 }
-function resetForm(){
+async function resetForm(){
   editing=null;
-  ["f_name","f_port","f_model","f_served","f_seqs","f_mlen","f_extra","f_venv"].forEach(i=>document.getElementById(i).value="");
-  document.getElementById("f_parser").value="hermes";
-  document.getElementById("f_tools").checked=true;
+  ["f_name","f_port","f_model","f_served","f_venv"].forEach(i=>document.getElementById(i).value="");
   document.getElementById("f_autostart").checked=false;
   document.getElementById("f_name").disabled=false;
   document.getElementById("formtitle").textContent="Add Instance";
   document.getElementById("submitbtn").textContent="Add Instance";
   document.getElementById("cancelbtn").style.display="none";
   document.getElementById("formmsg").textContent="";
+  await ensureFlags(); renderConfigTabs({});
 }
-function editInstance(i){
+async function editInstance(i){
   editing=i.name;
   document.getElementById("f_name").value=i.name;
   document.getElementById("f_name").disabled=true;
   document.getElementById("f_port").value=i.port;
   document.getElementById("f_model").value=i.model||"";
   document.getElementById("f_served").value=(i.served_name&&i.served_name!==i.model)?i.served_name:"";
-  document.getElementById("f_seqs").value=i.max_num_seqs||"";
-  document.getElementById("f_mlen").value=i.max_model_len||"";
-  document.getElementById("f_parser").value=i.tool_parser||"hermes";
-  document.getElementById("f_tools").checked=i.enable_tool_choice!==false;
   document.getElementById("f_autostart").checked=!!i.autostart;
-  document.getElementById("f_extra").value=i.extra_args||"";
   document.getElementById("f_venv").value=i.venv||"";
   document.getElementById("formtitle").textContent="Edit "+i.name;
   document.getElementById("submitbtn").textContent="Save Changes";
   document.getElementById("cancelbtn").style.display="";
+  await ensureFlags(); renderConfigTabs(i.args||{});
   window.scrollTo(0,document.body.scrollHeight);
 }
 async function submitInstance(){
@@ -1809,7 +2209,8 @@ async function submitInstance(){
   const r = await fetch(url,{method,headers:authHeaders(),body:JSON.stringify(body)});
   const j = await r.json().catch(()=>({}));
   const msg=document.getElementById("formmsg");
-  if(r.ok){ msg.style.color="var(--green)"; msg.textContent=editing?"saved — restart to apply":"created"; resetForm(); loadInstances(); }
+  if(r.status===401){ refreshAuthUI(); return; }
+  if(r.ok){ msg.style.color="var(--green)"; msg.textContent=editing?"saved — restart instance to apply":"created"; resetForm(); loadInstances(); }
   else { msg.style.color="var(--red)"; msg.textContent=j.error||("error "+r.status); }
 }
 async function removeInstance(name){
@@ -1817,6 +2218,65 @@ async function removeInstance(name){
   const r=await fetch(`/api/instances/${name}`,{method:"DELETE",headers:authHeaders()});
   if(!r.ok){ const j=await r.json().catch(()=>({})); alert("Failed: "+(j.error||r.status)); }
   loadInstances();
+}
+function toggleArgsPreview(){
+  const el=document.getElementById("argspreview");
+  if(el.style.display==="none"){
+    const a=collectArgs(); const parts=[];
+    for(const k in a){ parts.push(a[k]===true?k:`${k} ${a[k]}`); }
+    el.textContent="vllm serve "+(fval("f_model")||"<model>")+" \\\n  --port "+(fval("f_port")||"<port>")
+      +(parts.length?" \\\n  "+parts.join(" \\\n  "):"");
+    el.style.display="";
+  } else el.style.display="none";
+}
+
+// ---- HF model browser ----
+function openHF(){ document.getElementById("hfmodal").style.display="flex"; document.getElementById("hfq").focus(); }
+function closeHF(){ document.getElementById("hfmodal").style.display="none"; }
+async function runHF(){
+  const q=document.getElementById("hfq").value.trim();
+  const mlx=document.getElementById("hfmlx").checked?"1":"0";
+  const box=document.getElementById("hfresults");
+  if(!q){ box.textContent="Enter a search term."; return; }
+  box.textContent="searching…";
+  try{
+    const d=await (await fetch(`/api/hf/search?q=${encodeURIComponent(q)}&mlx=${mlx}`)).json();
+    const ms=d.models||[];
+    if(!ms.length){ box.innerHTML='<div style="color:var(--muted)">No models found.'+(mlx==="1"?' Try unchecking "MLX only".':'')+'</div>'; return; }
+    box.innerHTML=ms.map(m=>`<div class="hfrow">
+      <span class="hid">${m.id}</span>
+      ${m.quant?`<span class="tag">${m.quant}</span>`:""}
+      <span class="dl">▼ ${m.downloads.toLocaleString()}</span>
+      <button class="btn go" onclick="pickHF('${m.id}')">Use</button></div>`).join("");
+  }catch(e){ box.textContent="search failed"; }
+}
+function pickHF(id){
+  document.getElementById("f_model").value=id;
+  closeHF();
+  // suggest a name + served-name from the leaf
+  const leaf=id.split("/").pop();
+  if(!fval("f_name")) document.getElementById("f_name").value=leaf.toLowerCase().replace(/[^a-z0-9_-]/g,"-").slice(0,40);
+}
+
+// ---- vllm-metal version / update ----
+async function checkVersion(){
+  const el=document.getElementById("verline"); el.textContent="checking…";
+  try{
+    const d=await (await fetch("/api/vllm-version",{cache:"no-store"})).json();
+    const inst=d.installed||{};
+    el.innerHTML=`installed vllm-metal <b style="color:var(--green)">${inst["vllm-metal"]||"?"}</b> · vllm ${inst["vllm"]||"?"} · PyPI latest ${d.latest||"?"}`;
+  }catch(e){ el.textContent="version check failed"; }
+}
+async function doUpdate(){
+  if(!confirm("Update vllm-metal via pip in the venv? Restart instances afterward to use the new build."))return;
+  const log=document.getElementById("updlog"); log.style.display=""; log.textContent="starting update…\n";
+  const r=await fetch("/api/vllm-update",{method:"POST",headers:authHeaders()});
+  if(r.status===401){ refreshAuthUI(); return; }
+  const poll=setInterval(async()=>{
+    const s=await (await fetch("/api/vllm-update-status",{cache:"no-store"})).json();
+    log.textContent=s.log||""; log.scrollTop=log.scrollHeight;
+    if(!s.running && s.rc!==null){ clearInterval(poll); log.textContent+=`\n[exit ${s.rc}]`; checkVersion(); }
+  },1500);
 }
 
 // honor deep-links: #settings page, or #processes/#filesystems sub-tab
