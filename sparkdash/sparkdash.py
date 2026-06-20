@@ -218,6 +218,19 @@ def build_vllm_args(inst):
 # ---------------------------------------------------------------------------
 # Instance supervisor — spawns/kills vllm as child subprocesses.
 # ---------------------------------------------------------------------------
+def _port_listener_pids(port):
+    """PIDs LISTENing on a TCP port (the authoritative liveness signal —
+    survives SparkDash restarts, unlike an in-memory Popen handle)."""
+    out = _run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"])
+    pids = []
+    for ln in out.split():
+        try:
+            pids.append(int(ln))
+        except ValueError:
+            pass
+    return pids
+
+
 class InstanceSupervisor:
     def __init__(self):
         self._procs = {}        # name -> Popen
@@ -225,6 +238,10 @@ class InstanceSupervisor:
         self._stopping = set()  # names intentionally stopped (skip autorestart)
 
     def is_running(self, name):
+        # authoritative: is something LISTENing on the instance's port?
+        inst = get_instance(name)
+        if inst and _port_listener_pids(inst["port"]):
+            return True
         with self._lock:
             p = self._procs.get(name)
             return p is not None and p.poll() is None
@@ -232,7 +249,18 @@ class InstanceSupervisor:
     def pid(self, name):
         with self._lock:
             p = self._procs.get(name)
-            return p.pid if p and p.poll() is None else None
+        if p and p.poll() is None:
+            return p.pid
+        # adopted/orphan: report the actual listener pid on the port
+        inst = get_instance(name)
+        pids = _port_listener_pids(inst["port"]) if inst else []
+        return pids[0] if pids else None
+
+    def port_busy(self, name):
+        """True if ANY process is already serving this instance's port —
+        whether we spawned it or it's an orphan from a prior run."""
+        inst = get_instance(name)
+        return bool(inst and _port_listener_pids(inst["port"]))
 
     def start(self, name):
         inst = get_instance(name)
@@ -240,6 +268,13 @@ class InstanceSupervisor:
             return False, "no such instance"
         if self.is_running(name):
             return True, "already running"
+        # GUARD: never spawn a duplicate onto a port that's already serving.
+        # This is what prevented the multi-zombie leak — after a SparkDash
+        # restart our Popen handle is empty, but the orphaned vllm still listens.
+        if self.port_busy(name):
+            with self._lock:
+                self._stopping.discard(name)
+            return True, f"already serving on :{inst['port']} (adopted)"
         args = build_vllm_args(inst)
         env = dict(os.environ)
         venv_bin = os.path.dirname(inst.get("venv") or _VENV_DEFAULT)
@@ -258,21 +293,34 @@ class InstanceSupervisor:
         return True, f"started pid {p.pid}"
 
     def stop(self, name):
+        inst = get_instance(name)
         with self._lock:
             p = self._procs.get(name)
             self._stopping.add(name)
-        if p is None or p.poll() is not None:
-            # maybe an externally-running process on this port; nothing we own
-            return True, "not running (or not supervised)"
-        try:
-            # SIGTERM the whole process group (vllm spawns workers)
-            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
+        killed = []
+        # 1) our own child (process group)
+        if p is not None and p.poll() is None:
             try:
-                p.terminate()
-            except Exception:
-                pass
-        return True, "stopping"
+                os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+                killed.append(p.pid)
+            except (ProcessLookupError, PermissionError):
+                try:
+                    p.terminate(); killed.append(p.pid)
+                except Exception:
+                    pass
+        # 2) ALSO kill any orphan/adopted listeners on this port (+ their groups)
+        if inst:
+            for pid in _port_listener_pids(inst["port"]):
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                killed.append(pid)
+        return True, (f"stopping pids {sorted(set(killed))}" if killed
+                      else "not running")
 
     def restore_on_boot(self):
         for inst in load_instances():
@@ -521,42 +569,72 @@ def _disk_weights_bytes(model_id):
     return int(m.group(1)) * 1024 if m else 0
 
 
-def vllm_memory(model_id):
-    """GPU/unified-memory footprint of the vLLM engine, split weights vs KV/other.
+_UNIT = {"KB": 1024, "MB": 1024**2, "GB": 1024**3, "B": 1}
 
-    The authoritative total is the EngineCore process's 'IOAccelerator
-    (graphics)' region from `footprint`; weights are the on-disk model size;
-    the remainder is KV cache + activations + Metal runtime.
-    """
+
+def _footprint_pid(pid):
+    """(gpu_graphics_bytes, phys_footprint_bytes) for one pid via `footprint`."""
+    fp = _run(["footprint", "-p", str(pid)], timeout=8)
+    gpu = rss = 0
+    m = re.search(r"([\d.]+)\s*([KMG]?B)\s+.*IOAccelerator \(graphics\)", fp)
+    if m:
+        gpu = int(float(m.group(1)) * _UNIT[m.group(2)])
+    m = re.search(r"phys_footprint:\s*([\d.]+)\s*([KMG]?B)", fp)
+    if m:
+        rss = int(float(m.group(1)) * _UNIT[m.group(2)])
+    return gpu, rss
+
+
+def _child_pids(parent):
+    """Direct child PIDs of a parent (one level)."""
+    out = _run(["pgrep", "-P", str(parent)])
+    return [int(x) for x in out.split() if x.isdigit()]
+
+
+def _vllm_pids_for_port(port):
+    """The vllm process serving `port` (the LISTEN pid) plus its EngineCore
+    children — the processes that actually hold this instance's GPU memory.
+    Walks the real process tree, so it never double-counts other instances."""
+    listeners = _port_listener_pids(port)
+    pids = set(listeners)
+    for lp in listeners:
+        for ch in _child_pids(lp):
+            pids.add(ch)
+            # EngineCore can be a grandchild
+            for gch in _child_pids(ch):
+                pids.add(gch)
+    return pids
+
+
+_vllm_mem_cache = {}  # port -> {t, data}
+
+
+def vllm_memory_for(port, model_id):
+    """Per-instance GPU/unified-memory footprint, split weights vs KV/other.
+    Only counts the process tree of the vllm LISTENing on `port`, so multiple
+    instances are attributed independently. Cached per port (footprint is slow)."""
     now = time.time()
-    c = _VLLM_MEM_CACHE
-    if c["data"] is not None and now - c["t"] < _VLLM_MEM_TTL:
+    c = _vllm_mem_cache.get(port)
+    if c and now - c["t"] < _VLLM_MEM_TTL:
         return c["data"]
 
-    # find the EngineCore pid (holds the GPU allocations)
-    pids = _run(["pgrep", "-f", "VLLM::EngineCore"]).split()
-    serve_pids = _run(["pgrep", "-f", "vllm serve"]).split()
-    gpu_bytes = 0
-    rss_bytes = 0
+    pids = _vllm_pids_for_port(port)
+    gpu_bytes = rss_bytes = 0
     for p in pids:
-        fp = _run(["footprint", "-p", p], timeout=8)
-        m = re.search(r"([\d.]+)\s*([KMG]B)\s+.*IOAccelerator \(graphics\)", fp)
-        if m:
-            gpu_bytes += int(float(m.group(1)) * {"KB": 1024, "MB": 1024**2, "GB": 1024**3}[m.group(2)])
-        m = re.search(r"phys_footprint:\s*([\d.]+)\s*([KMG]B)", fp)
-        if m:
-            rss_bytes += int(float(m.group(1)) * {"KB": 1024, "MB": 1024**2, "GB": 1024**3}[m.group(2)])
+        g, r = _footprint_pid(p)
+        gpu_bytes += g
+        rss_bytes += r
 
     weights = _disk_weights_bytes(model_id) if gpu_bytes else 0
     kv_other = max(0, gpu_bytes - weights)
     data = {
-        "running": bool(pids or serve_pids),
-        "gpu_total": gpu_bytes,        # weights + KV + activations (unified mem)
-        "weights": weights,            # model weights (== on-disk 4-bit size)
-        "kv_other": kv_other,          # KV cache + activations + Metal runtime
-        "phys_footprint": rss_bytes,   # total process footprint incl. GPU
+        "running": bool(pids),
+        "gpu_total": gpu_bytes,
+        "weights": weights,
+        "kv_other": kv_other,
+        "phys_footprint": rss_bytes,
     }
-    c.update(t=now, data=data)
+    _vllm_mem_cache[port] = {"t": now, "data": data}
     return data
 
 
@@ -646,6 +724,9 @@ def instances_status():
             "pid": supervisor.pid(name),
             "up": stats.get("up", False),
             "stats": stats if stats.get("up") else None,
+            "memory": vllm_memory_for(inst["port"],
+                                      stats.get("model") if stats.get("up") else inst.get("model"))
+                       if (running or stats.get("up")) else None,
         })
     return out
 
@@ -655,9 +736,6 @@ def collect():
     cm = cpu_mem_stats()
     host = host_info()
     insts = instances_status()
-    # primary = first instance that's actually serving (for the headline panel)
-    primary = next((i for i in insts if i["up"]), None)
-    vstats = primary["stats"] if primary else {"up": False}
     return {
         "ts": time.time(),
         "host": host,
@@ -671,8 +749,6 @@ def collect():
         "pressure": memory_pressure(),
         "processes": top_processes(15),
         "filesystems": file_systems(),
-        "vllm": vstats,
-        "vllm_mem": vllm_memory(vstats.get("model") if vstats.get("up") else None),
         "instances": insts,
     }
 
@@ -1101,9 +1177,19 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .membar-track #seg_w{background:linear-gradient(90deg,var(--green-dim),var(--green))}
   .membar-track #seg_kv{background:linear-gradient(90deg,#7a5a00,var(--amber))}
   /* vLLM strip */
-  .vllm{grid-column:1 / -1;padding:18px 22px}
+  #instpanels{grid-column:1 / -1}
+  .vllm{padding:18px 22px;margin-bottom:18px}
   .vllm h4{margin:0 0 4px;font-size:15px;font-weight:600}
   .model{font-size:13px;color:var(--green);margin-bottom:14px;font-family:ui-monospace,Menlo,monospace}
+  .ihdr{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  .ihdr .idot{width:9px;height:9px;border-radius:50%}
+  .ihdr .iname{font-weight:700;font-size:15px}
+  .ihdr .imodel{color:var(--green);font-size:12px;font-family:ui-monospace,Menlo,monospace}
+  .ihdr .istate{color:var(--muted);font-size:12px;margin-left:auto}
+  .memhdr{color:var(--muted);font-size:13px;margin:16px 0 8px}
+  .memhdr b{color:var(--text)}
+  .memlegend{display:flex;gap:24px;margin-top:10px;font-size:13px;color:var(--muted)}
+  .memlegend .pip{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px}
   .vgrid{display:grid;grid-template-columns:repeat(8,1fr);gap:12px}
   .stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px}
   .stat .l{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
@@ -1230,18 +1316,6 @@ INDEX_HTML = r"""<!DOCTYPE html>
             <div class="d" id="presline">—</div></div>
         </div>
       </div>
-      <div class="section" style="border-bottom:none">
-        <h4>vLLM Memory (Unified / Metal)</h4>
-        <div class="membar-track"><div class="seg" id="seg_w" style="width:0%"></div><div class="seg" id="seg_kv" style="width:0%"></div></div>
-        <div class="memrow" style="margin-top:14px">
-          <div class="item"><div class="h"><span class="pip" style="background:var(--green)"></span>Model weights</div>
-            <div class="d" id="ml_w">—</div></div>
-          <div class="item"><div class="h"><span class="pip" style="background:var(--amber)"></span>KV cache + activations</div>
-            <div class="d" id="ml_kv">—</div></div>
-          <div class="item"><div class="h"><span class="pip" style="background:var(--muted)"></span>GPU total</div>
-            <div class="d" id="ml_tot">—</div></div>
-        </div>
-      </div>
     </div>
 
     <!-- PROCESSES view -->
@@ -1266,21 +1340,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- vLLM full-width strip -->
-  <div class="card vllm">
-    <h4>vLLM Inference Engine</h4>
-    <div class="model" id="vllmmodel">—</div>
-    <div class="vgrid">
-      <div class="stat"><div class="l">Running</div><div class="n" id="v_run">0</div></div>
-      <div class="stat"><div class="l">Waiting</div><div class="n" id="v_wait">0</div></div>
-      <div class="stat"><div class="l">Generation</div><div class="n"><span id="v_tps">0</span><small> t/s</small></div></div>
-      <div class="stat"><div class="l">Prompt</div><div class="n"><span id="v_ptps">0</span><small> t/s</small></div></div>
-      <div class="stat"><div class="l">KV Cache</div><div class="n"><span id="v_kv">0</span><small> %</small></div></div>
-      <div class="stat"><div class="l">Prefix Hit</div><div class="n"><span id="v_prefix">0</span><small> %</small></div></div>
-      <div class="stat"><div class="l">Gen tok</div><div class="n" id="v_gentot" style="font-size:18px">0</div></div>
-      <div class="stat"><div class="l">Prompt tok</div><div class="n" id="v_ptot" style="font-size:18px">0</div></div>
-    </div>
-  </div>
+  <!-- vLLM instances: one full-width panel per instance -->
+  <div id="instpanels"></div>
 
   <!-- Inference activity log -->
   <div class="card activity">
@@ -1412,6 +1473,50 @@ function multiline(id,series,colors,max){
   });
 }
 
+// One full-width panel per instance (serving stats + own memory breakdown).
+function renderInstancePanels(insts){
+  const wrap=document.getElementById("instpanels");
+  if(!wrap) return;
+  if(!insts.length){
+    wrap.innerHTML='<div class="card vllm" style="color:var(--muted)">No vLLM-metal instances configured — add one in Settings.</div>';
+    return;
+  }
+  wrap.innerHTML = insts.map(i=>{
+    const s=i.stats, m=i.memory;
+    const dot = i.up ? "var(--green)" : (i.supervised ? "var(--amber)" : "var(--muted)");
+    const state = i.up ? "serving" : (i.supervised ? "loading…" : "stopped");
+    let stats;
+    if(i.up && s){
+      stats=`<div class="vgrid">
+        <div class="stat"><div class="l">Running</div><div class="n">${s.running}</div></div>
+        <div class="stat"><div class="l">Waiting</div><div class="n">${s.waiting}</div></div>
+        <div class="stat"><div class="l">Generation</div><div class="n">${s.gen_tps}<small> t/s</small></div></div>
+        <div class="stat"><div class="l">Prompt</div><div class="n">${s.prompt_tps}<small> t/s</small></div></div>
+        <div class="stat"><div class="l">KV Cache</div><div class="n">${s.kv_cache}<small> %</small></div></div>
+        <div class="stat"><div class="l">Prefix Hit</div><div class="n">${s.prefix_hit_rate}<small> %</small></div></div>
+        <div class="stat"><div class="l">Gen tok</div><div class="n" style="font-size:18px">${fmt(s.total_gen_tokens)}</div></div>
+        <div class="stat"><div class="l">Prompt tok</div><div class="n" style="font-size:18px">${fmt(s.total_prompt_tokens)}</div></div>
+      </div>`;
+    } else {
+      stats=`<div style="color:var(--muted);font-size:13px;padding:6px 0">${i.supervised?"engine starting — model loading into memory…":"not running — start it in Settings"}</div>`;
+    }
+    let mem="";
+    if(m && m.gpu_total>0){
+      const wG=m.weights/GB, kvG=m.kv_other/GB, totG=m.gpu_total/GB;
+      mem=`<div class="memhdr">Unified / Metal memory — <b>${totG.toFixed(2)} GB</b></div>
+        <div class="membar-track"><div class="seg" style="background:linear-gradient(90deg,var(--green-dim),var(--green));width:${wG/totG*100}%"></div><div class="seg" style="background:linear-gradient(90deg,#7a5a00,var(--amber));width:${kvG/totG*100}%"></div></div>
+        <div class="memlegend"><span><span class="pip" style="background:var(--green)"></span>weights ${wG.toFixed(2)} GB</span>
+        <span><span class="pip" style="background:var(--amber)"></span>KV + activations ${kvG.toFixed(2)} GB</span></div>`;
+    }
+    return `<div class="card vllm">
+      <div class="ihdr"><span class="idot" style="background:${dot}"></span>
+        <span class="iname">${i.name}</span>
+        <span class="imodel">${s?s.model:(i.model||"")}</span>
+        <span class="istate">:${i.port} · ${state}${i.pid?" · pid "+i.pid:""}</span></div>
+      ${stats}${mem}</div>`;
+  }).join("");
+}
+
 async function tick(){
   let d;
   try{ d=await (await fetch("/api/metrics",{cache:"no-store"})).json(); }
@@ -1466,36 +1571,8 @@ async function tick(){
   document.getElementById("presline").textContent=
     pr.free_pct!=null ? `${pr.label} · ${pr.free_pct}% free` : "—";
 
-  // --- vLLM memory breakdown (weights vs KV/other) ---
-  const vm=d.vllm_mem||{};
-  if(vm.running && vm.gpu_total>0){
-    const wG=vm.weights/GB, kvG=vm.kv_other/GB, totG=vm.gpu_total/GB;
-    document.getElementById("seg_w").style.width=(wG/totG*100)+"%";
-    document.getElementById("seg_kv").style.width=(kvG/totG*100)+"%";
-    document.getElementById("ml_w").textContent=wG.toFixed(2)+" GB";
-    document.getElementById("ml_kv").textContent=kvG.toFixed(2)+" GB";
-    document.getElementById("ml_tot").textContent=totG.toFixed(2)+" GB unified";
-  } else {
-    document.getElementById("seg_w").style.width="0%";
-    document.getElementById("seg_kv").style.width="0%";
-    document.getElementById("ml_w").textContent="—";
-    document.getElementById("ml_kv").textContent="—";
-    document.getElementById("ml_tot").textContent="engine not running";
-  }
-
-  // --- vLLM ---
-  const v=d.vllm;
-  if(v.up){
-    document.getElementById("vllmmodel").textContent="● "+v.model;
-    document.getElementById("v_run").textContent=v.running;
-    document.getElementById("v_wait").textContent=v.waiting;
-    document.getElementById("v_tps").textContent=v.gen_tps;
-    document.getElementById("v_ptps").textContent=v.prompt_tps;
-    document.getElementById("v_kv").textContent=v.kv_cache;
-    document.getElementById("v_prefix").textContent=v.prefix_hit_rate;
-    document.getElementById("v_gentot").textContent=fmt(v.total_gen_tokens);
-    document.getElementById("v_ptot").textContent=fmt(v.total_prompt_tokens);
-  } else { document.getElementById("vllmmodel").textContent="● engine offline"; }
+  // --- vLLM instances: one panel each ---
+  renderInstancePanels(d.instances||[]);
 
   // --- Processes table ---
   const procs=d.processes||[];
