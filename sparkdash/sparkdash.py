@@ -1531,10 +1531,11 @@ function renderInstancePanels(insts){
     let mem="";
     if(m && m.gpu_total>0){
       const wG=m.weights/GB, kvG=m.kv_other/GB, totG=m.gpu_total/GB;
+      const kvUse = s ? s.kv_cache : 0;   // live KV pool usage %
       mem=`<div class="memhdr">Unified / Metal memory allocated — <b>${totG.toFixed(2)} GB</b> <span style="color:#8a8a8a">(incl. paged-out)</span></div>
         <div class="membar-track"><div class="seg" style="background:linear-gradient(90deg,var(--green-dim),var(--green));width:${wG/totG*100}%"></div><div class="seg" style="background:linear-gradient(90deg,#7a5a00,var(--amber));width:${kvG/totG*100}%"></div></div>
         <div class="memlegend"><span><span class="pip" style="background:var(--green)"></span>weights ${wG.toFixed(2)} GB</span>
-        <span><span class="pip" style="background:var(--amber)"></span>KV + activations ${kvG.toFixed(2)} GB</span></div>`;
+        <span><span class="pip" style="background:var(--amber)"></span>KV cache pool ${kvG.toFixed(2)} GB <span style="color:#8a8a8a">(reserved · ${kvUse}% in use)</span></span></div>`;
     }
     return `<div class="card vllm">
       <div class="ihdr"><span class="idot" style="background:${dot}"></span>
