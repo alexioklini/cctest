@@ -926,6 +926,7 @@ class AdminObservabilityHandlers:
         ("studio_model", "Studio (Projekt-Outputs)", "config", None),
         ("audio_overview_model", "Audio Overview (Podcast-Skript)", "config", None),
         ("code_graph_model", "Code-Graph (Symbol-Zusammenfassungen)", "config", None),
+        ("translation_model", "Übersetzung", "tools", None),
         ("background_task_model", "Fan-out-Hintergrundmodell", "config", None),
         ("kg_extraction_model", "KG-Extraktion", "config", None),
         ("tts_model", "Text-to-Speech", "tools", "tts"),
@@ -964,6 +965,7 @@ class AdminObservabilityHandlers:
             "kg_extraction_model": kg.get("extraction_model", "") or "",
             "tts_model": (tool_cfg.get("text_to_speech") or {}).get("default_model", "") or "",
             "transcribe_model": (tool_cfg.get("transcribe_audio") or {}).get("default_model", "") or "",
+            "translation_model": (tool_cfg.get("translation") or {}).get("default_model", "") or "",
         }
         ocr = cfg.get("ocr") or {}
         ocr_block = {
@@ -1177,6 +1179,10 @@ class AdminObservabilityHandlers:
                 ta = dict((_brain.get_tool_config().get("transcribe_audio") or {}))
                 ta["default_model"] = _validate_model(body["transcribe_model"])
                 tool_updates["transcribe_audio"] = ta
+            if "translation_model" in body:
+                tr = dict((_brain.get_tool_config().get("translation") or {}))
+                tr["default_model"] = _validate_model(body["translation_model"])
+                tool_updates["translation"] = tr
 
             with open(config_path, "w") as f:
                 json.dump(cfg, f, indent=2)
