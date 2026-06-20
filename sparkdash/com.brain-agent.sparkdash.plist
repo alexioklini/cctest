@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.brain-agent.sparkdash</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/alexander/sparkdash.py</string>
+        <string>--port</string>
+        <string>8013</string>
+        <string>--vllm</string>
+        <string>http://127.0.0.1:8012</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/alexander/sparkdash.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/alexander/sparkdash.log</string>
+</dict>
+</plist>
