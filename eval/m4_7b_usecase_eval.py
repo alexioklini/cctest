@@ -17,6 +17,14 @@ def key(n): return PROV[n].get('api_key', '')
 M4 = ("M4-7B", "Qwen2.5-7B-Instruct-4bit", "http://192.168.1.214:8012", key("Lokal-M4"))
 SMALL = ("cloud-small", "mistral-small-latest", "http://127.0.0.1:8317", key("CLIProxyAPI"))
 MEDIUM = ("cloud-medium", "mistral-medium-3.5", "http://127.0.0.1:8317", key("CLIProxyAPI"))
+# Larger local fallback for the user-profile case (oMLX). NOTE: gemma-4-12B on
+# oMLX can 500 with "Thread group size (1024) > maximum (640)" — a Metal kernel
+# limit, not a model-quality issue. If it returns the sidecar EMPTY_GIVEUP_TEXT
+# with usage input/output_tokens=0, check ~/.omlx/logs/server.log for that crash
+# and adjust the oMLX model config. When serving, it scored 5/5 grounded on the
+# profile case (~11s) — on par with the post-fix M4 7B.
+GEMMA12 = ("gemma-12B", "gemma-4-12B-it-qat-4bit", "http://localhost:8000",
+           PROV.get("Lokal", {}).get("api_key", ""))
 
 
 def call(prov, system, user, max_tokens, temperature=None, forced_tool=None):
@@ -109,22 +117,32 @@ def uc_wiki_gate():
         SYS, smalltalk, 8)
 
 
+def _load_production_profile_prompt():
+    """Load the REAL _PROFILE_SYSTEM_PROMPT from server.py via AST so the eval
+    tests exactly what the daemon runs (not a hand-copied approximation)."""
+    import ast
+    src = open('server.py').read()
+    ns = {}
+    for node in ast.parse(src).body:
+        if (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in ("_PROFILE_SECTION_INSTRUCTIONS",
+                                           "_PROFILE_SYSTEM_PROMPT")):
+            ns[node.targets[0].id] = eval(
+                compile(ast.Expression(node.value), '<x>', 'eval'), {}, ns)
+    return ns["_PROFILE_SYSTEM_PROMPT"]
+
+
 def uc_user_profile():
-    SYS = ("You maintain a user-context profile that an AI assistant reads at the start "
-           "of every chat. Output ONLY the profile in Markdown, nothing else — no preface, "
-           "no commentary, no JSON, no code fences.\n\n"
-           "Schema (use exactly these section headings, in this order; if a section has "
-           "nothing real to say, write `_(none)_`):\n"
-           "## Work context\n## Personal context\n## Top of mind\n## Recent months\n"
-           "## Earlier context\n## Long-term background\n\n"
-           "HARD RULES:\n- Never invent facts. If you don't have evidence, leave the "
-           "section as `_(none)_`.\n- Write in third person about the user.\n"
-           "- Match the user's predominant language.\n- Each section 2–6 sentences max.\n"
-           "- No timestamps.")
+    SYS = _load_production_profile_prompt()
     user = ("Build the profile from scratch. The user's preferred name is Alexander.\n\n"
             "CHAT SAMPLES (most recent first):\n" + CONV +
             "\n\nOutput the COMPLETE profile using the schema above.")
-    run("#10 USER-PROFILE DAEMON", SYS, user, 2000)
+    # The profile case is where M4 7B regressed (hallucination) before the
+    # v9.177.0 GROUNDING/CAPTURE prompt fix; gemma-12B is the larger local
+    # fallback. Compare all three so a future prompt/model change can be
+    # re-checked the same way. gemma is included only if oMLX is generating.
+    run("#10 USER-PROFILE DAEMON", SYS, user, 2000,
+        providers=(M4, GEMMA12, SMALL))
 
 
 def uc_code_graph():
