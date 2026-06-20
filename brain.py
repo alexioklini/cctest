@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.171.0"
+VERSION = "9.172.0"
 VERSION_DATE = "2026-06-20"
 CHANGELOG = [
+    ("9.172.0", "2026-06-20", "chore(cleanup): den toten LLM-Memory-Classifier entfernt. classify_chat_for_memory() + _MEMORY_CLASSIFIER_PROMPT (brain.py) geloescht — der einzige Aufrufer lag im UNERREICHBAREN Body der retired chat-sync-Daemon (server_daemons.py, nach dem fruehen return; das Wiki ist seit v9.105 der alleinige Feeder fuer chat-abgeleitete Wings). Im toten Daemon-Body den Classifier-Gate-Block durch ein leeres _clf_skip_ids ersetzt + die nur dort genutzten clf_enabled/clf_model/clf_file_categories-Reads entfernt (clf_min_turns bleibt). Den verwaisten Knopf mempalace.chat_sync.classifier.model aus config.json entfernt (zeigte auf Lokal-M4-7B, trieb aber nichts Lebendiges). BEHALTEN: classifier.default_mode (LIVE — Per-Session-Memory-Toggle-Default, handlers/chat.py) + enabled/categories_to_file/min_turns (haben noch MemPalace-Settings-UI). py_compile OK; Neustart noetig."),
     ("9.171.0", "2026-06-20", "feat(models): eigener deep_research_model-Knopf fuer den Deep-Research-Loop (engine/deep_research.py). Nutzte hart _background_model_default(); NEU deep_research_model zuerst (gesetzt+enabled), sonst Fallback default. Research macht Verifikations-/Synthese-Reasoning → will oft ein STAERKERES Modell als die Billig-Bulk-Hintergrundtasks. Verdrahtet: boot-loader + Service-Modelle-Slot 'Deep Research (Recherche-Loop)'. LIVE: deep_research_model=CLIProxyAPI/mistral-medium-3.5. py_compile OK; Neustart noetig."),
     ("9.170.0", "2026-06-20", "feat(models)+fix(translate): Uebersetzung im Service-Modelle-Panel + toter Spracherkennungs-Fallback repariert. (1) NEU Service-Modelle-Slot 'Uebersetzung' (translation_model, tools-file-Slot wie tts/transcribe → schreibt tools_config.json translation.default_model). Bisher nur im Tools-Tab editierbar; jetzt auch zentral im Service-Modelle-Panel. (2) FIX: translation.detection_fallback_model zeigte auf 'mistral-vibe-cli-fast' (DEAKTIVIERT) — der LLM-Fallback der Spracherkennung (handlers/translate.py liest detection_fallback_model) waere bei Lingua-Unsicherheit auf ein totes Modell gelaufen. Jetzt auf Lokal-M4/Qwen2.5-7B gesetzt. Haupt-Uebersetzungsmodell bleibt mistral-small. py_compile OK; Neustart noetig."),
     ("9.169.0", "2026-06-20", "feat(models): eigener code_graph_model-Knopf fuer die Code-Graph-Symbol-Zusammenfassungen. engine/code_graph.py generate_summaries() nutzte hart _background_model_default(). NEU: code_graph_model zuerst (gesetzt+enabled), sonst Fallback default. Verdrahtet: boot-loader + Service-Modelle-Slot 'Code-Graph (Symbol-Zusammenfassungen)'. LIVE: code_graph_model=Lokal-M4/Qwen2.5-7B (lokales 7B fuer die Massen-Einzeiler-Summaries). py_compile OK; Neustart noetig."),
@@ -9513,71 +9514,6 @@ def make_headers(api_key: str) -> dict:
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
-
-
-_MEMORY_CLASSIFIER_PROMPT = (
-    "Classify this chat exchange into exactly one category. "
-    "Reply with ONLY the category name, nothing else.\n"
-    "Categories:\n"
-    "- fact: contains user-specific data, measurements, names, dates, results\n"
-    "- preference: user expresses a preference, like, dislike, or personal choice\n"
-    "- decision: a decision was made, an action agreed upon, a plan set\n"
-    "- reference: mentions a specific resource, URL, tool, project, or document\n"
-    "- generic: generic advice, how-to steps, or information not specific to the user\n"
-    "- refusal: assistant says it can't help, doesn't have access, or doesn't know\n"
-    "- chitchat: greetings, small talk, jokes, acknowledgements with no substance"
-)
-
-
-def classify_chat_for_memory(user_text: str, assistant_text: str,
-                             model: str, timeout: int = 15) -> str | None:
-    """Classify a user+assistant exchange for memory filing. Returns the
-    category label or None on error.
-
-    Routes through `sidecar_proxy.background_call` so it picks up the same
-    GDPR pre-flight + provider routing as every other non-interactive LLM
-    call. The chat-sync daemon sets `current_user_id` on the thread-local
-    before invoking us so any per-user gating downstream can find the caller.
-    """
-    try:
-        # GDPR policy gate. Aborts the classify if the admin chose abort
-        # policy; otherwise proceeds with possibly-swapped model and possibly
-        # pseudonymised text. Reply is a one-word label so deanon is a no-op
-        # but applying it costs nothing.
-        try:
-            model, (_u_pii, _a_pii), _deanon = gdpr_pick_model_for_background(
-                model, [user_text, assistant_text], purpose="memory_classifier")
-        except GDPRBlockedError:
-            return None
-        messages = [
-            {"role": "user",
-             "content": f"User: {_u_pii[:2000]}\nAssistant: {_a_pii[:2000]}"},
-        ]
-        from handlers import sidecar_proxy as _sidecar_proxy
-        _res = _sidecar_proxy.background_call(
-            messages=messages,
-            model=model,
-            system_prompt=_MEMORY_CLASSIFIER_PROMPT,
-            cost_purpose="memory_classifier",
-            max_tokens=20,
-        )
-        text = _deanon(_res.get("reply") or "")
-        if not text:
-            return None
-        content = text.strip().strip('"').strip("'").strip().lower()
-        # Some thinking-format models leak <think>…</think> wrappers around
-        # short answers. Strip the wrapper so the label inside is comparable.
-        if "<think>" in content and "</think>" in content:
-            content = content.split("</think>", 1)[1].strip()
-        # Take just the first token-ish word — labels are single words.
-        if content:
-            content = content.split()[0].strip(",.;:!?\"'`").lower()
-        valid = {"fact", "preference", "decision", "reference",
-                 "generic", "refusal", "chitchat"}
-        return content if content in valid else None
-    except Exception as e:
-        print(f"[mempalace-classifier] error: {e}", file=sys.stderr, flush=True)
-        return None
 
 
 def get_available_models(api_key: str, base_url: str) -> list[str]:

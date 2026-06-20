@@ -649,12 +649,9 @@ def _mempalace_chat_sync_loop(srv):
             closet_head = int(sync_cfg2.get("closet_content_head_chars", 5000))
             default_room = sync_cfg2.get("room", "chat")
 
-            # Classifier gate config
+            # Classifier gate config (LLM classifier removed; only the
+            # min_turns short-chat gate remains referenced in this dead body).
             clf_cfg = sync_cfg2.get("classifier", {}) or {}
-            clf_enabled = bool(clf_cfg.get("enabled", False))
-            clf_model = clf_cfg.get("model", "")
-            clf_file_categories = set(clf_cfg.get("categories_to_file",
-                ["fact", "preference", "decision", "reference"]))
             clf_min_turns = int(clf_cfg.get("min_turns", 0))
 
             closets_col = None
@@ -780,40 +777,11 @@ def _mempalace_chat_sync_loop(srv):
 
                 new_last_id = after_id
 
-                # Build classifier skip-set: message IDs to skip based on LLM classification.
-                # Skip classifier entirely if user toggled save_to_memory on this session.
+                # The LLM memory-classifier gate was removed (the chat-sync
+                # daemon is retired; the wiki is the sole feeder for chat-derived
+                # wings). This body is unreachable — kept internally consistent
+                # with an empty skip-set so the consume point below still resolves.
                 _clf_skip_ids: set[int] = set()
-                if clf_enabled and clf_model and mem_mode == 2:
-                    # Pin the chat owner's user_id on the daemon thread so
-                    # client-mode ambient proxy can pick a tab of the right
-                    # user. Empty for legacy sessions without owner — the
-                    # picker returns None and the LLM call fails fast on
-                    # an air-gapped server (same fail-fast contract as
-                    # scheduled tasks; Stage 2 closes that hole).
-                    with engine.request_context(current_user_id=session_user_id or ""):
-                        i = 0
-                        while i < len(new_messages):
-                            m = new_messages[i]
-                            m_role = (m.get("role") or "").strip()
-                            m_id = int(m.get("id") or 0)
-                            # Pair user+assistant for classification
-                            if m_role == "user" and i + 1 < len(new_messages):
-                                nxt = new_messages[i + 1]
-                                nxt_role = (nxt.get("role") or "").strip()
-                                nxt_id = int(nxt.get("id") or 0)
-                                if nxt_role == "assistant":
-                                    u_text = str(m.get("content") or "")[:2000]
-                                    a_text = str(nxt.get("content") or "")[:2000]
-                                    category = engine.classify_chat_for_memory(
-                                        u_text, a_text, clf_model)
-                                    if category and category not in clf_file_categories:
-                                        _clf_skip_ids.add(m_id)
-                                        _clf_skip_ids.add(nxt_id)
-                                        print(f"[mempalace-classifier] skip ({category}): "
-                                              f"{u_text[:60]}", flush=True)
-                                    i += 2
-                                    continue
-                            i += 1
 
                 # Track the current turn's anchor user-message id. Every drawer
                 # filed from this turn (user, assistant, attachment, tool result)

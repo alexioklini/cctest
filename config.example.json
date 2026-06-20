@@ -2619,7 +2619,6 @@
       "closet_content_head_chars": 5000,
       "classifier": {
         "enabled": true,
-        "model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit",
         "categories_to_file": [
           "fact",
           "preference",
