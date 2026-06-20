@@ -40,6 +40,15 @@ M4_MODEL_3B = "Lokal-M4-3B/Qwen2.5-3B-Instruct-4bit"   # smaller local candidate
 CLOUD_SMALL = "CLIProxyAPI/mistral-small-latest"   # summary + classifier baseline
 CLOUD_MEDIUM = "CLIProxyAPI/mistral-medium-3.5"    # memory-classifier baseline
 
+# Apple Foundation Model — the on-device LLM in the Apple Intelligence stack
+# (macOS 27 / "FM 3"). Reached via `fm serve` (the macOS 27 FM CLI), which
+# exposes an OpenAI Chat-Completions server — NOT Anthropic /v1/messages. So it
+# has its own call path (_fm_classify_call) using response_format=json_schema
+# for structured routing (FM's equivalent of the others' forced-tool-use).
+# Start on the M4 with:  fm serve --host 0.0.0.0 --port 1976
+FM_MODEL = "AppleFM/system"
+FM_BASE = "http://192.168.1.214:1976"
+
 # Endpoints not registered in config.json (ad-hoc bench candidates served on the M4).
 # vllm-metal serves one model per process: 7B on :8012 (config), 3B on :8013 (here).
 _INLINE_ENDPOINTS = {
@@ -100,6 +109,71 @@ def _messages_call(model_id, system, user, max_tokens=200, tools=None, tool_choi
     return text.strip(), tin, dt, None
 
 
+def _fm_route_schema():
+    """JSON schema for FM's response_format — same enums as the route tool, so
+    FM is held to the exact vocabulary the others get via forced-tool-use.
+
+    NB: the on-device FM has a small (~4k-token) context. The 984-token
+    production classifier prompt fits, but a verbose schema on top can tip it
+    over (a real 500 'transcript exceeded context size'). We keep the schema
+    lean — enums on every field (the whole point of the fair test) but no
+    descriptions/min-max noise.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "task_types": {"type": "array",
+                           "items": {"type": "string", "enum": sorted(brain._TASK_TYPE_TIER.keys())}},
+            "tools": {"type": "array",
+                      "items": {"type": "string", "enum": sorted(brain._TASK_TOOL_GROUPS.keys())}},
+            "complexity": {"type": "string", "enum": ["low", "medium", "high"]},
+        },
+        "required": ["task_types", "tools", "complexity"],
+    }
+
+
+def _fm_classify_call(system, user, max_tokens=120):
+    """Apple FM via `fm serve` OpenAI Chat-Completions + json_schema structured
+    output. Returns (text, parsed_input_dict, latency_s, err) — same shape as
+    _messages_call so run_classifier treats FM identically to the others.
+
+    Always non-streaming (`stream:false`) — fm serve streams SSE by default.
+    """
+    body = {
+        "model": "system",            # on-device Apple Foundation Model
+        "stream": False,
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "route", "schema": _fm_route_schema()},
+        },
+    }
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        FM_BASE + "/v1/chat/completions", data=data,
+        headers={"content-type": "application/json"})
+    t0 = time.time()
+    try:
+        r = json.load(urllib.request.urlopen(req, timeout=90))
+    except Exception as e:
+        return None, None, time.time() - t0, str(e)[:160]
+    dt = time.time() - t0
+    try:
+        content = r["choices"][0]["message"]["content"] or ""
+    except (KeyError, IndexError, TypeError):
+        return None, None, dt, f"unexpected shape: {str(r)[:120]}"
+    tin = None
+    try:
+        tin = json.loads(content)
+    except Exception:
+        pass  # leave tin None -> counts as invalid, like a dropped-brace failure
+    return content.strip(), tin, dt, None
+
+
 # ---- the forced route tool, built from brain's live enums (no drift) ----
 ROUTE_TOOL = {
     "name": "route",
@@ -157,15 +231,27 @@ MEMCLF_CASES = [
 
 
 def run_classifier(model_id, reps):
-    """Forced-tool routing: JSON-valid rate + memory-when-expected rate + latency."""
+    """Forced-tool routing: JSON-valid rate + memory-when-expected rate + latency.
+
+    Apple FM (FM_MODEL) routes through _fm_classify_call (OpenAI Chat-Completions
+    + json_schema); every other model uses the Anthropic forced-tool path. Both
+    return the same (text, input_dict, latency, err) shape, so the scoring below
+    is identical — the only difference is the structured-output MECHANISM, which
+    is the native one for each backend (fair comparison of the actual job).
+    """
+    is_fm = (model_id == FM_MODEL)
     valid = 0; total = 0; mem_hit = 0; mem_exp = 0; lats = []
     for case, internal in CLASSIFY_CASES:
         for _ in range(reps):
             total += 1
-            txt, tin, dt, err = _messages_call(
-                model_id, brain._STRUCTURED_CLASSIFY_SYSTEM, case,
-                max_tokens=64, tools=[ROUTE_TOOL],
-                tool_choice={"type": "tool", "name": "route"})
+            if is_fm:
+                txt, tin, dt, err = _fm_classify_call(
+                    brain._STRUCTURED_CLASSIFY_SYSTEM, case, max_tokens=64)
+            else:
+                txt, tin, dt, err = _messages_call(
+                    model_id, brain._STRUCTURED_CLASSIFY_SYSTEM, case,
+                    max_tokens=64, tools=[ROUTE_TOOL],
+                    tool_choice={"type": "tool", "name": "route"})
             lats.append(dt)
             if err or not isinstance(tin, dict) or "task_types" not in tin or "complexity" not in tin:
                 continue
@@ -249,7 +335,8 @@ def main():
 
     tasks = [
         ("classifier", run_classifier,
-         [("M4-Qwen-7B", M4_MODEL), ("M4-Qwen-3B", M4_MODEL_3B), ("cloud-small", CLOUD_SMALL)]),
+         [("M4-Qwen-7B", M4_MODEL), ("Apple-FM", FM_MODEL),
+          ("M4-Qwen-3B", M4_MODEL_3B), ("cloud-small", CLOUD_SMALL)]),
         ("summary",    run_summary,
          [("M4-Qwen-7B", M4_MODEL), ("M4-Qwen-3B", M4_MODEL_3B), ("cloud-small", CLOUD_SMALL)]),
         ("memclf",     run_memclf,
