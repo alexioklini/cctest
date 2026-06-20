@@ -348,11 +348,8 @@ _pending_clients = []
 
 
 def _ip_label(ip):
-    """Human label for a client IP. 127.0.0.1 == local (SSH/self); any other
-    address is a LAN client — most likely the brain-agent server."""
-    if ip in ("127.0.0.1", "::1", "localhost"):
-        return "localhost (SSH/self)"
-    return f"brain-agent? ({ip})"
+    """Just the client IP."""
+    return ip
 
 
 def _parse_stats_line(line):
