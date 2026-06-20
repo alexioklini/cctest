@@ -391,6 +391,136 @@ def _omlx_request(path, method="GET", body=None, timeout=8):
         return False, {"error": f"{type(e).__name__}: {e}"}
 
 
+# oMLX admin session — the cache/global-settings/device-info endpoints live
+# behind /admin and need a session cookie minted from the api_key. Cached so we
+# don't re-login every poll; auto re-login on 401.
+_omlx_admin = {"cookie": None, "t": 0}
+_omlx_admin_lock = threading.Lock()
+
+
+def _omlx_admin_login():
+    import urllib.request
+    base, key, enabled = _omlx_cfg()
+    if not enabled:
+        return None
+    try:
+        req = urllib.request.Request(
+            base + "/admin/api/login",
+            data=json.dumps({"api_key": key, "remember": True}).encode(),
+            method="POST")
+        req.add_header("Content-Type", "application/json")
+        resp = urllib.request.urlopen(req, timeout=8)
+        for h in resp.headers.get_all("Set-Cookie") or []:
+            if "omlx_admin_session" in h:
+                return h.split(";", 1)[0]  # name=value
+    except Exception:
+        return None
+    return None
+
+
+def _omlx_admin_request(path, method="GET", body=None, timeout=8, _retry=True):
+    """Call an oMLX /admin endpoint using a cached admin-session cookie."""
+    import urllib.request
+    base, _key, enabled = _omlx_cfg()
+    if not enabled:
+        return False, {"error": "oMLX disabled"}
+    with _omlx_admin_lock:
+        cookie = _omlx_admin["cookie"]
+        if not cookie:
+            cookie = _omlx_admin["cookie"] = _omlx_admin_login()
+    if not cookie:
+        return False, {"error": "oMLX admin login failed"}
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(base + path, data=data, method=method)
+    req.add_header("Cookie", cookie)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        raw = urllib.request.urlopen(req, timeout=timeout).read().decode()
+        return True, (json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403) and _retry:  # stale session → re-login once
+            with _omlx_admin_lock:
+                _omlx_admin["cookie"] = None
+            return _omlx_admin_request(path, method, body, timeout, _retry=False)
+        return False, {"error": f"admin HTTP {e.code}"}
+    except Exception as e:
+        return False, {"error": f"{type(e).__name__}: {e}"}
+
+
+def _parse_size(s):
+    """'111GB' / '8GB' -> bytes. Tolerates None / already-numeric."""
+    if s is None:
+        return None
+    if isinstance(s, (int, float)):
+        return int(s)
+    m = re.match(r"\s*([\d.]+)\s*([KMGT]?)B?\s*$", str(s), re.I)
+    if not m:
+        return None
+    mult = {"": 1, "K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
+    return int(float(m.group(1)) * mult.get(m.group(2).upper(), 1))
+
+
+def omlx_cache_status():
+    """KV / SSD cache picture — the crux of why oMLX is kept (its SSD-tiered KV
+    cache holds the large contexts the fallback role needs). Read from oMLX's own
+    /admin/api/stats `runtime_cache` (oMLX has full volume access; a `du` from
+    the launchd-sandboxed sparkdash process can't see /Volumes/Scratch). Falls
+    back to global-settings config for the dir/sizes if stats lacks them."""
+    ok, st = _omlx_admin_request("/admin/api/stats")
+    if not ok:
+        return {"available": False, "error": st.get("error")}
+    rc = st.get("runtime_cache") or {}
+    # per-model rates (use the first/default loaded model for the headline rates)
+    models = rc.get("models") or []
+    rates = {}
+    indexed_blocks = 0
+    block_size = None
+    if models:
+        m0 = models[0]
+        indexed_blocks = m0.get("indexed_blocks") or 0
+        block_size = m0.get("block_size")
+        cum = (m0.get("cache_rates") or {}).get("cumulative") or {}
+        rates = {
+            "prefix_hit_rate": cum.get("prefix_hit_rate"),
+            "prefix_hits": cum.get("prefix_hits"),
+            "prefix_misses": cum.get("prefix_misses"),
+            "ssd_hot_hits": cum.get("ssd_hot_hits"),
+            "ssd_disk_loads": cum.get("ssd_disk_loads"),
+            "ssd_saves": cum.get("ssd_saves"),
+            "evictions": cum.get("evictions"),
+        }
+    # config fallback for the dir
+    _ok2, gs = _omlx_admin_request("/admin/api/global-settings")
+    cache_cfg = (gs.get("cache") or {}) if _ok2 else {}
+    return {
+        "available": True,
+        "enabled": cache_cfg.get("enabled", True),
+        "ssd_cache_dir": rc.get("ssd_cache_dir") or cache_cfg.get("ssd_cache_dir"),
+        "ssd_used_bytes": rc.get("total_size_bytes"),
+        "ssd_max_bytes": rc.get("disk_max_bytes"),
+        "ssd_num_files": rc.get("total_num_files"),
+        "hot_cache_used_bytes": rc.get("hot_cache_size_bytes"),
+        "hot_cache_max_bytes": rc.get("hot_cache_max_bytes"),
+        "hot_cache_entries": rc.get("hot_cache_entries"),
+        "indexed_blocks": indexed_blocks,
+        "block_size": block_size,
+        "cache_efficiency": st.get("cache_efficiency"),
+        "total_cached_tokens": st.get("total_cached_tokens"),
+        "rates": rates,
+        "max_concurrent_requests": (gs.get("scheduler") or {}).get("max_concurrent_requests") if _ok2 else None,
+    }
+
+
+def omlx_global_settings():
+    """Full oMLX global-settings (for the Settings config UI)."""
+    return _omlx_admin_request("/admin/api/global-settings")
+
+
+def omlx_update_global_settings(body):
+    return _omlx_admin_request("/admin/api/global-settings", method="POST", body=body)
+
+
 def omlx_status():
     """Top-level oMLX server status (mirrors the instances_status shape enough
     for the dashboard to render it as a peer of the vllm instances)."""
@@ -1394,6 +1524,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(omlx_status()))
         elif self.path.startswith("/api/omlx/models"):
             self._send(200, json.dumps(omlx_models()))
+        elif self.path.startswith("/api/omlx/cache"):
+            self._send(200, json.dumps(omlx_cache_status()))
+        elif self.path.startswith("/api/omlx/settings"):
+            ok, gs = omlx_global_settings()
+            self._send(200 if ok else 502, json.dumps(gs if ok else {"error": gs.get("error")}))
         elif self.path.startswith("/api/hf/search"):
             from urllib.parse import urlparse, parse_qs
             q = parse_qs(urlparse(self.path).query)
@@ -1458,6 +1593,28 @@ class Handler(BaseHTTPRequestHandler):
             ok, data = (omlx_load if action == "load" else omlx_unload)(model_id)
             return self._send(200 if ok else 502,
                               json.dumps({"ok": ok, **(data if isinstance(data, dict) else {"data": data})}))
+        # /api/omlx/settings  — update oMLX global-settings (cache/scheduler)
+        if self.path.rstrip("/") == "/api/omlx/settings":
+            body = self._json_body()
+            if body is None:
+                return self._send(400, json.dumps({"error": "bad json"}))
+            ok, data = omlx_update_global_settings(body)
+            return self._send(200 if ok else 502,
+                              json.dumps({"ok": ok, **(data if isinstance(data, dict) else {})}))
+        # /api/omlx/config  — sparkdash-side oMLX connection (base_url/api_key/enabled)
+        if self.path.rstrip("/") == "/api/omlx/config":
+            body = self._json_body()
+            if body is None:
+                return self._send(400, json.dumps({"error": "bad json"}))
+            cfg = _load_config()
+            o = cfg.setdefault("omlx", {})
+            for k in ("base_url", "api_key", "enabled"):
+                if k in body:
+                    o[k] = body[k]
+            _save_config(cfg)
+            with _omlx_admin_lock:   # connection changed → drop cached admin session
+                _omlx_admin["cookie"] = None
+            return self._send(200, json.dumps({"ok": True, "omlx": o}))
         # /api/instances  (create)
         if self.path.rstrip("/") == "/api/instances":
             body = self._json_body()
@@ -1586,6 +1743,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .membar-track #seg_kv{background:linear-gradient(90deg,#7a5a00,var(--amber))}
   /* vLLM strip */
   #instpanels{grid-column:1 / -1}
+  #omlxpanel{grid-column:1 / -1}
   .vllm{padding:18px 22px;margin-bottom:18px}
   .vllm h4{margin:0 0 4px;font-size:15px;font-weight:600}
   .model{font-size:13px;color:var(--green);margin-bottom:14px;font-family:ui-monospace,Menlo,monospace}
@@ -1611,6 +1769,14 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .obtn{border:1px solid var(--line);background:#222;color:var(--text);border-radius:7px;padding:5px 12px;font-size:12px;cursor:pointer}
   .obtn.start:hover{border-color:var(--green);color:var(--green)}
   .obtn.stop:hover{border-color:var(--red);color:var(--red)}
+  /* oMLX KV/SSD cache */
+  .omlx-cache{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .occ-l{font-size:13px;color:var(--text);margin-bottom:7px;display:flex;align-items:baseline;gap:8px}
+  .occ-dir{color:var(--muted);font-size:11px;font-family:ui-monospace,Menlo,monospace}
+  .occ-v{color:var(--muted);font-size:12px;margin-top:6px}
+  .omlx-crates{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:12px;font-size:12px;color:var(--muted)}
+  .omlx-crates b{color:var(--green)}
+  @media(max-width:760px){.omlx-cache{grid-template-columns:1fr}}
   .stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px}
   .stat .l{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
   .stat .n{font-size:22px;font-weight:700;margin-top:5px}
@@ -1842,6 +2008,26 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <div id="instlist" style="margin-top:16px">loading…</div>
     </div>
 
+    <!-- oMLX management card -->
+    <div class="card" style="padding:20px 24px;margin-bottom:18px">
+      <div style="display:flex;align-items:center">
+        <div>
+          <h4 style="margin:0 0 4px;font-size:16px">oMLX <span id="omlxVer" style="color:var(--muted);font-size:13px"></span></h4>
+          <div class="hint" style="color:var(--muted);font-size:13px">The native oMLX server (kept for its SSD-tiered KV cache — large contexts the GDPR/fallback role needs). Connection + cache/scheduler settings.</div>
+        </div>
+      </div>
+      <!-- sparkdash-side connection -->
+      <div class="form" style="margin-top:14px">
+        <label>Base URL<input id="om_base" placeholder="http://localhost:8000"/></label>
+        <label>API key<input id="om_key" placeholder="brain"/></label>
+        <label class="chk"><input id="om_enabled" type="checkbox"/> Monitor oMLX in this dashboard</label>
+        <div style="display:flex;align-items:flex-end"><button class="btn go" type="button" onclick="saveOmlxConn()">Save connection</button></div>
+      </div>
+      <!-- oMLX-side cache + scheduler (admin global-settings) -->
+      <div id="omlxSettings" style="margin-top:6px"></div>
+      <div id="omlxMsg" style="margin-top:8px;font-size:13px;min-height:18px"></div>
+    </div>
+
     <!-- runtime / updater card -->
     <div class="card" style="padding:18px 24px;margin-bottom:18px">
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
@@ -2051,12 +2237,49 @@ async function renderOmlxPanel(){
       }).join("")+`</div>`;
     }
   }
+  // KV / SSD cache section — the reason oMLX is kept (SSD-tiered KV cache holds
+  // big contexts the fallback role needs). Live from oMLX's runtime_cache stats.
+  let cache="";
+  if(up){
+    let c=null; try{ c=await (await fetch("/api/omlx/cache",{cache:"no-store"})).json(); }catch(e){}
+    if(c && c.available){
+      const ssdU=c.ssd_used_bytes||0, ssdM=c.ssd_max_bytes||0;
+      const hotU=c.hot_cache_used_bytes||0, hotM=c.hot_cache_max_bytes||0;
+      const ssdPct = ssdM? Math.min(ssdU/ssdM*100,100):0;
+      const hotPct = hotM? Math.min(hotU/hotM*100,100):0;
+      const r=c.rates||{};
+      const pct=v=>v==null?"–":(v*100).toFixed(0)+"%";
+      cache=`<div class="memhdr" style="margin-top:14px">KV / SSD Cache <span style="color:#8a8a8a">(SSD-tiered prefix cache — why oMLX serves large contexts)</span></div>
+        <div class="omlx-cache">
+          <div class="occ">
+            <div class="occ-l">SSD disk cache <span class="occ-dir">${c.ssd_cache_dir||""}</span></div>
+            <div class="membar-track"><div class="seg" style="background:linear-gradient(90deg,var(--blue),#5b8fd0);width:${ssdPct}%"></div></div>
+            <div class="occ-v">${(ssdU/GB).toFixed(1)} GB / ${(ssdM/GB).toFixed(0)} GB cap · ${c.ssd_num_files||0} files</div>
+          </div>
+          <div class="occ">
+            <div class="occ-l">Hot RAM cache</div>
+            <div class="membar-track"><div class="seg" style="background:linear-gradient(90deg,var(--green-dim),var(--green));width:${hotPct}%"></div></div>
+            <div class="occ-v">${(hotU/GB).toFixed(2)} GB / ${(hotM/GB).toFixed(0)} GB · ${c.hot_cache_entries||0} entries</div>
+          </div>
+        </div>
+        <div class="omlx-crates">
+          <span>prefix hit <b>${pct(r.prefix_hit_rate)}</b></span>
+          <span>hits ${r.prefix_hits??0} · miss ${r.prefix_misses??0}</span>
+          <span>SSD loads ${r.ssd_disk_loads??0}</span>
+          <span>SSD saves ${r.ssd_saves??0}</span>
+          <span>evictions ${r.evictions??0}</span>
+          <span>blocks ${c.indexed_blocks??0}${c.block_size?" @"+c.block_size:""}</span>
+        </div>`;
+    } else if(c && c.error){
+      cache=`<div class="memhdr" style="margin-top:14px">KV / SSD Cache <span style="color:var(--amber)">— ${c.error}</span></div>`;
+    }
+  }
   wrap.innerHTML=`<div class="card vllm omlx">
     <div class="ihdr"><span class="idot" style="background:${dot}"></span>
       <span class="iname">oMLX</span>
       <span class="imodel">${up?(st.default_model||""):""}</span>
       <span class="istate">${(st.base_url||"").replace(/^https?:\/\//,"")} · ${state}${st.version?" · v"+st.version:""}</span></div>
-    ${stats}${models}</div>`;
+    ${stats}${cache}${models}</div>`;
 }
 
 async function omlxAction(modelId, action){
@@ -2209,7 +2432,7 @@ async function refreshAuthUI(){
   // server treats requests as open until an account is created.
   if(s.configured && s.authed){
     gate.style.display="none"; mgr.style.display=""; loadInstances();
-    resetForm(); checkVersion();
+    resetForm(); checkVersion(); loadOmlxConfig();
   } else {
     mgr.style.display="none"; gate.style.display="";
     document.getElementById("authtitle").textContent = needsSetup ? "Create admin account" : "Sign in";
@@ -2243,6 +2466,64 @@ async function doAuth(){
 async function doLogout(){
   await fetch("/api/logout",{method:"POST",headers:authHeaders()});
   refreshAuthUI();
+}
+
+// oMLX config: sparkdash-side connection + oMLX-side cache/scheduler settings.
+let _omlxGS=null;
+async function loadOmlxConfig(){
+  // connection (from oMLX status — reflects sparkdash.json)
+  try{
+    const st=await (await fetch("/api/omlx/status",{cache:"no-store"})).json();
+    document.getElementById("om_base").value = st.base_url||"http://localhost:8000";
+    document.getElementById("om_enabled").checked = st.enabled!==false;
+    document.getElementById("omlxVer").textContent = st.up?("· v"+(st.version||"")+" · "+(st.up?"online":"offline")):"· offline";
+  }catch(e){}
+  // oMLX-side settings (admin global-settings)
+  const box=document.getElementById("omlxSettings");
+  let gs=null; try{ gs=await (await fetch("/api/omlx/settings",{cache:"no-store"})).json(); }catch(e){}
+  if(!gs || gs.error){ box.innerHTML=`<div class="hint" style="color:var(--amber);font-size:13px;margin-top:6px">oMLX settings unavailable${gs&&gs.error?(" — "+gs.error):""}</div>`; return; }
+  _omlxGS=gs; const c=gs.cache||{}, sch=gs.scheduler||{};
+  box.innerHTML=`<div class="memhdr" style="margin:14px 0 8px">oMLX cache &amp; scheduler <span style="color:#8a8a8a">(applied on the oMLX server)</span></div>
+    <div class="form">
+      <label class="chk"><input id="oc_enabled" type="checkbox" ${c.enabled?"checked":""}/> SSD cache enabled</label>
+      <label>SSD cache dir<input id="oc_dir" value="${c.ssd_cache_dir||""}"/></label>
+      <label>SSD cache max (e.g. 111GB)<input id="oc_ssdmax" value="${c.ssd_cache_max_size||""}"/></label>
+      <label>Hot RAM cache max (e.g. 8GB)<input id="oc_hotmax" value="${c.hot_cache_max_size||""}"/></label>
+      <label>Max concurrent requests<input id="oc_conc" type="number" value="${sch.max_concurrent_requests||""}"/></label>
+      <div style="display:flex;align-items:flex-end"><button class="btn go" type="button" onclick="saveOmlxSettings()">Save oMLX settings</button></div>
+    </div>`;
+}
+async function saveOmlxConn(){
+  const body={base_url:document.getElementById("om_base").value.trim(),
+              api_key:document.getElementById("om_key").value.trim()||undefined,
+              enabled:document.getElementById("om_enabled").checked};
+  if(body.api_key===undefined) delete body.api_key; // keep existing if blank
+  const msg=document.getElementById("omlxMsg");
+  try{
+    const r=await fetch("/api/omlx/config",{method:"POST",headers:authHeaders(),body:JSON.stringify(body)});
+    if(r.status===401){ refreshAuthUI(); return; }
+    const j=await r.json();
+    msg.style.color=j.ok?"var(--green)":"var(--red)"; msg.textContent=j.ok?"connection saved":("error: "+(j.error||""));
+    if(j.ok) loadOmlxConfig();
+  }catch(e){ msg.style.color="var(--red)"; msg.textContent="error: "+e; }
+}
+async function saveOmlxSettings(){
+  if(!_omlxGS) return;
+  // patch only the fields we expose, preserving the rest of the settings object
+  const gs=JSON.parse(JSON.stringify(_omlxGS));
+  gs.cache=gs.cache||{}; gs.scheduler=gs.scheduler||{};
+  gs.cache.enabled=document.getElementById("oc_enabled").checked;
+  gs.cache.ssd_cache_dir=document.getElementById("oc_dir").value.trim();
+  gs.cache.ssd_cache_max_size=document.getElementById("oc_ssdmax").value.trim();
+  gs.cache.hot_cache_max_size=document.getElementById("oc_hotmax").value.trim();
+  const conc=parseInt(document.getElementById("oc_conc").value,10); if(!isNaN(conc)) gs.scheduler.max_concurrent_requests=conc;
+  const msg=document.getElementById("omlxMsg");
+  try{
+    const r=await fetch("/api/omlx/settings",{method:"POST",headers:authHeaders(),body:JSON.stringify(gs)});
+    if(r.status===401){ refreshAuthUI(); return; }
+    const j=await r.json();
+    msg.style.color=j.ok?"var(--green)":"var(--red)"; msg.textContent=j.ok?"oMLX settings saved (some changes need an oMLX restart)":("error: "+(j.error||""));
+  }catch(e){ msg.style.color="var(--red)"; msg.textContent="error: "+e; }
 }
 
 async function loadInstances(){
