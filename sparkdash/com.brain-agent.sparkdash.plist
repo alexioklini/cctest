@@ -10,13 +10,23 @@
         <string>/Users/alexander/sparkdash.py</string>
         <string>--port</string>
         <string>8013</string>
-        <string>--vllm</string>
-        <string>http://127.0.0.1:8012</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/alexander/.venv-vllm-metal/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/alexander</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
     <key>StandardOutPath</key>
     <string>/Users/alexander/sparkdash.log</string>
     <key>StandardErrorPath</key>

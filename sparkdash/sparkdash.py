@@ -1,28 +1,201 @@
 #!/usr/bin/env python3
-"""SparkDash — DGX-Spark-style monitoring dashboard for the Mac mini M4 vLLM host.
+"""SparkDash — DGX-Spark-style monitor + control plane for vLLM-metal on Mac.
 
 Self-contained, stdlib only (no pip install). Run ON the Mac mini:
 
     python3 sparkdash.py            # serves on 0.0.0.0:8013
-    python3 sparkdash.py --port N --vllm http://127.0.0.1:8012
 
-Metrics are read locally:
-  * GPU utilization + allocated unified memory  -> ioreg IOAccelerator PerformanceStatistics
-  * Per-core + aggregate CPU                     -> host_processor_info (ctypes, no sudo)
-  * Memory + swap                                -> top / sysctl vm.swapusage
-  * thermal pressure                             -> pmset -g therm (no sudo)
-  * vLLM serving stats                           -> Prometheus /metrics on the vLLM port
+System metrics are read locally (ioreg / host_processor_info / top / pmset).
+vLLM-metal instances are supervised as child subprocesses, defined in a registry
+(~/sparkdash-instances.json) and managed from the Settings UI. Mutating
+endpoints require a shared token (config ~/sparkdash.json or SPARKDASH_TOKEN).
 """
 import argparse
 import ctypes
 import ctypes.util
 import json
+import os
 import re
+import signal
 import subprocess
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import urlopen
 from urllib.error import URLError
+
+# ---------------------------------------------------------------------------
+# Config + shared token
+# ---------------------------------------------------------------------------
+_CONFIG_FILE = os.path.expanduser("~/sparkdash.json")
+_INSTANCES_FILE = os.path.expanduser("~/sparkdash-instances.json")
+_VENV_DEFAULT = os.path.expanduser("~/.venv-vllm-metal/bin/vllm")
+
+
+def _load_config():
+    try:
+        with open(_CONFIG_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def auth_token():
+    """Shared token required for mutating endpoints. env wins over config."""
+    return os.environ.get("SPARKDASH_TOKEN") or _load_config().get("token") or ""
+
+
+# ---------------------------------------------------------------------------
+# Instance registry (persistent JSON) — one entry per vLLM-metal instance.
+# host is always 'local' today; the field exists so remote hosts can be added.
+# ---------------------------------------------------------------------------
+_registry_lock = threading.Lock()
+
+
+def load_instances():
+    try:
+        with open(_INSTANCES_FILE) as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def save_instances(instances):
+    with _registry_lock:
+        tmp = _INSTANCES_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(instances, f, indent=2)
+        os.replace(tmp, _INSTANCES_FILE)
+
+
+def get_instance(name):
+    for i in load_instances():
+        if i.get("name") == name:
+            return i
+    return None
+
+
+def upsert_instance(inst):
+    instances = load_instances()
+    for idx, i in enumerate(instances):
+        if i.get("name") == inst["name"]:
+            instances[idx] = inst
+            break
+    else:
+        instances.append(inst)
+    save_instances(instances)
+
+
+def delete_instance(name):
+    save_instances([i for i in load_instances() if i.get("name") != name])
+
+
+def instance_log_path(name):
+    return os.path.expanduser(f"~/Library/Logs/vllm-{name}.log")
+
+
+def build_vllm_args(inst):
+    """Translate a registry entry into the `vllm serve …` argv."""
+    venv = inst.get("venv") or _VENV_DEFAULT
+    args = [venv, "serve", inst["model"],
+            "--host", "0.0.0.0",
+            "--port", str(inst["port"]),
+            "--served-model-name", inst.get("served_name") or inst["model"]]
+    if inst.get("max_num_seqs"):
+        args += ["--max-num-seqs", str(inst["max_num_seqs"])]
+    if inst.get("max_model_len"):
+        args += ["--max-model-len", str(inst["max_model_len"])]
+    if inst.get("enable_tool_choice", True):
+        args += ["--enable-auto-tool-choice",
+                 "--tool-call-parser", inst.get("tool_parser") or "hermes"]
+    for extra in (inst.get("extra_args") or "").split():
+        args.append(extra)
+    return args
+
+
+# ---------------------------------------------------------------------------
+# Instance supervisor — spawns/kills vllm as child subprocesses.
+# ---------------------------------------------------------------------------
+class InstanceSupervisor:
+    def __init__(self):
+        self._procs = {}        # name -> Popen
+        self._lock = threading.Lock()
+        self._stopping = set()  # names intentionally stopped (skip autorestart)
+
+    def is_running(self, name):
+        with self._lock:
+            p = self._procs.get(name)
+            return p is not None and p.poll() is None
+
+    def pid(self, name):
+        with self._lock:
+            p = self._procs.get(name)
+            return p.pid if p and p.poll() is None else None
+
+    def start(self, name):
+        inst = get_instance(name)
+        if not inst:
+            return False, "no such instance"
+        if self.is_running(name):
+            return True, "already running"
+        args = build_vllm_args(inst)
+        env = dict(os.environ)
+        venv_bin = os.path.dirname(inst.get("venv") or _VENV_DEFAULT)
+        env["PATH"] = venv_bin + ":" + env.get("PATH", "")
+        try:
+            logf = open(instance_log_path(name), "a")
+            logf.write(f"\n=== SparkDash start {name}: {' '.join(args)} ===\n")
+            logf.flush()
+            p = subprocess.Popen(args, stdout=logf, stderr=subprocess.STDOUT,
+                                 env=env, start_new_session=True)
+        except OSError as e:
+            return False, f"spawn failed: {e}"
+        with self._lock:
+            self._procs[name] = p
+            self._stopping.discard(name)
+        return True, f"started pid {p.pid}"
+
+    def stop(self, name):
+        with self._lock:
+            p = self._procs.get(name)
+            self._stopping.add(name)
+        if p is None or p.poll() is not None:
+            # maybe an externally-running process on this port; nothing we own
+            return True, "not running (or not supervised)"
+        try:
+            # SIGTERM the whole process group (vllm spawns workers)
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            try:
+                p.terminate()
+            except Exception:
+                pass
+        return True, "stopping"
+
+    def restore_on_boot(self):
+        for inst in load_instances():
+            if inst.get("autostart"):
+                self.start(inst["name"])
+
+    def _watchdog(self):
+        """Restart autostart instances that died unexpectedly."""
+        while True:
+            time.sleep(5)
+            for inst in load_instances():
+                name = inst["name"]
+                if not inst.get("autostart"):
+                    continue
+                with self._lock:
+                    stopping = name in self._stopping
+                    p = self._procs.get(name)
+                dead = p is not None and p.poll() is not None
+                never = p is None
+                if not stopping and (dead or never):
+                    self.start(name)
+
+
+supervisor = InstanceSupervisor()
 
 # ---------------------------------------------------------------------------
 # Metric collectors
@@ -297,7 +470,7 @@ _VLLM_GAUGES = {
     "vllm:prefix_cache_queries_total": "prefix_queries",
     "vllm:prefix_cache_hits_total": "prefix_hits",
 }
-_prev = {"t": None, "prompt_tokens": 0.0, "generation_tokens": 0.0}
+_prev_by_url = {}  # base_url -> {t, prompt_tokens, generation_tokens}
 
 
 def vllm_stats(base_url):
@@ -321,15 +494,16 @@ def vllm_stats(base_url):
                     pass
                 break
     now = time.time()
+    prev = _prev_by_url.setdefault(base_url, {"t": None, "prompt_tokens": 0.0, "generation_tokens": 0.0})
     gen_tps = prompt_tps = 0.0
-    if _prev["t"] is not None:
-        dt = now - _prev["t"]
+    if prev["t"] is not None:
+        dt = now - prev["t"]
         if dt > 0:
-            gen_tps = max(0.0, (vals.get("generation_tokens", 0) - _prev["generation_tokens"]) / dt)
-            prompt_tps = max(0.0, (vals.get("prompt_tokens", 0) - _prev["prompt_tokens"]) / dt)
-    _prev.update(t=now,
-                 prompt_tokens=vals.get("prompt_tokens", 0.0),
-                 generation_tokens=vals.get("generation_tokens", 0.0))
+            gen_tps = max(0.0, (vals.get("generation_tokens", 0) - prev["generation_tokens"]) / dt)
+            prompt_tps = max(0.0, (vals.get("prompt_tokens", 0) - prev["prompt_tokens"]) / dt)
+    prev.update(t=now,
+                prompt_tokens=vals.get("prompt_tokens", 0.0),
+                generation_tokens=vals.get("generation_tokens", 0.0))
     pq = vals.get("prefix_queries", 0.0)
     ph = vals.get("prefix_hits", 0.0)
     return {
@@ -346,11 +520,43 @@ def vllm_stats(base_url):
     }
 
 
-def collect(vllm_url):
+def instances_status():
+    """Status of every registered instance: registry fields + supervisor state
+    + live scrape (if running). Sorted by name for stable display."""
+    out = []
+    for inst in sorted(load_instances(), key=lambda i: i.get("name", "")):
+        name = inst["name"]
+        base = f"http://127.0.0.1:{inst['port']}"
+        running = supervisor.is_running(name)
+        stats = vllm_stats(base) if (running or True) else {"up": False}
+        out.append({
+            "name": name,
+            "host": inst.get("host", "local"),
+            "port": inst["port"],
+            "model": inst.get("model"),
+            "served_name": inst.get("served_name") or inst.get("model"),
+            "autostart": bool(inst.get("autostart")),
+            "max_num_seqs": inst.get("max_num_seqs"),
+            "max_model_len": inst.get("max_model_len"),
+            "tool_parser": inst.get("tool_parser"),
+            "extra_args": inst.get("extra_args", ""),
+            "venv": inst.get("venv", ""),
+            "supervised": running,
+            "pid": supervisor.pid(name),
+            "up": stats.get("up", False),
+            "stats": stats if stats.get("up") else None,
+        })
+    return out
+
+
+def collect():
     gpu = gpu_stats()
     cm = cpu_mem_stats()
     host = host_info()
-    vstats = vllm_stats(vllm_url)
+    insts = instances_status()
+    # primary = first instance that's actually serving (for the headline panel)
+    primary = next((i for i in insts if i["up"]), None)
+    vstats = primary["stats"] if primary else {"up": False}
     return {
         "ts": time.time(),
         "host": host,
@@ -366,6 +572,7 @@ def collect(vllm_url):
         "filesystems": file_systems(),
         "vllm": vstats,
         "vllm_mem": vllm_memory(vstats.get("model") if vstats.get("up") else None),
+        "instances": insts,
     }
 
 
@@ -376,11 +583,8 @@ def collect(vllm_url):
 #   Engine 000: Avg prompt throughput: 2.7 tokens/s, Avg generation throughput:
 #   9.5 tokens/s, Running: 1 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.1%,
 #   Prefix cache hit rate: 94.1%
-import os
-import threading
 from collections import deque
 
-_VLLM_LOG = os.path.expanduser("~/Library/Logs/vllm-metal.log")
 _ACTIVITY_FILE = os.path.expanduser("~/sparkdash-activity.jsonl")
 _activity = deque(maxlen=500)          # in-memory recent events for the UI
 _activity_lock = threading.Lock()
@@ -422,10 +626,49 @@ def _parse_stats_line(line):
     }
 
 
+# per-instance tail state: name -> {"pos": int, "awaiting": dict|None}
+_tail_state = {}
+
+
+def _process_log_chunk(name, chunk):
+    """Parse new log text for one instance; append call rows tagged w/ instance."""
+    state = _tail_state.setdefault(name, {"pos": 0, "awaiting": None})
+    for line in chunk.splitlines():
+        am = _ACCESS_RE.search(line)
+        if am:
+            ip, ep = am.group(1), am.group(2)
+            wall = _run(["date", "+%m-%d %H:%M:%S"]).strip()
+            ev = {
+                "ts": wall, "instance": name,
+                "client": _ip_label(ip), "ip": ip, "endpoint": ep,
+                "gen_tps": 0.0, "prompt_tps": 0.0,
+                "kv_cache": 0.0, "prefix_hit": 0.0,
+                "gpu_mem_gb": round(gpu_stats()["alloc_mem"] / 1024**3, 2),
+            }
+            with _activity_lock:
+                _activity.append(ev)
+            try:
+                with open(_ACTIVITY_FILE, "a") as wf:
+                    wf.write(json.dumps(ev) + "\n")
+            except OSError:
+                pass
+            state["awaiting"] = ev
+            continue
+        st = _parse_stats_line(line)
+        if st and state["awaiting"] is not None:
+            aw = state["awaiting"]
+            with _activity_lock:
+                aw["gen_tps"] = max(aw["gen_tps"], st["gen_tps"])
+                aw["prompt_tps"] = max(aw["prompt_tps"], st["prompt_tps"])
+                aw["kv_cache"] = max(aw["kv_cache"], st["kv_cache"])
+                aw["prefix_hit"] = st["prefix_hit"]
+            if not (st["running"] or st["gen_tps"] > 0):
+                state["awaiting"] = None
+
+
 def _activity_tailer():
-    """Background thread: follow the vLLM log. ONE row per actual LLM call
-    (a POST /v1/chat/completions or /v1/completions access line), enriched with
-    the engine throughput from the next stats sample. Persisted to JSONL."""
+    """Background thread: follow EVERY registered instance's log. One row per
+    actual LLM call, tagged with the instance name, enriched with throughput."""
     # seed from existing activity file so the panel isn't empty after restart
     try:
         with open(_ACTIVITY_FILE) as f:
@@ -437,65 +680,38 @@ def _activity_tailer():
     except OSError:
         pass
 
-    # the call awaiting throughput enrichment from the next stats line
-    awaiting = None
+    # start each known instance's tail at end-of-file (skip historical lines)
+    for inst in load_instances():
+        lp = instance_log_path(inst["name"])
+        try:
+            _tail_state[inst["name"]] = {"pos": os.path.getsize(lp), "awaiting": None}
+        except OSError:
+            _tail_state[inst["name"]] = {"pos": 0, "awaiting": None}
 
-    pos = 0
-    try:
-        pos = os.path.getsize(_VLLM_LOG)  # start at end, only new lines
-    except OSError:
-        pos = 0
     while True:
         try:
-            size = os.path.getsize(_VLLM_LOG)
-            if size < pos:           # log rotated/truncated
-                pos = 0
-            if size > pos:
-                with open(_VLLM_LOG, "r", errors="replace") as f:
-                    f.seek(pos)
-                    chunk = f.read()
-                    pos = f.tell()
-                for line in chunk.splitlines():
-                    # --- an actual LLM call: one row ---
-                    am = _ACCESS_RE.search(line)
-                    if am:
-                        ip, ep = am.group(1), am.group(2)
-                        wall = _run(["date", "+%m-%d %H:%M:%S"]).strip()
-                        ev = {
-                            "ts": wall,
-                            "client": _ip_label(ip),
-                            "ip": ip,
-                            "endpoint": ep,
-                            "gen_tps": 0.0, "prompt_tps": 0.0,
-                            "kv_cache": 0.0, "prefix_hit": 0.0,
-                            "gpu_mem_gb": round(gpu_stats()["alloc_mem"] / 1024**3, 2),
-                        }
-                        with _activity_lock:
-                            _activity.append(ev)
-                        try:
-                            with open(_ACTIVITY_FILE, "a") as wf:
-                                wf.write(json.dumps(ev) + "\n")
-                        except OSError:
-                            pass
-                        awaiting = ev   # enrich with throughput from next stats
-                        continue
-                    # --- a stats line: enrich the most recent call's speed ---
-                    st = _parse_stats_line(line)
-                    if st and awaiting is not None:
-                        with _activity_lock:
-                            awaiting["gen_tps"] = max(awaiting["gen_tps"], st["gen_tps"])
-                            awaiting["prompt_tps"] = max(awaiting["prompt_tps"], st["prompt_tps"])
-                            awaiting["kv_cache"] = max(awaiting["kv_cache"], st["kv_cache"])
-                            awaiting["prefix_hit"] = st["prefix_hit"]
-                        # done enriching once the engine returns to idle
-                        if not (st["running"] or st["gen_tps"] > 0):
-                            awaiting = None
+            for inst in load_instances():
+                name = inst["name"]
+                lp = instance_log_path(name)
+                state = _tail_state.setdefault(name, {"pos": 0, "awaiting": None})
+                try:
+                    size = os.path.getsize(lp)
+                except OSError:
+                    continue
+                if size < state["pos"]:
+                    state["pos"] = 0
+                if size > state["pos"]:
+                    with open(lp, "r", errors="replace") as f:
+                        f.seek(state["pos"])
+                        chunk = f.read()
+                        state["pos"] = f.tell()
+                    _process_log_chunk(name, chunk)
         except Exception:
             pass
         time.sleep(2)
 
 
-def recent_activity(n=60):
+def recent_activity(n=80):
     with _activity_lock:
         return list(_activity)[-n:]
 
@@ -504,30 +720,155 @@ def recent_activity(n=60):
 # HTTP server
 # ---------------------------------------------------------------------------
 
-class Handler(BaseHTTPRequestHandler):
-    vllm_url = "http://127.0.0.1:8012"
+_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,40}$")
 
+
+class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _send(self, code, body, ctype):
+    def _send(self, code, body, ctype="application/json"):
         data = body.encode() if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Sparkdash-Token")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.end_headers()
         self.wfile.write(data)
 
+    def _json_body(self):
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+            return json.loads(self.rfile.read(n) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return None
+
+    def _authed(self):
+        """True if no token is configured (open) or the header matches."""
+        tok = auth_token()
+        if not tok:
+            return True
+        return self.headers.get("X-Sparkdash-Token", "") == tok
+
+    def _require_auth(self):
+        if not self._authed():
+            self._send(401, json.dumps({"error": "invalid or missing token"}))
+            return False
+        return True
+
+    # --- validation shared by create/edit ---
+    def _validate_instance(self, body, existing_name=None):
+        name = (body.get("name") or "").strip()
+        if not _NAME_RE.match(name):
+            return None, "name must be 1-40 chars [a-zA-Z0-9_-]"
+        if not body.get("model"):
+            return None, "model is required"
+        try:
+            port = int(body.get("port"))
+        except (TypeError, ValueError):
+            return None, "port must be an integer"
+        if not (1024 <= port <= 65535):
+            return None, "port out of range"
+        # port/name collision with a DIFFERENT instance
+        for i in load_instances():
+            if i["name"] != existing_name:
+                if i["name"] == name:
+                    return None, f"instance '{name}' already exists"
+                if int(i["port"]) == port:
+                    return None, f"port {port} already used by '{i['name']}'"
+        inst = {
+            "name": name,
+            "host": "local",
+            "port": port,
+            "model": body["model"].strip(),
+            "served_name": (body.get("served_name") or body["model"]).strip(),
+            "max_num_seqs": body.get("max_num_seqs") or None,
+            "max_model_len": body.get("max_model_len") or None,
+            "enable_tool_choice": bool(body.get("enable_tool_choice", True)),
+            "tool_parser": (body.get("tool_parser") or "hermes").strip(),
+            "extra_args": (body.get("extra_args") or "").strip(),
+            "venv": (body.get("venv") or "").strip(),
+            "autostart": bool(body.get("autostart", False)),
+        }
+        return inst, None
+
+    def do_OPTIONS(self):
+        self._send(204, b"")
+
     def do_GET(self):
         if self.path.startswith("/api/metrics"):
-            self._send(200, json.dumps(collect(self.vllm_url)), "application/json")
+            self._send(200, json.dumps(collect()))
         elif self.path.startswith("/api/activity"):
-            self._send(200, json.dumps(recent_activity(80)), "application/json")
+            self._send(200, json.dumps(recent_activity(80)))
+        elif self.path.startswith("/api/instances"):
+            self._send(200, json.dumps(instances_status()))
+        elif self.path.startswith("/api/auth-required"):
+            self._send(200, json.dumps({"required": bool(auth_token())}))
         elif self.path in ("/", "/index.html"):
             self._send(200, INDEX_HTML, "text/html; charset=utf-8")
         else:
-            self._send(404, "not found", "text/plain")
+            self._send(404, json.dumps({"error": "not found"}))
+
+    def do_POST(self):
+        if not self._require_auth():
+            return
+        # /api/instances/<name>/start | /stop
+        m = re.match(r"^/api/instances/([^/]+)/(start|stop)$", self.path)
+        if m:
+            name, action = m.group(1), m.group(2)
+            if not get_instance(name):
+                return self._send(404, json.dumps({"error": "no such instance"}))
+            ok, msg = (supervisor.start if action == "start" else supervisor.stop)(name)
+            return self._send(200 if ok else 500, json.dumps({"ok": ok, "msg": msg}))
+        # /api/instances  (create)
+        if self.path.rstrip("/") == "/api/instances":
+            body = self._json_body()
+            if body is None:
+                return self._send(400, json.dumps({"error": "bad json"}))
+            inst, err = self._validate_instance(body)
+            if err:
+                return self._send(400, json.dumps({"error": err}))
+            upsert_instance(inst)
+            return self._send(201, json.dumps({"ok": True, "instance": inst}))
+        self._send(404, json.dumps({"error": "not found"}))
+
+    def do_PUT(self):
+        if not self._require_auth():
+            return
+        m = re.match(r"^/api/instances/([^/]+)$", self.path)
+        if not m:
+            return self._send(404, json.dumps({"error": "not found"}))
+        name = m.group(1)
+        if not get_instance(name):
+            return self._send(404, json.dumps({"error": "no such instance"}))
+        body = self._json_body()
+        if body is None:
+            return self._send(400, json.dumps({"error": "bad json"}))
+        body.setdefault("name", name)
+        inst, err = self._validate_instance(body, existing_name=name)
+        if err:
+            return self._send(400, json.dumps({"error": err}))
+        # if name changed, drop the old entry
+        if inst["name"] != name:
+            delete_instance(name)
+        upsert_instance(inst)
+        return self._send(200, json.dumps({"ok": True, "instance": inst,
+                                           "note": "restart the instance to apply changes"}))
+
+    def do_DELETE(self):
+        if not self._require_auth():
+            return
+        m = re.match(r"^/api/instances/([^/]+)$", self.path)
+        if not m:
+            return self._send(404, json.dumps({"error": "not found"}))
+        name = m.group(1)
+        if not get_instance(name):
+            return self._send(404, json.dumps({"error": "no such instance"}))
+        supervisor.stop(name)
+        delete_instance(name)
+        return self._send(200, json.dumps({"ok": True}))
 
 
 INDEX_HTML = r"""<!DOCTYPE html>
@@ -636,6 +977,36 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .cl.remote{background:#3a2a16;color:var(--amber)}
   .cl.none{color:#555}
   footer{color:var(--muted);font-size:12px;text-align:center;padding:0 0 22px}
+  /* settings page */
+  #page-settings main{max-width:1000px;margin:0 auto;padding:22px 28px}
+  .btn{background:#222;color:var(--text);border:1px solid var(--line);border-radius:8px;
+       padding:7px 14px;font-size:13px;cursor:pointer}
+  .btn:hover{background:#2c2c2c}
+  .btn.primary{background:var(--green-dim);border-color:var(--green);color:#fff}
+  .btn.primary:hover{background:var(--green)}
+  .btn.danger{color:var(--red);border-color:#5a2018}
+  .btn.danger:hover{background:#2a1410}
+  .btn.go{color:var(--green);border-color:#2f5500}
+  .btn.go:hover{background:#16260a}
+  input,select{background:#0c0c0c;border:1px solid var(--line);border-radius:7px;color:var(--text);
+       padding:7px 10px;font-size:13px;outline:none}
+  input:focus{border-color:var(--green-dim)}
+  .form{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+  .form label{display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--muted)}
+  .form label.wide{grid-column:1 / -1}
+  .form label.chk{flex-direction:row;align-items:center;gap:8px}
+  .req{color:var(--red)}
+  .inst{border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:12px;background:#0e0e0e}
+  .inst .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .inst .nm{font-weight:700;font-size:15px}
+  .inst .st{font-size:12px;padding:3px 9px;border-radius:6px;font-weight:600}
+  .inst .st.run{background:#1f3a00;color:var(--green)}
+  .inst .st.stop{background:#2a2a2a;color:var(--muted)}
+  .inst .st.ext{background:#3a2a16;color:var(--amber)}
+  .inst .meta{color:var(--muted);font-size:12px;font-family:ui-monospace,Menlo,monospace;margin-top:8px;word-break:break-all}
+  .inst .acts{margin-left:auto;display:flex;gap:8px}
+  .inst .live{font-size:12px;color:var(--muted);margin-top:8px}
+  .inst .live b{color:var(--green)}
   @media(max-width:1100px){main{grid-template-columns:1fr}.vgrid{grid-template-columns:repeat(4,1fr)}}
 </style>
 </head>
@@ -644,10 +1015,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <div class="welcome">👋 Welcome</div>
   <div class="title">Your DGX Dashboard</div>
   <nav>
-    <a class="active">Home</a><a>Settings</a><a>Docs ↗</a><a>Forums ↗</a><a>Resources ↗</a>
+    <a class="active" id="nav-home" onclick="showPage('home')">Home</a><a id="nav-settings" onclick="showPage('settings')">Settings</a><a>Docs ↗</a><a>Forums ↗</a><a>Resources ↗</a>
     <span class="livepill"><span class="dot" id="livedot"></span><span id="livetxt">live</span></span>
   </nav>
 </header>
+<div id="page-home">
 <main>
   <!-- LEFT COLUMN: gauge + sparkline pairs -->
   <div class="leftcol">
@@ -764,15 +1136,55 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <div class="actlog">
       <table class="act">
         <thead><tr>
-          <th>Time</th><th>Client</th><th>Endpoint</th><th>Gen t/s</th><th>Prompt t/s</th>
+          <th>Time</th><th>Instance</th><th>Client</th><th>Endpoint</th><th>Gen t/s</th><th>Prompt t/s</th>
           <th>KV %</th><th>Prefix %</th><th>GPU mem</th>
         </tr></thead>
-        <tbody id="actbody"><tr class="idle"><td colspan="8">no LLM calls recorded yet</td></tr></tbody>
+        <tbody id="actbody"><tr class="idle"><td colspan="9">no LLM calls recorded yet</td></tr></tbody>
       </table>
     </div>
   </div>
 </main>
 <footer id="uptime">—</footer>
+</div><!-- /page-home -->
+
+<!-- ===================== SETTINGS PAGE ===================== -->
+<div id="page-settings" style="display:none">
+  <main style="display:block">
+    <div class="card" style="padding:20px 24px;margin-bottom:18px">
+      <h4 style="margin:0 0 4px;font-size:16px">vLLM-metal Instances</h4>
+      <div class="hint" style="color:var(--muted);font-size:13px">Start/stop, edit, and add served models supervised by SparkDash on this host.</div>
+      <div id="authrow" style="margin-top:14px;display:none">
+        <span style="font-size:13px;color:var(--muted)">Control token</span>
+        <input id="tokfield" type="password" placeholder="X-Sparkdash-Token" style="margin-left:8px"/>
+        <button class="btn" onclick="saveToken()">Save</button>
+        <span id="tokstate" style="font-size:12px;margin-left:8px;color:var(--muted)"></span>
+      </div>
+      <div id="instlist" style="margin-top:16px">loading…</div>
+    </div>
+
+    <div class="card" style="padding:20px 24px">
+      <h4 style="margin:0 0 14px;font-size:16px" id="formtitle">Add Instance</h4>
+      <div class="form">
+        <label>Name <span class="req">*</span><input id="f_name" placeholder="qwen7b"/></label>
+        <label>Port <span class="req">*</span><input id="f_port" type="number" placeholder="8012"/></label>
+        <label class="wide">Model (HF repo or path) <span class="req">*</span><input id="f_model" placeholder="mlx-community/Qwen2.5-7B-Instruct-4bit"/></label>
+        <label class="wide">Served name<input id="f_served" placeholder="(defaults to model)"/></label>
+        <label>Max num seqs<input id="f_seqs" type="number" placeholder="8"/></label>
+        <label>Max model len<input id="f_mlen" type="number" placeholder="(model default)"/></label>
+        <label>Tool-call parser<input id="f_parser" placeholder="hermes"/></label>
+        <label class="chk"><input id="f_tools" type="checkbox" checked/> Enable auto tool choice</label>
+        <label class="chk"><input id="f_autostart" type="checkbox"/> Autostart (boot + restart on crash)</label>
+        <label class="wide">Extra args<input id="f_extra" placeholder="--gpu-memory-utilization 0.9"/></label>
+        <label class="wide">venv vllm path<input id="f_venv" placeholder="(default ~/.venv-vllm-metal/bin/vllm)"/></label>
+      </div>
+      <div style="margin-top:16px">
+        <button class="btn primary" onclick="submitInstance()" id="submitbtn">Add Instance</button>
+        <button class="btn" onclick="resetForm()" id="cancelbtn" style="display:none">Cancel</button>
+        <span id="formmsg" style="margin-left:12px;font-size:13px"></span>
+      </div>
+    </div>
+  </main>
+</div>
 
 <script>
 const GB = 1024**3;
@@ -952,12 +1364,14 @@ async function tickActivity(){
   try{ rows=await (await fetch("/api/activity",{cache:"no-store"})).json(); }
   catch(e){ return; }
   const body=document.getElementById("actbody");
-  if(!rows.length){ body.innerHTML='<tr class="idle"><td colspan="8">no LLM calls recorded yet</td></tr>'; return; }
+  if(!rows.length){ body.innerHTML='<tr class="idle"><td colspan="9">no LLM calls recorded yet</td></tr>'; return; }
   body.innerHTML = rows.slice().reverse().map(r=>{
     const isLocal = r.ip==="127.0.0.1";
     const cl = `<span class="cl ${isLocal?"local":"remote"}">${r.client}</span>`;
     const ep = (r.endpoint||"").replace("/v1/","");
-    return `<tr class="busy"><td>${r.ts}</td><td style="text-align:left">${cl}</td>`
+    const inst = r.instance||"—";
+    return `<tr class="busy"><td>${r.ts}</td><td style="text-align:left;color:var(--green)">${inst}</td>`
+      +`<td style="text-align:left">${cl}</td>`
       +`<td style="text-align:left;color:#8a8a8a">${ep}</td>`
       +`<td>${r.gen_tps.toFixed(1)}</td><td>${r.prompt_tps.toFixed(1)}</td>`
       +`<td>${r.kv_cache.toFixed(1)}</td><td>${r.prefix_hit.toFixed(1)}</td>`
@@ -965,9 +1379,142 @@ async function tickActivity(){
   }).join("");
 }
 
-// honor #processes / #filesystems deep-links
+// ===================== SETTINGS / INSTANCE MANAGER =====================
+let TOKEN = localStorage.getItem("sparkdash_token") || "";
+let editing = null;   // instance name being edited, or null
+
+function showPage(p){
+  document.getElementById("page-home").style.display = p==="home"?"":"none";
+  document.getElementById("page-settings").style.display = p==="settings"?"":"none";
+  document.getElementById("nav-home").classList.toggle("active", p==="home");
+  document.getElementById("nav-settings").classList.toggle("active", p==="settings");
+  if(p==="settings") loadInstances();
+}
+
+function authHeaders(){
+  const h = {"Content-Type":"application/json"};
+  if(TOKEN) h["X-Sparkdash-Token"]=TOKEN;
+  return h;
+}
+function saveToken(){
+  TOKEN = document.getElementById("tokfield").value.trim();
+  localStorage.setItem("sparkdash_token", TOKEN);
+  document.getElementById("tokstate").textContent = TOKEN ? "saved" : "cleared";
+}
+
+async function checkAuth(){
+  try{
+    const r = await (await fetch("/api/auth-required")).json();
+    if(r.required){
+      document.getElementById("authrow").style.display="";
+      document.getElementById("tokfield").value=TOKEN;
+    }
+  }catch(e){}
+}
+
+async function loadInstances(){
+  let list;
+  try{ list = await (await fetch("/api/instances",{cache:"no-store"})).json(); }
+  catch(e){ document.getElementById("instlist").textContent="error loading"; return; }
+  const el = document.getElementById("instlist");
+  if(!list.length){ el.innerHTML='<div style="color:var(--muted);font-size:13px">No instances yet — add one below.</div>'; return; }
+  el.innerHTML = list.map(i=>{
+    let st,stcls;
+    if(i.supervised){ st="running"+(i.pid?" · pid "+i.pid:""); stcls="run"; }
+    else if(i.up){ st="running (external)"; stcls="ext"; }
+    else { st="stopped"; stcls="stop"; }
+    const live = i.up && i.stats
+      ? `<div class="live">model <b>${i.stats.model}</b> · ${i.stats.running} running · ${i.stats.gen_tps} t/s · KV ${i.stats.kv_cache}%</div>` : "";
+    const startStop = (i.supervised)
+      ? `<button class="btn danger" onclick="ctl('${i.name}','stop')">Stop</button>`
+      : `<button class="btn go" onclick="ctl('${i.name}','start')">Start</button>`;
+    return `<div class="inst"><div class="top">
+        <span class="nm">${i.name}</span>
+        <span class="st ${stcls}">${st}</span>
+        <span style="color:var(--muted);font-size:12px">:${i.port}${i.autostart?" · autostart":""}</span>
+        <div class="acts">${startStop}
+          <button class="btn" onclick='editInstance(${JSON.stringify(i)})'>Edit</button>
+          <button class="btn danger" onclick="removeInstance('${i.name}')">Remove</button>
+        </div>
+      </div>
+      <div class="meta">${i.model}${i.served_name&&i.served_name!==i.model?" → "+i.served_name:""}${i.max_num_seqs?" · max-num-seqs "+i.max_num_seqs:""}${i.tool_parser?" · "+i.tool_parser:""}</div>
+      ${live}</div>`;
+  }).join("");
+}
+
+async function ctl(name, action){
+  const r = await fetch(`/api/instances/${name}/${action}`,{method:"POST",headers:authHeaders()});
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok){ alert("Failed: "+(j.error||j.msg||r.status)); }
+  setTimeout(loadInstances, 600);
+}
+
+function fval(id){ return document.getElementById(id).value.trim(); }
+function formBody(){
+  return {
+    name: fval("f_name"), port: parseInt(fval("f_port"))||0,
+    model: fval("f_model"), served_name: fval("f_served"),
+    max_num_seqs: parseInt(fval("f_seqs"))||null,
+    max_model_len: parseInt(fval("f_mlen"))||null,
+    tool_parser: fval("f_parser")||"hermes",
+    enable_tool_choice: document.getElementById("f_tools").checked,
+    autostart: document.getElementById("f_autostart").checked,
+    extra_args: fval("f_extra"), venv: fval("f_venv"),
+  };
+}
+function resetForm(){
+  editing=null;
+  ["f_name","f_port","f_model","f_served","f_seqs","f_mlen","f_extra","f_venv"].forEach(i=>document.getElementById(i).value="");
+  document.getElementById("f_parser").value="hermes";
+  document.getElementById("f_tools").checked=true;
+  document.getElementById("f_autostart").checked=false;
+  document.getElementById("f_name").disabled=false;
+  document.getElementById("formtitle").textContent="Add Instance";
+  document.getElementById("submitbtn").textContent="Add Instance";
+  document.getElementById("cancelbtn").style.display="none";
+  document.getElementById("formmsg").textContent="";
+}
+function editInstance(i){
+  editing=i.name;
+  document.getElementById("f_name").value=i.name;
+  document.getElementById("f_name").disabled=true;
+  document.getElementById("f_port").value=i.port;
+  document.getElementById("f_model").value=i.model||"";
+  document.getElementById("f_served").value=(i.served_name&&i.served_name!==i.model)?i.served_name:"";
+  document.getElementById("f_seqs").value=i.max_num_seqs||"";
+  document.getElementById("f_mlen").value=i.max_model_len||"";
+  document.getElementById("f_parser").value=i.tool_parser||"hermes";
+  document.getElementById("f_tools").checked=i.enable_tool_choice!==false;
+  document.getElementById("f_autostart").checked=!!i.autostart;
+  document.getElementById("f_extra").value=i.extra_args||"";
+  document.getElementById("f_venv").value=i.venv||"";
+  document.getElementById("formtitle").textContent="Edit "+i.name;
+  document.getElementById("submitbtn").textContent="Save Changes";
+  document.getElementById("cancelbtn").style.display="";
+  window.scrollTo(0,document.body.scrollHeight);
+}
+async function submitInstance(){
+  const body=formBody();
+  const url = editing ? `/api/instances/${editing}` : "/api/instances";
+  const method = editing ? "PUT" : "POST";
+  const r = await fetch(url,{method,headers:authHeaders(),body:JSON.stringify(body)});
+  const j = await r.json().catch(()=>({}));
+  const msg=document.getElementById("formmsg");
+  if(r.ok){ msg.style.color="var(--green)"; msg.textContent=editing?"saved — restart to apply":"created"; resetForm(); loadInstances(); }
+  else { msg.style.color="var(--red)"; msg.textContent=j.error||("error "+r.status); }
+}
+async function removeInstance(name){
+  if(!confirm("Remove instance '"+name+"'? It will be stopped and deleted from the registry."))return;
+  const r=await fetch(`/api/instances/${name}`,{method:"DELETE",headers:authHeaders()});
+  if(!r.ok){ const j=await r.json().catch(()=>({})); alert("Failed: "+(j.error||r.status)); }
+  loadInstances();
+}
+checkAuth();
+
+// honor deep-links: #settings page, or #processes/#filesystems sub-tab
 const _hv=(location.hash||"").replace("#","");
-if(["processes","filesystems","resources"].includes(_hv)) switchView(_hv);
+if(_hv==="settings") showPage("settings");
+else if(["processes","filesystems","resources"].includes(_hv)) switchView(_hv);
 
 tick(); tickActivity();
 setInterval(tick,2000); setInterval(tickActivity,3000);
@@ -982,12 +1529,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8013)
     ap.add_argument("--host", default="0.0.0.0")
-    ap.add_argument("--vllm", default="http://127.0.0.1:8012")
     args = ap.parse_args()
-    Handler.vllm_url = args.vllm
+    # supervise instances: restore autostart ones, then watchdog + activity tail
+    supervisor.restore_on_boot()
+    threading.Thread(target=supervisor._watchdog, daemon=True).start()
     threading.Thread(target=_activity_tailer, daemon=True).start()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"SparkDash on http://{args.host}:{args.port}  (vLLM: {args.vllm})")
+    tok = "token set" if auth_token() else "NO TOKEN (control endpoints OPEN)"
+    print(f"SparkDash on http://{args.host}:{args.port}  · auth: {tok}")
     srv.serve_forever()
 
 
