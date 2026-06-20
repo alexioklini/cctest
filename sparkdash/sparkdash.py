@@ -2026,6 +2026,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
       </div>
       <!-- oMLX-side cache + scheduler (admin global-settings) -->
       <div id="omlxSettings" style="margin-top:6px"></div>
+      <!-- full model roster + load/unload (moved here from the dashboard) -->
+      <div id="omlxModels" style="margin-top:6px"></div>
       <div id="omlxMsg" style="margin-top:8px;font-size:13px;min-height:18px"></div>
     </div>
 
@@ -2222,20 +2224,19 @@ async function renderOmlxPanel(){
   } else {
     stats=`<div style="color:var(--muted);font-size:13px;padding:6px 0">${st&&st.error?("oMLX unreachable — "+st.error):"oMLX not running"}</div>`;
   }
-  // model list with load/unload buttons (only when up)
+  // model list — only LOADED models here, READ-ONLY (monitoring). Full roster +
+  // load/unload controls live in Settings → oMLX, not on the dashboard.
   let models="";
   if(up){
     try{ const md=await (await fetch("/api/omlx/models",{cache:"no-store"})).json(); _omlxModels=md.models||[]; }catch(e){}
-    if(_omlxModels.length){
-      models=`<div class="memhdr" style="margin-top:10px">Models <span style="color:#8a8a8a">(${st.default_model||""} = default · load/unload to manage memory)</span></div>
-      <div class="omlx-models">`+_omlxModels.map(m=>{
+    const loadedM=_omlxModels.filter(m=>m.loaded||m.is_loading);
+    if(loadedM.length){
+      models=`<div class="memhdr" style="margin-top:10px">Loaded models <span style="color:#8a8a8a">(manage in Settings → oMLX)</span></div>
+      <div class="omlx-models">`+loadedM.map(m=>{
         const sz = m.actual_size||m.estimated_size; const szTxt = sz?(sz/GB).toFixed(1)+"G":"";
-        const badge = m.loaded?`<span class="omlx-b loaded">loaded</span>`:(m.is_loading?`<span class="omlx-b loading">loading…</span>`:`<span class="omlx-b">idle</span>`);
+        const badge = m.loaded?`<span class="omlx-b loaded">loaded</span>`:`<span class="omlx-b loading">loading…</span>`;
         const defTag = (m.id===st.default_model)?`<span class="omlx-b def">default</span>`:"";
-        const btn = m.loaded
-          ? `<button class="obtn stop" onclick="omlxAction('${m.id}','unload')">Unload</button>`
-          : `<button class="obtn start" onclick="omlxAction('${m.id}','load')">Load</button>`;
-        return `<div class="omlx-row"><span class="om-id">${m.id}</span>${defTag}${badge}<span class="om-sz">${szTxt}</span>${btn}</div>`;
+        return `<div class="omlx-row"><span class="om-id">${m.id}</span>${defTag}${badge}<span class="om-sz">${szTxt}</span></div>`;
       }).join("")+`</div>`;
     }
   }
@@ -2293,13 +2294,16 @@ async function renderOmlxPanel(){
 
 async function omlxAction(modelId, action){
   if(!confirm(`${action} oMLX model ${modelId}?`)) return;
+  const msg=document.getElementById("omlxMsg");
   try{
     const r=await fetch(`/api/omlx/models/${encodeURIComponent(modelId)}/${action}`,{method:"POST",headers:authHeaders()});
     if(r.status===401){ refreshAuthUI(); return; }
     const j=await r.json();
-    if(!j.ok) alert(`${action} failed: ${j.error||JSON.stringify(j)}`);
-  }catch(e){ alert(`${action} error: ${e}`); }
-  renderOmlxPanel();
+    if(msg){ msg.style.color=j.ok?"var(--green)":"var(--red)"; msg.textContent=j.ok?`${action}ed ${modelId}`:`${action} failed: ${j.error||""}`; }
+    else if(!j.ok) alert(`${action} failed: ${j.error||JSON.stringify(j)}`);
+  }catch(e){ if(msg){msg.style.color="var(--red)";msg.textContent=`${action} error: ${e}`;} else alert(`${action} error: ${e}`); }
+  loadOmlxModels();          // refresh the Settings roster
+  renderOmlxPanel();         // refresh the dashboard loaded-models view
 }
 
 async function tick(){
@@ -2501,6 +2505,26 @@ async function loadOmlxConfig(){
       <label>Max concurrent requests<input id="oc_conc" type="number" value="${sch.max_concurrent_requests||""}"/></label>
       <div style="display:flex;align-items:flex-end"><button class="btn go" type="button" onclick="saveOmlxSettings()">Save oMLX settings</button></div>
     </div>`;
+  loadOmlxModels();
+}
+// Full model roster + load/unload — lives in Settings (not the dashboard).
+async function loadOmlxModels(){
+  const box=document.getElementById("omlxModels");
+  if(!box) return;
+  let md=null; try{ md=await (await fetch("/api/omlx/models",{cache:"no-store"})).json(); }catch(e){}
+  let def=""; try{ def=(await (await fetch("/api/omlx/status",{cache:"no-store"})).json()).default_model||""; }catch(e){}
+  const list=(md&&md.models)||[];
+  if(!list.length){ box.innerHTML=`<div class="hint" style="color:var(--muted);font-size:13px;margin-top:6px">No models discovered${md&&md.error?(" — "+md.error):""}</div>`; return; }
+  box.innerHTML=`<div class="memhdr" style="margin:16px 0 8px">Models <span style="color:#8a8a8a">(load/unload to manage memory · ${def} = default)</span></div>
+    <div class="omlx-models">`+list.map(m=>{
+      const sz=m.actual_size||m.estimated_size; const szTxt=sz?(sz/GB).toFixed(1)+"G":"";
+      const badge=m.loaded?`<span class="omlx-b loaded">loaded</span>`:(m.is_loading?`<span class="omlx-b loading">loading…</span>`:`<span class="omlx-b">idle</span>`);
+      const defTag=(m.id===def)?`<span class="omlx-b def">default</span>`:"";
+      const btn=m.loaded
+        ? `<button class="obtn stop" onclick="omlxAction('${m.id}','unload')">Unload</button>`
+        : `<button class="obtn start" onclick="omlxAction('${m.id}','load')">Load</button>`;
+      return `<div class="omlx-row"><span class="om-id">${m.id}</span>${defTag}${badge}<span class="om-sz">${szTxt}</span>${btn}</div>`;
+    }).join("")+`</div>`;
 }
 async function saveOmlxConn(){
   const body={base_url:document.getElementById("om_base").value.trim(),
