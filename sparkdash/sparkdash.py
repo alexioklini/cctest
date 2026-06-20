@@ -149,6 +149,91 @@ def thermal_level():
     return {"label": "Nominal", "level": 0, "speed_limit": 100}
 
 
+def memory_pressure():
+    """Honest memory health: system-wide free %, mapped to a 0-3 level.
+
+    macOS reports 'free %' rather than a pressure colour for normal users;
+    high free % == green. Levels mirror Activity Monitor's green/yellow/red.
+    """
+    out = _run(["memory_pressure"], timeout=4)
+    free = None
+    m = re.search(r"free percentage:\s*(\d+)%", out)
+    if m:
+        free = int(m.group(1))
+    if free is None:
+        return {"free_pct": None, "label": "—", "level": 0}
+    if free >= 40:
+        label, level = "Normal", 0
+    elif free >= 20:
+        label, level = "Warning", 1
+    elif free >= 10:
+        label, level = "Elevated", 2
+    else:
+        label, level = "Critical", 3
+    return {"free_pct": free, "label": label, "level": level}
+
+
+# --- vLLM / Metal memory breakdown (cached; footprint is slow) --------------
+
+_VLLM_MEM_CACHE = {"t": 0.0, "data": None}
+_VLLM_MEM_TTL = 15.0  # seconds
+
+
+def _disk_weights_bytes(model_id):
+    """Best-effort on-disk size of the model's weights (== loaded into GPU).
+
+    vLLM may report only the served-name (e.g. 'Qwen2.5-7B-Instruct-4bit'),
+    so match the HF hub cache dir by *suffix* rather than the full repo id.
+    """
+    if not model_id:
+        return 0
+    leaf = model_id.split("/")[-1]  # served-name or repo leaf
+    out = _run(["bash", "-lc",
+                'du -sk "$HOME"/.cache/huggingface/hub/models--*--'
+                + leaf + ' 2>/dev/null | sort -rn | head -1'], timeout=6)
+    m = re.search(r"^(\d+)", out)
+    return int(m.group(1)) * 1024 if m else 0
+
+
+def vllm_memory(model_id):
+    """GPU/unified-memory footprint of the vLLM engine, split weights vs KV/other.
+
+    The authoritative total is the EngineCore process's 'IOAccelerator
+    (graphics)' region from `footprint`; weights are the on-disk model size;
+    the remainder is KV cache + activations + Metal runtime.
+    """
+    now = time.time()
+    c = _VLLM_MEM_CACHE
+    if c["data"] is not None and now - c["t"] < _VLLM_MEM_TTL:
+        return c["data"]
+
+    # find the EngineCore pid (holds the GPU allocations)
+    pids = _run(["pgrep", "-f", "VLLM::EngineCore"]).split()
+    serve_pids = _run(["pgrep", "-f", "vllm serve"]).split()
+    gpu_bytes = 0
+    rss_bytes = 0
+    for p in pids:
+        fp = _run(["footprint", "-p", p], timeout=8)
+        m = re.search(r"([\d.]+)\s*([KMG]B)\s+.*IOAccelerator \(graphics\)", fp)
+        if m:
+            gpu_bytes += int(float(m.group(1)) * {"KB": 1024, "MB": 1024**2, "GB": 1024**3}[m.group(2)])
+        m = re.search(r"phys_footprint:\s*([\d.]+)\s*([KMG]B)", fp)
+        if m:
+            rss_bytes += int(float(m.group(1)) * {"KB": 1024, "MB": 1024**2, "GB": 1024**3}[m.group(2)])
+
+    weights = _disk_weights_bytes(model_id) if gpu_bytes else 0
+    kv_other = max(0, gpu_bytes - weights)
+    data = {
+        "running": bool(pids or serve_pids),
+        "gpu_total": gpu_bytes,        # weights + KV + activations (unified mem)
+        "weights": weights,            # model weights (== on-disk 4-bit size)
+        "kv_other": kv_other,          # KV cache + activations + Metal runtime
+        "phys_footprint": rss_bytes,   # total process footprint incl. GPU
+    }
+    c.update(t=now, data=data)
+    return data
+
+
 # --- vLLM Prometheus scrape -------------------------------------------------
 
 _VLLM_GAUGES = {
@@ -213,6 +298,7 @@ def collect(vllm_url):
     gpu = gpu_stats()
     cm = cpu_mem_stats()
     host = host_info()
+    vstats = vllm_stats(vllm_url)
     return {
         "ts": time.time(),
         "host": host,
@@ -223,8 +309,112 @@ def collect(vllm_url):
         "mem": {"used": cm["mem_used"], "total": host["memsize"]},
         "swap": swap_stats(),
         "thermal": thermal_level(),
-        "vllm": vllm_stats(vllm_url),
+        "pressure": memory_pressure(),
+        "vllm": vstats,
+        "vllm_mem": vllm_memory(vstats.get("model") if vstats.get("up") else None),
     }
+
+
+# ---------------------------------------------------------------------------
+# Inference activity log — tail + parse vLLM's own engine-stats lines
+# ---------------------------------------------------------------------------
+# vLLM logs every ~10s (loggers.py):
+#   Engine 000: Avg prompt throughput: 2.7 tokens/s, Avg generation throughput:
+#   9.5 tokens/s, Running: 1 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.1%,
+#   Prefix cache hit rate: 94.1%
+import os
+import threading
+from collections import deque
+
+_VLLM_LOG = os.path.expanduser("~/Library/Logs/vllm-metal.log")
+_ACTIVITY_FILE = os.path.expanduser("~/sparkdash-activity.jsonl")
+_activity = deque(maxlen=500)          # in-memory recent events for the UI
+_activity_lock = threading.Lock()
+
+_STATS_RE = re.compile(
+    r"(\d\d-\d\d \d\d:\d\d:\d\d).*?Engine \d+:.*?"
+    r"Avg prompt throughput:\s*([\d.]+) tokens/s.*?"
+    r"Avg generation throughput:\s*([\d.]+) tokens/s.*?"
+    r"Running:\s*(\d+) reqs.*?Waiting:\s*(\d+) reqs.*?"
+    r"GPU KV cache usage:\s*([\d.]+)%.*?"
+    r"Prefix cache hit rate:\s*([\d.]+)%")
+
+
+def _parse_stats_line(line):
+    m = _STATS_RE.search(line)
+    if not m:
+        return None
+    ts, ptps, gtps, run, wait, kv, prefix = m.groups()
+    return {
+        "ts": ts,
+        "prompt_tps": float(ptps),
+        "gen_tps": float(gtps),
+        "running": int(run),
+        "waiting": int(wait),
+        "kv_cache": float(kv),
+        "prefix_hit": float(prefix),
+    }
+
+
+def _activity_tailer():
+    """Background thread: follow the vLLM log, record non-idle engine-stats
+    events to memory + a rolling JSONL file (with current GPU memory)."""
+    # seed from existing activity file so the panel isn't empty after restart
+    try:
+        with open(_ACTIVITY_FILE) as f:
+            for ln in f.readlines()[-200:]:
+                try:
+                    _activity.append(json.loads(ln))
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+
+    pos = 0
+    try:
+        pos = os.path.getsize(_VLLM_LOG)  # start at end, only new lines
+    except OSError:
+        pos = 0
+    while True:
+        try:
+            size = os.path.getsize(_VLLM_LOG)
+            if size < pos:           # log rotated/truncated
+                pos = 0
+            if size > pos:
+                with open(_VLLM_LOG, "r", errors="replace") as f:
+                    f.seek(pos)
+                    chunk = f.read()
+                    pos = f.tell()
+                for line in chunk.splitlines():
+                    ev = _parse_stats_line(line)
+                    if not ev:
+                        continue
+                    # only record when something happened (skip idle zero rows,
+                    # but always keep the first row after activity to mark the end)
+                    busy = ev["running"] or ev["waiting"] or ev["gen_tps"] > 0 or ev["prompt_tps"] > 0
+                    if not busy:
+                        if _activity and _activity[-1].get("busy"):
+                            ev["busy"] = False
+                        else:
+                            continue
+                    else:
+                        ev["busy"] = True
+                    ev["gpu_mem_gb"] = round(gpu_stats()["alloc_mem"] / 1024**3, 2)
+                    with _activity_lock:
+                        _activity.append(ev)
+                    try:
+                        with open(_ACTIVITY_FILE, "a") as wf:
+                            wf.write(json.dumps(ev) + "\n")
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+        time.sleep(2)
+
+
+def recent_activity(n=60):
+    with _activity_lock:
+        return list(_activity)[-n:]
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +439,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/metrics"):
             self._send(200, json.dumps(collect(self.vllm_url)), "application/json")
+        elif self.path.startswith("/api/activity"):
+            self._send(200, json.dumps(recent_activity(80)), "application/json")
         elif self.path in ("/", "/index.html"):
             self._send(200, INDEX_HTML, "text/html; charset=utf-8")
         else:
@@ -315,6 +507,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .memrow .item .h{font-weight:600;display:flex;align-items:center;gap:8px}
   .memrow .item .h .pip{width:10px;height:10px;border-radius:50%}
   .memrow .item .d{color:var(--muted);font-size:13px;margin-top:3px}
+  .membar-track{display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--line);background:#0c0c0c}
+  .membar-track .seg{height:100%;transition:width .5s ease}
+  .membar-track #seg_w{background:linear-gradient(90deg,var(--green-dim),var(--green))}
+  .membar-track #seg_kv{background:linear-gradient(90deg,#7a5a00,var(--amber))}
   /* vLLM strip */
   .vllm{grid-column:1 / -1;padding:18px 22px}
   .vllm h4{margin:0 0 4px;font-size:15px;font-weight:600}
@@ -324,6 +520,21 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .stat .l{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
   .stat .n{font-size:22px;font-weight:700;margin-top:5px}
   .stat .n small{font-size:12px;color:var(--muted);font-weight:500}
+  /* activity log */
+  .activity{grid-column:1 / -1;padding:18px 22px}
+  .activity h4{margin:0 0 12px;font-size:15px;font-weight:600;display:flex;align-items:center;gap:10px}
+  .activity .hint{color:var(--muted);font-size:12px;font-weight:400}
+  .actlog{max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:10px;background:#0c0c0c}
+  table.act{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+  table.act th{position:sticky;top:0;background:#141414;color:var(--muted);font-weight:600;
+               text-align:right;padding:9px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--line)}
+  table.act th:first-child,table.act td:first-child{text-align:left}
+  table.act td{padding:7px 12px;text-align:right;border-bottom:1px solid #1a1a1a}
+  table.act tr.idle td{color:var(--muted)}
+  table.act tr.busy td:nth-child(3){color:var(--green);font-weight:600}
+  .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+  .badge.run{background:#1f3a00;color:var(--green)}
+  .badge.idle{background:#222;color:var(--muted)}
   footer{color:var(--muted);font-size:12px;text-align:center;padding:0 0 22px}
   @media(max-width:1100px){main{grid-template-columns:1fr}.vgrid{grid-template-columns:repeat(4,1fr)}}
 </style>
@@ -388,6 +599,20 @@ INDEX_HTML = r"""<!DOCTYPE html>
           <div class="d" id="memline">—</div></div>
         <div class="item"><div class="h"><span class="pip" style="background:var(--blue)"></span>Swap</div>
           <div class="d" id="swapline">—</div></div>
+        <div class="item"><div class="h"><span class="pip" id="prespip" style="background:var(--green)"></span>Pressure</div>
+          <div class="d" id="presline">—</div></div>
+      </div>
+    </div>
+    <div class="section" style="border-bottom:none">
+      <h4>vLLM Memory (Unified / Metal)</h4>
+      <div class="membar-track"><div class="seg" id="seg_w" style="width:0%"></div><div class="seg" id="seg_kv" style="width:0%"></div></div>
+      <div class="memrow" style="margin-top:14px">
+        <div class="item"><div class="h"><span class="pip" style="background:var(--green)"></span>Model weights</div>
+          <div class="d" id="ml_w">—</div></div>
+        <div class="item"><div class="h"><span class="pip" style="background:var(--amber)"></span>KV cache + activations</div>
+          <div class="d" id="ml_kv">—</div></div>
+        <div class="item"><div class="h"><span class="pip" style="background:var(--muted)"></span>GPU total</div>
+          <div class="d" id="ml_tot">—</div></div>
       </div>
     </div>
   </div>
@@ -405,6 +630,20 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <div class="stat"><div class="l">Prefix Hit</div><div class="n"><span id="v_prefix">0</span><small> %</small></div></div>
       <div class="stat"><div class="l">Gen tok</div><div class="n" id="v_gentot" style="font-size:18px">0</div></div>
       <div class="stat"><div class="l">Prompt tok</div><div class="n" id="v_ptot" style="font-size:18px">0</div></div>
+    </div>
+  </div>
+
+  <!-- Inference activity log -->
+  <div class="card activity">
+    <h4>Inference Activity <span class="hint">(vLLM engine stats · newest first · logged to ~/sparkdash-activity.jsonl)</span></h4>
+    <div class="actlog">
+      <table class="act">
+        <thead><tr>
+          <th>Time</th><th>State</th><th>Gen t/s</th><th>Prompt t/s</th>
+          <th>Running</th><th>Waiting</th><th>KV %</th><th>Prefix %</th><th>GPU mem</th>
+        </tr></thead>
+        <tbody id="actbody"><tr class="idle"><td colspan="9">waiting for activity…</td></tr></tbody>
+      </table>
     </div>
   </div>
 </main>
@@ -513,6 +752,30 @@ async function tick(){
   document.getElementById("swapline").textContent=
     `${su.toFixed(2)} GB (${spct.toFixed(1)}%) of ${st.toFixed(1)} GB`;
 
+  // --- memory pressure (honest health signal) ---
+  const pr=d.pressure||{};
+  const prcol=["#76b900","#e0a93d","#e08a3d","#e0533d"][pr.level||0];
+  document.getElementById("prespip").style.background=prcol;
+  document.getElementById("presline").textContent=
+    pr.free_pct!=null ? `${pr.label} · ${pr.free_pct}% free` : "—";
+
+  // --- vLLM memory breakdown (weights vs KV/other) ---
+  const vm=d.vllm_mem||{};
+  if(vm.running && vm.gpu_total>0){
+    const wG=vm.weights/GB, kvG=vm.kv_other/GB, totG=vm.gpu_total/GB;
+    document.getElementById("seg_w").style.width=(wG/totG*100)+"%";
+    document.getElementById("seg_kv").style.width=(kvG/totG*100)+"%";
+    document.getElementById("ml_w").textContent=wG.toFixed(2)+" GB";
+    document.getElementById("ml_kv").textContent=kvG.toFixed(2)+" GB";
+    document.getElementById("ml_tot").textContent=totG.toFixed(2)+" GB unified";
+  } else {
+    document.getElementById("seg_w").style.width="0%";
+    document.getElementById("seg_kv").style.width="0%";
+    document.getElementById("ml_w").textContent="—";
+    document.getElementById("ml_kv").textContent="—";
+    document.getElementById("ml_tot").textContent="engine not running";
+  }
+
   // --- vLLM ---
   const v=d.vllm;
   if(v.up){
@@ -529,7 +792,26 @@ async function tick(){
 
   document.getElementById("uptime").textContent=d.host.model+" · "+d.host.chip+" · "+d.host.uptime;
 }
-tick(); setInterval(tick,2000);
+
+async function tickActivity(){
+  let rows;
+  try{ rows=await (await fetch("/api/activity",{cache:"no-store"})).json(); }
+  catch(e){ return; }
+  const body=document.getElementById("actbody");
+  if(!rows.length){ body.innerHTML='<tr class="idle"><td colspan="9">no activity recorded yet</td></tr>'; return; }
+  body.innerHTML = rows.slice().reverse().map(r=>{
+    const cls = r.busy ? "busy" : "idle";
+    const badge = r.busy ? '<span class="badge run">running</span>' : '<span class="badge idle">idle</span>';
+    return `<tr class="${cls}"><td>${r.ts}</td><td>${badge}</td>`
+      +`<td>${r.gen_tps.toFixed(1)}</td><td>${r.prompt_tps.toFixed(1)}</td>`
+      +`<td>${r.running}</td><td>${r.waiting}</td>`
+      +`<td>${r.kv_cache.toFixed(1)}</td><td>${r.prefix_hit.toFixed(1)}</td>`
+      +`<td>${r.gpu_mem_gb!=null?r.gpu_mem_gb.toFixed(1)+" GB":"—"}</td></tr>`;
+  }).join("");
+}
+
+tick(); tickActivity();
+setInterval(tick,2000); setInterval(tickActivity,3000);
 window.addEventListener("resize",()=>tick());
 </script>
 </body>
@@ -544,6 +826,7 @@ def main():
     ap.add_argument("--vllm", default="http://127.0.0.1:8012")
     args = ap.parse_args()
     Handler.vllm_url = args.vllm
+    threading.Thread(target=_activity_tailer, daemon=True).start()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"SparkDash on http://{args.host}:{args.port}  (vLLM: {args.vllm})")
     srv.serve_forever()
