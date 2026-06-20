@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.175.0"
+VERSION = "9.176.0"
 VERSION_DATE = "2026-06-20"
 CHANGELOG = [
+    ("9.176.0", "2026-06-20", "fix(next-prompt): Nächster-Prompt-Vorschlag liefert auf LOKALEN Modellen (M4 7B) jetzt echte Vorschläge statt NONE. PROBLEM (end-to-end-Eval): next_prompt_model wurde auf Lokal-M4/Qwen2.5-7B gelegt, aber der Vorschlag kam IMMER leer (raw='NONE') — die Routing-Kette war korrekt (brain → /v1/messages → M4, 200), das 7B befolgte nur die Anweisung 'wenn nichts plausibel ist, antworte NONE' ZU eifrig und waehlte NONE selbst bei klar vorhandenem naechsten Schritt (Cloud-Modelle widerstehen, das kleine lokale nicht — direkt am M4 verifiziert: mit NONE-Klausel → 'NONE' auf reicher Session; ohne → 4/4 relevante Vorschlaege). FIX: generate_next_prompt_suggestion() loest das Modell jetzt VOR dem Instruction-Bau auf und laesst die NONE-Ausstiegsklausel fuer LOKALE Modelle (is_model_local) WEG — lokal wird immer ein konkreter Vorschlag verlangt (ein Wegwerf-Ghost auf einer beendeten Konversation ist harmlos). Cloud-Pfad unveraendert (NONE bleibt, damit faehige Modelle bei wirklich beendeten Chats abstinieren koennen). LIVE verifiziert: next-prompt auf M4 liefert 'Can you test the changes and confirm they work?'; Cloud weiterhin sinnvoll. py_compile OK; Neustart noetig."),
     ("9.175.0", "2026-06-20", "feat(gui): die letzten 3 nur-in-config Modell-Settings sind jetzt GUI-konfigurierbar (Service-Modelle / OCR-Block). Final-Audit aller ~28 Modell-Keys ergab 3 ohne GUI: (1) translation.detection_fallback_model (LLM-Fallback der Spracherkennung, von translate.py gelesen) → neuer tools-Slot 'Übersetzung – Spracherkennung (LLM-Fallback)' (leer erlaubt = nur lingua). (2) ocr.local_vision_model (lokales Vision-LLM bei engine=local_vision/auto; Hilfetext sagte vorher 'in config editieren') → neues Eingabefeld im OCR-Block, ein-/ausgeblendet via _svcOcrEngineToggle bei local_vision/auto; GET ocr_block + POST-Handler erweitert. (3) telegram.model (Modell des Telegram-Frontends, hatte gar keinen Settings-Tab) → neuer config-nested-Slot 'Telegram-Frontend' (Read/Write auf cfg.telegram.model). Alle drei via die generische Slot-Registry/Save (window._svcSlotKeys) bzw. den OCR-Block. js_gate gruen (5/5 smoke); py_compile OK. Damit hat JEDES Modell-Setting eine GUI ausser den bewusst venv-seitigen Embeddings. Neustart noetig (Boot-Loader/Slots)."),
     ("9.174.0", "2026-06-20", "feat(models): Ton-Glättung der Übersetzung von der Prompt-Verfeinerung getrennt (eigener Knopf). Bisher teilten sich der Übersetzungs-Ton-Rewrite UND die ✨-Verfeinern-Schaltfläche (+ Soul/Profil-Polish + ask_llm-Fallback) EINEN Knopf (refinement.model) — eine Modelländerung fürs eine bewegte das andere. NEU: translation.rewrite_model (eigener tools-config-Key); server_lib/translate/text.py + document.py (_resolve_rewrite_model) lesen ihn ZUERST, sonst refinement.model, sonst Übersetzungsmodell (unset = bisheriges Verhalten). NEU GUI-Slot 'Übersetzung – Ton-Glättung' (Service-Modelle, tools-file-Slot). LIVE: translation.rewrite_model=mistral-small (schnell/Cloud, war der einzige M4-7B-Schritt in einer Vordergrund-Übersetzung), refinement.model zurück auf Lokal-M4-7B (Prompt-Verfeinern). Reine config/GUI + 2 Resolver-Zeilen; kein Neustart fürs Modell nötig (get_tool_config liest frisch), Neustart nur für den neuen Slot im Backend."),
     ("9.173.0", "2026-06-20", "feat(memory): Auto-Memory-Modus bekommt wieder eine ECHTE Entscheidung — LLM-Gate, das pro Session entscheidet ob der Chat ins Wiki soll. KONTEXT: nach Entfernung des toten Per-Turn-Memory-Classifiers (9.172.0) verhielt sich der Memory-Toggle 'Auto' (save_to_memory==2) identisch zu 'Ein' (immer ins Wiki). NEU: wiki_store.wiki_worth_saving(session_id) — ein kleiner LLM-Call (_WIKI_GATE_PROMPT) beurteilt die GANZE Konversation: SAVE wenn etwas Merk-Wuerdiges drin ist (Fakt/Praeferenz/Entscheidung/Referenz), SKIP bei Smalltalk/Wegwerf/Refusal. FAIL-OPEN (Fehler/leer → True, lieber speichern als verlieren); GDPR-gated (wiki_gate purpose). Verdrahtet im Chat-Worker (_auto_wiki): Modus 2 ruft das Gate VOR wiki_from_chat — SKIP bricht ab; Modus 1 (Ein) speichert weiter immer. Per-Session via bestehendem 90s-Debounce. NEU Knopf wiki_gate_model (Service-Modelle-Slot 'Wiki-Auto-Gate', boot-loader); leer → _background_model_default. cost_purpose 'wiki_gate' (Label 'Wiki-Auto-Gate (merken?)'). LIVE: wiki_gate_model=Lokal-M4/Qwen2.5-7B. Nachfolger des in 9.172.0 entfernten classify_chat_for_memory, aber per-SESSION + Wiki-aware statt per-Turn-Wing. py_compile OK; Neustart noetig."),
@@ -5385,11 +5386,34 @@ def generate_next_prompt_suggestion(session) -> str | None:
             style_hint = " Telegraphic style: drop articles, filler, hedging; fragments OK; substance only."
         elif cm == 3:
             style_hint = " Ultra-telegraphic: max compression; no articles/filler/hedging; symbols (→ = > &) ok; no full sentences."
+        # Model precedence: per-agent override (agent.json next_prompt_suggestions.model)
+        # → server-level knob `next_prompt_model` (Service-Modelle → Nächster-Prompt;
+        # empty = use the chat's current model, the default behaviour) → session model.
+        # Resolved BEFORE the instruction so the prompt can be tuned per model class.
+        override_model = (cfg.get("model") or "").strip()
+        if not override_model:
+            _npm = (_server_config().get("next_prompt_model") or "").strip()
+            if _npm and _is_model_available(_npm):
+                override_model = _npm
+        model = override_model or session.model
+        if not model:
+            return None
+
+        # The "respond NONE" escape hatch lets capable cloud models abstain when a
+        # conversation is truly finished. But small LOCAL models (e.g. the M4 7B)
+        # over-trigger it — they default to NONE even when an obvious next message
+        # exists, making the suggestion useless. So drop the NONE clause for local
+        # models and always ask for a concrete suggestion (a throwaway ghost on a
+        # finished chat is harmless — the user just ignores it). Verified on
+        # Qwen2.5-7B: with NONE present it returns NONE on rich sessions; without
+        # it, it returns relevant suggestions reliably (4/4).
+        _none_clause = ("" if is_model_local(model)
+                        else " If nothing plausible comes to mind, respond with "
+                             "the single token: NONE")
         instruction = (
             "Based on the conversation above, predict the user's most likely "
             f"next message. Respond with ONLY that message text (no quotes, no preamble, "
-            f"no explanation). Keep it under {max_words} words.{style_hint} If nothing plausible "
-            "comes to mind, respond with the single token: NONE"
+            f"no explanation). Keep it under {max_words} words.{style_hint}{_none_clause}"
         )
 
         # Strip metadata fields the API rejects (mirror augmented_messages pattern)
@@ -5406,18 +5430,6 @@ def generate_next_prompt_suggestion(session) -> str | None:
             return None
 
         clean_msgs.append({"role": "user", "content": instruction})
-
-        # Model precedence: per-agent override (agent.json next_prompt_suggestions.model)
-        # → server-level knob `next_prompt_model` (Service-Modelle → Nächster-Prompt;
-        # empty = use the chat's current model, the default behaviour) → session model.
-        override_model = (cfg.get("model") or "").strip()
-        if not override_model:
-            _npm = (_server_config().get("next_prompt_model") or "").strip()
-            if _npm and _is_model_available(_npm):
-                override_model = _npm
-        model = override_model or session.model
-        if not model:
-            return None
 
         # GDPR policy gate: detect PII, swap model and/or pseudonymise inputs
         # per `gdpr_scanner.background_pii_action`. Only `abort` raises; other

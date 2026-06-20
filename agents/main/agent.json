@@ -261,7 +261,7 @@
   },
   "next_prompt_suggestions": {
     "enabled": true,
-    "model": "CLIProxyAPI/mistral-small-latest",
+    "model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit",
     "max_words": 15
   }
 }
