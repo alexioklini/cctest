@@ -305,7 +305,18 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
 
     fetches_used = 0
     try:
-        model = _brain._background_model_default()
+        # Dedicated deep_research_model knob (v9.171.0); empty -> background
+        # default. (Research does verification/synthesis reasoning, so this
+        # often wants a STRONGER model than the cheap-bulk background tasks.)
+        model = ""
+        try:
+            _dr = (_brain._server_config().get("deep_research_model") or "").strip()
+            if _dr and _brain._is_model_available(_dr):
+                model = _dr
+        except Exception:
+            pass
+        if not model:
+            model = _brain._background_model_default()
         if not model:
             ChatDB.update_research_run(run_id, status="error", error="No model available (set a server default model).")
             return

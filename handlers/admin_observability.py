@@ -926,6 +926,7 @@ class AdminObservabilityHandlers:
         ("studio_model", "Studio (Projekt-Outputs)", "config", None),
         ("audio_overview_model", "Audio Overview (Podcast-Skript)", "config", None),
         ("code_graph_model", "Code-Graph (Symbol-Zusammenfassungen)", "config", None),
+        ("deep_research_model", "Deep Research (Recherche-Loop)", "config", None),
         ("translation_model", "Übersetzung", "tools", None),
         ("background_task_model", "Fan-out-Hintergrundmodell", "config", None),
         ("kg_extraction_model", "KG-Extraktion", "config", None),
@@ -961,6 +962,7 @@ class AdminObservabilityHandlers:
             "studio_model": cfg.get("studio_model", "") or "",
             "audio_overview_model": cfg.get("audio_overview_model", "") or "",
             "code_graph_model": cfg.get("code_graph_model", "") or "",
+            "deep_research_model": cfg.get("deep_research_model", "") or "",
             "background_task_model": cfg.get("background_task_model", "") or "",
             "kg_extraction_model": kg.get("extraction_model", "") or "",
             "tts_model": (tool_cfg.get("text_to_speech") or {}).get("default_model", "") or "",
@@ -1122,6 +1124,8 @@ class AdminObservabilityHandlers:
                 cfg["audio_overview_model"] = _validate_model(body["audio_overview_model"])
             if "code_graph_model" in body:
                 cfg["code_graph_model"] = _validate_model(body["code_graph_model"])
+            if "deep_research_model" in body:
+                cfg["deep_research_model"] = _validate_model(body["deep_research_model"])
             if "background_task_model" in body:
                 cfg["background_task_model"] = _validate_model(body["background_task_model"])
             if "kg_extraction_model" in body:
