@@ -5,7 +5,7 @@ The libraries live across FOUR Python environments:
   - server homebrew python (markitdown, mlx-*, spacy, tree-sitter, …) — in-process
   - the mempalace venv (`mempalace`) — sys.path-injected lazily by mempalace_glue
   - the SDK / sidecar venv `.venv_sdk` (`anthropic`) — separate subprocess
-  - the crawl4ai render venv `.venv_crawl4ai` (`crawl4ai`, `playwright`) — separate
+  - the crawl4ai render venv `.venv_crawl4ai` (`crawl4ai`, `playwright`, `scrapling`) — separate
 
 So a single in-process `importlib.metadata` sweep can't see them all. We probe
 the in-process ones directly and shell the venv interpreters for theirs. The
@@ -135,9 +135,10 @@ _GROUPS = [
     ("Anthropic SDK (Sidecar)", "venv_sdk", [
         ("anthropic", "anthropic"),
     ]),
-    ("Web-Rendering (crawl4ai)", "venv_crawl4ai", [
+    ("Web-Rendering (crawl4ai + Scrapling)", "venv_crawl4ai", [
         ("crawl4ai", "crawl4ai"),
         ("playwright", "playwright"),
+        ("scrapling", "scrapling (Stealth-Render)"),
     ]),
 ]
 

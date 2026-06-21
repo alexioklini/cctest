@@ -647,6 +647,7 @@ def tool_web_fetch(args: dict) -> str:
         #   "raw"       — non-HTML, or HTML returned verbatim (no conversion)
         #   "markitdown"— HTML converted to markdown by _html_to_markdown
         #   "crawl4ai"  — rendered in a headless browser (JS-built pages)
+        #   "scrapling" — stealth render (Cloudflare/anti-bot bypass), 2nd fallback
         fetch_method = "raw"
         is_html = "html" in content_type or text.lstrip().startswith(("<html", "<!doc", "<!DOC"))
         # `usable` = the text we'd actually hand the model. For HTML that's the
@@ -689,7 +690,29 @@ def tool_web_fetch(args: dict) -> str:
             # wall and returns even less.
             if rendered.get("success") and len(_md) > len(usable.strip()):
                 text = _md
+                usable = _md
                 fetch_method = "crawl4ai"
+
+            # SECOND fallback — Scrapling StealthyFetcher (stealth Firefox,
+            # Cloudflare Turnstile bypass). The plain crawl4ai render is headless
+            # Chromium; anti-bot pages (Cloudflare challenge, bot detection) stop
+            # it cold so the content is STILL thin. Try the stealth render only
+            # when we're still below the usable-content bar, and again only keep
+            # it if it strictly beats what we have. Same graceful degradation:
+            # service down / scrapling absent → success=False → we keep the best
+            # result so far.
+            if len(usable.strip()) < 600:
+                try:
+                    report_tool_progress(phase="Stealth-Render",
+                                         note="Anti-Bot-Umgehung (Scrapling)")
+                except Exception:
+                    pass
+                stealth = _brain._crawl4ai_render_stealth(final_url)
+                _smd = (stealth.get("markdown") or "").strip()
+                if stealth.get("success") and len(_smd) > len(usable.strip()):
+                    text = _smd
+                    usable = _smd
+                    fetch_method = "scrapling"
 
         if len(text) > max_length:
             text = text[:max_length] + "\n... (truncated)"

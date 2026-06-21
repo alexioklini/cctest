@@ -407,6 +407,7 @@ function _fetchMethodDisplay(fm) {
   }
   const tip = {
     crawl4ai: 'In einem Headless-Browser gerendert (Seite benötigt JavaScript)',
+    scrapling: 'Stealth-Render zur Anti-Bot-Umgehung (Cloudflare/Turnstile) — 2. Fallback',
     markitdown: 'HTML zu Markdown konvertiert',
     raw: 'Rohinhalt, keine Konvertierung',
     image: 'Bild per Vision-Modell beschrieben',

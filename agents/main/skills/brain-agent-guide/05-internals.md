@@ -18,7 +18,7 @@ launcher.py → server.py (HTTP API, port 8420)
                 │      Owns the agentic loop. Brain never iterates LLM rounds.
                 │
                 ├── searxng/ (port 8088, separate venv) — self-hosted search
-                ├── crawl4ai/ (port 8422, separate venv) — headless render
+                ├── crawl4ai/ (port 8422, separate venv) — headless render + Scrapling stealth
                 ├── SQLite              # chats, schedules, costs, traces, context, …
                 └── MemPalace (in-process, NOT MCP)
 ```
@@ -291,7 +291,13 @@ probe), admin status/restart endpoints:
 - **crawl4ai** (`:8422`, `Crawl4aiSupervisor`) — headless Chromium render
   service, `POST /render {url}` → markdown. No-ops unless
   `config.json → crawl4ai.auto_start`. `brain._crawl4ai_render()` degrades
-  gracefully when down. Admin: `/v1/crawl4ai/{status,restart}`.
+  gracefully when down. Admin: `/v1/crawl4ai/{status,restart}`. The SAME
+  service also serves `POST /render_stealth {url}` — a Scrapling
+  `StealthyFetcher` render (stealth Firefox, Cloudflare-Turnstile bypass) whose
+  HTML is converted to markdown with crawl4ai's own generator (so the output
+  format matches `/render`). `brain._crawl4ai_render_stealth()` calls it as a
+  SECOND fallback; Scrapling is a soft dependency in the same `.venv_crawl4ai`
+  (absent → endpoint reports unavailable, `/render` unaffected).
 
 `web_fetch` content handling: the response Content-Type / URL extension is
 checked FIRST. A non-HTML FILE (PDF/DOCX/XLSX/PPTX/CSV/image — by URL ext,
@@ -307,8 +313,13 @@ this from <30 so a consent-wall teaser triggers it, not just an empty shell)
 OR when the final URL is a consent/cookie interstitial (`/consent`, `/tcf/`,
 `cookie`, `datenschutz/zustimmung`). The render is only taken when it's
 strictly longer than the HTTP result (guards against a render that itself
-hits the wall). Every result is tagged `fetch_method`
-(raw/markitdown/crawl4ai/document/image/academic), surfaced as a chat-view badge.
+hits the wall). If the content is STILL thin (<600 chars) after the crawl4ai
+render — the page is behind real anti-bot/Cloudflare protection that headless
+Chromium can't pass — a SECOND fallback fires: `/render_stealth` (Scrapling
+StealthyFetcher), again kept only if strictly longer, tagged
+`fetch_method=scrapling`. Every result is tagged `fetch_method`
+(raw/markitdown/crawl4ai/scrapling/document/image/academic), surfaced as a
+chat-view badge.
 
 ## Document extraction (read_document + mining)
 

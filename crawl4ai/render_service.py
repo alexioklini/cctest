@@ -11,9 +11,14 @@ sidecar and SearXNG. Brain calls it only as a FALLBACK — when the cheap HTTP
 fetch returns an empty / JS-shell result — so static pages stay fast.
 
 Endpoints:
-  GET  /health           -> {"status": "ok"}
-  POST /render {url,...}  -> {"success": bool, "markdown": str,
-                             "length": int, "url": str, "error": str}
+  GET  /health                   -> {"status": "ok"}
+  POST /render {url,...}          -> headless Chromium (crawl4ai). {"success",
+                                     "markdown", "length", "url", "error"}
+  POST /render_stealth {url,...}  -> stealth Firefox (Scrapling StealthyFetcher,
+                                     Cloudflare Turnstile bypass) -> HTML then
+                                     crawl4ai-markdown. SECOND fallback, tried by
+                                     Brain only after /render still comes back
+                                     thin/blocked. Same result shape as /render.
 """
 import argparse
 import asyncio
@@ -28,6 +33,20 @@ try:
 except Exception as e:  # pragma: no cover
     print(f"[crawl4ai] FATAL: import failed: {e}", flush=True)
     sys.exit(1)
+
+# Scrapling's StealthyFetcher is the SECOND-fallback render path (POST
+# /render_stealth): a stealth Firefox (Camoufox) that bypasses Cloudflare
+# Turnstile/Interstitial + bot-detection that plain headless Chromium (the
+# crawl4ai path above) gets stopped by. Soft import — if Scrapling isn't
+# installed in this venv the service still serves /render; /render_stealth
+# just reports it's unavailable so Brain falls through to the HTTP result.
+try:
+    from scrapling.fetchers import StealthyFetcher
+    _STEALTH_OK = True
+except Exception as e:  # pragma: no cover
+    StealthyFetcher = None
+    _STEALTH_OK = False
+    print(f"[crawl4ai] scrapling stealth unavailable: {e}", flush=True)
 
 # One event loop + one browser, shared across requests (browser startup is the
 # expensive part — keep it warm). All renders are marshalled onto this loop.
@@ -73,6 +92,52 @@ async def _render(url: str, wait_until: str, delay: float, timeout_ms: int) -> d
     }
 
 
+async def _html_to_markdown(html: str) -> str:
+    """Convert a raw HTML string to markdown using crawl4ai's OWN markdown
+    generator (via its `raw:` URL scheme — no network) so the stealth path's
+    output is byte-identical in format to the primary /render path. Reuses the
+    warm crawler; this is a pure in-memory conversion."""
+    if not (html or "").strip():
+        return ""
+    crawler = await _ensure_crawler()
+    r = await crawler.arun(
+        url="raw:" + html,
+        config=CrawlerRunConfig(cache_mode=CacheMode.BYPASS, verbose=False),
+    )
+    return (r.markdown or "") if r.success else ""
+
+
+async def _render_stealth(url: str, network_idle: bool, timeout_ms: int) -> dict:
+    """Render one URL with Scrapling's StealthyFetcher (stealth Firefox), then
+    convert the rendered HTML to markdown. The whole point of this path is
+    anti-bot bypass (Cloudflare Turnstile/Interstitial) that the crawl4ai
+    Chromium path can't get through — so it's tried only AFTER /render."""
+    if not _STEALTH_OK:
+        return {"success": False, "markdown": "", "length": 0, "url": url,
+                "error": "scrapling not installed in this venv"}
+    page = await StealthyFetcher.async_fetch(
+        url,
+        headless=True,
+        network_idle=network_idle,
+        timeout=timeout_ms,
+        # solve_cloudflare wires Scrapling's Turnstile/Interstitial bypass —
+        # the reason this fallback exists.
+        solve_cloudflare=True,
+    )
+    html = page.html_content or ""
+    md = await _html_to_markdown(html)
+    status = getattr(page, "status", 0) or 0
+    ok = bool(md.strip()) and 200 <= status < 400
+    return {
+        "success": ok,
+        "markdown": md,
+        "length": len(md),
+        "url": getattr(page, "url", url) or url,
+        "status": status,
+        "error": "" if ok else f"stealth render: status={status}, md_len={len(md.strip())}",
+    }
+
+
 def _run_coro(coro):
     """Submit a coroutine to the shared loop from a request thread and block."""
     fut = asyncio.run_coroutine_threadsafe(coro, _loop)
@@ -98,7 +163,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path.split("?")[0] != "/render":
+        path = self.path.split("?")[0]
+        if path not in ("/render", "/render_stealth"):
             self._send(404, {"error": "not found"})
             return
         try:
@@ -111,12 +177,17 @@ class Handler(BaseHTTPRequestHandler):
         if not url:
             self._send(400, {"error": "no url"})
             return
-        wait_until = body.get("wait_until") or "networkidle"
-        delay = float(body.get("delay", 2.5))
-        timeout_ms = int(body.get("timeout_ms", 30000))
         try:
-            result = _run_coro(_render(url, wait_until, delay, timeout_ms))
-            self._send(200, result)
+            if path == "/render_stealth":
+                network_idle = bool(body.get("network_idle", True))
+                timeout_ms = int(body.get("timeout_ms", 60000))
+                coro = _render_stealth(url, network_idle, timeout_ms)
+            else:
+                wait_until = body.get("wait_until") or "networkidle"
+                delay = float(body.get("delay", 2.5))
+                timeout_ms = int(body.get("timeout_ms", 30000))
+                coro = _render(url, wait_until, delay, timeout_ms)
+            self._send(200, _run_coro(coro))
         except Exception as e:
             self._send(200, {"success": False, "markdown": "", "length": 0,
                              "url": url, "error": f"{type(e).__name__}: {e}"[:500]})
