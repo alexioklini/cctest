@@ -1287,6 +1287,21 @@ _OMLX_COMPLETION_RE = re.compile(
     r"in ([\d.]+)s \(([\d.]+) tok/s\),\s*prompt:\s*(\d+)")
 _OMLX_ACCESS_RE = re.compile(
     r"(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d).*?- (POST|GET) (/v1/\S+) → (\d+)")
+# STREAMING completions don't emit a "Chat completion:" summary line — the chat
+# UI streams, so without these the actual chat traffic never showed up. Two
+# signals: `vlm_mtp stats: request=<id> finish=<r> ... emitted=<n>` carries the
+# token count (only on the MTP/speculative path), and `[vlm_stream_generate]
+# GeneratorExit for request <id>` fires at the end of EVERY streaming request
+# (the reliable one-row-per-call signal). We buffer the stats by request id and
+# emit the row on GeneratorExit, enriching with emitted-tokens when we saw them.
+_OMLX_MTP_STATS_RE = re.compile(
+    r"(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d).*?vlm_mtp stats: request=([a-f0-9-]+) "
+    r"finish=(\S+).*?emitted=(\d+)")
+_OMLX_STREAM_END_RE = re.compile(
+    r"(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d).*?vlm_stream_generate\] GeneratorExit "
+    r"for request ([a-f0-9-]+)")
+# request_id -> {"emitted": int, "finish": str} seen since its stream end.
+_omlx_stream_stats = {}
 _OMLX_LOG_PATH = os.path.expanduser("~/.omlx/logs/server.log")
 
 
@@ -1295,15 +1310,28 @@ def _omlx_log_ts(raw):
     return raw[5:] if len(raw) >= 19 else raw
 
 
+def _omlx_emit(ev):
+    """Append an oMLX activity row + persist it (shared by all parse branches)."""
+    with _activity_lock:
+        _activity.append(ev)
+    try:
+        with open(_ACTIVITY_FILE, "a") as wf:
+            wf.write(json.dumps(ev) + "\n")
+    except OSError:
+        pass
+
+
 def _process_omlx_log_chunk(chunk):
     """Parse new oMLX server.log text into activity rows tagged instance=oMLX.
-    A completion line is the real 'one row per call' signal (carries tps); a
-    non-2xx access line is surfaced too so failures are visible."""
+    Three call signals: a non-streaming 'Chat completion:' line (carries tps); a
+    STREAMING request's 'GeneratorExit' (one row per streamed call — what the
+    chat UI actually produces; enriched with token count from a preceding
+    'vlm_mtp stats' line when present); and a non-2xx access line (failures)."""
     for line in chunk.splitlines():
         cm = _OMLX_COMPLETION_RE.search(line)
         if cm:
             ts, toks, secs, tps, prompt = cm.groups()
-            ev = {
+            _omlx_emit({
                 "ts": _omlx_log_ts(ts), "instance": "oMLX",
                 "client": "local", "ip": "127.0.0.1",
                 "endpoint": "/v1/completion",
@@ -1311,21 +1339,40 @@ def _process_omlx_log_chunk(chunk):
                 "gen_tps": float(tps), "prompt_tps": 0.0,
                 "kv_cache": 0.0, "prefix_hit": 0.0,
                 "gpu_mem_gb": round(gpu_stats()["alloc_mem"] / 1024**3, 2),
-            }
-            with _activity_lock:
-                _activity.append(ev)
-            try:
-                with open(_ACTIVITY_FILE, "a") as wf:
-                    wf.write(json.dumps(ev) + "\n")
-            except OSError:
-                pass
+            })
+            continue
+        # Streaming: buffer the per-request token stats (only on the MTP path)…
+        sm = _OMLX_MTP_STATS_RE.search(line)
+        if sm:
+            _ts, rid, finish, emitted = sm.groups()
+            _omlx_stream_stats[rid] = {"emitted": int(emitted), "finish": finish}
+            # Bound the buffer so a long run of stats-without-end can't grow it.
+            if len(_omlx_stream_stats) > 256:
+                for k in list(_omlx_stream_stats)[:128]:
+                    _omlx_stream_stats.pop(k, None)
+            continue
+        # …and emit one row when the stream ends (fires for EVERY streamed call).
+        em = _OMLX_STREAM_END_RE.search(line)
+        if em:
+            ts, rid = em.groups()
+            stats = _omlx_stream_stats.pop(rid, None)
+            _omlx_emit({
+                "ts": _omlx_log_ts(ts), "instance": "oMLX",
+                "client": "local", "ip": "127.0.0.1",
+                "endpoint": "/v1/chat/completions",
+                "status": "200",  # a completed stream is a successful call
+                "gen_tps": 0.0, "prompt_tps": 0.0,
+                "kv_cache": 0.0, "prefix_hit": 0.0,
+                "tokens": (stats or {}).get("emitted"),
+                "gpu_mem_gb": round(gpu_stats()["alloc_mem"] / 1024**3, 2),
+            })
             continue
         am = _OMLX_ACCESS_RE.search(line)
         if am:
             ts, _method, ep, code = am.groups()
             if code.startswith("2"):
                 continue  # success: the completion line already logged the call
-            ev = {
+            _omlx_emit({
                 "ts": _omlx_log_ts(ts), "instance": "oMLX",
                 "client": "local", "ip": "127.0.0.1",
                 "endpoint": ep,
@@ -1333,14 +1380,7 @@ def _process_omlx_log_chunk(chunk):
                 "gen_tps": 0.0, "prompt_tps": 0.0,
                 "kv_cache": 0.0, "prefix_hit": 0.0,
                 "gpu_mem_gb": round(gpu_stats()["alloc_mem"] / 1024**3, 2),
-            }
-            with _activity_lock:
-                _activity.append(ev)
-            try:
-                with open(_ACTIVITY_FILE, "a") as wf:
-                    wf.write(json.dumps(ev) + "\n")
-            except OSError:
-                pass
+            })
 
 
 def _ip_label(ip):
