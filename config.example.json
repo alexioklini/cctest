@@ -728,7 +728,7 @@
       "profile": "speed",
       "_caps_canonical": true,
       "is_local": true,
-      "warmup": false,
+      "warmup": true,
       "benchmark": {
         "coding": {
           "measured": {
@@ -803,7 +803,8 @@
           }
         }
       },
-      "auto_lcm": true
+      "auto_lcm": true,
+      "warmup_mode": "minimal"
     },
     "gemma-4-e2b-it-4bit": {
       "enabled": true,

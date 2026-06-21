@@ -1268,8 +1268,10 @@ _STATS_RE = re.compile(
 # Track BOTH OpenAI (/v1/chat/completions, /v1/completions) AND Anthropic
 # (/v1/messages) — brain-agent calls local models via the native Anthropic
 # endpoint, so missing /v1/messages hid all brain-agent traffic from the log.
+# Group 3 = the HTTP status code (200/401/500/…) so each row carries a status.
 _ACCESS_RE = re.compile(
-    r'(\d+\.\d+\.\d+\.\d+):\d+ - "POST (/v1/(?:chat/completions|completions|messages))')
+    r'(\d+\.\d+\.\d+\.\d+):\d+ - "POST (/v1/(?:chat/completions|completions|messages))'
+    r' HTTP/[\d.]+"\s+(\d+)')
 
 # pending client requests seen since the last stats line was recorded
 _pending_clients = []
@@ -1305,6 +1307,7 @@ def _process_omlx_log_chunk(chunk):
                 "ts": _omlx_log_ts(ts), "instance": "oMLX",
                 "client": "local", "ip": "127.0.0.1",
                 "endpoint": "/v1/completion",
+                "status": "200",  # a completion line IS a successful call
                 "gen_tps": float(tps), "prompt_tps": 0.0,
                 "kv_cache": 0.0, "prefix_hit": 0.0,
                 "gpu_mem_gb": round(gpu_stats()["alloc_mem"] / 1024**3, 2),
@@ -1325,7 +1328,8 @@ def _process_omlx_log_chunk(chunk):
             ev = {
                 "ts": _omlx_log_ts(ts), "instance": "oMLX",
                 "client": "local", "ip": "127.0.0.1",
-                "endpoint": ep + " · " + code,
+                "endpoint": ep,
+                "status": code,
                 "gen_tps": 0.0, "prompt_tps": 0.0,
                 "kv_cache": 0.0, "prefix_hit": 0.0,
                 "gpu_mem_gb": round(gpu_stats()["alloc_mem"] / 1024**3, 2),
@@ -1370,11 +1374,12 @@ def _process_log_chunk(name, chunk):
     for line in chunk.splitlines():
         am = _ACCESS_RE.search(line)
         if am:
-            ip, ep = am.group(1), am.group(2)
+            ip, ep, code = am.group(1), am.group(2), am.group(3)
             wall = _run(["date", "+%m-%d %H:%M:%S"]).strip()
             ev = {
                 "ts": wall, "instance": name,
                 "client": _ip_label(ip), "ip": ip, "endpoint": ep,
+                "status": code,
                 "gen_tps": 0.0, "prompt_tps": 0.0,
                 "kv_cache": 0.0, "prefix_hit": 0.0,
                 "gpu_mem_gb": round(gpu_stats()["alloc_mem"] / 1024**3, 2),
@@ -2051,10 +2056,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <div class="actlog">
       <table class="act">
         <thead><tr>
-          <th>Time</th><th>Instance</th><th>Client</th><th>Endpoint</th><th>Gen t/s</th><th>Prompt t/s</th>
+          <th>Time</th><th>Instance</th><th>Client</th><th>Endpoint</th><th>Status</th><th>Gen t/s</th><th>Prompt t/s</th>
           <th>KV %</th><th>Prefix %</th><th>GPU mem</th>
         </tr></thead>
-        <tbody id="actbody"><tr class="idle"><td colspan="9">no LLM calls recorded yet</td></tr></tbody>
+        <tbody id="actbody"><tr class="idle"><td colspan="10">no LLM calls recorded yet</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -2490,15 +2495,25 @@ async function tickActivity(){
   try{ rows=await (await fetch("/api/activity",{cache:"no-store"})).json(); }
   catch(e){ return; }
   const body=document.getElementById("actbody");
-  if(!rows.length){ body.innerHTML='<tr class="idle"><td colspan="9">no LLM calls recorded yet</td></tr>'; return; }
+  if(!rows.length){ body.innerHTML='<tr class="idle"><td colspan="10">no LLM calls recorded yet</td></tr>'; return; }
   body.innerHTML = rows.slice().reverse().map(r=>{
     const isLocal = r.ip==="127.0.0.1";
     const cl = `<span class="cl ${isLocal?"local":"remote"}">${r.client}</span>`;
     const ep = (r.endpoint||"").replace("/v1/","");
     const inst = r.instance||"—";
+    // Status: 2xx → green "OK", any other code → red "<code>". Rows logged
+    // before status capture (old JSONL entries) have no status → neutral dash.
+    let stCell;
+    if(r.status==null){ stCell='<td style="color:#8a8a8a">—</td>'; }
+    else{
+      const ok = String(r.status).startsWith("2");
+      stCell = `<td style="color:${ok?"var(--green)":"var(--red)"};font-weight:600">`
+        + (ok?"OK":String(r.status)) + "</td>";
+    }
     return `<tr class="busy"><td>${r.ts}</td><td style="text-align:left;color:var(--green)">${inst}</td>`
       +`<td style="text-align:left">${cl}</td>`
       +`<td style="text-align:left;color:#8a8a8a">${ep}</td>`
+      +stCell
       +`<td>${r.gen_tps.toFixed(1)}</td><td>${r.prompt_tps.toFixed(1)}</td>`
       +`<td>${r.kv_cache.toFixed(1)}</td><td>${r.prefix_hit.toFixed(1)}</td>`
       +`<td>${r.gpu_mem_gb!=null?r.gpu_mem_gb.toFixed(1)+" GB":"—"}</td></tr>`;
