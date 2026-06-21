@@ -1045,10 +1045,30 @@ A: Drei Prüfungen:
 3. Ist der Recherche-Modus richtig gesetzt? Q&A braucht ihn AN; Codegen AUS.
 
 **F: Der Chat sagt „Kontextfenster wird voll".**
-A: **Jetzt verdichten** im Warnbanner klicken oder das ✂️-Symbol in der
-Statusleiste. Der LCM (Lossless Context Manager) fasst ältere Turns
+A: **Jetzt verdichten** im Warnbanner klicken oder das Verdichten-Symbol in
+der Statusleiste. Der LCM (Lossless Context Manager) fasst ältere Turns
 zusammen; nichts geht verloren (Originale bleiben durchsuchbar), aber die
 aktive Konversation schrumpft.
+
+**F: Was ist Auto-LCM?**
+A: Eine **pro Modell** einstellbare automatische Verdichtung (General
+Settings → Service-Modelle → Häkchen „Auto-LCM" je Modell; **Standard: aus**).
+Ist sie für das verwendete Modell an, verdichtet Brain den Verlauf **vor
+jedem Turn** automatisch (und entfaltet ihn wieder, wenn Platz frei wird), so
+dass das Kontextfenster unter der Schwelle bleibt — manuelles Verdichten ist
+dann deaktiviert. In der Statusleiste zeigt ein Abzeichen den Verdichtungs-
+Grad (−X% · N/M Anfragen); der verdichtete Verlauf erscheint im Chat heller/
+kursiv wie ein Denk-Block. Reicht selbst maximale Verdichtung nicht, fragt ein
+Dialog, ob du es erneut versuchen oder einen neuen Chat (leer oder **mit
+Übergabe**) starten willst.
+
+**F: Was macht der Übergabe-Knopf im Eingabefeld?**
+A: Er erstellt aus dem aktuellen Chat ein **Übergabe-Dokument** (Ziel, Stand,
+Entscheidungen, offene Punkte) und öffnet einen **neuen Chat** mit zwei
+angehängten Dokumenten: der kompakten Übergabe und dem **vollständigen
+Verlauf** des Ursprungs-Chats. Das Modell arbeitet aus der Übergabe und öffnet
+den vollen Verlauf nur bei Bedarf — du machst nahtlos dort weiter, wo du
+aufgehört hast.
 
 **F: Was bedeuten die farbigen Badges an Web-Abrufen (raw / markitdown /
 crawl4ai)?**

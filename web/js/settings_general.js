@@ -357,6 +357,10 @@ async function saveModelsConfig() {
       // Parallel tool calls
       const ptc = row.querySelector('.mdl-parallel-tools')?.checked;
       if (ptc === false) mc[mid].parallel_tool_calls = false; else delete mc[mid].parallel_tool_calls;
+      // Auto-LCM (automatic context compaction). Default OFF (opt-in per model);
+      // persist explicit true only, drop the key when off.
+      const autoLcm = row.querySelector('.mdl-auto-lcm')?.checked;
+      if (autoLcm === true) mc[mid].auto_lcm = true; else delete mc[mid].auto_lcm;
       // Warmup. Persist explicit false so the speed profile's warmup=true
       // overlay can't silently re-enable warmup the user just turned off.
       const warm = row.querySelector('.mdl-warmup')?.checked;

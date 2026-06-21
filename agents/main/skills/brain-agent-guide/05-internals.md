@@ -1249,9 +1249,40 @@ leaf summaries → condensation → fallback truncation. Assembly: summaries
 (highest depth first) + fresh tail (default 16 messages) within token
 budget.
 
-**Manual-only trigger** — chat worker no longer auto-fires LCM. The
-status-bar ✂️ button calls `triggerLCM()` → `POST /v1/context/compact`
-with `force=true`. The warning banner shows at ≥60% context usage.
+**Two modes, decided PER-MODEL** via `config.json → models.<id>.auto_lcm`
+(default ON; checkbox in General Settings → Service-Modelle; read via
+`resolve_model_settings(model).get("auto_lcm", True)`).
+
+- **Auto-LCM (default)** — when the FINAL resolved model (after auto-route +
+  GDPR fallback; the chat worker reads `session.model`/`max_context` AFTER the
+  in-worker GDPR swap) has `auto_lcm` on, `ContextManager.auto_balance(session,
+  max_context, emit=)` runs BEFORE every turn. It computes fill from the
+  UNCOMPRESSED history (`load_messages(include_compacted=True)` minus
+  `lcm_inserted` rows) ÷ `max_context`: over `compact_threshold` →
+  `check_and_compact(force=True)` (reuses prior summary blocks, keeps a fresh
+  tail); comfortably under + old summaries exist → BIDIRECTIONALLY expand
+  (restore originals). Persisted via the SHARED `lcm_persist_compaction` /
+  `lcm_restore_originals` helpers (`compacted=1` originals + `lcm_inserted`
+  tags) — the same path the manual button uses. Manual compaction is BLOCKED
+  (the endpoint returns 409 `auto_lcm_active`; status-bar button disabled;
+  warning banner suppressed). If still over threshold after max compaction →
+  SSE `auto_lcm_over_threshold` → decision modal (retry / new chat / new chat
+  with handover). The compaction LEVEL is recorded on the turn's
+  `metadata.lcm_state` {before/after tokens+pct, saved_pct, turns_compressed/
+  total, still_over} → status-line badge + the in-chat compacted block header;
+  in auto mode the compacted block renders thinking-style (lighter/italic,
+  `.lcm-auto`, no restore button).
+- **Manual (auto_lcm off)** — chat worker does NOT auto-fire. The status-bar
+  button calls `triggerLCM()` → `POST /v1/context/compact` with `force=true`;
+  the warning banner shows at ≥60% usage.
+
+**Handover** — available in ANY chat (composer button + the over-threshold
+modal). `POST /v1/chat/handover {session_id}` → the chat's resolved model
+writes a structured handover doc; the endpoint returns it PLUS a second doc
+with the full verbatim source transcript (so the new chat works from the
+summary and opens the history only when it needs detail). The client opens a
+new chat, attaches BOTH .md files, and seeds a "continue where we left off"
+prompt.
 
 ## Tools — adding a new one
 

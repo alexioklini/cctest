@@ -1752,6 +1752,14 @@ class AdminObservabilityHandlers:
         if not engine._context_manager:
             self._send_json({"error": "Context manager not initialized"}, 500)
             return
+        # Manual compaction is NOT available when the session's current model has
+        # auto-LCM on — Brain compacts automatically before each turn there.
+        if engine._auto_lcm_enabled(session.model):
+            self._send_json({
+                "error": "auto_lcm_active",
+                "message": "Auto-Verdichtung ist für dieses Modell aktiv — manuelle Verdichtung ist nicht möglich.",
+            }, 409)
+            return
         try:
             before = engine._estimate_conversation_tokens(session.messages)
             # Force compaction regardless of threshold
@@ -1763,34 +1771,10 @@ class AdminObservabilityHandlers:
             )
             with session.lock:
                 session.messages = result[0]
-            # Persist: mark old messages as compacted, insert new summary messages
+            # Persist via the shared helper (same path auto-LCM uses): mark old
+            # messages compacted, insert lcm_inserted summary+tail rows.
             if result[1]:
-                try:
-                    with _db_conn() as conn:
-                        # Mark ALL existing messages as compacted (preserves originals for search)
-                        conn.execute(
-                            "UPDATE messages SET compacted = 1 WHERE session_id = ? AND (compacted = 0 OR compacted IS NULL)",
-                            (session_id,)
-                        )
-                        # Insert the new compacted message set (summaries + fresh tail).
-                        # Tag every inserted row `lcm_inserted` so uncompact can delete
-                        # exactly the LCM-produced rows — across multiple compaction
-                        # rounds — without mistaking a prior round's synthetic block or
-                        # re-rendered tail for an original message.
-                        for msg in session.messages:
-                            role = msg.get("role", "user")
-                            content = msg.get("content", "")
-                            c = json.dumps(content) if not isinstance(content, str) else content
-                            md = dict(msg.get("metadata") or {})
-                            md["lcm_inserted"] = True
-                            meta = json.dumps(md)
-                            conn.execute(
-                                "INSERT INTO messages (session_id, role, content, metadata, compacted) VALUES (?, ?, ?, ?, 0)",
-                                (session_id, role, c, meta)
-                            )
-                        conn.commit()
-                except Exception as e:
-                    print(f"  [WARN] Compact DB persist: {e}", flush=True)
+                engine.lcm_persist_compaction(session_id, session.messages)
             after = engine._estimate_conversation_tokens(session.messages)
             stats = engine._context_manager.get_stats(session_id)
             self._send_json({

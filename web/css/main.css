@@ -1004,6 +1004,30 @@ textarea { resize: none; }
 .lcm-summary-body h3:first-child { margin-top: 0; }
 .lcm-summary-body p { margin: 4px 0; }
 .lcm-summary-body ul, .lcm-summary-body ol { margin: 4px 0; padding-left: 20px; }
+/* Auto-LCM: render the compacted history like a THINKING block — lighter,
+   italic, borderless (just a subtle left rule) so the user reads it as
+   automatically-compressed background context, not a boxed action card.
+   Mirrors .msg-thinking's tone. No restore button (uncompression is auto). */
+.lcm-summary-block.lcm-auto {
+  border: none;
+  border-radius: 0;
+  border-left: 2px solid var(--border-100, #e5e7eb);
+  margin: 6px 0 10px;
+}
+.lcm-summary-block.lcm-auto .lcm-summary-header {
+  background: transparent;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--text-400, #9ca3af);
+  padding: 4px 12px;
+}
+.lcm-summary-block.lcm-auto .lcm-summary-header:hover { background: transparent; color: var(--text-300); }
+.lcm-summary-block.lcm-auto .lcm-summary-body-text {
+  border-top: none;
+  color: var(--text-400, #9ca3af);
+  font-style: italic;
+  padding: 4px 16px 8px;
+}
 /* Chat-summary block — LLM-generated synopsis, collapsed by default,
    rendered once under the first turn header. Tone is intentionally
    quieter than .lcm-summary-block (which announces context truncation). */

@@ -2044,6 +2044,8 @@ class BrainAgentHandler(
             self._handle_chat_answer()
         elif path == "/v1/chat/gdpr-recovery":
             self._handle_chat_gdpr_recovery()
+        elif path == "/v1/chat/handover":
+            self._handle_chat_handover()
         elif path == "/v1/attachments/scan":
             self._handle_attachment_scan()
         elif path == "/v1/gdpr/scan-text":

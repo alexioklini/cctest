@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.177.0"
-VERSION_DATE = "2026-06-20"
+VERSION = "9.178.0"
+VERSION_DATE = "2026-06-21"
 CHANGELOG = [
+    ("9.178.0", "2026-06-21", "feat(auto-lcm + handover): automatische verlustfreie Kontext-Verdichtung als PER-MODELL-Einstellung + ein Übergabe-Feature für jeden Chat. (1) AUTO-LCM: neues per-Modell-Flag config.json → models.<id>.auto_lcm (default AUS — opt-in pro Modell; Checkbox in General Settings → Service-Modelle neben Parallele-Tools/Warmup; gelesen via resolve_model_settings().get('auto_lcm', False)). Aktuell NUR auf gemma-4-26B-A4B-it-MLX-4bit (oMLX) aktiviert. Ist es für das FINALE Modell aktiv (nach Auto-Route + GDPR-Fallback — der Worker liest session.model/max_context erst NACH dem in-Worker-GDPR-Swap), verdichtet Brain den Verlauf VOR jedem Turn automatisch: neue ContextManager.auto_balance(session, max_context, emit=) schätzt die Füllrate aus der UNKOMPRIMIERTEN History (DB-Originale via load_messages(include_compacted=True), abzgl. lcm_inserted-Blöcke) ÷ max_context; über Schwelle → check_and_compact(force=True) (nutzt bestehende Summary-Blöcke wieder, hält frischen Tail); deutlich darunter + alte Summaries vorhanden → BIDIREKTIONAL entfalten (Originale wiederherstellen). Persistenz exakt wie der manuelle ✂️-Pfad über neue GETEILTE Helfer lcm_persist_compaction / lcm_restore_originals (compacted=1 + lcm_inserted-Tags), die auch der manuelle Endpoint jetzt nutzt. Im Auto-Modus ist die MANUELLE Verdichtung gesperrt (Endpoint → 409 auto_lcm_active; Status-Bar-Button disabled; 'bitte verdichten'-Banner unterdrückt). Bleibt der Kontext auch nach maximaler Verdichtung über Schwelle → SSE auto_lcm_over_threshold → Entscheidungs-Modal (Erneut versuchen / Neuer Chat leer / Neuer Chat mit Übergabe). VERDICHTUNGS-GRAD sichtbar: Turn-Metadata.lcm_state {before/after_tokens, before/after_pct, saved_pct, turns_compressed/total, still_over} (wire-gestrippt, via load_messages zum Client) → Inline-Badge neben der Kontext-Leiste (−X% · N/M Anfragen) UND Kopfzeile des verdichteten Blocks; der verdichtete Verlauf wird im Auto-Modus wie ein THINKING-Block gerendert (heller/kursiv, .lcm-auto, kein Wiederherstellen-Button — Entfalten ist automatisch). Kompaktier-Spinner zeigt Phase (Verdichten/Entfalten) + %. (2) ÜBERGABE (handover): in JEDEM Chat über einen Composer-Button (data-composer-toggle=btn-handover, sichtbar sobald der Chat Verlauf hat) + als Ausweg im Over-Threshold-Modal. POST /v1/chat/handover {session_id} → das RESOLVED Modell des Chats schreibt ein strukturiertes Markdown-Übergabe-Dokument (Ziel / Stand / Entscheidungen / offene Punkte / nötiger Kontext) via sidecar_proxy.background_call (purpose=handover, dieselbe GDPR/Quota/Cost-Naht), + den VOLLSTÄNDIGEN Ursprungs-Verlauf als ZWEITES, separates Dokument, sodass das Modell aus der Zusammenfassung arbeiten kann und den (ggf. großen) Wortlaut-Verlauf nur öffnet, wenn es Details braucht. Client: startHandoverChat() ruft newChat() → seedet state._pendingFiles mit BEIDEN .md (UTF-8-base64, scan=done) + einen 'mach dort weiter'-Prompt. (3) ICONS: das ✂️-Emoji des LCM-Buttons + das 🔍-Emoji des Inspect-Buttons durch Inline-SVG (stroke=currentColor, Stil der Quota-Donut) ersetzt. js_gate GRÜN (eslint clean, net-globals 1444→1448 [+4: _utf8ToBase64/startHandoverChat/composerHandover/showAutoLcmOverThresholdModal, Feature-Add, Baseline gebumpt], smoke 5/5). py_compile brain.py + handlers/chat.py + admin_observability.py + server.py OK. Neustart nötig. brain-agent-guide 01/05/06 + SKILL.md nachgezogen."),
     ("9.177.0", "2026-06-20", "fix(user-profile): Nutzerprofil-Daemon (user_profile_model=Lokal-M4/Qwen2.5-7B) erfindet keine Fakten mehr. SYSTEMATISCHER TEST aller 7 auf das M4-7B umgelegten Hintergrund-Use-Cases (Chat-Summary, Wiki-Gate, User-Profil, Code-Graph, Refine, Lang-Detect + bereits gefixtes Next-Prompt) gegen die fruehere Cloud-Variante (mistral-small), gefahren direkt ueber den Live-Sidecar /turn mit den PRODUKTIONS-Prompts (eval/m4_7b_usecase_eval.py). Ergebnis: 6/7 lokal gleichwertig ODER besser als Cloud (Refine-Polish + Engineer praeziser, Engineer ueberstrictifiziert casual-lookups NICHT wo mistral-small es tut; Lang-Detect de/en/fr/nl/it/es korrekt; Code-Graph formattreuer; Chat-Summary deckt mehr Topics ab; Wiki-Gate SAVE/SKIP korrekt). EINZIGE Regression: das User-Profil — M4 7B halluzinierte in 2/3 Laeufen plausibel klingenden, NIE gesagten Hintergrund ('long-standing interest', 'spanning model deployment', 'several projects'), waehrend mistral-small geerdet blieb; die HARD RULE 'Never invent facts' stand vergraben mitten in der Regelliste, die das kleine lokale Modell zu schwach gewichtete. FIX (_PROFILE_SYSTEM_PROMPT in server.py): die Erdungs-Regel steht jetzt ZUERST und emphatisch (GROUNDING-Block: nur explizit Gesagtes, sonst Body exakt `_(none)_`, ein erfundener Fakt macht das ganze Profil falsch) + eine explizite CAPTURE-Klausel (eine ausgesprochene Praeferenz/Entscheidung IST ein expliziter Fakt) damit das Modell beim Erden nicht gleichzeitig echte Praeferenzen wegwirft. Verifiziert: M4 7B jetzt 5/5 sauber (geerdet UND behaelt Praeferenz); Cloud war schon korrekt und bleibt unveraendert. Latenz lokal hoeher (Profil ~10-12s vs Cloud ~1.5s, Summary ~2.6s vs 0.5s) aber alle ausser Refine sind asynchrone Hintergrund-Tasks -> egal; Refine-Polish ~2.5s bleibt unter der Wahrnehmungsschwelle. Reiner Prompt-Edit, keine Routing-Aenderung. py_compile OK; Neustart noetig."),
     ("9.176.0", "2026-06-20", "fix(next-prompt): Nächster-Prompt-Vorschlag liefert auf LOKALEN Modellen (M4 7B) jetzt echte Vorschläge statt NONE. PROBLEM (end-to-end-Eval): next_prompt_model wurde auf Lokal-M4/Qwen2.5-7B gelegt, aber der Vorschlag kam IMMER leer (raw='NONE') — die Routing-Kette war korrekt (brain → /v1/messages → M4, 200), das 7B befolgte nur die Anweisung 'wenn nichts plausibel ist, antworte NONE' ZU eifrig und waehlte NONE selbst bei klar vorhandenem naechsten Schritt (Cloud-Modelle widerstehen, das kleine lokale nicht — direkt am M4 verifiziert: mit NONE-Klausel → 'NONE' auf reicher Session; ohne → 4/4 relevante Vorschlaege). FIX: generate_next_prompt_suggestion() loest das Modell jetzt VOR dem Instruction-Bau auf und laesst die NONE-Ausstiegsklausel fuer LOKALE Modelle (is_model_local) WEG — lokal wird immer ein konkreter Vorschlag verlangt (ein Wegwerf-Ghost auf einer beendeten Konversation ist harmlos). Cloud-Pfad unveraendert (NONE bleibt, damit faehige Modelle bei wirklich beendeten Chats abstinieren koennen). LIVE verifiziert: next-prompt auf M4 liefert 'Can you test the changes and confirm they work?'; Cloud weiterhin sinnvoll. py_compile OK; Neustart noetig."),
     ("9.175.0", "2026-06-20", "feat(gui): die letzten 3 nur-in-config Modell-Settings sind jetzt GUI-konfigurierbar (Service-Modelle / OCR-Block). Final-Audit aller ~28 Modell-Keys ergab 3 ohne GUI: (1) translation.detection_fallback_model (LLM-Fallback der Spracherkennung, von translate.py gelesen) → neuer tools-Slot 'Übersetzung – Spracherkennung (LLM-Fallback)' (leer erlaubt = nur lingua). (2) ocr.local_vision_model (lokales Vision-LLM bei engine=local_vision/auto; Hilfetext sagte vorher 'in config editieren') → neues Eingabefeld im OCR-Block, ein-/ausgeblendet via _svcOcrEngineToggle bei local_vision/auto; GET ocr_block + POST-Handler erweitert. (3) telegram.model (Modell des Telegram-Frontends, hatte gar keinen Settings-Tab) → neuer config-nested-Slot 'Telegram-Frontend' (Read/Write auf cfg.telegram.model). Alle drei via die generische Slot-Registry/Save (window._svcSlotKeys) bzw. den OCR-Block. js_gate gruen (5/5 smoke); py_compile OK. Damit hat JEDES Modell-Setting eine GUI ausser den bewusst venv-seitigen Embeddings. Neustart noetig (Boot-Loader/Slots)."),
@@ -8396,6 +8397,215 @@ class ContextManager:
             "depth_distribution": depth_stats,
             "config": self.get_config(),
         }
+
+    # ------------------------------------------------------------------
+    # Auto-LCM (per-model automatic compaction)
+    # ------------------------------------------------------------------
+    # auto_balance() is the driver for the per-model `auto_lcm` feature: it runs
+    # in the chat worker BEFORE the turn (once the FINAL model + its max_context
+    # are settled — after auto-route + GDPR fallback), keying its fill estimate
+    # off the FULL UNCOMPRESSED history (DB originals), not the possibly-already-
+    # compacted live list. It compresses to get under threshold, or — when there
+    # is headroom and prior summaries exist — uncompresses back toward verbatim.
+    # Persistence mirrors the manual ✂️ path EXACTLY (the same shared helpers
+    # below), so the compacted state survives reload and the manual restore works.
+
+    def _uncompressed_history(self, session_id: str) -> list[dict]:
+        """All ORIGINAL turns for a session (compacted=1 rows + live non-LCM
+        rows), excluding LCM-inserted synthetic blocks — i.e. what the history
+        would be with no compaction at all. Used to compute the true fill rate."""
+        from server_lib.db import ChatDB
+        rows = ChatDB.load_messages(session_id, include_compacted=True)
+        out = []
+        for m in rows:
+            md = m.get("metadata") or {}
+            if md.get("lcm_inserted"):
+                continue  # synthetic summary block — not an original
+            out.append({"role": m.get("role", "user"), "content": m.get("content", "")})
+        return out
+
+    def auto_balance(self, session, max_context: int, *, system_prompt: str = "",
+                     emit=None) -> dict:
+        """Compress/uncompress `session.messages` to settle context fill under
+        the configured threshold for the FINAL model's `max_context`.
+
+        Returns a stats dict: {ran, before_tokens, after_tokens, before_pct,
+        after_pct, saved_pct, turns_compressed, turns_total, still_over,
+        threshold_pct}. `before_*` reflect the UNCOMPRESSED history; `after_*`
+        the live (possibly compacted) state actually sent to the model.
+        """
+        cfg = self.get_config()
+        threshold_pct = float(cfg.get("compact_threshold", 0.60))
+        max_context = int(max_context or DEFAULT_MAX_CONTEXT_TOKENS)
+        threshold_tokens = int(max_context * threshold_pct)
+
+        def _emit(ev, data):
+            if emit:
+                try:
+                    emit(ev, data)
+                except Exception:
+                    pass
+
+        uncompressed = self._uncompressed_history(session.id)
+        before_tokens = _estimate_conversation_tokens(uncompressed, system_prompt)
+        turns_total = sum(1 for m in uncompressed if m.get("role") == "user")
+        before_pct = int(before_tokens / max_context * 100) if max_context else 0
+
+        def _live_tokens():
+            return _estimate_conversation_tokens(session.messages, system_prompt)
+
+        def _result(ran, still_over):
+            after_tokens = _live_tokens()
+            after_pct = int(after_tokens / max_context * 100) if max_context else 0
+            # Turns currently rendered verbatim vs the synthetic summary prefix.
+            verbatim_turns = sum(
+                1 for m in session.messages
+                if m.get("role") == "user"
+                and not str(m.get("content", "")).startswith("[Conversation Context]"))
+            turns_compressed = max(0, turns_total - verbatim_turns)
+            saved = before_tokens - after_tokens
+            saved_pct = int(saved / before_tokens * 100) if before_tokens else 0
+            return {
+                "ran": ran,
+                "before_tokens": before_tokens,
+                "after_tokens": after_tokens,
+                "before_pct": before_pct,
+                "after_pct": after_pct,
+                "saved_pct": max(0, saved_pct),
+                "turns_compressed": turns_compressed,
+                "turns_total": turns_total,
+                "still_over": still_over,
+                "threshold_pct": threshold_pct,
+            }
+
+        # Case A: uncompressed history already fits comfortably under threshold.
+        # If the live list still carries summaries (a prior era's compaction),
+        # there is now headroom to restore originals so the user reads verbatim.
+        if before_tokens < threshold_tokens:
+            had_summaries = any(
+                str(m.get("content", "")).startswith("[Conversation Context]")
+                for m in session.messages)
+            if had_summaries:
+                _emit("compacting", {"phase": "expand", "pct": before_pct})
+                restored = lcm_restore_originals(session.id)
+                if restored is not None:
+                    with session.lock:
+                        session.messages = restored
+                    _emit("compacted", _result(True, still_over=False))
+                    return _result(True, still_over=False)
+            return _result(False, still_over=False)
+
+        # Case B: over threshold — compress. check_and_compact already reuses any
+        # existing summary blocks (it strips the synthetic prefix, summarizes only
+        # the newly-aged-out real turns into a NEW leaf block) and keeps a fresh
+        # tail. force=True so it compacts regardless of its own internal gate; we
+        # have already decided here.
+        _emit("compacting", {"phase": "compress", "pct": before_pct})
+        try:
+            assembled, changed = self.check_and_compact(
+                session.messages, session.id, session.model,
+                session.api_key, session.base_url,
+                system_prompt=system_prompt, max_tokens=max_context, force=True)
+        except Exception as e:
+            logging.warning(f"auto_balance compaction failed: {e}")
+            return _result(False, still_over=before_pct >= int(threshold_pct * 100))
+        if changed:
+            with session.lock:
+                session.messages = assembled
+            lcm_persist_compaction(session.id, session.messages)
+        after_tokens = _live_tokens()
+        still_over = after_tokens >= threshold_tokens
+        _emit("compacted", _result(changed, still_over))
+        return _result(changed, still_over)
+
+
+def _auto_lcm_enabled(model: str) -> bool:
+    """Whether automatic LCM is enabled for the FINAL resolved model.
+    Per-model `auto_lcm` in config.json → models.<id> (profile-overlaid);
+    defaults OFF when unspecified (opt-in per model)."""
+    try:
+        cfg = resolve_model_settings(model) or {}
+        return cfg.get("auto_lcm", False) is True
+    except Exception:
+        return False
+
+
+def lcm_persist_compaction(session_id: str, new_messages: list[dict]):
+    """Persist a compaction to the chats DB: mark every existing live message
+    `compacted=1` (originals preserved for search + restore) and insert the new
+    summary+tail set, each tagged `metadata.lcm_inserted` so restore can delete
+    exactly the LCM-produced rows. SHARED by the manual ✂️ endpoint and auto-LCM
+    so both write identical state. Best-effort — a persist failure must not block
+    the turn (the in-memory session.messages is already correct)."""
+    from server import _db_conn
+    try:
+        with _db_conn() as conn:
+            conn.execute(
+                "UPDATE messages SET compacted = 1 WHERE session_id = ? "
+                "AND (compacted = 0 OR compacted IS NULL)",
+                (session_id,))
+            for msg in new_messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                c = json.dumps(content) if not isinstance(content, str) else content
+                md = dict(msg.get("metadata") or {})
+                md["lcm_inserted"] = True
+                conn.execute(
+                    "INSERT INTO messages (session_id, role, content, metadata, compacted) "
+                    "VALUES (?, ?, ?, ?, 0)",
+                    (session_id, role, c, json.dumps(md)))
+            conn.commit()
+    except Exception as e:
+        logging.warning(f"lcm_persist_compaction({session_id}): {e}")
+
+
+def lcm_restore_originals(session_id: str) -> list[dict] | None:
+    """Delete LCM-inserted rows + restore originals to compacted=0, clear the
+    session's summary rows, and return the restored message list (role+content).
+    Returns None if there are no originals to restore. SHARED by the manual
+    uncompact endpoint and auto-LCM's expand path."""
+    from server import _db_conn
+    from server_lib.db import ChatDB
+    try:
+        with _db_conn() as conn:
+            has_originals = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ? AND compacted = 1",
+                (session_id,)).fetchone()[0]
+            if not has_originals:
+                return None
+            tagged = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ? "
+                "AND metadata LIKE '%\"lcm_inserted\": true%'",
+                (session_id,)).fetchone()[0]
+            if tagged:
+                conn.execute(
+                    "DELETE FROM messages WHERE session_id = ? "
+                    "AND metadata LIKE '%\"lcm_inserted\": true%'",
+                    (session_id,))
+            else:
+                row = conn.execute(
+                    "SELECT MAX(id) FROM messages WHERE session_id = ? AND compacted = 1",
+                    (session_id,)).fetchone()
+                max_orig_id = row[0] if row and row[0] else 0
+                conn.execute(
+                    "DELETE FROM messages WHERE session_id = ? AND id > ?",
+                    (session_id, max_orig_id))
+            conn.execute(
+                "UPDATE messages SET compacted = 0 WHERE session_id = ? AND compacted = 1",
+                (session_id,))
+            conn.commit()
+    except Exception as e:
+        logging.warning(f"lcm_restore_originals({session_id}): {e}")
+        return None
+    # Clear context.db summaries so the next compaction starts a fresh era.
+    try:
+        ctx_conn = _context_conn()
+        ctx_conn.execute("DELETE FROM summaries WHERE session_id = ?", (session_id,))
+        ctx_conn.commit()
+    except Exception:
+        pass
+    fresh = ChatDB.load_messages(session_id)
+    return [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in fresh]
 
 
 _context_manager: ContextManager | None = None

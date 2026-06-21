@@ -1167,6 +1167,108 @@ def _generate_chat_summary(session):
             pass
 
 
+def _generate_handover_document(session) -> tuple[str, str]:
+    """Generate the HANDOVER artifacts for `session`: a (summary_md, transcript_md)
+    pair. The SUMMARY is the chat's RESOLVED model's structured handover (goal /
+    state / decisions / open items / next steps). The TRANSCRIPT is the verbatim
+    full history of the source chat, returned as a SEPARATE document so the new
+    chat can work from the summary alone and only open the (potentially large)
+    history when it needs the detail. Returns ("", "") on failure. Routes the
+    summary through sidecar_proxy.background_call (same GDPR/quota/cost seam)."""
+    with engine.request_context():
+        engine.get_request_context().current_agent = session.agent
+        engine.get_request_context().current_user_id = (getattr(session, "user_id", "") or "")
+        engine.get_request_context().cost_purpose = "handover"
+        # Build a compact transcript: user + final-assistant turns (skip thinking/
+        # tool rows — they're not in session.messages persisted form anyway).
+        lines = []
+        for m in session.messages:
+            role = m.get("role", "")
+            if role not in ("user", "assistant"):
+                continue
+            content = m.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    b.get("text", "") for b in content
+                    if isinstance(b, dict) and b.get("type") == "text")
+            if not (isinstance(content, str) and content.strip()):
+                continue
+            _pre = (m.get("metadata") or {}).get("preamble")
+            if _pre and content.startswith(_pre):
+                content = content[len(_pre):].lstrip("\n")
+            who = "Nutzer" if role == "user" else "Assistent"
+            lines.append(f"### {who}\n{content.strip()[:6000]}")
+        transcript = "\n\n".join(lines)
+        if not transcript.strip():
+            return "", ""
+
+        system_prompt = (
+            "Du schreibst ein ÜBERGABE-Dokument (handover) für einen neuen Chat, "
+            "der genau dort weitermachen soll, wo dieser aufgehört hat. Schreibe "
+            "präzise, strukturiertes Markdown in der Sprache des Gesprächs. "
+            "Erfinde NICHTS — nutze nur den Verlauf. Gliederung:\n"
+            "# Übergabe\n"
+            "## Ziel — worum geht es im Gespräch insgesamt\n"
+            "## Bisheriger Stand — was wurde erreicht/entschieden (Stichpunkte)\n"
+            "## Wichtige Entscheidungen & Annahmen\n"
+            "## Offene Punkte / nächste Schritte\n"
+            "## Kontext, den der neue Chat braucht (Dateien, Namen, Werte)\n"
+            "Der vollständige Wortlaut-Verlauf liegt dem neuen Chat als SEPARATES "
+            "Dokument bei — fasse hier zusammen, kopiere nicht den ganzen Verlauf. "
+            "Gib NUR das Markdown-Dokument aus, nichts davor oder danach."
+        )
+        prompt = (
+            "Hier ist der Gesprächsverlauf, den du übergeben sollst:\n\n"
+            + transcript)
+
+        model = session.model
+        sample = [prompt]
+        _deanon = engine._identity_deanon
+        try:
+            model, _new_sample, _deanon = engine.gdpr_pick_model_for_background(
+                model, sample, purpose="handover")
+            if _new_sample is not sample and _new_sample:
+                prompt = _new_sample[0]
+        except engine.GDPRBlockedError:
+            raise
+        except Exception:
+            pass
+
+        _res = sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            system_prompt=system_prompt,
+            agent_id=session.agent_id,
+            session_id=session.id,
+            user_id=(getattr(session, "user_id", "") or ""),
+            project=(session.project or ""),
+            cost_purpose="handover",
+            max_tokens=4000,
+        )
+        if _res.get("error"):
+            return "", ""
+        summary = _deanon(_res.get("reply") or "").strip()
+        if not summary:
+            return "", ""
+        # Lead-in note on the summary doc so the model knows the full history is
+        # available as a SECOND document if it needs the detail.
+        summary_doc = (
+            summary
+            + "\n\n---\n\n"
+            + "_Der vollständige Wortlaut-Verlauf des Ursprungs-Chats liegt als "
+            + "separates Dokument bei (\"Verlauf – …\"). Lies ihn nur, wenn die "
+            + "Zusammenfassung oben für den nächsten Schritt nicht ausreicht._"
+        )
+        transcript_doc = (
+            "# Vollständiger Verlauf des Ursprungs-Chats\n\n"
+            + "_Der komplette, wörtliche Verlauf des Chats, aus dem diese Übergabe "
+            + "stammt. Nur zum Nachschlagen — die Zusammenfassung steht im "
+            + "Übergabe-Dokument._\n\n"
+            + _deanon(transcript)
+        )
+        return summary_doc, transcript_doc
+
+
 def _attach_usage_meta(meta: dict, usage_totals: dict, sid: str):
     """Write token counts + the live session cost into a partial-message's
     metadata. Used by the cancel/error paths so an interrupted turn persists what
@@ -2309,6 +2411,30 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 engine.maybe_reprime_for_thinking(session.model, _wants_thinking,
                                                   agent_id=session.agent_id)
 
+                # --- Auto-LCM (per-model automatic context compaction) ---
+                # Runs BEFORE the wire build (session.messages is read at the wire
+                # assembly below) and AFTER the final model + max_context are
+                # settled (auto-route in _handle_chat + the in-worker GDPR swap
+                # above). Per-MODEL setting, keyed on the FINAL model. Mutates
+                # session.messages + persists like the manual ✂️ button. Skip on
+                # recovery turns (the recovery path has its own message handling)
+                # and when no context_manager is wired.
+                _lcm_state = None
+                try:
+                    if (engine._context_manager
+                            and engine._auto_lcm_enabled(session.model)
+                            and not getattr(session, "_is_recovery_turn", False)):
+                        _lcm_state = engine._context_manager.auto_balance(
+                            session, session.max_context, emit=live.emit)
+                        if _lcm_state and _lcm_state.get("ran"):
+                            engine.get_request_context()._lcm_state = _lcm_state
+                        if _lcm_state and _lcm_state.get("still_over"):
+                            # Even max compaction left us over threshold — let the
+                            # user decide (retry / new chat w/ handover / fresh).
+                            live.emit("auto_lcm_over_threshold", _lcm_state)
+                except Exception as _lcm_e:
+                    print(f"[chat] auto-lcm skipped: {_lcm_e}", flush=True)
+
                 # Sidecar path: build the system prompt, hand the loop over
                 # to the Anthropic SDK in the sidecar process. event_callback
                 # translates sidecar SSE → Brain's LiveStream vocabulary, so
@@ -2638,6 +2764,13 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     # was used; stripped before the wire so it never replays.
                     if _web_sources_used:
                         msg_metadata["web_sources"] = _web_sources_used
+                    # Auto-LCM: record this turn's compaction level (before/after
+                    # tokens + pct, turns compressed/total) on the turn metadata
+                    # so the status line + the in-chat compacted block can show
+                    # the compaction level after reload, not just live. Only when
+                    # auto-LCM actually compacted/expanded this turn.
+                    if _lcm_state and _lcm_state.get("ran"):
+                        msg_metadata["lcm_state"] = _lcm_state
                     # Persist the auto-route classification + routing decision on
                     # the turn (like web_sources) so the per-turn classification
                     # modal works after reload, not just on the live turn. Only
@@ -2947,6 +3080,10 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         done_data["text_rounds"] = msg_metadata["text_rounds"]
                     if session_cost is not None:
                         done_data["cost"] = session_cost
+                    # Auto-LCM compaction level → live status-line badge picks it
+                    # up here; reload reads the same dict from msg_metadata.
+                    if msg_metadata.get("lcm_state"):
+                        done_data["lcm_state"] = msg_metadata["lcm_state"]
                     # GDPR highlight payload — UI marks each restored span
                     # in the reply with a tooltip. Pulled from the metadata
                     # we just attached to the persisted message; live path
@@ -4381,6 +4518,51 @@ class ChatHandlerMixin:
             return
         self._send_json({"delivered": True, "session_id": session_id,
                          "action": action})
+
+    def _handle_chat_handover(self):
+        """POST /v1/chat/handover — generate a handover document for a chat.
+
+        Body: `{session_id}`. The chat's RESOLVED model writes a structured
+        markdown handover (goal, decisions, current state, open items, next
+        steps) of the whole conversation so it can be attached to a NEW chat
+        and the model told to continue where it left off. Returns the markdown
+        — the client creates the new chat and seeds it with the attachment +
+        a 'this is a handover, continue' prompt. Available in ANY chat (the
+        composer button + the auto-LCM over-threshold modal both call this)."""
+        try:
+            body = self._read_json()
+        except Exception:
+            self._send_json({"error": "invalid JSON body"}, 400)
+            return
+        session_id = (body.get("session_id") or "").strip()
+        if not session_id:
+            self._send_json({"error": "session_id required"}, 400)
+            return
+        if self._session_access_check(session_id) is None:
+            return
+        session = sessions.get(session_id)  # noqa: F821 — server-injected
+        if not session:
+            self._send_json({"error": "Session not found"}, 404)
+            return
+        if len(session.messages) < 2:
+            self._send_json({"error": "nothing_to_hand_over",
+                             "message": "Dieser Chat hat noch keinen Verlauf für eine Übergabe."}, 400)
+            return
+        try:
+            summary_md, transcript_md = _generate_handover_document(session)
+        except engine.GDPRBlockedError as e:
+            self._send_json({"error": "gdpr_blocked", "message": str(e)}, 409)
+            return
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+            return
+        if not summary_md:
+            self._send_json({"error": "generation_failed",
+                             "message": "Die Übergabe konnte nicht erstellt werden."}, 500)
+            return
+        title = (session.title or session.summary or "Chat").strip()[:80]
+        self._send_json({"session_id": session_id, "markdown": summary_md,
+                         "transcript": transcript_md, "source_title": title})
 
     def _handle_attachment_scan(self):
         """POST /v1/attachments/scan — upload-time PII scan for one attachment.

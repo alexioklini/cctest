@@ -920,7 +920,17 @@ function buildStreamCallbacks(chat, isActive) {
       },
       compacting: (d) => {
         if (typeof buddyPhase === 'function') buddyPhase('compacting');
-        setStreamStatus(chat, 'label', `Kontext wird verdichtet${d.pct ? ` (${d.pct}% voll)` : ''}…`);
+        // Auto-LCM emits a phase: 'compress' (verdichten) or 'expand' (entfalten,
+        // when there's headroom to restore originals). Show progress accordingly.
+        const verb = d.phase === 'expand' ? 'Kontext wird entfaltet' : 'Kontext wird verdichtet';
+        setStreamStatus(chat, 'label', `${verb}${d.pct ? ` (${d.pct}% voll)` : ''}…`);
+      },
+      auto_lcm_over_threshold: (d) => {
+        // Auto-LCM ran but the chat is STILL over threshold even after maximum
+        // compaction. Let the user decide what to do.
+        if (typeof showAutoLcmOverThresholdModal === 'function') {
+          showAutoLcmOverThresholdModal(chat, d);
+        }
       },
       citation_reround_start: (d) => {
         if (!isActive()) return;
@@ -1018,6 +1028,12 @@ function buildStreamCallbacks(chat, isActive) {
         // work on the live turn identically to a reloaded one.
         if (d.auto_route) {
           assistantMsg.metadata.auto_route = d.auto_route;
+        }
+        // Auto-LCM compaction level for this turn → drives the status-line badge
+        // (chat._lcmState is the live cache; metadata.lcm_state survives reload).
+        if (d.lcm_state) {
+          assistantMsg.metadata.lcm_state = d.lcm_state;
+          chat._lcmState = d.lcm_state;
         }
         if (dur > 0 && (tokIn + estOut) > 0) {
           // Total throughput (prompt-in + generated-out) over wall-clock.
@@ -1316,6 +1332,97 @@ async function restoreLCM(sessionId) {
     showToast('Ursprüngliche Nachrichten wiederhergestellt');
   } catch(e) {
     showToast('Wiederherstellung fehlgeschlagen: ' + (e.message || e), true);
+  }
+}
+// UTF-8-safe base64 (umlauts in the German handover doc would corrupt btoa()).
+function _utf8ToBase64(str) {
+  return btoa(unescape(encodeURIComponent(str)));
+}
+// Generate a handover document for a session and open a NEW chat with it
+// attached + a "continue where we left off" prompt seeded in the composer.
+// Shared by the composer button (composerHandover) and the auto-LCM
+// over-threshold modal. `sessionId` defaults to the active chat.
+async function startHandoverChat(sessionId) {
+  sessionId = sessionId || state.activeChat?.sessionId;
+  if (!sessionId) { showToast('Keine aktive Sitzung', true); return; }
+  showToast('Übergabe wird erstellt…');
+  let md, transcript, srcTitle;
+  try {
+    const res = await API.post('/v1/chat/handover', { session_id: sessionId });
+    md = res.markdown;
+    transcript = res.transcript || '';
+    srcTitle = res.source_title || 'Chat';
+    if (!md) { showToast('Übergabe konnte nicht erstellt werden', true); return; }
+  } catch (e) {
+    const msg = (e && e.message) ? e.message : String(e);
+    showToast('Übergabe fehlgeschlagen: ' + msg, true);
+    return;
+  }
+  // Fresh chat FIRST (newChat clears _pendingFiles), then seed BOTH docs as
+  // attachments + prompt. Two separate files: the concise summary the model
+  // works from, and the full verbatim history it opens only if it needs detail.
+  // Both are our own generated docs — no PII gate, mark scan done.
+  newChat();
+  try {
+    const safe = (s) => s.slice(0, 80).replace(/[\/\\]/g, '-');
+    const attach = (name, text) => state._pendingFiles.push({
+      name, type: 'text/markdown',
+      data: _utf8ToBase64(text),
+      encoding: 'base64', preview: null,
+      scan: { state: 'done', reason: '' },
+    });
+    attach(safe(`Übergabe – ${srcTitle}`) + '.md', md);
+    if (transcript) attach(safe(`Verlauf – ${srcTitle}`) + '.md', transcript);
+    if (typeof renderFilePreviews === 'function') renderFilePreviews();
+    if (typeof updateSendButton === 'function') updateSendButton();
+    const input = _composerInputEl();
+    if (input) {
+      input.value = 'Dies ist eine Übergabe aus einem vorherigen Chat. Lies das angehängte Übergabe-Dokument ("Übergabe – …") und mach genau dort weiter, wo wir aufgehört haben. Der vollständige Verlauf liegt als separates Dokument ("Verlauf – …") bei — öffne ihn nur, falls du Details brauchst.';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.focus();
+    }
+    showToast('Neuer Chat mit Übergabe bereit — zum Fortfahren senden.');
+  } catch (e) {
+    showToast('Übergabe-Anhang fehlgeschlagen: ' + (e.message || e), true);
+  }
+}
+// Composer toolbar button — handover from the current chat.
+async function composerHandover() {
+  await startHandoverChat(state.activeChat?.sessionId);
+}
+// Decision modal shown when auto-LCM ran but the chat is STILL over threshold
+// even after maximum compaction. Three choices: retry the turn anyway, start a
+// new chat with a handover, or start a fresh empty chat.
+async function showAutoLcmOverThresholdModal(chat, d) {
+  const pct = d && d.after_pct ? d.after_pct : '';
+  const msg = `Der Kontext ist auch nach automatischer Verdichtung noch ${pct ? pct + '% ' : ''}voll — `
+    + `das überschreitet die Kapazität dieses Modells.\n\n`
+    + `Du kannst es trotzdem versuchen (kann fehlschlagen) oder einen neuen Chat beginnen. `
+    + `Eine Übergabe fasst diesen Chat zusammen und nimmt sie in den neuen Chat mit.`;
+  const choice = await showDialog({
+    title: 'Kontext voll',
+    message: msg,
+    buttons: [
+      { label: 'Erneut versuchen', value: 'retry' },
+      { label: 'Neuer Chat (leer)', value: 'fresh' },
+      { label: 'Neuer Chat mit Übergabe', value: 'handover', primary: true },
+    ],
+  });
+  if (choice === 'retry') {
+    if (typeof sendMessage === 'function') {
+      // Re-send the last user message text. The worker will run auto_balance
+      // again and proceed to run_turn regardless.
+      const input = _composerInputEl();
+      if (input && !input.value.trim()) {
+        const lastUser = [...(chat.messages || [])].reverse().find(m => m.role === 'user');
+        if (lastUser && typeof lastUser.content === 'string') input.value = lastUser.content;
+      }
+      showToast('Wird erneut versucht…');
+    }
+  } else if (choice === 'handover') {
+    await startHandoverChat(chat.sessionId);
+  } else if (choice === 'fresh') {
+    newChat();
   }
 }
 async function openInspectModal() {

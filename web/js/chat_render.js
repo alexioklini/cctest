@@ -134,11 +134,30 @@ function renderMessages() {
       // with turn groups). Open class + chevron kept out of the hash → stable.
       const toggleFn = `toggleTurnCollapse(${t.turnNum})`;
       const sessionId = chat.sessionId || '';
-      const lcmHtml = `<div class="lcm-summary-block" data-turn="${t.turnNum}">
+      // Auto-LCM is per-model (default on). In auto mode the compacted history
+      // is rendered like a THINKING block (lighter/italic, lcm-auto class) with
+      // a compaction-LEVEL header and NO manual restore button (uncompression
+      // is automatic). In manual mode keep the card + Wiederherstellen button.
+      const autoLcmOn = (state.modelsConfig?.models?.[chat.model]?.auto_lcm) === true;
+      // Compaction level: prefer this chat's latest lcm_state for the header.
+      let ls = chat._lcmState || null;
+      if (!ls) {
+        for (let mi = chat.messages.length - 1; mi >= 0; mi--) {
+          const st = chat.messages[mi]?.metadata?.lcm_state;
+          if (st) { ls = st; break; }
+        }
+      }
+      const lvl = (ls && ls.ran)
+        ? ` · ${ls.turns_compressed}/${ls.turns_total} Anfragen · ${ls.before_tokens.toLocaleString()}→${ls.after_tokens.toLocaleString()} Token (−${ls.saved_pct}%)`
+        : '';
+      const restoreBtn = autoLcmOn ? '' :
+        `<button class="lcm-restore-btn" onclick="event.stopPropagation();restoreLCM('${sessionId}')" title="Ursprüngliche Nachrichten wiederherstellen">Wiederherstellen</button>`;
+      const blockCls = 'lcm-summary-block' + (autoLcmOn ? ' lcm-auto' : '');
+      const lcmHtml = `<div class="${blockCls}" data-turn="${t.turnNum}">
         <div class="lcm-summary-header" onclick="${toggleFn}">
           <svg class="lcm-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;transition:transform .2s"><polyline points="6 9 12 15 18 9"/></svg>
-          <span style="flex:1">Kontext verdichtet</span>
-          <button class="lcm-restore-btn" onclick="event.stopPropagation();restoreLCM('${sessionId}')" title="Ursprüngliche Nachrichten wiederherstellen">Wiederherstellen</button>
+          <span style="flex:1">Kontext verdichtet${esc(lvl)}</span>
+          ${restoreBtn}
         </div>
         <div class="lcm-summary-body collapsible-body"><div class="collapsible-inner"><div class="lcm-summary-body-text">${marked.parse(summaryRaw)}</div></div></div>
       </div>`;

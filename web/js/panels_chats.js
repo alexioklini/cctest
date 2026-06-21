@@ -112,6 +112,13 @@ function updateStatusBar() {
     cavBtn.style.color = '';
   }
 
+  // Handover button: only meaningful once the chat has a saved session with
+  // history to hand over (a fresh/empty chat has nothing to summarize).
+  const canHandover = !!chat.sessionId && (chat.messages || []).some(m => m.role === 'assistant');
+  for (const hBtn of _composerToggleEls('btn-handover')) {
+    hBtn.style.display = canHandover ? '' : 'none';
+  }
+
   // Transparent-anonymisation sticky preference indicator (step 6.3). Shows
   // a shield-with-checkmark next to the composer when chat.gdprActionPref
   // is set, so the user sees PII handling is automatic for this chat and
@@ -201,13 +208,49 @@ function updateStatusBar() {
     label.textContent = `${fmtK(contextUsed)} / ${fmtK(effectiveMaxContext)} (${pct}%)`;
     label.title = `${contextUsed.toLocaleString()} / ${effectiveMaxContext.toLocaleString()} Token (letzte API-Eingabe)`;
 
-    // LCM warning banner: show at ≥60% — compaction is manual-only, so the
-    // banner stays visible until the user runs ✂️ Compact or the conversation
-    // resets.
+    // Auto-LCM is a PER-MODEL setting (config.json → models.<id>.auto_lcm,
+    // default ON). When on for the chat's current model, Brain compacts
+    // automatically before every turn: manual compaction is disabled, the
+    // "please compact" banner is suppressed, and a compaction-LEVEL badge shows
+    // the saved %/turns from the latest turn's lcm_state.
+    const autoLcmOn = (state.modelsConfig?.models?.[chat.model]?.auto_lcm) === true;
+    const lcmBtn = document.getElementById('status-lcm-btn');
+    if (lcmBtn) {
+      lcmBtn.disabled = autoLcmOn;
+      lcmBtn.title = autoLcmOn
+        ? 'Auto-Verdichtung aktiv — manuelle Verdichtung ist deaktiviert'
+        : 'Lossless Context Manager — Chat-Verlauf komprimieren';
+    }
+    // Compaction-level badge: read the most recent turn's lcm_state (saved %,
+    // turns compressed / total). Shown only when auto-LCM actually compacted.
+    const badge = document.getElementById('status-lcm-badge');
+    if (badge) {
+      let ls = chat._lcmState || null;
+      if (!ls) {
+        for (let mi = chat.messages.length - 1; mi >= 0; mi--) {
+          const st = chat.messages[mi]?.metadata?.lcm_state;
+          if (st) { ls = st; break; }
+        }
+      }
+      if (autoLcmOn && ls && ls.ran && (ls.turns_compressed > 0 || ls.saved_pct > 0)) {
+        const bt = document.getElementById('status-lcm-badge-text');
+        if (bt) bt.textContent = `−${ls.saved_pct}% · ${ls.turns_compressed}/${ls.turns_total}`;
+        badge.style.display = 'inline-flex';
+        badge.title = `Auto-Verdichtung: ${ls.turns_compressed} von ${ls.turns_total} Anfragen verdichtet, `
+          + `${ls.before_tokens.toLocaleString()}→${ls.after_tokens.toLocaleString()} Token (−${ls.saved_pct}%)`;
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    // LCM warning banner: ONLY in manual mode (auto-LCM off). At ≥60% it
+    // prompts the user to compact. In auto-LCM mode it is always suppressed —
+    // Brain handles fill automatically and the over-threshold case is handled
+    // by the auto_lcm_over_threshold decision modal instead.
     const banner = document.getElementById('lcm-warn-banner');
     if (banner) {
       const isStreaming = !!document.getElementById('stop-btn')?.offsetParent;
-      if (pct >= 60 && !isStreaming) {
+      if (!autoLcmOn && pct >= 60 && !isStreaming) {
         const txt = document.getElementById('lcm-warn-text');
         if (txt) txt.textContent = `Der Kontext ist zu ${pct}% gefüllt — jetzt verdichten, um das Gespräch fortzusetzen.`;
         banner.classList.add('visible');
@@ -218,6 +261,7 @@ function updateStatusBar() {
   } else {
     wrap.style.display = 'none';
     document.getElementById('lcm-warn-banner')?.classList.remove('visible');
+    document.getElementById('status-lcm-badge')?.style.setProperty('display', 'none');
   }
 
   // Session cost indicator — shows current session $ spend. Quota state

@@ -143,6 +143,10 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `POST /v1/chat/answer` — `{session_id, answer}` unblocks `AskUserQuestion`
 - `POST /v1/chat/gdpr-recovery` — `{session_id, action}` resolve a
   pre-send PII modal (`block`, `proceed_local`, `proceed_pseudo`, …)
+- `POST /v1/chat/handover` — `{session_id}` generate a handover for a chat.
+  The resolved model writes a structured handover doc; returns `{markdown,
+  transcript, source_title}` (transcript = the full verbatim source history as
+  a SEPARATE doc). The client opens a new chat with both attached.
 
 ### Manage
 - `POST /v1/sessions` — create empty session
@@ -416,7 +420,8 @@ already anonymises (see 05-internals).
 
 - `GET /v1/context/config` — admin: LCM config
 - `GET /v1/context/stats?session_id=` — current usage
-- `POST /v1/context/compact` — `{session_id, force?}` trigger LCM
+- `POST /v1/context/compact` — `{session_id, force?}` trigger LCM (returns
+  409 `auto_lcm_active` when the session's model has auto-LCM on)
 
 ## Artifacts
 

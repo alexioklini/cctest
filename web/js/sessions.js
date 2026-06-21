@@ -543,6 +543,7 @@ function newChat() {
   chat._tokensOut = 0;
   chat._lastSpeed = null;
   chat._lastApiIn = 0;
+  chat._lcmState = null;
   chat._piiHistoryScanLen = -1;
   chat._piiHistoryHas = false;
   chat._piiHistoryCounts = {};
