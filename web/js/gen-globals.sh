@@ -52,6 +52,7 @@ localStorage
 sessionStorage
 fetch
 FormData
+XMLHttpRequest
 Headers
 Request
 Response

@@ -1412,10 +1412,19 @@ function editProjectInstructions() {
         <div id="project-instr-files-list" style="margin-bottom:10px"></div>
         <input type="file" id="project-instr-file-input" style="display:none"
           onchange="uploadProjectInstructionFile(this)">
-        <button class="btn-secondary" type="button"
+        <button class="btn-secondary" type="button" id="project-instr-upload-btn"
           onclick="document.getElementById('project-instr-file-input').click()">
           Datei hochladen
         </button>
+        <div id="project-instr-upload-progress" style="display:none;margin-top:10px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-400);margin-bottom:4px">
+            <span id="project-instr-upload-label">Wird hochgeladen …</span>
+            <span id="project-instr-upload-pct"></span>
+          </div>
+          <div style="height:6px;border-radius:3px;background:var(--bg-100);overflow:hidden">
+            <div id="project-instr-upload-fill" style="height:100%;width:0%;background:var(--accent,#3b82f6);transition:width .15s ease"></div>
+          </div>
+        </div>
       </div>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border-100)">
@@ -1447,6 +1456,26 @@ function renderProjectInstructionFiles(files) {
   }).join('');
 }
 
+function _instrUploadProgress(pct, label) {
+  const box = document.getElementById('project-instr-upload-progress');
+  const fill = document.getElementById('project-instr-upload-fill');
+  const pctEl = document.getElementById('project-instr-upload-pct');
+  const labelEl = document.getElementById('project-instr-upload-label');
+  if (!box) return;
+  if (pct === false) { box.style.display = 'none'; return; }  // hide
+  box.style.display = '';
+  if (labelEl && label) labelEl.textContent = label;
+  // pct null = sent, server processing → indeterminate (full bar, no number).
+  if (pct === null) {
+    if (fill) fill.style.width = '100%';
+    if (pctEl) pctEl.textContent = '';
+    if (labelEl && !label) labelEl.textContent = 'Wird verarbeitet …';
+  } else {
+    if (fill) fill.style.width = pct + '%';
+    if (pctEl) pctEl.textContent = pct + '%';
+  }
+}
+
 async function uploadProjectInstructionFile(input) {
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
@@ -1457,14 +1486,20 @@ async function uploadProjectInstructionFile(input) {
     input.value = '';
     return;
   }
+  const btn = document.getElementById('project-instr-upload-btn');
+  if (btn) btn.disabled = true;
+  _instrUploadProgress(0, 'Wird hochgeladen …');
   try {
-    const res = await API.uploadProjectInstructionFile(agentId, projectName, file);
+    const res = await API.uploadProjectInstructionFile(
+      agentId, projectName, file, (pct) => _instrUploadProgress(pct));
     if (res && res.error) { alert('Upload fehlgeschlagen: ' + res.error); return; }
     if (state._projectDetail) state._projectDetail.instruction_files = res.instruction_files || [];
     renderProjectInstructionFiles((res && res.instruction_files) || []);
   } catch (e) {
-    alert('Upload fehlgeschlagen: ' + e);
+    alert('Upload fehlgeschlagen: ' + ((e && e.message) || e));
   } finally {
+    _instrUploadProgress(false);  // hide
+    if (btn) btn.disabled = false;
     input.value = '';
   }
 }

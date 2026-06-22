@@ -264,12 +264,37 @@ class API {
   static updateProject(agent, name, cfg) { return this.put(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`, cfg); }
   static deleteProject(agent, name) { return this.del(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`); }
   static listProjectInstructionFiles(agent, name) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-files`); }
-  static async uploadProjectInstructionFile(agent, name, file) {
-    const fd = new FormData();
-    fd.append('file', file, file.name);
-    const h = {}; const t = localStorage.getItem('auth-token'); if (t) h['Authorization'] = `Bearer ${t}`;
-    const r = await fetch(`${BASE_URL}/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-files`, { method: 'POST', headers: h, body: fd });
-    return r.json();
+  // XHR (not fetch) so upload.onprogress can drive a progress bar for big files.
+  // onProgress(pct|null) — pct is 0..100, or null once the bytes are sent and the
+  // server is still processing (length not computable / 100% reached).
+  static uploadProjectInstructionFile(agent, name, file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${BASE_URL}/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-files`);
+      const t = localStorage.getItem('auth-token');
+      if (t) xhr.setRequestHeader('Authorization', `Bearer ${t}`);
+      if (typeof onProgress === 'function' && xhr.upload) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            onProgress(pct >= 100 ? null : pct);  // 100% sent → server processing
+          } else {
+            onProgress(null);
+          }
+        };
+        xhr.upload.onload = () => onProgress(null);  // bytes done → processing
+      }
+      xhr.onload = () => {
+        let body = {};
+        try { body = JSON.parse(xhr.responseText || '{}'); } catch (e) { /* keep {} */ }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(body);
+        else reject(new Error(body.error || `HTTP ${xhr.status}`));
+      };
+      xhr.onerror = () => reject(new Error('Netzwerkfehler beim Upload'));
+      xhr.send(fd);
+    });
   }
   static deleteProjectInstructionFile(agent, name, filename) { return this.del(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-files/${encodeURIComponent(filename)}`); }
   // AI-generation of project instructions (agentic, review-before-save).
