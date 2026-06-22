@@ -780,6 +780,64 @@ class AdminConfigHandlers:
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    # --- Chat cleanup (auto archive + delete) config handlers ---
+
+    _CLEANUP_DEFAULTS = {
+        "enabled": False,
+        "archive_after_days": 30,
+        "delete_after_days": 90,
+        "run_interval_seconds": 3600,
+    }
+
+    def _handle_cleanup_config_get(self):
+        """GET /v1/cleanup/config — auto archive/delete settings. 0 days = that
+        stage disabled; enabled=false = whole feature off."""
+        if self._require_auth() is None:
+            return
+        cfg = dict(self._CLEANUP_DEFAULTS)
+        cfg.update((server_config or {}).get("chat_cleanup") or {})
+        self._send_json(cfg)
+
+    def _handle_cleanup_config_save(self):
+        """POST /v1/cleanup/config — persist auto archive/delete settings to the
+        repo-root config.json AND the live server_config (so the chat-cleanup
+        daemon picks them up without a restart). Admin-only."""
+        if self._require_role("admin") is None:
+            return
+        body = self._read_json() or {}
+        cur = dict(self._CLEANUP_DEFAULTS)
+        cur.update((server_config or {}).get("chat_cleanup") or {})
+        try:
+            if "enabled" in body:
+                cur["enabled"] = bool(body["enabled"])
+            for k in ("archive_after_days", "delete_after_days"):
+                if k in body:
+                    v = int(body[k])
+                    if v < 0:
+                        self._send_json({"error": f"{k} must be >= 0 (0 disables that stage)"}, 400)
+                        return
+                    cur[k] = v
+            if "run_interval_seconds" in body:
+                cur["run_interval_seconds"] = max(300, int(body["run_interval_seconds"]))
+        except (TypeError, ValueError):
+            self._send_json({"error": "archive_after_days / delete_after_days must be integers"}, 400)
+            return
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+        try:
+            cfg = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    cfg = json.load(f)
+            cfg["chat_cleanup"] = cur
+            with open(config_path, "w") as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+            return
+        # Live update so the running daemon reads the new values next cycle.
+        server_config["chat_cleanup"] = cur
+        self._send_json({"status": "saved", "config": cur})
+
     # --- Tools config handlers ---
 
     def _handle_tools_config_get(self):

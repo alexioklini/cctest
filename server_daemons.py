@@ -3006,6 +3006,75 @@ def _user_profile_cycle(srv):
             _auth_mod.AuthDB.set_daily_summary_cursor(uid, now, f"error:{type(e).__name__}", "")
 
 
+_CHAT_CLEANUP_DEFAULT_INTERVAL_SEC = 3600
+
+
+def _chat_cleanup_loop(srv):
+    """Auto-archive idle private chats, then auto-delete long-archived ones.
+
+    Two independent stages, each gated by a config day-count (0 = stage off):
+      - archive: a chat idle >= archive_after_days that is purely private, not
+        memorized (no session/<id> wiki page, save_to_memory=0), and not
+        referenced anywhere (favourite / unfinished bg task / in-flight turn /
+        workflow) → status='archived' (stamps archived_at). Conservative: any
+        exclusion leaves it active. See ChatDB.list_auto_archivable.
+      - delete: a chat archived >= delete_after_days ago (by archived_at) →
+        fully deleted, INCLUDING its wiki page + MemPalace drawer (the cascade
+        lives in ChatDB.delete_session via wiki_store.delete_page_for_session).
+
+    Config is read live each cycle from server_config['chat_cleanup'] so GUI
+    edits take effect without a restart. The whole feature no-ops when the block
+    is absent or enabled=false."""
+    time.sleep(30)  # let boot settle before the first sweep
+    while True:
+        slept = _CHAT_CLEANUP_DEFAULT_INTERVAL_SEC
+        try:
+            cfg = (engine._server_config().get("chat_cleanup") or {})
+            slept = max(300, int(cfg.get("run_interval_seconds",
+                                         _CHAT_CLEANUP_DEFAULT_INTERVAL_SEC)))
+            if not cfg.get("enabled", False):
+                time.sleep(slept)
+                continue
+            now = time.time()
+            archive_days = int(cfg.get("archive_after_days", 0) or 0)
+            delete_days = int(cfg.get("delete_after_days", 0) or 0)
+
+            # Stage 1 — archive idle, private, unreferenced chats.
+            if archive_days > 0:
+                cutoff = now - archive_days * 86400
+                ids = ChatDB.list_auto_archivable(cutoff) or []
+                n = 0
+                for sid in ids:
+                    try:
+                        ChatDB.archive_session(sid)
+                        n += 1
+                    except Exception as e:
+                        print(f"[chat-cleanup] archive {sid[:8]} failed: "
+                              f"{type(e).__name__}: {e}", flush=True)
+                if n:
+                    print(f"[chat-cleanup] archived {n} idle chat(s) "
+                          f"(>{archive_days}d)", flush=True)
+
+            # Stage 2 — delete chats archived past the delete window.
+            if delete_days > 0:
+                cutoff = now - delete_days * 86400
+                ids = ChatDB.list_auto_deletable(cutoff) or []
+                n = 0
+                for sid in ids:
+                    try:
+                        srv.sessions.delete(sid)  # → ChatDB.delete_session (+ wiki + mempalace)
+                        n += 1
+                    except Exception as e:
+                        print(f"[chat-cleanup] delete {sid[:8]} failed: "
+                              f"{type(e).__name__}: {e}", flush=True)
+                if n:
+                    print(f"[chat-cleanup] deleted {n} chat(s) archived "
+                          f">{delete_days}d (incl. wikis)", flush=True)
+        except Exception as e:
+            print(f"[chat-cleanup] cycle error: {type(e).__name__}: {e}", flush=True)
+        time.sleep(slept)
+
+
 def _warmup_keeper_loop(srv):
     # Small startup delay so we don't race provider probes on boot
     time.sleep(5)

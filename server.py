@@ -338,6 +338,7 @@ class Session:
         self.summary: str = ""  # LLM-generated chat summary for sidebar
         self.sdk_session_id: str | None = None  # Agent SDK session ID for resume
         self._last_summary_at = 0  # Token count at last continuous summary
+        self._last_active_persisted_at = 0.0  # Throttle for on-open last_active DB writes
         self.save_to_memory: bool = False  # User toggle: always file to MemPalace
         self.caveman_mode: int = 0  # 0=off, 1=lite, 2=full, 3=ultra
         # Per-session thinking level: '' = unset (use default at send time),
@@ -489,6 +490,22 @@ class SessionManager:
             self._sessions[session.id] = session
         return session
 
+    @staticmethod
+    def _touch_on_open(s: "Session"):
+        """Persist last_active when a chat is OPENED (not just messaged), so a
+        chat you read but don't type in still counts as accessed. Throttled
+        (~5 min/session) to keep this off the hot read path, and skipped for
+        archived sessions — opening an archived chat must NOT revive it or reset
+        its auto-delete clock. The DB UPDATE itself is also status='active'-guarded."""
+        try:
+            now = s.last_active
+            if (s.status == "active"
+                    and now - getattr(s, "_last_active_persisted_at", 0.0) >= 300):
+                s._last_active_persisted_at = now
+                ChatDB.touch_last_active(s.id, now)
+        except Exception:
+            pass
+
     def get(self, session_id: str) -> Session | None:
         with self._lock:
             s = self._sessions.get(session_id)
@@ -497,6 +514,7 @@ class SessionManager:
                 evt = self._load_events.get(session_id)
             elif s is not None:
                 s.last_active = time.time()
+                self._touch_on_open(s)
                 return s
             else:
                 # Mark as loading to prevent duplicate construction
@@ -512,6 +530,7 @@ class SessionManager:
                 result = self._sessions.get(session_id)
                 if result is not self._LOADING_SENTINEL and result is not None:
                     result.last_active = time.time()
+                    self._touch_on_open(result)
                     return result
             return None
 
@@ -1477,6 +1496,8 @@ class BrainAgentHandler(
 
         if path == "/v1/wiki/config":
             self._handle_wiki_config_get()
+        elif path == "/v1/cleanup/config":
+            self._handle_cleanup_config_get()
         elif path == "/v1/wiki/tags":
             self._handle_wiki_tags_get()
         elif path == "/v1/wiki/tree":
@@ -1856,6 +1877,8 @@ class BrainAgentHandler(
             self._handle_mcp_jsonrpc()
         elif path == "/v1/wiki/config":
             self._handle_wiki_config_save()
+        elif path == "/v1/cleanup/config":
+            self._handle_cleanup_config_save()
         elif path == "/v1/wiki/tags/rename":
             self._handle_wiki_tag_rename()
         elif path == "/v1/wiki/tags":
@@ -4240,6 +4263,12 @@ def main():
     # shows a recent up/down + latency per search engine without manual testing.
     threading.Thread(target=server_daemons._searxng_engine_health_loop, args=(_srv,), daemon=True, name="searxng-engine-health").start()
     threading.Thread(target=server_daemons._bgtask_group_timeout_loop, args=(_srv,), daemon=True, name="bgtask-group-timeout").start()
+
+    # Chat cleanup — auto-archive idle private chats (config archive_after_days)
+    # then auto-delete long-archived ones (delete_after_days), each stage off
+    # when its day-count is 0. Deleting a chat also removes its wiki. No-ops
+    # unless config.json → chat_cleanup.enabled is true.
+    threading.Thread(target=server_daemons._chat_cleanup_loop, args=(_srv,), daemon=True, name="chat-cleanup").start()
 
     # Warmup keeper — fires minimal prefill requests at models flagged with
     # warmup=true so their first real turn lands on a warm KV cache. Runs

@@ -654,6 +654,31 @@ async function _genTab_context(C) {
     } catch(e) { C.innerHTML = P('<div style="color:var(--text-400)">Kontext-Konfiguration nicht verfügbar</div>'); }
 }
 
+async function _genTab_cleanup(C) {
+  /* ─── BEREINIGUNG (auto archive + delete) ─── */
+    try {
+      const cfg = await API.get('/v1/cleanup/config');
+      C.innerHTML = P(`<div style="${G('16px')}">
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="cleanup-enabled" ${cfg.enabled?'checked':''}>
+          <label for="cleanup-enabled" style="font-size:14px;font-weight:500;color:var(--text-200)">Automatisches Archivieren &amp; Löschen aktiviert</label>
+        </div>
+        <div style="font-size:13px;color:var(--text-400);line-height:1.5">
+          Private Chats, die nicht gemerkt (Wiki/Memory), favorisiert oder anderweitig
+          referenziert sind und seit der eingestellten Zahl an Tagen nicht aufgerufen wurden,
+          werden automatisch archiviert. Alles Archivierte wird nach Ablauf der Lösch-Frist
+          endgültig gelöscht (inkl. zugehörigem Wiki). Gilt für projektlose und projektbasierte Chats.
+          <br><strong>0 = Stufe deaktiviert.</strong>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div><label class="form-label">Archivieren nach (Tage Inaktivität)</label><input class="form-input" id="cleanup-archive-days" type="number" value="${cfg.archive_after_days ?? 30}" min="0" max="3650"></div>
+          <div><label class="form-label">Löschen nach (Tage im Archiv)</label><input class="form-input" id="cleanup-delete-days" type="number" value="${cfg.delete_after_days ?? 90}" min="0" max="3650"></div>
+        </div>
+        <button class="btn-primary" onclick="saveCleanupConfig()">Speichern</button>
+      </div>`);
+    } catch(e) { C.innerHTML = P('<div style="color:var(--text-400)">Bereinigungs-Konfiguration nicht verfügbar</div>'); }
+}
+
 async function _genTab_costs(C) {
   /* ─── COSTS ─── */
     try {

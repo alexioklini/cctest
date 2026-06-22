@@ -4056,5 +4056,11 @@
   "composer_defaults": {
     "thinking_level": "none",
     "caveman_mode": 0
+  },
+  "chat_cleanup": {
+    "enabled": false,
+    "archive_after_days": 30,
+    "delete_after_days": 90,
+    "run_interval_seconds": 3600
   }
 }

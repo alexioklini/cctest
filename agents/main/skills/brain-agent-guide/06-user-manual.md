@@ -270,7 +270,27 @@ Nachrichten.
 
 **Archivieren ≠ Löschen**: archivierte Chats sind aus der Liste
 ausgeblendet, ihre Gedächtnis-Drawer bleiben aber erhalten. Löschen
-entfernt alles inklusive Drawer.
+entfernt alles inklusive Drawer **und des zugehörigen Wikis**.
+
+**Automatisches Archivieren & Löschen** (Einstellungen → Allgemein →
+**Bereinigung**, admin-konfigurierbar): Ist die Funktion aktiviert, werden
+Chats automatisch aufgeräumt — für projektlose **und** projektbasierte Chats:
+- **Archivieren nach N Tagen Inaktivität** (Standard 30): Ein Chat, der seit N
+  Tagen nicht mehr **aufgerufen** wurde, wird automatisch archiviert — **aber
+  nur**, wenn er rein **privat** ist (nicht geteilt), **nicht gemerkt** ist
+  (kein Wiki/Memory aus diesem Chat) und **nirgends referenziert** ist (kein
+  Favorit, keine laufende Hintergrundaufgabe, kein Workflow). Gemerkte,
+  geteilte, favorisierte oder referenzierte Chats bleiben unangetastet.
+- **Löschen nach M Tagen im Archiv** (Standard 90): Alles, was seit M Tagen
+  archiviert ist, wird endgültig gelöscht (inkl. Drawer **und Wiki**).
+- **Jede Frist auf 0 setzen schaltet die jeweilige Stufe ab**; der Haupt-Schalter
+  schaltet die ganze Funktion aus (Standard: aus).
+- Das **Öffnen** eines archivierten Chats holt ihn **nicht** automatisch zurück
+  und stoppt die Lösch-Uhr nicht — zum Behalten den Chat manuell de-archivieren
+  (Zeilenmenü ⋯). Ein noch genutzter, **aktiver** Chat wird hingegen schon durch
+  das bloße Öffnen als „aufgerufen“ gewertet und damit vor dem Archivieren bewahrt.
+- Vor diesem Release bereits archivierte Chats haben keinen Archivierungs-Zeitstempel
+  und werden erst nach erneutem Archivieren auto-gelöscht.
 
 **In-Gedächtnis-speichern** (Eingabe-Knopf oder Chat-Einstellung):
 - **aus** — nichts aus diesem Chat geht in MemPalace

@@ -1306,6 +1306,38 @@ prompt.
 Per-tool prose (description/when_to_use/warnings/examples/applies_with)
 is added via admin UI → `POST /v1/tools/settings`, NOT in code.
 
+## Chat auto-archive + auto-delete (`chat-cleanup` daemon)
+
+`server_daemons._chat_cleanup_loop` (registered in `server.py`, thread name
+`chat-cleanup`) runs two independent, config-gated stages each cycle (interval
+`run_interval_seconds`, min 300s). Config is read LIVE from
+`config.json → chat_cleanup` via `engine._server_config()`, so GUI edits apply
+without a restart. The whole feature is OFF unless `enabled:true` (default off,
+opt-in). Either day-count `=0` disables that stage.
+
+- **Archive** (`archive_after_days`): `ChatDB.list_auto_archivable(cutoff)`
+  returns ids that are `status='active'`, idle (`last_active < cutoff`), have
+  ≥1 message, are **purely private** (`visibility='user'`, no `team_id`/
+  `extra_member_user_ids`), **not memorized** (`save_to_memory=0` AND no
+  `wiki_pages.source_ref='session/<id>'`), and **not referenced** (no
+  `favourites` row of type chat/project_chat, no unfinished `background_tasks`,
+  no `active_turns`, no `workflow_run_id`, no `streaming_text`). All exclusions
+  are `NOT EXISTS` subqueries in one SQL (everything lives in `chats.db`).
+  `archive_session` flips status + stamps `archived_at`. Conservative by design.
+- **Delete** (`delete_after_days`): `list_auto_deletable(cutoff)` =
+  `status='archived' AND archived_at < cutoff`. The daemon calls
+  `srv.sessions.delete(sid)` → `ChatDB.delete_session`, which now ALSO removes
+  the chat's wiki page + its MemPalace drawer via
+  `wiki_store.delete_page_for_session` (access-gate-free, daemon-internal). The
+  delete clock uses the exact `archived_at` column (N days after archiving,
+  independent of the archive window). Rows archived before this column existed
+  have `archived_at=NULL` → never auto-delete until re-archived.
+- **Access semantics**: `last_active` was previously persisted only on
+  message-send. `SessionManager.get()` now also persists it on chat OPEN
+  (throttled ~5 min via `ChatDB.touch_last_active`), but ONLY for active chats
+  — opening an archived chat does NOT revive it or reset its delete clock (the
+  UPDATE is `status='active'`-guarded). To keep an archived chat, un-archive it.
+
 ## Common pitfalls
 
 - Daemon stdout/stderr → `server.error.log`, not `server.log`.
@@ -1315,6 +1347,8 @@ is added via admin UI → `POST /v1/tools/settings`, NOT in code.
   warmup/GPU/etc. — would silently re-enable user-toggled-off fields).
 - Sessions are created lazily on first send. SQL hides 0-message
   sessions older than 60s. Startup purge deletes >5min empty sessions.
-- Archive ≠ delete: archived sessions keep their drawers.
+- Archive ≠ delete: archived sessions keep their drawers (but the
+  `chat-cleanup` daemon auto-deletes them after `delete_after_days`, and
+  deleting a chat now also drops its wiki — see "Chat auto-archive").
 - Schedule deletes are tombstoned in `config.deleted_models` — only
   "Full Resync" clears them.

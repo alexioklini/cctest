@@ -926,3 +926,28 @@ def delete_page(page_id):
         _purge_page_drawers(wing, page_id)
     ChatDB.delete_wiki_page(page_id)
     return True
+
+
+def delete_page_for_session(session_id):
+    """Delete the wiki page memorized from a chat (source_ref=session/<id>),
+    INCLUDING its MemPalace drawer. Daemon/cascade-internal: runs from chat
+    deletion where there is NO request user, so it skips the per-user access
+    gate that `delete_page` enforces. No-op when the chat was never memorized."""
+    if not session_id:
+        return False
+    ChatDB = _chatdb()
+    page = ChatDB.find_wiki_page_by_source(f"session/{session_id}")
+    if not page:
+        return False
+    page_id = page["id"]
+    # Re-parent children so a memorized sub-tree survives the page removal,
+    # mirroring delete_page (children are keyed by parent_id, not source_ref).
+    new_parent = page.get("parent_id") or ""
+    for child_id in ChatDB.wiki_children(page_id):
+        ChatDB.update_wiki_page(child_id, parent_id=new_parent)
+    wing = _wing_for(page.get("scope", ""), page.get("owner_id", ""),
+                     page.get("team_id", ""), page.get("project_id", ""))
+    if wing:
+        _purge_page_drawers(wing, page_id)
+    ChatDB.delete_wiki_page(page_id)
+    return True

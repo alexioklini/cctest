@@ -434,6 +434,25 @@ already anonymises (see 05-internals).
 - `POST /v1/context/compact` — `{session_id, force?}` trigger LCM (returns
   409 `auto_lcm_active` when the session's model has auto-LCM on)
 
+## Chat cleanup (auto archive + delete)
+
+- `GET /v1/cleanup/config` — auto archive/delete settings (any logged-in user):
+  `{enabled, archive_after_days, delete_after_days, run_interval_seconds}`.
+- `POST /v1/cleanup/config` (admin) — save `{enabled?, archive_after_days?,
+  delete_after_days?}` (day-counts must be ≥0; **0 = that stage disabled**).
+  Persists to `config.json → chat_cleanup` AND the live config, so the
+  `chat-cleanup` daemon picks it up next cycle (no restart). Whole feature is
+  off (default) unless `enabled:true`.
+- Behavior: a chat idle ≥ `archive_after_days` that is **purely private** (not
+  shared), **not memorized** (no `session/<id>` wiki page, `save_to_memory=0`)
+  and **not referenced** (no favourite / unfinished background task / in-flight
+  turn / workflow) is auto-archived; anything archived ≥ `delete_after_days`
+  (by `archived_at`) is **deleted — including its wiki page + MemPalace drawer**.
+  Opening an archived chat does NOT revive it (un-archive via
+  `POST /v1/sessions/manage {action:"archive"/"...unarchive"}` / the sidebar).
+  Idle is by `last_active`, which is now also bumped when a chat is **opened**
+  (active chats only).
+
 ## Artifacts
 
 - `GET /v1/artifacts?session_id=&role=` — list

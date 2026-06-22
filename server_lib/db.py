@@ -585,6 +585,15 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN thinking_level TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Auto-archive timestamp (migration): Unix seconds when the session
+            # was archived, NULL while active. Set by archive_session/archive_all,
+            # cleared by unarchive. Drives the auto-DELETE clock (delete N days
+            # after archived) — see the chat-cleanup daemon. NULL on rows archived
+            # before this column existed → those never auto-delete until re-archived.
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN archived_at REAL DEFAULT NULL")
+            except sqlite3.OperationalError:
+                pass
             # ── MemPalace chat-sync cursor ──
             # Tracks which messages have already been mirrored into MemPalace,
             # per session. `last_message_id` is the highest messages.id filed so far.
@@ -2082,6 +2091,19 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
+    def touch_last_active(session_id, ts):
+        """Persist last_active on chat OPEN — only for ACTIVE sessions. The
+        status='active' guard means opening an ARCHIVED chat never resets its
+        clock (auto-delete must still fire). Lightweight single-column UPDATE,
+        called throttled from the hot read path."""
+        with _db_conn() as conn:
+            conn.execute(
+                "UPDATE sessions SET last_active = ? WHERE id = ? AND status = 'active'",
+                (ts, session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
     def update_session_share(session_id, *, visibility=None, team_id=None,
                              extra_member_user_ids=None, excluded_user_ids=None,
                              owner_user_id=None):
@@ -2704,15 +2726,78 @@ class ChatDB:
     @_db_safe(default=None)
     def archive_session(session_id):
         with _db_conn() as conn:
-            conn.execute("UPDATE sessions SET status = 'archived' WHERE id = ?", (session_id,))
+            # Stamp archived_at so the auto-delete clock starts now (delete N days
+            # after archived). Both manual archive (UI) and the auto-archive
+            # daemon go through here, so both get a timestamp.
+            conn.execute(
+                "UPDATE sessions SET status = 'archived', archived_at = ? WHERE id = ?",
+                (time.time(), session_id))
             conn.commit()
 
     @staticmethod
     @_db_safe(default=None)
     def unarchive_session(session_id):
         with _db_conn() as conn:
-            conn.execute("UPDATE sessions SET status = 'active' WHERE id = ?", (session_id,))
+            # Clearing archived_at pulls the chat off the auto-delete clock.
+            conn.execute(
+                "UPDATE sessions SET status = 'active', archived_at = NULL WHERE id = ?",
+                (session_id,))
             conn.commit()
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_auto_archivable(cutoff_ts):
+        """Session ids eligible for AUTO-archive: idle since `cutoff_ts`, purely
+        private, not memorized, not referenced anywhere. Conservative — a chat
+        that trips ANY exclusion is left active. See the chat-cleanup daemon."""
+        with _db_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT s.id FROM sessions s
+                WHERE s.status = 'active'
+                  AND s.last_active < ?
+                  -- purely private
+                  AND (s.visibility IS NULL OR s.visibility = 'user')
+                  AND (s.team_id IS NULL OR s.team_id = '')
+                  AND (s.extra_member_user_ids IS NULL OR s.extra_member_user_ids = '[]')
+                  -- not memorized (intent flag OR a materialized wiki page)
+                  AND COALESCE(s.save_to_memory, 0) = 0
+                  -- not mid-flight / not workflow-bound
+                  AND (s.workflow_run_id IS NULL OR s.workflow_run_id = '')
+                  AND (s.streaming_text IS NULL OR s.streaming_text = '')
+                  -- has at least one message (empty-session purge owns the rest)
+                  AND EXISTS (SELECT 1 FROM messages m WHERE m.session_id = s.id)
+                  -- no memorized wiki page
+                  AND NOT EXISTS (
+                      SELECT 1 FROM wiki_pages w WHERE w.source_ref = 'session/' || s.id)
+                  -- not favourited by anyone
+                  AND NOT EXISTS (
+                      SELECT 1 FROM favourites f
+                      WHERE f.item_id = s.id AND f.item_type IN ('chat','project_chat'))
+                  -- no unfinished background task
+                  AND NOT EXISTS (
+                      SELECT 1 FROM background_tasks b
+                      WHERE b.session_id = s.id
+                        AND b.status NOT IN ('done','cancelled','error'))
+                  -- no in-flight turn
+                  AND NOT EXISTS (
+                      SELECT 1 FROM active_turns a WHERE a.session_id = s.id)
+                """,
+                (cutoff_ts,)).fetchall()
+            return [r[0] for r in rows]
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_auto_deletable(cutoff_ts):
+        """Session ids eligible for AUTO-delete: archived and stamped archived_at
+        older than `cutoff_ts`. Rows archived before the archived_at column
+        existed have NULL → never auto-delete until re-archived."""
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT id FROM sessions WHERE status = 'archived' "
+                "AND archived_at IS NOT NULL AND archived_at < ?",
+                (cutoff_ts,)).fetchall()
+            return [r[0] for r in rows]
 
     @staticmethod
     @_db_safe(default=None)
@@ -2728,6 +2813,16 @@ class ChatDB:
             # NOT dropped here (deleting a chat must not wipe Brainy's history).
             conn.commit()
         _purge_mempalace_session(session_id)
+        # Delete the chat's wiki page too (the conversation's memorized memory):
+        # its source_ref is session/<id>. Done via wiki_store so the page's
+        # MemPalace drawer is purged and children re-parented, not just the row.
+        # Best-effort, daemon-internal (no request user) → access-gate-free path.
+        try:
+            from engine import wiki_store as _wiki
+            _wiki.delete_page_for_session(session_id)
+        except Exception as _e:
+            print(f"[delete-session] wiki cleanup failed for {session_id[:8]}: "
+                  f"{type(_e).__name__}: {_e}", flush=True)
 
     # ── Helpdesk ("Brainy") history ──
     # PER-USER, not per-session: Brainy is a personal assistant with ONE
@@ -2924,7 +3019,9 @@ class ChatDB:
                 conditions.append("(project IS NULL OR project = '')")
                 conditions.append("(project_id IS NULL OR project_id = '')")
             where = " WHERE " + " AND ".join(conditions)
-            conn.execute(f"UPDATE sessions SET status = 'archived'{where}", params)
+            conn.execute(
+                f"UPDATE sessions SET status = 'archived', archived_at = ?{where}",
+                [time.time()] + params)
             conn.commit()
 
     @staticmethod
@@ -2947,7 +3044,7 @@ class ChatDB:
                 conditions.append("(project IS NULL OR project = '')")
                 conditions.append("(project_id IS NULL OR project_id = '')")
             where = " WHERE " + " AND ".join(conditions)
-            conn.execute(f"UPDATE sessions SET status = 'active'{where}", params)
+            conn.execute(f"UPDATE sessions SET status = 'active', archived_at = NULL{where}", params)
             conn.commit()
 
     @staticmethod
