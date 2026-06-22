@@ -1034,10 +1034,17 @@ function renderAssistantMessage(msg, idx) {
     }
   }
 
+  // Caveman tint: color the reply by its effective output style. Session chat
+  // toggle wins over the per-model system default (effective = chat or system),
+  // mirroring the server's `caveman_chat or caveman_system`. Off → no class, so
+  // a normal reply renders unchanged.
+  const cavEff = (parseInt(meta?.caveman_chat) || 0) || (parseInt(meta?.caveman_system) || 0);
+  const cavClass = cavEff ? ` msg-caveman-${cavEff}` : '';
+
   return `
     <div class="msg-turn msg-turn-assistant"${msg.id != null ? ` data-msg-id="${msg.id}"` : ''}>
       ${thinkingHtml}
-      <div class="msg-assistant msg-content">${rendered}</div>
+      <div class="msg-assistant msg-content${cavClass}">${rendered}</div>
       ${citationWarnHtml}
       ${citationLegendHtml}
       ${filesHtml}
@@ -1201,7 +1208,12 @@ function renderStreamingMessage(chat) {
   }
 
   if (chat.streamingText) {
-    html += `<div class="msg-assistant msg-content">${renderMarkdown(chat.streamingText)}</div>`;
+    // Same caveman tint as a persisted reply, driven by the live session toggle
+    // (per-model system default isn't known client-side mid-stream; the toggle
+    // is the dominant axis anyway — effective = chat or system).
+    const cavLive = parseInt(chat.cavemanMode) || 0;
+    const cavLiveClass = cavLive ? ` msg-caveman-${cavLive}` : '';
+    html += `<div class="msg-assistant msg-content${cavLiveClass}">${renderMarkdown(chat.streamingText)}</div>`;
   }
 
   html += '</div>';

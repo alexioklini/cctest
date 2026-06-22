@@ -1253,6 +1253,27 @@ textarea { resize: none; }
   color: var(--text-100);
 }
 
+/* Caveman-mode tint: color the reply by its effective output style so the
+   compressed register is visible at a glance. Escalates lite → ultra toward a
+   warmer/earthier hue. A subtle left border reinforces the mode without
+   changing layout. Set in chat_render.js (msg-caveman-<1..3>). */
+.msg-assistant.msg-caveman-1 {
+  color: #b8860b;
+  border-left: 3px solid rgba(184, 134, 11, 0.45);
+  padding-left: 10px;
+}
+.msg-assistant.msg-caveman-2 {
+  color: #cc6a16;
+  border-left: 3px solid rgba(204, 106, 22, 0.55);
+  padding-left: 10px;
+}
+.msg-assistant.msg-caveman-3 {
+  color: #c0392b;
+  border-left: 3px solid rgba(192, 57, 43, 0.65);
+  padding-left: 10px;
+  font-weight: 600;
+}
+
 /* Message actions (hover toolbar) */
 .msg-actions-bar {
   /* Hover-revealed (keep), but when shown it must display EVERYTHING — the
