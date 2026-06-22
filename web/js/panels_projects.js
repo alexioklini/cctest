@@ -169,6 +169,31 @@ function openProject(agentId, projectName) {
   state.currentProject = projectName;
   state._projectDetailAgent = agentId;
   state._projectDetailName = projectName;
+  // The project-landing composer creates a FRESH chat on send (sendMessage's
+  // project branch calls newChat({inheritProject})), so it must show composer
+  // defaults — not whatever the previously-viewed chat had set. Entering a
+  // project does not run openSession()/newChat(), so reset the active chat's
+  // composer-mode fields here and let the toggle-button sync below repaint
+  // them. Without this, caveman / memory / thinking / PII-shield carry over
+  // from the last chat the user looked at.
+  const _pchat = state.ensureAgentChat(agentId);
+  if (_pchat) {
+    const _def = state.defaultComposerModes();
+    _pchat.cavemanMode = _def.cavemanMode;
+    _pchat.saveToMemory = _def.saveToMemory;
+    _pchat.memoryMode = _def.memoryMode;
+    _pchat.thinkingLevel = _def.thinkingLevel;
+    // Sticky PII / GDPR consent is per-conversation — a fresh project chat
+    // must re-prompt rather than inherit the prior chat's shield state.
+    _pchat.gdprActionPref = '';
+    _pchat.gdprFeedbackAsk = false;
+    _pchat.hasGdprMapping = false;
+    _pchat._piiHistoryScanLen = -1;
+    _pchat._piiHistoryHas = false;
+    _pchat._piiHistoryCounts = {};
+    // Fresh project chat → empty Websuche basket (mirrors newChat()).
+    _pchat.webBasket = [];
+  }
   // Default to the Active tab on entry; the tab UI also resets visually below.
   state._projectChatsFilter = 'active';
   document.querySelectorAll('.project-chats-tab').forEach(t => {

@@ -609,6 +609,12 @@ function newChat(opts) {
     if (typeof updateSendButton === 'function') updateSendButton();
   } catch (e) {}
   schedulePIIBadgeUpdate();
+  // Re-render the composer toggle buttons (memory / caveman / gdpr-pref) from
+  // the freshly-reset chat state. The 'welcome' view does NOT run
+  // updateChatView()/updateStatusBar() (unlike navigateTo('chat')), so without
+  // this the caveman/memory/gdpr shield icons would keep showing the PREVIOUS
+  // chat's state even though chat.* were just reset to defaults above.
+  if (typeof updateStatusBar === 'function') updateStatusBar();
   if (typeof maybeUpdateWorkflowBanner === 'function') maybeUpdateWorkflowBanner();
   // Session is created lazily on first send — pre-creating here would
   // leave an orphan 0-message row in the DB whenever the user opens a

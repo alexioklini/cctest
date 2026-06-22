@@ -80,13 +80,18 @@ function navigateTo(view, opts) {
         loadProjectDetail(opts.agentId, opts.projectName);
       }
       // Refresh composer toggles so the project composer mirrors chat state
-      // (model selector, thinking, save-to-memory, caveman, local chip).
-      // updateStatusBar deliberately skipped — the bar is hidden here and
-      // calling it would still read state.activeChat from the prior chat.
+      // (model selector, thinking, save-to-memory, caveman, gdpr shield, local
+      // chip). openProject() resets state.activeChat's composer modes to
+      // defaults before navigating here, so updateStatusBar() — which is what
+      // repaints the caveman / memory / gdpr-pref toggle buttons — now reads
+      // the fresh defaults, not the prior chat's state. (The status BAR itself
+      // stays hidden via display:none above; only the composer toggles, which
+      // updateStatusBar also drives, are the target.)
       try {
         if (state.activeChat?.model) updateModelSelectorDisplay(state.activeChat.model);
         refreshThinkingButton();
   if (typeof refreshResearchModeButton === 'function') refreshResearchModeButton();
+        if (typeof updateStatusBar === 'function') updateStatusBar();
         updateSendButton();
         renderFilePreviews();
         schedulePIIBadgeUpdate();
