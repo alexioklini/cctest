@@ -23,16 +23,6 @@ async function _genTab_server(C) {
           <span style="font-size:11px;color:${ok?'var(--success)':'var(--error)'}">${esc(info.status||(ok?'running':'stopped'))}</span>
         </div>`;
       }
-      // Default model selector — chat-capable only. A leading placeholder is
-      // selected when no default is set (or the saved id is gone), so an empty
-      // default_model shows "— nicht gesetzt —" instead of silently displaying
-      // the first option as if it were chosen.
-      const mc = state.modelsConfig?.models || {};
-      const enabledModels = enabledModelsWithCapability('chat');
-      const _hasDefault = !!srv.default_model && enabledModels.some(([mid]) => mid === srv.default_model);
-      const modelOpts = `<option value="" ${_hasDefault ? '' : 'selected'}>— nicht gesetzt (bestes verfügbares Modell) —</option>`
-        + enabledModels.map(([mid])=>modelOption(mid, {selected: mid===srv.default_model})).join('');
-
       C.innerHTML = P(`<div style="${G('16px')}">
         <div style="display:flex;align-items:center;gap:8px">
           ${DOT(true)}<span style="font-size:14px;font-weight:500;color:var(--text-100)">Verbunden</span>
@@ -41,41 +31,19 @@ async function _genTab_server(C) {
           ${srv.pid?`<span style="${MONO}">PID ${srv.pid}</span>`:''}
         </div>
         ${SEC('Dienste')}${svcRows}
-        ${SEC('Standardmodell')}
-        <div style="display:flex;gap:8px;align-items:center">
-          <select class="form-select" id="srv-default-model" style="flex:1">${modelOpts}</select>
-          <button class="btn-secondary" onclick="API.post('/v1/services/server',{default_model:document.getElementById('srv-default-model').value}).then(()=>showToast('Standardmodell aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
+        ${SEC('Modelle')}
+        <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
+          <span style="font-size:13px;color:var(--text-200);flex:1">Standardmodell, Bildbeschreibung, Chat-Zusammenfassung, Auto-Routing-Klassifikator und alle weiteren Dienst-Modelle werden zentral unter <b>Service-Modelle</b> gepflegt.</span>
+          <button class="btn-secondary" style="font-size:12px;padding:4px 10px" onclick="switchGeneralTab('service-models', document.querySelector('.modal-tab[onclick*=\\'service-models\\']'))">Konfigurieren &rarr;</button>
         </div>
-        ${SEC('Anhänge', 'Vision-Modell, das angehängte Bilder beschreibt, wenn das aktive Chat-Modell selbst keine Bilder verarbeiten kann. Greift nur bei Modellen ohne Vision-Fähigkeit; multimodale Modelle erhalten das Bild direkt. Ist hier nichts gesetzt, liefert ein Bildanhang an ein reines Textmodell nur Metadaten (Abmessungen, Format). Beispiele für Vision-Modelle: gemini-2.5-flash, mistral-small-latest.')}
-        <div style="display:flex;gap:8px;align-items:center">
-          <select class="form-select" id="srv-attachment-image-model" style="flex:1">
-            <option value="">Keines (Bilder werden nicht beschrieben)</option>
-            ${enabledModelsWithCapability('image').map(([mid])=>modelOption(mid, {selected: mid===(srv.attachment_image_model||'')})).join('')}
-          </select>
-          <button class="btn-secondary" onclick="API.post('/v1/services/server',{attachment_image_model:document.getElementById('srv-attachment-image-model').value}).then(()=>showToast('Bildmodell aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
-        </div>
-        ${(() => {
-          const defMdl = srv.default_model || '';
-          const hasVision = modelHasCapability(defMdl, 'image');
-          const hasImageModel = !!(srv.attachment_image_model);
-          return (!hasVision && !hasImageModel) ? `<div style="font-size:13px;color:var(--warning, #b45309);margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--bg-200)">&#9888; Ihr Standardmodell unterstützt keine Vision und es ist kein Bildbeschreibungsmodell konfiguriert. Angehängte Bilder liefern nur grundlegende Metadaten (Abmessungen, Format).</div>` : '';
-        })()}
-        ${SEC('Zusammenfassungen', 'Hintergrundmodell, das die Chat-Synopse (Tooltip in der Sitzungsliste + einklappbarer Block über dem Chat) und das automatisch gepflegte Benutzerprofil erzeugt. „Auto" verwendet das Server-Standardmodell. Wird auch von den LLM-/Hybrid-Modi des Auto-Routings als Klassifizierungsmodell genutzt. Nur ändern, wenn ein bestimmtes Modell gewünscht ist.')}
-        <div style="display:flex;gap:8px;align-items:center">
-          <select class="form-select" id="srv-chat-summary-model" style="flex:1">
-            <option value="">Auto (Server-Standardmodell verwenden)</option>
-            ${enabledModels.map(([mid])=>modelOption(mid, {selected: mid===(srv.chat_summary_model||'')})).join('')}
-          </select>
-          <button class="btn-secondary" onclick="API.post('/v1/services/server',{chat_summary_model:document.getElementById('srv-chat-summary-model').value}).then(()=>showToast('Zusammenfassungsmodell aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
-        </div>
-        ${SEC('Auto-Routing', 'Legt fest, wie das „✨ Smart/Auto"-Modell im Verfasser (und background_task_model=auto beim Fan-out) die Absicht einer Anfrage erkennt und das passende Modell wählt.\n\n• Schlüsselwörter: regelbasiert, ohne Kosten, ohne LLM-Aufruf.\n• LLM: ein günstiges/lokales Modell klassifiziert die Anfrage (nutzt das oben gesetzte Zusammenfassungsmodell, sonst das günstigste/lokale Modell).\n• Hybrid: erst Schlüsselwörter, das LLM nur bei Unklarheit.\n\nLLM/Hybrid fallen bei Fehler oder Timeout still auf Schlüsselwörter zurück. Im LLM-Modus liefert der Classifier zusätzlich eine Komplexität (gering/mittel/hoch): hoch hebt die Modellstufe an (Reasoning-Modell), gering senkt sie (günstigeres Modell). Einfachere Aufgaben bleiben bevorzugt in der Cloud (günstigstes Cloud-Modell), lokal nur als letzte Option.')}
+        ${SEC('Auto-Routing', 'Legt fest, wie das „✨ Smart/Auto"-Modell im Verfasser (und background_task_model=auto beim Fan-out) die Absicht einer Anfrage erkennt und das passende Modell wählt.\n\n• Schlüsselwörter: regelbasiert, ohne Kosten, ohne LLM-Aufruf.\n• LLM: ein Klassifizierungsmodell erkennt die Absicht. Welches Modell, legt der Slot „Prompt-Klassifikation (Auto-Routing)" unter Service-Modelle fest (ist er leer, das günstigste/lokale Modell).\n• Hybrid: erst Schlüsselwörter, das LLM nur bei Unklarheit.\n\nLLM/Hybrid fallen bei Fehler oder Timeout still auf Schlüsselwörter zurück. Im LLM-Modus liefert der Classifier zusätzlich eine Komplexität (gering/mittel/hoch): hoch hebt die Modellstufe an (Reasoning-Modell), gering senkt sie (günstigeres Modell). Einfachere Aufgaben bleiben bevorzugt in der Cloud (günstigstes Cloud-Modell), lokal nur als letzte Option.')}
         <div style="display:flex;gap:8px;align-items:center">
           ${(() => {
             const arm = srv.auto_route_classifier_mode || 'keywords';
             const opt = (v, lbl) => `<option value="${v}" ${arm===v?'selected':''}>${lbl}</option>`;
             return `<select class="form-select" id="srv-auto-route-mode" style="flex:1">
               ${opt('keywords', 'Schlüsselwörter (Standard, ohne Kosten)')}
-              ${opt('llm', 'LLM (klassifiziert per günstigem/lokalem Modell)')}
+              ${opt('llm', 'LLM (Modell unter Service-Modelle konfigurierbar)')}
               ${opt('hybrid', 'Hybrid (erst Schlüsselwörter, LLM nur bei Bedarf)')}
             </select>`;
           })()}

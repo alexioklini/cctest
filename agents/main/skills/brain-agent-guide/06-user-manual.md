@@ -899,20 +899,22 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
 - **Zeitplan** — der eigene memory_summary-Daemon des Agenten
 
 ### Allgemeine Einstellungen (Admin)
-- **Server** — Standardmodell, Chat-Zusammenfassungs-Modell, **Auto-Routing**,
-  Ports, Monitore für **Sidecar**, **Web Search (SearXNG)** und **crawl4ai**
-  (Status/PID/Uptime/Health/Breaker + Neustart; SearXNG zusätzlich mit
-  Pro-Engine-Tabelle und „Jetzt testen"). Beim Standardmodell zeigt das
-  Auswahlfeld „— nicht gesetzt —", wenn keins gesetzt ist (seit 9.21.4).
+- **Server** — **Auto-Routing**, Ports, Monitore für **Sidecar**, **Web Search
+  (SearXNG)** und **crawl4ai** (Status/PID/Uptime/Health/Breaker + Neustart;
+  SearXNG zusätzlich mit Pro-Engine-Tabelle und „Jetzt testen"). Die
+  Modell-Zuordnungen (Standardmodell, Chat-Zusammenfassung, Auto-Routing-
+  Klassifikator usw.) liegen nicht mehr hier, sondern zentral unter
+  **Service-Modelle** — eine „Modelle"-Karte verlinkt dorthin.
   **Auto-Routing** legt fest, wie die „✨ Smart"-Modi im Verfasser (Cloud/Lokal)
   und `Fan-out-Modell = Auto` die Absicht einer Anfrage erkennen, um das passende
-  Modell zu wählen: **Schlüsselwörter** (Standard, ohne Kosten), **LLM**
-  (klassifiziert per günstigem/lokalem Modell) oder **Hybrid** (erst
-  Schlüsselwörter, LLM nur bei Bedarf). LLM/Hybrid fallen bei Fehler oder
-  Timeout still auf Schlüsselwörter zurück — eine Anfrage hängt nie daran.
-  Diese Einstellung steuert nur die **Modellwahl**; die **Werkzeug-Optimierung**
-  ist davon getrennt und wird pro Agent geschaltet (siehe Agent-Einstellungen →
-  Token-Optimierung).
+  Modell zu wählen: **Schlüsselwörter** (Standard, ohne Kosten), **LLM** (ein
+  Klassifizierungsmodell erkennt die Absicht — welches Modell, legt der Slot
+  **„Prompt-Klassifikation (Auto-Routing)"** unter Service-Modelle fest; leer =
+  günstigstes/lokales Modell) oder **Hybrid** (erst Schlüsselwörter, LLM nur bei
+  Bedarf). LLM/Hybrid fallen bei Fehler oder Timeout still auf Schlüsselwörter
+  zurück — eine Anfrage hängt nie daran. Diese Einstellung steuert nur die
+  **Modellwahl**; die **Werkzeug-Optimierung** ist davon getrennt und wird pro
+  Agent geschaltet (siehe Agent-Einstellungen → Token-Optimierung).
 - **Provider** — OpenAI-kompatible Provider hinzufügen/bearbeiten/testen
 - **Nodes** — verteilte Compute-Peers
 - **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost). Pro
@@ -922,7 +924,8 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   **✨ Auto** klassifiziert stattdessen die Absicht jedes Leaf-Tasks und wählt
   je Task das passende Modell (gesteuert über Server → Auto-Routing).
 - **Service-Modelle** — eine zentrale Stelle für die Modellzuordnung aller
-  Hintergrunddienste: Server-Standardmodell, Chat-Zusammenfassung,
+  Hintergrunddienste: Server-Standardmodell, Bildbeschreibung (Anhänge),
+  Chat-Zusammenfassung, **Prompt-Klassifikation (Auto-Routing)**,
   Fan-out-Hintergrundmodell, KG-Extraktion, Text-to-Speech, Transkription sowie
   **OCR** (Engine/Provider/Modell). Jeder Slot ist ein geprüftes Dropdown; es
   gibt **keine fest verdrahteten Standardwerte** — ein nicht zugewiesener oder
