@@ -106,6 +106,32 @@ Even when work IS needed, do only the minimum, fast. Priorities:
 
 ---
 
+## CONCRETE DATA for the changed-file optimization (the user's #1 follow-up)
+
+Measured at handover: touching ONE ingested file (`aml-risikoanalyse__000.md`)
+→ sync run 3312 took **269.5s** and filed 9 drawers. That is FAR too slow for a
+single-file change and is the top remaining optimization. Where the time goes
+(to investigate precisely next session):
+- KG: `_run_kg_for` runs `run_kg_post_pass` over the wing; with the stable cursor
+  it SHOULD skip unchanged sources, but it still opens the wing + iterates. The
+  changed source re-extracts (correct). Confirm the OTHER sources truly skip and
+  aren't re-LLM'd. (Watch `new=` vs `skip=` per source in the KG log for run 3312+.)
+- Closet regen: `run_closet_regen_incremental` triggers a **full wing rebuild**
+  when ANY source changed (code comment: "upstream doesn't accept per-file
+  filters yet"). For one changed file in a multi-hundred-drawer wing this is the
+  likely bulk of the 269s. → needs per-source closet scoping (probably a
+  mempalace venv patch, see [[project_mempalace_venv_patches]]).
+- Mining: the bulk pre-filter should pass only the 1 changed file to mine().
+  Confirm via the "[project-sync] pre-filter … N/M changed" log line.
+
+ALSO OBSERVED (not a bug in our code): a log line
+`[project] KG override changed for risikoanalysen (method llm→rules …) — KG+closet
+cursors purged`. A KG method/profile toggle (UI or API) purges cursors and forces
+a full re-extract. This explains both extra churn during testing AND the
+`profile=generic` vs configured `normative` discrepancy seen in KG log lines.
+Decide whether that toggle should be debounced / confirm it wasn't fired
+accidentally during testing.
+
 ## Verification checklist (definition of done)
 
 - [ ] Fresh full sync on risikoanalysen stores `sync_status.source_fingerprint`.
