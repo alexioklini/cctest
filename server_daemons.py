@@ -97,6 +97,51 @@ def _file_change_watcher(srv):
             pass
 
 
+def _project_source_fingerprint(pdir: str, project: dict, weburl_folder: str) -> str:
+    """Cheap fingerprint of ALL of a project's source files — ingested uploads,
+    input folders, and fetched web-URL files. Pure os.scandir walk over (path,
+    mtime_ns, size); NO Qdrant / DB / network. Used to skip the ENTIRE per-project
+    sync (mining + KG + closet) in ~1s when nothing on disk changed since the last
+    successful cycle. Returns a sha1 hex string (stable for an unchanged tree).
+
+    Roots covered:
+      - <pdir>/ingested   (uploaded attachments, chunked .md)
+      - each input_folders[].path (user-mined folders)
+      - weburl_folder     (<pdir>/web-urls, mined project web URLs)
+    Hidden/.brain-extracted companion dirs are walked too — a re-extraction
+    rewrites them, which SHOULD count as a change (re-mine warranted)."""
+    h = hashlib.sha1()
+    roots = []
+    if pdir:
+        roots.append(os.path.join(pdir, "ingested"))
+    for fe in (project.get("input_folders") or []):
+        p = (fe.get("path") or "").strip()
+        if p:
+            roots.append(os.path.expanduser(p))
+    if weburl_folder:
+        roots.append(weburl_folder)
+
+    entries = []
+    for root in roots:
+        if not root or not os.path.isdir(root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames.sort()
+            for fn in sorted(filenames):
+                fp = os.path.join(dirpath, fn)
+                try:
+                    st = os.stat(fp)
+                    entries.append(f"{fp}|{st.st_mtime_ns}|{st.st_size}")
+                except OSError:
+                    entries.append(f"{fp}|?")
+    for e in entries:
+        h.update(e.encode("utf-8", "replace"))
+        h.update(b"\n")
+    # Include the count so an empty tree vs a missing-root case differ cleanly.
+    h.update(f"#count={len(entries)}".encode())
+    return h.hexdigest()
+
+
 def _mempalace_yaml_for_artifacts(wing: str) -> str:
     # Default-room "general" satisfies miner.detect_room fallback. Rooms
     # field must be a list per miner spec, even if minimal.
@@ -2071,6 +2116,67 @@ def _project_sync_loop(srv):
                         print(f"[project-sync.weburl] {agent_id}/{proj_name}: "
                               f"{type(_e_wu).__name__}: {_e_wu}", flush=True)
 
+                    # ── FAST no-change gate ──────────────────────────────────
+                    # Fingerprint every source file (ingested + input folders +
+                    # web-urls) via a pure os.stat walk. If it matches the last
+                    # SUCCESSFUL cycle's fingerprint, NOTHING on disk changed —
+                    # skip the whole project (mining + KG + closet) in ~1s instead
+                    # of probing Qdrant per file/drawer. Computed AFTER the web-URL
+                    # fetch (which may rewrite web-urls/ files → new fingerprint).
+                    # Manual "Sync now" with no change still skips (the user gets a
+                    # near-instant idle, which is the honest answer). Full-Resync
+                    # uses a different path and is unaffected.
+                    _prev_sync = (project.get("sync_status") or {})
+                    _prev_fp = _prev_sync.get("source_fingerprint") or ""
+                    _prev_state = _prev_sync.get("state") or ""
+                    try:
+                        _cur_fp = _project_source_fingerprint(
+                            pdir, project, _weburl_folder)
+                    except Exception as _e_fp:
+                        _cur_fp = ""  # fingerprint failed → don't skip, do full sync
+                        print(f"[project-sync] fingerprint failed "
+                              f"{agent_id}/{proj_name}: {type(_e_fp).__name__}: "
+                              f"{_e_fp}", flush=True)
+                    # Success state for a completed sync is "idle" (set far below).
+                    if _cur_fp and _cur_fp == _prev_fp and _prev_state == "idle":
+                        # Nothing changed since the last good sync → fast idle.
+                        _finished = datetime.datetime.now(
+                            datetime.timezone.utc).isoformat()
+                        _row = dict(_prev_sync)
+                        _row["state"] = "idle"
+                        _row["last_run_started"] = _finished
+                        _row["last_run_finished"] = _finished
+                        _row["last_triggered_by"] = _trigger
+                        _row["last_files_filed"] = 0
+                        _row["last_error"] = ""
+                        _row["source_fingerprint"] = _cur_fp
+                        try:
+                            engine.ProjectManager.update_project(
+                                agent_id, proj_name,
+                                {"sync_status": _row,
+                                 "input_folders_last_scan": _finished})
+                        except Exception:
+                            pass
+                        # Record a completed (no-op) run so the due-gate clock +
+                        # history advance, but skip ALL phase work.
+                        try:
+                            _nr = _sync_log.start_run(
+                                chats_db_path, project_id, triggered_by=_trigger)
+                            _sync_log.finish_run(
+                                chats_db_path, _nr, "idle",
+                                {"final_state": "idle", "files_filed_this_cycle": 0,
+                                 "total_files": _prev_sync.get("total_files", 0),
+                                 "total_indexed": _prev_sync.get("total_indexed", 0),
+                                 "total_triples": _prev_sync.get("total_triples", 0),
+                                 "folders_seen": 0, "elapsed_s": 0.0,
+                                 "skipped_unchanged": True, "errors": []})
+                        except Exception:
+                            pass
+                        srv._project_sync_clear_live(agent_id, proj_name)
+                        print(f"[project-sync] {agent_id}/{proj_name}: unchanged "
+                              f"(fingerprint match) — skipped all phases", flush=True)
+                        continue
+
                     _run_id = _sync_log.start_run(
                         chats_db_path, project_id, triggered_by=_trigger)
                     started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -2849,6 +2955,12 @@ def _project_sync_loop(srv):
                         "last_folders_seen": folders_seen,
                         "last_error": last_error,
                         "items": item_states,
+                        # Fingerprint of the source tree this cycle processed.
+                        # Next cycle compares against it for the fast no-change
+                        # skip. Only meaningful when the run succeeded (the gate
+                        # also requires state=='ok'), but stored regardless so a
+                        # later successful cycle has a baseline.
+                        "source_fingerprint": _cur_fp,
                     }
                     try:
                         engine.ProjectManager.update_project(agent_id, proj_name, {
