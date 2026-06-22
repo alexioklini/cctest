@@ -3715,8 +3715,12 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 .pt-children { margin-left: 14px; border-left: 1px solid var(--border-100); padding-left: 4px; }
 .pt-items { display: flex; flex-direction: column; }
 .pt-empty, .pt-loading { color: var(--text-400); font-size: 12px; padding: 4px 8px; font-style: italic; }
-.pt-instructions { padding: 4px 8px; color: var(--text-200); font-size: 12.5px; }
+/* Cap the expanded instructions so a long doc stays scrollable and the
+   files/folders/web-URL nodes below it remain visible without endless scrolling. */
+.pt-instructions { padding: 4px 8px; color: var(--text-200); font-size: 12.5px;
+  max-height: 220px; overflow-y: auto; }
 .pt-instructions :is(p, ul, ol) { margin: 4px 0; }
+.pt-instructions :first-child { margin-top: 0; }
 .pt-foldertree { margin-left: 20px; }
 
 /* C3 — virtual groups, selection, drag/drop */
