@@ -1029,6 +1029,16 @@ function buildStreamCallbacks(chat, isActive) {
         if (d.auto_route) {
           assistantMsg.metadata.auto_route = d.auto_route;
         }
+        // Caveman level for this turn → drives the per-reply colour tint in
+        // renderAssistantMessage. Without this, the just-finished reply renders
+        // uncoloured (metadata had no caveman_*) until a reload fetched the
+        // server-persisted value. Prefer the done payload if the server sent it,
+        // else fall back to the live session toggle. Only set when non-zero so a
+        // normal turn's metadata stays clean (matches the server, which omits 0).
+        const _cavChat = parseInt(d.caveman_chat) || parseInt(chat.cavemanMode) || 0;
+        const _cavSys = parseInt(d.caveman_system) || 0;
+        if (_cavChat) assistantMsg.metadata.caveman_chat = _cavChat;
+        if (_cavSys) assistantMsg.metadata.caveman_system = _cavSys;
         // Auto-LCM compaction level for this turn → drives the status-line badge
         // (chat._lcmState is the live cache; metadata.lcm_state survives reload).
         if (d.lcm_state) {
