@@ -39,6 +39,7 @@ on top of this layer.
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import json
 import os
 import sqlite3
@@ -1037,9 +1038,19 @@ def run_kg_post_pass(
             return
         sf = src["source_file"]
         rep_did = src["representative_drawer_id"]
+        # STABLE cursor-key base. The progress cursor is keyed `<base>#<chunk>`.
+        # It MUST be invariant across cycles or the incremental skip never matches
+        # and the whole source re-extracts every sync. The drawer id is NOT stable:
+        # the miner re-files drawers with content-hash ids that change between
+        # cycles (and there are many drawers per source), so the old
+        # representative_drawer_id drifted every run. Key on the SOURCE FILE PATH
+        # instead — it's constant for the life of the file. (rep_did is still used
+        # for triple provenance / source_drawer_id below, where a real drawer id
+        # is wanted.) Per-drawer chunking mode keeps using the drawer's own id.
+        cursor_base = ("src_" + hashlib.sha1(sf.encode("utf-8")).hexdigest()[:24]) if sf else rep_did
 
         if skip_code and _is_code_path(sf):
-            cursor_key = f"{rep_did}#0"
+            cursor_key = f"{cursor_base}#0"
             with _write_lock:
                 if cursor_key not in _already:
                     _progress_record(chats_db_path, wing, cursor_key,
@@ -1094,7 +1105,7 @@ def run_kg_post_pass(
                               f"progress={p_del}", flush=True)
                     with _write_lock:
                         stale_keys = {k for k in _already
-                                      if k.startswith(rep_did + "#")}
+                                      if k.startswith(cursor_base + "#")}
                         _already -= stale_keys
                 except Exception as e:
                     print(f"{log_prefix} invalidate {sf} failed: "
@@ -1215,7 +1226,7 @@ def run_kg_post_pass(
                 else:
                     _doc_gdpr = ""      # scanner error → fail open, proceed
         if _doc_gdpr:
-            cursor_key = f"{rep_did}#0"
+            cursor_key = f"{cursor_base}#0"
             _progress_record(chats_db_path, wing, cursor_key, sf,
                              adapter_name, 0,
                              error=f"kg_skipped: gdpr_{_doc_gdpr}")
@@ -1235,7 +1246,7 @@ def run_kg_post_pass(
 
         chunks = _chunk_text_paragraphs(file_text, source_chunk_chars)
         if not chunks:
-            cursor_key = f"{rep_did}#0"
+            cursor_key = f"{cursor_base}#0"
             _progress_record(chats_db_path, wing, cursor_key, sf,
                              adapter_name, 0,
                              error="skipped: empty after chunking")
@@ -1251,7 +1262,7 @@ def run_kg_post_pass(
         for ci, chunk_text in enumerate(chunks):
             if cancel_token is not None and getattr(cancel_token, "is_set", lambda: False)():
                 break
-            cursor_key = f"{rep_did}#{ci}"
+            cursor_key = f"{cursor_base}#{ci}"
             with _write_lock:
                 if cursor_key in _already:
                     result.drawers_skipped += 1
@@ -1289,7 +1300,7 @@ def run_kg_post_pass(
             # per-file as a 'KG⊘' badge.
             if err and err.startswith("gdpr_skip:"):
                 for _ci in range(len(chunks)):
-                    _ck = f"{rep_did}#{_ci}"
+                    _ck = f"{cursor_base}#{_ci}"
                     _progress_record(chats_db_path, wing, _ck, sf,
                                      adapter_name, 0, error="kg_skipped: gdpr_skip")
                     with _write_lock:
