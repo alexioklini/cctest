@@ -70,6 +70,17 @@ function handleFileSelect(event) {
 // mutate the entry with the response. The composer's send-button gate +
 // the PII modal both read `entry.scan` to decide what to do.
 async function scanPendingAttachment(entry) {
+  // Scanner disabled → do NOT scan the attachment at all (this POST to
+  // /v1/attachments/scan is a SEPARATE path from PIIScanner.scan, so it needs
+  // its own guard; without it, adding a file still triggered a server-side PII
+  // scan even with the feature off). Mark the entry done+unscanned so the send
+  // gate never waits on it and no badge claims a finding.
+  if (state.piiScannerEnabled === false) {
+    entry.scan = { state: 'done', scanned: false, reason: 'scanner_disabled' };
+    renderFilePreviews();
+    updateSendButton();
+    return;
+  }
   try {
     // Empty string when no session exists yet (composer pre-create) — the
     // server falls back to a per-user scratch dir. Server still requires
