@@ -618,6 +618,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             <span id="project-sync-sublabel" class="project-sync-sublabel"></span>
           </span>
         </div>
+        <!-- Per-phase checklist, visible only while syncing (populated by
+             refreshProjectSyncStatus → renderSyncPhases). Each row: status icon
+             + phase name + live count/ETA on the running phase. -->
+        <div id="project-sync-phases" class="project-sync-phases" style="display:none;margin:0 0 8px 0"></div>
         <!-- Memory actions — icon buttons (tooltips on hover). The primary sync
              stays slightly emphasised; admin actions reveal for admins. -->
         <div class="project-mem-actions" style="display:flex;gap:8px;margin-top:8px;align-items:center">

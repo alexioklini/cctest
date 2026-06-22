@@ -995,6 +995,17 @@ Per-source change invalidation: snapshots `kg_extraction_source_state`,
 on diff DELETEs `triples` matching exact source_file + progress rows +
 orphan-entity sweep.
 
+**Method/profile-change invalidation (9.184.0)**: the per-drawer cursor
+self-invalidates ONLY on source-file change — NOT on a KG method/profile
+change. Both edit paths now purge the cursor explicitly so a switch actually
+re-extracts: the GLOBAL `POST /v1/mempalace/kg/config` (KG_FIELDS in
+`_handle_kg_config_save`) and the PER-PROJECT override
+(`ProjectManager.update_project` compares old vs new `kg_method`/`kg_profile`;
+on change → `kg_purge_for_scope` + `closet_regen_purge_for_scope` for the
+project wing, and the PUT handler kicks `_project_sync_request`). Before
+9.184.0 the per-project path had no invalidation — a `rules→llm` flip kept the
+stale rules-era triples (every chunk already marked done → LLM skipped all).
+
 **GDPR policy + KG (9.92.0)**: KG extraction obeys `gdpr_scanner.background_pii_action`
 like every other non-interactive caller — it does NOT hardwire its own behaviour
 (the v9.91.0 hardwired pre-check was removed). The policy has **four** values:

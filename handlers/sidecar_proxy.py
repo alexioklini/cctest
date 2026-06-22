@@ -901,6 +901,7 @@ def background_call(
     account_cost: bool = True,
     cost_purpose: str | None = None,
     forced_tool: dict | None = None,
+    temperature: float | None = None,
 ) -> dict:
     """Thin convenience wrapper around `run_turn_blocking` for background /
     non-interactive LLM calls (Phase 4).
@@ -961,7 +962,13 @@ def background_call(
         "bg_task": bool(bg_task),
     }
     sampling = {
-        "temperature": inf.get("temperature"),
+        # Explicit `temperature` arg overrides the model's configured value —
+        # used by deterministic callers (KG triple extraction needs temp 0.0 for
+        # stable, reproducible output; without this a model configured at 0.7
+        # made the extracted triple set vary run-to-run, e.g. 229 vs 330 on the
+        # same docs).
+        "temperature": (temperature if temperature is not None
+                        else inf.get("temperature")),
         "top_p": inf.get("top_p"),
         "top_k": inf.get("top_k"),
         "stop_sequences": inf.get("stop") or inf.get("stop_sequences"),

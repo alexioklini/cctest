@@ -610,17 +610,39 @@ async function uploadProjectFiles(files) {
   const projectName = state._projectDetailName;
   if (!agentId || !projectName) return;
 
+  // Show the same progress modal the folder import uses, so a single-file
+  // upload also gives visible "something is happening" feedback (extraction +
+  // mining can take seconds) instead of only a transient toast. Files uploaded
+  // this way land at the project root (no group chain — that's folder-import's
+  // job). Reuses _folderImportProgress* + _folderImportShowResult verbatim.
+  const total = files.length;
+  const title = total === 1 ? 'Datei wird hochgeladen …' : 'Dateien werden hochgeladen …';
+  _folderImportProgressOpen(total, title);
+  let ok = 0, done = 0, aborted = false;
+  const failures = [];
   for (const file of files) {
+    if (window._folderImportAborted) { aborted = true; break; }
+    _folderImportProgressUpdate(done, total, file.name, failures.length);
     try {
-      showToast(`${file.name} wird hochgeladen …`);
       const result = await _ingestOneProjectFile(agentId, projectName, file);
-      if (result.error) showToast(`Fehler: ${result.error}`);
-      else showToast(`${file.name} hochgeladen`);
+      if (result.error) failures.push({ name: file.name, reason: result.error });
+      else if (!result.source_hash) failures.push({ name: file.name, reason: 'kein Inhalt extrahiert' });
+      else ok++;
     } catch(e) {
-      showToast(`${file.name} konnte nicht hochgeladen werden`);
+      failures.push({ name: file.name, reason: (e && e.message) || 'Netzwerkfehler' });
     }
+    done++;
+    _folderImportProgressUpdate(done, total, file.name, failures.length);
   }
+  window._folderImportAborted = false;
   loadProjectFiles(agentId, projectName);
+  if (typeof renderProjectSourceTree === 'function') renderProjectSourceTree();
+  if (!failures.length && !aborted) {
+    _folderImportProgressClose();
+    showToast(total === 1 ? `${files[0].name} hochgeladen` : `${ok} Datei(en) hochgeladen`);
+  } else {
+    _folderImportShowResult({ ok, total, aborted, failures });
+  }
 }
 
 // Ingest a set of files that came from a dropped/picked FOLDER, preserving the
@@ -675,7 +697,7 @@ function confirmProjectFolderImport(entries) {
 // Build / update / close a single progress modal for the folder import (replaces
 // the overlapping per-file toasts). Includes an Abort button: the loop checks
 // window._folderImportAborted between files and stops cleanly.
-function _folderImportProgressOpen(total) {
+function _folderImportProgressOpen(total, title) {
   window._folderImportAborted = false;
   let ov = document.getElementById('folder-import-progress');
   if (!ov) {
@@ -686,7 +708,7 @@ function _folderImportProgressOpen(total) {
     document.body.appendChild(ov);
   }
   ov.innerHTML = `<div class="sched-modal" style="max-width:480px">
-    <h2>Ordner wird importiert …</h2>
+    <h2>${esc(title || 'Ordner wird importiert …')}</h2>
     <div style="font-size:13px;color:var(--text-300);margin:8px 0">
       <div id="fip-current" style="font-family:var(--font-mono);font-size:12px;color:var(--text-400);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:10px">Wird vorbereitet …</div>
       <div style="height:8px;background:var(--bg-100);border-radius:4px;overflow:hidden;border:1px solid var(--border-100)">

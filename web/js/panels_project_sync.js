@@ -286,6 +286,63 @@ function stopProjectSyncPoll() {
   }
 }
 
+// Render the per-phase checklist shown while a sync is in flight. The daemon
+// reports a single `mining_phase` (the phase running NOW); phases ordered
+// before it are done, the named one is running (with live count + ETA), the
+// rest are pending. The three phases map to the cost breakdown: Indexierung =
+// convert+mine+embed (A+B), KG-Extraktion = triple extraction (C),
+// Closet-Rerank = the LLM closet pass (D). Embedding is not separately
+// instrumented (it happens inside the miner's per-file step), so it's folded
+// into Indexierung rather than shown as a phantom row.
+const _SYNC_PHASES = [
+  { key: 'indexing', label: 'Indexierung',     doneK: 'mining_done',  totK: 'mining_total',  startK: 'started_at',         unit: 'Dokumente' },
+  { key: 'kg',       label: 'KG-Extraktion',   doneK: 'kg_done',      totK: 'kg_total',      startK: 'kg_started_at',      unit: 'Abschnitte' },
+  { key: 'closet',   label: 'Closet-Rerank',   doneK: 'closet_done',  totK: 'closet_total',  startK: 'closet_started_at',  unit: 'Quellen' },
+];
+
+function _syncPhaseEta(startVal, done, tot) {
+  if (!startVal || !(done > 0) || !(tot > 0) || done / tot < 0.05) return '';
+  let startedMs = 0;
+  if (typeof startVal === 'number') startedMs = startVal * 1000;
+  else { const t = new Date(startVal).getTime(); if (!isNaN(t)) startedMs = t; }
+  if (!startedMs) return '';
+  const remainMs = Math.max(0, Date.now() - startedMs) * (tot - done) / done;
+  if (remainMs <= 1000 || remainMs > 1000 * 60 * 60 * 8) return '';
+  const s = Math.floor(remainMs / 1000);
+  const str = s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
+  return ` · ETA ${str}`;
+}
+
+function renderSyncPhases(st, live) {
+  const box = document.getElementById('project-sync-phases');
+  if (!box) return;
+  if (live !== 'syncing') { box.style.display = 'none'; box.innerHTML = ''; return; }
+  const cur = st.mining_phase || '';
+  const curIdx = _SYNC_PHASES.findIndex(p => p.key === cur);
+  // While syncing but before the daemon names a phase (cycle warm-up), treat
+  // the first phase as the active one so the list isn't all-pending.
+  const activeIdx = curIdx >= 0 ? curIdx : 0;
+  const rows = _SYNC_PHASES.map((p, i) => {
+    let icon, cls, detail = '';
+    if (i < activeIdx) { icon = '✓'; cls = 'done'; }
+    else if (i > activeIdx) { icon = '⏳'; cls = 'pending'; }
+    else {
+      icon = '▶'; cls = 'running';
+      const done = Number(st[p.doneK] || 0);
+      const tot = Number(st[p.totK] || 0);
+      if (tot > 0) detail = `${done}/${tot} ${p.unit}${_syncPhaseEta(st[p.startK], done, tot)}`;
+      else if (done > 0) detail = `${done} ${p.unit}`;
+    }
+    return `<div class="sync-phase-row ${cls}">
+      <span class="sync-phase-icon">${icon}</span>
+      <span class="sync-phase-name">${esc(p.label)}</span>
+      <span class="sync-phase-detail">${esc(detail)}</span>
+    </div>`;
+  }).join('');
+  box.innerHTML = rows;
+  box.style.display = '';
+}
+
 async function refreshProjectSyncStatus(agentId, projectName) {
   const chip = document.getElementById('project-sync-chip');
   const labelEl = document.getElementById('project-sync-label');
@@ -432,6 +489,9 @@ async function refreshProjectSyncStatus(agentId, projectName) {
       if (sublabelElKg) sublabelElKg.textContent = '';
     }
     labelEl.textContent = label;
+    // Per-phase checklist (Indexierung / KG-Extraktion / Closet-Rerank) —
+    // only while syncing; hidden otherwise.
+    renderSyncPhases(st, live);
     // Knowledge-graph button: admin-only. The drilldown is a debug /
     // operations surface (predicate distribution, sample triples,
     // extraction-log, admin re-extract) — useful for verifying extraction
@@ -484,6 +544,8 @@ async function refreshProjectSyncStatus(agentId, projectName) {
   } catch(e) {
     // Hide on auth/404 — non-managers may not be able to read it.
     chip.style.display = 'none';
+    const ph = document.getElementById('project-sync-phases');
+    if (ph) { ph.style.display = 'none'; ph.innerHTML = ''; }
   }
 }
 

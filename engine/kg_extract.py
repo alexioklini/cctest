@@ -629,6 +629,12 @@ def extract_triples_from_drawer(
     max_triples: int = 12,
     max_drawer_chars: int = 6000,
     min_confidence: float = 0.5,
+    # Greedy decoding for stable, reproducible triple sets. temperature=0.0 IS
+    # honoured by CLIProxyAPI/Mistral and gives byte-identical output run-to-run
+    # (verified: 3/3 identical completions at temp 0 vs. a drift at 0.1/0.7).
+    # The earlier "0.0 doesn't work" was a forwarding bug — the value was
+    # declared here but never passed to background_call, so the model ran at its
+    # config default (0.7); now that it's plumbed through, 0.0 works as intended.
     inference_temperature: float = 0.0,
     inference_max_tokens: int = 8000,
     cancel_token=None,
@@ -690,6 +696,12 @@ def extract_triples_from_drawer(
             system_prompt=system_prompt,
             cost_purpose="kg_extract",
             max_tokens=inference_max_tokens,
+            # Greedy decoding for structured extraction — deterministic, stable
+            # triple sets run-to-run. (inference_temperature defaults to 0.0;
+            # before this it was declared but never forwarded, so the model's
+            # configured temp — 0.7 for mistral-small — applied and the triple
+            # count drifted between identical re-extractions.)
+            temperature=inference_temperature,
         )
         raw = _kg_deanon(_res.get("reply") or "") or None
         _err = _res.get("error") or ""
@@ -1710,6 +1722,147 @@ def _file_stat_or_zero(path: str) -> tuple[int, int]:
         return 0, 0
 
 
+def _regen_closets_parallel(
+    *, palace_path: str, wing: str, cfg, workers: int,
+    progress_cb=None,
+    log_prefix: str = "[closet-regen]",
+) -> dict:
+    """Parallel drop-in for mempalace.closet_llm.regenerate_closets(wing=...).
+
+    Upstream's `regenerate_closets` runs one LLM call per source_file SERIALLY
+    (`for source in sources: _call_llm(...)`), which on a wing whose two PDFs
+    were chunked into ~195 source_files means ~195 serial cloud round-trips —
+    the dominant cost of a project sync (measured ~12 min). This reimplements
+    the same body using the same upstream primitives (`_call_llm`,
+    `_parsed_to_closet_lines`, `purge_file_closets`, `upsert_closet_lines`,
+    `mine_lock`) but fans the LLM calls out across `workers` threads.
+
+    Behaviour is intended to match upstream exactly EXCEPT for ordering:
+      - same grouping by source_file, same wing filter,
+      - same per-source purge+upsert under `mine_lock(source)` (per-source, so
+        distinct sources never contend; the LLM call — the slow part — is what
+        parallelises),
+      - same metadata stamp (generated_by / normalize_version / entities),
+      - on LLM failure the source is left with its regex closets (counted
+        `failed`, not written), identical to upstream.
+
+    Returns the same summary shape: {processed, failed, input_tokens,
+    output_tokens}. Raises nothing the caller doesn't already handle — any
+    setup failure propagates so the wrapper's try/except records it.
+    """
+    from mempalace.closet_llm import (
+        _call_llm, _parsed_to_closet_lines, NORMALIZE_VERSION,
+    )
+    from mempalace.palace import (
+        get_collection, get_closets_collection, mine_lock,
+        purge_file_closets, upsert_closet_lines,
+    )
+    from datetime import datetime as _dt
+
+    drawers_col = get_collection(palace_path, create=False)
+    closets_col = get_closets_collection(palace_path)
+    total = drawers_col.count()
+    if total == 0:
+        return {"processed": 0, "failed": 0, "input_tokens": 0, "output_tokens": 0}
+
+    all_data = drawers_col.get(limit=total, include=["documents", "metadatas"])
+    by_source: dict = {}
+    for doc_id, doc, meta in zip(
+            all_data["ids"], all_data["documents"], all_data["metadatas"]):
+        w = (meta or {}).get("wing", "")
+        if wing and w != wing:
+            continue
+        source = (meta or {}).get("source_file", "unknown")
+        slot = by_source.setdefault(
+            source, {"drawer_ids": [], "content": [], "meta": meta})
+        slot["drawer_ids"].append(doc_id)
+        slot["content"].append(doc)
+
+    sources = list(by_source.keys())
+    if not sources:
+        return {"processed": 0, "failed": 0, "input_tokens": 0, "output_tokens": 0}
+
+    counters = {"processed": 0, "failed": 0, "input_tokens": 0,
+                "output_tokens": 0}
+    _clock = threading.Lock()  # guards counters only
+    total_sources = len(sources)
+
+    def _emit_progress() -> None:
+        # Fire the live-progress callback with done/total. "done" = every
+        # source whose LLM call has returned (processed OR failed), so the bar
+        # advances even when some sources fall back to regex.
+        if progress_cb is None:
+            return
+        done = counters["processed"] + counters["failed"]
+        try:
+            progress_cb(done, total_sources)
+        except Exception:
+            pass
+
+    def _one(source: str) -> None:
+        data = by_source[source]
+        content = "\n\n".join(data["content"])
+        meta = data["meta"] or {}
+        w = meta.get("wing", "")
+        r = meta.get("room", "")
+        entities = meta.get("entities", "")
+
+        # Slow part — runs concurrently. _call_llm is self-contained (own
+        # retry + hard-deadline watchdog), no shared mutable state.
+        parsed, usage = _call_llm(cfg, source, w, r, content)
+        if not parsed:
+            with _clock:
+                counters["failed"] += 1
+            return
+        if usage:
+            with _clock:
+                counters["input_tokens"] += usage.get("prompt_tokens", 0)
+                counters["output_tokens"] += usage.get("completion_tokens", 0)
+
+        lines = _parsed_to_closet_lines(parsed, data["drawer_ids"], entities)
+        closet_id_base = f"closet_{w}_{r}_{os.path.basename(source)[:30]}"
+        # Per-source lock matches upstream: serialises purge+upsert for THIS
+        # source against any concurrent miner rebuild. Distinct sources hold
+        # distinct locks, so the write phase parallelises across sources too.
+        with mine_lock(source):
+            purge_file_closets(closets_col, source)
+            upsert_closet_lines(
+                closets_col, closet_id_base, lines,
+                {
+                    "wing": w, "room": r, "source_file": source,
+                    "generated_by": f"llm:{cfg.model}",
+                    "filed_at": _dt.now().isoformat(),
+                    "entities": entities,
+                    "normalize_version": NORMALIZE_VERSION,
+                },
+            )
+        with _clock:
+            counters["processed"] += 1
+
+    n_workers = max(1, int(workers))
+    print(f"{log_prefix} parallel regen: {len(sources)} source files, "
+          f"workers={n_workers}", flush=True)
+    _emit_progress()  # initial 0/N so the UI shows the phase immediately
+    if n_workers == 1:
+        for s in sources:
+            _one(s)
+            _emit_progress()
+    else:
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=n_workers) as ex:
+            futs = {ex.submit(_one, s): s for s in sources}
+            for f in concurrent.futures.as_completed(futs):
+                # _one swallows its own per-source errors into counters; an
+                # unexpected exception (e.g. collection write error) shouldn't
+                # kill the whole batch — count it as failed and continue.
+                exc = f.exception()
+                if exc is not None:
+                    with _clock:
+                        counters["failed"] += 1
+                _emit_progress()
+    return counters
+
+
 def run_closet_regen_incremental(
     *,
     palace_path: str,
@@ -1719,9 +1872,16 @@ def run_closet_regen_incremental(
     endpoint: str,
     api_key: str,
     api_model: str,
+    workers: int = 0,
+    model_for_workers: str = "",
+    progress_cb=None,
     log_prefix: str = "[closet-regen]",
 ) -> dict:
     """Wing-wide LLM closet regen, gated on "did any source change?".
+
+    `workers` > 0 forces a parallel-fan-out width; 0 resolves it from
+    `model_for_workers` via `_kg_resolve_workers` (provider max_concurrent →
+    8 for cloud), matching the KG extractor's concurrency policy.
 
     Returns a small summary dict:
         {sources_seen, sources_stale, regen_triggered, elapsed_s, error?}
@@ -1781,19 +1941,24 @@ def run_closet_regen_incremental(
 
     # Run the wing-wide regen. Upstream rebuilds every source in the wing,
     # not just the stale ones — but at least we only pay this when something
-    # actually changed.
+    # actually changed. We use our OWN parallel reimplementation
+    # (_regen_closets_parallel) instead of upstream's serial
+    # regenerate_closets: same primitives + behaviour, but the per-source LLM
+    # calls fan out across `workers` threads (upstream is one-at-a-time, the
+    # measured ~12-min bottleneck of a project sync).
     try:
-        from mempalace.closet_llm import (
-            LLMConfig as _ClosetLLMConfig,
-            regenerate_closets as _regen,
-        )
+        from mempalace.closet_llm import LLMConfig as _ClosetLLMConfig
     except Exception as e:
         return {"error": f"closet_llm import: {type(e).__name__}: {e}",
                 "regen_triggered": False, "elapsed_s": time.time() - t0}
 
     cfg = _ClosetLLMConfig(endpoint=endpoint, key=api_key, model=api_model)
+    regen_workers = workers if workers > 0 else _kg_resolve_workers(model_for_workers)
     try:
-        out = _regen(palace_path=palace_path, wing=wing, cfg=cfg) or {}
+        out = _regen_closets_parallel(
+            palace_path=palace_path, wing=wing, cfg=cfg,
+            workers=regen_workers, progress_cb=progress_cb,
+            log_prefix=log_prefix) or {}
     except Exception as e:
         return {"error": f"regen: {type(e).__name__}: {e}",
                 "regen_triggered": False,

@@ -1792,7 +1792,8 @@ def _project_sync_loop(srv):
             print(f"[project-sync.kg] wing={wing} prefix={source_prefix} "
                   f"failed: {type(e).__name__}: {e}", flush=True)
 
-    def _run_closet_regen_for(wing: str, source_prefix: str = ""):
+    def _run_closet_regen_for(wing: str, source_prefix: str = "",
+                              progress_cb=None):
         """Regenerate LLM-augmented closets for the wing using the same
         model the user selected for KG extraction. Closets boost the
         ranking of vector retrieval (mempalace_query) — this swaps
@@ -1842,6 +1843,10 @@ def _project_sync_loop(srv):
                     chats_db_path=chats_db_path,
                     endpoint=endpoint, api_key=api_key,
                     api_model=api_model,
+                    # Parallel fan-out width resolved from the KG model's
+                    # provider concurrency cap (same policy as KG extraction).
+                    model_for_workers=model,
+                    progress_cb=progress_cb,
                     log_prefix="[project-sync.closet]",
                 )
             if isinstance(out, dict) and out.get("error"):
@@ -1853,63 +1858,14 @@ def _project_sync_loop(srv):
                   f"{type(e).__name__}: {e}", flush=True)
             return {"error": f"{type(e).__name__}: {e}"}
 
-    def _count_wing_drawers_by_source(wing: str, source_prefix: str) -> int:
-        """Authoritative count of drawers in `wing` whose source_file
-        startswith(source_prefix). Used to populate per-item drawer
-        counts after a mine — survives dedup-only re-runs unchanged.
-        """
-        try:
-            col = _get_drawers_col(palace_path, create=False)
-            if not col:
-                return 0
-            # Chroma supports operator filters; use $and + startswith via
-            # `$contains` is unreliable on metadata. Pull all and filter
-            # in-Python — wings are typically small.
-            got = col.get(where={"wing": wing}, include=["metadatas"])
-            metas = got.get("metadatas") or []
-            # ANCHOR the directory prefix at a path boundary so folder `/p/proj1`
-            # doesn't also count drawers from the sibling `/p/proj1extra` (the
-            # bug inflated per-item counts when two input folders shared a name
-            # prefix). Match the exact path or anything strictly under it.
-            _pfx = source_prefix.rstrip(os.sep)
-            _pfx_child = _pfx + os.sep
-            hits = 0
-            for m in metas:
-                sf = (m or {}).get("source_file") or ""
-                if sf == _pfx or sf.startswith(_pfx_child):
-                    hits += 1
-            return hits
-        except Exception:
-            return 0
-
-    def _count_wing_drawers_by_prefixes(wing: str, prefixes: list) -> dict:
-        """Count drawers per source_file prefix with ONE wing fetch.
-
-        _count_wing_drawers_by_source does a full-wing `col.get` + Python filter
-        per call; calling it once per uploaded doc (258×) on a 6994-drawer wing
-        meant ~1.8M metadata rows pulled from the backend between indexing and
-        KG — the project then sat for many minutes before KG could start. This
-        fetches the wing's source_files ONCE and counts every prefix against
-        that single snapshot. Returns {prefix: count}. Falls back to 0s on
-        error so callers degrade (counts are display-only, never gate KG)."""
-        out = {p: 0 for p in prefixes}
-        try:
-            col = _get_drawers_col(palace_path, create=False)
-            if not col:
-                return out
-            got = col.get(where={"wing": wing}, include=["metadatas"])
-            metas = got.get("metadatas") or []
-            anchored = [(p, p.rstrip(os.sep), p.rstrip(os.sep) + os.sep)
-                        for p in prefixes]
-            for m in metas:
-                sf = (m or {}).get("source_file") or ""
-                for p, pfx, pfx_child in anchored:
-                    if sf == pfx or sf.startswith(pfx_child):
-                        out[p] += 1
-                        break
-            return out
-        except Exception:
-            return out
+    # NOTE: the per-source drawer counters (_count_wing_drawers_by_source /
+    # _count_wing_drawers_by_prefixes) were removed in 9.185.0. They each did a
+    # full-wing `col.get(where={wing})` metadata fetch to populate a cosmetic
+    # per-item "(N Schubladen)" badge, and ran in the hot path BETWEEN indexing
+    # and KG — on a ~1900-drawer wing that stalled the pipeline for tens of
+    # seconds with no phase shown ("stuck at 2/2"). The badge now degrades to
+    # "Indexiert". Only the end-of-cycle wing totals below survive (they run
+    # once after all work, off the hot path).
 
     def _count_wing_drawers_total(wing: str) -> int:
         try:
@@ -2399,22 +2355,20 @@ def _project_sync_loop(srv):
                             files_filed += ingest_filed
                             finished_at_attach = datetime.datetime.now(
                                 datetime.timezone.utc).isoformat()
-                            # Authoritative count per source: drawers whose
-                            # source_file references the chunk files for each
-                            # key (source_file ends <key>__<idx>.md). ONE wing
-                            # fetch for all keys (was 258 full-wing scans → a
-                            # multi-minute stall before KG on big wings).
-                            _pfx_by_h = {
-                                h: engine.IngestManager.chunk_filename_prefix(
-                                    ingested_dir, h) for h in hashes}
-                            _counts = _count_wing_drawers_by_prefixes(
-                                wing, list(_pfx_by_h.values()))
+                            # Mark each uploaded source indexed. We deliberately
+                            # do NOT pull a per-source drawer count here: it
+                            # required a full-wing metadata fetch
+                            # (_count_wing_drawers_by_prefixes) that, on a large
+                            # wing (~1900 drawers), stalled the pipeline for tens
+                            # of seconds BETWEEN "indexing 2/2" and KG start with
+                            # no phase shown — and the number only fed a cosmetic
+                            # "(N Schubladen)" badge. Dropped (the badge simply
+                            # shows "Indexiert"). The KG run below knows its own
+                            # chunk counts from the work it actually does.
                             for h in hashes:
-                                cnt = _counts.get(_pfx_by_h[h], 0)
                                 _set_item("attachment", h,
                                     state=("error" if ingest_err else "indexed"),
                                     last_run_finished=finished_at_attach,
-                                    drawers_filed=cnt,
                                     error=ingest_err)
                             # Mark every uploaded source as processed in the
                             # cycle progress. Done as a batch since the miner
@@ -2426,21 +2380,20 @@ def _project_sync_loop(srv):
                             # ingest-<hash>-<idx>.md), so we can scope
                             # precisely per attachment.
                             #
-                            # Project-wide KG progress for the UI: total =
-                            # drawers in the wing (what KG iterates across all
-                            # docs); kg_done_base accumulates completed drawers
-                            # ACROSS documents (the per-chunk callback adds the
-                            # in-flight document's delta on top). started_at →
-                            # ETA. This makes the counter monotonic + show a real
-                            # X/total + ETA, instead of a per-doc value that
-                            # reset to ~0 each document.
+                            # KG progress: switch the phase to "kg" + reset the
+                            # cross-document base, but WITHOUT a kg_total — that
+                            # denominator used to come from a second full-wing
+                            # fetch (_count_wing_drawers_total) that cost about as
+                            # long as the (now-parallel, ~45s) KG phase it was
+                            # measuring. The UI bar degrades to a live chunk
+                            # count (kg_done) with no fixed total/ETA, which is
+                            # honest for a fast phase and removes the stall.
                             if not ingest_err:
-                                _kg_total_units = _count_wing_drawers_total(wing)
                                 srv._project_sync_set_live(
                                     agent_id, proj_name,
                                     state="syncing", mining_phase="kg",
                                     kg_done=0, kg_done_base=0,
-                                    kg_total=_kg_total_units,
+                                    kg_total=0,
                                     kg_started_at=time.time())
                             for h in hashes:
                                 if ingest_err:
@@ -2726,15 +2679,15 @@ def _project_sync_loop(srv):
                                 elapsed_s=round(time.time() - _index_t0_f, 2),
                                 errors=[folder_err] if folder_err else [])
                         files_filed += folder_filed
-                        # Authoritative cumulative drawer count: source_file
-                        # in the wing always startswith the absolute folder
-                        # path for files mined from this folder.
-                        cum = _count_wing_drawers_by_source(wing, fpath)
+                        # No per-folder drawer count here: like the attachment
+                        # path, _count_wing_drawers_by_source was a full-wing
+                        # metadata fetch feeding only a cosmetic "(N Schubladen)"
+                        # badge, and it stalled the pipeline before KG on large
+                        # wings. Dropped — badge shows "Indexiert".
                         _set_item("folder", fpath,
                             state=("error" if folder_err else "indexed"),
                             last_run_finished=datetime.datetime.now(
                                 datetime.timezone.utc).isoformat(),
-                            drawers_filed=cum,
                             error=folder_err)
                         # Bump cycle progress by the file count we pre-scanned
                         # for this folder. Slight overshoot is fine — see
@@ -2769,7 +2722,22 @@ def _project_sync_loop(srv):
                         if _run_id:
                             _sync_log.step_start(
                                 chats_db_path, _run_id, "closet_rerank")
-                        _closet_out = _run_closet_regen_for(wing) or {}
+                        # Live phase D progress: push mining_phase="closet" +
+                        # closet_done/total after each source's closet is
+                        # (re)built so the project view shows the Closet-Rerank
+                        # row advancing instead of sitting silent (this phase
+                        # was previously invisible — the ~76%-of-cycle gap).
+                        _closet_phase_t0 = time.time()
+                        def _closet_prog(done, total):
+                            srv._project_sync_set_live(
+                                agent_id, proj_name,
+                                state="syncing",
+                                mining_phase="closet",
+                                closet_done=done,
+                                closet_total=total,
+                                closet_started_at=_closet_phase_t0)
+                        _closet_out = _run_closet_regen_for(
+                            wing, progress_cb=_closet_prog) or {}
                         if _run_id:
                             _sync_log.step_finish(
                                 chats_db_path, _run_id, "closet_rerank",

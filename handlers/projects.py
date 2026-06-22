@@ -214,7 +214,13 @@ class ProjectsHandlerMixin:
             # folders are mined into the project wing+KG). Without this, newly
             # added URLs/folders waited up to the 6h scheduled cycle — the user
             # added sources from Research and saw nothing happen.
-            if "web_urls" in body or "input_folders" in body:
+            # Also kick when the per-project KG method/profile changed:
+            # update_project just purged this project's KG cursor, so a sync
+            # is needed to re-extract under the new setting (otherwise the
+            # switch shows no effect until the next scheduled cycle — the
+            # rules→llm "still only 4 triples" surprise).
+            if ("web_urls" in body or "input_folders" in body
+                    or "kg_method" in body or "kg_profile" in body):
                 try:
                     _srv()._project_sync_request(agent_id, proj_name)
                 except Exception:
