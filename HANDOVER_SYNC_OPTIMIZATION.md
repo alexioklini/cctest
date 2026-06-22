@@ -7,6 +7,17 @@
 
 ---
 
+## ✅ UPDATE (end of session): FAST GATE VERIFIED WORKING
+
+The open bug below was a **test-timing artifact**, not a real bug. Confirmed:
+- Full sync (run 3310) **persisted** `source_fingerprint` (`9ad34c51…`), state idle.
+- Next sync with **no changes** (run **3311**): `elapsed = 0.0s`, `skipped_unchanged = true`. **The ~1s requirement is MET** (vs 285–287s before).
+- Change-test (touch one ingested file → sync) in progress at handover write — expected: a non-skipped run that re-mines/KGs only the changed source.
+
+So the core requirement ("unchanged sync finishes in ~1s, all phases") is **done and verified**. Remaining = the SCALING optimizations (#2 wing-scope bulk_check_mined, #3 per-file closet regen) — nice-to-have for hundreds of projects, not blockers. Everything is committed + pushed to main (through `d3f64c4`, plus this handover update).
+
+---
+
 ## TL;DR status
 
 - **KG re-extraction bug: FIXED & verified** (commits `c9028ab` + `2c2a199`, shipped in running 9.189.2/.3). KG now skips unchanged drawers — proven: sync after stable-keys-laid-down wrote **0 new KG progress rows** for the risikoanalysen wing.
