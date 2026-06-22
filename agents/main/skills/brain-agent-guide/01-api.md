@@ -80,6 +80,22 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
   picks a voice tagged for it; else `auto_voice:true` detects the text's language;
   else the configured default. The Translation Text + Live-mic tabs pass `lang`
   per side, so they auto-use language-matched voices.
+- `POST /v1/sessions/export` — `{session_id, kind: "summary"|"dump"}` → save a
+  markdown export into the session artifact folder (registered as an artifact).
+  `dump` = verbatim full chat history (pure transform, no LLM). `summary` = LLM
+  synopsis via the configured `chat_summary_model`. → `{status, name, artifact_id}`.
+  (Chat-view status-line buttons.)
+- `POST /v1/sessions/export-bundle` — `{session_id}` → **SSE**. Builds a complete
+  -chat ZIP server-side and streams `progress {percent, stage}` events, then
+  `done {token, filename, size}` (or `error {message}`). The zip bundles
+  everything the right panel shows: `conversation.md`, `tool-calls.md` (per-turn
+  tool input/output), `references.md/json` (web sources), `statistics.md/json`
+  (turns/tokens/cost/models/per-tool counts), `inspect.json`, `messages.json`,
+  `attachments/` (uploaded files), `artifacts/` (generated files), `README.md`.
+  The zip is **downloaded, NOT stored as an artifact**.
+- `GET /v1/sessions/export-bundle/download?token=…` — serve the built zip once
+  (single-use token, 600s TTL), then delete the temp file. Returns
+  `application/zip` as an attachment.
 - `GET /v1/sessions/<sid>/gdpr-maps` — admin: pseudonym maps for this chat
 - `GET /v1/sessions/<sid>/gdpr-maps/<id>` — admin: decrypt one map
 

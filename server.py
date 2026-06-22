@@ -1520,6 +1520,8 @@ class BrainAgentHandler(
             self._handle_list_models()
         elif path == "/v1/sessions":
             self._handle_list_sessions()
+        elif path == "/v1/sessions/export-bundle/download":
+            self._handle_export_bundle_download()
         elif path.startswith("/v1/sessions/search"):
             self._handle_session_search()
         elif path.startswith("/v1/sessions/") and path.endswith("/inspect"):
@@ -1936,6 +1938,10 @@ class BrainAgentHandler(
             _tool_mcp_mod.handle_tools_call(self)
         elif path == "/v1/sessions/manage":
             self._handle_manage_session()
+        elif path == "/v1/sessions/export":
+            self._handle_export_session()
+        elif path == "/v1/sessions/export-bundle":
+            self._handle_export_bundle()
         elif path == "/v1/agents/switch":
             self._handle_switch_agent()
         elif path == "/v1/agents/create":

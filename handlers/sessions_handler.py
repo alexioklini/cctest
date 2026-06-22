@@ -4,8 +4,34 @@ import os
 import sqlite3
 import threading
 import time
+import uuid
 
 import brain as engine
+from handlers import sidecar_proxy
+from server_lib.sse_stream import encode_sse
+
+# One-time download tokens for chat-bundle zips. The SSE build endpoint writes
+# the zip to a temp file and registers a token here; the download endpoint
+# serves it once and deletes both. Entries auto-expire after _BUNDLE_TTL.
+_bundle_downloads: dict[str, dict] = {}
+_bundle_lock = threading.Lock()
+_BUNDLE_TTL = 600  # seconds
+
+
+def _bundle_register(path: str, filename: str) -> str:
+    tok = uuid.uuid4().hex
+    with _bundle_lock:
+        # Opportunistic GC of expired entries.
+        now = time.time()
+        for k, v in list(_bundle_downloads.items()):
+            if now - v.get("ts", 0) > _BUNDLE_TTL:
+                try:
+                    os.unlink(v.get("path", ""))
+                except OSError:
+                    pass
+                _bundle_downloads.pop(k, None)
+        _bundle_downloads[tok] = {"path": path, "filename": filename, "ts": now}
+    return tok
 
 
 def _next_prompt_cache_sig(session) -> str:
@@ -82,6 +108,464 @@ def _backfill_orphan_artifacts(sid: str) -> None:
                         pass
     except Exception:
         pass
+
+
+def _flatten_content(content) -> str:
+    """Render a message's content (string or content-block list) to plain text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for b in content:
+            if not isinstance(b, dict):
+                continue
+            t = b.get("type")
+            if t == "text":
+                parts.append(b.get("text", ""))
+            elif t in ("image_url", "image"):
+                parts.append("_[Bild]_")
+        return "\n".join(p for p in parts if p)
+    return str(content or "")
+
+
+def _build_conversation_markdown(sid: str, info: dict, msgs: list) -> str:
+    """Pure, deterministic markdown dump of the full conversation — no LLM.
+
+    Includes user/assistant turns and thinking blocks (collapsed). Tool
+    exchanges live only in-memory and never reach the DB, so they are absent by
+    design — this dumps the persisted history.
+    """
+    from datetime import datetime as _dt
+    title = (info.get("title") or "").strip() or "Chat"
+    lines = [
+        f"# {title}",
+        "",
+        f"- **Sitzung:** `{sid}`",
+        f"- **Agent:** {info.get('agent_id') or 'main'}",
+    ]
+    if info.get("project"):
+        lines.append(f"- **Projekt:** {info.get('project')}")
+    if info.get("model"):
+        lines.append(f"- **Modell:** {info.get('model')}")
+    lines.append(f"- **Exportiert:** {_dt.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    turn = 0
+    for m in msgs:
+        role = m.get("role", "")
+        text = _flatten_content(m.get("content", "")).rstrip()
+        if not text:
+            continue
+        if role in ("user", "human"):
+            turn += 1
+            # Strip the round-0 artifact-folder preamble riding in the first
+            # user message (plumbing, not what the user typed).
+            _pre = (m.get("metadata") or {}).get("preamble")
+            if _pre and text.startswith(_pre):
+                text = text[len(_pre):].lstrip("\n")
+            lines.append(f"## Anfrage {turn} — Nutzer")
+            lines.append("")
+            lines.append(text)
+        elif role == "assistant":
+            lines.append("### Antwort")
+            lines.append("")
+            lines.append(text)
+        elif role == "thinking":
+            lines.append("<details><summary>Denken</summary>")
+            lines.append("")
+            lines.append(text)
+            lines.append("")
+            lines.append("</details>")
+        else:
+            continue
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _generate_chat_summary_markdown(sid, info, agent_id, msgs, dump_md):
+    """Run one background LLM call to produce a markdown summary of the chat.
+
+    Returns the markdown string, or None on failure. Uses the configured
+    `chat_summary_model` (same resolution as the sidebar synopsis), falling back
+    to the background default.
+    """
+    from datetime import datetime as _dt
+    # Build the source text from the deterministic dump (cap to keep the
+    # prompt bounded; the summary should reflect the whole conversation).
+    convo = dump_md[:60000]
+    prompt = (
+        "Erstelle eine strukturierte Zusammenfassung des folgenden Chat-Verlaufs "
+        "als Markdown. Beginne mit einem kurzen Absatz zum Gesamtthema, dann eine "
+        "Stichpunktliste der wichtigsten Fragen/Aufgaben und der jeweiligen "
+        "Ergebnisse/Antworten. Gib NUR das Markdown aus, ohne Code-Fences.\n\n"
+        "--- CHAT-VERLAUF ---\n" + convo
+    )
+    try:
+        configured = (server_config.get("chat_summary_model") or "").strip()
+        model = ""
+        if configured:
+            mcfg = (engine._models_config or {}).get(configured) or {}
+            if mcfg.get("enabled", True):
+                model = configured
+        if not model:
+            model = engine._background_model_default()
+        if not model:
+            return None
+
+        with engine.request_context(current_session_id=sid):
+            engine.get_request_context().current_agent = info.get("agent_id") or agent_id
+            engine.get_request_context().current_user_id = (info.get("user_id") or "")
+            _res = sidecar_proxy.background_call(
+                messages=[{"role": "user", "content": prompt}],
+                model=model,
+                system_prompt="Du fasst Chat-Verläufe präzise auf Deutsch zusammen. Gib nur Markdown aus.",
+                agent_id=agent_id,
+                session_id=sid,
+                user_id=(info.get("user_id") or ""),
+                project=(info.get("project") or ""),
+                purpose="transform",
+                cost_purpose="chat_export_summary",
+                max_tokens=2000,
+            )
+        if _res.get("error"):
+            return None
+        reply = (_res.get("reply") or "").strip()
+        if not reply:
+            return None
+    except Exception:
+        return None
+
+    title = (info.get("title") or "").strip() or "Chat"
+    header = (
+        f"# Zusammenfassung — {title}\n\n"
+        f"- **Sitzung:** `{sid}`\n"
+        f"- **Modell (Zusammenfassung):** {model}\n"
+        f"- **Erstellt:** {_dt.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        "---\n\n"
+    )
+    return header + reply + "\n"
+
+
+def _safe_name(name: str) -> str:
+    """Sanitise a filename for inclusion in the zip (no path traversal)."""
+    base = os.path.basename(name or "").strip() or "unnamed"
+    return "".join(c for c in base if c.isalnum() or c in "._- ()[]") or "unnamed"
+
+
+def _build_session_inspect_data(sid, info):
+    """Assemble the same per-turn audit data the right-panel inspector shows:
+    per-turn tool calls (input/output), web sources, payloads, GDPR ids, totals.
+    Returns the inspect dict (or a minimal stub on failure)."""
+    msgs = ChatDB.load_messages(sid, include_compacted=True)
+    interactions = []
+    i = 0
+    n = len(msgs)
+    while i < n:
+        m = msgs[i]
+        role = m.get("role", "")
+        if role in ("user", "human"):
+            user_meta = m.get("metadata") or {}
+            content_in = _flatten_content(m.get("content", ""))
+            # Find the next assistant message for this turn.
+            assistant_msg = None
+            j = i + 1
+            while j < n:
+                if msgs[j].get("role") == "assistant":
+                    assistant_msg = msgs[j]
+                    break
+                if msgs[j].get("role") in ("user", "human"):
+                    break
+                j += 1
+            meta = (assistant_msg.get("metadata") or {}) if assistant_msg else {}
+            interactions.append({
+                "turn": len(interactions) + 1,
+                "user": {"content": content_in,
+                         "gdpr_mapping_id": user_meta.get("gdpr_mapping_id") or ""},
+                "assistant": ({
+                    "content": _flatten_content(assistant_msg.get("content", "")),
+                    "tokens_in": meta.get("tokens_in", 0),
+                    "tokens_out": meta.get("tokens_out", 0),
+                    "duration": meta.get("duration", 0),
+                    "model": meta.get("model", ""),
+                    "cost": meta.get("cost", 0),
+                    "tools": meta.get("tools", []),
+                    "thinking": meta.get("thinking"),
+                    "thinking_level": meta.get("thinking_level"),
+                    "request_payloads": meta.get("request_payloads", []),
+                    "web_sources": meta.get("web_sources") or [],
+                    "citation_validation": meta.get("citation_validation") or {},
+                    "auto_route": meta.get("auto_route") or {},
+                    "gdpr_mapping_id": meta.get("gdpr_mapping_id") or "",
+                } if assistant_msg else None),
+            })
+            i = (j + 1) if assistant_msg else (i + 1)
+        else:
+            i += 1
+    return {"session_id": sid, "agent": info.get("agent_id") or "main",
+            "model": info.get("model") or "", "title": info.get("title") or "",
+            "interactions": interactions}
+
+
+def _render_tool_calls_md(inspect):
+    """Readable per-turn tool-call input→output dump (the right-panel tool view)."""
+    lines = ["# Tool-Aufrufe (Eingabe / Ausgabe)", ""]
+    any_tool = False
+    for ix in inspect.get("interactions", []):
+        a = ix.get("assistant") or {}
+        tools = a.get("tools") or []
+        if not tools:
+            continue
+        any_tool = True
+        lines.append(f"## Anfrage {ix.get('turn')}")
+        lines.append("")
+        for t in tools:
+            name = t.get("name", "?")
+            lines.append(f"### `{name}`")
+            lines.append("")
+            lines.append("**Eingabe:**")
+            lines.append("```json")
+            try:
+                lines.append(json.dumps(t.get("args", {}), ensure_ascii=False, indent=2))
+            except Exception:
+                lines.append(str(t.get("args", "")))
+            lines.append("```")
+            res = t.get("result", "")
+            lines.append("")
+            lines.append("**Ausgabe:**")
+            lines.append("```")
+            lines.append((str(res) if res is not None else "")[:20000])
+            lines.append("```")
+            lines.append("")
+    if not any_tool:
+        lines.append("_Keine Tool-Aufrufe in dieser Sitzung._")
+    return "\n".join(lines) + "\n"
+
+
+def _render_references(inspect):
+    """References pane = per-turn web sources (Webquellen) + citation validation."""
+    refs = []
+    for ix in inspect.get("interactions", []):
+        a = ix.get("assistant") or {}
+        for s in (a.get("web_sources") or []):
+            refs.append({"turn": ix.get("turn"), "title": s.get("title", ""),
+                         "url": s.get("url", ""), "content": s.get("content", ""),
+                         "error": s.get("error")})
+    md = ["# Referenzen / Webquellen", ""]
+    if not refs:
+        md.append("_Keine Webquellen in dieser Sitzung._")
+    for r in refs:
+        md.append(f"## [{r['turn']}] {r['title'] or r['url']}")
+        md.append("")
+        md.append(f"- **URL:** {r['url']}")
+        if r.get("error"):
+            md.append(f"- **Fehler:** {r['error']}")
+        md.append("")
+        if r.get("content"):
+            md.append(r["content"][:20000])
+        md.append("")
+    return "\n".join(md) + "\n", refs
+
+
+def _render_statistics(sid, info, inspect):
+    """Session statistics: turns, tokens, cost, duration, models, per-tool counts."""
+    from datetime import datetime as _dt
+    inter = inspect.get("interactions", [])
+    cost = engine._cost_tracker.get_session_cost(sid) if getattr(engine, "_cost_tracker", None) else {}
+    tokens_in = sum((ix.get("assistant") or {}).get("tokens_in", 0) for ix in inter)
+    tokens_out = sum((ix.get("assistant") or {}).get("tokens_out", 0) for ix in inter)
+    duration = sum((ix.get("assistant") or {}).get("duration", 0) for ix in inter)
+    models = {}
+    tool_counts = {}
+    for ix in inter:
+        a = ix.get("assistant") or {}
+        if a.get("model"):
+            models[a["model"]] = models.get(a["model"], 0) + 1
+        for t in (a.get("tools") or []):
+            nm = t.get("name", "?")
+            tool_counts[nm] = tool_counts.get(nm, 0) + 1
+    stats = {
+        "session_id": sid,
+        "title": info.get("title") or "",
+        "agent": info.get("agent_id") or "main",
+        "project": info.get("project") or "",
+        "turns": len(inter),
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "duration_seconds": round(duration, 1),
+        "cost_usd": round(cost.get("cost", 0.0), 4),
+        "llm_calls": cost.get("calls", 0),
+        "models_used": models,
+        "tool_call_counts": tool_counts,
+        "exported_at": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    md = [
+        "# Statistik", "",
+        f"- **Sitzung:** `{sid}`",
+        f"- **Titel:** {stats['title']}",
+        f"- **Agent:** {stats['agent']}",
+    ]
+    if stats["project"]:
+        md.append(f"- **Projekt:** {stats['project']}")
+    md += [
+        f"- **Anfragen (Turns):** {stats['turns']}",
+        f"- **Tokens (Eingabe):** {tokens_in:,}",
+        f"- **Tokens (Ausgabe):** {tokens_out:,}",
+        f"- **Dauer gesamt:** {stats['duration_seconds']} s",
+        f"- **Kosten gesamt:** ${stats['cost_usd']}",
+        f"- **LLM-Aufrufe:** {stats['llm_calls']}",
+        "",
+        "## Verwendete Modelle", "",
+    ]
+    for mdl, c in (models.items() or []):
+        md.append(f"- {mdl}: {c}×")
+    if not models:
+        md.append("_keine_")
+    md += ["", "## Tool-Aufrufe nach Typ", ""]
+    for nm, c in sorted(tool_counts.items(), key=lambda kv: -kv[1]):
+        md.append(f"- `{nm}`: {c}×")
+    if not tool_counts:
+        md.append("_keine_")
+    return "\n".join(md) + "\n", stats
+
+
+def _enumerate_attachments(sid, msgs):
+    """Resolve on-disk attachment files for a session (dedup by path)."""
+    seen = set()
+    out = []
+    for m in msgs:
+        for f in ((m.get("metadata") or {}).get("files") or []):
+            p = f.get("path") or ""
+            if p and p not in seen and os.path.isfile(p):
+                seen.add(p)
+                out.append((p, f.get("filename") or f.get("name") or os.path.basename(p)))
+    # Also sweep the on-disk attachment dir (covers files whose metadata path
+    # drifted but the bytes are still present).
+    adir = os.path.join("/tmp", "brain-attachments", sid)
+    if os.path.isdir(adir):
+        for name in os.listdir(adir):
+            p = os.path.join(adir, name)
+            if os.path.isfile(p) and p not in seen:
+                seen.add(p)
+                out.append((p, name))
+    return out
+
+
+def _build_chat_bundle(sid, info, progress):
+    """Build a complete-chat zip bundle to a temp file. `progress(pct, label)`
+    is called as work advances. Returns (temp_zip_path, filename)."""
+    import zipfile
+    import tempfile
+    from datetime import datetime as _dt
+
+    agent_id = info.get("agent_id") or "main"
+    root = f"chat-bundle_{sid[:8]}_{_dt.now().strftime('%Y-%m-%d_%H%M%S')}"
+    fd, zpath = tempfile.mkstemp(prefix="chat-bundle_", suffix=".zip")
+    os.close(fd)
+
+    progress(5, "Nachrichten werden gelesen…")
+    msgs = ChatDB.load_messages(sid, include_compacted=True)
+    conversation_md = _build_conversation_markdown(sid, info, msgs)
+
+    progress(20, "Audit-Daten werden zusammengestellt…")
+    inspect = _build_session_inspect_data(sid, info)
+    tool_calls_md = _render_tool_calls_md(inspect)
+    references_md, refs = _render_references(inspect)
+    statistics_md, stats = _render_statistics(sid, info, inspect)
+
+    progress(40, "Anhänge werden gesammelt…")
+    attachments = _enumerate_attachments(sid, msgs)
+
+    progress(55, "Artefakte werden gesammelt…")
+    artifacts = ChatDB.get_artifacts(sid) or []
+
+    progress(70, "Hintergrundaufgaben…")
+    bg_tasks = []
+    try:
+        bg_tasks = ChatDB.list_background_tasks(sid) if hasattr(ChatDB, "list_background_tasks") else []
+    except Exception:
+        bg_tasks = []
+
+    progress(80, "Bundle wird gepackt…")
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+        def w(rel, data):
+            z.writestr(f"{root}/{rel}", data)
+
+        w("conversation.md", conversation_md)
+        w("tool-calls.md", tool_calls_md)
+        w("references.md", references_md)
+        w("references.json", json.dumps(refs, ensure_ascii=False, indent=2))
+        w("statistics.md", statistics_md)
+        w("statistics.json", json.dumps(stats, ensure_ascii=False, indent=2))
+        w("inspect.json", json.dumps(inspect, ensure_ascii=False, indent=2, default=str))
+        w("messages.json", json.dumps(msgs, ensure_ascii=False, indent=2, default=str))
+        if bg_tasks:
+            w("background-tasks.json", json.dumps(bg_tasks, ensure_ascii=False, indent=2, default=str))
+
+        # Attachments (user-uploaded files).
+        for p, name in attachments:
+            try:
+                with open(p, "rb") as fh:
+                    z.writestr(f"{root}/attachments/{_safe_name(name)}", fh.read())
+            except OSError:
+                pass
+
+        # Artifacts (generated files — latest version bytes; disk first, DB fallback).
+        for a in artifacts:
+            name = _safe_name(a.get("name") or a.get("id"))
+            data = None
+            dpath = a.get("path") or ""
+            if dpath and os.path.isfile(dpath):
+                try:
+                    with open(dpath, "rb") as fh:
+                        data = fh.read()
+                except OSError:
+                    data = None
+            if data is None:
+                ver = ChatDB.get_artifact_content(a.get("id"))
+                if ver and ver.get("content") is not None:
+                    c = ver["content"]
+                    data = c if isinstance(c, bytes) else str(c).encode("utf-8")
+            if data is not None:
+                z.writestr(f"{root}/artifacts/{name}", data)
+
+        # README index.
+        readme = _render_bundle_readme(sid, info, stats, len(attachments),
+                                       len(artifacts), len(refs), bool(bg_tasks))
+        w("README.md", readme)
+
+    progress(95, "Abschluss…")
+    return zpath, root + ".zip"
+
+
+def _render_bundle_readme(sid, info, stats, n_attach, n_artifacts, n_refs, has_bg):
+    from datetime import datetime as _dt
+    lines = [
+        f"# Chat-Bundle — {info.get('title') or 'Chat'}", "",
+        f"Vollständiger Export der Sitzung `{sid}`, erstellt am "
+        f"{_dt.now().strftime('%Y-%m-%d %H:%M:%S')}.", "",
+        "## Inhalt", "",
+        "- `conversation.md` — vollständiger Chat-Verlauf (verbatim)",
+        "- `tool-calls.md` — Tool-Aufrufe pro Anfrage (Eingabe/Ausgabe)",
+        "- `references.md` / `references.json` — Webquellen/Referenzen",
+        "- `statistics.md` / `statistics.json` — Statistik (Tokens, Kosten, Modelle, Tools)",
+        "- `inspect.json` — vollständige Audit-Daten pro Turn (Payloads, GDPR-IDs)",
+        "- `messages.json` — Rohnachrichten inkl. Metadaten",
+        f"- `attachments/` — {n_attach} hochgeladene Datei(en)",
+        f"- `artifacts/` — {n_artifacts} generierte Datei(en)",
+    ]
+    if has_bg:
+        lines.append("- `background-tasks.json` — Hintergrundaufgaben dieser Sitzung")
+    lines += [
+        "", "## Kennzahlen", "",
+        f"- Anfragen: {stats.get('turns')}",
+        f"- Tokens: {stats.get('tokens_in'):,} ein / {stats.get('tokens_out'):,} aus",
+        f"- Kosten: ${stats.get('cost_usd')}",
+        f"- Webquellen: {n_refs}",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 class SessionsHandlerMixin:
@@ -813,6 +1297,175 @@ class SessionsHandlerMixin:
                 return False
             results = [r for r in results if _accessible(r)]
         self._send_json({"results": results[:limit], "query": query})
+
+    def _handle_export_session(self):
+        """POST /v1/sessions/export {session_id, kind: 'summary'|'dump'}
+
+        Writes a markdown file into the session's artifact folder and registers
+        it as an artifact (shows in the right-hand panel). `dump` is a pure,
+        deterministic transform of the persisted conversation — no LLM. `summary`
+        runs one background call through the configured `chat_summary_model`.
+        """
+        body = self._read_json()
+        sid = body.get("session_id", "")
+        kind = body.get("kind", "")
+        if kind not in ("summary", "dump"):
+            self._send_json({"error": "kind must be 'summary' or 'dump'"}, 400); return
+        info = self._session_access_check(sid)
+        if info is None:
+            return
+
+        agent_id = info.get("agent_id") or "main"
+        msgs = ChatDB.load_messages(sid)
+        if not msgs:
+            self._send_json({"error": "session has no messages"}, 400); return
+
+        dump_md = _build_conversation_markdown(sid, info, msgs)
+
+        if kind == "dump":
+            content = dump_md
+            base = "chat-dump"
+        else:
+            content = _generate_chat_summary_markdown(sid, info, agent_id, msgs, dump_md)
+            if content is None:
+                self._send_json({"error": "summary generation failed"}, 502); return
+            base = "chat-summary"
+
+        from datetime import datetime as _dt
+        fname = f"{base}_{sid[:8]}_{_dt.now().strftime('%Y-%m-%d_%H%M%S')}.md"
+
+        # Resolve the session's artifact folder + write the file, then register
+        # it as an artifact under the session's request context so
+        # `_register_artifact_version` can resolve the session id (same pattern
+        # as _backfill_orphan_artifacts).
+        artifact_id = None
+        try:
+            with engine.request_context(current_session_id=sid):
+                folder = engine._get_artifact_session_folder(sid)
+                artifact_dir = os.path.join(
+                    engine.AGENTS_DIR, agent_id, "artifacts", folder)
+                os.makedirs(artifact_dir, exist_ok=True)
+                fpath = os.path.join(artifact_dir, fname)
+                with open(fpath, "w", encoding="utf-8") as f:
+                    f.write(content)
+                res = engine._register_artifact_version(fpath, "created", agent_id)
+                if res:
+                    artifact_id = res[0]
+        except Exception as e:
+            self._send_json({"error": f"could not save artifact: {e}"}, 500); return
+
+        # Nudge any attached client to refresh its artifacts panel live.
+        try:
+            s = sessions.get(sid)
+            if s and getattr(s, "live_stream", None) and not s.live_stream.done:
+                s.live_stream.emit("artifact_updated", {
+                    "path": fpath, "name": fname,
+                    "size": len(content.encode("utf-8")),
+                    "action": "created", "artifact_id": artifact_id,
+                    "artifact_role": "output", "artifact_type": "markdown",
+                })
+        except Exception:
+            pass
+
+        self._send_json({"status": "saved", "session_id": sid,
+                         "name": fname, "artifact_id": artifact_id})
+
+    def _handle_export_bundle(self):
+        """POST /v1/sessions/export-bundle {session_id} — SSE.
+
+        Builds a complete-chat zip (history, statistics, attachments, artifacts,
+        tool-call I/O, references — everything the right panel shows) and streams
+        real progress events while doing so. On completion emits a `done` event
+        carrying a one-time download token; the zip itself is fetched via
+        GET /v1/sessions/export-bundle/download?token=… and is NOT stored as an
+        artifact.
+        """
+        body = self._read_json()
+        sid = body.get("session_id", "")
+        info = self._session_access_check(sid)
+        if info is None:
+            return
+
+        # Open the SSE stream.
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        try:
+            self.wfile.flush()
+        except OSError:
+            return
+
+        client_gone = threading.Event()
+
+        def emit(ev, data):
+            try:
+                self.wfile.write(encode_sse(ev, data))
+                self.wfile.flush()
+            except (OSError, BrokenPipeError):
+                client_gone.set()
+
+        def progress(pct, label):
+            emit("progress", {"percent": pct, "stage": label})
+
+        try:
+            zpath, filename = _build_chat_bundle(sid, info, progress)
+        except Exception as e:
+            emit("error", {"message": f"Bundle fehlgeschlagen: {e}"})
+            return
+
+        if client_gone.is_set():
+            try:
+                os.unlink(zpath)
+            except OSError:
+                pass
+            return
+
+        try:
+            size = os.path.getsize(zpath)
+        except OSError:
+            size = 0
+        token = _bundle_register(zpath, filename)
+        emit("progress", {"percent": 100, "stage": "Fertig"})
+        emit("done", {"token": token, "filename": filename, "size": size})
+
+    def _handle_export_bundle_download(self):
+        """GET /v1/sessions/export-bundle/download?token=… — serve the built zip
+        once, then delete it. Token is single-use."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        token = qs.get("token", [""])[0]
+        with _bundle_lock:
+            entry = _bundle_downloads.pop(token, None)
+        if not entry:
+            self._send_json({"error": "invalid or expired token"}, 404)
+            return
+        zpath = entry["path"]
+        filename = entry["filename"]
+        try:
+            with open(zpath, "rb") as f:
+                data = f.read()
+        except OSError:
+            self._send_json({"error": "bundle file gone"}, 404)
+            return
+        finally:
+            try:
+                os.unlink(zpath)
+            except OSError:
+                pass
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+        except (OSError, BrokenPipeError):
+            pass
 
     def _handle_manage_session(self):
         """POST /v1/sessions/manage — archive, unarchive, clear, delete_message"""

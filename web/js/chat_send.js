@@ -1314,6 +1314,104 @@ async function triggerLCM() {
     if (typeof buddyTurnEnd === 'function') buddyTurnEnd();
   }
 }
+// Save a markdown export of the chat into the session's artifacts folder.
+// kind 'summary' = LLM synopsis (chat_summary_model); 'dump' = verbatim history.
+async function _exportChat(kind, btnId) {
+  const chat = state.activeChat;
+  const sessionId = chat?.sessionId;
+  if (!sessionId) { showToast('Keine aktive Sitzung', true); return; }
+  if (chat.streaming) { showToast('Bitte auf das Ende der Antwort warten', true); return; }
+  const btn = document.getElementById(btnId);
+  if (btn) btn.disabled = true;
+  showToast(kind === 'summary' ? 'Zusammenfassung wird erstellt…' : 'Chat-Verlauf wird exportiert…');
+  try {
+    const result = await API.exportChat(sessionId, kind);
+    if (result.error) { showToast('Export fehlgeschlagen: ' + result.error, true); return; }
+    // Refresh this session's artifact list and surface the new file.
+    try {
+      const artResp = await API.getArtifacts(sessionId);
+      state.artifacts[sessionId] = artResp.artifacts || [];
+    } catch (e) { /* non-fatal */ }
+    if (result.artifact_id && typeof openArtifactPanel === 'function') {
+      openArtifactPanel(result.artifact_id);
+    } else if (typeof setRightPanelGlow === 'function') {
+      setRightPanelGlow(true);
+    }
+    showToast(`Gespeichert: ${result.name}`);
+  } catch (e) {
+    showToast('Export fehlgeschlagen: ' + (e.message || e), true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+function exportChatSummary() { return _exportChat('summary', 'status-summary-btn'); }
+function exportChatDump() { return _exportChat('dump', 'status-dump-btn'); }
+
+// Build + download a complete-chat zip bundle, showing a live progress modal.
+// Bundles everything the right panel shows: history, statistics, attachments,
+// generated artifacts, tool-call input/output, references. Downloaded, not
+// stored as an artifact.
+async function exportChatBundle() {
+  const chat = state.activeChat;
+  const sessionId = chat?.sessionId;
+  if (!sessionId) { showToast('Keine aktive Sitzung', true); return; }
+  if (chat.streaming) { showToast('Bitte auf das Ende der Antwort warten', true); return; }
+  const btn = document.getElementById('status-bundle-btn');
+  if (btn) btn.disabled = true;
+
+  const modal = _showBundleProgressModal();
+  try {
+    let result = null;
+    await API.exportBundle(sessionId, {
+      progress: (d) => modal.update(d.percent, d.stage),
+      done: (d) => { result = d; },
+      error: (d) => { throw new Error(d.message || 'Fehler'); },
+    });
+    if (!result || !result.token) throw new Error('Kein Bundle erhalten');
+    modal.update(100, 'Download wird gestartet…');
+    const blob = await API.fetchBundle(result.token);
+    _saveBlobAs(blob, result.filename || `chat-bundle_${sessionId.slice(0,8)}.zip`);
+    modal.close();
+    showToast('Bundle heruntergeladen');
+  } catch (e) {
+    modal.close();
+    showToast('Bundle fehlgeschlagen: ' + (e.message || e), true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Progress modal: title + stage text + determinate progress bar. Returns
+// {update(percent, stage), close()}.
+function _showBundleProgressModal() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:460px">
+      <div class="modal-header"><h2 class="modal-title">Chat-Bundle wird erstellt</h2></div>
+      <div class="modal-body" style="padding:28px 24px">
+        <p class="bundle-stage" style="margin:0 0 14px;color:var(--text-400);font-size:13px">Wird vorbereitet…</p>
+        <div style="background:var(--bg-300,#2a2a2a);border-radius:6px;height:10px;overflow:hidden">
+          <div class="bundle-bar" style="height:100%;width:0%;background:var(--accent-brand,#6c8cff);transition:width .25s ease"></div>
+        </div>
+        <p class="bundle-pct" style="margin:10px 0 0;text-align:right;color:var(--text-500);font-size:12px">0%</p>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const stageEl = overlay.querySelector('.bundle-stage');
+  const barEl = overlay.querySelector('.bundle-bar');
+  const pctEl = overlay.querySelector('.bundle-pct');
+  return {
+    update: (percent, stage) => {
+      const p = Math.max(0, Math.min(100, Number(percent) || 0));
+      barEl.style.width = p + '%';
+      pctEl.textContent = p + '%';
+      if (stage) stageEl.textContent = stage;
+    },
+    close: () => overlay.remove(),
+  };
+}
+
 async function restoreLCM(sessionId) {
   if (!sessionId) return;
   if (!await showConfirm('Ursprüngliche Nachrichten wiederherstellen? Die verdichtete Zusammenfassung wird durch den vollständigen Verlauf ersetzt.', 'Verlauf wiederherstellen')) return;

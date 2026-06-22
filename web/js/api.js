@@ -105,6 +105,71 @@ class API {
     return this.get(url);
   }
   static getSessionMessages(id) { return this.get(`/v1/sessions/${id}/messages`); }
+  // Export the chat as markdown into the session's artifacts folder.
+  // kind: 'summary' (LLM, chat_summary_model) | 'dump' (verbatim, no LLM).
+  static exportChat(sessionId, kind) {
+    return this.post('/v1/sessions/export', { session_id: sessionId, kind });
+  }
+  // Build a complete-chat zip bundle with live SSE progress. `callbacks` map:
+  // {progress({percent,stage}), done({token,filename,size}), error({message})}.
+  // Streams via fetch-reader (Bearer header works; EventSource cannot send it).
+  static async exportBundle(sessionId, callbacks) {
+    const resp = await fetch(`${BASE_URL}/v1/sessions/export-bundle`, {
+      method: 'POST',
+      headers: this._headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!resp.ok || !resp.body) {
+      if (callbacks.error) callbacks.error({ message: `HTTP ${resp.status}` });
+      return;
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let lastEventType = null;
+    // Terminal events (`done`/`error`) end the stream. We must NOT wait for the
+    // connection to close — the server may hold it briefly after emitting `done`,
+    // and the browser's reader would block on read() forever, hanging the whole
+    // download. So we break the loop as soon as a terminal event is dispatched.
+    let finished = false;
+    const dispatch = (line) => {
+      if (line.startsWith('event: ')) {
+        lastEventType = line.slice(7).trim();
+      } else if (line.startsWith('data: ') && lastEventType) {
+        let data = null, parsed = false;
+        try { data = JSON.parse(line.slice(6)); parsed = true; } catch (e) {}
+        const evType = lastEventType;
+        if (parsed && callbacks[evType]) {
+          try { callbacks[evType](data); }
+          catch (cbErr) { console.error('[bundle SSE] callback threw:', evType, cbErr); }
+        }
+        if (evType === 'done' || evType === 'error') finished = true;
+        lastEventType = null;
+      }
+    };
+    while (!finished) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        dispatch(line);
+        if (finished) break;
+      }
+    }
+    if (!finished && buffer.trim()) for (const line of buffer.split('\n')) dispatch(line);
+    // Release the stream so the held connection is torn down promptly.
+    try { await reader.cancel(); } catch (e) {}
+  }
+  // Fetch the finished bundle zip (Bearer-authed) and return a Blob.
+  static async fetchBundle(token) {
+    const resp = await fetch(`${BASE_URL}/v1/sessions/export-bundle/download?token=${encodeURIComponent(token)}`, {
+      method: 'GET', headers: this._headers(),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return resp.blob();
+  }
   // Server-side PII summary over the session's history (regex + spaCy NER).
   // The composer history badge in nav.js unions these counts with its local
   // regex scan so soft-PII (name/address/organisation) only NER detects also

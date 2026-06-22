@@ -79,6 +79,24 @@ Gesamt). Hinweis: lokale Modelle sind kostenlos und erscheinen mit 0 $ (aber ech
 Tokens); Aufrufe von vor der Einführung dieser Funktion erscheinen als
 *Unbekannt (Altdaten)*.
 
+Am **rechten Rand der Statusleiste** liegen Aktionsknöpfe für den aktuellen
+Chat:
+- **Zusammenfassung** — erstellt per KI (über das konfigurierte
+  Zusammenfassungs-Modell) eine strukturierte Zusammenfassung des Chats als
+  Markdown-Datei und legt sie im Artefakte-Ordner der Sitzung ab.
+- **Verlauf exportieren** — speichert den **vollständigen Chat-Verlauf
+  wortgetreu** als Markdown-Datei im Artefakte-Ordner (ohne KI).
+- **Bundle herunterladen** — erzeugt ein **komplettes ZIP-Paket** der Sitzung
+  und lädt es herunter (es wird *nicht* als Artefakt gespeichert). Während des
+  Packens zeigt ein Fenster den Fortschritt. Das ZIP enthält alles, was auch
+  das rechte Panel zeigt: den Verlauf (`conversation.md`), die Tool-Aufrufe mit
+  Ein-/Ausgabe (`tool-calls.md`), Referenzen/Webquellen, eine Statistik
+  (Anfragen, Tokens, Kosten, Modelle, Tool-Nutzung), die Roh-Audit-Daten
+  (`inspect.json`, `messages.json`), den Ordner `attachments/` (hochgeladene
+  Dateien) und den Ordner `artifacts/` (erzeugte Dateien).
+- **Verdichten** (Schere) — Kontext verdichten (LCM, siehe FAQ).
+- **Untersuchen** (Lupe) — Sitzungs-Inspektor öffnen.
+
 **Handy & Tablet (Responsive)** — die Oberfläche passt sich drei Größen an:
 - **Desktop** (breit) — volle Drei-Spalten-Ansicht (Seitenleiste · Inhalt ·
   rechtes Panel).
