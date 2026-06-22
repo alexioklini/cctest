@@ -294,10 +294,14 @@ function stopProjectSyncPoll() {
 // Closet-Rerank = the LLM closet pass (D). Embedding is not separately
 // instrumented (it happens inside the miner's per-file step), so it's folded
 // into Indexierung rather than shown as a phantom row.
+// User-facing phase labels in plain German — no technical terms (no
+// "Indexierung"/"KG"/"Extraktion"/"Closet"/"Rerank"), so a normal user
+// understands what's happening. The `key`s still match the daemon's
+// `mining_phase` values; only the display strings changed.
 const _SYNC_PHASES = [
-  { key: 'indexing', label: 'Indexierung',     doneK: 'mining_done',  totK: 'mining_total',  startK: 'started_at',         unit: 'Dokumente' },
-  { key: 'kg',       label: 'KG-Extraktion',   doneK: 'kg_done',      totK: 'kg_total',      startK: 'kg_started_at',      unit: 'Abschnitte' },
-  { key: 'closet',   label: 'Closet-Rerank',   doneK: 'closet_done',  totK: 'closet_total',  startK: 'closet_started_at',  unit: 'Quellen' },
+  { key: 'indexing', label: 'Dokumente werden gelesen',  doneK: 'mining_done',  totK: 'mining_total',  startK: 'started_at',         unit: 'Dokumente' },
+  { key: 'kg',       label: 'Inhalte werden verknüpft',  doneK: 'kg_done',      totK: 'kg_total',      startK: 'kg_started_at',      unit: 'Abschnitte' },
+  { key: 'closet',   label: 'Suche wird optimiert',      doneK: 'closet_done',  totK: 'closet_total',  startK: 'closet_started_at',  unit: 'Quellen' },
 ];
 
 function _syncPhaseEta(startVal, done, tot) {
@@ -309,8 +313,8 @@ function _syncPhaseEta(startVal, done, tot) {
   const remainMs = Math.max(0, Date.now() - startedMs) * (tot - done) / done;
   if (remainMs <= 1000 || remainMs > 1000 * 60 * 60 * 8) return '';
   const s = Math.floor(remainMs / 1000);
-  const str = s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
-  return ` · ETA ${str}`;
+  const str = s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)} Min.` : `${Math.floor(s / 3600)} Std.`;
+  return ` · noch ca. ${str}`;
 }
 
 function renderSyncPhases(st, live) {
@@ -384,11 +388,11 @@ async function refreshProjectSyncStatus(agentId, projectName) {
       let phaseStart = st.started_at || st.last_run_started || '';
       if (st.mining_phase === 'kg' && Number(st.kg_total || 0) > 0) {
         proc = Number(st.kg_done || 0); tot = Number(st.kg_total || 0);
-        phaseWord = 'KG-Extraktion'; unit = '';
+        phaseWord = 'Inhalte werden verknüpft'; unit = '';
         if (st.kg_started_at) phaseStart = st.kg_started_at;
       } else if (st.mining_phase === 'indexing' && Number(st.mining_total || 0) > 0) {
         proc = Number(st.mining_done || 0); tot = Number(st.mining_total || 0);
-        phaseWord = 'Indexierung'; unit = 'Dokumente';
+        phaseWord = 'Dokumente werden gelesen'; unit = 'Dokumente';
       }
       let progress = '';
       if (tot > 0) progress = ` ${proc}/${tot}`;
@@ -406,15 +410,16 @@ async function refreshProjectSyncStatus(agentId, projectName) {
         if (remainMs > 1000 && remainMs < 1000 * 60 * 60 * 48) {
           const remainSec = Math.floor(remainMs / 1000);
           const etaStr = remainSec < 60 ? `${remainSec}s`
-                       : remainSec < 3600 ? `${Math.floor(remainSec / 60)}m`
-                       : `${Math.floor(remainSec / 3600)}h`;
-          eta = ` · ETA ${etaStr}`;
+                       : remainSec < 3600 ? `${Math.floor(remainSec / 60)} Min.`
+                       : `${Math.floor(remainSec / 3600)} Std.`;
+          eta = ` · noch ca. ${etaStr}`;
         }
       }
-      // Build label per phase: "Speicher: KG-Extraktion 235/6994 · ETA 4m" or
-      // "Speicher: Indexierung 168/258 Dokumente · ETA 2m". When no phase
-      // counter is live yet, fall back to the generic Dateien count.
-      const headWord = phaseWord || 'synchronisiert';
+      // Build label per phase: "Speicher: Inhalte werden verknüpft 235/6994 ·
+      // noch ca. 4 Min." or "Speicher: Dokumente werden gelesen 168/258
+      // Dokumente · noch ca. 2 Min.". When no phase counter is live yet, fall
+      // back to a plain "wird aktualisiert".
+      const headWord = phaseWord || 'wird aktualisiert';
       const unitStr = unit ? ` ${unit}` : '';
       label = `Speicher: ${headWord}${progress}${unitStr}${eta}`;
       chip.title = 'Synchronisierung läuft';

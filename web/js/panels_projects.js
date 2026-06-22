@@ -484,17 +484,17 @@ function projectItemPillHtml(kind, ident) {
   const triples = it.triples_extracted;
   const kgParseErrors = it.kg_parse_errors || 0;
   if (kgState === 'extracting') {
-    kgBadge = ` <span class="project-item-pill" data-kg="extracting" title="Knowledge-Graph-Extraktion läuft">KG…</span>`;
+    kgBadge = ` <span class="project-item-pill" data-kg="extracting" title="Inhalte werden verknüpft">wird verknüpft …</span>`;
   } else if (kgState === 'error') {
-    const kgErr = it.kg_last_error || 'KG-Extraktion fehlgeschlagen';
+    const kgErr = it.kg_last_error || 'Verknüpfen fehlgeschlagen';
     const triplesPart = (typeof triples === 'number' && triples > 0) ? `${triples} Beziehungen · ` : '';
-    kgBadge = ` <span class="project-item-pill" data-kg="error" title="${esc(kgErr)}">${triplesPart}KG !</span>`;
+    kgBadge = ` <span class="project-item-pill" data-kg="error" title="${esc(kgErr)}">${triplesPart}Verknüpfen fehlgeschlagen</span>`;
   } else if (typeof triples === 'number' && triples > 0) {
-    // Per-folder pill in the right pane — same renaming as the project chip
-    // ("triples" is jargon, "relations" is what's been extracted).
-    const warnPart = kgParseErrors > 0 ? ` · ${kgParseErrors} Parse-Fehler` : '';
-    const warnTitle = kgParseErrors > 0 ? ` (${kgParseErrors} Abschnitte lieferten ungültiges JSON — nicht kritisch)` : '';
-    kgBadge = ` <span class="project-item-pill" data-kg="${kgParseErrors > 0 ? 'warn' : 'ok'}" title="Aus diesem Ordner extrahierte Knowledge-Graph-Beziehungen${warnTitle}">${triples} Beziehungen${warnPart}</span>`;
+    // Per-folder pill in the right pane — plain German, no jargon.
+    // ("triples" → "Beziehungen", "Parse-Fehler" → "übersprungene Abschnitte").
+    const warnPart = kgParseErrors > 0 ? ` · ${kgParseErrors} übersprungen` : '';
+    const warnTitle = kgParseErrors > 0 ? ` (${kgParseErrors} Abschnitte konnten nicht ausgewertet werden — nicht kritisch)` : '';
+    kgBadge = ` <span class="project-item-pill" data-kg="${kgParseErrors > 0 ? 'warn' : 'ok'}" title="Aus diesem Ordner gewonnene Beziehungen${warnTitle}">${triples} Beziehungen${warnPart}</span>`;
   }
   return `<span class="project-item-pill" data-state="${stateName}" title="${esc(tip)}">${esc(label)}</span>${kgBadge}`;
 }
