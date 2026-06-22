@@ -818,7 +818,16 @@ def _iter_wing_source_files(palace_path: str, wing: str, source_prefix: str
             continue
         by_source.setdefault(sf, []).append(did)
     for sf in sorted(by_source.keys()):
-        drawer_ids = by_source[sf]
+        # Sort the per-source drawer ids so the representative (drawer_ids[0]) is
+        # DETERMINISTIC across cycles. Qdrant's col.get() does not guarantee a
+        # stable id order, so without this the representative_drawer_id drifted
+        # every run → the progress cursor key (`<rep_did>#<chunk>`) never matched
+        # the recorded keys → drawers_skipped stayed 0 and the WHOLE source was
+        # re-extracted every sync (non-deterministic triple counts, orphan
+        # progress rows). Sorting fixes the source_file chunking mode's incremental
+        # skip. (Per-drawer mode keys progress by the drawer's own id, so it was
+        # unaffected — but a stable order is harmless there.)
+        drawer_ids = sorted(by_source[sf])
         yield {
             "source_file": sf,
             "drawer_ids": drawer_ids,
