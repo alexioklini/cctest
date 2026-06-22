@@ -132,6 +132,18 @@ a full re-extract. This explains both extra churn during testing AND the
 Decide whether that toggle should be debounced / confirm it wasn't fired
 accidentally during testing.
 
+## Note on manual "Sync now" timing (observed, not a bug)
+
+The project-sync daemon is **single-threaded** and processes projects sequentially
+within a cycle. A manual `sync-now` is QUEUED and fires when the daemon reaches
+that project — if big projects (web-url miners like macrumors, large folders) are
+ahead in the cycle, a manual request can wait minutes for a fresh run row to
+appear. During verification this looked like "sync-now didn't fire" but the run
+just hadn't been reached yet. At hundreds of projects this sequential cycle is
+itself worth considering (the fast no-change gate makes each unchanged project
+~ms, so a full cycle over hundreds of unchanged projects should still be quick —
+verify the per-cycle wall time at scale).
+
 ## Verification checklist (definition of done)
 
 - [ ] Fresh full sync on risikoanalysen stores `sync_status.source_fingerprint`.
