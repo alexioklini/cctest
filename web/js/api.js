@@ -272,6 +272,10 @@ class API {
     return r.json();
   }
   static deleteProjectInstructionFile(agent, name, filename) { return this.del(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-files/${encodeURIComponent(filename)}`); }
+  // AI-generation of project instructions (agentic, review-before-save).
+  static generateProjectInstructions(agent, name, prompt) { return this.post(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/generate-instructions`, { prompt }); }
+  static getInstructionGen(agent, name, genId) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-gen/${encodeURIComponent(genId)}`); }
+  static cancelInstructionGen(agent, name, genId) { return this.post(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-gen/${encodeURIComponent(genId)}/cancel`, {}); }
 
   // Costs
   static getCosts(hours, agent) {

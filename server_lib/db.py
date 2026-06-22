@@ -874,6 +874,41 @@ class ChatDB:
                 "UPDATE project_outputs SET status='error', "
                 "error='Server restart — generation lost', "
                 "finished_at=strftime('%s','now') WHERE status='generating'")
+            # ── AI-generated project instructions ──
+            # One row per "generate instructions with AI" run. The agentic worker
+            # reads the project's reference/instruction files + queries the project
+            # wing, then writes the full instruction markdown into `result_md`.
+            # The UI polls status and, on 'ready', loads result_md into the
+            # instructions editor for the user to review + Save — it is NOT applied
+            # to project.json automatically (review-before-save, like a draft).
+            # Distinct from project_outputs (those are saved Studio deliverables /
+            # artifacts; this draft text never becomes an artifact or wiki entry).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS project_instruction_gen (
+                    id          TEXT PRIMARY KEY,
+                    agent_id    TEXT NOT NULL DEFAULT 'main',
+                    project_id  TEXT NOT NULL,
+                    status      TEXT NOT NULL DEFAULT 'generating',
+                    phase       TEXT DEFAULT '',
+                    prompt      TEXT NOT NULL DEFAULT '',
+                    result_md   TEXT NOT NULL DEFAULT '',
+                    error       TEXT NOT NULL DEFAULT '',
+                    model       TEXT DEFAULT '',
+                    created_at  REAL DEFAULT (strftime('%s','now')),
+                    created_by  TEXT NOT NULL DEFAULT '',
+                    finished_at REAL,
+                    cancel      INTEGER DEFAULT 0
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_proj_instr_gen_project "
+                "ON project_instruction_gen(project_id, created_at)")
+            # Crash reconcile (same as project_outputs): a generating draft at boot
+            # lost its thread → mark errored so the UI never shows a zombie.
+            conn.execute(
+                "UPDATE project_instruction_gen SET status='error', "
+                "error='Server restart — generation lost', "
+                "finished_at=strftime('%s','now') WHERE status='generating'")
             # ── Deep Research runs ──
             # One row per Deep Research run (the bounded agentic loop). Tracks
             # live progress (phase + budget counters as JSON) so the UI can poll;
@@ -1270,6 +1305,66 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("DELETE FROM project_outputs WHERE id = ?", (output_id,))
             conn.commit()
+
+    # ── AI-generated project instructions (draft, review-before-save) ──
+    @staticmethod
+    @_db_safe(default=None)
+    def create_instruction_gen(gen_id, agent_id, project_id, prompt, created_by):
+        """Insert an instruction-generation run in 'generating' state; the
+        agentic worker flips it to ready/error via update_instruction_gen."""
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO project_instruction_gen "
+                "(id, agent_id, project_id, prompt, created_by) VALUES (?, ?, ?, ?, ?)",
+                (gen_id, agent_id, project_id, prompt, created_by))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_instruction_gen(gen_id, **fields):
+        """Patch an instruction-gen row. Whitelisted columns only; sets
+        finished_at when status flips to a terminal state."""
+        allowed = ("status", "phase", "result_md", "error", "model")
+        sets, vals = [], []
+        for k in allowed:
+            if k in fields:
+                sets.append(f"{k} = ?")
+                vals.append(fields[k])
+        if fields.get("status") in ("ready", "error", "cancelled"):
+            sets.append("finished_at = strftime('%s','now')")
+        if not sets:
+            return
+        vals.append(gen_id)
+        with _db_conn() as conn:
+            conn.execute(
+                f"UPDATE project_instruction_gen SET {', '.join(sets)} WHERE id = ?", vals)
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_instruction_gen(gen_id):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM project_instruction_gen WHERE id = ?", (gen_id,)).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    @_db_safe(default=None)
+    def cancel_instruction_gen(gen_id):
+        """Set the cooperative-cancel flag — the worker checks it between phases."""
+        with _db_conn() as conn:
+            conn.execute(
+                "UPDATE project_instruction_gen SET cancel = 1 WHERE id = ?", (gen_id,))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=False)
+    def instruction_gen_cancelled(gen_id):
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT cancel FROM project_instruction_gen WHERE id = ?", (gen_id,)).fetchone()
+            return bool(row and row[0])
 
     @staticmethod
     @_db_safe(default=None)

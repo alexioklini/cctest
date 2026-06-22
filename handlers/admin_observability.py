@@ -993,6 +993,7 @@ class AdminObservabilityHandlers:
         ("user_profile_model", "Nutzerprofil-Daemon", "config", None),
         ("wiki_gate_model", "Wiki-Auto-Gate (Auto-Memory: merken?)", "config", None),
         ("studio_model", "Studio (Projekt-Outputs)", "config", None),
+        ("instruction_gen_model", "Projektanweisungen (KI-Generierung)", "config", None),
         ("audio_overview_model", "Audio Overview (Podcast-Skript)", "config", None),
         ("code_graph_model", "Code-Graph (Symbol-Zusammenfassungen)", "config", None),
         ("deep_research_model", "Deep Research (Recherche-Loop)", "config", None),
@@ -1033,6 +1034,7 @@ class AdminObservabilityHandlers:
             "user_profile_model": cfg.get("user_profile_model", "") or "",
             "wiki_gate_model": cfg.get("wiki_gate_model", "") or "",
             "studio_model": cfg.get("studio_model", "") or "",
+            "instruction_gen_model": cfg.get("instruction_gen_model", "") or "",
             "audio_overview_model": cfg.get("audio_overview_model", "") or "",
             "code_graph_model": cfg.get("code_graph_model", "") or "",
             "deep_research_model": cfg.get("deep_research_model", "") or "",
@@ -1199,6 +1201,8 @@ class AdminObservabilityHandlers:
                 cfg["wiki_gate_model"] = _validate_model(body["wiki_gate_model"])
             if "studio_model" in body:
                 cfg["studio_model"] = _validate_model(body["studio_model"])
+            if "instruction_gen_model" in body:
+                cfg["instruction_gen_model"] = _validate_model(body["instruction_gen_model"])
             if "audio_overview_model" in body:
                 cfg["audio_overview_model"] = _validate_model(body["audio_overview_model"])
             if "code_graph_model" in body:

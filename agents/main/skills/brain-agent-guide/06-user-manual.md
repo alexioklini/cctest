@@ -397,6 +397,21 @@ jeweils passende bei Bedarf eigenständig, verlässt sich also direkt auf die
 Anweisungen ergänzt und wörtlich vorliegen soll; nutze Schritt 4 / Eingabe-
 ordner für einen durchsuchbaren Dokumentkorpus.
 
+**Anweisung mit KI erstellen** (im selben Dialog, Bereich „✨ Anweisung mit KI
+erstellen"): Statt die Projekt-Anweisung von Hand zu schreiben, beschreibst du
+kurz Ziel und gewünschtes Ergebnis des Projekts, klickst **Generieren** — und
+ein KI-Lauf verfasst die vollständige Anweisung. Er liest dabei die beigelegten
+Referenz-/Begleitdateien (Inhalt wird direkt verwendet, eine Vorlagendatei wird
+als verbindliche Ergebnis-Struktur übernommen), fragt das Projektwissen
+(eingelesene Ordner/Web-Quellen) ab und darf eine Webrecherche machen. Der
+Fortschritt (welche Datei gelesen, welche Abfrage läuft) wird live angezeigt;
+mit **Abbrechen** lässt sich der Lauf stoppen. Das Ergebnis wird zum **Prüfen**
+in den Editor geladen — gespeichert wird erst mit **Speichern** (nichts wird
+automatisch überschrieben). Welches Modell die Generierung nutzt, stellt der
+Admin unter **Einstellungen → Allgemein → Service-Modelle →
+„Projektanweisungen (KI-Generierung)"** ein; welche Werkzeuge der Lauf nutzen
+darf, steht in der Tool-Matrix in der Spalte **„Projektanweisung"**.
+
 Die Hilfe auf der Projekt-Einstellungsseite ist ein aufklappbarer
 „Hilfe"-Bereich.
 

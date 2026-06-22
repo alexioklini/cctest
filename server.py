@@ -1755,6 +1755,8 @@ class BrainAgentHandler(
             self._handle_research_runs_list(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/research/runs/" in path:
             self._handle_research_run_get(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/instruction-gen/" in path:
+            self._handle_project_instruction_gen_get(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path:
             self._handle_project_get(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):
@@ -2142,6 +2144,10 @@ class BrainAgentHandler(
             self._handle_project_full_resync(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-cancel"):
             self._handle_project_sync_cancel(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/generate-instructions"):
+            self._handle_project_generate_instructions(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/instruction-gen/" in path and path.endswith("/cancel"):
+            self._handle_project_instruction_gen_cancel(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/generate"):
             self._handle_project_generate(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/outputs/" in path and path.endswith("/rename"):
@@ -3625,6 +3631,14 @@ def main():
     _seeded = engine.seed_tool_purpose_states(server_config["tool_settings"])
     if _seeded:
         print(f"Tool settings: seeded per-use-case states for {_seeded} tool(s)")
+    # Backfill the `instruction_gen` purpose column on already-seeded installs
+    # (the one-time seed above skips records that already have a states map, so a
+    # purpose added later needs its own idempotent backfill). Non-members →
+    # inactive, members → their scalar state.
+    _bf = engine.backfill_purpose_column(
+        server_config["tool_settings"], "instruction_gen", engine._INSTRUCTION_GEN_TOOLS)
+    if _bf:
+        print(f"Tool settings: backfilled instruction_gen column for {_bf} tool(s)")
     _ts_after = json.dumps(server_config["tool_settings"], sort_keys=True)
     if _ts_before != _ts_after or persisted_during_init:
         try:

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.188.1"
+VERSION = "9.189.0"
 VERSION_DATE = "2026-06-22"
 CHANGELOG = [
+    ("9.189.0", "2026-06-22", "feat(projekte: Projektanweisungen mit KI erstellen): im Anweisungen-Dialog gibt es jetzt einen Modus 'Anweisung mit KI erstellen'. Der Nutzer beschreibt kurz Ziel/Ergebnis des Projekts; ein AGENTISCHER Lauf liest die beigelegten Referenz-/Begleitdateien (read_document), fragt das Projektwissen ab (mempalace_query + KG) und darf Webrecherche machen, und verfasst daraus eine vollstaendige Markdown-Projektanweisung. Ergebnis wird zum PRUEFEN in den Editor geladen (nicht automatisch gespeichert — review-before-save). Ersetzt den frueheren Handarbeits-Workflow (eigener Chat, Referenzdocs anhaengen, Anweisung schreiben lassen, ins Projekt kopieren — siehe Projekt 'risikoanalysen' + Chat 92ddc378). KERN ist der Meta-System-Prompt, der die ALLGEMEINE Bauweise guter Projektanweisungen traegt (Ziel/Liefergegenstand zuerst, Referenzdokumente benennen+WOFUER, Methodik als Schritt-fuer-Schritt, Datenquellen unterscheiden, EXAKTE Ergebnisvorlage, Rolle/Werkzeuge/QS/Glossar), sodass schon ein kurzer Intent ein Dokument mit der vollen Struktur-DNA ergibt. SITES: (1) engine/instruction_gen.py NEU — agentischer Worker (background_call, dedizierte purpose 'instruction_gen', max_rounds 12), Quellen-Preamble (nennt Datei-Diskpfade + listet Ordner/Web-URLs + Wing-Auszug), In-Memory-Fortschrittslog (transparente Schritte) + Cancel via turn_id. (2) brain.py — neue purpose 'instruction_gen' in _VALID_PURPOSES, Default-Toolset _INSTRUCTION_GEN_TOOLS (read/list/search + mempalace_query + 3 KG-Tools + web_fetch/exa/searxng), backfill_purpose_column() (idempotenter Spalten-Backfill fuer schon-geseedete Installs). (3) server.py — Boot ruft backfill_purpose_column fuer instruction_gen; 3 Routen (POST generate-instructions, GET instruction-gen/<id>, POST instruction-gen/<id>/cancel). (4) handlers/projects.py — 3 Handler (Start/Status/Cancel, require_manage, project-scoped). (5) server_lib/db.py — Tabelle project_instruction_gen + CRUD + Crash-Reconcile. (6) server_lib/tool_mcp.py — note_tool_call-Hook (uebersetzt Tool-Calls der instrgen-Session in lesbare Fortschrittsschritte). (7) handlers/admin_observability.py — dedizierter Service-Modelle-Slot 'Projektanweisungen (KI-Generierung)' (instruction_gen_model, leer = Hintergrund-Default). (8) web/js — api.js (3 Methoden), panels_projects.js (KI-Box + Generieren/Abbrechen + Live-Fortschritt/Fehler, fuellt Editor bei 'ready'), settings_general_tabs.js (Matrix-Spaltenlabel 'Projektanweisung'). Tool-Matrix-Spalte + Service-Modelle-Slot rendern generisch. py_compile aller Python-Dateien OK; js_gate GRUEN (eslint clean, net-globals 1461->1465 Baseline mitgezogen — 4 neue inline-gerufene Globals, smoke 5/5). Neustart noetig (Boot-Backfill + neue Tabelle/Routen/purpose)."),
     ("9.188.1", "2026-06-22", "fix(artifacts): heruntergeladene Binär-Artefakte (z.B. .docx) behalten ihren echten Namen statt einer Blob-UUID. SYMPTOM (Chat ac30edae): die generierte 'risikoanalyse M&P 2025.docx' lud über den Artefakt-Panel-Button als 'ba87c770-5cb3-45e3-ab2f-ad2737fee106.docx' herunter. URSACHE: downloadArtifactBlob (web/js/panels_artifacts.js) holte das auth'd Blob und rief `window.open(objUrl, '_blank')` — beim Download eines blob:-URL benennt der Browser die Datei nach der internen Blob-UUID; der `name`-Parameter wurde empfangen aber nie verwendet. Server-seitig war alles korrekt (/v1/artifacts/<id>/download sendet Content-Disposition filename=\"risikoanalyse M&P 2025.docx\", live verifiziert). FIX: statt window.open ein `<a download=\"<name>\">`-Element klicken; Dateiname bevorzugt aus dem Content-Disposition-Header (regex deckt BEIDE Formen ab — filename=\"…\" UND RFC-5987 filename*=UTF-8''… , decodeURIComponent), Fallback auf den übergebenen name, dann 'artifact' — nie die Blob-UUID. Extraktion gegen beide Header-Formen + No-Header-Fallback unit-verifiziert. NUR Frontend — kein Neustart, nur Hard-Refresh. js_gate GRÜN (eslint clean, net-globals unverändert, smoke 5/5)."),
     ("9.188.0", "2026-06-22", "fix(read_document): ein Ganz-Dokument-Read einer großen Datei sprengt nicht mehr das Kontextfenster im ersten Turn. SYMPTOM (Chat db2a5401): drei angehängte Regulator-Dokumente (Nationale Risikoanalyse 2025 PDF 3,3MB, aml-risikoanalyse PDF 693KB, WPB docx 759KB) + Prompt 'lies beide Dokumente und erstelle eine Projektanweisung' → Turn stirbt sofort mit Provider-400 'Prompt contains 274171 tokens, too large for model with 262144 maximum context length' (auch in einem späteren Fall 435423 Tokens nach 8 Runden/17 Tools). URSACHE: Anhänge werden korrekt auf Disk geroutet (NICHT inline), aber read_document gibt den Inhalt VERBATIM zurück (tool_mcp-Hartregel) — die 3,3MB-PDF extrahiert zu ~768k Zeichen / ~190k Tokens, also überfüllt EIN einziger Ganz-Read schon fast das Fenster; zwei Dokumente → Overflow. Der vorhandene Nachrichten-Budget-Clamp (_apply_tool_result_budget) ist auf dem interaktiven Pfad ein No-Op (Tool-Results leben ephemer im Sidecar, nie in session.messages), griff also nie. FIX: Single-Read-Größenwächter direkt im read_document-Rückgabepunkt (_ok_and_cache, engine/tools/file_tools.py) — überschreitet ein Ganz-Dokument-Read (kein pages/offset/limit/sheet/slides gesetzt) das Budget (_DOC_READ_BUDGET_CHARS, default 120k Zeichen ≈ 30k Tokens, via config.json conversion.read_document_budget_chars überschreibbar), wird der VOLLE (bereits anonymisierte) Text in den tool-results-Ordner der Session gespillt und nur eine 8k-Vorschau + format-passende Anweisung zurückgegeben (PDF → pages='1-10' weiterblättern; Text → offset/limit; oder die gespillte .fulltext.md grep-en) plus truncated/full_chars/full_text_path-Felder. Eine explizite pages/offset/limit-Auswahl bleibt unangetastet (das Modell narrowt bereits). Nichts geht verloren — es wird nur nicht alles in EINEN Prompt gezwungen; das Modell blättert das Dokument durch. LIVE VERIFIZIERT: Ganz-Read der 134k-Zeichen-docx → 9k-Vorschau + Spill + truncated=True; paged read (pages=1-5) → echter Inhalt, kein Spill; bestehende file_tools-Tests unverändert grün (die EINE Vorab-Fehlermeldung in test_simple_stdout ist ein bereits auf main bestehender tool_python_exec-NameError, NICHT von dieser Änderung). py_compile OK. Neustart nötig. ZUSÄTZLICH (gleicher Commit) ein dabei entdeckter Pre-Existing-Bug GEFIXT: tool_python_exec referenzierte ein nie definiertes `agent` (file_tools.py:2210) → NameError bei JEDEM python_exec-Aufruf (vom Charakterisierungstest gefangen); jetzt wie überall via get_request_context().current_agent aufgelöst. Test test_simple_stdout danach grün."),
     ("9.187.1", "2026-06-22", "fix(gdpr): die ZWEITE PII-Scan-Quelle beim Anhängen einer Datei wird jetzt auch vom Aus-Schalter erfasst. 9.187.0 sperrte den JS-Regex-Scan (PIIScanner.scan) + den Verlaufs-NER-Call, ABER das Anhängen einer Datei löste WEITERHIN einen serverseitigen Scan aus: files.js scanPendingAttachment() POSTet jede frisch angehängte Datei an /v1/attachments/scan — ein eigener Pfad, der state.piiScannerEnabled NICHT prüfte. Daher 'PII deaktiviert, trotzdem Scan' direkt nach dem Anhängen. FIX: scanPendingAttachment() bricht früh ab, wenn state.piiScannerEnabled===false, und markiert den Eintrag scan={state:'done',scanned:false,reason:'scanner_disabled'} (Send-Gate wartet nicht, kein Badge — 'scanner_disabled' ist weder in BLOCKING_REASONS noch in der Warn-Liste). Deckt alle drei Anhäng-Trigger ab (Datei-Picker, Drag&Drop, programmatisch) da alle über scanPendingAttachment laufen. LIVE VERIFIZIERT (Playwright gegen den laufenden Server, Scanner serverseitig aus): nach Anhängen → 0 Netz-Calls an /v1/attachments/scan UND /v1/gdpr/scan-text, Eintrag = done/scanner_disabled, Senden nicht blockiert; state.piiScannerEnabled=false + PIIScanner.policy.enabled=false korrekt aus /v1/services bezogen. js_gate GRÜN."),
@@ -1473,6 +1474,7 @@ def seed_tool_purpose_states(settings: dict) -> int:
         "memory_summary": set(_MEMORY_SUMMARY_TOOLS),
         "research_minimal": set(minimal),
         "helpdesk": set(_HELPDESK_TOOLS),
+        "instruction_gen": set(_INSTRUCTION_GEN_TOOLS),
     }
     changed = 0
     for name in TOOL_DISPATCH:
@@ -1493,6 +1495,36 @@ def seed_tool_purpose_states(settings: dict) -> int:
             else:
                 states[purpose] = "inactive"
         rec["states"] = states
+        changed += 1
+    return changed
+
+
+def backfill_purpose_column(settings: dict, purpose: str, members: set[str]) -> int:
+    """Idempotently ADD one purpose's `states` cell to every already-seeded tool
+    record (the one-time seed skips records that already have a states map, so a
+    NEW purpose added after first boot would otherwise be missing from the table
+    and fall through to each tool's scalar default — wrongly making everything
+    'active' for the new column). For each TOOL_DISPATCH tool that lacks a
+    states[purpose] entry, set it: members → the tool's scalar state (so a
+    globally-disabled tool stays disabled in its channel), non-members →
+    'inactive'. Records that ALREADY carry states[purpose] are left untouched
+    (admin edits preserved). Returns the number of cells added."""
+    changed = 0
+    for name in TOOL_DISPATCH:
+        rec = settings.get(name)
+        if not isinstance(rec, dict):
+            rec = empty_tool_setting()
+            settings[name] = rec
+        states = rec.get("states")
+        if not isinstance(states, dict):
+            states = {}
+            rec["states"] = states
+        if purpose in states:
+            continue  # already present (seeded or admin-set) — don't clobber
+        if name in members:
+            states[purpose] = _rec_tool_state(rec, default="active")
+        else:
+            states[purpose] = "inactive"
         changed += 1
     return changed
 
@@ -1591,13 +1623,34 @@ _HELPDESK_TOOLS = {
     "code_graph_query",
 }
 
+# instruction_gen — default read+research tool set for AI-generation of project
+# instructions. SEED only: once seeded into the per-purpose `states` table this
+# becomes admin-editable in the tool matrix (Tools-Einstellungen → column
+# "Projektanweisung"). The model WRITES the instruction document as its final
+# text, so no write/exec/email/git/delegation tools are included.
+_INSTRUCTION_GEN_TOOLS = {
+    # Read the project's reference/instruction files + ingested files.
+    "read_document", "read_file", "list_directory", "search_files",
+    # Project knowledge: semantic wing search + knowledge graph.
+    "mempalace_query",
+    "mempalace_kg_query", "mempalace_kg_search", "mempalace_kg_neighbors",
+    # Web research (the user may require a "umfassende Webrecherche").
+    "web_fetch", "exa_search", "searxng_search",
+}
+
 # research_minimal — harness-style lean purpose. Tools are discovered
 # dynamically by `minimal: True` flag on their TOOL_DEFINITIONS entry; each
 # such tool may also carry `minimal_role` (a one-line phrase composed into
 # the dynamic system prompt). Add a new tool to the purpose by setting these
 # two fields on its definition — no constant to update here. Validated
 # 2026-05-14 (Gate-PT-2) on gemma-4-e4b for autonomous research tasks.
-_VALID_PURPOSES = ("interactive", "transform", "memory_summary", "research_minimal", "helpdesk")
+# instruction_gen — AI-generation of project instructions (engine/instruction_gen.py).
+# A read+research-only purpose: the agent reads the project's reference files +
+# queries its wing/KG + may web-search, then WRITES the instruction document as
+# its final text (not via a tool). Its tool set is admin-configurable in the
+# per-use-case tool matrix (Service-/Tools-Einstellungen), seeded below to the
+# read/research tools. No file-write/email/git/python/delegation tools.
+_VALID_PURPOSES = ("interactive", "transform", "memory_summary", "research_minimal", "helpdesk", "instruction_gen")
 
 # Valid `tool_profile` values for a scheduled task. Empty string = "default"
 # (resolved to research_minimal at fire time, matching Phase A behavior).

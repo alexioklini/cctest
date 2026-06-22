@@ -289,6 +289,15 @@ def handle_tools_call(handler) -> None:
     tool_use_id = body.get("tool_use_id") or ""
     turn_id = ctx.get("turn_id") or ""
 
+    # Transparency hook for AI instruction-generation: record each tool call as a
+    # human-readable progress step so the dialog can show what the agent is doing
+    # live. No-op for any non-instruction-gen session (cheap prefix check inside).
+    try:
+        from engine import instruction_gen as _ig
+        _ig.note_tool_call(ctx.get("session_id") or "", name, args)
+    except Exception:
+        pass
+
     # Enforce the per-turn tool set. The sidecar only OFFERS the resolved tools,
     # but a model can still emit a tool_use for any name it knows (e.g.
     # read_file when only read_document was offered) — and _dispatch would run

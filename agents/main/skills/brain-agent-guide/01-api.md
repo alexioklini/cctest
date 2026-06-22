@@ -221,6 +221,15 @@ streaming call, per-USER history, fixed read-only tool set. See
   max 25 MB; manage-gated). Stored under instruction-files/, binaries get a .md
   companion; recorded in project.json instruction_files[]
 - `DELETE .../projects/<name>/instruction-files/<filename>` — remove one (manage)
+- `POST .../projects/<name>/generate-instructions` — `{prompt}` → start an
+  agentic KI run that WRITES the project instructions (reads the inlined
+  reference/instruction files, queries the project wing/KG, may web-search;
+  purpose `instruction_gen`, admin-configurable tool set + model). Returns
+  `{gen_id}`. Result is loaded into the editor for review — NOT auto-saved (manage)
+- `GET .../projects/<name>/instruction-gen/<gen_id>` — poll: `{status (generating|
+  ready|error|cancelled), phase, model, error, result_md (only when ready),
+  steps[] (live tool-call log)}`
+- `POST .../projects/<name>/instruction-gen/<gen_id>/cancel` — abort the run (manage)
 - `GET .../projects/<name>/image` — project thumbnail
 - `POST .../projects/<name>/generate` — generate a grounded output from the
   project's sources. Body `{kind: study_guide|briefing|faq|timeline|audio_overview,

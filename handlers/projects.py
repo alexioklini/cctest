@@ -1271,6 +1271,83 @@ class ProjectsHandlerMixin:
         self._send_json({"status": "deleted", "filename": fname,
                          "instruction_files": files})
 
+    # ----- AI-generation of project instructions (agentic, review-before-save) -----
+    # Replaces the manual workflow (open a chat, attach the reference docs, prompt
+    # the agent to write a project-instruction document, paste the result into the
+    # project view). The agent reads the project's reference/instruction files +
+    # queries its wing/KG + may web-search, then writes the markdown. The result
+    # is loaded into the instructions editor for review + Save — NOT auto-applied.
+
+    def _handle_project_generate_instructions(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/generate-instructions
+        Body: {prompt}. Spawns the agentic generation worker, returns {gen_id}."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        body = self._read_json() or {}
+        user_prompt = str(body.get("prompt") or "").strip()
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        from engine import instruction_gen
+        gen_id = instruction_gen.start_generation(
+            agent_id=agent_id, project=project, user_prompt=user_prompt,
+            user_id=user["id"])
+        self._send_json({"gen_id": gen_id, "status": "generating"})
+
+    def _handle_project_instruction_gen_get(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/instruction-gen/{gen_id}
+        Poll target: status + phase + live step log (+ result_md when ready)."""
+        from server_lib.db import ChatDB
+        from engine import instruction_gen
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        gen_id = path.rstrip("/").split("/")[-1]
+        if not agent_id or not proj_name or not gen_id:
+            self._send_json({"error": "Missing parameters"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        row = ChatDB.get_instruction_gen(gen_id)
+        if not row or row.get("project_id") != (project.get("id") or ""):
+            self._send_json({"error": "Generation not found"}, 404)
+            return
+        self._send_json({
+            "gen_id": gen_id,
+            "status": row.get("status", ""),
+            "phase": row.get("phase", "") or "",
+            "model": row.get("model", "") or "",
+            "error": row.get("error", "") or "",
+            # result_md only when ready (avoid streaming a half-baked draft).
+            "result_md": row.get("result_md", "") if row.get("status") == "ready" else "",
+            "steps": instruction_gen.get_steps(gen_id),
+        })
+
+    def _handle_project_instruction_gen_cancel(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/instruction-gen/{gen_id}/cancel"""
+        from server_lib.db import ChatDB
+        from engine import instruction_gen
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        parts = path.rstrip("/").split("/")
+        gen_id = parts[-2] if len(parts) >= 2 else ""   # …/{gen_id}/cancel
+        if not agent_id or not proj_name or not gen_id:
+            self._send_json({"error": "Missing parameters"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        row = ChatDB.get_instruction_gen(gen_id)
+        if not row or row.get("project_id") != (project.get("id") or ""):
+            self._send_json({"error": "Generation not found"}, 404)
+            return
+        instruction_gen.request_cancel(gen_id)
+        self._send_json({"gen_id": gen_id, "status": "cancelling"})
+
     def _handle_multipart_ingest(self, agent_id: str, project_name) -> dict:
         """Parse multipart/form-data upload and ingest the file."""
         content_type = self.headers.get("Content-Type", "")

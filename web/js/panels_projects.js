@@ -1372,6 +1372,25 @@ function editProjectInstructions() {
         Projekt streng auf Basis der Unterlagen antwortet, stellst du separat
         über den <em>Recherchemodus</em> ein.
       </p>
+
+      <div id="instr-ai-box" style="border:1px solid var(--border-100);border-radius:8px;padding:12px;margin-bottom:14px;background:var(--bg-200)">
+        <div style="font-weight:600;font-size:13px;margin-bottom:4px">✨ Anweisung mit KI erstellen</div>
+        <p style="font-size:12px;color:var(--text-400);margin:0 0 10px">
+          Beschreibe kurz Ziel und gewünschtes Ergebnis des Projekts. Die KI liest
+          die beigelegten Referenzdateien sowie die eingelesenen Quellen und
+          verfasst daraus eine vollständige Projektanweisung. Das Ergebnis wird
+          unten zum Prüfen eingefügt – gespeichert wird erst mit „Speichern“.
+        </p>
+        <textarea id="instr-ai-prompt" rows="3"
+          style="width:100%;box-sizing:border-box;font-size:13px;padding:8px;border:1px solid var(--border-100);border-radius:6px;resize:vertical"
+          placeholder="z. B. Erstelle Risikoanalysen für Kunden/Partner der WPB. Ergebnis im Format der beigelegten Referenz-Word-Datei; Methodik aus den Regulator-Dokumenten; zusätzlich Webrecherche."></textarea>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+          <button class="btn-primary" type="button" id="instr-ai-generate-btn" onclick="generateProjectInstructionsAI()">Generieren</button>
+          <button class="btn-secondary" type="button" id="instr-ai-cancel-btn" onclick="cancelProjectInstructionsAI()" style="display:none">Abbrechen</button>
+        </div>
+        <div id="instr-ai-progress" style="display:none;margin-top:10px;font-size:12px"></div>
+      </div>
+
       <div class="instr-tabs" role="tablist">
         <button class="instr-tab active" id="instr-tab-edit" role="tab" onclick="switchInstrTab('edit')">Bearbeiten</button>
         <button class="instr-tab" id="instr-tab-preview" role="tab" onclick="switchInstrTab('preview')">Vorschau</button>
@@ -1979,6 +1998,107 @@ async function saveProjectInstructions() {
   } catch(e) {
     showToast('Anweisungen konnten nicht gespeichert werden');
   }
+}
+
+// ─── AI-generation of project instructions (agentic, review-before-save) ──────
+// state._instrGen = { id, poll, agentId, projectName } while a run is active.
+function _instrAiSetRunning(running) {
+  const genBtn = document.getElementById('instr-ai-generate-btn');
+  const cancelBtn = document.getElementById('instr-ai-cancel-btn');
+  const promptEl = document.getElementById('instr-ai-prompt');
+  if (genBtn) { genBtn.disabled = running; genBtn.textContent = running ? 'Generiert …' : 'Generieren'; }
+  if (cancelBtn) cancelBtn.style.display = running ? '' : 'none';
+  if (promptEl) promptEl.disabled = running;
+}
+
+function _instrAiRenderProgress(data) {
+  const box = document.getElementById('instr-ai-progress');
+  if (!box) return;
+  box.style.display = '';
+  const steps = (data && data.steps) || [];
+  const status = (data && data.status) || '';
+  const ICON = { phase: '▸', tool: '⚙', info: 'ℹ', error: '✕' };
+  let html = steps.map(s => {
+    const col = s.kind === 'error' ? 'var(--danger,#dc2626)'
+      : s.kind === 'tool' ? 'var(--text-300)' : 'var(--text-200)';
+    return `<div style="color:${col};padding:1px 0">${esc(ICON[s.kind] || '·')} ${esc(s.text || '')}</div>`;
+  }).join('');
+  if (status === 'generating' || !status) {
+    html += `<div style="color:var(--text-400);padding:2px 0">⏳ Läuft …</div>`;
+  } else if (status === 'error') {
+    html += `<div style="color:var(--danger,#dc2626);font-weight:600;padding:2px 0">Fehler: ${esc(data.error || 'unbekannt')}</div>`;
+  } else if (status === 'cancelled') {
+    html += `<div style="color:var(--text-400);padding:2px 0">Abgebrochen.</div>`;
+  } else if (status === 'ready') {
+    html += `<div style="color:var(--success);font-weight:600;padding:2px 0">✓ Fertig — Ergebnis unten eingefügt.</div>`;
+  }
+  box.innerHTML = html;
+  box.scrollTop = box.scrollHeight;
+}
+
+async function generateProjectInstructionsAI() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  const promptEl = document.getElementById('instr-ai-prompt');
+  if (!agentId || !projectName || !promptEl) return;
+  const prompt = promptEl.value.trim();
+  if (state._instrGen && state._instrGen.poll) return;  // already running
+  _instrAiSetRunning(true);
+  _instrAiRenderProgress({ status: 'generating', steps: [{ kind: 'phase', text: 'Wird gestartet …' }] });
+  let genId = '';
+  try {
+    const r = await API.generateProjectInstructions(agentId, projectName, prompt);
+    if (r && r.error) throw new Error(r.error);
+    genId = r && r.gen_id;
+  } catch (e) {
+    _instrAiSetRunning(false);
+    _instrAiRenderProgress({ status: 'error', error: (e && e.message) || 'Start fehlgeschlagen', steps: [] });
+    return;
+  }
+  if (!genId) { _instrAiSetRunning(false); return; }
+  state._instrGen = { id: genId, agentId, projectName, poll: null };
+
+  const tick = async () => {
+    // Stale guard: modal closed or a different run started → stop polling.
+    if (!state._instrGen || state._instrGen.id !== genId
+        || !document.getElementById('instr-ai-progress')) {
+      if (state._instrGen && state._instrGen.poll) clearInterval(state._instrGen.poll);
+      if (state._instrGen && state._instrGen.id === genId) state._instrGen = null;
+      return;
+    }
+    let data;
+    try {
+      data = await API.getInstructionGen(agentId, projectName, genId);
+    } catch (e) { return; }  // transient — keep polling
+    _instrAiRenderProgress(data);
+    if (['ready', 'error', 'cancelled'].includes(data.status)) {
+      clearInterval(state._instrGen.poll);
+      state._instrGen = null;
+      _instrAiSetRunning(false);
+      if (data.status === 'ready' && data.result_md) {
+        const ta = document.getElementById('project-instructions-textarea');
+        if (ta) {
+          ta.value = data.result_md;
+          // If preview is open, refresh it.
+          if (typeof switchInstrTab === 'function'
+              && document.getElementById('instr-tab-preview')?.classList.contains('active')) {
+            switchInstrTab('preview');
+          }
+        }
+        showToast('Anweisung erstellt — bitte prüfen und speichern');
+      }
+    }
+  };
+  state._instrGen.poll = setInterval(tick, 1200);
+  tick();
+}
+
+async function cancelProjectInstructionsAI() {
+  if (!state._instrGen) return;
+  const { id, agentId, projectName } = state._instrGen;
+  try {
+    await API.cancelInstructionGen(agentId, projectName, id);
+  } catch (e) { /* best-effort */ }
 }
 
 // ─── Project member-picker helpers ───────────────────────────────
