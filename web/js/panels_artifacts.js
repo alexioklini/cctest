@@ -615,14 +615,28 @@ async function renderArtifactDocument(artifactId, version, name, ext) {
     </div>`;
 }
 
-// Open a binary artifact in a new tab from an auth'd blob (download URL is
-// Bearer-only). Shared by the document file card.
+// Download a binary artifact from an auth'd blob (download URL is Bearer-only).
+// Shared by the document file card. Uses an <a download="<name>"> so the file
+// saves with its REAL name — `window.open(blobUrl)` names the download by the
+// blob's internal UUID (e.g. ba87c770-….docx), losing the artifact's name.
 async function downloadArtifactBlob(artifactId, version, name) {
   try {
     const resp = await fetch(API.getArtifactDownloadUrl(artifactId, version), { headers: API._headers() });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    // Prefer the server's Content-Disposition filename; fall back to the passed
+    // name, then a generic default — never the blob UUID.
+    let filename = name || 'artifact';
+    const disp = resp.headers.get('Content-Disposition') || '';
+    const m = /filename\*=UTF-8''([^;]+)|filename="([^"]+)"/.exec(disp);
+    if (m) filename = decodeURIComponent(m[1] || m[2] || filename);
     const objUrl = URL.createObjectURL(await resp.blob());
-    window.open(objUrl, '_blank', 'noopener');
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
   } catch (e) {
     showToast('Öffnen fehlgeschlagen: ' + (e.message || e), true);
   }
