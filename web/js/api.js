@@ -383,7 +383,13 @@ class API {
     };
     if (model) body.model = model;
     if (state.planModeActive) body.mode = 'plan';
-    if (state.thinkingLevel && state.thinkingLevel !== 'none') body.thinking = state.thinkingLevel;
+    // Thinking level is per-chat. Always send the active chat's value (incl.
+    // 'none') so the server persists it onto the session — a reload then
+    // restores exactly what the user chose, including an explicit "off".
+    {
+      const _tl = (state.activeChat && state.activeChat.thinkingLevel) || 'none';
+      body.thinking = _tl;
+    }
     if (state.currentProject) body.project = state.currentProject;
     if (images && images.length) {
       body.images = images.map(i => ({data: i.data, media_type: i.type}));

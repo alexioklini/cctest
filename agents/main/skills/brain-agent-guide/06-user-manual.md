@@ -102,14 +102,26 @@ Tokens); Aufrufe von vor der Einführung dieser Funktion erscheinen als
 - 🪨 Caveman-Modus (knappe Antworten)
 
 **Standard vs. gemerkter Zustand:** Ein **neuer Chat** startet immer auf
-**Standardwerten** — das Standard-/Agenten-Modell (nie das zuletzt benutzte),
-Caveman aus, Gedächtnis-Modus auf der Server-Voreinstellung. Beim **Wieder-
-öffnen eines bestehenden Chats** wird dagegen der **letzte Zustand dieses
-Chats** wiederhergestellt: das im letzten Zug verwendete Modell sowie der
-gespeicherte Caveman- und Gedächtnis-Modus. Ein neuer Chat ist außerdem immer
-**allgemein (ohne Projekt)** — projektgebunden nur, wenn er **innerhalb eines
-Projekts** gestartet wird. Eine **Übergabe** erbt den Modus des Ursprungs-Chats
-(projektgebunden bleibt im Projekt, allgemein bleibt allgemein).
+**Standardwerten** — das Standard-/Agenten-Modell (nie das zuletzt benutzte)
+sowie **Denk-Stufe, Caveman-Modus und Gedächtnis-Modus** auf der konfigurierten
+Voreinstellung (nie vom letzten Chat übernommen). Beim **Wiederöffnen eines
+bestehenden Chats** wird dagegen der **letzte Zustand dieses Chats**
+wiederhergestellt: das im letzten Zug verwendete Modell (war es „✨ Smart/Auto",
+bleibt es Auto) sowie die gespeicherte **Denk-Stufe, Caveman- und Gedächtnis-
+Stufe** dieses Chats. Die drei Standardwerte legst du **pro Konto** in
+**Benutzereinstellungen → Memory → „Eingabefeld-Standards für neue Chats"**
+fest (Denk-Stufe, Caveman; der Gedächtnis-Standard steht direkt darüber unter
+„Standard für neue Chats"). „Server-Standard verwenden" erbt jeweils die
+globale Admin-Vorgabe (Einstellungen → Allgemein → Server → „Eingabefeld-
+Standards (global)"). Auflösung: dein Konto-Wert → globaler Wert → aus. Ein neuer Chat ist außerdem immer **allgemein (ohne Projekt)** —
+projektgebunden nur, wenn er **innerhalb eines Projekts** gestartet wird. Eine
+**Übergabe** erbt den Modus des Ursprungs-Chats (projektgebunden bleibt im
+Projekt, allgemein bleibt allgemein).
+
+Die **Denk-Stufe** ist pro Chat: sie wird beim Wiederöffnen wiederhergestellt
+und gilt auch auf „✨ Smart/Auto" — dort wird die gewählte Stufe „best effort"
+auf das vom Auto-Router gewählte Modell angewendet (Modelle ohne Reasoning
+ignorieren sie, Modelle mit nur An/Aus klemmen auf „Hoch").
 
 **Brainy** — die schwebende Sprechblase unten rechts (in jeder Ansicht).
 Brainy ist ein **schreibgeschützter** Helpdesk-Assistent: er kennt diese

@@ -684,6 +684,22 @@ function renderUserSettingsMemory(body) {
   const hourOpts = Array.from({length: 24}, (_, i) => ({
     value: String(i), label: `${String(i).padStart(2, '0')}:00 Ortszeit`,
   }));
+  // Per-user new-chat composer defaults. '' = inherit the global default
+  // (Admin → General Settings → Server → Eingabefeld-Standards).
+  const thinkingOpts = [
+    {value: '', label: 'Server-Standard verwenden'},
+    {value: 'none', label: 'Aus'},
+    {value: 'low', label: 'Niedrig'},
+    {value: 'medium', label: 'Mittel'},
+    {value: 'high', label: 'Hoch'},
+  ];
+  const cavemanOpts = [
+    {value: '', label: 'Server-Standard verwenden'},
+    {value: '0', label: 'Aus'},
+    {value: '1', label: 'Lite'},
+    {value: '2', label: 'Voll'},
+    {value: '3', label: 'Ultra'},
+  ];
   body.innerHTML = `
     <div style="max-width:520px">
       <h3 style="margin:0 0 4px 0;font-size:15px">Memory-Standardwerte</h3>
@@ -698,6 +714,19 @@ function renderUserSettingsMemory(body) {
         prefs.memory_sched_default == null ? '' : String(prefs.memory_sched_default),
         schedOpts,
         'Ob der Miner die von Ihren geplanten Tasks erzeugten Artefakte ablegt. „Aus“ belässt sie nur auf der Festplatte.')}
+      <hr style="border:none;border-top:1px solid var(--border-light);margin:18px 0">
+      <h3 style="margin:0 0 4px 0;font-size:15px">Eingabefeld-Standards für neue Chats</h3>
+      <div style="font-size:12px;color:var(--text-400);margin-bottom:12px">
+        Werte, mit denen ein <b>neuer</b> Chat startet. „Server-Standard verwenden“ übernimmt die globale Vorgabe des Administrators. Beim Wiederöffnen eines bestehenden Chats wird immer dessen eigener gespeicherter Stand wiederhergestellt — diese Standardwerte gelten nur für frische Chats und sind pro Chat weiter umschaltbar.
+      </div>
+      ${_us_select('Denk-Stufe', 'us-thinking-default',
+        prefs.thinking_level_default == null ? '' : String(prefs.thinking_level_default),
+        thinkingOpts,
+        'Auf „✨ Smart/Auto“ wird die Stufe best-effort auf das gewählte Modell angewendet.')}
+      ${_us_select('Caveman-Modus', 'us-caveman-default',
+        prefs.caveman_mode_default == null ? '' : String(prefs.caveman_mode_default),
+        cavemanOpts,
+        'Knappheit der Antworten in neuen Chats.')}
       <hr style="border:none;border-top:1px solid var(--border-light);margin:18px 0">
       <h3 style="margin:0 0 4px 0;font-size:15px">Memory aus dem Chat-Verlauf</h3>
       <div style="font-size:12px;color:var(--text-400);margin-bottom:12px">
@@ -823,6 +852,8 @@ async function userProfileReset() {
 async function saveUserSettingsMemory() {
   const memChats = document.getElementById('us-mem-chats')?.value;
   const memSched = document.getElementById('us-mem-sched')?.value;
+  const thinkDef = document.getElementById('us-thinking-default')?.value;
+  const cavemanDef = document.getElementById('us-caveman-default')?.value;
   const dailyEnabled = !!document.getElementById('us-daily-enabled')?.checked;
   const dailyHour = parseInt(document.getElementById('us-daily-hour')?.value || '6', 10);
   const msg = document.getElementById('us-mem-msg');
@@ -830,6 +861,8 @@ async function saveUserSettingsMemory() {
   const prefs = {
     memory_chats_default: memChats === '' ? null : parseInt(memChats, 10),
     memory_sched_default: memSched === '' ? null : parseInt(memSched, 10),
+    thinking_level_default: thinkDef === '' ? null : thinkDef,
+    caveman_mode_default: cavemanDef === '' ? null : parseInt(cavemanDef, 10),
     daily_summary_enabled: dailyEnabled,
     daily_summary_hour_local: dailyHour,
   };

@@ -24,7 +24,12 @@ const state = {
   // Chat state
   currentProject: null,
   planModeActive: false,
-  thinkingLevel: localStorage.getItem('thinking-level') || 'none',
+  // Server-provided new-chat composer defaults (loaded on init from
+  // /v1/composer/defaults). thinking_level/caveman_mode live in config.json
+  // → composer_defaults; memory_mode mirrors the classifier default_mode.
+  // Thinking level is now PER-CHAT (chat.thinkingLevel), restored on reload +
+  // reset to this default on a new chat — no longer a single global.
+  composerDefaults: { thinking_level: 'none', caveman_mode: 0, memory_mode: 0 },
   // Privacy-first default: GDPR details + inline highlights stay hidden
   // until the user explicitly opts in via the composer toggle. Only the
   // Datenschutz statistics header (count of anonymisations / de-anonymisations)
@@ -80,19 +85,47 @@ const state = {
     return agent?.model || (this.models.length ? this.models[0].id || this.models[0] : '');
   },
 
-  // Default memory mode for a fresh chat, from the server-provided classifier
-  // default. Returned as the per-chat shape {saveToMemory, memoryMode}.
-  defaultMemoryMode() {
-    const defMode = parseInt((this.mempalaceClassifier || {}).default_mode) || 0;
+  // Default composer modes for a FRESH chat — memory, caveman, thinking.
+  // Two-tier resolution (same model as the existing memory default):
+  //   per-user preference (User Settings) → global default (composer_defaults)
+  //   → off. NEVER the last chat's values and NEVER localStorage. Returned in
+  // the per-chat shape used across the composer.
+  defaultComposerModes() {
+    const cd = this.composerDefaults || {};
+    const prefs = (this.authUser || {}).preferences || {};
+
+    // Memory: per-user memory_chats_default (null = inherit) → global → off.
+    let memMode;
+    if (prefs.memory_chats_default !== undefined && prefs.memory_chats_default !== null) {
+      memMode = parseInt(prefs.memory_chats_default) || 0;
+    } else if (cd.memory_mode !== undefined && cd.memory_mode !== null) {
+      memMode = parseInt(cd.memory_mode) || 0;
+    } else {
+      memMode = parseInt((this.mempalaceClassifier || {}).default_mode) || 0;
+    }
+
+    // Thinking: per-user thinking_level_default (null = inherit) → global → none.
+    let tl = (prefs.thinking_level_default != null && prefs.thinking_level_default !== '')
+      ? String(prefs.thinking_level_default).toLowerCase()
+      : String(cd.thinking_level || 'none').toLowerCase();
+    if (!['none', 'low', 'medium', 'high'].includes(tl)) tl = 'none';
+
+    // Caveman: per-user caveman_mode_default (null = inherit) → global → 0.
+    const cav = (prefs.caveman_mode_default != null && prefs.caveman_mode_default !== '')
+      ? parseInt(prefs.caveman_mode_default) || 0
+      : parseInt(cd.caveman_mode) || 0;
+
     return {
-      saveToMemory: defMode === 1,
-      memoryMode: defMode === 1 ? 'on' : defMode === 2 ? 'auto' : 'off',
+      saveToMemory: memMode === 1,
+      memoryMode: memMode === 1 ? 'on' : memMode === 2 ? 'auto' : 'off',
+      cavemanMode: Math.max(0, Math.min(3, cav)),
+      thinkingLevel: tl,
     };
   },
 
   ensureAgentChat(agentId) {
     if (!this.agentChats[agentId]) {
-      const mem = this.defaultMemoryMode();
+      const def = this.defaultComposerModes();
       this.agentChats[agentId] = {
         sessionId: null,
         agent: agentId,
@@ -105,9 +138,10 @@ const state = {
         files: [],
         _streamStartTime: null,
         _streamTimerInterval: null,
-        saveToMemory: mem.saveToMemory,
-        memoryMode: mem.memoryMode,
-        cavemanMode: 0,
+        saveToMemory: def.saveToMemory,
+        memoryMode: def.memoryMode,
+        cavemanMode: def.cavemanMode,
+        thinkingLevel: def.thinkingLevel,
         chatTitle: '',
         chatSummary: '',
         _summaryOpen: false,

@@ -4052,5 +4052,9 @@
   "audio_overview_model": "CLIProxyAPI/mistral-small-latest",
   "code_graph_model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit",
   "deep_research_model": "CLIProxyAPI/mistral-medium-3.5",
-  "wiki_gate_model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit"
+  "wiki_gate_model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit",
+  "composer_defaults": {
+    "thinking_level": "none",
+    "caveman_mode": 0
+  }
 }

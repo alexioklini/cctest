@@ -578,6 +578,13 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN chat_audio_overview TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Per-session thinking level (migration): '' = unset (use default at
+            # send time), else 'none'|'low'|'medium'|'high'. Sticky across turns
+            # of the same session, restored on reload (mirrors caveman_mode).
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN thinking_level TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             # ── MemPalace chat-sync cursor ──
             # Tracks which messages have already been mirrored into MemPalace,
             # per session. `last_message_id` is the highest messages.id filed so far.
@@ -2115,6 +2122,18 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET caveman_mode = ? WHERE id = ?",
                         (int(value), session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_thinking_level(session_id, value):
+        """Update per-session thinking level: '' (unset) | none | low | medium | high."""
+        lvl = str(value or "").lower().strip()
+        if lvl not in ("", "none", "low", "medium", "high"):
+            lvl = ""
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET thinking_level = ? WHERE id = ?",
+                        (lvl, session_id))
             conn.commit()
 
     @staticmethod

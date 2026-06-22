@@ -3271,7 +3271,15 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 # not the last working model. The model that actually answered
                 # is recorded in the assistant message metadata, so nothing is
                 # lost. Falls back to "auto-cloud" if the stash is missing.
-                if auto_route:
+                #
+                # Gate on want_auto, NOT `auto_route`: on a CONCRETE-model turn
+                # the LLM classifier still builds an `auto_route` dict tagged
+                # classifier_only=True (so the inspector button shows the tool
+                # decision). That is not a model pick — treating it as Auto here
+                # would re-freeze the stale directive and lose the manual model
+                # on reload (the original bug). want_auto is True iff the
+                # composer model itself was an Auto directive.
+                if want_auto:
                     _directive = getattr(session, "_composer_auto_model", "") or "auto-cloud"
                     with session.lock:
                         session.model = _directive
@@ -3282,6 +3290,30 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                             session.project or "", user_id=session.user_id)
                     except Exception:
                         pass
+                else:
+                    # Manual / concrete model turn (no per-turn router). The user
+                    # may have switched the composer to a concrete model on an
+                    # existing session — that pick lived only in session.model
+                    # in-memory and was never written back, so reopening the chat
+                    # read the stale creation value (e.g. a leftover "auto-cloud")
+                    # and wrongly showed Smart mode. Persist the model that
+                    # actually ran so reload shows the last used model. Guard: only
+                    # for a real concrete id (never an auto directive) and only on
+                    # a change, to avoid a needless write every turn.
+                    _used = session.model or ""
+                    if _used and not _parse_auto_directive(_used)[0]:
+                        try:
+                            _stored = (ChatDB.get_session_info(session.id) or {}).get("model", "")
+                        except Exception:
+                            _stored = ""
+                        if _used != _stored:
+                            try:
+                                ChatDB.save_session(session.id, session.agent_id, _used,
+                                                    session.title, session.status,
+                                                    session.created_at, session.last_active,
+                                                    session.project or "", user_id=session.user_id)
+                            except Exception:
+                                pass
                 try:
                     ChatDB.set_streaming_text(sid, "")  # finalized — clear the partial
                 except Exception:
@@ -3845,6 +3877,25 @@ class ChatHandlerMixin:
         if not message:
             self._send_json({"error": "No message"}, 400)
             return
+
+        # Per-session thinking level. The client sends body.thinking from the
+        # composer; when present we persist it onto the session so a reload
+        # restores the same level (mirrors caveman_mode). When absent (e.g. a
+        # non-UI caller), fall back to the session's stored value so the turn
+        # still honours the chat's chosen level.
+        if thinking_level is None:
+            thinking_level = getattr(session, "thinking_level", "") or None
+        else:
+            _tl_norm = str(thinking_level or "").lower().strip()
+            if _tl_norm not in ("none", "low", "medium", "high"):
+                _tl_norm = ""
+            if (getattr(session, "thinking_level", "") or "") != _tl_norm:
+                with session.lock:
+                    session.thinking_level = _tl_norm
+                try:
+                    ChatDB.update_session_thinking_level(session.id, _tl_norm)
+                except Exception:
+                    pass
 
         # Custom command expansion
         if message.startswith("/"):

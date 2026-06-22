@@ -75,6 +75,12 @@ PREFERENCE_DEFAULTS = {
     "communication_preferences": "",
     "memory_chats_default": None,
     "memory_sched_default": None,
+    # Per-user new-chat composer defaults. None = use the global default
+    # (config.json → composer_defaults); else override for this user. A fresh
+    # chat starts on: per-user pref → global → off. Restored-on-reload state is
+    # per-session and unaffected by these.
+    "thinking_level_default": None,   # None | "none"|"low"|"medium"|"high"
+    "caveman_mode_default": None,     # None | 0|1|2|3
     "daily_summary_enabled": False,
     "daily_summary_hour_local": 6,
     # Cosmetic ASCII companion shown in the chat spinner + welcome screen.
@@ -127,6 +133,23 @@ def _coerce_pref(key: str, value):
             raise ValueError(f"{key} must be 0|1|2|null")
         if iv not in (0, 1, 2):
             raise ValueError(f"{key} must be 0|1|2|null")
+        return iv
+    if key == "thinking_level_default":
+        if value is None or value == "":
+            return None
+        s = str(value).strip().lower()
+        if s not in ("none", "low", "medium", "high"):
+            raise ValueError("thinking_level_default must be none|low|medium|high|null")
+        return s
+    if key == "caveman_mode_default":
+        if value is None or value == "":
+            return None
+        try:
+            iv = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("caveman_mode_default must be 0|1|2|3|null")
+        if iv not in (0, 1, 2, 3):
+            raise ValueError("caveman_mode_default must be 0|1|2|3|null")
         return iv
     if key == "buddy_species":
         s = (value or "").strip().lower() if isinstance(value, str) else ""

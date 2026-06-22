@@ -592,6 +592,16 @@ function _thinkingOptionsForModel(modelId) {
 // so the caller can disable the control.
 function _thinkingOptionsForFormat(fmt) {
   if (fmt === 'none' || !fmt) return null;
+  if (fmt === 'auto') {
+    // Smart (Lokal|Cloud): effective model unknown until turn time. Offer the
+    // full set; the server applies the level best-effort to the picked model.
+    return {options: [
+      {value:'none',label:'Off'},
+      {value:'low',label:'Low'},
+      {value:'medium',label:'Medium'},
+      {value:'high',label:'High'},
+    ], note: "Wird auf das vom Auto-Router gewählte Modell best-effort angewendet."};
+  }
   if (fmt === 'inline_tags') {
     return {options: [{value:'none',label:'Off'},{value:'high',label:'An'}],
             note: "Nur Denken an/aus — keine abgestuften Stufen."};

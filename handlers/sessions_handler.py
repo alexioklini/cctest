@@ -148,6 +148,7 @@ class SessionsHandlerMixin:
             resp["title"] = session.title or ""
             resp["caveman_mode"] = session.caveman_mode
             resp["save_to_memory"] = int(getattr(session, "save_to_memory", 0) or 0)
+            resp["thinking_level"] = getattr(session, "thinking_level", "") or ""
             resp["project"] = session.project or ""
             resp["workflow_run_id"] = getattr(session, "workflow_run_id", "") or ""
             _rmo = getattr(session, "research_mode_override", None)
@@ -172,6 +173,7 @@ class SessionsHandlerMixin:
                 resp["title"] = info.get("title", "")
                 resp["caveman_mode"] = int(info.get("caveman_mode", 0) or 0)
                 resp["save_to_memory"] = int(info.get("save_to_memory", 0) or 0)
+                resp["thinking_level"] = info.get("thinking_level", "") or ""
                 resp["project"] = info.get("project", "") or ""
                 resp["workflow_run_id"] = info.get("workflow_run_id", "") or ""
                 _rmo_db = info.get("research_mode_override", None)
@@ -1119,6 +1121,15 @@ class SessionsHandlerMixin:
             # Cache invalidation no longer needed: caveman level lives outside
             # the cache key as post-processing on the cached base prose.
             self._send_json({"status": "ok", "caveman_mode": mode, "session_id": sid})
+        elif action == "thinking_level":
+            lvl = str(body.get("level", "") or "").lower().strip()
+            if lvl not in ("", "none", "low", "medium", "high"):
+                lvl = ""
+            ChatDB.update_session_thinking_level(sid, lvl)
+            s = sessions.get(sid)
+            if s:
+                s.thinking_level = lvl
+            self._send_json({"status": "ok", "thinking_level": lvl, "session_id": sid})
         elif action == "allow_further_web":
             allow = bool(body.get("value"))
             ChatDB.update_session_allow_further_web(sid, allow)

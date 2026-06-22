@@ -558,6 +558,7 @@ class AuthHandlerMixin:
         "/v1/services/telegram",
         "/v1/settings/commands",
         "/v1/mempalace/classifier",
+        "/v1/composer/defaults",
         "/v1/warmup/trigger",
         "/v1/backup",
         "/v1/restore",

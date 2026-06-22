@@ -26,6 +26,9 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
 - `POST /v1/auth/preferences` — merge-update `users.preferences` JSON
   (keys: `greeting_name`, `job_description`, `communication_preferences`,
   `memory_chats_default`, `memory_sched_default`,
+  `thinking_level_default` (null|none|low|medium|high),
+  `caveman_mode_default` (null|0..3) — per-user new-chat composer defaults,
+  null = inherit the global `composer_defaults`,
   `daily_summary_enabled`, `daily_summary_hour_local`)
 - `GET /v1/auth/me` — current user
 - `GET /v1/auth/users` — admin: list all users
@@ -153,10 +156,13 @@ streaming call, per-USER history, fixed read-only tool set. See
   `{agent, model, title?, project?, project_id?}`
 - `POST /v1/sessions/manage` — bulk ops:
   `action: "delete" | "archive" | "rename" | "set_visibility" |
-   "set_project" | "set_save_to_memory" | "memorize_turns" |
+   "set_project" | "set_save_to_memory" | "caveman_mode" |
+   "thinking_level" | "memorize_turns" |
    "purge_turns" | "allow_further_web" | ...`. Body keys depend on action;
    see `04-recipes.md`. `allow_further_web {value}` toggles the sticky
    per-session escape hatch that lifts the Websuche tool lockout.
+   `caveman_mode {mode:0..3}` + `thinking_level {level:"none"|"low"|"medium"|"high"}`
+   persist the per-session composer toggles (restored on reload).
 
 ## Agents
 
@@ -318,6 +324,11 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 
 - `GET /v1/mempalace/stats` — wing/room/drawer counts
 - `GET /v1/mempalace/classifier` / `POST` — chat-sync classifier config
+- `GET /v1/composer/defaults` (any logged-in user) / `POST` (admin) — new-chat
+  composer defaults `{thinking_level, caveman_mode, memory_mode}`. thinking +
+  caveman live in `config.json → composer_defaults`; memory_mode writes through
+  to `mempalace.chat_sync.classifier.default_mode` (single source). Configured
+  in General Settings → Server → „Eingabefeld-Standards".
 - `GET /v1/mempalace/activity` — live miner state
 - `GET /v1/mempalace/session-turns?session_id=` — drawer ids per turn
 - `GET /v1/mempalace/drawers?wing=&room=&q=&limit=` — list drawers

@@ -340,6 +340,10 @@ class Session:
         self._last_summary_at = 0  # Token count at last continuous summary
         self.save_to_memory: bool = False  # User toggle: always file to MemPalace
         self.caveman_mode: int = 0  # 0=off, 1=lite, 2=full, 3=ultra
+        # Per-session thinking level: '' = unset (use default at send time),
+        # else 'none'|'low'|'medium'|'high'. Sticky across turns, restored on
+        # reload — mirrors caveman_mode.
+        self.thinking_level: str = ""
         # Per-session research-mode override (sticky across turns).
         # None = use the project's `research_mode` default;
         # True/False = force the override for this chat. Set from the composer
@@ -438,6 +442,9 @@ class Session:
                 self.user_id = info.get("user_id", "") or ""
                 self.save_to_memory = bool(info.get("save_to_memory", 0))
                 self.caveman_mode = int(info.get("caveman_mode", 0) or 0)
+                _tl = str(info.get("thinking_level", "") or "").lower()
+                self.thinking_level = (_tl if _tl in
+                    ("none", "low", "medium", "high") else "")
                 _rmo = info.get("research_mode_override", None)
                 self.research_mode_override = (None if _rmo is None
                                                 else bool(_rmo))
@@ -1663,6 +1670,8 @@ class BrainAgentHandler(
             self._handle_mempalace_stats()
         elif path == "/v1/mempalace/classifier":
             self._handle_mempalace_classifier_get()
+        elif path == "/v1/composer/defaults":
+            self._handle_composer_defaults_get()
         elif path == "/v1/mempalace/activity":
             self._send_json(engine.mempalace_activity.snapshot())
         elif path.startswith("/v1/mempalace/session-turns"):
@@ -1978,6 +1987,8 @@ class BrainAgentHandler(
             self._handle_server_config()
         elif path == "/v1/mempalace/classifier":
             self._handle_mempalace_classifier_save()
+        elif path == "/v1/composer/defaults":
+            self._handle_composer_defaults_save()
         elif path == "/v1/mempalace/kg/config":
             self._handle_kg_config_save()
         elif path == "/v1/doctor/live":

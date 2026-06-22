@@ -344,6 +344,74 @@ class AdminObservabilityHandlers:
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    def _handle_composer_defaults_get(self):
+        """GET /v1/composer/defaults — new-chat composer defaults.
+
+        Returns the values a FRESH chat starts on: thinking level + caveman
+        mode (stored in config.json → composer_defaults) plus the memory mode
+        default (kept in its canonical place, mempalace.chat_sync.classifier.
+        default_mode, so there is one source of truth — this just surfaces it
+        alongside). Readable by any logged-in user (the client loads it on
+        init to seed new chats); writes are admin-only.
+        """
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+        cd = {}
+        mem_default = 0
+        try:
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    config = json.load(f)
+                cd = config.get("composer_defaults", {}) or {}
+                mem_default = (((config.get("mempalace", {}) or {})
+                               .get("chat_sync", {}) or {})
+                               .get("classifier", {}) or {}).get("default_mode", 0)
+        except Exception:
+            pass
+        tl = str(cd.get("thinking_level", "none") or "none").lower()
+        if tl not in ("none", "low", "medium", "high"):
+            tl = "none"
+        self._send_json({
+            "thinking_level": tl,
+            "caveman_mode": max(0, min(3, int(cd.get("caveman_mode", 0) or 0))),
+            "memory_mode": max(0, min(2, int(mem_default or 0))),
+        })
+
+    def _handle_composer_defaults_save(self):
+        """POST /v1/composer/defaults — save new-chat composer defaults (admin).
+
+        thinking_level + caveman_mode land in config.json → composer_defaults;
+        memory_mode is written through to its canonical classifier home so the
+        existing memory-default consumers keep working unchanged.
+        """
+        body = self._read_json()
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+        try:
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    config = json.load(f)
+            cd = config.setdefault("composer_defaults", {})
+            if "thinking_level" in body:
+                tl = str(body["thinking_level"] or "none").lower().strip()
+                if tl not in ("none", "low", "medium", "high"):
+                    self._send_json({"error": f"invalid thinking_level: {tl}"}, 400)
+                    return
+                cd["thinking_level"] = tl
+            if "caveman_mode" in body:
+                cd["caveman_mode"] = max(0, min(3, int(body["caveman_mode"])))
+            if "memory_mode" in body:
+                # Write through to the canonical classifier default_mode.
+                mp = config.setdefault("mempalace", {})
+                cs = mp.setdefault("chat_sync", {})
+                clf = cs.setdefault("classifier", {})
+                clf["default_mode"] = max(0, min(2, int(body["memory_mode"])))
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=2)
+            engine._mempalace_config_cache = None
+            self._send_json({"status": "saved", "composer_defaults": cd})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     # ── Knowledge-graph endpoints ─────────────────────────────────────────
     #
     # Project-scoped KG produced by kg_extract.run_kg_post_pass during the

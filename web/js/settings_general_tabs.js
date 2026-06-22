@@ -49,6 +49,35 @@ async function _genTab_server(C) {
           })()}
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{auto_route_classifier_mode:document.getElementById('srv-auto-route-mode').value}).then(()=>showToast('Auto-Routing aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
         </div>
+        ${SEC('Eingabefeld-Standards (global)', 'GLOBALE Vorgabe, mit der ein NEUER Chat startet: Denk-Stufe, Caveman-Modus und Gedächtnis-Modus. Jeder Nutzer kann das pro Konto übersteuern (Benutzereinstellungen → Memory → „Eingabefeld-Standards“, „Server-Standard verwenden“ = erbt diesen Wert hier). Gilt nur für frische Chats — beim Wiederöffnen wird der eigene gespeicherte Stand des Chats wiederhergestellt. (Der Gedächtnis-Standard ist derselbe Wert wie in MemPalace → Classifier.)')}
+        ${(() => {
+          const cd = state.composerDefaults || {};
+          const tl = String(cd.thinking_level || 'none').toLowerCase();
+          const cm = parseInt(cd.caveman_mode) || 0;
+          const mm = parseInt(cd.memory_mode) || 0;
+          const optTL = (v, lbl) => `<option value="${v}" ${tl===v?'selected':''}>${lbl}</option>`;
+          const optN = (cur, v, lbl) => `<option value="${v}" ${cur===v?'selected':''}>${lbl}</option>`;
+          return `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <label style="font-size:12px;color:var(--text-200)">Denk-Stufe
+              <select class="form-select" id="cd-thinking" style="width:100%;margin-top:4px">
+                ${optTL('none','Aus')}${optTL('low','Niedrig')}${optTL('medium','Mittel')}${optTL('high','Hoch')}
+              </select>
+            </label>
+            <label style="font-size:12px;color:var(--text-200)">Caveman-Modus
+              <select class="form-select" id="cd-caveman" style="width:100%;margin-top:4px">
+                ${optN(cm,0,'Aus')}${optN(cm,1,'Lite')}${optN(cm,2,'Voll')}${optN(cm,3,'Ultra')}
+              </select>
+            </label>
+            <label style="font-size:12px;color:var(--text-200)">Gedächtnis-Modus
+              <select class="form-select" id="cd-memory" style="width:100%;margin-top:4px">
+                ${optN(mm,0,'Aus')}${optN(mm,2,'Auto')}${optN(mm,1,'Ein')}
+              </select>
+            </label>
+          </div>
+          <div style="margin-top:8px">
+            <button class="btn-secondary" onclick="saveComposerDefaults()">Standards speichern</button>
+          </div>`;
+        })()}
         ${SEC('Sidecar')}
         ${_renderSupervisorStatus(sc, {
           restartFn: 'restartSidecar',
@@ -2397,6 +2426,31 @@ function _svcOcrEngineToggle() {
   cloud.style.display = (eng.value === 'mistral_ocr' || eng.value === 'auto') ? '' : 'none';
   const local = document.getElementById('svc-ocr-local');
   if (local) local.style.display = (eng.value === 'local_vision' || eng.value === 'auto') ? '' : 'none';
+}
+
+// Save the new-chat composer defaults (Server tab → Eingabefeld-Standards).
+// thinking_level + caveman_mode persist to config.json composer_defaults;
+// memory_mode writes through to the classifier default_mode. Updates
+// state.composerDefaults so subsequent new chats pick them up without a reload.
+async function saveComposerDefaults() {
+  const body = {
+    thinking_level: document.getElementById('cd-thinking')?.value || 'none',
+    caveman_mode: parseInt(document.getElementById('cd-caveman')?.value) || 0,
+    memory_mode: parseInt(document.getElementById('cd-memory')?.value) || 0,
+  };
+  try {
+    await API.post('/v1/composer/defaults', body);
+    state.composerDefaults = {
+      thinking_level: body.thinking_level,
+      caveman_mode: body.caveman_mode,
+      memory_mode: body.memory_mode,
+    };
+    // Keep the memory classifier mirror in sync so anything reading it agrees.
+    if (state.mempalaceClassifier) state.mempalaceClassifier.default_mode = body.memory_mode;
+    showToast('Eingabefeld-Standards gespeichert');
+  } catch (e) {
+    showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
+  }
 }
 
 async function saveServiceModels() {

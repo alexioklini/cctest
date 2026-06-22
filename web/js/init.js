@@ -21,6 +21,13 @@ function toggleTheme() {
 function getActiveThinkingFormat() {
   const mid = state.activeChat?.model || '';
   if (!mid) return 'none';
+  // Auto / Smart (Lokal|Cloud): the concrete model isn't known until the
+  // server picks one at turn time. Don't disable the button — expose the full
+  // level set ('auto' format) and let the user pick a level "best effort". The
+  // server clamps the chosen level to whatever the effective model's
+  // thinking_format actually supports (none → dropped, binary → high, granular
+  // → verbatim) in run_session_turn.
+  if (typeof isAutoModel === 'function' && isAutoModel(mid)) return 'auto';
   const cfg = state.modelsConfig?.models?.[mid];
   return (cfg && cfg.thinking_format) || 'none';
 }
@@ -38,6 +45,27 @@ function _composerLevelsForFormat(fmt) {
   return vals;
 }
 
+// Thinking level is PER-CHAT (chat.thinkingLevel) — restored on reload, reset
+// to the configured default on a new chat. These helpers read/write the active
+// chat's value (falling back to the new-chat default when no chat exists yet).
+function getThinkingLevel() {
+  const chat = state.activeChat;
+  if (chat && chat.thinkingLevel) return chat.thinkingLevel;
+  return (state.defaultComposerModes && state.defaultComposerModes().thinkingLevel) || 'none';
+}
+function _setThinkingLevel(level, persist) {
+  const chat = state.activeChat;
+  if (chat) chat.thinkingLevel = level;
+  // Persist to the session so a reload restores it (mirrors caveman/memory).
+  // Only when there's a live session; a draft chat persists on first send via
+  // body.thinking. Fire-and-forget.
+  if (persist && chat && chat.sessionId) {
+    API.post('/v1/sessions/manage', {
+      action: 'thinking_level', session_id: chat.sessionId, level: level,
+    }).catch(() => {});
+  }
+}
+
 function cycleThinkingLevel() {
   const fmt = getActiveThinkingFormat();
   if (fmt === 'none') {
@@ -47,7 +75,7 @@ function cycleThinkingLevel() {
   const levels = _composerLevelsForFormat(fmt);
   // If the saved level isn't in this format's set, jump to the first non-off
   // level. Otherwise advance one step.
-  const cur = state.thinkingLevel || 'none';
+  const cur = getThinkingLevel();
   let next;
   const idx = levels.indexOf(cur);
   if (idx < 0) {
@@ -55,26 +83,24 @@ function cycleThinkingLevel() {
   } else {
     next = levels[(idx + 1) % levels.length];
   }
-  state.thinkingLevel = next;
-  localStorage.setItem('thinking-level', state.thinkingLevel);
+  _setThinkingLevel(next, true);
   refreshThinkingButton();
-  showToast(`Denken: ${state.thinkingLevel}`);
+  showToast(`Denken: ${next}`);
 }
 
-// Demote state.thinkingLevel to a value valid for the current model's
-// thinking_format. Called when the active chat's model changes.
+// Demote the active chat's thinking level to a value valid for the current
+// model's thinking_format. Called when the active chat's model changes.
 function _ensureValidThinkingLevel() {
   const fmt = getActiveThinkingFormat();
-  const cur = state.thinkingLevel || 'none';
+  const cur = getThinkingLevel();
   if (fmt === 'none') {
-    // Don't clear localStorage — user might switch back to a thinking model.
-    // The button is disabled in this state regardless.
+    // Leave the stored level alone — the user might switch back to a thinking
+    // model. The button is disabled in this state regardless.
     return;
   }
   const levels = _composerLevelsForFormat(fmt);
   if (!levels.includes(cur)) {
-    state.thinkingLevel = 'none';
-    localStorage.setItem('thinking-level', 'none');
+    _setThinkingLevel('none', true);
     refreshThinkingButton();
   }
 }
@@ -112,14 +138,13 @@ function refreshThinkingButton() {
   // back to a thinking-capable model).
   if (supported) {
     const valid = _composerLevelsForFormat(fmt);
-    if (!valid.includes(state.thinkingLevel || 'none')) {
-      state.thinkingLevel = 'none';
-      localStorage.setItem('thinking-level', 'none');
+    if (!valid.includes(getThinkingLevel())) {
+      _setThinkingLevel('none', true);
     }
   }
   // Per-level color ramp: off=neutral grey, low=amber, medium=orange, high=red.
   const colorMap = { none: '', low: '#f59e0b', medium: '#f97316', high: '#ef4444' };
-  const level = state.thinkingLevel || 'none';
+  const level = getThinkingLevel();
   for (const btn of _composerToggleEls('btn-thinking')) {
     btn.innerHTML = thinkingIconFor(level);
     if (!supported) {
@@ -137,7 +162,9 @@ function refreshThinkingButton() {
       // does. e.g. mistral_blocks → "Thinking: off · cycle: off → high".
       const valid = _composerLevelsForFormat(fmt);
       const cycleHint = valid.length > 1 ? ' · Wechsel: ' + valid.join(' → ') : '';
-      btn.title = `Denken: ${level} (${fmt})${cycleHint}`;
+      btn.title = fmt === 'auto'
+        ? `Denken: ${level} · best-effort auf das vom Auto-Router gewählte Modell${cycleHint}`
+        : `Denken: ${level} (${fmt})${cycleHint}`;
     }
   }
 }
@@ -1146,7 +1173,7 @@ async function init() {
 
   // Load initial data
   try {
-    const [statusData, agentsData, modelsData, providersData, teamsData, modelsConfigData, servicesData, clfData] = await Promise.all([
+    const [statusData, agentsData, modelsData, providersData, teamsData, modelsConfigData, servicesData, clfData, composerDefData] = await Promise.all([
       API.getStatus().catch(() => null),
       API.getAgents().catch(() => ({agents:[]})),
       API.getModels().catch(() => ({models:[]})),
@@ -1155,6 +1182,7 @@ async function init() {
       API.getModelsConfig().catch(() => ({})),
       API.getServices().catch(() => ({})),
       API.get('/v1/mempalace/classifier').catch(() => ({})),
+      API.get('/v1/composer/defaults').catch(() => ({})),
     ]);
 
     state.connected = !!statusData;
@@ -1166,6 +1194,9 @@ async function init() {
     state.modelsConfig = modelsConfigData || {};
     applyGdprConfigToScanner((servicesData.server || {}).gdpr_scanner);
     state.mempalaceClassifier = clfData || {};
+    if (composerDefData && typeof composerDefData === 'object' && !composerDefData.error) {
+      state.composerDefaults = composerDefData;
+    }
 
     // Update user menu / connection indicator
     renderUserMenu();

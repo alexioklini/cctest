@@ -141,6 +141,16 @@ async function openSession(sessionId, agentId) {
     const memVal = parseInt(data.save_to_memory) || 0;
     chat.saveToMemory = memVal === 1;
     chat.memoryMode = memVal === 1 ? 'on' : memVal === 2 ? 'auto' : 'off';
+    // Per-session thinking level: restore this chat's stored value; an empty
+    // stored value (never set on this session) falls back to the new-chat
+    // default. The composer button reads chat.thinkingLevel.
+    {
+      const _stl = String(data.thinking_level || '').toLowerCase();
+      chat.thinkingLevel = ['none', 'low', 'medium', 'high'].includes(_stl)
+        ? _stl
+        : state.defaultComposerModes().thinkingLevel;
+      if (typeof refreshThinkingButton === 'function') refreshThinkingButton();
+    }
     // Per-session research-mode override: null = use project default,
     // true = force on, false = force off. Composer button reads this.
     chat.researchModeOverride = (data.research_mode_override === null
@@ -379,6 +389,13 @@ async function openSession(sessionId, agentId) {
     if (data.total_tokens) chat.totalTokens = data.total_tokens;
     chat.messages = expanded;
 
+    // Drop any cached references for this session so the badge + pane rebuild
+    // from the freshly loaded messages/metadata. The cache is otherwise only
+    // invalidated at stream end, so reopening a session that was visited earlier
+    // this page-life returned a stale (often live-only "searched") split and a
+    // wrong References count after reload.
+    if (typeof invalidateChatReferences === 'function') invalidateChatReferences(sessionId);
+
     // A turn is in progress for this session — flag it so we re-attach to the
     // live stream after navigating in. The stream replays every event from the
     // start of the turn, so it rebuilds streamingText (and the in-flight
@@ -529,10 +546,12 @@ function newChat(opts) {
   chat.autoPicked = null;
   chat.autoReason = '';
   if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay(chat.model);
-  chat.cavemanMode = 0;
-  const _mem = state.defaultMemoryMode();
-  chat.saveToMemory = _mem.saveToMemory;
-  chat.memoryMode = _mem.memoryMode;
+  const _def = state.defaultComposerModes();
+  chat.cavemanMode = _def.cavemanMode;
+  chat.saveToMemory = _def.saveToMemory;
+  chat.memoryMode = _def.memoryMode;
+  chat.thinkingLevel = _def.thinkingLevel;
+  if (typeof refreshThinkingButton === 'function') refreshThinkingButton();
   // Fresh chat → empty Websuche basket. Prevents the previous chat's marked
   // URLs from silently coming along into the new conversation.
   chat.webBasket = [];
