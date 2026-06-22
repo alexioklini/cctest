@@ -1383,7 +1383,7 @@ function editProjectInstructions() {
         </p>
         <textarea id="instr-ai-prompt" rows="3"
           style="width:100%;box-sizing:border-box;font-size:13px;padding:8px;border:1px solid var(--border-100);border-radius:6px;resize:vertical"
-          placeholder="z. B. Erstelle Risikoanalysen für Kunden/Partner der WPB. Ergebnis im Format der beigelegten Referenz-Word-Datei; Methodik aus den Regulator-Dokumenten; zusätzlich Webrecherche."></textarea>
+          placeholder="z. B. Worum geht es in diesem Projekt, was soll dabei herauskommen (Ergebnisformat/Aufbau), worauf soll es sich stützen (beigelegte Dateien, eingelesene Quellen, Webrecherche)?"></textarea>
         <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
           <button class="btn-primary" type="button" id="instr-ai-generate-btn" onclick="generateProjectInstructionsAI()">Generieren</button>
           <button class="btn-secondary" type="button" id="instr-ai-cancel-btn" onclick="cancelProjectInstructionsAI()" style="display:none">Abbrechen</button>
