@@ -181,18 +181,26 @@ function renderFilePreviews() {
         if (sc.state === 'pending') {
           scanBadge = `<span title="Wird auf PII geprüft…" style="font-size:10px;color:var(--text-300)">⏳</span>`;
         } else if (sc.scanned === false &&
-                   ['too_large','extract_timeout','extract_failed','unsupported'].includes(sc.reason)) {
+                   ['too_large','unsupported'].includes(sc.reason)) {
+          // BLOCKING gaps: structural rejections — send stays disabled until
+          // the file is removed (mirrors BLOCKING_REASONS in chat_send.js).
           const r = {
             'too_large': 'zu groß für PII-Prüfung',
-            'extract_timeout': 'Zeitüberschreitung bei PII-Prüfung',
-            'extract_failed': 'PII-Prüfung fehlgeschlagen',
             'unsupported': 'nicht unterstütztes Format — keine Prüfung möglich',
           }[sc.reason];
-          // Append classification fragment so an unscannable + classified
-          // attachment doesn't hide the classification info behind the
-          // PII-side icon.
           const _t = r + (clsTooltipFragment ? clsTooltipFragment : '');
           scanBadge = `<span title="${esc(_t)} — zum Senden entfernen" style="color:#dc2626;font-weight:bold;cursor:help">⛔</span>`;
+        } else if (sc.scanned === false &&
+                   ['extract_timeout','extract_failed'].includes(sc.reason)) {
+          // NON-BLOCKING gaps: the scan tried but didn't finish/succeed. The
+          // user can send anyway (or remove the file) — surface it as an
+          // amber warning, NOT the red ⛔ "remove to send".
+          const r = {
+            'extract_timeout': 'PII-Prüfung nicht rechtzeitig fertig — Senden trotzdem möglich',
+            'extract_failed': 'PII-Prüfung fehlgeschlagen — Senden trotzdem möglich',
+          }[sc.reason];
+          const _t = r + (clsTooltipFragment ? clsTooltipFragment : '');
+          scanBadge = `<span title="${esc(_t)}" style="color:#d97706;font-weight:bold;cursor:help">⚠️</span>`;
         } else if (sc.scanned && sc.finding_count > 0) {
           // PII findings present — surface the count and fold the
           // classification summary into the same tooltip per user request

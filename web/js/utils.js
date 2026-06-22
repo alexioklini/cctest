@@ -1014,6 +1014,14 @@ const PIIScanner = {
   // Applies per-category actions: rules with action='ignore' are skipped;
   // email findings matching the allowlist are dropped silently.
   scan(text) {
+    // Master off-switch: when the admin has disabled the GDPR scanner
+    // (gdpr_scanner.enabled === false → policy.enabled === false), the client
+    // must not scan AT ALL. Gating here — the single chokepoint every scan path
+    // flows through (scanPayload, history scan, block-check) — guarantees no
+    // call site can leak a scan when the feature is off, instead of relying on
+    // each caller to remember the `state.piiScannerEnabled` guard (the history
+    // path didn't, so the badge/NER check kept running when disabled).
+    if (this.policy && this.policy.enabled === false) return [];
     if (!text || typeof text !== 'string') return [];
     const findings = [];
     const seenSpans = []; // [start, end, ruleId]

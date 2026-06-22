@@ -4660,7 +4660,11 @@ class ChatHandlerMixin:
             return
 
         MAX_BYTES = 50 * 1024 * 1024
-        TIMEOUT_S = 30
+        # 120s (was 30s): big PDFs/spreadsheets legitimately take longer to
+        # extract+scan, and a timeout is no longer a hard send-blocker on the
+        # client (it's surfaced as a non-blocking coverage gap), so a more
+        # generous limit lets most real documents finish scanning.
+        TIMEOUT_S = 120
 
         attachment_id = f"{int(time.time() * 1000):x}_{hash(name) & 0xffff:04x}"
         safe_name = name.replace("/", "_").replace("\\", "_")

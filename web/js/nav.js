@@ -464,6 +464,10 @@ function _piiHistoryMergeAndCache(chat) {
 }
 
 function _piiHistoryFetchServer(chat, expectLen) {
+  // Scanner disabled → no server-side NER round-trip either (the local scan is
+  // already gated in PIIScanner.scan; this stops the network call too so
+  // "PII check" truly does nothing when the admin turned the feature off).
+  if (state.piiScannerEnabled === false) return;
   // No sessionId = new chat not yet persisted. Server has no history to
   // scan — local regex result is authoritative until the first send.
   if (!chat || !chat.sessionId) return;

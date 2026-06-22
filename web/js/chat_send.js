@@ -107,8 +107,13 @@ async function sendMessage() {
   // accepted gaps — they return reason in {media, archive}, which is NOT
   // blocking. Server-side scanner failures (timeout, too_large,
   // unsupported, extract_failed) ARE blocking.
+  // A scan that TIMED OUT or FAILED is a coverage GAP, not a reason to forbid
+  // sending — the user can remove the attachment any time, and a slow/failed
+  // scan shouldn't hard-block them (same philosophy as archive/media, which are
+  // already accepted non-blocking gaps). Only structural rejections
+  // (unsupported format, over the size cap) stay blocking.
   const BLOCKING_REASONS = new Set([
-    'unsupported', 'too_large', 'extract_timeout', 'extract_failed',
+    'unsupported', 'too_large',
   ]);
   const pendingScan = (state._pendingFiles || []).find(
     f => f.scan && f.scan.state === 'pending');
