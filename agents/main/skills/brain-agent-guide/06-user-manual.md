@@ -101,6 +101,16 @@ Tokens); Aufrufe von vor der Einführung dieser Funktion erscheinen als
 - 💾 In-Gedächtnis-speichern-Zyklus (aus / an / auto)
 - 🪨 Caveman-Modus (knappe Antworten)
 
+**Standard vs. gemerkter Zustand:** Ein **neuer Chat** startet immer auf
+**Standardwerten** — das Standard-/Agenten-Modell (nie das zuletzt benutzte),
+Caveman aus, Gedächtnis-Modus auf der Server-Voreinstellung. Beim **Wieder-
+öffnen eines bestehenden Chats** wird dagegen der **letzte Zustand dieses
+Chats** wiederhergestellt: das im letzten Zug verwendete Modell sowie der
+gespeicherte Caveman- und Gedächtnis-Modus. Ein neuer Chat ist außerdem immer
+**allgemein (ohne Projekt)** — projektgebunden nur, wenn er **innerhalb eines
+Projekts** gestartet wird. Eine **Übergabe** erbt den Modus des Ursprungs-Chats
+(projektgebunden bleibt im Projekt, allgemein bleibt allgemein).
+
 **Brainy** — die schwebende Sprechblase unten rechts (in jeder Ansicht).
 Brainy ist ein **schreibgeschützter** Helpdesk-Assistent: er kennt diese
 Oberfläche, kann Sitzungs-/Nutzerkontext lesen und Fragen beantworten,

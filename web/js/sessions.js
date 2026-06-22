@@ -57,15 +57,9 @@ async function ensureSession(chat) {
       }).catch(() => {});
     }
     if (data.max_context) chat.maxContext = data.max_context;
-    // Restore user's last caveman chat mode for new sessions
-    const savedCaveman = parseInt(localStorage.getItem('caveman-chat-mode')) || 0;
-    if (savedCaveman > 0) {
-      chat.cavemanMode = savedCaveman;
-      API.post('/v1/sessions/manage', {
-        action: 'caveman_mode', session_id: chat.sessionId, mode: savedCaveman,
-      }).catch(() => {});
-      updateStatusBar();
-    }
+    // Caveman mode is NOT reused from the last chat — a fresh session always
+    // starts at the default (off / per-model system default). newChat() resets
+    // chat.cavemanMode to 0 and the server applies any per-model default itself.
     // Show warmup indicator if provider supports it
     if (data.warmup) {
       startWarmupPoll(chat);
@@ -504,7 +498,12 @@ async function openSession(sessionId, agentId) {
   }
 }
 
-function newChat() {
+// opts.inheritProject — when starting a fresh chat that must keep a specific
+// project binding regardless of the current view (e.g. handover from a
+// project-based chat), pass the source project name here. Empty string forces
+// a general (projectless) chat. Undefined keeps the default view-driven rule.
+function newChat(opts) {
+  opts = opts || {};
   NextPrompt.clear();
   if (!state.activeAgentId) {
     if (state.agents.length) selectAgent(state.agents[0].name);
@@ -522,6 +521,18 @@ function newChat() {
   chat.chatTitle = '';
   chat.chatSummary = '';
   chat.workflowRunId = '';
+  // The per-agent chat object is reused across conversations, so a fresh chat
+  // must reset the composer back to defaults instead of inheriting the previous
+  // conversation's choices. Model → the agent's standard/default model (never
+  // the last picked one); caveman/memory → their defaults (never reused).
+  chat.model = state.defaultModelForAgent(state.activeAgentId);
+  chat.autoPicked = null;
+  chat.autoReason = '';
+  if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay(chat.model);
+  chat.cavemanMode = 0;
+  const _mem = state.defaultMemoryMode();
+  chat.saveToMemory = _mem.saveToMemory;
+  chat.memoryMode = _mem.memoryMode;
   // Fresh chat → empty Websuche basket. Prevents the previous chat's marked
   // URLs from silently coming along into the new conversation.
   chat.webBasket = [];
@@ -547,10 +558,17 @@ function newChat() {
   chat._piiHistoryScanLen = -1;
   chat._piiHistoryHas = false;
   chat._piiHistoryCounts = {};
-  // Drop project binding when starting a fresh chat outside the project-detail
-  // flow. The project-detail composer's sendMessage branch sets currentProject
-  // again before this call returns, so its turns still get tagged.
-  if (state.currentView !== 'project-detail') {
+  // Project binding for the fresh chat:
+  //  - opts.inheritProject given → use it verbatim (handover keeps the base
+  //    chat's mode: a project name binds to that project, '' forces general).
+  //  - else inside project-detail → keep currentProject (sendMessage's
+  //    project branch re-sets it before this call returns).
+  //  - else → general (projectless) chat.
+  if (opts.inheritProject !== undefined) {
+    const inherited = opts.inheritProject || '';
+    state.currentProject = inherited || null;
+    chat.project = inherited;
+  } else if (state.currentView !== 'project-detail') {
     state.currentProject = null;
     chat.project = '';
   }

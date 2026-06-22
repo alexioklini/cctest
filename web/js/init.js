@@ -557,7 +557,6 @@ async function toggleCavemanMode() {
       mode: next,
     });
     chat.cavemanMode = next;
-    localStorage.setItem('caveman-chat-mode', String(next));
     updateStatusBar();
     const labels = {
       0: 'Caveman: aus 🚀',

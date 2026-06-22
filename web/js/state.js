@@ -72,14 +72,31 @@ const state = {
     return this.activeAgentId ? this.agentChats[this.activeAgentId] : null;
   },
 
+  // Standard/default model for an agent — the agent's configured model, else
+  // the first available model. This is the model a FRESH chat must start on;
+  // it never reflects the model last picked in a previous conversation.
+  defaultModelForAgent(agentId) {
+    const agent = this.agents.find(a => (a.id || a.name) === agentId);
+    return agent?.model || (this.models.length ? this.models[0].id || this.models[0] : '');
+  },
+
+  // Default memory mode for a fresh chat, from the server-provided classifier
+  // default. Returned as the per-chat shape {saveToMemory, memoryMode}.
+  defaultMemoryMode() {
+    const defMode = parseInt((this.mempalaceClassifier || {}).default_mode) || 0;
+    return {
+      saveToMemory: defMode === 1,
+      memoryMode: defMode === 1 ? 'on' : defMode === 2 ? 'auto' : 'off',
+    };
+  },
+
   ensureAgentChat(agentId) {
     if (!this.agentChats[agentId]) {
-      const agent = this.agents.find(a => (a.id || a.name) === agentId);
-      const defMode = parseInt((this.mempalaceClassifier || {}).default_mode) || 0;
+      const mem = this.defaultMemoryMode();
       this.agentChats[agentId] = {
         sessionId: null,
         agent: agentId,
-        model: agent?.model || (this.models.length ? this.models[0].id || this.models[0] : ''),
+        model: this.defaultModelForAgent(agentId),
         messages: [],
         streaming: false,
         totalTokens: 0,
@@ -88,8 +105,8 @@ const state = {
         files: [],
         _streamStartTime: null,
         _streamTimerInterval: null,
-        saveToMemory: defMode === 1,
-        memoryMode: defMode === 1 ? 'on' : defMode === 2 ? 'auto' : 'off',
+        saveToMemory: mem.saveToMemory,
+        memoryMode: mem.memoryMode,
         cavemanMode: 0,
         chatTitle: '',
         chatSummary: '',

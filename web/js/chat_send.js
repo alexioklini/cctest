@@ -1355,6 +1355,9 @@ function _utf8ToBase64(str) {
 async function startHandoverChat(sessionId) {
   sessionId = sessionId || state.activeChat?.sessionId;
   if (!sessionId) { showToast('Keine aktive Sitzung', true); return; }
+  // Capture the source chat's mode (general vs project-based) BEFORE newChat()
+  // clears the binding — the handover chat must inherit it.
+  const _srcProject = state.activeChat?.project || '';
   showToast('Übergabe wird erstellt…');
   let md, transcript, srcTitle;
   try {
@@ -1372,7 +1375,9 @@ async function startHandoverChat(sessionId) {
   // attachments + prompt. Two separate files: the concise summary the model
   // works from, and the full verbatim history it opens only if it needs detail.
   // Both are our own generated docs — no PII gate, mark scan done.
-  newChat();
+  // Inherit the base chat's mode: a project-based source stays in that project,
+  // a general source stays general (never silently rebinds the handover).
+  newChat({ inheritProject: _srcProject });
   try {
     const safe = (s) => s.slice(0, 80).replace(/[\/\\]/g, '-');
     const attach = (name, text) => state._pendingFiles.push({
