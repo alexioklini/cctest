@@ -1593,6 +1593,49 @@ def _project_sync_loop(srv):
                               respect_gitignore=False)
             return _parse_drawers_filed(buf.getvalue())
 
+        # BULK pre-filter so an unchanged project costs ~one Qdrant scan instead
+        # of one file_already_mined() query PER FILE inside mine(). mine() skips
+        # unchanged files correctly, but each skip still issues a paginated
+        # collection.get(where={source_file}) — with ~200 files that made the
+        # "indexing" phase take ~2 min even when NOTHING changed. Here we fetch
+        # the wing's {source_file: source_mtime} map ONCE and drop files whose
+        # mtime already matches; only genuinely new/changed files reach mine().
+        # When nothing changed, `files` becomes empty and mine() is never called.
+        # CAVEAT: this matches on mtime only, so it does NOT trigger the rare
+        # normalize_version-upgrade re-mine that file_already_mined() would (a
+        # mempalace schema bump). That self-corrects on the file's next real edit
+        # and can be forced via Full-Resync; the steady-state no-op cost is what
+        # matters here.
+        try:
+            from mempalace.palace import bulk_check_mined as _bulk_mined
+            _col = _get_drawers_col(palace_path, create=False)
+            if _col is not None:
+                _mined = _bulk_mined(_col)  # {source_file: mtime}
+                _changed = []
+                for f in files:
+                    try:
+                        _prev = _mined.get(f)
+                        if _prev is None:
+                            _changed.append(f)            # never mined → mine it
+                        elif abs(float(_prev) - os.path.getmtime(f)) >= 0.001:
+                            _changed.append(f)            # mtime moved → re-mine
+                        # else: unchanged → skip (don't hand to mine())
+                    except OSError:
+                        _changed.append(f)                # stat failed → let mine() decide
+                if len(_changed) != len(files):
+                    print(f"[project-sync] pre-filter {os.path.basename(folder)}: "
+                          f"{len(_changed)}/{len(files)} file(s) changed, "
+                          f"{len(files) - len(_changed)} unchanged skipped",
+                          flush=True)
+                files = _changed
+        except Exception as _e:
+            # Best-effort optimisation — on any error fall through to the full
+            # (correct, just slower) per-file path below.
+            print(f"[project-sync] mine pre-filter skipped ({type(_e).__name__}: "
+                  f"{_e}) — full mine", flush=True)
+        if not files:
+            return 0  # nothing changed → mine() not needed at all
+
         def _doc_key(fp):
             # Map a chunk file path to its uploaded-document key; fall back to
             # the path itself for non-chunk files (so they still count as 1 doc).
