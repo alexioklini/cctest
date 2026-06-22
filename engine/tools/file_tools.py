@@ -233,8 +233,82 @@ def tool_edit_file(args: dict) -> str:
         return _err(f"edit_file: {e}")
 
 
+# Max chars a SINGLE whole-document read returns inline before it's spilled to
+# disk + previewed. ~120k chars ≈ 30k tokens — generous for one doc, small
+# enough that several reads + the running conversation still fit a 256k window.
+# (A 3.3 MB PDF extracts to ~768k chars / ~190k tokens — one such read alone
+# overflows the window, which is the bug this guards.) Overridable via
+# config.json conversion.read_document_budget_chars.
+_DOC_READ_BUDGET_CHARS_DEFAULT = 120_000
+_DOC_READ_PREVIEW_CHARS = 8_000
+
+
+def _doc_read_budget_chars() -> int:
+    try:
+        import brain as _b
+        v = int(((_b._server_config() or {}).get("conversion") or {})
+                .get("read_document_budget_chars", 0) or 0)
+        return v if v > 0 else _DOC_READ_BUDGET_CHARS_DEFAULT
+    except Exception:
+        return _DOC_READ_BUDGET_CHARS_DEFAULT
+
+
+_DOC_READ_BUDGET_CHARS = _DOC_READ_BUDGET_CHARS_DEFAULT  # re-resolved per call below
+
+
+def _spill_oversized_read(path: str, payload: dict, content: str) -> str:
+    """A whole-doc read exceeded the single-read budget: write the full content
+    to the session's tool-results dir and return a preview + instructions to
+    read it in ranges. Keeps the file fully available (re-read / grep / citation
+    validator) without forcing ~190k tokens into one prompt."""
+    import brain as _brain
+    fmt = payload.get("format", "")
+    is_pdf = fmt == "pdf" or path.lower().endswith(".pdf")
+    size_kb = len(content) // 1024
+    sid = get_request_context().current_session_id or ""
+    agent = get_request_context().current_agent or getattr(_brain, "_current_agent", None)
+    agent_id = agent.agent_id if agent else "main"
+    spill_path = ""
+    try:
+        results_dir = os.path.join(
+            _brain.AGENTS_DIR, agent_id, "artifacts",
+            _get_artifact_session_folder(sid), "tool-results")
+        os.makedirs(results_dir, exist_ok=True)
+        base = os.path.basename(path)
+        spill_path = os.path.join(results_dir, base + ".fulltext.md")
+        with open(spill_path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+    except OSError:
+        spill_path = ""
+    preview = content[:_DOC_READ_PREVIEW_CHARS]
+    if is_pdf:
+        how = ("Read it in parts: call read_document again with `pages` "
+               "(e.g. pages=\"1-10\", then \"11-20\", …) to page through it")
+    else:
+        how = ("Read it in parts: call read_document again with `offset`+`limit` "
+               "(line numbers) to page through it")
+    spill_line = (f"Full text saved to: {spill_path} — "
+                  f"read_document/read_file that path with offset+limit, or grep "
+                  f"it via execute_command.\n" if spill_path else "")
+    note = (
+        f"[Document too large to return in one read ({size_kb}KB, "
+        f"~{len(content)//4} tokens) — it would overflow the model context. "
+        f"{how}; do NOT re-read the same range.]\n"
+        f"{spill_line}"
+        f"Preview (first {_DOC_READ_PREVIEW_CHARS} chars):\n{preview}\n…")
+    out = {k: v for k, v in payload.items() if k != "content"}
+    out["content"] = note
+    out["truncated"] = True
+    out["full_chars"] = len(content)
+    if spill_path:
+        out["full_text_path"] = spill_path
+    return _ok(out)
+
+
 def tool_read_document(args: dict) -> str:
     """Format-aware document reader."""
+    global _DOC_READ_BUDGET_CHARS
+    _DOC_READ_BUDGET_CHARS = _doc_read_budget_chars()
     import brain as _brain
     # Accept legacy / drawer-vocab synonyms — drawers from mempalace_query
     # carry the field as `source_file`, and the model frequently passes that
@@ -283,6 +357,27 @@ def tool_read_document(args: dict) -> str:
             if anon is not raw:
                 payload = dict(payload)
                 payload["content"] = anon
+            # Single-read size guard. A whole-document read of a large file
+            # (e.g. a 3.3 MB PDF → ~190k tokens) returned VERBATIM overflows the
+            # model's context window in ONE call — the turn dies at round 0 with
+            # a provider "prompt too large" 400, before the model can do
+            # anything. The message-level budget (_apply_tool_result_budget) is
+            # a no-op on the interactive path (tool results are ephemeral in the
+            # sidecar, never in session.messages), so the clamp has to happen
+            # HERE at the tool-result point the sidecar actually sends. When the
+            # content exceeds the budget we spill the FULL (already-anonymised)
+            # text to the session's tool-results dir and return a preview plus a
+            # format-appropriate instruction to read it in ranges — the model
+            # can then narrow with pages= (PDF) or offset/limit (text), or grep
+            # the spilled file. Nothing is lost; it's just not all forced into
+            # one prompt. An explicit pages/offset/limit selection is left
+            # alone (the model is already narrowing).
+            content = str(payload.get("content", "") or "")
+            narrowed = bool(args.get("pages") or args.get("offset")
+                            or args.get("limit") or args.get("sheet")
+                            or args.get("slides"))
+            if (not narrowed) and len(content) > _DOC_READ_BUDGET_CHARS:
+                return _spill_oversized_read(path, payload, content)
             return _ok(payload)
 
         ext = os.path.splitext(path)[1].lower()
@@ -2112,7 +2207,14 @@ def tool_python_exec(args: dict) -> str:
     script_path = os.path.join(work_dir, script_name)
     with open(script_path, "w") as f:
         f.write(code)
+    # `agent` and `session_id` were both referenced later in this function but
+    # never defined — a NameError on EVERY python_exec call (caught by the
+    # characterization test; `agent` at the _after_file_write below, `session_id`
+    # at the stray-write gate further down). Resolve both from the request
+    # context the same way every other tool here does.
+    agent = get_request_context().current_agent or getattr(_brain, "_current_agent", None)
     agent_id = (agent.agent_id if agent else "main")
+    session_id = get_request_context().current_session_id or ""
     _brain._after_file_write(script_path, "created", agent_id)
 
     env = os.environ.copy()
