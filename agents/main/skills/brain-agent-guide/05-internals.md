@@ -514,6 +514,27 @@ error/cancelled runs don't count (they retry next pass). So the interval now
 survives restarts (v9.153.1). [The April 2026 change only removed the destructive
 startup-WIPE — the incremental boot pass was never disabled until this gate.]
 
+**Fast no-change gate + incremental changed-file path** (v9.189.3–.6). At the
+TOP of each per-project iteration (after the web-URL sync, before any phase) the
+daemon computes a source FINGERPRINT — a pure `os.stat` walk over
+`ingested/` + input folders + `web-urls/`, sha1 of sorted `path|mtime_ns|size`,
+no Qdrant/DB/network. If it equals the last successful cycle's
+`sync_status.source_fingerprint` AND state is `idle`, the WHOLE project is skipped
+in ~0s (`skipped_unchanged=true`) — no mining, KG, or closet work. This is the
+common case at the 6h cadence over hundreds of projects. When the fingerprint
+DIFFERS, only the changed data is touched: (1) mining pre-filters via ONE
+wing-scoped `get(where={wing})` `{source_file: mtime}` map (NOT a whole-corpus
+scan) and hands `mine()` only the changed files — the file paths are normalised
+with `os.fspath` because `scan_project` yields `PosixPath` while drawer
+`source_file` keys are `str`, and a `PosixPath`≠`str` key mismatch silently made
+the pre-filter pass EVERY file for years (the ~264s-per-1-file-change bug, fixed
+v9.189.6); (2) KG skips unchanged sources via the stable `sha1(source_file)`
+cursor key (v9.189.2); (3) closet regen rebuilds ONLY the changed sources
+(`_regen_closets_parallel(only_sources=…)`, idempotent per-source purge+upsert)
+instead of the whole wing. Net: a 1-file change syncs in ~seconds across all
+phases (was ~270–285s). A KG-method/profile toggle purges cursors → forces a
+full rebuild by design. `Full Resync` has its own path and is unaffected.
+
 **Project `web_urls` refresh is cost-gated** (not re-fetched every cycle).
 Per-URL state lives in `web-urls/.fetch-state.json`. A URL is (A) SKIPPED with
 no network if its on-disk copy is younger than `project_sync.web_url_refresh_seconds`

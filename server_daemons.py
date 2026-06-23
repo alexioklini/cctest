@@ -1624,6 +1624,15 @@ def _project_sync_loop(srv):
         per batch (not across the whole mine) so other daemons interleave."""
         try:
             files = mp_miner.scan_project(folder, respect_gitignore=False)
+            # scan_project yields pathlib.PosixPath, but drawer source_file
+            # metadata + mine()'s file list are plain strings. A PosixPath never
+            # equals a str as a dict key, so without this the bulk pre-filter's
+            # `_mined.get(f)` ALWAYS missed → every file looked "changed" → all
+            # ~195 files were handed to mine(), which then paid the per-file
+            # file_already_mined() Qdrant skip-check (the ~264s indexing cost on
+            # a 1-file change). Normalising to str makes the lookup match.
+            if files:
+                files = [os.fspath(f) for f in files]
         except Exception as e:
             print(f"[project-sync] scan_project failed {folder}: "
                   f"{type(e).__name__}: {e}", flush=True)
@@ -1646,16 +1655,31 @@ def _project_sync_loop(srv):
         # the wing's {source_file: source_mtime} map ONCE and drop files whose
         # mtime already matches; only genuinely new/changed files reach mine().
         # When nothing changed, `files` becomes empty and mine() is never called.
+        #
+        # WING-SCOPED: upstream bulk_check_mined() paginates the ENTIRE shared
+        # drawers collection (ALL projects) — O(total_corpus) per project, which
+        # at hundreds of projects made even a 1-file change spend ~170s scanning
+        # everyone else's drawers. We instead do ONE `get(where={wing})` so we
+        # read only this project's ~few-thousand drawers. (Same wing-filter the
+        # rest of the daemon already uses, e.g. _iter_wing_source_files.)
         # CAVEAT: this matches on mtime only, so it does NOT trigger the rare
         # normalize_version-upgrade re-mine that file_already_mined() would (a
         # mempalace schema bump). That self-corrects on the file's next real edit
         # and can be forced via Full-Resync; the steady-state no-op cost is what
         # matters here.
         try:
-            from mempalace.palace import bulk_check_mined as _bulk_mined
             _col = _get_drawers_col(palace_path, create=False)
             if _col is not None:
-                _mined = _bulk_mined(_col)  # {source_file: mtime}
+                # Wing-scoped {source_file: source_mtime} map — one Qdrant fetch
+                # filtered to this project's drawers, not the whole corpus.
+                _mined = {}
+                _got = _col.get(where={"wing": wing}, include=["metadatas"])
+                for _m in (_got.get("metadatas") or []):
+                    _m = _m or {}
+                    _src = _m.get("source_file")
+                    _mt = _m.get("source_mtime")
+                    if _src and _mt is not None:
+                        _mined[_src] = float(_mt)
                 _changed = []
                 for f in files:
                     try:
@@ -1893,12 +1917,11 @@ def _project_sync_loop(srv):
         **incremental** (kg_extract.run_closet_regen_incremental):
         walks the wing's source files, compares each file's (mtime,
         size) against the closet_regen_progress cursor in chats.db,
-        and only triggers the upstream wing-wide rebuild when at
-        least one source has changed since the last cycle. With 400
-        unchanged PDFs the wrapper short-circuits in milliseconds;
-        with one edited PDF it runs the full wing rebuild (upstream
-        doesn't accept per-file filters yet) and refreshes every
-        cursor row.
+        and only rebuilds the sources that changed since the last
+        cycle. With 400 unchanged PDFs the wrapper short-circuits in
+        milliseconds; with one edited PDF it rebuilds only that one
+        source's closets (per-source purge+upsert is idempotent, so
+        untouched sources keep theirs) and refreshes only its cursor.
         """
         if kg_extract is None:
             return

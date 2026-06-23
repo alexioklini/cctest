@@ -1652,12 +1652,14 @@ def kg_purge_for_scope(palace_path: str, *, source_prefix: str = "",
 # it's called, even if nothing changed. For a 400-PDF project that's 400
 # LLM calls per daemon cycle forever — daemon-hostile.
 #
-# This wrapper gates the wing-wide call on "did any source file in the wing
-# actually change?" using a (palace_wing, source_file) cursor that records
-# (mtime, size). If everything's unchanged, we short-circuit. If even one
-# source changed, we run the full rebuild and re-record the cursor — finer-
-# grained per-file regen would need an upstream `source_files=[...]` filter
-# on `regenerate_closets`, which doesn't exist today.
+# This wrapper gates regen on "which source files in the wing actually
+# changed?" using a (palace_wing, source_file) cursor that records
+# (mtime, size). If everything's unchanged, we short-circuit. If some sources
+# changed, we rebuild ONLY those — our own parallel reimplementation
+# (_regen_closets_parallel) takes an only_sources filter, so we don't depend on
+# upstream's `regenerate_closets` (which has no per-file filter and rebuilds the
+# whole wing). The per-source purge+upsert is idempotent, so untouched sources
+# keep their closets; only the changed sources' cursors are re-recorded.
 #
 # Cursor key:
 #   (palace_wing, source_file) → (mtime_ns, size_bytes, processed_at, error)
@@ -1745,6 +1747,7 @@ def _file_stat_or_zero(path: str) -> tuple[int, int]:
 def _regen_closets_parallel(
     *, palace_path: str, wing: str, cfg, workers: int,
     progress_cb=None,
+    only_sources: set | None = None,
     log_prefix: str = "[closet-regen]",
 ) -> dict:
     """Parallel drop-in for mempalace.closet_llm.regenerate_closets(wing=...).
@@ -1765,6 +1768,13 @@ def _regen_closets_parallel(
       - same metadata stamp (generated_by / normalize_version / entities),
       - on LLM failure the source is left with its regex closets (counted
         `failed`, not written), identical to upstream.
+
+    `only_sources`, when given, restricts the regen to exactly those
+    source_file paths — the per-source purge+upsert is idempotent per source,
+    so rebuilding just the changed sources leaves every other source's closets
+    untouched. This is what turns a one-file edit from a full-wing rebuild
+    (~195 LLM calls) into a single-source rebuild. When None, ALL sources in
+    the wing are rebuilt (the original full-wing behaviour).
 
     Returns the same summary shape: {processed, failed, input_tokens,
     output_tokens}. Raises nothing the caller doesn't already handle — any
@@ -1799,6 +1809,11 @@ def _regen_closets_parallel(
         slot["content"].append(doc)
 
     sources = list(by_source.keys())
+    if only_sources is not None:
+        # Scope to just the changed sources. Any requested source not present
+        # in the wing (e.g. deleted between detection and regen) is silently
+        # dropped — its drawers are gone, so there's nothing to rebuild.
+        sources = [s for s in sources if s in only_sources]
     if not sources:
         return {"processed": 0, "failed": 0, "input_tokens": 0, "output_tokens": 0}
 
@@ -1906,11 +1921,11 @@ def run_closet_regen_incremental(
     Returns a small summary dict:
         {sources_seen, sources_stale, regen_triggered, elapsed_s, error?}
 
-    If `regen_triggered` is False, no LLM calls were made. If True, upstream
-    `regenerate_closets` was called once for the whole wing (it doesn't
-    accept per-file filters today) and every stale source was recorded in
-    the cursor with its current (mtime, size). Even unchanged sources get
-    their cursor refreshed because upstream rebuilt them too.
+    If `regen_triggered` is False, no LLM calls were made. If True, the regen
+    is scoped to ONLY the stale sources (the per-source purge+upsert is
+    idempotent, so untouched sources keep their existing closets) and each
+    stale source's cursor is refreshed with its current (mtime, size). A
+    one-file edit therefore rebuilds one source's closets, not the whole wing.
     """
     if not palace_path or not os.path.isdir(palace_path):
         return {"error": "palace_path missing", "regen_triggered": False}
@@ -1959,13 +1974,14 @@ def run_closet_regen_incremental(
             "elapsed_s": time.time() - t0,
         }
 
-    # Run the wing-wide regen. Upstream rebuilds every source in the wing,
-    # not just the stale ones — but at least we only pay this when something
-    # actually changed. We use our OWN parallel reimplementation
-    # (_regen_closets_parallel) instead of upstream's serial
+    # Run the regen scoped to ONLY the stale sources. We use our OWN parallel
+    # reimplementation (_regen_closets_parallel) instead of upstream's serial
     # regenerate_closets: same primitives + behaviour, but the per-source LLM
     # calls fan out across `workers` threads (upstream is one-at-a-time, the
-    # measured ~12-min bottleneck of a project sync).
+    # measured ~12-min bottleneck of a project sync) AND it accepts an
+    # only_sources filter, so a one-file edit rebuilds one source — not the
+    # whole wing (the per-source purge+upsert is idempotent, untouched sources
+    # keep their closets).
     try:
         from mempalace.closet_llm import LLMConfig as _ClosetLLMConfig
     except Exception as e:
@@ -1978,6 +1994,7 @@ def run_closet_regen_incremental(
         out = _regen_closets_parallel(
             palace_path=palace_path, wing=wing, cfg=cfg,
             workers=regen_workers, progress_cb=progress_cb,
+            only_sources=set(stale_sources),
             log_prefix=log_prefix) or {}
     except Exception as e:
         return {"error": f"regen: {type(e).__name__}: {e}",
@@ -1986,10 +2003,15 @@ def run_closet_regen_incremental(
                 "sources_stale": len(stale_sources),
                 "elapsed_s": time.time() - t0}
 
-    # Record cursor for every source we observed this round (upstream
-    # regenerated them all, so every cursor row is now fresh).
-    for sf, (mt, sz) in fresh_stats.items():
-        _closet_progress_record(chats_db_path, wing, sf, mt, sz)
+    # Record cursor only for the stale sources we just rebuilt. Unchanged
+    # sources were NOT touched by the scoped regen, and their cursors already
+    # match (that's why they weren't stale), so leave them as-is. A source that
+    # vanished from disk (in stale_sources but not fresh_stats) has no current
+    # stat to record — skip it; if it reappears it's stale again.
+    for sf in stale_sources:
+        st = fresh_stats.get(sf)
+        if st is not None:
+            _closet_progress_record(chats_db_path, wing, sf, st[0], st[1])
 
     err = (out or {}).get("error", "")
     processed = (out or {}).get("processed", 0)
