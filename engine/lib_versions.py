@@ -111,10 +111,17 @@ def _mempalace_version() -> dict:
 # a dependency is added/retired. Grouped by the component each lib serves, NOT by
 # venv (that's an implementation detail; `source` below names the venv).
 _GROUPS = [
-    ("Dokument-Konvertierung", "in_process", [
+    ("Dokument-Konvertierung (Lesen)", "in_process", [
         ("markitdown", "markitdown"),
         ("pdfminer.six", "pdfminer.six"),
         ("beautifulsoup4", "BeautifulSoup4"),
+    ]),
+    ("Dokument-Erzeugung (write_document)", "in_process", [
+        ("python-docx", "python-docx (.docx)"),
+        ("reportlab", "reportlab (.pdf)"),
+        ("openpyxl", "openpyxl (.xlsx)"),
+        ("python-pptx", "python-pptx (.pptx)"),
+        ("markdown-it-py", "markdown-it-py (Markdown-Parser)"),
     ]),
     ("Lokale Inferenz (MLX)", "in_process", [
         ("mlx", "mlx"),

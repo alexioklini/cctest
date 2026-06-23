@@ -128,14 +128,17 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   red. The model triggers ONE feature explicitly: `::kpi VALUE | LABEL | risk`
   lines render a coloured KPI stat-box strip. All toggled by `docx.{cover,toc,
   zebra_fill,rule_color,strip_emoji,risk_badges}` in the preset.
-  **Markdown engine** (v9.192.0): the .docx/.pdf body is parsed with markdown-it-py
-  (a real CommonMark parser), so standard markdown converts NATIVELY — nested
-  bullet/ordered lists, `> ` blockquotes, fenced code blocks (monospace + shaded),
-  and `[text](url)` clickable links (all previously dropped as raw text by the old
-  line parser). ::kpi + cover frontmatter are peeled off in a pre-pass before
-  markdown-it; OUR renderer (not the lib) still owns the look (badges/zebra/cover/
-  KPI). The `document-markdown` skill tells the model how to write converter-
-  friendly markdown; regression-guarded by `eval/doc_render_eval.py`.
+  **Markdown engine** (v9.192.0; pptx parity v9.192.2): the .docx/.pdf/.pptx body
+  is parsed with markdown-it-py (a real CommonMark parser), so standard markdown
+  converts NATIVELY — nested bullet/ordered lists, `> ` blockquotes, fenced code
+  blocks (monospace + shaded), and `[text](url)` clickable links (all previously
+  dropped as raw text by the old line parser). All THREE formats share the same
+  block model + renderer features (badges/zebra/inline). pptx: `# `/`## ` start
+  slides, bodies get bullets/nested lists/real tables-with-badges/inline runs.
+  ::kpi + cover frontmatter are peeled off in a pre-pass before markdown-it; OUR
+  renderer (not the lib) still owns the look. The `document-markdown` skill tells
+  the model how to write converter-friendly markdown; regression-guarded by
+  `eval/doc_render_eval.py` (docx + pdf + pptx asserts).
 - `edit_document(path, ...)` — structural edit
 
 ## Memory (MemPalace, direct — not MCP)

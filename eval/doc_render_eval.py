@@ -232,7 +232,34 @@ text
 """,
  [("baseline", "docx", lambda c: c.docx_table_count() >= 1 and c.docx_has_shaded_cell()),
   ("baseline", "docx", lambda c: c.docx_has_text("2,1")),
-  ("new", "docx", lambda c: c.docx_has_list())])
+  ("new", "docx", lambda c: c.docx_has_list()),
+  # pptx parity: bold rendered (not **literal**), a real table, no raw pipes
+  ("new", "pptx", lambda c: c.pptx_has_bold()),
+  ("new", "pptx", lambda c: c.pptx_has_table()),
+  ("new", "pptx", lambda c: not c.pptx_has_text("**fett**") and not c.pptx_has_text("| A |"))])
+
+# 13 — pptx-focused: inline + nested list + table across two slides
+case("pptx_rich",
+"""# Titelfolie
+Eine Einleitung.
+
+# Themenfolie
+Wichtige Punkte mit **fett** und *kursiv*:
+
+- Punkt eins
+- Punkt zwei
+  - Unterpunkt
+
+| Faktor | Bewertung |
+|---|---|
+| A | Hoch |
+| B | Gering |
+""",
+ [("new", "pptx", lambda c: c.pptx_slide_count() >= 2),
+  ("new", "pptx", lambda c: c.pptx_has_bold()),
+  ("new", "pptx", lambda c: not c.pptx_has_text("**fett**")),
+  ("new", "pptx", lambda c: c.pptx_has_table()),
+  ("new", "pptx", lambda c: c.pptx_para_levels() >= 2)])
 
 
 # ── docx probe ──────────────────────────────────────────────────────────────
@@ -281,7 +308,45 @@ class PdfProbe:
     def pdf_has_text(self, s): return s in self.txt
 
 
-def run(do_pdf):
+class PptxProbe:
+    def __init__(self, path):
+        from pptx import Presentation
+        self.prs = Presentation(path)
+    def _runs(self):
+        for sl in self.prs.slides:
+            for sh in sl.shapes:
+                if sh.has_text_frame:
+                    for p in sh.text_frame.paragraphs:
+                        for r in p.runs:
+                            yield p, r
+    def pptx_all_text(self):
+        out = []
+        for sl in self.prs.slides:
+            for sh in sl.shapes:
+                if sh.has_text_frame:
+                    out.append(sh.text_frame.text)
+                if sh.has_table:
+                    for row in sh.table.rows:
+                        for cell in row.cells:
+                            out.append(cell.text)
+        return "\n".join(out)
+    def pptx_has_text(self, s): return s in self.pptx_all_text()
+    def pptx_slide_count(self): return len(self.prs.slides)
+    def pptx_has_bold(self):
+        return any(r.font.bold for _, r in self._runs())
+    def pptx_has_table(self):
+        return any(sh.has_table for sl in self.prs.slides for sh in sl.shapes)
+    def pptx_para_levels(self):
+        lv = set()
+        for sl in self.prs.slides:
+            for sh in sl.shapes:
+                if sh.has_text_frame:
+                    for p in sh.text_frame.paragraphs:
+                        lv.add(p.level)
+        return len(lv)
+
+
+def run(do_pdf, do_pptx=True):
     import importlib
     importlib.reload(ft)  # pick up edits between runs
     ft._enforce_artifact_path = lambda p, who: (p, None)
@@ -298,8 +363,14 @@ def run(do_pdf):
                 pdf_path = f"{OUT}/{name}.pdf"
                 ft.tool_write_document({"path": pdf_path, "content": md, "style": ""})
                 probes["pdf"] = PdfProbe(pdf_path)
+            if do_pptx and any(fmt == "pptx" for _, fmt, _ in checks):
+                pptx_path = f"{OUT}/{name}.pptx"
+                ft.tool_write_document({"path": pptx_path, "content": md, "style": ""})
+                probes["pptx"] = PptxProbe(pptx_path)
             for kind, fmt, fn in checks:
                 if fmt == "pdf" and not do_pdf:
+                    continue
+                if fmt == "pptx" and not do_pptx:
                     continue
                 ctx = probes[fmt]
                 try:

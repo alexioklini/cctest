@@ -2042,44 +2042,187 @@ def tool_write_document(args: dict) -> str:
                                     _r.font.color.rgb = _PRGB(*_body_rgb)
                 except Exception:
                     pass
-            slides_content = re.split(r'^#\s+(.+)$', content, flags=re.MULTILINE)
+            from pptx.util import Inches as _PInches, Pt as _PPt
+            _pptx_strip_emoji = bool(_style["docx"].get("strip_emoji", True))
+            _pptx_do_badges = bool(_style["docx"].get("risk_badges", True))
+            _pptx_hdr_bg = _hex_rgb(_style["colors"].get("table_header_bg", "#1F3864"))
+            _pptx_hdr_fg = _hex_rgb(_style["colors"].get("table_header_text", "#FFFFFF"))
+            _pptx_zebra = _hex_rgb(_style["docx"].get("zebra_fill", "#EDF1F8"))
+
+            # Inline runs → pptx paragraph runs (bold/italic/mono/link), the pptx
+            # sibling of _docx_add_runs. Same markdown-it block model as docx/pdf.
+            def _pptx_add_runs(paragraph, runs):
+                for r in runs:
+                    run = paragraph.add_run()
+                    run.text = r.text
+                    run.font.bold = bool(r.bold)
+                    run.font.italic = bool(r.italic)
+                    if r.mono:
+                        run.font.name = _style["fonts"].get("mono", "Consolas")
+                    if r.href:
+                        try:
+                            run.hyperlink.address = r.href
+                        except Exception:
+                            pass
+
+            def _pptx_emit_blocks(tf, blocks, level=0):
+                """Render block list into a slide text-frame. Lists/quotes/code
+                become indented bullets (slide-appropriate); tables are handled by
+                the caller (they become real pptx tables, not text)."""
+                for blk in blocks:
+                    bt = blk["type"]
+                    if bt == "paragraph":
+                        p = tf.add_paragraph()
+                        p.level = min(level, 4)
+                        _pptx_add_runs(p, blk["runs"])
+                    elif bt == "list":
+                        for item in blk["items"]:
+                            wrote_first = False
+                            for sub in item:
+                                if sub["type"] == "paragraph" and not wrote_first:
+                                    p = tf.add_paragraph()
+                                    p.level = min(level, 4)
+                                    _pptx_add_runs(p, sub["runs"])
+                                    wrote_first = True
+                                elif sub["type"] == "list":
+                                    _pptx_emit_blocks(tf, [sub], level + 1)
+                    elif bt == "quote":
+                        for qb in blk["blocks"]:
+                            if qb.get("type") == "paragraph":
+                                p = tf.add_paragraph()
+                                p.level = min(level, 4)
+                                _pptx_add_runs(p, qb["runs"])
+                                for _r in p.runs:
+                                    _r.font.italic = True
+                    elif bt == "code":
+                        for cl in blk["text"].split("\n"):
+                            p = tf.add_paragraph()
+                            p.level = min(level + 1, 4)
+                            run = p.add_run(); run.text = cl or " "
+                            run.font.name = _style["fonts"].get("mono", "Consolas")
+                            run.font.size = _PPt(14)
+                    elif bt == "hr":
+                        tf.add_paragraph()  # blank separator line
+
+            def _pptx_add_table(slide, blk, top_in):
+                """Render a markdown table as a REAL pptx table with header fill,
+                zebra rows and risk-badge cell colouring (parity with docx/pdf)."""
+                rows = blk.get("rows") or []
+                if not rows:
+                    return top_in
+                nrows, ncols = len(rows), max(len(r) for r in rows)
+                width = _PInches(9.0); height = _PInches(0.4 * nrows)
+                gtbl = slide.shapes.add_table(nrows, ncols, _PInches(0.5),
+                                              _PInches(top_in), width, height).table
+                # badge column by evidence
+                _bcol = None
+                if _pptx_do_badges and nrows > 1:
+                    _hl = [_runs_plain(rows[0][c]).strip().lower() if c < len(rows[0]) else ""
+                           for c in range(ncols)]
+                    _best, _bsc = None, 0
+                    for _ci in range(ncols):
+                        _hits = sum(1 for _r in rows[1:]
+                                    if _ci < len(_r) and _risk_badge(_runs_plain(_r[_ci])))
+                        _hint = any(_hl[_ci] == h or _hl[_ci].endswith(h) for h in _BADGE_COL_HINTS)
+                        _sc = _hits + (0.5 if _hint else 0)
+                        if _hits >= max(1, (nrows - 1) // 2) and _sc > _bsc:
+                            _best, _bsc = _ci, _sc
+                    _bcol = _best
+                for ri, row in enumerate(rows):
+                    for ci in range(ncols):
+                        cell = gtbl.cell(ri, ci)
+                        runs = row[ci] if ci < len(row) else []
+                        cell.text = ""
+                        p = cell.text_frame.paragraphs[0]
+                        is_header = ri == 0
+                        badge = (not is_header and ci == _bcol and _risk_badge(_runs_plain(runs))) or None
+                        if is_header:
+                            if _pptx_hdr_bg:
+                                cell.fill.solid(); cell.fill.fore_color.rgb = _PRGB(*_pptx_hdr_bg)
+                            _pptx_add_runs(p, runs)
+                            for _r in p.runs:
+                                _r.font.bold = True
+                                if _pptx_hdr_fg:
+                                    _r.font.color.rgb = _PRGB(*_pptx_hdr_fg)
+                        elif badge:
+                            cell.fill.solid(); cell.fill.fore_color.rgb = _PRGB(*_hex_rgb("#" + badge[1]))
+                            _pptx_add_runs(p, runs)
+                            for _r in p.runs:
+                                _r.font.bold = True
+                                _r.font.color.rgb = _PRGB(*_hex_rgb("#" + badge[0]))
+                        else:
+                            if _pptx_zebra and ri % 2 == 0:
+                                cell.fill.solid(); cell.fill.fore_color.rgb = _PRGB(*_pptx_zebra)
+                            _pptx_add_runs(p, runs)
+                        for _r in p.runs:
+                            _r.font.size = _PPt(12)
+                return top_in + 0.45 * nrows + 0.3
+
+            # Slide boundary = a level-1 OR level-2 heading (`# ` / `## `). Decks
+            # are commonly written `# Deck Title` + `## Slide 1` + `## Slide 2`, so
+            # both start a new slide; deeper headings (### …) stay in the body.
+            slides_content = re.split(r'^#{1,2}\s+(.+)$', content, flags=re.MULTILINE)
             if len(slides_content) < 3:
-                slide_layout = prs.slide_layouts[1]
-                slide = prs.slides.add_slide(slide_layout)
+                slide = prs.slides.add_slide(prs.slide_layouts[1])
                 slide.shapes.title.text = "Slide 1"
-                slide.placeholders[1].text = content.strip()
+                tf = slide.placeholders[1].text_frame
+                tf.clear()
+                _blocks = _markdown_to_blocks(content.strip())
+                _first = tf.paragraphs[0]
+                _para_blocks = [b for b in _blocks if b["type"] != "table"]
+                if _para_blocks and _para_blocks[0]["type"] == "paragraph":
+                    _pptx_add_runs(_first, _para_blocks[0]["runs"])
+                    _para_blocks = _para_blocks[1:]
+                _pptx_emit_blocks(tf, _para_blocks)
             else:
-                from pptx.util import Inches as _PInches
                 for si in range(1, len(slides_content), 2):
-                    title = slides_content[si].strip()
+                    title = _clean_heading_text(slides_content[si].strip(), _pptx_strip_emoji)
                     body = slides_content[si + 1].strip() if si + 1 < len(slides_content) else ""
-                    body_lines = [l for l in body.split("\n") if l.strip()]
-                    # Image lines on this slide (e.g. render_diagram charts).
-                    imgs = [_resolve_doc_image(m.group(2), _doc_dir)
-                            for m in (_MD_IMAGE_RE.match(l) for l in body_lines) if m]
-                    imgs = [p for p in imgs if p]
-                    text_lines = [l for l in body_lines if not _MD_IMAGE_RE.match(l)]
-                    if imgs and not text_lines:
-                        # Picture-focused slide: title-only layout + centered image(s).
+                    _blocks = _markdown_to_blocks(body)
+                    # Separate images (placed as pictures) from flow blocks.
+                    _img_paths = []
+                    _flow = []
+                    for b in _blocks:
+                        if b["type"] == "paragraph":
+                            _m = _MD_IMAGE_RE.match(_runs_plain(b["runs"]).strip())
+                            if _m:
+                                _ip = _resolve_doc_image(_m.group(2), _doc_dir)
+                                if _ip and not _ip.lower().endswith(".svg"):
+                                    _img_paths.append(_ip)
+                                    continue
+                        _flow.append(b)
+                    _tables = [b for b in _flow if b["type"] == "table"]
+                    _text_blocks = [b for b in _flow if b["type"] != "table"]
+                    _has_text = any(
+                        (b["type"] in ("paragraph", "list", "quote", "code")) and
+                        (_runs_plain(b["runs"]).strip() if b["type"] == "paragraph" else True)
+                        for b in _text_blocks)
+                    if _img_paths and not _has_text and not _tables:
+                        # Picture-focused slide.
                         slide = prs.slides.add_slide(prs.slide_layouts[5])
                         slide.shapes.title.text = title
-                        slide.shapes.add_picture(imgs[0], _PInches(1.0), _PInches(1.6),
+                        slide.shapes.add_picture(_img_paths[0], _PInches(1.0), _PInches(1.6),
                                                  height=_PInches(5.0))
                     else:
                         slide = prs.slides.add_slide(prs.slide_layouts[1])
                         slide.shapes.title.text = title
                         tf = slide.placeholders[1].text_frame
                         tf.clear()
-                        for li, bline in enumerate(text_lines):
-                            bline = re.sub(r'^[-*]\s+', '', bline.strip())
-                            if li == 0:
-                                tf.text = bline
+                        # First text block fills paragraphs[0]; rest append.
+                        if _text_blocks:
+                            first = _text_blocks[0]
+                            if first["type"] == "paragraph":
+                                _pptx_add_runs(tf.paragraphs[0], first["runs"])
+                                _pptx_emit_blocks(tf, _text_blocks[1:])
                             else:
-                                tf.add_paragraph().text = bline
-                        # Any image on a text slide: place it to the right.
-                        if imgs:
+                                _pptx_emit_blocks(tf, _text_blocks)
+                        # Tables become real pptx tables, stacked below the text.
+                        _top = 4.2 if _has_text else 1.8
+                        for _tb in _tables:
+                            _top = _pptx_add_table(slide, _tb, _top)
+                        if _img_paths and not _tables:
                             try:
-                                slide.shapes.add_picture(imgs[0], _PInches(5.2),
+                                slide.shapes.add_picture(_img_paths[0], _PInches(5.2),
                                                          _PInches(1.8), height=_PInches(4.0))
                             except Exception:
                                 pass

@@ -3,7 +3,7 @@ name: Document Markdown
 description: How to write markdown for write_document so it converts to a polished .docx / .pdf. The converter (markdown-it-py → our renderer) understands standard markdown PLUS two house conventions (::kpi stat boxes, a Bewertung/Risiko column for auto risk-badges). Read this before producing a report/letter/analysis as a Word or PDF file.
 metadata:
   type: guide
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # Document Markdown
@@ -96,6 +96,30 @@ Freigabe: …
 The title + those `Key: value` lines become the cover; everything else flows
 into the body. A short memo (few headings, no frontmatter) stays single-page —
 don't force a cover with filler.
+
+## Slides (.pptx)
+
+For a `.pptx` deck, a `# ` or `## ` heading starts a **new slide** (its text
+becomes the slide title); deeper `### ` headings stay in the slide body. Each
+slide's body is the same rich markdown — bullets (nested for sub-points), tables
+(with the Bewertung/Risiko auto-badges), `**bold**`/`*italic*`/links all render
+as real formatting. A slide whose body is only an `![alt](file.png)` becomes a
+full-bleed picture slide. Keep slide bodies to a few bullets — slides are for
+key points, not paragraphs.
+
+```
+# Deck-Titel
+
+## Erste Folie
+- Kernpunkt mit **Betonung**
+- Zweiter Punkt
+  - Unterpunkt
+
+## Datenfolie
+| Faktor | Bewertung |
+|---|---|
+| A | Hoch |
+```
 
 ## Quick template — a clean report
 
