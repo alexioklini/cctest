@@ -7,6 +7,41 @@
 
 ---
 
+## ✅✅ UPDATE 2 (2026-06-23): CHANGED-FILE PATH NOW FAST TOO — SHIPPED (9.189.4/.5/.6)
+
+The #1 follow-up below ("1-file change = 269s") is **DONE & verified live**. A
+single-file change on risikoanalysen now syncs in **~14s across ALL phases**
+(was ~270–285s). Committed + pushed to main (`42d641f`).
+
+Root cause of the 264s indexing phase: **the mine bulk pre-filter never
+filtered.** `mp_miner.scan_project()` returns `pathlib.PosixPath`; drawer
+`source_file` keys (and `mine()`'s `files=` list) are `str`. A `PosixPath` is
+never equal to a `str` as a dict key, so `_mined.get(f)` ALWAYS missed → every
+file looked "changed" → all ~195 files were handed to `mine()`, which then paid
+the per-file `file_already_mined()` Qdrant skip-check. The 9.189.2/`e449e31`
+prefilter AND the original `bulk_check_mined` both had this bug — they never
+actually filtered. **Fix (9.189.6): `os.fspath()` the scan result.** Verified
+against the live palace: 0/195 path matches → 195/195; indexing 264s → **1.9s**.
+
+Two more (shipped same commit):
+- **9.189.5**: wing-scoped the prefilter fetch — one `get(where={wing})` instead
+  of upstream `bulk_check_mined()` scanning the whole shared corpus (all projects).
+- **9.189.4**: closet regen rebuilds ONLY changed sources via
+  `_regen_closets_parallel(only_sources=…)` (idempotent per-source purge+upsert)
+  instead of the full wing — 1 source (~6s) vs ~195 LLM calls. NO venv patch
+  needed — `_regen_closets_parallel` is OUR reimplementation, not upstream.
+
+Measured changed-file breakdown (run 3333, warm pool settled):
+indexing 1.9s · kg 1.1s · closet 5.8s · total **14.1s**. (First post-restart run
+showed 113s indexing = transient warm-pool GPU contention, NOT steady-state.)
+
+Remaining nice-to-haves: the embedding model reloads + hits HuggingFace on each
+mine() (a few seconds, fine for now); at hundreds of projects, re-verify the full
+unchanged cycle stays quick (each project = one os.stat walk via the fingerprint
+gate).
+
+---
+
 ## ✅ UPDATE (end of session): FAST GATE VERIFIED WORKING
 
 The open bug below was a **test-timing artifact**, not a real bug. Confirmed:
