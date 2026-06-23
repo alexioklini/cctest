@@ -60,6 +60,24 @@ async function ensureSession(chat) {
     // Caveman mode is NOT reused from the last chat — a fresh session always
     // starts at the default (off / per-model system default). newChat() resets
     // chat.cavemanMode to 0 and the server applies any per-model default itself.
+    // BUT: a draft chat may carry a caveman level set before the first send —
+    // e.g. the project-landing composer, where sendMessage snapshots the 🪨
+    // toggle across newChat() and restores it onto chat.cavemanMode. The server
+    // reads caveman from the SESSION row (not the request body, unlike
+    // thinking), so persist a non-default carried level now that the id exists —
+    // else the toggle is silently dropped for the turn. Mirrors the webBasket
+    // persist above.
+    // Awaited (not fire-and-forget like webBasket above): the turn worker reads
+    // session.caveman_mode at build time and the send fires right after
+    // ensureSession returns, so the DB write must land BEFORE the turn starts.
+    if ((parseInt(chat.cavemanMode, 10) || 0) > 0) {
+      try {
+        await API.post('/v1/sessions/manage', {
+          action: 'caveman_mode', session_id: chat.sessionId,
+          mode: parseInt(chat.cavemanMode, 10) || 0,
+        });
+      } catch (e) { /* non-fatal: turn proceeds at the session default */ }
+    }
     // Show warmup indicator if provider supports it
     if (data.warmup) {
       startWarmupPoll(chat);

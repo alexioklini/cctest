@@ -69,6 +69,13 @@ async function sendMessage() {
     const _carryModel = (_pickedModel && _pickedModel !== _agentDefault)
       ? { model: _pickedModel, autoPicked: _preChat.autoPicked, autoReason: _preChat.autoReason }
       : null;
+    // Same problem again for the thinking-level and caveman composer toggles:
+    // the user can set them on the project-landing composer, but newChat()
+    // resets both to their defaults (sessions.js) before the turn is built, so
+    // the picks are silently dropped (the model was already special-cased above;
+    // these two were missed). Snapshot and restore them across newChat().
+    const _carryThinking = _preChat ? _preChat.thinkingLevel : undefined;
+    const _carryCaveman = _preChat ? _preChat.cavemanMode : undefined;
     newChat();
     state._pendingFiles = _carryFiles;
     state._pendingImages = _carryImages;
@@ -78,6 +85,12 @@ async function sendMessage() {
       _freshChat.autoPicked = _carryModel.autoPicked;
       _freshChat.autoReason = _carryModel.autoReason;
       if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay(_freshChat.model);
+    }
+    {
+      const _freshChat = state.ensureAgentChat(state.activeAgentId);
+      if (_carryThinking !== undefined) _freshChat.thinkingLevel = _carryThinking;
+      if (_carryCaveman !== undefined) _freshChat.cavemanMode = _carryCaveman;
+      if (typeof refreshThinkingButton === 'function') refreshThinkingButton();
       if (typeof updateStatusBar === 'function') updateStatusBar();
     }
     if (typeof renderFilePreviews === 'function') renderFilePreviews();

@@ -1356,7 +1356,7 @@ function editProjectInstructions() {
 
   const content = document.createElement('div');
   content.className = 'modal-content';
-  content.style.maxWidth = '600px';
+  content.style.maxWidth = '1200px';
   content.innerHTML = `
     <div class="modal-header">
       <span class="modal-title">Projekt-Anweisungen</span>
