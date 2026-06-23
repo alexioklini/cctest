@@ -32,6 +32,11 @@ wechsle zu `04-recipes.md` und führe sie aus.
 - **Wiki** — editierbares Wissens-Wiki (= Langzeit-Gedächtnis; durchsuchbar)
 - **Einstellungen (Zahnrad)** — Agent- + allgemeine Einstellungen
   (meist nur für Admins)
+- **Versionsnummer** (oben neben „Brain Agent“) — anklickbar: öffnet die
+  **Versionshistorie** „Was ist neu in Brain Agent“. Ein Modal mit der
+  kuratierten Liste aller Releases (neueste zuerst, aktuelle Version
+  vorausgewählt): links die Versionen, rechts pro Eintrag was die Version
+  bringt — aus Nutzersicht beschrieben, mit „Für alle“/„Für Admins“-Markierung.
 
 **Hauptbereich** — die jeweils gewählte Ansicht. Die Willkommensansicht
 zeigt Begrüßung + Eingabefeld + Prompt-Karten.

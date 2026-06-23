@@ -1192,7 +1192,7 @@ class BrainAgentHandler(
     # --- Routing ---
 
     # Paths that don't require auth
-    _PUBLIC_GET_PATHS = {"/v1/status", "/v1/auth/me"}
+    _PUBLIC_GET_PATHS = {"/v1/status", "/v1/auth/me", "/v1/changelog/curated"}
     # /v1/tools/call has its own per-turn nonce auth (see server_lib/tool_mcp.py)
     # and is reached only from the sidecar over localhost — so it's exempt from
     # the user-auth gate. Bind to 127.0.0.1 only (see main()) to keep it safe.
@@ -1510,6 +1510,8 @@ class BrainAgentHandler(
             self._handle_chat_stream()
         elif path == "/v1/status":
             self._handle_status()
+        elif path == "/v1/changelog/curated":
+            self._handle_changelog_curated()
         elif path == "/v1/agents":
             self._handle_list_agents()
         elif path.startswith("/v1/agents/") and "/files" in path:
@@ -2418,6 +2420,17 @@ class BrainAgentHandler(
             "scheduler_tasks": len(engine._scheduler.list_all()) if engine._scheduler else 0,
             "changelog": [{"version": v, "date": d, "changes": c} for v, d, c in engine.CHANGELOG],
             "disabled_commands": server_config.get("disabled_commands", []),
+        })
+
+    def _handle_changelog_curated(self):
+        """Curated, end-user-facing version history (German, benefit-oriented) for the
+        sidebar version-history modal. Distinct from the technical `changelog` in
+        /v1/status — see engine/changelog_curated.py. Public (like /v1/status) so the
+        version badge can open it even on the login screen."""
+        self._send_json({
+            "current_version": engine.VERSION,
+            "current_date": engine.VERSION_DATE,
+            "entries": engine.CURATED_CHANGELOG,
         })
 
     def _handle_list_agents(self):

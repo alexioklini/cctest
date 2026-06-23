@@ -1308,7 +1308,18 @@ async function renderPromptCards() {
     if (!r.ok) return;
     const body = await r.json();
     const el = document.getElementById('sb-brand-version');
-    if (el && body && body.version) el.textContent = 'v' + body.version;
+    if (el && body && body.version) {
+      el.textContent = 'v' + body.version;
+      // Klick öffnet die kuratierte Versionshistorie (modal_changelog.js)
+      el.classList.add('sb-brand-version-click');
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
+      el.title = 'Versionshistorie anzeigen';
+      el.addEventListener('click', () => { if (typeof openChangelogModal === 'function') openChangelogModal(); });
+      el.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); if (typeof openChangelogModal === 'function') openChangelogModal(); }
+      });
+    }
   } catch {}
 })();
 

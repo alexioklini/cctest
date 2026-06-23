@@ -567,6 +567,13 @@ CHANGELOG = [
     ("0.1.0", "2026-03-10", "Initial release — streaming chat, model fallback, SSE parsing."),
 ]
 
+# Curated, end-user-facing version history (German, benefit-oriented) shown in the
+# web UI when the user clicks the version in the left sidebar. HANDMAINTAINED, NOT
+# derived from CHANGELOG above — see engine/changelog_curated.py + CLAUDE.md
+# "Kuratierte Versionshistorie pflegen". Re-exported here so server.py reaches it
+# as engine.CURATED_CHANGELOG (same pattern as engine.CHANGELOG).
+from engine.changelog_curated import CURATED_CHANGELOG  # noqa: E402
+
 import argparse
 import collections
 import contextlib

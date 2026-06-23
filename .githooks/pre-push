@@ -51,6 +51,7 @@ fi
 # stdin: <local ref> <local sha> <remote ref> <remote sha> per pushed ref.
 needs_check=0
 drifted=0
+changelog_drifted=0
 
 while read -r local_ref local_sha remote_ref remote_sha; do
   # Skip branch deletions (all-zero local sha).
@@ -75,6 +76,17 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     needs_check=1
     if ! echo "$changed" | grep -q "^${SKILL_DIR}/"; then
       drifted=1
+    fi
+  fi
+
+  # Curated end-user version history: if this range bumps brain.py's VERSION
+  # line but never touches engine/changelog_curated.py, the user-facing history
+  # likely drifted. (Diff the VERSION line specifically — a brain.py touch that
+  # leaves VERSION alone is not a release.)
+  if echo "$changed" | grep -q '^brain\.py$' \
+     && ! echo "$changed" | grep -q '^engine/changelog_curated\.py$'; then
+    if git diff "$range" $extra -- brain.py 2>/dev/null | grep -Eq '^\+VERSION = "'; then
+      changelog_drifted=1
     fi
   fi
 done
@@ -133,6 +145,29 @@ if [[ "$needs_check" == "1" && "$drifted" == "1" ]]; then
   If no doc update is needed (internal refactor, test-only, etc.), re-push:
 
     SKILL_DOC_OK=1 git push        # or:  git push --no-verify
+──────────────────────────────────────────────────────────────────────
+
+EOF
+  exit 1
+fi
+
+if [[ "$changelog_drifted" == "1" && "${CHANGELOG_OK:-}" != "1" ]]; then
+  cat >&2 <<EOF
+
+──────────────────────────────────────────────────────────────────────
+  curated version-history check
+
+  This push bumps brain.py VERSION but does NOT touch
+  engine/changelog_curated.py.
+
+  That file is the end-user version history shown when a user clicks the
+  version in the left sidebar. If this release adds or changes anything an
+  end user or admin can SEE, add a curated entry at the TOP (benefit-oriented
+  German — see CLAUDE.md "Keeping the curated version history current").
+
+  If the release is purely internal (perf, invisible fix, refactor), re-push:
+
+    CHANGELOG_OK=1 git push        # or:  git push --no-verify
 ──────────────────────────────────────────────────────────────────────
 
 EOF

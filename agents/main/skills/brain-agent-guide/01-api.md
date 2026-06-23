@@ -552,7 +552,11 @@ Once a feedback row exists, user and admin exchange short one-line messages
 
 ## Services / Notifications / Backup / Status
 
-- `GET /v1/status` — server uptime + version
+- `GET /v1/status` — server uptime + version (+ technical `changelog`)
+- `GET /v1/changelog/curated` — **public**: curated end-user version history
+  (German, benefit-oriented) for the sidebar version-history modal. Returns
+  `{current_version, current_date, entries:[{version,date,title,body,audience,versions}]}`.
+  Handmaintained in `engine/changelog_curated.py` (NOT the technical changelog).
 - `GET /v1/doctor` — admin: static config-health checks (model→provider
   integrity, provider gaps, MemPalace + KG health, **GDPR/classification
   scanner-disabled warnings**). `POST /v1/doctor/live` adds live probes (test
