@@ -1255,6 +1255,162 @@ def _apply_docx_header_footer(doc, style: dict, doc_dir: str):
                               logo_spec=logo, page_token=True)
 
 
+# ── Markdown → block model (markdown-it-py) ────────────────────────────────
+# markdown-it-py is already installed (markitdown dependency). It ONLY tokenises
+# (text → token list) — it renders nothing itself. We translate its token stream
+# into a small, format-agnostic block model below; the docx + pdf renderers each
+# consume that SAME model, so the two paths stay in lock-step and we keep full
+# control of the look (badges/zebra/cover/KPI all live in OUR renderer, not the
+# lib). This replaced a hand-rolled line parser that silently dropped lists,
+# blockquotes, code fences and links. Our non-standard ::kpi + cover frontmatter
+# are stripped in a pre-pass BEFORE markdown-it ever sees the text.
+
+# An inline run carries text + bold/italic/mono/link — built from markdown-it's
+# inline children so headings/cells/paragraphs render identically everywhere.
+class _Run:
+    __slots__ = ("text", "bold", "italic", "mono", "href")
+    def __init__(self, text, bold=False, italic=False, mono=False, href=None):
+        self.text, self.bold, self.italic, self.mono, self.href = text, bold, italic, mono, href
+
+
+def _inline_tokens_to_runs(tok):
+    """Flatten a markdown-it 'inline' token's children into a list of _Run.
+    Handles strong/em/code_inline/link/softbreak. Nested emphasis composes."""
+    runs = []
+    if tok is None or not getattr(tok, "children", None):
+        # plain inline content with no markup
+        if tok is not None and tok.content:
+            runs.append(_Run(tok.content))
+        return runs
+    bold = ital = 0
+    href = [None]
+    for ch in tok.children:
+        t = ch.type
+        if t == "strong_open": bold += 1
+        elif t == "strong_close": bold = max(0, bold - 1)
+        elif t == "em_open": ital += 1
+        elif t == "em_close": ital = max(0, ital - 1)
+        elif t == "link_open":
+            href[0] = dict(ch.attrs).get("href") if ch.attrs else None
+        elif t == "link_close":
+            href[0] = None
+        elif t == "code_inline":
+            runs.append(_Run(ch.content, mono=True, bold=bool(bold), italic=bool(ital), href=href[0]))
+        elif t == "softbreak" or t == "hardbreak":
+            runs.append(_Run(" "))
+        elif t == "text":
+            if ch.content:
+                runs.append(_Run(ch.content, bold=bool(bold), italic=bool(ital), href=href[0]))
+        elif t == "image":
+            # inline images are rare in our reports; keep alt text as a fallback
+            alt = ch.content or ""
+            if alt:
+                runs.append(_Run(alt, italic=True))
+    return runs or ([_Run(tok.content)] if tok.content else [])
+
+
+def _runs_plain(runs):
+    return "".join(r.text for r in runs)
+
+
+def _md_parser():
+    from markdown_it import MarkdownIt
+    return (MarkdownIt("commonmark", {"html": False})
+            .enable("table").enable("strikethrough"))
+
+
+def _markdown_to_blocks(md_text):
+    """Parse markdown into a flat list of block dicts the renderers consume:
+      {"type":"heading","level":n,"runs":[...]}
+      {"type":"paragraph","runs":[...]}
+      {"type":"hr"}
+      {"type":"code","text":str,"lang":str}
+      {"type":"quote","blocks":[...]}            # nested blocks
+      {"type":"list","ordered":bool,"items":[[blocks...], ...],"level":n}
+      {"type":"table","rows":[[runs,...], ...]}  # row 0 = header
+    Lists nest via item-blocks that may themselves contain a 'list'."""
+    toks = _md_parser().parse(md_text)
+    # Walk the flat token stream with an explicit container stack.
+    root = []
+    stack = [root]            # current block-list to append to
+    list_stack = []           # active list dicts
+    item_stack = []           # active list-item block-lists
+    pending_table = None
+    cur_row = None
+    in_header = False
+
+    def top(): return stack[-1]
+
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        ty = t.type
+        if ty == "heading_open":
+            lvl = int(t.tag[1])
+            inline = toks[i + 1] if i + 1 < len(toks) else None
+            top().append({"type": "heading", "level": lvl,
+                          "runs": _inline_tokens_to_runs(inline)})
+            i += 3; continue
+        if ty == "paragraph_open":
+            inline = toks[i + 1] if i + 1 < len(toks) else None
+            top().append({"type": "paragraph", "runs": _inline_tokens_to_runs(inline)})
+            i += 3; continue
+        if ty == "hr":
+            top().append({"type": "hr"}); i += 1; continue
+        if ty == "fence" or ty == "code_block":
+            top().append({"type": "code", "text": t.content.rstrip("\n"),
+                          "lang": (t.info or "").strip()})
+            i += 1; continue
+        if ty == "bullet_list_open" or ty == "ordered_list_open":
+            lst = {"type": "list", "ordered": ty.startswith("ordered"),
+                   "items": [], "level": len(list_stack)}
+            top().append(lst)
+            list_stack.append(lst)
+            i += 1; continue
+        if ty == "list_item_open":
+            item_blocks = []
+            list_stack[-1]["items"].append(item_blocks)
+            stack.append(item_blocks)   # children append into this item
+            i += 1; continue
+        if ty == "list_item_close":
+            stack.pop()
+            i += 1; continue
+        if ty == "bullet_list_close" or ty == "ordered_list_close":
+            list_stack.pop()
+            i += 1; continue
+        if ty == "blockquote_open":
+            qblocks = []
+            top().append({"type": "quote", "blocks": qblocks})
+            stack.append(qblocks)
+            i += 1; continue
+        if ty == "blockquote_close":
+            stack.pop()
+            i += 1; continue
+        if ty == "table_open":
+            pending_table = {"type": "table", "rows": []}
+            top().append(pending_table)
+            i += 1; continue
+        if ty == "table_close":
+            pending_table = None
+            i += 1; continue
+        if ty in ("thead_open", "thead_close", "tbody_open", "tbody_close"):
+            in_header = ty == "thead_open" or (ty == "tbody_close" and in_header)
+            i += 1; continue
+        if ty == "tr_open":
+            cur_row = []; i += 1; continue
+        if ty == "tr_close":
+            if pending_table is not None and cur_row is not None:
+                pending_table["rows"].append(cur_row)
+            cur_row = None; i += 1; continue
+        if ty in ("th_open", "td_open"):
+            inline = toks[i + 1] if i + 1 < len(toks) else None
+            if cur_row is not None:
+                cur_row.append(_inline_tokens_to_runs(inline))
+            i += 3; continue
+        i += 1
+    return root
+
+
 # ── Opus-near docx polish (all deterministic) ──────────────────────────────
 # Leading emoji + variation selectors a model tends to prefix onto headings
 # (📌📊📜🏢🔍📈🛡️📉🎯📎 …). Stripped for regulatory docs when docx.strip_emoji on.
@@ -1303,6 +1459,129 @@ def _add_inline_md_runs(paragraph, text: str, *, base_bold=False, base_italic=Fa
             rgb = _hex_rgb(color)
             if rgb:
                 run.font.color.rgb = RGBColor(*rgb)
+
+
+def _docx_add_runs(paragraph, runs, *, base_bold=False, color=None, mono_font="Consolas"):
+    """Render a list of _Run (from the markdown-it block model) into a docx
+    paragraph — bold/italic/mono + clickable hyperlinks. The token-based sibling
+    of _add_inline_md_runs (which parses raw **md** text); both coexist so the
+    cover/KPI helpers can keep using the text variant."""
+    from docx.shared import RGBColor
+    for r in runs:
+        if r.href:
+            _docx_add_hyperlink(paragraph, r.text, r.href, color=color)
+            continue
+        run = paragraph.add_run(r.text)
+        run.bold = bool(r.bold or base_bold)
+        run.italic = bool(r.italic)
+        if r.mono:
+            run.font.name = mono_font
+        if color:
+            rgb = _hex_rgb(color)
+            if rgb:
+                run.font.color.rgb = RGBColor(*rgb)
+
+
+def _docx_add_hyperlink(paragraph, text, url, *, color=None):
+    """Append a real clickable hyperlink run (python-docx has no API for it).
+    Falls back to a plain blue-underlined run if relationship wiring fails."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from docx.shared import RGBColor
+    try:
+        part = paragraph.part
+        r_id = part.relate_to(
+            url, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            is_external=True)
+        hyperlink = OxmlElement("w:hyperlink")
+        hyperlink.set(qn("r:id"), r_id)
+        new_run = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        c = OxmlElement("w:color"); c.set(qn("w:val"), "2E74B5"); rPr.append(c)
+        u = OxmlElement("w:u"); u.set(qn("w:val"), "single"); rPr.append(u)
+        new_run.append(rPr)
+        t = OxmlElement("w:t"); t.text = text; new_run.append(t)
+        hyperlink.append(new_run)
+        paragraph._p.append(hyperlink)
+    except Exception:
+        run = paragraph.add_run(text)
+        run.font.color.rgb = RGBColor(0x2E, 0x74, 0xB5)
+        run.underline = True
+
+
+def _docx_render_list(doc, lst, style, *, level=0):
+    """Render a (possibly nested) list block as real Word list paragraphs.
+    Bullet → 'List Bullet[ N]', ordered → 'List Number[ N]'. Nested lists recurse
+    with a deeper Word list style so Word shows the indent + sub-bullets."""
+    base = "List Number" if lst.get("ordered") else "List Bullet"
+    lvl = min(level, 2)
+    style_name = base if lvl == 0 else f"{base} {lvl + 1}"
+    mono = style["fonts"].get("mono", "Consolas")
+    for item in lst["items"]:
+        first_para_done = False
+        for blk in item:
+            bt = blk["type"]
+            if bt == "paragraph" and not first_para_done:
+                try:
+                    p = doc.add_paragraph(style=style_name)
+                except KeyError:
+                    p = doc.add_paragraph(style=base)
+                _docx_add_runs(p, blk["runs"], mono_font=mono)
+                first_para_done = True
+            elif bt == "list":
+                _docx_render_list(doc, blk, style, level=level + 1)
+            elif bt == "paragraph":
+                # continuation paragraph inside the same item
+                p = doc.add_paragraph()
+                p.paragraph_format.left_indent = __import__("docx").shared.Inches(0.25 * (lvl + 1))
+                _docx_add_runs(p, blk["runs"], mono_font=mono)
+            elif bt == "code":
+                _docx_render_code(doc, blk, style)
+            elif bt == "quote":
+                for qb in blk["blocks"]:
+                    if qb.get("type") == "paragraph":
+                        _docx_render_quote_para(doc, qb["runs"], style)
+
+
+def _docx_render_quote_para(doc, runs, style):
+    """A blockquote paragraph: left indent + a left accent border + italic grey."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from docx.shared import Inches
+    p = doc.add_paragraph()
+    p.paragraph_format.left_indent = Inches(0.3)
+    pPr = p._p.get_or_add_pPr()
+    pbdr = OxmlElement("w:pBdr")
+    left = OxmlElement("w:left")
+    left.set(qn("w:val"), "single"); left.set(qn("w:sz"), "18")
+    left.set(qn("w:space"), "8")
+    left.set(qn("w:color"), (style["docx"].get("rule_color") or "#B4C6E7").lstrip("#"))
+    pbdr.append(left); pPr.append(pbdr)
+    _docx_add_runs(p, runs, mono_font=style["fonts"].get("mono", "Consolas"))
+    for r in p.runs:
+        r.italic = True
+
+
+def _docx_render_code(doc, blk, style):
+    """A fenced code block: monospace runs on a light-shaded paragraph, one Word
+    line per source line (no \\n in a run — Word needs separate breaks)."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from docx.shared import Pt
+    mono = style["fonts"].get("mono", "Consolas")
+    p = doc.add_paragraph()
+    pPr = p._p.get_or_add_pPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear"); shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), "F2F2F2")
+    pPr.append(shd)
+    lines = blk["text"].split("\n")
+    for li, ln in enumerate(lines):
+        run = p.add_run(ln)
+        run.font.name = mono
+        run.font.size = Pt(max(8, int(style["sizes"].get("body", 11)) - 1))
+        if li < len(lines) - 1:
+            run.add_break()
 
 
 def _shade_cell(cell, hex_color):
@@ -1383,6 +1662,46 @@ def _add_toc_field(doc):
     fe = OxmlElement("w:fldChar"); fe.set(qn("w:fldCharType"), "end")
     run._r.append(fb); run._r.append(instr); run._r.append(sep)
     run._r.append(placeholder); run._r.append(fe)
+
+
+def _extract_cover_and_body(content, dx):
+    """Pre-pass over RAW markdown (before markdown-it): if the doc is substantial
+    and starts with an H1 (+ optional 'Key: value' frontmatter), peel those off
+    for the cover page and return (title, [(k,v)...], body_markdown). The cover
+    lines are NON-standard framing we render ourselves; the rest goes to
+    markdown-it. Returns (None, [], content) when no cover applies."""
+    if not dx.get("cover", True):
+        return None, [], content
+    lines = content.split("\n")
+    n_headings = sum(1 for l in lines if re.match(r'^#{1,6}\s', l))
+    n_nonblank = sum(1 for l in lines if l.strip())
+    title, tidx = None, None
+    for li, ln in enumerate(lines[:40]):
+        m = re.match(r'^#\s+(.*)', ln)
+        if m:
+            title, tidx = m.group(1).strip(), li
+            break
+    if title is None:
+        return None, [], content
+    # frontmatter directly under the H1 (until blank / --- / non-kv line)
+    front, consumed_to = [], tidx
+    for li in range(tidx + 1, min(tidx + 12, len(lines))):
+        raw = lines[li].strip()
+        if not raw or raw == "---":
+            consumed_to = li if raw == "---" else li - 1
+            break
+        fm = re.match(r'^\*{0,2}([A-Za-zÄÖÜäöü][^:]{1,40}?)\*{0,2}:\s*(.+)$', raw)
+        if fm and "|" not in raw and not raw.startswith("::"):
+            front.append((fm.group(1).strip(), re.sub(r'\*+', '', fm.group(2)).strip()))
+            consumed_to = li
+        else:
+            consumed_to = li - 1
+            break
+    substantial = (n_headings >= 4) or bool(front) or (n_nonblank >= 30)
+    if not substantial:
+        return None, [], content
+    body = "\n".join(lines[consumed_to + 1:])
+    return title, front, body
 
 
 def _kpi_match(line: str):
@@ -1555,181 +1874,123 @@ def tool_write_document(args: dict) -> str:
             _hdr_bg = _style["colors"].get("table_header_bg", "#1F3864")
             _hdr_fg = _style["colors"].get("table_header_text", "#FFFFFF")
             _do_badges = bool(_dx.get("risk_badges", True))
-            lines = content.split("\n")
+            _mono = _style["fonts"].get("mono", "Consolas")
 
-            # ── Cover page + TOC (deterministic, from content already present) ──
-            # Cover = the FIRST '# H1' + any leading 'Key: value' frontmatter lines
-            # before the first blank line. We consume them so they don't re-render
-            # in the body. Skipped if docx.cover is off or no H1 is found.
-            #
-            # SUBSTANCE GATE: a cover page + TOC is only warranted for a real
-            # report — not a short memo. Render them only when the doc is
-            # substantial: ≥4 headings, OR a multi-line H1+frontmatter block, OR
-            # many lines. A 2-paragraph note with one heading stays single-page.
-            _consumed = set()
-            _n_headings = sum(1 for _l in lines if re.match(r'^#{1,6}\s', _l))
-            _n_nonblank = sum(1 for _l in lines if _l.strip())
-            if _dx.get("cover", True):
-                _title, _title_idx = None, None
-                for _li, _ln in enumerate(lines[:40]):
-                    _hm = re.match(r'^#\s+(.*)', _ln)
-                    if _hm:
-                        _title, _title_idx = _hm.group(1).strip(), _li
-                        break
-                # peek whether frontmatter follows the H1 (Key: value lines)
-                _has_front = False
-                if _title is not None:
-                    for _li in range(_title_idx + 1, min(_title_idx + 6, len(lines))):
-                        _r = lines[_li].strip()
-                        if not _r or _r == "---":
-                            break
-                        if re.match(r'^\*{0,2}[A-Za-zÄÖÜäöü][^:|]{1,40}?\*{0,2}:\s*\S', _r):
-                            _has_front = True
-                        break
-                _substantial = (_n_headings >= 4) or _has_front or (_n_nonblank >= 30)
-                if _title is not None and _substantial:
-                    _front = []
-                    for _li in range(_title_idx + 1, min(_title_idx + 12, len(lines))):
-                        _raw = lines[_li].strip()
-                        if not _raw or _raw == "---":
-                            if _raw == "---":
-                                _consumed.add(_li)
-                            break
-                        _fm = re.match(r'^\*{0,2}([A-Za-zÄÖÜäöü][^:]{1,40}?)\*{0,2}:\s*(.+)$', _raw)
-                        if _fm and "|" not in _raw:
-                            _front.append((_fm.group(1).strip(),
-                                           re.sub(r'\*+', '', _fm.group(2)).strip()))
-                            _consumed.add(_li)
+            # Cover page + TOC (substantial reports only — see _extract_cover_and_body).
+            _cover_title, _cover_front, _body_md = _extract_cover_and_body(content, _dx)
+            if _cover_title is not None:
+                _render_cover_page(doc, _style, _cover_title, _cover_front)
+                if _dx.get("toc", True):
+                    _add_toc_field(doc)
+                    doc.add_page_break()
+
+            # Parse the body with markdown-it (real lists/quotes/code/links/tables)
+            # then render the block model. ::kpi lines arrive as plain paragraphs —
+            # we recognise + group them here into coloured stat-strips.
+            _blocks = _markdown_to_blocks(_body_md)
+
+            def _docx_render_table_block(blk):
+                rows = blk.get("rows") or []
+                if not rows:
+                    return
+                max_cols = max(len(r) for r in rows)
+                table = doc.add_table(rows=len(rows), cols=max_cols)
+                try:
+                    table.style = _dx.get("table_style") or "Table Grid"
+                except (KeyError, Exception):
+                    table.style = "Table Grid"
+                # Badge column by evidence (same rule as before, now over runs).
+                _badge_col = None
+                if _do_badges and len(rows) > 1:
+                    _hdr_l = [_runs_plain(rows[0][c]).strip().lower() if c < len(rows[0]) else ""
+                              for c in range(max_cols)]
+                    _best, _best_hits = None, 0
+                    for _ci in range(max_cols):
+                        _hits = sum(1 for _r in rows[1:]
+                                    if _ci < len(_r) and _risk_badge(_runs_plain(_r[_ci])))
+                        _hinted = any(_hdr_l[_ci] == hint or _hdr_l[_ci].endswith(hint)
+                                      for hint in _BADGE_COL_HINTS)
+                        _score = _hits + (0.5 if _hinted else 0)
+                        if _hits >= max(1, (len(rows) - 1) // 2) and _score > _best_hits:
+                            _best, _best_hits = _ci, _score
+                    _badge_col = _best
+                for ri, row in enumerate(rows):
+                    is_header = ri == 0
+                    for ci in range(max_cols):
+                        cell = table.rows[ri].cells[ci]
+                        cell.text = ""
+                        para = cell.paragraphs[0]
+                        runs = row[ci] if ci < len(row) else []
+                        cell_plain = _runs_plain(runs)
+                        badge = (not is_header and ci == _badge_col and _risk_badge(cell_plain)) or None
+                        if is_header:
+                            _shade_cell(cell, _hdr_bg)
+                            _docx_add_runs(para, runs, base_bold=True, color=_hdr_fg, mono_font=_mono)
+                        elif badge:
+                            _shade_cell(cell, "#" + badge[1])
+                            para.alignment = 1
+                            _docx_add_runs(para, runs, base_bold=True, color="#" + badge[0], mono_font=_mono)
                         else:
-                            break
-                    _render_cover_page(doc, _style, _title, _front)
-                    _consumed.add(_title_idx)
-                    if _dx.get("toc", True):
-                        _add_toc_field(doc)
-                        doc.add_page_break()
+                            if _zebra and ri % 2 == 0:
+                                _shade_cell(cell, _zebra)
+                            _docx_add_runs(para, runs, mono_font=_mono)
 
-            i = 0
-            _kpis = []  # pending ::kpi lines → flushed as a coloured strip
-            while i < len(lines):
-                if i in _consumed:
-                    i += 1
-                    continue
-                line = lines[i]
-                # KPI convention: '::kpi VALUE | LABEL | risk' — collect consecutive
-                # ones, flush as one coloured box-strip when the run ends.
-                _kpi = _kpi_match(line)
-                if _kpi:
-                    _kpis.append(_kpi)
-                    i += 1
-                    if i >= len(lines) or not _kpi_match(lines[i]):
-                        _emit_kpi_strip(doc, _kpis, _style)
-                        _kpis = []
-                    continue
-                # Embedded image: ![alt](file) → add_picture (e.g. a render_diagram chart)
-                img_match = _MD_IMAGE_RE.match(line)
-                if img_match:
-                    img_path = _resolve_doc_image(img_match.group(2), _doc_dir)
-                    if img_path and img_path.lower().endswith(".svg"):
-                        # python-docx can't embed SVG. Mirror the pdf branch's
-                        # explicit guidance instead of a silent broken caption.
-                        doc.add_paragraph(
-                            f"[Bild {img_match.group(2)} — für DOCX bitte als PNG rendern (render_diagram format=png)]")
-                    elif img_path:
-                        try:
-                            from docx.shared import Inches
-                            doc.add_picture(img_path, width=Inches(6.0))
-                        except Exception:
-                            doc.add_paragraph(f"[Bild: {img_match.group(1) or img_match.group(2)}]")
-                    else:
-                        doc.add_paragraph(f"[Bild nicht gefunden: {img_match.group(2)}]")
-                    i += 1
-                    continue
-                # Horizontal rule: a bare --- / *** / ___ → real divider, not text.
-                if re.match(r'^\s*([-*_])\1{2,}\s*$', line):
-                    _add_hrule(doc, _rule_col)
-                    i += 1
-                    continue
-                # Headings — strip leading emoji, render inline **/* as runs (the
-                # old code added raw text here, leaking ** and 📌 into headings).
-                heading_match = re.match(r'^(#{1,6})\s+(.*)', line)
-                if heading_match:
-                    level = min(len(heading_match.group(1)), 9)
-                    htext = _clean_heading_text(heading_match.group(2), _strip_emoji)
-                    h = doc.add_heading("", level=level)
-                    _add_inline_md_runs(h, htext)
-                    i += 1
-                    continue
-                # Table detection
-                if "|" in line and i + 1 < len(lines) and re.match(r'^\|[\s\-:|]+\|', lines[i + 1]):
-                    table_rows = []
-                    while i < len(lines) and "|" in lines[i]:
-                        cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
-                        if not re.match(r'^[\s\-:|]+$', lines[i].strip().strip("|")):
-                            table_rows.append(cells)
-                        i += 1
-                    if table_rows:
-                        max_cols = max(len(r) for r in table_rows)
-                        table = doc.add_table(rows=len(table_rows), cols=max_cols)
-                        try:
-                            table.style = _dx.get("table_style") or "Table Grid"
-                        except (KeyError, Exception):
-                            table.style = "Table Grid"
-                        # Which column (if any) holds risk ratings → badge it.
-                        # Pick by EVIDENCE: the column whose body cells most often
-                        # parse as a risk value (gering/mittel/erhöht/hoch). A
-                        # header-hint ('Bewertung'/'Risiko') only breaks ties — this
-                        # avoids mis-picking 'Risikofaktor' (a label column) just
-                        # because its name starts with 'risiko'.
-                        _badge_col = None
-                        if _do_badges and len(table_rows) > 1:
-                            _hdr_l = [re.sub(r'\*+', '', h).strip().lower() for h in table_rows[0]]
-                            _best, _best_hits = None, 0
-                            for _ci in range(max_cols):
-                                _hits = sum(1 for _r in table_rows[1:]
-                                            if _ci < len(_r) and _risk_badge(_r[_ci]))
-                                _hinted = (_ci < len(_hdr_l) and
-                                           any(_hdr_l[_ci] == hint or _hdr_l[_ci].endswith(hint)
-                                               for hint in _BADGE_COL_HINTS))
-                                # require the column to be MOSTLY risk values, so a
-                                # stray 'gering' in a prose column doesn't qualify
-                                _score = _hits + (0.5 if _hinted else 0)
-                                if _hits >= max(1, (len(table_rows) - 1) // 2) and _score > _best_hits:
-                                    _best, _best_hits = _ci, _score
-                            _badge_col = _best
-                        for ri, row_data in enumerate(table_rows):
-                            is_header = ri == 0
-                            for ci, cell_val in enumerate(row_data):
-                                if ci >= max_cols:
-                                    continue
-                                cell = table.rows[ri].cells[ci]
-                                cell.text = ""  # clear default empty paragraph
-                                para = cell.paragraphs[0]
-                                clean = re.sub(r'\*+', '', cell_val).strip() if is_header else cell_val
-                                badge = (not is_header and ci == _badge_col
-                                         and _risk_badge(cell_val)) or None
-                                if is_header:
-                                    _shade_cell(cell, _hdr_bg)
-                                    _add_inline_md_runs(para, clean or cell_val,
-                                                        base_bold=True, color=_hdr_fg)
-                                elif badge:
-                                    _shade_cell(cell, "#" + badge[1])
-                                    para.alignment = 1  # center
-                                    _add_inline_md_runs(para, cell_val,
-                                                        base_bold=True, color="#" + badge[0])
-                                else:
-                                    if _zebra and ri % 2 == 0:
-                                        _shade_cell(cell, _zebra)
-                                    _add_inline_md_runs(para, cell_val)
-                    continue
-                # Regular paragraph with inline formatting (single shared renderer)
-                stripped = line.strip()
-                if stripped:
+            _kpis = []
+            def _flush_kpis():
+                if _kpis:
+                    _emit_kpi_strip(doc, _kpis, _style)
+                    _kpis.clear()
+
+            for blk in _blocks:
+                bt = blk["type"]
+                # A paragraph that is only '::kpi …' lines → collect into a strip.
+                if bt == "paragraph":
+                    txt = _runs_plain(blk["runs"])
+                    kpi_lines = [_kpi_match(l) for l in txt.split("\n")]
+                    if kpi_lines and all(kpi_lines):
+                        _kpis.extend(kpi_lines)
+                        continue
+                    _flush_kpis()
+                    # An image-only paragraph (![alt](file)) → embed the picture.
+                    _im = _MD_IMAGE_RE.match(txt.strip())
+                    if _im:
+                        _ip = _resolve_doc_image(_im.group(2), _doc_dir)
+                        if _ip and _ip.lower().endswith(".svg"):
+                            doc.add_paragraph(f"[Bild {_im.group(2)} — für DOCX bitte als PNG rendern (render_diagram format=png)]")
+                        elif _ip:
+                            try:
+                                from docx.shared import Inches
+                                doc.add_picture(_ip, width=Inches(6.0))
+                            except Exception:
+                                doc.add_paragraph(f"[Bild: {_im.group(1) or _im.group(2)}]")
+                        else:
+                            doc.add_paragraph(f"[Bild nicht gefunden: {_im.group(2)}]")
+                        continue
                     para = doc.add_paragraph()
-                    _add_inline_md_runs(para, stripped,
-                                        mono_font=_style["fonts"].get("mono", "Consolas"))
-                i += 1
-            if _kpis:
-                _emit_kpi_strip(doc, _kpis, _style)
+                    _docx_add_runs(para, blk["runs"], mono_font=_mono)
+                    continue
+                _flush_kpis()
+                if bt == "heading":
+                    htext = _clean_heading_text(_runs_plain(blk["runs"]), _strip_emoji)
+                    h = doc.add_heading("", level=min(blk["level"], 9))
+                    # keep inline emphasis inside the heading, but feed the
+                    # emoji-cleaned plain text (headings rarely carry links)
+                    _add_inline_md_runs(h, htext)
+                elif bt == "hr":
+                    _add_hrule(doc, _rule_col)
+                elif bt == "list":
+                    _docx_render_list(doc, blk, _style)
+                elif bt == "quote":
+                    for qb in blk["blocks"]:
+                        if qb.get("type") == "paragraph":
+                            _docx_render_quote_para(doc, qb["runs"], _style)
+                        elif qb.get("type") == "list":
+                            _docx_render_list(doc, qb, _style)
+                elif bt == "code":
+                    _docx_render_code(doc, blk, _style)
+                elif bt == "table":
+                    _docx_render_table_block(blk)
+            _flush_kpis()
             doc.save(path)
 
         elif ext == ".xlsx":
@@ -1890,6 +2151,28 @@ def tool_write_document(args: dict) -> str:
                 _s = re.sub(r'\*(.+?)\*', r'<i>\1</i>', _s)
                 return _s
 
+            def _esc(_s):
+                return _s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+            # Runs (markdown-it block model) → reportlab mini-HTML markup, with
+            # real <a href> links + monospace via <font face>. The token sibling
+            # of _pdf_inline (which parses raw **md** text).
+            def _pdf_runs(runs):
+                out = []
+                for r in runs:
+                    t = _esc(r.text)
+                    if r.mono:
+                        t = f'<font face="Courier">{t}</font>'
+                    if r.bold:
+                        t = f"<b>{t}</b>"
+                    if r.italic:
+                        t = f"<i>{t}</i>"
+                    if r.href:
+                        href = _esc(r.href)
+                        t = f'<a href="{href}" color="#2E74B5"><u>{t}</u></a>'
+                    out.append(t)
+                return "".join(out)
+
             # A cell paragraph style so long cell text wraps inside the column
             # instead of overflowing (reportlab Table needs flowables to wrap).
             _cell_style = _RLParaStyle(
@@ -1933,206 +2216,208 @@ def tool_write_document(args: dict) -> str:
                 story.append(strip)
                 story.append(Spacer(1, 14))
 
-            # ── Cover page + TOC (same substance gate as docx) ──────────────────
-            _pdf_consumed = set()
-            _pdf_nh = sum(1 for _l in lines if re.match(r'^#{1,6}\s', _l))
-            _pdf_nb = sum(1 for _l in lines if _l.strip())
-            if _pdf_dx.get("cover", True):
-                _pt, _pti = None, None
-                for _li, _ln in enumerate(lines[:40]):
-                    _m = re.match(r'^#\s+(.*)', _ln)
-                    if _m:
-                        _pt, _pti = _m.group(1).strip(), _li
-                        break
-                _pf = []
-                if _pt is not None:
-                    for _li in range(_pti + 1, min(_pti + 12, len(lines))):
-                        _r = lines[_li].strip()
-                        if not _r or _r == "---":
-                            if _r == "---":
-                                _pdf_consumed.add(_li)
-                            break
-                        _fm = re.match(r'^\*{0,2}([A-Za-zÄÖÜäöü][^:|]{1,40}?)\*{0,2}:\s*(.+)$', _r)
-                        if _fm:
-                            _pf.append((_fm.group(1).strip(), re.sub(r'\*+', '', _fm.group(2)).strip()))
-                            _pdf_consumed.add(_li)
-                        else:
-                            break
-                if _pt is not None and ((_pdf_nh >= 4) or _pf or (_pdf_nb >= 30)):
-                    _navy = _style["colors"].get("heading", "#1F3864")
-                    _acc = _style["colors"].get("accent", "#2E74B5")
-                    story.append(Spacer(1, 2.0 * _rl_inch))
-                    story.append(Paragraph("VERTRAULICH · INTERNE RISIKOANALYSE", _RLParaStyle(
-                        "CoverKick", parent=styles["Normal"], fontSize=10, textColor=_RLHex(_acc), fontName="Helvetica-Bold")))
-                    story.append(_RLHRFlowable(width="100%", thickness=2, color=_RLHex(_navy), spaceBefore=6, spaceAfter=18))
-                    _ttl_txt = re.sub(r'[*`]+', '', _clean_heading_text(_pt, _pdf_strip_emoji))
-                    story.append(Paragraph(_ttl_txt.replace("&", "&amp;").replace("<", "&lt;"), _RLParaStyle(
-                        "CoverTitle", parent=styles["Normal"], fontSize=28, leading=32, textColor=_RLHex(_navy), fontName="Helvetica-Bold")))
-                    if _pf:
-                        story.append(Spacer(1, 0.4 * _rl_inch))
-                        for _k, _v in _pf:
-                            _ke = _k.upper().replace("&", "&amp;").replace("<", "&lt;")
-                            _ve = _v.replace("&", "&amp;").replace("<", "&lt;")
-                            story.append(Paragraph(f"<b>{_ke}</b>&nbsp;&nbsp;&nbsp;{_ve}", _RLParaStyle(
-                                "CoverMeta", parent=styles["Normal"], fontSize=10, leading=18)))
+            # ── Cover page + TOC (shared substance gate with docx) ──────────────
+            _pdf_title, _pdf_front, _pdf_body = _extract_cover_and_body(content, _pdf_dx)
+            if _pdf_title is not None:
+                _navy = _style["colors"].get("heading", "#1F3864")
+                _acc = _style["colors"].get("accent", "#2E74B5")
+                story.append(Spacer(1, 2.0 * _rl_inch))
+                story.append(Paragraph("VERTRAULICH · INTERNE RISIKOANALYSE", _RLParaStyle(
+                    "CoverKick", parent=styles["Normal"], fontSize=10, textColor=_RLHex(_acc), fontName="Helvetica-Bold")))
+                story.append(_RLHRFlowable(width="100%", thickness=2, color=_RLHex(_navy), spaceBefore=6, spaceAfter=18))
+                _ttl_txt = re.sub(r'[*`]+', '', _clean_heading_text(_pdf_title, _pdf_strip_emoji))
+                story.append(Paragraph(_ttl_txt.replace("&", "&amp;").replace("<", "&lt;"), _RLParaStyle(
+                    "CoverTitle", parent=styles["Normal"], fontSize=28, leading=32, textColor=_RLHex(_navy), fontName="Helvetica-Bold")))
+                if _pdf_front:
+                    story.append(Spacer(1, 0.4 * _rl_inch))
+                    for _k, _v in _pdf_front:
+                        _ke = _k.upper().replace("&", "&amp;").replace("<", "&lt;")
+                        _ve = _v.replace("&", "&amp;").replace("<", "&lt;")
+                        story.append(Paragraph(f"<b>{_ke}</b>&nbsp;&nbsp;&nbsp;{_ve}", _RLParaStyle(
+                            "CoverMeta", parent=styles["Normal"], fontSize=10, leading=18)))
+                story.append(_RLPageBreak())
+                if _pdf_want_toc:
+                    story.append(Paragraph("Inhaltsverzeichnis", _RLParaStyle(
+                        "TocTitle", parent=styles["Normal"], fontSize=16, leading=20,
+                        textColor=_RLHex(_navy), fontName="Helvetica-Bold", spaceAfter=12)))
+                    _toc = _RLToC()
+                    _toc.levelStyles = [
+                        _RLParaStyle("TOC0", parent=styles["Normal"], fontSize=11, leading=16,
+                                     leftIndent=0, firstLineIndent=0, spaceBefore=4,
+                                     textColor=_RLHex(_style["colors"].get("heading", "#1F3864"))),
+                        _RLParaStyle("TOC1", parent=styles["Normal"], fontSize=10, leading=14, leftIndent=16),
+                        _RLParaStyle("TOC2", parent=styles["Normal"], fontSize=9.5, leading=13, leftIndent=32,
+                                     textColor=_RLHex("#666666")),
+                    ]
+                    story.append(_toc)
                     story.append(_RLPageBreak())
-                    _pdf_consumed.add(_pti)
-                    # Table of contents on its own page (filled on the 2nd build
-                    # pass). Only rendered together with the cover — same as docx.
-                    if _pdf_want_toc:
-                        story.append(Paragraph("Inhaltsverzeichnis", _RLParaStyle(
-                            "TocTitle", parent=styles["Normal"], fontSize=16, leading=20,
-                            textColor=_RLHex(_navy), fontName="Helvetica-Bold", spaceAfter=12)))
-                        _toc = _RLToC()
-                        _toc.levelStyles = [
-                            _RLParaStyle("TOC0", parent=styles["Normal"], fontSize=11, leading=16,
-                                         leftIndent=0, firstLineIndent=0, spaceBefore=4,
-                                         textColor=_RLHex(_style["colors"].get("heading", "#1F3864"))),
-                            _RLParaStyle("TOC1", parent=styles["Normal"], fontSize=10, leading=14, leftIndent=16),
-                            _RLParaStyle("TOC2", parent=styles["Normal"], fontSize=9.5, leading=13, leftIndent=32,
-                                         textColor=_RLHex("#666666")),
-                        ]
-                        story.append(_toc)
-                        story.append(_RLPageBreak())
-                        _pdf_toc_active = True
+                    _pdf_toc_active = True
 
-            _pdf_kpis = []
+            # ── Render the body via the markdown-it block model ─────────────────
             _pdf_hkey = [0]
-            i = 0
-            while i < len(lines):
-                if i in _pdf_consumed:
-                    i += 1
+            _pdf_kpis = []
+
+            def _pdf_flush_kpis():
+                if _pdf_kpis:
+                    _pdf_emit_kpis(list(_pdf_kpis))
+                    _pdf_kpis.clear()
+
+            def _pdf_table_flowable(blk):
+                rows = blk.get("rows") or []
+                if not rows:
+                    return None
+                max_cols = max(len(r) for r in rows)
+                _bcol = None
+                if _pdf_do_badges and len(rows) > 1:
+                    _hl = [_runs_plain(rows[0][c]).strip().lower() if c < len(rows[0]) else ""
+                           for c in range(max_cols)]
+                    _best, _bsc = None, 0
+                    for _ci in range(max_cols):
+                        _hits = sum(1 for _r in rows[1:]
+                                    if _ci < len(_r) and _risk_badge(_runs_plain(_r[_ci])))
+                        _hint = any(_hl[_ci] == h or _hl[_ci].endswith(h) for h in _BADGE_COL_HINTS)
+                        _sc = _hits + (0.5 if _hint else 0)
+                        if _hits >= max(1, (len(rows) - 1) // 2) and _sc > _bsc:
+                            _best, _bsc = _ci, _sc
+                    _bcol = _best
+                data, _badge_cmds = [], []
+                for ri, row in enumerate(rows):
+                    cells = []
+                    cstyle = _hdr_cell_style if ri == 0 else _cell_style
+                    for ci in range(max_cols):
+                        runs = row[ci] if ci < len(row) else []
+                        plain = _runs_plain(runs)
+                        _bdg = (ri > 0 and ci == _bcol and _risk_badge(plain)) or None
+                        _cs = cstyle
+                        if _bdg:
+                            _cs = _RLParaStyle(f"Badge{ri}{ci}", parent=_cell_style,
+                                               textColor=_RLHex("#" + _bdg[0]),
+                                               alignment=_RL_TA_CENTER, fontName="Helvetica-Bold")
+                            _badge_cmds.append(("BACKGROUND", (ci, ri), (ci, ri), _RLHex("#" + _bdg[1])))
+                        cells.append(Paragraph(_pdf_runs(runs) or "&nbsp;", _cs))
+                    data.append(cells)
+                avail_w = _psize[0] - 2 * _marg
+                tbl = _RLTable(data, colWidths=[avail_w / max_cols] * max_cols, repeatRows=1)
+                tbl.setStyle(_RLTableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), _RLHex(_hdr_bg_hex)),
+                    ("GRID", (0, 0), (-1, -1), 0.5, _RLHex(_grid_hex)),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_rl_colors.white, _RLHex(_pdf_dx.get("zebra_fill", "#F2F4F8"))]),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ] + _badge_cmds))
+                return tbl
+
+            def _pdf_render_list(blk, depth=0):
+                """Flat-render a (nested) list with an indent + bullet/number prefix.
+                reportlab ListFlowable is finicky with mixed content; a prefixed,
+                indented paragraph per item is robust and reads correctly."""
+                bullet = "•"
+                for n, item in enumerate(blk["items"], 1):
+                    prefix = f"{n}." if blk.get("ordered") else bullet
+                    first = True
+                    for sub in item:
+                        st = sub["type"]
+                        if st == "paragraph" and first:
+                            sty = _RLParaStyle(f"LI{depth}", parent=styles["Normal"],
+                                               leftIndent=14 + depth * 16, firstLineIndent=-12,
+                                               spaceBefore=1, spaceAfter=1)
+                            story.append(Paragraph(f"{prefix}&nbsp;&nbsp;" + _pdf_runs(sub["runs"]), sty))
+                            first = False
+                        elif st == "list":
+                            _pdf_render_list(sub, depth + 1)
+                        elif st == "paragraph":
+                            sty = _RLParaStyle(f"LIc{depth}", parent=styles["Normal"],
+                                               leftIndent=14 + depth * 16 + 12)
+                            story.append(Paragraph(_pdf_runs(sub["runs"]), sty))
+
+            def _pdf_render_quote(blk):
+                qsty = _RLParaStyle("Quote", parent=styles["Normal"], leftIndent=18,
+                                    textColor=_RLHex("#555555"), borderColor=_RLHex(_pdf_rule_hex),
+                                    borderWidth=0, leading=15)
+                for qb in blk["blocks"]:
+                    if qb.get("type") == "paragraph":
+                        story.append(Paragraph("<i>" + _pdf_runs(qb["runs"]) + "</i>", qsty))
+                    elif qb.get("type") == "list":
+                        _pdf_render_list(qb)
+
+            def _pdf_render_code(blk):
+                csty = _RLParaStyle("Code", parent=styles["Normal"], fontName="Courier",
+                                    fontSize=max(8, int(_style["sizes"].get("body", 11)) - 1),
+                                    leading=12, leftIndent=8, backColor=_RLHex("#F2F2F2"),
+                                    borderPadding=4)
+                # Preserve leading indentation per line (reportlab collapses
+                # runs of spaces in its mini-HTML, so swap them for &nbsp;).
+                _clines = []
+                for _cl in _esc(blk["text"]).split("\n"):
+                    _lead = len(_cl) - len(_cl.lstrip(" "))
+                    _clines.append("&nbsp;" * _lead + _cl.lstrip(" "))
+                safe = "<br/>".join(_clines)
+                story.append(Paragraph(safe or "&nbsp;", csty))
+                story.append(Spacer(1, 8))
+
+            for blk in _markdown_to_blocks(_pdf_body):
+                bt = blk["type"]
+                if bt == "paragraph":
+                    txt = _runs_plain(blk["runs"])
+                    kpi_lines = [_kpi_match(l) for l in txt.split("\n")]
+                    if kpi_lines and all(kpi_lines):
+                        _pdf_kpis.extend(kpi_lines)
+                        continue
+                    _pdf_flush_kpis()
+                    _im = _MD_IMAGE_RE.match(txt.strip())
+                    if _im:
+                        _ip = _resolve_doc_image(_im.group(2), _doc_dir)
+                        if _ip and not _ip.lower().endswith(".svg"):
+                            try:
+                                img = _RLImage(_ip)
+                                maxw = 6.5 * _rl_inch
+                                if img.drawWidth > maxw:
+                                    ratio = maxw / img.drawWidth
+                                    img.drawWidth = maxw; img.drawHeight *= ratio
+                                story.append(img); story.append(Spacer(1, 12))
+                            except Exception:
+                                story.append(Paragraph(f"[Bild: {_im.group(1) or _im.group(2)}]", styles["Normal"]))
+                        else:
+                            story.append(Paragraph(
+                                f"[Bild {_im.group(2)} — für PDF bitte als PNG rendern (render_diagram format=png)]",
+                                styles["Normal"]))
+                        continue
+                    story.append(Paragraph(_pdf_runs(blk["runs"]) or "&nbsp;", styles["Normal"]))
                     continue
-                raw = lines[i]
-                line = raw.strip()
-                if not line:
-                    story.append(Spacer(1, 12))
-                    i += 1
-                    continue
-                # KPI convention: '::kpi VALUE | LABEL | risk' → coloured box-strip.
-                _km = _kpi_match(line)
-                if _km:
-                    _pdf_kpis.append(_km)
-                    i += 1
-                    if i >= len(lines) or not _kpi_match(lines[i]):
-                        _pdf_emit_kpis(_pdf_kpis)
-                        _pdf_kpis = []
-                    continue
-                # Markdown table: a "|...|" line immediately followed by a
-                # "|---|---|" separator. Mirrors the docx table detection so
-                # the PDF shows real tables instead of literal pipe text.
-                if "|" in line and i + 1 < len(lines) and re.match(r'^\|[\s\-:|]+\|', lines[i + 1].strip()):
-                    table_rows = []
-                    while i < len(lines) and "|" in lines[i]:
-                        body = lines[i].strip().strip("|")
-                        if not re.match(r'^[\s\-:|]+$', body):  # skip the |---| separator row
-                            table_rows.append([c.strip() for c in body.split("|")])
-                        i += 1
-                    if table_rows:
-                        max_cols = max(len(r) for r in table_rows)
-                        # Badge column by evidence (same rule as the docx path).
-                        _pdf_badge_col = None
-                        if _pdf_do_badges and len(table_rows) > 1:
-                            _hl = [re.sub(r'\*+', '', h).strip().lower() for h in table_rows[0]]
-                            _best, _bsc = None, 0
-                            for _ci in range(max_cols):
-                                _hits = sum(1 for _r in table_rows[1:]
-                                            if _ci < len(_r) and _risk_badge(_r[_ci]))
-                                _hint = (_ci < len(_hl) and any(_hl[_ci] == h or _hl[_ci].endswith(h)
-                                                                for h in _BADGE_COL_HINTS))
-                                _sc = _hits + (0.5 if _hint else 0)
-                                if _hits >= max(1, (len(table_rows) - 1) // 2) and _sc > _bsc:
-                                    _best, _bsc = _ci, _sc
-                            _pdf_badge_col = _best
-                        data = []
-                        _badge_cmds = []  # per-cell BACKGROUND/TEXTCOLOR for badges
-                        for ri, row_data in enumerate(table_rows):
-                            cells = []
-                            cstyle = _hdr_cell_style if ri == 0 else _cell_style
-                            for ci in range(max_cols):
-                                val = row_data[ci] if ci < len(row_data) else ""
-                                _bdg = (ri > 0 and ci == _pdf_badge_col and _risk_badge(val)) or None
-                                _cs = cstyle
-                                if _bdg:
-                                    _cs = _RLParaStyle(f"Badge{ri}{ci}", parent=_cell_style,
-                                                       textColor=_RLHex("#" + _bdg[0]),
-                                                       alignment=_RL_TA_CENTER, fontName="Helvetica-Bold")
-                                    _badge_cmds.append(("BACKGROUND", (ci, ri), (ci, ri), _RLHex("#" + _bdg[1])))
-                                cells.append(Paragraph(_pdf_inline(val) or "&nbsp;", _cs))
-                            data.append(cells)
-                        avail_w = _psize[0] - 2 * _marg
-                        tbl = _RLTable(data, colWidths=[avail_w / max_cols] * max_cols, repeatRows=1)
-                        tbl.setStyle(_RLTableStyle([
-                            ("BACKGROUND", (0, 0), (-1, 0), _RLHex(_hdr_bg_hex)),
-                            ("GRID", (0, 0), (-1, -1), 0.5, _RLHex(_grid_hex)),
-                            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_rl_colors.white, _RLHex(_pdf_dx.get("zebra_fill", "#F2F4F8"))]),
-                            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                            ("TOPPADDING", (0, 0), (-1, -1), 3),
-                            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                        ] + _badge_cmds))  # badge cmds last → override the zebra fill
-                        story.append(tbl)
-                        story.append(Spacer(1, 12))
-                    continue
-                # Embedded image (e.g. a render_diagram chart). reportlab can't
-                # place an SVG directly — PNG/JPG embed; SVG falls back to a note
-                # (the model should render_diagram with format=png for PDF).
-                img_match = _MD_IMAGE_RE.match(line)
-                if img_match:
-                    img_path = _resolve_doc_image(img_match.group(2), _doc_dir)
-                    if img_path and not img_path.lower().endswith(".svg"):
-                        try:
-                            img = _RLImage(img_path)
-                            maxw = 6.5 * _rl_inch
-                            if img.drawWidth > maxw:
-                                ratio = maxw / img.drawWidth
-                                img.drawWidth = maxw
-                                img.drawHeight *= ratio
-                            story.append(img)
-                            story.append(Spacer(1, 12))
-                        except Exception:
-                            story.append(Paragraph(f"[Bild: {img_match.group(1) or img_match.group(2)}]", styles["Normal"]))
-                    else:
-                        story.append(Paragraph(
-                            f"[Bild {img_match.group(2)} — für PDF bitte als PNG rendern (render_diagram format=png)]",
-                            styles["Normal"]))
-                    i += 1
-                    continue
-                # Horizontal rule: bare --- / *** / ___ → a thin divider flowable.
-                if re.match(r'^([-*_])\1{2,}$', line):
-                    story.append(_RLHRFlowable(width="100%", thickness=0.75,
-                                               color=_RLHex(_pdf_rule_hex),
-                                               spaceBefore=6, spaceAfter=10))
-                    i += 1
-                    continue
-                heading_match = re.match(r'^(#{1,6})\s+(.*)', line)
-                if heading_match:
-                    level = len(heading_match.group(1))
+                _pdf_flush_kpis()
+                if bt == "heading":
+                    level = blk["level"]
                     style_name = f"Heading{min(level, 6)}"
                     if style_name not in styles:
                         style_name = "Heading1"
-                    # Strip leading emoji + render inline **/* (the old code passed
-                    # raw heading text → ** and 📌 leaked, same bug as the docx path).
-                    htext = _clean_heading_text(heading_match.group(2), _pdf_strip_emoji)
+                    htext = _clean_heading_text(_runs_plain(blk["runs"]), _pdf_strip_emoji)
                     _plain = re.sub(r'[*`]+', '', htext).strip()
                     if _pdf_toc_active and level <= 3 and _plain:
-                        # Bookmark anchor so the ToC entry is clickable; tag the
-                        # flowable so afterFlowable emits a TOCEntry on each pass.
                         _pdf_hkey[0] += 1
                         _key = f"h{_pdf_hkey[0]}"
-                        _para = Paragraph(f'<a name="{_key}"/>' + _pdf_inline(htext), styles[style_name])
+                        _para = Paragraph(f'<a name="{_key}"/>' + _esc(htext), styles[style_name])
                         _para._toc_text = _plain
                         _para._toc_level = level - 1
                         _para._toc_key = _key
                         story.append(_para)
                     else:
-                        story.append(Paragraph(_pdf_inline(htext), styles[style_name]))
-                else:
-                    story.append(Paragraph(_pdf_inline(line), styles["Normal"]))
-                i += 1
-            if _pdf_kpis:
-                _pdf_emit_kpis(_pdf_kpis)
+                        story.append(Paragraph(_esc(htext), styles[style_name]))
+                elif bt == "hr":
+                    story.append(_RLHRFlowable(width="100%", thickness=0.75,
+                                               color=_RLHex(_pdf_rule_hex), spaceBefore=6, spaceAfter=10))
+                elif bt == "list":
+                    _pdf_render_list(blk)
+                    story.append(Spacer(1, 6))
+                elif bt == "quote":
+                    _pdf_render_quote(blk)
+                elif bt == "code":
+                    _pdf_render_code(blk)
+                elif bt == "table":
+                    _t = _pdf_table_flowable(blk)
+                    if _t is not None:
+                        story.append(_t); story.append(Spacer(1, 12))
+            _pdf_flush_kpis()
             _pdf_cb = _make_pdf_hdrftr_cb(_style, _psize, _marg, _rl_inch, _RLHex)
             # multiBuild (2 passes) resolves the ToC page numbers; plain build
             # otherwise. The header/footer canvas callback runs on every page.
