@@ -540,6 +540,22 @@ start-of-iteration value): on folder/binary projects doc_convert regenerates the
 fingerprint was sampled — re-stat'ing captures the settled tree so the very next
 no-change cycle skips immediately instead of wasting one full catch-up cycle
 (v9.189.7). A failed/cancelled run keeps the start fp so it never wrongly skips.
+**Folder/binary projects (external recursive `input_folders` of PDF/DOCX) +
+web-urls now route through the SAME batched/pre-filtered path as `ingested/`
+(v9.189.8)** — they previously used a raw `mp_miner.mine()` that bypassed the
+pre-filter. `scan_project` returns the `.brain-extracted/*.md` companions (not
+the binaries), which match the stored `source_file` keys so the pre-filter
+engages. Three rebuild-cost rules now hold: (a) an EMPTY scan (e.g. `ingested/`
+with only `mempalace.yaml`) does NOT call `mine()` at all — an empty mine still
+ran the wing-wide entity-link rebuild (the old 168s ghost step); (b) `_mine_batched`
+calls `mine()` ONCE over all changed files, not per-25-batch, so the wing-wide
+entity-link rebuild (hallways + topic/entity tunnels — a full recompute, cost ∝
+wing size, ~100-165s) runs at most once per folder instead of once per batch;
+(c) a `# BRAIN-PATCH` in `mempalace/miner.py` gates that rebuild on
+`total_drawers > 0`, so a touch-only / identical-re-mine that files 0 drawers
+skips it entirely (FTS5 validation moved to its own `if not dry_run` block so it
+still always runs). A REAL content change still pays one wing-wide rebuild — it's
+an upstream full recompute, not a delta. See [[project_mempalace_venv_patches]].
 
 **Project `web_urls` refresh is cost-gated** (not re-fetched every cycle).
 Per-URL state lives in `web-urls/.fetch-state.json`. A URL is (A) SKIPPED with

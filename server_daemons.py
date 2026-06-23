@@ -1605,7 +1605,8 @@ def _project_sync_loop(srv):
         return 0
 
     def _mine_batched(folder: str, wing: str, agent_name: str, *,
-                      progress_cb=None, batch_size: int = 25) -> int:
+                      progress_cb=None, batch_size: int = 25,
+                      respect_gitignore: bool = False) -> int:
         """Mine `folder` into `wing` in batches so the UI sees STEADY progress.
 
         mp_miner.mine() over a whole folder is one opaque blocking call that
@@ -1621,9 +1622,14 @@ def _project_sync_loop(srv):
         report distinct-keys-seen / distinct-keys-total. The miner is idempotent
         + mtime-cursored, so batching changes nothing about the result — only the
         feedback cadence. Returns total drawers filed. Holds _palace_write_lock
-        per batch (not across the whole mine) so other daemons interleave."""
+        per batch (not across the whole mine) so other daemons interleave.
+
+        `respect_gitignore` mirrors mp_miner.mine()'s flag: the ingested/ path
+        passes False (uploaded chunks, no .gitignore), input_folders pass True
+        (user dirs may carry .gitignore). The pre-scan and the per-batch mine()
+        MUST use the same value or the scanned set and mine()'s own walk diverge."""
         try:
-            files = mp_miner.scan_project(folder, respect_gitignore=False)
+            files = mp_miner.scan_project(folder, respect_gitignore=respect_gitignore)
             # scan_project yields pathlib.PosixPath, but drawer source_file
             # metadata + mine()'s file list are plain strings. A PosixPath never
             # equals a str as a dict key, so without this the bulk pre-filter's
@@ -1637,15 +1643,24 @@ def _project_sync_loop(srv):
             print(f"[project-sync] scan_project failed {folder}: "
                   f"{type(e).__name__}: {e}", flush=True)
             files = None
-        if not files:
-            # Fall back to a whole-folder mine (empty/scan-failed) so behaviour
-            # never regresses below the original single call.
+        if files is None:
+            # scan_project RAISED — we don't know the file set, so fall back to a
+            # whole-folder mine() to never regress below the original single call.
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf), _palace_write_lock:
                 mp_miner.mine(project_dir=folder, palace_path=palace_path,
                               wing_override=wing, agent=agent_name,
-                              respect_gitignore=False)
+                              respect_gitignore=respect_gitignore)
             return _parse_drawers_filed(buf.getvalue())
+        if not files:
+            # scan_project returned an EMPTY list — the folder has nothing
+            # minable (e.g. kg-real-policies/ingested holds only mempalace.yaml).
+            # Do NOT call mine(): an empty mine() still runs the wing-WIDE
+            # entity-link rebuild (hallways + tunnels, ~165s on a large wing) for
+            # ZERO drawers. Skipping it here is what makes a no-change folder
+            # sync actually cheap. (The old code's whole-folder fallback fired
+            # the rebuild on every empty ingested/ mine — the 168s ghost step.)
+            return 0
 
         # BULK pre-filter so an unchanged project costs ~one Qdrant scan instead
         # of one file_already_mined() query PER FILE inside mine(). mine() skips
@@ -1715,31 +1730,62 @@ def _project_sync_loop(srv):
             return k or fp
 
         total_docs = len({_doc_key(f) for f in files})
-        seen_docs: set = set()
         filed = 0
         if progress_cb:
             try: progress_cb(0, total_docs, 0)
             except Exception: pass
-        for i in range(0, len(files), batch_size):
-            batch = files[i:i + batch_size]
+        # ONE mine() over ALL changed files — NOT per-batch. mp_miner.mine()
+        # runs a wing-WIDE entity-link rebuild (hallways + cross-wing topic +
+        # entity tunnels) at the END of every call, and that rebuild scans the
+        # WHOLE wing (cost ∝ wing size, ~165s on a 1500-drawer wing) regardless
+        # of how many files changed. Batching the mine therefore multiplied that
+        # fixed cost by the batch count. The pre-filter already shrank `files` to
+        # just the changed set, so a single mine() call does the minimum drawer
+        # work AND pays the entity-link rebuild exactly once. When nothing
+        # changed we returned above and mine() (hence the rebuild) never runs.
+        # We keep batch_size only as a safety ceiling: if a huge number of files
+        # genuinely changed at once, fall back to chunked calls (rare; the extra
+        # rebuilds are acceptable vs one pathologically large mine()).
+        if len(files) <= max(batch_size, 200):
             buf = io.StringIO()
             try:
                 with contextlib.redirect_stdout(buf), _palace_write_lock:
                     mp_miner.mine(project_dir=folder, palace_path=palace_path,
                                   wing_override=wing, agent=agent_name,
-                                  respect_gitignore=False, files=batch)
+                                  respect_gitignore=respect_gitignore, files=files)
                 filed += _parse_drawers_filed(buf.getvalue())
             except SystemExit:
                 pass
             except Exception as e:
-                print(f"[project-sync] mine batch failed {folder} "
-                      f"[{i}:{i+len(batch)}]: {type(e).__name__}: {e}",
+                print(f"[project-sync] mine failed {folder} "
+                      f"({len(files)} file(s)): {type(e).__name__}: {e}",
                       flush=True)
-            for f in batch:
-                seen_docs.add(_doc_key(f))
             if progress_cb:
-                try: progress_cb(len(seen_docs), total_docs, filed)
+                try: progress_cb(total_docs, total_docs, filed)
                 except Exception: pass
+        else:
+            seen_docs: set = set()
+            for i in range(0, len(files), batch_size):
+                batch = files[i:i + batch_size]
+                buf = io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(buf), _palace_write_lock:
+                        mp_miner.mine(project_dir=folder, palace_path=palace_path,
+                                      wing_override=wing, agent=agent_name,
+                                      respect_gitignore=respect_gitignore,
+                                      files=batch)
+                    filed += _parse_drawers_filed(buf.getvalue())
+                except SystemExit:
+                    pass
+                except Exception as e:
+                    print(f"[project-sync] mine batch failed {folder} "
+                          f"[{i}:{i+len(batch)}]: {type(e).__name__}: {e}",
+                          flush=True)
+                for f in batch:
+                    seen_docs.add(_doc_key(f))
+                if progress_cb:
+                    try: progress_cb(len(seen_docs), total_docs, filed)
+                    except Exception: pass
         return filed
 
     def _run_kg_for(wing: str, source_prefix: str, item_set_fn,
@@ -2631,24 +2677,15 @@ def _project_sync_loop(srv):
                                                      "indexing", folder=_weburl_folder)
                             _wu_t0 = time.time()
                             _wu_filed = 0
-                            _wu_buf = io.StringIO()
+                            # Route through _mine_batched so web-URL .md files get
+                            # the wing-scoped pre-filter too (skips the per-file
+                            # file_already_mined() check + the wing-wide entity-link
+                            # rebuild when nothing changed). web-urls/ is hash-gated
+                            # upstream so most cycles have zero changed files here.
                             try:
-                                with contextlib.redirect_stdout(_wu_buf), _palace_write_lock:
-                                    mp_miner.mine(
-                                        project_dir=_weburl_folder,
-                                        palace_path=palace_path,
-                                        wing_override=wing,
-                                        agent="brain-project-sync",
-                                        respect_gitignore=False,
-                                    )
-                                for line in _wu_buf.getvalue().splitlines():
-                                    s = line.strip()
-                                    if s.startswith("Drawers filed"):
-                                        try:
-                                            _wu_filed = int(s.split(":")[-1].strip().split()[0])
-                                        except Exception:
-                                            pass
-                                        break
+                                _wu_filed = _mine_batched(
+                                    _weburl_folder, wing, "brain-project-sync",
+                                    respect_gitignore=False)
                             except SystemExit:
                                 pass
                             except Exception as e:
@@ -2817,25 +2854,23 @@ def _project_sync_loop(srv):
                                 chats_db_path, _run_id, "indexing",
                                 folder=fpath)
                         _index_t0_f = time.time()
-                        buf = io.StringIO()
+                        # Route through _mine_batched so input_folders get the
+                        # SAME wing-scoped bulk pre-filter as ingested/ — a raw
+                        # mp_miner.mine() here bypassed it, so every file paid the
+                        # per-file file_already_mined() skip-check inside mine()
+                        # (the folder/binary-project hotspot). respect_gitignore
+                        # stays True for user dirs.
+                        def _folder_prog(done, total, filed_so_far):
+                            srv._project_sync_set_live(
+                                agent_id, proj_name, state="syncing",
+                                current_folder=fpath, mining_phase="indexing",
+                                mining_done=done, mining_total=total,
+                                mining_drawers=filed_so_far)
                         try:
-                            with contextlib.redirect_stdout(buf), _palace_write_lock:
-                                mp_miner.mine(
-                                    project_dir=fpath,
-                                    palace_path=palace_path,
-                                    wing_override=wing,
-                                    agent="brain-project-sync",
-                                    respect_gitignore=True,
-                                )
-                            for line in buf.getvalue().splitlines():
-                                s = line.strip()
-                                if s.startswith("Drawers filed"):
-                                    try:
-                                        folder_filed = int(
-                                            s.split(":")[-1].strip().split()[0])
-                                    except Exception:
-                                        pass
-                                    break
+                            folder_filed = _mine_batched(
+                                fpath, wing, "brain-project-sync",
+                                progress_cb=_folder_prog,
+                                respect_gitignore=True)
                         except SystemExit:
                             pass
                         except Exception as e:
