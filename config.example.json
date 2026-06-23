@@ -92,7 +92,7 @@
       8336139166
     ],
     "enabled": false,
-    "model": "claude-opus-4-6"
+    "model": "CLIProxyAPI/mistral-small-latest"
   },
   "models": {
     "whisper-tiny": {
@@ -704,7 +704,7 @@
       "warmup": false
     },
     "gemma-4-26B-A4B-it-MLX-4bit": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "gemma-4-26B-A4B-it-MLX-4bit",
       "display_name": "gemma-4-26B-A4B-it-MLX-4bit",
       "icon": "💎",
@@ -728,7 +728,7 @@
       "profile": "speed",
       "_caps_canonical": true,
       "is_local": true,
-      "warmup": true,
+      "warmup": false,
       "benchmark": {
         "coding": {
           "measured": {
@@ -807,7 +807,7 @@
       "warmup_mode": "minimal"
     },
     "gemma-4-e2b-it-4bit": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "gemma-4-e2b-it-4bit",
       "display_name": "gemma-4-e2b-it-4bit",
       "icon": "💎",
@@ -908,7 +908,7 @@
       }
     },
     "gemma-4-e4b-it-4bit": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "gemma-4-e4b-it-4bit",
       "display_name": "gemma-4-e4b-it-4bit",
       "icon": "💎",
@@ -1944,7 +1944,7 @@
       "warmup": false
     },
     "mistral-ocr-latest": {
-      "enabled": false,
+      "enabled": true,
       "shortname": "mistral-ocr-latest",
       "display_name": "mistral-ocr-latest",
       "icon": "🌬️",
@@ -2088,7 +2088,7 @@
       "_audio_backfilled": true
     },
     "gemma-4-26b-cloud": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "gemma-4-26b-cloud",
       "display_name": "gemma-4-26b-cloud",
       "icon": "💎",
@@ -2114,7 +2114,7 @@
       "warmup": false
     },
     "gemma-4-31b-cloud": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "gemma-4-31b-cloud",
       "display_name": "gemma-4-31b-cloud",
       "icon": "💎",
@@ -2202,7 +2202,7 @@
       "warmup": false
     },
     "mistral-code-latest": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "mistral-code-latest",
       "display_name": "mistral-code-latest",
       "icon": "🌬️",
@@ -2224,7 +2224,7 @@
       "warmup": false
     },
     "mistral-code-fim-latest": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "mistral-code-fim-latest",
       "display_name": "mistral-code-fim-latest",
       "icon": "🌬️",
@@ -2246,7 +2246,7 @@
       "warmup": false
     },
     "mistral-code-agent-latest": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "mistral-code-agent-latest",
       "display_name": "mistral-code-agent-latest",
       "icon": "🌬️",
@@ -2268,7 +2268,7 @@
       "warmup": false
     },
     "MarkItDown": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "MarkItDown",
       "display_name": "MarkItDown",
       "icon": "🤖",
@@ -2329,10 +2329,12 @@
       "raw_formats": [],
       "provider": "Lokal-M4",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "mistral-ocr-3-0": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "mistral-ocr-3-0",
       "display_name": "mistral-ocr-3-0",
       "icon": "🌬️",
@@ -2349,10 +2351,12 @@
       "raw_formats": [],
       "provider": "mistral-direct",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "mistral-ocr-3": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "mistral-ocr-3",
       "display_name": "mistral-ocr-3",
       "icon": "🌬️",
@@ -2369,10 +2373,12 @@
       "raw_formats": [],
       "provider": "mistral-direct",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "mistral-ocr-4-0": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "mistral-ocr-4-0",
       "display_name": "mistral-ocr-4-0",
       "icon": "🌬️",
@@ -2389,10 +2395,12 @@
       "raw_formats": [],
       "provider": "mistral-direct",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "mistral-ocr-4": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "mistral-ocr-4",
       "display_name": "mistral-ocr-4",
       "icon": "🌬️",
@@ -2409,7 +2417,38 @@
       "raw_formats": [],
       "provider": "mistral-direct",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "gemma-4-12B-it-qat-4bit": {
+      "enabled": true,
+      "shortname": "gemma-4-12B-it-qat-4bit",
+      "display_name": "gemma-4-12B-it-qat-4bit",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image",
+        "audio"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 246000,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": true,
+      "auto_lcm": true,
+      "warmup": true,
+      "warmup_mode": "minimal"
     }
   },
   "nodes": {},
@@ -2518,22 +2557,22 @@
     "Qwen3.6-35B-A3B-4bit"
   ],
   "gdpr_scanner": {
-    "enabled": false,
+    "enabled": true,
     "server_log": false,
-    "server_block": false,
-    "default_local_fallback_model": "gemma-4-26B-A4B-it-MLX-4bit",
+    "server_block": true,
+    "default_local_fallback_model": "gemma-4-12B-it-qat-4bit",
     "categories": {
       "secrets": {
         "action": "block"
       },
       "national_id": {
-        "action": "warn"
+        "action": "block"
       },
       "national_id_ctx": {
-        "action": "warn"
+        "action": "block"
       },
       "financial": {
-        "action": "warn"
+        "action": "block"
       },
       "business_id": {
         "action": "ignore"
@@ -2553,8 +2592,10 @@
     },
     "rule_overrides": {
       "organisation": "ignore",
-      "email": "warn",
-      "name": "ignore"
+      "email": "block",
+      "phone": "warn",
+      "address": "block",
+      "dob": "block"
     },
     "min_occurrences": {
       "anthropic_key": 1,
@@ -2623,14 +2664,14 @@
       "br_cnpj": 1,
       "organisation": 1,
       "tax_id_ctx": 1,
-      "email": 1,
-      "name": 1,
+      "email": 3,
+      "name": 3,
       "phone": 3,
       "ipv4": 1,
       "ipv6": 1,
-      "address": 1,
+      "address": 3,
       "date": 10,
-      "dob": 1,
+      "dob": 3,
       "passport": 1,
       "bare_identifier": 1
     },
@@ -2665,7 +2706,13 @@
     "user_overrides": {}
   },
   "conversion": {
-    "use_markitdown": true
+    "use_markitdown": true,
+    "markitdown_exts": [
+      ".docx",
+      ".msg",
+      ".pptx"
+    ],
+    "pdf_engine": "pymupdf4llm"
   },
   "_local_mlx_whisper_seeded": true,
   "mistral_image_agent_id": "ag_019e09234bdc739c90fdabc0ac4959bb",
@@ -4172,10 +4219,10 @@
     "extra_patterns": []
   },
   "classification_scanner": {
-    "enabled": false,
+    "enabled": true,
     "server_block": false,
     "server_log": false,
-    "default_local_fallback_model": "gemma-4-26B-A4B-it-MLX-4bit",
+    "default_local_fallback_model": "",
     "per_level_action": {
       "public": "ignore",
       "internal": "warn",

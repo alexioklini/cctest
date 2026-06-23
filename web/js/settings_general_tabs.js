@@ -2625,9 +2625,40 @@ function _dsGet(obj, path) {
 // Pending logo upload state for the editor: base64 data + ext when the user
 // picks a new file, the existing filename when editing, and a remove flag.
 let _dsLogo = { data: null, ext: '', file: '', remove: false };
+// Object URL of the saved logo fetched WITH the Bearer header. /v1/doc-styles is
+// admin-gated (JWT-only, no cookie), so a bare <img src="/v1/doc-styles?logo=…">
+// gets a 401 and renders as a broken/empty image — which looked like "no logo
+// saved". We must fetch the bytes with the auth header and show an object URL
+// instead (same reason the audio/artifact downloads blob-fetch). Cleared+revoked
+// on each load to avoid leaking object URLs.
+let _dsLogoBlobUrl = '';
+function _dsRevokeLogoBlob() {
+  if (_dsLogoBlobUrl) { try { URL.revokeObjectURL(_dsLogoBlobUrl); } catch (e) {} _dsLogoBlobUrl = ''; }
+}
+// Fetch the saved logo for `file` (Bearer-authed) into _dsLogoBlobUrl, then
+// repaint the thumbnail + live preview. No-op if the editor moved on (the
+// current _dsLogo.file changed) or a freshly-picked logo (_dsLogo.data) wins.
+async function _dsLoadLogoBlob(file) {
+  _dsRevokeLogoBlob();
+  if (!file) return;
+  try {
+    const resp = await fetch('/v1/doc-styles?logo=' + encodeURIComponent(file),
+                             { headers: API._headers() });
+    if (!resp.ok) return;
+    if (_dsLogo.file !== file || _dsLogo.remove) return;  // editor moved on
+    _dsLogoBlobUrl = URL.createObjectURL(await resp.blob());
+    if (!_dsLogo.data) {
+      const thumb = document.getElementById('ds-logo-thumb');
+      if (thumb) { thumb.src = _dsLogoBlobUrl; thumb.style.display = ''; }
+      const rm = document.getElementById('ds-logo-remove'); if (rm) rm.style.display = '';
+    }
+    _docStylePreview();
+  } catch (e) { /* leave thumbnail empty on failure */ }
+}
 
 function docStyleNew() {
   const defaults = (state._docStyles && state._docStyles.defaults) || {};
+  _dsRevokeLogoBlob();
   _dsLogo = { data: null, ext: '', file: '', remove: false };
   _docStyleRenderEditor('', { name: '', description: '', ...defaults });
 }
@@ -2639,8 +2670,13 @@ async function docStyleEdit(name) {
     // to defaults if the server is old and didn't send it.
     const parsed = d.parsed || (state._docStyles && state._docStyles.defaults) || {};
     // Seed logo state from the saved preset so the preview shows the existing logo.
+    _dsRevokeLogoBlob();
     _dsLogo = { data: null, ext: '', file: ((parsed.logo || {}).file || ''), remove: false };
     _docStyleRenderEditor(d.name || name, parsed);
+    // The thumbnail can't use a bare <img src="/v1/doc-styles?logo=…"> (admin
+    // JWT endpoint — a cookieless <img> GET 401s). Fetch the bytes with the
+    // Bearer header and swap in an object URL after the editor renders.
+    if (_dsLogo.file) _dsLoadLogoBlob(_dsLogo.file);
   } catch (e) { showToast('Laden fehlgeschlagen: ' + (e.message || e), true); }
 }
 
@@ -2656,10 +2692,11 @@ function _docStyleRenderEditor(name, data) {
     if (f.type === 'logo') {
       // File picker + thumbnail + remove. The actual bytes live in _dsLogo;
       // the saved YAML's logo.file is derived at save time from the preset name.
-      const hasFile = !!_dsLogo.file;
-      const thumb = _dsLogo.data
-        ? _dsLogo.data
-        : (hasFile ? ('/v1/doc-styles?logo=' + encodeURIComponent(_dsLogo.file)) : '');
+      // Saved-logo thumbnail comes from the Bearer-fetched object URL
+      // (_dsLogoBlobUrl), NOT a bare /v1/doc-styles?logo= src (that endpoint is
+      // admin-JWT-only → a cookieless <img> GET 401s). If the blob isn't loaded
+      // yet, render empty; _dsLoadLogoBlob() repaints the thumb when it arrives.
+      const thumb = _dsLogo.data ? _dsLogo.data : (_dsLogoBlobUrl || '');
       return `<div style="${span}">${lbl}
         <div style="display:flex;align-items:center;gap:10px">
           <img id="ds-logo-thumb" src="${esc(thumb)}" alt=""
@@ -2769,6 +2806,7 @@ function _docStyleLogoPick(input) {
 }
 
 function _docStyleLogoRemove() {
+  _dsRevokeLogoBlob();
   _dsLogo = { data: null, ext: '', file: '', remove: true };
   const thumb = document.getElementById('ds-logo-thumb'); if (thumb) { thumb.src = ''; thumb.style.display = 'none'; }
   const rm = document.getElementById('ds-logo-remove'); if (rm) rm.style.display = 'none';
@@ -2847,7 +2885,9 @@ function _docStylePreview() {
   // Header / footer / logo bands (mirror what the doc tools draw on each page).
   const hdr = s.header || {}, ftr = s.footer || {}, logo = s.logo || {};
   const tok = t => String(t || '').replace('{page}', '1').replace('{date}', new Date().toISOString().slice(0, 10));
-  const logoSrc = _dsLogo.remove ? '' : (_dsLogo.data || (_dsLogo.file ? '/v1/doc-styles?logo=' + encodeURIComponent(_dsLogo.file) : ''));
+  // Preview logo: freshly-picked data URI, else the Bearer-fetched object URL —
+  // never a bare /v1/doc-styles?logo= src (admin-JWT endpoint, 401s for <img>).
+  const logoSrc = _dsLogo.remove ? '' : (_dsLogo.data || _dsLogoBlobUrl || '');
   const logoPos = (logo.position || 'header').toLowerCase();
   const logoImg = (where) => (logoSrc && logoPos === where && logoPos !== 'none')
     ? `<img src="${esc(logoSrc)}" style="height:${Math.min(28, (logo.width_inch || 1.2) * 14)}px;max-width:90px;object-fit:contain;float:${esc((logo.align || 'right') === 'center' ? 'none' : (logo.align || 'right'))};${(logo.align === 'center') ? 'display:block;margin:0 auto' : ''}">` : '';

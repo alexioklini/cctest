@@ -21,6 +21,7 @@ import csv
 import io
 import json
 import os
+import sys
 import tempfile
 import time
 import uuid
@@ -41,11 +42,21 @@ _MAX_FILES_PER_SCAN = 500
 _MAX_TEXT_BYTES = 1 * 1024 * 1024
 
 
+def _srv():
+    """The LIVE server module. The daemon runs server.py as the entry point, so
+    its globals live in sys.modules['__main__']; `import server` would bind a
+    SECOND, separate module object with its own server_config dict. We must read
+    and refresh the __main__ copy — that's the one brain._get_classification_config()
+    (and the enforcement seam) reads. Mirrors handlers/projects.py:_srv()."""
+    return sys.modules.get("__main__") or sys.modules.get("server")
+
+
 def _config() -> dict:
-    """Pull the live config dict — same path the GDPR scanner uses."""
+    """Pull the live config dict — same path the GDPR scanner uses. Reads from
+    the __main__ server module so it agrees with the enforcement read path."""
     try:
-        from server import server_config  # late import to avoid cycle
-        return server_config or {}
+        srv = _srv()
+        return getattr(srv, "server_config", None) or {}
     except Exception:
         return {}
 
@@ -747,12 +758,19 @@ class ClassificationHandlerMixin:
             self._send_json({"error": f"persist failed: {e}"}, 500)
             return
 
-        # Refresh in-memory server_config
+        # Refresh in-memory server_config on the LIVE (__main__) server module —
+        # NOT `from server import server_config`, which binds a separate second
+        # module copy. brain._get_classification_config() reads the __main__ copy,
+        # so refreshing the `server`-import copy left the policy block stale until
+        # restart (keywords looked saved because GET read the same wrong copy; the
+        # policy block looked unsaved because GET reads it via the __main__ path).
         try:
-            from server import server_config
-            server_config["classification"] = cfg["classification"]
-            if "classification_scanner" in cfg:
-                server_config["classification_scanner"] = cfg["classification_scanner"]
+            srv = _srv()
+            srv_cfg = getattr(srv, "server_config", None)
+            if isinstance(srv_cfg, dict):
+                srv_cfg["classification"] = cfg["classification"]
+                if "classification_scanner" in cfg:
+                    srv_cfg["classification_scanner"] = cfg["classification_scanner"]
         except Exception:
             pass
 
