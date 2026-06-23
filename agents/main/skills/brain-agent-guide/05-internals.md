@@ -534,6 +534,12 @@ cursor key (v9.189.2); (3) closet regen rebuilds ONLY the changed sources
 instead of the whole wing. Net: a 1-file change syncs in ~seconds across all
 phases (was ~270–285s). A KG-method/profile toggle purges cursors → forces a
 full rebuild by design. `Full Resync` has its own path and is unaffected.
+The stored fingerprint is RE-STAT'd at successful completion (not the
+start-of-iteration value): on folder/binary projects doc_convert regenerates the
+`.brain-extracted/*.md` companions DURING the sync, moving their mtimes after the
+fingerprint was sampled — re-stat'ing captures the settled tree so the very next
+no-change cycle skips immediately instead of wasting one full catch-up cycle
+(v9.189.7). A failed/cancelled run keeps the start fp so it never wrongly skips.
 
 **Project `web_urls` refresh is cost-gated** (not re-fetched every cycle).
 Per-URL state lives in `web-urls/.fetch-state.json`. A URL is (A) SKIPPED with

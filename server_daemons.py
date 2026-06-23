@@ -2981,9 +2981,23 @@ def _project_sync_loop(srv):
                         # Fingerprint of the source tree this cycle processed.
                         # Next cycle compares against it for the fast no-change
                         # skip. Only meaningful when the run succeeded (the gate
-                        # also requires state=='ok'), but stored regardless so a
+                        # also requires state=='idle'), but stored regardless so a
                         # later successful cycle has a baseline.
-                        "source_fingerprint": _cur_fp,
+                        #
+                        # RECOMPUTE at completion (not _cur_fp from iteration
+                        # start): doc_convert regenerates the .brain-extracted/
+                        # companion .md files DURING this sync, which moves their
+                        # mtimes AFTER _cur_fp was sampled. Storing the start-of-
+                        # iteration fp would mismatch the now-settled tree, so the
+                        # NEXT cycle would re-do a full sync once before converging
+                        # (observed on folder/binary projects: one wasted ~55s
+                        # cycle after every real change). Re-stat'ing here captures
+                        # the post-conversion tree so a true no-change cycle skips
+                        # immediately. On a successful run only; a failed/cancelled
+                        # run keeps _cur_fp so it doesn't accidentally skip next time.
+                        "source_fingerprint": (
+                            _project_source_fingerprint(pdir, project, _weburl_folder)
+                            if final_state == "idle" else _cur_fp),
                     }
                     try:
                         engine.ProjectManager.update_project(agent_id, proj_name, {
