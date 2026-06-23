@@ -56,9 +56,30 @@ async function sendMessage() {
     // composers don't call newChat() here, so they were never affected.)
     const _carryFiles = state._pendingFiles ? [...state._pendingFiles] : [];
     const _carryImages = state._pendingImages ? [...state._pendingImages] : [];
+    // Same problem as the files above: the user can pick a dedicated model on
+    // the project-landing composer, but newChat() resets chat.model back to the
+    // agent default (→ Auto/smart-cloud, which then runs prompt classification).
+    // The composer control is read at send time, so the reset wins and the pick
+    // is silently dropped. Snapshot the chosen model (+ its Auto bookkeeping)
+    // across newChat() and restore it. Only carry an explicit (non-default)
+    // pick so a user who never touched the selector still inherits the default.
+    const _preChat = state.ensureAgentChat(state.activeAgentId);
+    const _agentDefault = state.defaultModelForAgent(state.activeAgentId);
+    const _pickedModel = _preChat && _preChat.model;
+    const _carryModel = (_pickedModel && _pickedModel !== _agentDefault)
+      ? { model: _pickedModel, autoPicked: _preChat.autoPicked, autoReason: _preChat.autoReason }
+      : null;
     newChat();
     state._pendingFiles = _carryFiles;
     state._pendingImages = _carryImages;
+    if (_carryModel) {
+      const _freshChat = state.ensureAgentChat(state.activeAgentId);
+      _freshChat.model = _carryModel.model;
+      _freshChat.autoPicked = _carryModel.autoPicked;
+      _freshChat.autoReason = _carryModel.autoReason;
+      if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay(_freshChat.model);
+      if (typeof updateStatusBar === 'function') updateStatusBar();
+    }
     if (typeof renderFilePreviews === 'function') renderFilePreviews();
   }
 

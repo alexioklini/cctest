@@ -110,9 +110,24 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   <preset>.yaml` (e.g. `corporate`) — deterministic, model just writes markdown.
   A DEFAULT preset applies even when style= is omitted (project `doc_style` →
   config `doc_styles.default` → `corporate` → built-in), so output is on-brand by
-  default (v9.154.0).
+  default (v9.154.0). **Match a reference/template instead of a preset**: pass
+  `style='reference'` (auto-picks the current project's instruction-file `.docx`)
+  or `style='reference:<filename>'` — Brain reads that `.docx`'s real fonts /
+  heading styles / colors / margins (incl. the Word `docDefaults` body font) in
+  code and applies them, bypassing the brand preset. Use it when the user wants
+  output "im Format von / wie die Referenz" (.docx output only; lifts named-style
+  + margin definitions, not the full visual template/themes) (v9.190.0).
   Header/footer text supports `{page}`/`{date}` tokens; the logo + footer render
   on docx/pdf pages, pptx slides, and the html header/footer bands.
+  **Automatic .docx polish** (v9.191.0, deterministic, every model): cover page
+  (from the first `# H1` + leading `Key: value` lines) + Word TOC for substantial
+  reports, dark table headers + zebra rows, `---` → real divider, leading emoji
+  stripped from headings, inline `**bold**`/`*italic*` parsed in headings AND
+  table cells (no longer leaked verbatim), and **colour-coded risk badges** — a
+  table column of gering/mittel/erhöht/hoch ratings is auto-shaded green/amber/
+  red. The model triggers ONE feature explicitly: `::kpi VALUE | LABEL | risk`
+  lines render a coloured KPI stat-box strip. All toggled by `docx.{cover,toc,
+  zebra_fill,rule_color,strip_emoji,risk_badges}` in the preset.
 - `edit_document(path, ...)` — structural edit
 
 ## Memory (MemPalace, direct — not MCP)

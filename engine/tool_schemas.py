@@ -848,14 +848,25 @@ TOOL_DEFINITIONS = [
             "with data-accurate diagrams, first call render_diagram (→ a chart file in the "
             "same artifact folder), then reference that file with `![title](thatfile)` in "
             "the content here. Use PNG for .docx/.pdf embedding (SVG embeds in HTML, not "
-            "PDF); in .pptx an image-only slide section becomes a centered full-slide picture."
+            "PDF); in .pptx an image-only slide section becomes a centered full-slide picture. "
+            "PROFESSIONAL .docx POLISH (automatic — just write clean markdown): the tool "
+            "auto-renders a cover page (from the first `# H1` + leading `Key: value` lines) and "
+            "a table-of-contents for substantial reports, dark table headers with zebra rows, "
+            "real divider lines for `---`, and COLOUR-CODED RISK BADGES — a table column named "
+            "Bewertung/Risiko/Rating/Einstufung whose cells say gering/mittel/erhöht/hoch is "
+            "auto-shaded green/amber/red. Do NOT put `**bold**` markers or emojis in headings or "
+            "table headers — bold/emoji in headings is handled/stripped for you. KPI STAT BOXES: "
+            "to highlight 2–4 headline metrics as a coloured box-strip, emit consecutive lines "
+            "`::kpi VALUE | LABEL | risk` (e.g. `::kpi 1,34 | Residualrisiko | gering`); the third "
+            "field colours the box by the same risk scale. This is the one polish feature you "
+            "trigger explicitly — everything else is automatic from plain markdown."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Relative output filename, extension picks the format (e.g. `report.html`). It lands in your session artifact folder; absolute paths and '..' escapes are REFUSED."},
                 "content": {"type": "string", "description": "Markdown content to convert into the document"},
-                "style": {"type": "string", "description": "Style preset name (a file in the agent's skills/doc-styles/, e.g. 'corporate') — sets fonts/colors/layout + header/footer/logo deterministically. PREFER passing this for any report/document so the output is on-brand. If omitted, a DEFAULT preset is applied automatically (project's, the global default, or 'corporate') — so do NOT hand-write your own CSS/styling; write PLAIN MARKDOWN content and let the preset style it. (For .html, raw HTML you pass is kept as-is and only gains the header/footer/logo; markdown gets the full preset — so markdown+style gives the most consistent result.)"},
+                "style": {"type": "string", "description": "Style preset name (a file in the agent's skills/doc-styles/, e.g. 'corporate') — sets fonts/colors/layout + header/footer/logo deterministically. PREFER passing this for any report/document so the output is on-brand. If omitted, a DEFAULT preset is applied automatically (project's, the global default, or 'corporate') — so do NOT hand-write your own CSS/styling; write PLAIN MARKDOWN content and let the preset style it. (For .html, raw HTML you pass is kept as-is and only gains the header/footer/logo; markdown gets the full preset — so markdown+style gives the most consistent result.) ⟶ MATCH A REFERENCE/TEMPLATE: when the user wants the output to look like an attached reference document or a project template (e.g. a project instruction-file like 'WPB_Risikoanalyse_BRA_2025_v1.0.docx'), pass style='reference' to auto-pick the project's instruction-file .docx, or style='reference:<filename>' to name it. This LIFTS the reference's actual fonts/heading styles/colors/margins (read from the .docx in code) INSTEAD of applying a brand preset — use it whenever the request is 'erstelle X im Format von / wie die Referenz / like the attached doc'. (.docx output only; lifts named-style + margin definitions, not the full visual template/themes.)"},
             },
             "required": ["path", "content"],
         },

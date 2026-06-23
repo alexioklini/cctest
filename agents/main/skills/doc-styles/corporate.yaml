@@ -18,6 +18,12 @@ colors:
 docx:
   table_style: Light Grid Accent 1
   heading_bold: true
+  zebra_fill: "#edf1f8"
+  rule_color: "#b4c6e7"
+  strip_emoji: true
+  risk_badges: true
+  cover: true
+  toc: true
 pdf:
   page_size: letter
   margin_inch: 1

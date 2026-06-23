@@ -497,7 +497,16 @@ _DEFAULT_DOC_STYLE = {
     "sizes": {"body": 11, "h1": 20, "h2": 16, "h3": 13},
     "colors": {"heading": "#1F3864", "body": "#222222", "accent": "#2E74B5",
                "table_header_bg": "#1F3864", "table_header_text": "#FFFFFF"},
-    "docx": {"table_style": "Light Grid Accent 1", "heading_bold": True},
+    "docx": {"table_style": "Light Grid Accent 1", "heading_bold": True,
+             # Opus-near polish, all deterministic (CLAUDE.md rule 5). The MODEL
+             # writes plain markdown; code applies these. zebra_fill = alternating
+             # body-row shading; rule_color = ---/heading-underline colour;
+             # strip_emoji keeps regulatory docs clean; risk_badges colours a
+             # Bewertung/Risiko/Rating column by cell value (gering/mittel/
+             # erhöht/hoch); cover renders a title page from the FIRST # H1 +
+             # frontmatter; toc inserts a Word TOC field after the cover.
+             "zebra_fill": "#EDF1F8", "rule_color": "#B4C6E7",
+             "strip_emoji": True, "risk_badges": True, "cover": True, "toc": True},
     "pdf": {"page_size": "letter", "margin_inch": 1.0},
     "pptx": {"title_color": "#1F3864", "body_color": "#222222",
              "accent": "#2E74B5", "background": "#FFFFFF"},
@@ -593,6 +602,154 @@ def _load_doc_style(name: str):
     except Exception:
         pass
     return style
+
+
+def _resolve_reference_docx(filename: str) -> str | None:
+    """Resolve a reference .docx to lift styling FROM. Looks in the current
+    project's instruction-files/ dir (the owner-uploaded template/reference).
+    `filename` empty → auto-pick the project's sole/first instruction-file .docx.
+    Returns an existing absolute path or None (no project / no match / not .docx)."""
+    import brain as _brain
+    try:
+        proj_name = get_request_context().project
+        if not proj_name:
+            return None
+        agent = get_request_context().current_agent or _brain._current_agent
+        agent_id = agent.agent_id if agent else "main"
+        idir = _brain.ProjectManager._instruction_files_dir(agent_id, proj_name)
+        if not os.path.isdir(idir):
+            return None
+        filename = (filename or "").strip()
+        if filename:
+            cand = os.path.join(idir, os.path.basename(filename))
+            return cand if (os.path.isfile(cand) and cand.lower().endswith(".docx")) else None
+        # auto-pick: first .docx among the project's instruction files
+        for fn in sorted(os.listdir(idir)):
+            if fn.lower().endswith(".docx"):
+                return os.path.join(idir, fn)
+        return None
+    except Exception:
+        return None
+
+
+def _load_doc_style_from_reference(ref_path: str):
+    """Build a doc-style dict by reading the named-style DEFINITIONS out of a
+    reference .docx (the look the user wants to match) instead of a brand preset.
+    Lifts: body font/size/color (Normal style), heading font/size/color/bold
+    (Heading 1-3), and page margins. Deep-merged over the built-in defaults so
+    the returned shape always matches _DEFAULT_DOC_STYLE — the apply-loop in
+    tool_write_document consumes it unchanged.
+
+    Deterministic (CLAUDE.md rule 5): the model never interprets fonts/colors;
+    code reads them. Returns (style_dict, note) — `note` is a short human string
+    for the tool result (what matched / why it fell back). On any failure returns
+    (built-in default style, reason) so the caller can fall back loudly, never
+    silently producing a clobbered doc.
+
+    Scope limit: python-docx exposes named style + section-margin definitions,
+    NOT the full visual template (themes, cover pages, complex section layouts).
+    'Match' therefore means body/heading typography + margins, not a pixel clone."""
+    import copy
+    style = copy.deepcopy(_DEFAULT_DOC_STYLE)
+    try:
+        import docx
+    except ImportError:
+        return style, "python-docx not installed — applied built-in default"
+    try:
+        ref = docx.Document(ref_path)
+    except Exception as e:
+        return style, f"could not open reference ({e}) — applied built-in default"
+
+    def _style_font(name):
+        try:
+            return ref.styles[name].font
+        except Exception:
+            return None
+
+    def _doc_default_font_size():
+        """The document's docDefaults (rPrDefault/rPr) — the font/size every style
+        inherits when it sets none explicitly. python-docx's styles['Normal'].font
+        does NOT surface these, so a doc whose body font lives only in docDefaults
+        (the common Word case) would otherwise fall back to Calibri. Returns
+        (font_name|None, size_pt|None)."""
+        try:
+            from docx.oxml.ns import qn
+            dd = ref.styles.element.find(qn("w:docDefaults"))
+            rpr = dd.find(qn("w:rPrDefault")) if dd is not None else None
+            r = rpr.find(qn("w:rPr")) if rpr is not None else None
+            if r is None:
+                return None, None
+            rf = r.find(qn("w:rFonts"))
+            fname = rf.get(qn("w:ascii")) if rf is not None else None
+            sz = r.find(qn("w:sz"))
+            spt = None
+            if sz is not None and sz.get(qn("w:val")):
+                spt = round(int(sz.get(qn("w:val"))) / 2)  # half-points → pt
+            return fname, spt
+        except Exception:
+            return None, None
+
+    def _hexkey(rgb):
+        # docx RGBColor → '#RRGGBB'; None when the style inherits (no explicit color)
+        try:
+            return "#" + str(rgb) if rgb is not None else None
+        except Exception:
+            return None
+
+    matched = []
+    _dd_font, _dd_size = _doc_default_font_size()
+    nf = _style_font("Normal")
+    _body_font = (nf.name if nf is not None else None) or _dd_font
+    if _body_font:
+        style["fonts"]["body"] = _body_font; matched.append("body font")
+    _body_size = None
+    if nf is not None and nf.size is not None:
+        try:
+            _body_size = round(nf.size.pt)
+        except Exception:
+            _body_size = None
+    if _body_size is None:
+        _body_size = _dd_size
+    if _body_size:
+        style["sizes"]["body"] = _body_size; matched.append("body size")
+    if nf is not None:
+        bc = _hexkey(getattr(nf.color, "rgb", None))
+        if bc:
+            style["colors"]["body"] = bc; matched.append("body color")
+    # Headings: use Heading 1 as the canonical heading look; size each level from
+    # its own style when present so the hierarchy is preserved. Heading font falls
+    # back to the doc default (then body) when the Heading style names none.
+    h1f = _style_font("Heading 1")
+    _heading_font = (h1f.name if h1f is not None else None) or _dd_font
+    if _heading_font:
+        style["fonts"]["heading"] = _heading_font; matched.append("heading font")
+    if h1f is not None:
+        hc = _hexkey(getattr(h1f.color, "rgb", None))
+        if hc:
+            style["colors"]["heading"] = hc; matched.append("heading color")
+        if h1f.bold is not None:
+            style["docx"]["heading_bold"] = bool(h1f.bold)
+    for _lvl, _szkey in ((1, "h1"), (2, "h2"), (3, "h3")):
+        hf = _style_font(f"Heading {_lvl}")
+        if hf is not None and hf.size is not None:
+            try:
+                style["sizes"][_szkey] = round(hf.size.pt)
+            except Exception:
+                pass
+    # Page margins (first section) → pdf.margin_inch is the only margin knob in
+    # the shape; docx margins are applied via header/footer section, so capture
+    # the top/left as a representative inch value for any paginated reuse.
+    try:
+        sec = ref.sections[0]
+        if sec.left_margin is not None:
+            style["pdf"]["margin_inch"] = round(sec.left_margin.inches, 2)
+            matched.append("margins")
+    except Exception:
+        pass
+
+    note = ("matched " + ", ".join(matched)) if matched else \
+        "reference had no explicit named-style overrides — applied built-in default"
+    return style, note
 
 
 def _hex_rgb(h: str):
@@ -1098,6 +1255,224 @@ def _apply_docx_header_footer(doc, style: dict, doc_dir: str):
                               logo_spec=logo, page_token=True)
 
 
+# ── Opus-near docx polish (all deterministic) ──────────────────────────────
+# Leading emoji + variation selectors a model tends to prefix onto headings
+# (📌📊📜🏢🔍📈🛡️📉🎯📎 …). Stripped for regulatory docs when docx.strip_emoji on.
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
+    "\U00002190-\U000021FF\U00002B00-\U00002BFF\U0000FE00-\U0000FE0F\U0000200D]+")
+_INLINE_MD_SPLIT = re.compile(r'(\*\*\*.*?\*\*\*|\*\*.*?\*\*|\*[^*]+?\*|`[^`]+?`)')
+
+
+def _clean_heading_text(text: str, strip_emoji: bool) -> str:
+    """Strip a leading emoji (+ trailing whitespace) from a heading when enabled.
+    Only removes emoji at the START — emoji inside running prose is left alone."""
+    t = text
+    if strip_emoji:
+        t = _EMOJI_RE.sub("", t).strip()
+        t = re.sub(r"^[\s•\-–—]+", "", t)  # leftover bullet/dash glue
+    return t.strip()
+
+
+def _add_inline_md_runs(paragraph, text: str, *, base_bold=False, base_italic=False,
+                        color=None, mono_font="Consolas"):
+    """Parse inline **bold**/*italic*/***both***/`code` and append styled runs to
+    `paragraph`. The SINGLE place inline markdown is rendered — used by paragraphs,
+    HEADINGS and TABLE CELLS alike (the old code only did this for paragraphs, so
+    ** / * leaked verbatim into headings + table headers — the visible bug)."""
+    from docx.shared import RGBColor
+    parts = _INLINE_MD_SPLIT.split(text)
+    for part in parts:
+        if not part:
+            continue
+        b, it, mono, txt = base_bold, base_italic, False, part
+        if part.startswith("***") and part.endswith("***") and len(part) > 6:
+            b, it, txt = True, True, part[3:-3]
+        elif part.startswith("**") and part.endswith("**") and len(part) > 4:
+            b, txt = True, part[2:-2]
+        elif part.startswith("*") and part.endswith("*") and len(part) > 2:
+            it, txt = True, part[1:-1]
+        elif part.startswith("`") and part.endswith("`") and len(part) > 2:
+            mono, txt = True, part[1:-1]
+        run = paragraph.add_run(txt)
+        run.bold = b
+        run.italic = it
+        if mono:
+            run.font.name = mono_font
+        if color:
+            rgb = _hex_rgb(color)
+            if rgb:
+                run.font.color.rgb = RGBColor(*rgb)
+
+
+def _shade_cell(cell, hex_color):
+    """Set a table cell's background fill (w:shd) — python-docx has no API for it."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    rgb = _hex_rgb(hex_color)
+    if not rgb:
+        return
+    tcPr = cell._tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), "%02X%02X%02X" % rgb)
+    tcPr.append(shd)
+
+
+# Risk-badge palette: (text-colour, fill). Order matters — most specific first
+# ('sehr gut' before 'gut', 'hoch' substring caught after 'erhöht').
+_RISK_BADGES = [
+    (("sehr gut", "gering", "niedrig", "low"), ("548235", "E2EFDA")),
+    (("erhöht", "erhoht", "elevated"), ("C55A11", "FCE4D6")),
+    (("hoch", "high", "hohes"), ("C00000", "F8D7DA")),
+    (("mittel", "angemessen", "medium", "moderat"), ("BF8F00", "FFF2CC")),
+]
+
+
+def _risk_badge(value: str):
+    """Map a Bewertung/Risiko cell value → (fg_hex, bg_hex) or None if no match."""
+    v = (value or "").strip().lower()
+    if not v:
+        return None
+    for keys, (fg, bg) in _RISK_BADGES:
+        if any(k in v for k in keys):
+            return fg, bg
+    return None
+
+
+_BADGE_COL_HINTS = ("bewertung", "risiko", "rating", "einstufung", "risk", "stufe")
+
+
+def _add_hrule(doc, color):
+    """Add a horizontal divider paragraph (--- in markdown) as a bottom border."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    p = doc.add_paragraph()
+    pPr = p._p.get_or_add_pPr()
+    pbdr = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "6")
+    bottom.set(qn("w:space"), "1")
+    bottom.set(qn("w:color"), (color or "#B4C6E7").lstrip("#"))
+    pbdr.append(bottom)
+    pPr.append(pbdr)
+    return p
+
+
+def _add_toc_field(doc):
+    """Insert a Word Table-of-Contents field (heading levels 1-3). It renders as
+    a grey 'right-click → update field' placeholder until Word/LibreOffice
+    repaginates — standard for generated docs. Deterministic, no model input."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    title = doc.add_paragraph()
+    _add_inline_md_runs(title, "Inhaltsverzeichnis")
+    for r in title.runs:
+        r.bold = True
+        r.font.size = __import__("docx").shared.Pt(16)
+    p = doc.add_paragraph()
+    run = p.add_run()
+    fb = OxmlElement("w:fldChar"); fb.set(qn("w:fldCharType"), "begin")
+    instr = OxmlElement("w:instrText"); instr.set(qn("xml:space"), "preserve")
+    instr.text = 'TOC \\o "1-3" \\h \\z \\u'
+    sep = OxmlElement("w:fldChar"); sep.set(qn("w:fldCharType"), "separate")
+    placeholder = OxmlElement("w:t")
+    placeholder.text = "Inhaltsverzeichnis — in Word mit F9 aktualisieren."
+    fe = OxmlElement("w:fldChar"); fe.set(qn("w:fldCharType"), "end")
+    run._r.append(fb); run._r.append(instr); run._r.append(sep)
+    run._r.append(placeholder); run._r.append(fe)
+
+
+def _kpi_match(line: str):
+    """A '::kpi VALUE | LABEL | risk' convention line → (value, label, badge) or
+    None. Lets the model flag a headline metric as a coloured stat box WITHOUT
+    free-form layout — deterministic trigger, any model can emit it."""
+    m = re.match(r'^\s*::kpi\s+(.*)$', line)
+    if not m:
+        return None
+    parts = [p.strip() for p in m.group(1).split("|")]
+    value = parts[0] if parts else ""
+    label = parts[1] if len(parts) > 1 else ""
+    badge = parts[2] if len(parts) > 2 else (label or value)
+    return value, label, badge
+
+
+def _emit_kpi_strip(doc, kpis, style):
+    """Render a row of coloured KPI boxes from collected ::kpi lines."""
+    from docx.shared import Pt, RGBColor
+    if not kpis:
+        return
+    table = doc.add_table(rows=1, cols=len(kpis))
+    table.autofit = True
+    for ci, (value, label, badge) in enumerate(kpis):
+        cell = table.rows[0].cells[ci]
+        pal = _risk_badge(badge) or ("44546A", "EDF1F8")
+        _shade_cell(cell, "#" + pal[1])
+        cell.paragraphs[0].alignment = 1  # center
+        rv = cell.paragraphs[0].add_run(value)
+        rv.bold = True
+        rv.font.size = Pt(20)
+        crgb = _hex_rgb("#" + pal[0])
+        if crgb:
+            rv.font.color.rgb = RGBColor(*crgb)
+        if label:
+            pl = cell.add_paragraph()
+            pl.alignment = 1
+            rl = pl.add_run(label.upper())
+            rl.font.size = Pt(8.5)
+            lrgb = _hex_rgb(style["colors"].get("heading"))
+            if lrgb:
+                rl.font.color.rgb = RGBColor(*lrgb)
+
+
+def _render_cover_page(doc, style, title, frontmatter):
+    """Render a deterministic title page from the FIRST # H1 + leading key:value
+    'frontmatter' lines (Stichtag: …, Verantwortlich: …). Followed by a page
+    break. No model layout — code composes it from content already in the md."""
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    accent = style["colors"].get("accent", "#2E74B5")
+    navy = style["colors"].get("heading", "#1F3864")
+    for _ in range(6):
+        doc.add_paragraph()
+    # confidential kicker
+    kick = doc.add_paragraph()
+    rk = kick.add_run("VERTRAULICH · INTERNE RISIKOANALYSE")
+    rk.bold = True
+    rk.font.size = Pt(10)
+    krgb = _hex_rgb(style["colors"].get("accent"))
+    if krgb:
+        rk.font.color.rgb = RGBColor(*krgb)
+    _add_hrule(doc, navy)
+    # title — the cover title is always bold, so drop inline **/* markers outright
+    # (don't leave them verbatim like the old heading path did).
+    _ttl = _clean_heading_text(title, style["docx"].get("strip_emoji", True))
+    _ttl = re.sub(r'[*`]+', '', _ttl).strip()
+    tp = doc.add_paragraph()
+    rt = tp.add_run(_ttl)
+    rt.bold = True
+    rt.font.size = Pt(30)
+    rt.font.name = style["fonts"].get("heading", "Calibri")
+    trgb = _hex_rgb(navy)
+    if trgb:
+        rt.font.color.rgb = RGBColor(*trgb)
+    # frontmatter meta lines
+    if frontmatter:
+        doc.add_paragraph()
+        for key, val in frontmatter:
+            mp = doc.add_paragraph()
+            rkk = mp.add_run(key.upper() + "   ")
+            rkk.bold = True
+            rkk.font.size = Pt(9.5)
+            srgb = _hex_rgb(style["colors"].get("body"))
+            mp.add_run(val).font.size = Pt(10.5)
+    doc.add_page_break()
+
+
 def tool_write_document(args: dict) -> str:
     """Create documents from markdown content. Markdown ![alt](file) image
     references are EMBEDDED (docx/pptx/pdf) — pair with render_diagram to put
@@ -1109,7 +1484,23 @@ def tool_write_document(args: dict) -> str:
     # (project/global/'corporate') so output is styled even when the model omits
     # style= (the common case). _load_doc_style('') would give the bare built-in.
     _style_name = _resolve_default_style(args.get("style", ""))
-    _style = _load_doc_style(_style_name)
+    # style='reference' / 'reference:<filename>' → lift the look FROM a reference
+    # .docx (a project instruction-file template) instead of applying a brand
+    # preset. Only meaningful for .docx output; for other formats it degrades to
+    # the built-in default (no Word styles to lift), noted below.
+    _ref_note = ""
+    if _style_name == "reference" or _style_name.startswith("reference:"):
+        _ref_file = _style_name.split(":", 1)[1] if ":" in _style_name else ""
+        _ref_path = _resolve_reference_docx(_ref_file)
+        if _ref_path:
+            _style, _ref_note = _load_doc_style_from_reference(_ref_path)
+            _ref_note = f"Referenz-Stil aus {os.path.basename(_ref_path)}: {_ref_note}"
+        else:
+            _style = _load_doc_style("")
+            _ref_note = ("Keine Referenz-.docx in den Projekt-Begleitdateien gefunden "
+                         "— Standard-Stil angewandt.")
+    else:
+        _style = _load_doc_style(_style_name)
     try:
         # Hard guard: resolved path MUST be inside the session artifact folder
         # (relative names default into it; absolute / .. escapes refused). This
@@ -1157,10 +1548,83 @@ def tool_write_document(args: dict) -> str:
                 _apply_docx_header_footer(doc, _style, _doc_dir)
             except Exception:
                 pass
+            _dx = _style["docx"]
+            _strip_emoji = bool(_dx.get("strip_emoji", True))
+            _zebra = _dx.get("zebra_fill")
+            _rule_col = _dx.get("rule_color", "#B4C6E7")
+            _hdr_bg = _style["colors"].get("table_header_bg", "#1F3864")
+            _hdr_fg = _style["colors"].get("table_header_text", "#FFFFFF")
+            _do_badges = bool(_dx.get("risk_badges", True))
             lines = content.split("\n")
+
+            # ── Cover page + TOC (deterministic, from content already present) ──
+            # Cover = the FIRST '# H1' + any leading 'Key: value' frontmatter lines
+            # before the first blank line. We consume them so they don't re-render
+            # in the body. Skipped if docx.cover is off or no H1 is found.
+            #
+            # SUBSTANCE GATE: a cover page + TOC is only warranted for a real
+            # report — not a short memo. Render them only when the doc is
+            # substantial: ≥4 headings, OR a multi-line H1+frontmatter block, OR
+            # many lines. A 2-paragraph note with one heading stays single-page.
+            _consumed = set()
+            _n_headings = sum(1 for _l in lines if re.match(r'^#{1,6}\s', _l))
+            _n_nonblank = sum(1 for _l in lines if _l.strip())
+            if _dx.get("cover", True):
+                _title, _title_idx = None, None
+                for _li, _ln in enumerate(lines[:40]):
+                    _hm = re.match(r'^#\s+(.*)', _ln)
+                    if _hm:
+                        _title, _title_idx = _hm.group(1).strip(), _li
+                        break
+                # peek whether frontmatter follows the H1 (Key: value lines)
+                _has_front = False
+                if _title is not None:
+                    for _li in range(_title_idx + 1, min(_title_idx + 6, len(lines))):
+                        _r = lines[_li].strip()
+                        if not _r or _r == "---":
+                            break
+                        if re.match(r'^\*{0,2}[A-Za-zÄÖÜäöü][^:|]{1,40}?\*{0,2}:\s*\S', _r):
+                            _has_front = True
+                        break
+                _substantial = (_n_headings >= 4) or _has_front or (_n_nonblank >= 30)
+                if _title is not None and _substantial:
+                    _front = []
+                    for _li in range(_title_idx + 1, min(_title_idx + 12, len(lines))):
+                        _raw = lines[_li].strip()
+                        if not _raw or _raw == "---":
+                            if _raw == "---":
+                                _consumed.add(_li)
+                            break
+                        _fm = re.match(r'^\*{0,2}([A-Za-zÄÖÜäöü][^:]{1,40}?)\*{0,2}:\s*(.+)$', _raw)
+                        if _fm and "|" not in _raw:
+                            _front.append((_fm.group(1).strip(),
+                                           re.sub(r'\*+', '', _fm.group(2)).strip()))
+                            _consumed.add(_li)
+                        else:
+                            break
+                    _render_cover_page(doc, _style, _title, _front)
+                    _consumed.add(_title_idx)
+                    if _dx.get("toc", True):
+                        _add_toc_field(doc)
+                        doc.add_page_break()
+
             i = 0
+            _kpis = []  # pending ::kpi lines → flushed as a coloured strip
             while i < len(lines):
+                if i in _consumed:
+                    i += 1
+                    continue
                 line = lines[i]
+                # KPI convention: '::kpi VALUE | LABEL | risk' — collect consecutive
+                # ones, flush as one coloured box-strip when the run ends.
+                _kpi = _kpi_match(line)
+                if _kpi:
+                    _kpis.append(_kpi)
+                    i += 1
+                    if i >= len(lines) or not _kpi_match(lines[i]):
+                        _emit_kpi_strip(doc, _kpis, _style)
+                        _kpis = []
+                    continue
                 # Embedded image: ![alt](file) → add_picture (e.g. a render_diagram chart)
                 img_match = _MD_IMAGE_RE.match(line)
                 if img_match:
@@ -1180,11 +1644,19 @@ def tool_write_document(args: dict) -> str:
                         doc.add_paragraph(f"[Bild nicht gefunden: {img_match.group(2)}]")
                     i += 1
                     continue
-                # Headings
+                # Horizontal rule: a bare --- / *** / ___ → real divider, not text.
+                if re.match(r'^\s*([-*_])\1{2,}\s*$', line):
+                    _add_hrule(doc, _rule_col)
+                    i += 1
+                    continue
+                # Headings — strip leading emoji, render inline **/* as runs (the
+                # old code added raw text here, leaking ** and 📌 into headings).
                 heading_match = re.match(r'^(#{1,6})\s+(.*)', line)
                 if heading_match:
-                    level = len(heading_match.group(1))
-                    doc.add_heading(heading_match.group(2), level=level)
+                    level = min(len(heading_match.group(1)), 9)
+                    htext = _clean_heading_text(heading_match.group(2), _strip_emoji)
+                    h = doc.add_heading("", level=level)
+                    _add_inline_md_runs(h, htext)
                     i += 1
                     continue
                 # Table detection
@@ -1199,33 +1671,65 @@ def tool_write_document(args: dict) -> str:
                         max_cols = max(len(r) for r in table_rows)
                         table = doc.add_table(rows=len(table_rows), cols=max_cols)
                         try:
-                            table.style = _style["docx"].get("table_style") or "Table Grid"
+                            table.style = _dx.get("table_style") or "Table Grid"
                         except (KeyError, Exception):
                             table.style = "Table Grid"
+                        # Which column (if any) holds risk ratings → badge it.
+                        # Pick by EVIDENCE: the column whose body cells most often
+                        # parse as a risk value (gering/mittel/erhöht/hoch). A
+                        # header-hint ('Bewertung'/'Risiko') only breaks ties — this
+                        # avoids mis-picking 'Risikofaktor' (a label column) just
+                        # because its name starts with 'risiko'.
+                        _badge_col = None
+                        if _do_badges and len(table_rows) > 1:
+                            _hdr_l = [re.sub(r'\*+', '', h).strip().lower() for h in table_rows[0]]
+                            _best, _best_hits = None, 0
+                            for _ci in range(max_cols):
+                                _hits = sum(1 for _r in table_rows[1:]
+                                            if _ci < len(_r) and _risk_badge(_r[_ci]))
+                                _hinted = (_ci < len(_hdr_l) and
+                                           any(_hdr_l[_ci] == hint or _hdr_l[_ci].endswith(hint)
+                                               for hint in _BADGE_COL_HINTS))
+                                # require the column to be MOSTLY risk values, so a
+                                # stray 'gering' in a prose column doesn't qualify
+                                _score = _hits + (0.5 if _hinted else 0)
+                                if _hits >= max(1, (len(table_rows) - 1) // 2) and _score > _best_hits:
+                                    _best, _best_hits = _ci, _score
+                            _badge_col = _best
                         for ri, row_data in enumerate(table_rows):
+                            is_header = ri == 0
                             for ci, cell_val in enumerate(row_data):
-                                if ci < max_cols:
-                                    table.rows[ri].cells[ci].text = cell_val
+                                if ci >= max_cols:
+                                    continue
+                                cell = table.rows[ri].cells[ci]
+                                cell.text = ""  # clear default empty paragraph
+                                para = cell.paragraphs[0]
+                                clean = re.sub(r'\*+', '', cell_val).strip() if is_header else cell_val
+                                badge = (not is_header and ci == _badge_col
+                                         and _risk_badge(cell_val)) or None
+                                if is_header:
+                                    _shade_cell(cell, _hdr_bg)
+                                    _add_inline_md_runs(para, clean or cell_val,
+                                                        base_bold=True, color=_hdr_fg)
+                                elif badge:
+                                    _shade_cell(cell, "#" + badge[1])
+                                    para.alignment = 1  # center
+                                    _add_inline_md_runs(para, cell_val,
+                                                        base_bold=True, color="#" + badge[0])
+                                else:
+                                    if _zebra and ri % 2 == 0:
+                                        _shade_cell(cell, _zebra)
+                                    _add_inline_md_runs(para, cell_val)
                     continue
-                # Regular paragraph with inline formatting
+                # Regular paragraph with inline formatting (single shared renderer)
                 stripped = line.strip()
                 if stripped:
                     para = doc.add_paragraph()
-                    parts = re.split(r'(\*\*\*.*?\*\*\*|\*\*.*?\*\*|\*.*?\*)', stripped)
-                    for part in parts:
-                        if part.startswith("***") and part.endswith("***"):
-                            run = para.add_run(part[3:-3])
-                            run.bold = True
-                            run.italic = True
-                        elif part.startswith("**") and part.endswith("**"):
-                            run = para.add_run(part[2:-2])
-                            run.bold = True
-                        elif part.startswith("*") and part.endswith("*") and len(part) > 2:
-                            run = para.add_run(part[1:-1])
-                            run.italic = True
-                        else:
-                            para.add_run(part)
+                    _add_inline_md_runs(para, stripped,
+                                        mono_font=_style["fonts"].get("mono", "Consolas"))
                 i += 1
+            if _kpis:
+                _emit_kpi_strip(doc, _kpis, _style)
             doc.save(path)
 
         elif ext == ".xlsx":
@@ -1329,18 +1833,38 @@ def tool_write_document(args: dict) -> str:
         elif ext == ".pdf":
             try:
                 from reportlab.lib.pagesizes import letter, A4
-                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as _RLImage, Table as _RLTable, TableStyle as _RLTableStyle
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as _RLImage, Table as _RLTable, TableStyle as _RLTableStyle, PageBreak as _RLPageBreak
+                from reportlab.platypus.flowables import HRFlowable as _RLHRFlowable
+                from reportlab.platypus.tableofcontents import TableOfContents as _RLToC
                 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle as _RLParaStyle
                 from reportlab.lib.units import inch as _rl_inch
                 from reportlab.lib.colors import HexColor as _RLHex
                 from reportlab.lib import colors as _rl_colors
-                from reportlab.lib.enums import TA_LEFT as _RL_TA_LEFT
+                from reportlab.lib.enums import TA_LEFT as _RL_TA_LEFT, TA_CENTER as _RL_TA_CENTER
             except ImportError:
                 return _err("Install reportlab: pip3 install reportlab")
+            _pdf_dx = _style["docx"]  # polish keys are shared (strip_emoji/badges/cover/…)
+            _pdf_strip_emoji = bool(_pdf_dx.get("strip_emoji", True))
+            _pdf_rule_hex = _pdf_dx.get("rule_color", "#B4C6E7")
+            _pdf_do_badges = bool(_pdf_dx.get("risk_badges", True))
             _psize = A4 if str(_style["pdf"].get("page_size", "letter")).lower() == "a4" else letter
             _marg = float(_style["pdf"].get("margin_inch", 1.0)) * _rl_inch
+            _pdf_want_toc = bool(_pdf_dx.get("toc", True))
+            _pdf_toc_active = False  # True once a ToC flowable is actually placed
             doc_pdf = SimpleDocTemplate(path, pagesize=_psize, topMargin=_marg,
                                         bottomMargin=_marg, leftMargin=_marg, rightMargin=_marg)
+            # PDF table-of-contents: reportlab fills a ToC flowable over a 2-pass
+            # build (multiBuild) driven by 'TOCEntry' notifications. We tag each
+            # heading flowable with a bookmark key + emit the notify in an
+            # afterFlowable hook bound onto this template instance.
+            _pdf_toc_seq = [0]
+            def _pdf_after_flowable(flowable):
+                _txt = getattr(flowable, "_toc_text", None)
+                if _txt is not None:
+                    doc_pdf.notify("TOCEntry", (getattr(flowable, "_toc_level", 0),
+                                                _txt, doc_pdf.page,
+                                                getattr(flowable, "_toc_key", None)))
+            doc_pdf.afterFlowable = _pdf_after_flowable
             styles = getSampleStyleSheet()
             # Apply style fonts/colors to the reportlab paragraph styles.
             try:
@@ -1356,7 +1880,11 @@ def tool_write_document(args: dict) -> str:
             except Exception:
                 pass
             # Inline markdown (**bold**/*italic*) → reportlab mini-HTML markup.
+            # Escape raw &/< first (reportlab Paragraph parses XML — a bare '&'
+            # in 'M&P AM' would swallow following text as a bogus entity), then
+            # apply the bold/italic tags so they survive as real markup.
             def _pdf_inline(_s):
+                _s = _s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 _s = re.sub(r'\*\*\*(.+?)\*\*\*', r'<b><i>\1</i></b>', _s)
                 _s = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', _s)
                 _s = re.sub(r'\*(.+?)\*', r'<i>\1</i>', _s)
@@ -1376,13 +1904,119 @@ def tool_write_document(args: dict) -> str:
 
             story = []
             lines = content.split("\n")
+
+            # KPI strip helper: build a coloured 1-row table from ::kpi lines.
+            def _pdf_emit_kpis(kpis):
+                if not kpis:
+                    return
+                cells, cmds = [], []
+                for ci, (value, label, badge) in enumerate(kpis):
+                    pal = _risk_badge(badge) or ("44546A", "EDF1F8")
+                    vsty = _RLParaStyle(f"Kpi{ci}", parent=styles["Normal"], fontSize=22,
+                                        leading=24, alignment=_RL_TA_CENTER,
+                                        textColor=_RLHex("#" + pal[0]), fontName="Helvetica-Bold")
+                    lsty = _RLParaStyle(f"KpiL{ci}", parent=styles["Normal"], fontSize=8,
+                                        leading=10, alignment=_RL_TA_CENTER,
+                                        textColor=_RLHex(_style["colors"].get("heading", "#1F3864")))
+                    inner = _RLTable([[Paragraph(value, vsty)], [Paragraph((label or "").upper(), lsty)]])
+                    inner.setStyle(_RLTableStyle([("TOPPADDING", (0, 0), (-1, -1), 6),
+                                                  ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+                    cells.append(inner)
+                    cmds.append(("BACKGROUND", (ci, 0), (ci, 0), _RLHex("#" + pal[1])))
+                avail_w = _psize[0] - 2 * _marg
+                strip = _RLTable([cells], colWidths=[avail_w / len(kpis)] * len(kpis))
+                strip.setStyle(_RLTableStyle([
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("INNERGRID", (0, 0), (-1, -1), 3, _rl_colors.white),
+                ] + cmds))
+                story.append(strip)
+                story.append(Spacer(1, 14))
+
+            # ── Cover page + TOC (same substance gate as docx) ──────────────────
+            _pdf_consumed = set()
+            _pdf_nh = sum(1 for _l in lines if re.match(r'^#{1,6}\s', _l))
+            _pdf_nb = sum(1 for _l in lines if _l.strip())
+            if _pdf_dx.get("cover", True):
+                _pt, _pti = None, None
+                for _li, _ln in enumerate(lines[:40]):
+                    _m = re.match(r'^#\s+(.*)', _ln)
+                    if _m:
+                        _pt, _pti = _m.group(1).strip(), _li
+                        break
+                _pf = []
+                if _pt is not None:
+                    for _li in range(_pti + 1, min(_pti + 12, len(lines))):
+                        _r = lines[_li].strip()
+                        if not _r or _r == "---":
+                            if _r == "---":
+                                _pdf_consumed.add(_li)
+                            break
+                        _fm = re.match(r'^\*{0,2}([A-Za-zÄÖÜäöü][^:|]{1,40}?)\*{0,2}:\s*(.+)$', _r)
+                        if _fm:
+                            _pf.append((_fm.group(1).strip(), re.sub(r'\*+', '', _fm.group(2)).strip()))
+                            _pdf_consumed.add(_li)
+                        else:
+                            break
+                if _pt is not None and ((_pdf_nh >= 4) or _pf or (_pdf_nb >= 30)):
+                    _navy = _style["colors"].get("heading", "#1F3864")
+                    _acc = _style["colors"].get("accent", "#2E74B5")
+                    story.append(Spacer(1, 2.0 * _rl_inch))
+                    story.append(Paragraph("VERTRAULICH · INTERNE RISIKOANALYSE", _RLParaStyle(
+                        "CoverKick", parent=styles["Normal"], fontSize=10, textColor=_RLHex(_acc), fontName="Helvetica-Bold")))
+                    story.append(_RLHRFlowable(width="100%", thickness=2, color=_RLHex(_navy), spaceBefore=6, spaceAfter=18))
+                    _ttl_txt = re.sub(r'[*`]+', '', _clean_heading_text(_pt, _pdf_strip_emoji))
+                    story.append(Paragraph(_ttl_txt.replace("&", "&amp;").replace("<", "&lt;"), _RLParaStyle(
+                        "CoverTitle", parent=styles["Normal"], fontSize=28, leading=32, textColor=_RLHex(_navy), fontName="Helvetica-Bold")))
+                    if _pf:
+                        story.append(Spacer(1, 0.4 * _rl_inch))
+                        for _k, _v in _pf:
+                            _ke = _k.upper().replace("&", "&amp;").replace("<", "&lt;")
+                            _ve = _v.replace("&", "&amp;").replace("<", "&lt;")
+                            story.append(Paragraph(f"<b>{_ke}</b>&nbsp;&nbsp;&nbsp;{_ve}", _RLParaStyle(
+                                "CoverMeta", parent=styles["Normal"], fontSize=10, leading=18)))
+                    story.append(_RLPageBreak())
+                    _pdf_consumed.add(_pti)
+                    # Table of contents on its own page (filled on the 2nd build
+                    # pass). Only rendered together with the cover — same as docx.
+                    if _pdf_want_toc:
+                        story.append(Paragraph("Inhaltsverzeichnis", _RLParaStyle(
+                            "TocTitle", parent=styles["Normal"], fontSize=16, leading=20,
+                            textColor=_RLHex(_navy), fontName="Helvetica-Bold", spaceAfter=12)))
+                        _toc = _RLToC()
+                        _toc.levelStyles = [
+                            _RLParaStyle("TOC0", parent=styles["Normal"], fontSize=11, leading=16,
+                                         leftIndent=0, firstLineIndent=0, spaceBefore=4,
+                                         textColor=_RLHex(_style["colors"].get("heading", "#1F3864"))),
+                            _RLParaStyle("TOC1", parent=styles["Normal"], fontSize=10, leading=14, leftIndent=16),
+                            _RLParaStyle("TOC2", parent=styles["Normal"], fontSize=9.5, leading=13, leftIndent=32,
+                                         textColor=_RLHex("#666666")),
+                        ]
+                        story.append(_toc)
+                        story.append(_RLPageBreak())
+                        _pdf_toc_active = True
+
+            _pdf_kpis = []
+            _pdf_hkey = [0]
             i = 0
             while i < len(lines):
+                if i in _pdf_consumed:
+                    i += 1
+                    continue
                 raw = lines[i]
                 line = raw.strip()
                 if not line:
                     story.append(Spacer(1, 12))
                     i += 1
+                    continue
+                # KPI convention: '::kpi VALUE | LABEL | risk' → coloured box-strip.
+                _km = _kpi_match(line)
+                if _km:
+                    _pdf_kpis.append(_km)
+                    i += 1
+                    if i >= len(lines) or not _kpi_match(lines[i]):
+                        _pdf_emit_kpis(_pdf_kpis)
+                        _pdf_kpis = []
                     continue
                 # Markdown table: a "|...|" line immediately followed by a
                 # "|---|---|" separator. Mirrors the docx table detection so
@@ -1396,13 +2030,35 @@ def tool_write_document(args: dict) -> str:
                         i += 1
                     if table_rows:
                         max_cols = max(len(r) for r in table_rows)
+                        # Badge column by evidence (same rule as the docx path).
+                        _pdf_badge_col = None
+                        if _pdf_do_badges and len(table_rows) > 1:
+                            _hl = [re.sub(r'\*+', '', h).strip().lower() for h in table_rows[0]]
+                            _best, _bsc = None, 0
+                            for _ci in range(max_cols):
+                                _hits = sum(1 for _r in table_rows[1:]
+                                            if _ci < len(_r) and _risk_badge(_r[_ci]))
+                                _hint = (_ci < len(_hl) and any(_hl[_ci] == h or _hl[_ci].endswith(h)
+                                                                for h in _BADGE_COL_HINTS))
+                                _sc = _hits + (0.5 if _hint else 0)
+                                if _hits >= max(1, (len(table_rows) - 1) // 2) and _sc > _bsc:
+                                    _best, _bsc = _ci, _sc
+                            _pdf_badge_col = _best
                         data = []
+                        _badge_cmds = []  # per-cell BACKGROUND/TEXTCOLOR for badges
                         for ri, row_data in enumerate(table_rows):
                             cells = []
                             cstyle = _hdr_cell_style if ri == 0 else _cell_style
                             for ci in range(max_cols):
                                 val = row_data[ci] if ci < len(row_data) else ""
-                                cells.append(Paragraph(_pdf_inline(val) or "&nbsp;", cstyle))
+                                _bdg = (ri > 0 and ci == _pdf_badge_col and _risk_badge(val)) or None
+                                _cs = cstyle
+                                if _bdg:
+                                    _cs = _RLParaStyle(f"Badge{ri}{ci}", parent=_cell_style,
+                                                       textColor=_RLHex("#" + _bdg[0]),
+                                                       alignment=_RL_TA_CENTER, fontName="Helvetica-Bold")
+                                    _badge_cmds.append(("BACKGROUND", (ci, ri), (ci, ri), _RLHex("#" + _bdg[1])))
+                                cells.append(Paragraph(_pdf_inline(val) or "&nbsp;", _cs))
                             data.append(cells)
                         avail_w = _psize[0] - 2 * _marg
                         tbl = _RLTable(data, colWidths=[avail_w / max_cols] * max_cols, repeatRows=1)
@@ -1410,12 +2066,12 @@ def tool_write_document(args: dict) -> str:
                             ("BACKGROUND", (0, 0), (-1, 0), _RLHex(_hdr_bg_hex)),
                             ("GRID", (0, 0), (-1, -1), 0.5, _RLHex(_grid_hex)),
                             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_rl_colors.white, _rl_colors.HexColor("#F2F4F8")]),
+                            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_rl_colors.white, _RLHex(_pdf_dx.get("zebra_fill", "#F2F4F8"))]),
                             ("LEFTPADDING", (0, 0), (-1, -1), 5),
                             ("RIGHTPADDING", (0, 0), (-1, -1), 5),
                             ("TOPPADDING", (0, 0), (-1, -1), 3),
                             ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                        ]))
+                        ] + _badge_cmds))  # badge cmds last → override the zebra fill
                         story.append(tbl)
                         story.append(Spacer(1, 12))
                     continue
@@ -1443,21 +2099,48 @@ def tool_write_document(args: dict) -> str:
                             styles["Normal"]))
                     i += 1
                     continue
+                # Horizontal rule: bare --- / *** / ___ → a thin divider flowable.
+                if re.match(r'^([-*_])\1{2,}$', line):
+                    story.append(_RLHRFlowable(width="100%", thickness=0.75,
+                                               color=_RLHex(_pdf_rule_hex),
+                                               spaceBefore=6, spaceAfter=10))
+                    i += 1
+                    continue
                 heading_match = re.match(r'^(#{1,6})\s+(.*)', line)
                 if heading_match:
                     level = len(heading_match.group(1))
                     style_name = f"Heading{min(level, 6)}"
                     if style_name not in styles:
                         style_name = "Heading1"
-                    story.append(Paragraph(heading_match.group(2), styles[style_name]))
+                    # Strip leading emoji + render inline **/* (the old code passed
+                    # raw heading text → ** and 📌 leaked, same bug as the docx path).
+                    htext = _clean_heading_text(heading_match.group(2), _pdf_strip_emoji)
+                    _plain = re.sub(r'[*`]+', '', htext).strip()
+                    if _pdf_toc_active and level <= 3 and _plain:
+                        # Bookmark anchor so the ToC entry is clickable; tag the
+                        # flowable so afterFlowable emits a TOCEntry on each pass.
+                        _pdf_hkey[0] += 1
+                        _key = f"h{_pdf_hkey[0]}"
+                        _para = Paragraph(f'<a name="{_key}"/>' + _pdf_inline(htext), styles[style_name])
+                        _para._toc_text = _plain
+                        _para._toc_level = level - 1
+                        _para._toc_key = _key
+                        story.append(_para)
+                    else:
+                        story.append(Paragraph(_pdf_inline(htext), styles[style_name]))
                 else:
                     story.append(Paragraph(_pdf_inline(line), styles["Normal"]))
                 i += 1
+            if _pdf_kpis:
+                _pdf_emit_kpis(_pdf_kpis)
             _pdf_cb = _make_pdf_hdrftr_cb(_style, _psize, _marg, _rl_inch, _RLHex)
+            # multiBuild (2 passes) resolves the ToC page numbers; plain build
+            # otherwise. The header/footer canvas callback runs on every page.
+            _build = doc_pdf.multiBuild if _pdf_toc_active else doc_pdf.build
             if _pdf_cb:
-                doc_pdf.build(story, onFirstPage=_pdf_cb, onLaterPages=_pdf_cb)
+                _build(story, onFirstPage=_pdf_cb, onLaterPages=_pdf_cb)
             else:
-                doc_pdf.build(story)
+                _build(story)
 
         elif ext in (".html", ".htm"):
             # Two content modes, auto-detected:
@@ -1481,7 +2164,10 @@ def tool_write_document(args: dict) -> str:
         size = os.path.getsize(path)
         agent = get_request_context().current_agent or _brain._current_agent
         _brain._after_file_write(path, "created", agent.agent_id if agent else "main")
-        return _ok({"path": path, "size": size, "format": ext.lstrip("."), "status": "written"})
+        _res = {"path": path, "size": size, "format": ext.lstrip("."), "status": "written"}
+        if _ref_note:
+            _res["style"] = _ref_note
+        return _ok(_res)
     except ImportError as e:
         return _err(str(e))
     except Exception as e:

@@ -2570,9 +2570,15 @@ const _DOC_STYLE_FIELDS = [
     { path: 'colors.table_header_bg',   label: 'Tabellenkopf (Füllung)', type: 'color' },
     { path: 'colors.table_header_text', label: 'Tabellenkopf (Text)',  type: 'color' },
   ]},
-  { group: 'Word (.docx)', icon: '📄', fields: [
+  { group: 'Word (.docx) & PDF', icon: '📄', fields: [
     { path: 'docx.table_style',  label: 'Tabellenstil', type: 'text', ph: 'Light Grid Accent 1' },
     { path: 'docx.heading_bold', label: 'Überschriften fett', type: 'bool' },
+    { path: 'docx.zebra_fill',   label: 'Tabellen-Zebra (Füllung)', type: 'color' },
+    { path: 'docx.rule_color',   label: 'Trennlinien-Farbe', type: 'color' },
+    { path: 'docx.strip_emoji',  label: 'Emojis aus Überschriften entfernen', type: 'bool' },
+    { path: 'docx.risk_badges',  label: 'Risiko-Badges (gering/mittel/hoch einfärben)', type: 'bool' },
+    { path: 'docx.cover',        label: 'Deckblatt (bei großen Berichten)', type: 'bool' },
+    { path: 'docx.toc',          label: 'Inhaltsverzeichnis', type: 'bool' },
   ]},
   { group: 'PDF', icon: '📕', fields: [
     { path: 'pdf.page_size',   label: 'Seitengröße', type: 'choice', choices: ['letter', 'a4'] },

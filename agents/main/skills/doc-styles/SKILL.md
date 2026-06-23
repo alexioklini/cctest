@@ -3,7 +3,7 @@ name: Document Styles
 description: Editable per-format style presets (fonts, colors, layout) that write_document and render_diagram apply DETERMINISTICALLY when creating .docx/.pptx/.pdf files and diagrams. Not interpreted by the model — Python reads the YAML and sets the styling, so output looks consistent regardless of model strength.
 metadata:
   type: doc-style
-  version: 1.3.0
+  version: 1.4.0
 ---
 
 # Document Styles
@@ -27,9 +27,11 @@ full preset — so markdown + a named style is the most consistent.)
 - Copy `corporate.yaml`, rename, edit the values (hex colors `#RRGGBB`, sizes in
   points, font names must be installed/available).
 - Keys: `fonts` (body/heading/mono), `sizes` (body/h1/h2/h3), `colors`
-  (heading/body/accent/table_header_*), `docx` (table_style/heading_bold),
-  `pdf` (page_size letter|a4, margin_inch), `pptx` (title_color/body_color/
-  accent/background), `mermaid` (theme default|dark|forest|neutral, background).
+  (heading/body/accent/table_header_*), `docx` (table_style/heading_bold +
+  **polish keys** `zebra_fill`, `rule_color`, `strip_emoji`, `risk_badges`,
+  `cover`, `toc` — see below), `pdf` (page_size letter|a4, margin_inch), `pptx`
+  (title_color/body_color/accent/background), `mermaid` (theme default|dark|
+  forest|neutral, background).
 - **Header / footer / logo** (running page chrome):
   - `header` / `footer`: `text` (supports `{page}` / `{date}` tokens), `align`
     (left|center|right), `font_size` (pt), `color`. `footer.page_numbers: true`
@@ -42,8 +44,30 @@ full preset — so markdown + a named style is the most consistent.)
 - **docx**: Normal + Heading 1-3 styles get the fonts/sizes/colors; tables get
   `docx.table_style`; every section's header/footer gets the running text
   (`{page}` → live Word PAGE field) + logo picture.
+  **Automatic polish (deterministic, every model)** — keys under `docx`:
+  - `cover: true` → a title page from the FIRST `# H1` + leading `Key: value`
+    frontmatter lines, rendered only for substantial reports (≥4 headings, OR an
+    H1+frontmatter block, OR ≥30 non-blank lines — a short memo stays one page).
+  - `toc: true` → a Word table-of-contents field after the cover (F9 to update);
+    the SAME `cover`/`toc` keys also drive the **.pdf** cover page + a clickable,
+    page-numbered ToC (reportlab 2-pass build).
+  - `zebra_fill` (#hex) → alternating body-row shading; table headers get
+    `colors.table_header_bg`/`_text` (dark fill + white text).
+  - `rule_color` (#hex) → `---` lines become real divider rules; H1 gets an
+    underline.
+  - `strip_emoji: true` → a leading emoji on a heading is removed (regulatory
+    docs stay clean); inline `**bold**`/`*italic*` is parsed in headings AND
+    table cells (not left verbatim).
+  - `risk_badges: true` → a table column of risk ratings (the column whose cells
+    most often read gering/mittel/erhöht/hoch) is colour-badged green/amber/red.
+  - **`::kpi VALUE | LABEL | risk`** lines (in the markdown `content`, not the
+    preset) render a coloured KPI stat-box strip — the one polish feature the
+    model triggers explicitly.
 - **pdf**: page size + margins + heading/body colors (reportlab); header/footer
   text + page number + logo drawn on every page via an onPage canvas callback.
+  Gets the SAME automatic polish as docx — cover page, clickable page-numbered
+  table-of-contents, dark table headers + zebra rows, `---` dividers, emoji-strip
+  + inline-markdown in headings, colour-coded risk badges, and `::kpi` stat boxes.
 - **html**: a self-contained styled document. `content` may be **markdown**
   (rendered with the full preset — body/heading fonts+sizes+colors, accent links,
   table header colors) OR **raw HTML** (a full `<html>` doc is auto-detected and
