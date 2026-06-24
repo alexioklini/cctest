@@ -39,9 +39,11 @@ CURATED_CHANGELOG: list[dict] = [
                 "anonymisierter Wert ab einem solchen Schritt wieder im Klartext an das Cloud-Modell "
                 "gelangen. Das gilt gleichermaßen für Daten in Anhängen. Die Verlaufs-Übersicht zeigt "
                 "außerdem wieder alle erkannten Angaben über die gesamte Unterhaltung, nicht nur die "
-                "zuletzt entschiedene.",
+                "zuletzt entschiedene. Zudem behoben: ein wiederhergestellter Wert innerhalb eines "
+                "Quellenverweises in der Antwort wird jetzt korrekt dargestellt (zuvor konnte dort "
+                "fehlerhafter Code sichtbar werden).",
         "audience": "user",
-        "versions": ["9.201.0"],
+        "versions": ["9.201.0", "9.201.1"],
     },
     {
         "version": "9.200.0",

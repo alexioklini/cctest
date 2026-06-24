@@ -367,6 +367,7 @@
     "_streamRotateTick": "writable",
     "_streamSafetyNet": "writable",
     "_streamSynthWord": "writable",
+    "_stripGdprSentinels": "writable",
     "_stripMarkdownForSpeech": "writable",
     "_stripPreamble": "writable",
     "_studioElapsedHandle": "writable",

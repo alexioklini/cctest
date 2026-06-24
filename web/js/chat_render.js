@@ -1566,6 +1566,26 @@ function extractCitationsFromRaw(text) {
   });
   return { stripped, citations };
 }
+// Strip GDPR-highlight sentinels (⁣GDPR⁣<id>⁣…⁣/GDPR⁣) from a string, keeping the
+// inner value. A restored PII value (e.g. a de-anonymised email) inside a
+// citation quote would otherwise carry the sentinel wrapper into the pin's
+// title/data-citation/aria-label ATTRIBUTES, where the later sentinel→<mark>
+// pass injects a tag mid-attribute and shatters the citation button's HTML
+// (the "vip@konzern.de\"\" onclick=… aria-label=…>[1]" corruption). Citation
+// metadata is plain attribute text — it can't hold a <mark> anyway — so we
+// drop the sentinels here, BEFORE the pin is built.
+function _stripGdprSentinels(s) {
+  if (!s || typeof s !== 'string') return s;
+  if (s.indexOf(GDPR_SENTINEL_OPEN) < 0) return s;
+  // Remove OPEN<digits>DELIM and CLOSE markers, leaving the wrapped value.
+  return s
+    .split(GDPR_SENTINEL_CLOSE).join('')
+    .replace(new RegExp(
+      GDPR_SENTINEL_OPEN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        + '\\d+'
+        + GDPR_SENTINEL_DELIM.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      'g'), '');
+}
 function parseCitationBodyRaw(body) {
   if (!body) return null;
   let s = body.trim();
@@ -1597,7 +1617,13 @@ function parseCitationBodyRaw(body) {
   if (!file) file = body.trim();
   // Drop the trailing .md companion suffix when citing original binary
   file = file.replace(/\.(pdf|docx|pptx|xlsx|xlsm|eml|msg)\.md$/i, '.$1');
-  return { file, locator, quote };
+  // Strip any GDPR-highlight sentinels a restored PII value dragged into the
+  // quote/file/locator — they must not reach the pin's HTML attributes.
+  return {
+    file: _stripGdprSentinels(file),
+    locator: _stripGdprSentinels(locator),
+    quote: _stripGdprSentinels(quote),
+  };
 }
 function restoreCitationPins(html, citations) {
   if (!citations.length) return html;
