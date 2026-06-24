@@ -1522,6 +1522,9 @@ textarea { resize: none; }
   color: var(--text-400);
   transition: color 0.1s;
 }
+/* Static synthetic rows (GDPR privacy ops) have no expandable body — title
+   line only — so they must not look clickable. */
+.tool-block-static .tool-block-header { cursor: default; }
 .tool-block-header:hover { color: var(--text-300); }
 .tool-block-header .tool-icon { color: var(--accent-brand); font-size: 14px; }
 .tool-block-header .tool-icon-spin { animation: tool-spin 1.5s linear infinite; }

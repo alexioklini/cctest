@@ -783,46 +783,23 @@ function renderSyntheticGdprCall(msg, idx) {
   const ms = done?.duration_ms ?? 0;
   const timing = ms ? `<span class="tool-timing">${(ms / 1000).toFixed(1)}s</span>` : '';
 
-  // Body: key/value pairs from result + args. Keeps PII out — only counts,
-  // categories, sources, mapping_id; never actual values.
-  const safeArgs = msg.args || {};
-  const rows = [];
-  if (safeArgs.sources) rows.push(['Quellen', safeArgs.sources.join(', ')]);
-  if (safeArgs.source) rows.push(['Quelle', String(safeArgs.source)]);
-  if (safeArgs.scope) rows.push(['Bereich', String(safeArgs.scope)]);
-  if (Array.isArray(safeArgs.pending_on_read) && safeArgs.pending_on_read.length)
-    rows.push(['Ausstehend (beim Lesen)', safeArgs.pending_on_read.join(', ')]);
-  if (result.scope) rows.push(['Bereich', String(result.scope)]);
-  if (result.source) rows.push(['Quelle', String(result.source)]);
-  if (result.findings != null) rows.push(['Treffer', String(result.findings)]);
-  if (result.restored != null) rows.push(['Wiederhergestellt', String(result.restored)]);
-  if (result.categories) rows.push(['Kategorien', Object.entries(result.categories).map(([k, v]) => `${k}=${v}`).join(', ')]);
-  if (result.tokens_minted != null) rows.push(['Neue Token', String(result.tokens_minted)]);
-  if (Array.isArray(result.pending_on_read) && result.pending_on_read.length)
-    rows.push(['Ausstehend (beim Lesen)', result.pending_on_read.join(', ')]);
-  if (result.mapping_id) rows.push(['Mapping-ID', result.mapping_id]);
-  if (status === 'error' && result.error) rows.push(['Fehler', String(result.error)]);
-  const bodyHtml = rows.length
-    ? '<table class="tool-args-table"><tbody>' +
-        rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('') +
-      '</tbody></table>'
-    : '<div style="font-size:12px;color:var(--text-300);">Keine weiteren Details.</div>';
-
   // Shield icon as a per-row marker so users can recognise these at a glance.
   const shieldBadge = '<span class="tool-badge-synthetic" title="Serverseitige Datenschutz-Operation" '
     + 'style="font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:8px;'
     + 'background:rgba(4,120,87,.12);color:#047857;letter-spacing:.02em;">DATENSCHUTZ</span>';
 
+  // Title line ONLY — the per-finding detail table (Bereich/Treffer/Kategorien/
+  // Mapping-ID) was dropped at the user's request: the summary already says what
+  // happened ("Anonymisiert: Chat-Text: 1 Treffer · email"), so there's nothing
+  // worth expanding. No chevron, no onclick toggle, no collapsible body.
   return `
-    <div class="tool-block tool-block-synthetic${done ? ' has-result' : ''}" onclick="this.classList.toggle('open')">
+    <div class="tool-block tool-block-synthetic tool-block-static${done ? ' has-result' : ''}">
       <div class="tool-block-header">
         ${iconHtml}
         <span class="tool-name">🛡️ ${esc(title)}${summary ? ': ' + esc(summary) : ''}</span>
         ${shieldBadge}
         ${timing}
-        <span class="tool-chevron">&#9656;</span>
       </div>
-      <div class="tool-block-body collapsible-body"><div class="collapsible-inner">${bodyHtml}</div></div>
     </div>
   `;
 }

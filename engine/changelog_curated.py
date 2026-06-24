@@ -51,9 +51,11 @@ CURATED_CHANGELOG: list[dict] = [
                 "auch nach dem Neuladen der Seite. Der Schalter „Datenschutz-Details sichtbar“ steuert "
                 "dabei einheitlich alle Markierungen: ist er aus, bleibt der Chat unmarkiert. Zusätzlich "
                 "merkt sich jeder Chat einzeln, ob die Details ein- oder ausgeblendet sind, und stellt "
-                "diese Ansicht beim Wiederöffnen wieder her.",
+                "diese Ansicht beim Wiederöffnen wieder her. Die Datenschutz-Hinweise im Aktivitäts-"
+                "bereich sind außerdem auf eine kompakte Titelzeile reduziert — ohne aufklappbare "
+                "Detail-Tabelle.",
         "audience": "user",
-        "versions": ["9.199.0", "9.199.1", "9.200.1"],
+        "versions": ["9.199.0", "9.199.1", "9.200.1", "9.200.2"],
     },
     {
         "version": "9.198.0",
