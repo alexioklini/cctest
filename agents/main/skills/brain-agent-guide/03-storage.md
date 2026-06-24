@@ -232,15 +232,22 @@ Also holds the de-anon index for a `data_reviews` anonymisation (session id
 ```
 decision_id PK, session_id, user_id, turn_id, created_at,
 rule_id, value_hash (sha256(rule|value), per-session dedupe), raw_value (capped 512),
-confidence REAL, band, disposition, turn_action, false_positive INTEGER, source
+confidence REAL, band, disposition, turn_action, false_positive INTEGER, source,
+fake_value (9.201.0 — pseudonym for an anonymise decision, '' otherwise; capped 512)
 ```
-One row per PII finding the user reviewed in the pre-send dialog. Drives:
-(1) "already analysed" — a decided value isn't re-asked; (2) FP-for-chat — a
-`false_positive=1` value skips anonymisation server-side
-(`handlers/chat._filter_pii_false_positives`); (3) global learning —
-`ChatDB.pii_decision_stats()` = per-rule FP-rate. Methods:
-`record_pii_decisions` / `get_session_pii_decisions` / `pii_decision_stats` /
-`delete_session_pii_decisions`. Endpoints under `/v1/gdpr/decisions`.
+APPEND-ONLY ledger: one row per PII finding (latest row per value_hash wins).
+`fake_value` holds the original→pseudonym for `turn_action='anonymise'` rows,
+recorded server-side at TURN-END from the complete mapping (covers typed text +
+attachments + mid-turn tool-read PII). Drives: (1) "already analysed" — a decided
+value isn't re-asked; (2) FP-for-chat — a `false_positive=1` value skips
+anonymisation (`handlers/chat._filter_pii_false_positives`); (3) global learning
+— `ChatDB.pii_decision_stats()`; (4) **deterministic wire-history protection**
+(9.201.0) — `handlers/chat._apply_pii_decisions_to_wire` rebuilds the wire-history
+from the ledger (anonymise→fake, accepted/FP/local→original) on EVERY turn, so an
+early-anonymised value stays protected even after a later 'continue', independent
+of a live mapping. Methods: `record_pii_decisions` / `get_session_pii_decisions`
+(returns fake_value) / `pii_decision_stats` / `delete_session_pii_decisions`.
+Endpoints under `/v1/gdpr/decisions`.
 
 ### chats.db → data_reviews (GDPR + classification document reviews)
 ```

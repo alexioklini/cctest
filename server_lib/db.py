@@ -739,7 +739,8 @@ class ChatDB:
                     disposition   TEXT NOT NULL DEFAULT '',
                     turn_action   TEXT NOT NULL DEFAULT '',
                     false_positive INTEGER NOT NULL DEFAULT 0,
-                    source        TEXT NOT NULL DEFAULT ''
+                    source        TEXT NOT NULL DEFAULT '',
+                    fake_value    TEXT NOT NULL DEFAULT ''
                 )
             """)
             conn.execute(
@@ -754,6 +755,17 @@ class ChatDB:
                 "CREATE INDEX IF NOT EXISTS idx_pii_decisions_rule_fp "
                 "ON pii_decisions(rule_id, false_positive)"
             )
+            # Migration: fake_value holds the pseudonym for an anonymised
+            # decision (turn_action='anonymise'). Makes the decision ledger
+            # self-contained — the deterministic pre-send wire-history pass can
+            # reuse original→fake without decrypting pseudonym_maps. '' for
+            # accepted/false-positive/local decisions (the original is kept).
+            try:
+                conn.execute(
+                    "ALTER TABLE pii_decisions ADD COLUMN fake_value "
+                    "TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             # Migration: add anon_text to a data_reviews table created before
             # the stored-anonymised-text design (the CREATE above only applies
             # to a brand-new table).
@@ -2618,8 +2630,9 @@ class ChatDB:
                              decisions):
         """Persist one row per reviewed PII finding. `decisions` is a list of
         dicts: {rule_id, value, confidence, band, disposition, false_positive,
-        source}. `value_hash` = sha256(rule_id|value) for per-session dedupe.
-        Returns the number of rows written."""
+        source, fake_value?}. `fake_value` is the pseudonym for an anonymised
+        finding (turn_action='anonymise'); '' otherwise. `value_hash` =
+        sha256(rule_id|value) for per-session dedupe. Returns rows written."""
         import hashlib
         import uuid
         if not decisions:
@@ -2636,13 +2649,14 @@ class ChatDB:
                 float(d.get("confidence") or 0), str(d.get("band") or ""),
                 str(d.get("disposition") or ""), str(turn_action or ""),
                 1 if d.get("false_positive") else 0, str(d.get("source") or ""),
+                str(d.get("fake_value") or "")[:512],
             ))
         with _db_conn() as conn:
             conn.executemany(
                 "INSERT INTO pii_decisions (decision_id, session_id, user_id, "
                 "turn_id, created_at, rule_id, value_hash, raw_value, confidence, "
-                "band, disposition, turn_action, false_positive, source) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+                "band, disposition, turn_action, false_positive, source, fake_value) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
             conn.commit()
         return len(rows)
 
@@ -2650,15 +2664,16 @@ class ChatDB:
     @_db_safe(default=dict)
     def get_session_pii_decisions(session_id):
         """Return the session's prior decisions as a map keyed by value_hash →
-        {rule_id, value, false_positive, disposition, turn_action}. Latest row
-        per value_hash wins. Used to (a) skip re-asking already-decided values
-        ('bereits analysiert') and (b) honour FP values for the rest of the
-        chat (FP = don't anonymise)."""
+        {rule_id, value, false_positive, disposition, turn_action, fake_value}.
+        Latest row per value_hash wins. Used to (a) skip re-asking already-
+        decided values ('bereits analysiert'), (b) honour FP values for the rest
+        of the chat (FP = don't anonymise), and (c) drive the deterministic
+        pre-send wire-history pass (anonymised→fake_value, else→original)."""
         out = {}
         with _db_conn() as conn:
             rows = conn.execute(
                 "SELECT value_hash, rule_id, raw_value, false_positive, "
-                "disposition, turn_action, created_at "
+                "disposition, turn_action, fake_value, created_at "
                 "FROM pii_decisions WHERE session_id = ? "
                 "ORDER BY created_at ASC", (session_id,)).fetchall()
         for r in rows:
@@ -2666,6 +2681,7 @@ class ChatDB:
                 "rule_id": r[1], "value": r[2],
                 "false_positive": bool(r[3]),
                 "disposition": r[4], "turn_action": r[5],
+                "fake_value": r[6] or "",
             }
         return out
 

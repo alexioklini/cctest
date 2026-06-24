@@ -1110,12 +1110,33 @@ function _piiHistoryShowPopover(anchorBtn, payload) {
   if (historyChat) {
     const head = (txt) => '<div style="font-weight:600;font-size:11.5px;color:var(--text-200);margin-top:' +
       (draftScan ? '10px' : '4px') + '">' + txt + '</div>';
+
+    // (A) COMPLETE picture — the server history scan's label→count list. This
+    // is the authoritative "Gesamtheit der PII im Verlauf": it covers EVERY
+    // value across all turns (email from turn 1 AND phone from turn 5), unlike
+    // the per-finding decisions below which only exist for values the user
+    // actively decided (accepted-cleartext / anonymise). Always shown so prior-
+    // turn PII never disappears when a new turn adds a finding (the bug in chat
+    // 6f034721: only the latest decided value, the phone, was showing).
+    const counts = historyChat._piiHistoryCounts || {};
+    const entries = Object.entries(counts).filter(([, v]) => (v || 0) > 0)
+                          .sort((a, b) => (b[1] || 0) - (a[1] || 0));
+    if (entries.length > 0) {
+      const total = entries.reduce((a, [, v]) => a + (v || 0), 0);
+      const rows = entries.map(([k, v]) =>
+        '<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0">' +
+          '<span style="color:var(--text-200)">' + esc(k) + '</span>' +
+          '<span style="font-weight:600;color:var(--text-100)">' + v + '</span>' +
+        '</div>').join('');
+      sections.push(head('Im Verlauf · ' + total + ' Treffer') + rows);
+    }
+
+    // (B) Per-finding DECISION detail — an ADDITIONAL section (not a
+    // replacement) shown when the user has decided specific values. Each row:
+    // value (· pseudonym when anonymised) · confidence · outcome.
     const decided = Object.values(historyChat._piiDecisions || {})
       .filter(d => d && d.value);   // only entries with a real value are detailed
     if (decided.length > 0) {
-      // Detail per reviewed finding (like the decision modal): label · value
-      // (· pseudonym when anonymised) · confidence · outcome.
-      const ruleLbl = rid => gdprCategoryLabel(gdprRuleCategory(rid)) || rid || '';
       const fakeMap = (typeof _gdprOriginalToFakeMap === 'function')
         ? _gdprOriginalToFakeMap(historyChat) : {};
       const outcome = d => {
@@ -1144,22 +1165,7 @@ function _piiHistoryShowPopover(anchorBtn, payload) {
             '<div style="font-size:10px;color:' + o.col + ';margin-top:1px">' + esc(o.txt) + '</div>' +
           '</div>';
       }).join('');
-      sections.push(head('Bereits geprüft · ' + decided.length + ' Treffer') + rows);
-    } else {
-      // No per-finding decisions yet → fall back to the proven label→count list
-      // (this is what always worked). Shows e.g. "E-Mail-Adresse  1".
-      const counts = historyChat._piiHistoryCounts || {};
-      const entries = Object.entries(counts).filter(([, v]) => (v || 0) > 0)
-                            .sort((a, b) => (b[1] || 0) - (a[1] || 0));
-      if (entries.length > 0) {
-        const total = entries.reduce((a, [, v]) => a + (v || 0), 0);
-        const rows = entries.map(([k, v]) =>
-          '<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0">' +
-            '<span style="color:var(--text-200)">' + esc(k) + '</span>' +
-            '<span style="font-weight:600;color:var(--text-100)">' + v + '</span>' +
-          '</div>').join('');
-        sections.push(head('Verlauf · ' + total + ' Treffer in früheren Turns') + rows);
-      }
+      sections.push(head('Geprüfte Werte · ' + decided.length) + rows);
     }
   }
 

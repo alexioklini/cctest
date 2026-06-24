@@ -30,6 +30,20 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.2xx — Datenschutz-Prüfung serverseitig ──
     {
+        "version": "9.201.0",
+        "date": "2026-06-24",
+        "title": "Anonymisierte Daten bleiben dauerhaft geschützt",
+        "body": "Ein einmal anonymisierter Wert (z. B. eine E-Mail-Adresse) bleibt jetzt in jedem "
+                "weiteren Verlauf der Unterhaltung geschützt — auch dann, wenn Sie in einem späteren "
+                "Schritt für eine andere Angabe „Trotzdem senden“ wählen. Zuvor konnte ein früh "
+                "anonymisierter Wert ab einem solchen Schritt wieder im Klartext an das Cloud-Modell "
+                "gelangen. Das gilt gleichermaßen für Daten in Anhängen. Die Verlaufs-Übersicht zeigt "
+                "außerdem wieder alle erkannten Angaben über die gesamte Unterhaltung, nicht nur die "
+                "zuletzt entschiedene.",
+        "audience": "user",
+        "versions": ["9.201.0"],
+    },
+    {
         "version": "9.200.0",
         "date": "2026-06-24",
         "title": "Datenschutz-Prüfung mit Fortschritt und Abbrechen",

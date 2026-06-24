@@ -639,6 +639,100 @@ import re as _re_ws_mod
 _re_ws = _re_ws_mod.compile(r"\s+")
 
 
+def _apply_pii_decisions_to_wire(messages, decisions):
+    """Deterministically rewrite the wire-history from the persisted PII
+    decision ledger — NO scanning, NO new token mints.
+
+    `decisions` is `ChatDB.get_session_pii_decisions(sid)` (value_hash → record).
+    The ledger is append-only: every PII value the session ever saw, with the
+    user's decision. We use ONLY the anonymise decisions here: for each value
+    whose decision is `turn_action=='anonymise'` (and which has a stored
+    `fake_value`), replace EVERY occurrence of the original with the fake in the
+    user+assistant message text. Accepted / false-positive / local decisions
+    keep the original verbatim (the user chose to send it in clear), and values
+    never seen are left untouched (the current turn's own flow handles new PII).
+
+    This is what keeps an already-anonymised value protected on EVERY later turn
+    — including ones where the user picks 'continue' for a NEW finding — because
+    the decision is read from the ledger, not re-derived from a per-turn action.
+    Covers attachment-derived values too: their anonymise decisions are in the
+    same ledger (recorded from the complete turn-end mapping).
+
+    `session.messages` is NOT mutated — only the wire copy handed to the sidecar.
+    Returns `(wire_messages, replaced_count, counts_by_rule)`.
+    """
+    # Build the original→fake table from anonymise decisions only. Longest
+    # original first so a value that is a substring of another can't be
+    # partially shadowed (e.g. a phone inside an address-like string).
+    pairs = []
+    for d in (decisions or {}).values():
+        if not d or d.get("false_positive"):
+            continue
+        if d.get("turn_action") != "anonymise":
+            continue
+        orig = d.get("value") or ""
+        fake = d.get("fake_value") or ""
+        if orig and fake and orig != fake:
+            pairs.append((orig, fake, d.get("rule_id") or "unknown"))
+    pairs.sort(key=lambda p: -len(p[0]))
+    if not pairs:
+        return messages, 0, {}
+
+    replaced = 0
+    counts: dict[str, int] = {}
+
+    def _rewrite(text):
+        nonlocal replaced
+        if not text:
+            return text
+        out = text
+        for orig, fake, rid in pairs:
+            if orig in out:
+                n = out.count(orig)
+                out = out.replace(orig, fake)
+                replaced += n
+                counts[rid] = counts.get(rid, 0) + n
+        return out
+
+    wire = []
+    for msg in messages or []:
+        role = msg.get("role")
+        content = msg.get("content")
+        if role not in ("user", "assistant", "human") or content is None:
+            wire.append(msg)
+            continue
+        if isinstance(content, str):
+            new_text = _rewrite(content)
+            if new_text != content:
+                nm = dict(msg)
+                nm["content"] = new_text
+                wire.append(nm)
+            else:
+                wire.append(msg)
+        elif isinstance(content, list):
+            new_blocks = []
+            mutated = False
+            for blk in content:
+                if isinstance(blk, dict) and blk.get("type") == "text":
+                    nt = _rewrite(blk.get("text") or "")
+                    if nt != (blk.get("text") or ""):
+                        nb = dict(blk)
+                        nb["text"] = nt
+                        new_blocks.append(nb)
+                        mutated = True
+                        continue
+                new_blocks.append(blk)
+            if mutated:
+                nm = dict(msg)
+                nm["content"] = new_blocks
+                wire.append(nm)
+            else:
+                wire.append(msg)
+        else:
+            wire.append(msg)
+    return wire, replaced, counts
+
+
 def _pseudonymize_history_for_wire(messages, mapping, scanner_cfg):
     """Walk prior `session.messages` and produce a wire-only pseudonymised
     copy. The reused mapping's `forward` table short-circuits already-known
@@ -2161,6 +2255,10 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             _mapping, session_id=sid, turn_id=_anon_tool_id)
                         session._gdpr_mapping_id = _mapping.mapping_id
                         session._gdpr_streamer = StreamingDeanonymizer(_mapping)
+                        # (Anonymise decisions — original→fake — are recorded
+                        # once at turn END from the COMPLETE mapping; see the
+                        # worker finally. Doing it here would miss attachment
+                        # values minted later by read_document/read_file.)
                         # Per-turn flag read by `_build_system_prompt` post-
                         # process to append the verbatim-token-preservation
                         # clamp. Cleared in the worker's finally below.
@@ -2535,51 +2633,50 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 _max_tokens = int(inf_params.get("max_tokens", 16000) or 16000)
                 _agent_cfg = session.agent.config or {}
                 _max_rounds = int((_agent_cfg.get("limits") or {}).get("max_tool_rounds", 25) or 25)
-                # Transparent anonymisation: if a mapping is live, walk the
-                # FULL message history and produce a wire-only pseudonymised
-                # copy. Prior turns' assistant replies (persisted
-                # de-anonymised so the chat UI shows real values) carry real
-                # PII; without this pass they ship to the cloud LLM raw. The
-                # mapping-reuse short-circuit keeps token ids stable from
-                # turn 1, so a long anonymise session pays one regex scan
-                # per turn, not new mint cost.
+                # Transparent anonymisation — DETERMINISTIC, ledger-driven.
+                # Prior turns' user messages + assistant replies are persisted
+                # de-anonymised (the chat UI shows real values), so without a
+                # rewrite they'd ship to the cloud LLM in clear. We rebuild the
+                # wire-history straight from the persisted PII decision ledger
+                # (pii_decisions): every value the session EVER anonymised is
+                # replaced by its stored fake on EVERY subsequent turn — no
+                # re-scan, no new mints, and crucially INDEPENDENT of whether a
+                # mapping is "live" this turn. This is the fix for the leak where
+                # a value anonymised early went out in clear from the turn the
+                # user first chose 'continue' for a NEW finding: the decision is
+                # read from the ledger, not re-derived from the per-turn action.
+                # Accepted / false-positive / local values stay in clear (the
+                # user's choice); attachment-anonymised values are covered too
+                # (their decisions are in the same ledger).
                 _wire_messages = session.messages
-                _gmid = getattr(session, "_gdpr_mapping_id", "") or ""
-                if _gmid:
-                    _m = pseudonymizer.get_mapping(_gmid)
-                    if _m is not None:
-                        _wire_messages, _hist_new, _hist_counts = (
-                            _pseudonymize_history_for_wire(
-                                session.messages, _m,
-                                engine._get_gdpr_scanner_config()))
-                        if _hist_new > 0 or _hist_counts:
-                            try:
-                                _tuid = (f"anon_hist_{_gmid[:8]}_"
-                                         f"{int(time.time()*1000) % 1_000_000}")
-                                emit_gdpr_tool_event_for_session(
-                                    sid,
-                                    kind="anonymise_read",
-                                    tool_use_id=_tuid,
-                                    args={"source": "history"},
-                                    result={
-                                        "findings": sum(_hist_counts.values()),
-                                        "tokens_minted": _hist_new,
-                                        "categories": _hist_counts,
-                                        "source": "history",
-                                        "mapping_id": _gmid,
-                                    },
-                                    status="ok",
-                                    duration_ms=0,
-                                )
-                            except Exception:
-                                pass
-                            # Persist any newly-minted tokens so a server
-                            # restart mid-turn can still de-anonymise.
-                            try:
-                                pseudonymizer.save_mapping(
-                                    _m, session_id=sid, turn_id=_gmid)
-                            except Exception:
-                                pass
+                try:
+                    _pii_decisions = ChatDB.get_session_pii_decisions(sid)
+                except Exception:
+                    _pii_decisions = {}
+                if _pii_decisions:
+                    _wire_messages, _hist_repl, _hist_counts = (
+                        _apply_pii_decisions_to_wire(
+                            session.messages, _pii_decisions))
+                    if _hist_repl > 0:
+                        try:
+                            _tuid = (f"anon_hist_{sid[:8]}_"
+                                     f"{int(time.time()*1000) % 1_000_000}")
+                            emit_gdpr_tool_event_for_session(
+                                sid,
+                                kind="anonymise_read",
+                                tool_use_id=_tuid,
+                                args={"source": "history"},
+                                result={
+                                    "findings": _hist_repl,
+                                    "tokens_minted": 0,
+                                    "categories": _hist_counts,
+                                    "source": "history",
+                                },
+                                status="ok",
+                                duration_ms=0,
+                            )
+                        except Exception:
+                            pass
                 # Manual web-search: fetch the curated URLs FRESH now and
                 # prepend their content to the wire copy of the last user
                 # message only — ephemeral, never persisted into history, so
@@ -3379,6 +3476,34 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         if _m_inmem is not None:
                             pseudonymizer.save_mapping(
                                 _m_inmem, session_id=sid, turn_id=_gdpr_mid)
+                            # Record one pii_decisions row per anonymised value
+                            # (original → fake) so the deterministic pre-send
+                            # wire-history pass can reuse the fake on later turns
+                            # without re-scanning or decrypting. Done at turn-END
+                            # so the mapping is COMPLETE — it covers typed text,
+                            # freshly-submitted attachments, AND attachment text
+                            # discovered mid-turn by read_document/read_file tools
+                            # (the user's "must work for attachments too"). The
+                            # decision ledger thus holds every original→fake the
+                            # conversation ever produced. Idempotent: the latest
+                            # row per value_hash wins, so re-recording stable
+                            # values across turns is harmless.
+                            try:
+                                _anon_decisions = [
+                                    {"rule_id": _m_inmem.categories.get(_o, ""),
+                                     "value": _o, "fake_value": _f,
+                                     "disposition": "anonymise"}
+                                    for _o, _f in _m_inmem.forward.items()
+                                ]
+                                if _anon_decisions:
+                                    _au = getattr(engine.get_request_context(),
+                                                  "current_user_id", "") or ""
+                                    ChatDB.record_pii_decisions(
+                                        sid, _au, _gdpr_mid or "",
+                                        "anonymise", _anon_decisions)
+                            except Exception as _de:
+                                print(f"[gdpr] anon decision persist failed: "
+                                      f"{_de}", flush=True)
                     except Exception:
                         pass
                     try:
@@ -4318,7 +4443,20 @@ class ChatHandlerMixin:
         # session. When we are, rehydrate so the worker's anonymise branch
         # finds a live mapping and the streaming deanonymiser is wired up
         # before any text_delta lands.
+        #
+        # When the user chose 'continue'/'local' for THIS turn's new finding but
+        # the session has ALREADY anonymised earlier values (_had_prior_mapping),
+        # we still rehydrate the mapping — NOT to anonymise the new text
+        # (_gdpr_pending_action stays empty below, so that's left in clear per
+        # the user's choice) but so the REPLY de-anonymiser is active: the
+        # deterministic wire-history pass rewrites prior values to their fakes,
+        # and the model may echo those fakes, which the streamer reverses back to
+        # the real values before the user sees them. Skipped on an explicit
+        # shield opt-out (_opted_out). This is what keeps the already-anonymised
+        # history protected from turn 5 on without re-anonymising the new value.
         if gdpr_action == "anonymise":
+            rehydrate_session_gdpr_mapping(session)
+        elif _had_prior_mapping and not _opted_out:
             rehydrate_session_gdpr_mapping(session)
         else:
             session._gdpr_mapping_id = None
