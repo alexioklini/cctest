@@ -1022,50 +1022,59 @@ function _piiHistoryShowPopover(anchorBtn, payload) {
   }
 
   if (historyChat) {
-    // 9.197.0: the history badge shows the DECISION per already-seen finding,
-    // NOT raw values or rule counts. Driven by chat._piiDecisions (the persisted
-    // per-finding outcomes). Grouped by decision: false-positive vs handled.
-    const decided = Object.values(historyChat._piiDecisions || {});
     const head = (txt) => '<div style="font-weight:600;font-size:11.5px;color:var(--text-200);margin-top:' +
       (draftScan ? '10px' : '4px') + '">' + txt + '</div>';
+    const decided = Object.values(historyChat._piiDecisions || {})
+      .filter(d => d && d.value);   // only entries with a real value are detailed
     if (decided.length > 0) {
-      // 9.198.0: full detail per finding (like the decision modal) — value,
-      // confidence, and the outcome. Outcome = false-positive (clear, marked),
-      // anonymised, or accepted-cleartext (Trotzdem senden / local).
-      const ruleLbl = rid => (PIIScanner.categoryLabels &&
-        PIIScanner.categoryLabels[PIIScanner.ruleCategories?.[rid]]) || rid;
-      // Map original→fake from the chat's persisted anonymisation spans so we
-      // can show the pseudonym a value was replaced with.
-      const fakeMap = _gdprOriginalToFakeMap(historyChat);
+      // Detail per reviewed finding (like the decision modal): label · value
+      // (· pseudonym when anonymised) · confidence · outcome.
+      const ruleLbl = rid => (typeof PIIScanner !== 'undefined' && PIIScanner.categoryLabels &&
+        PIIScanner.categoryLabels[PIIScanner.ruleCategories?.[rid]]) || rid || '';
+      const fakeMap = (typeof _gdprOriginalToFakeMap === 'function')
+        ? _gdprOriginalToFakeMap(historyChat) : {};
       const outcome = d => {
-        if (d.false_positive) return { txt: 'Falschtreffer — nicht anonymisiert', col: '#92400e' };
+        if (d.false_positive) return { txt: 'nicht anonymisiert (Falschtreffer)', col: '#b45309' };
         if (d.turn_action === 'anonymise') return { txt: 'anonymisiert', col: '#047857' };
         if (d.turn_action === 'local' || d.turn_action === 'local_model')
           return { txt: 'lokal verarbeitet', col: '#047857' };
-        return { txt: 'akzeptiert — nicht anonymisiert', col: '#b45309' };
+        return { txt: 'nicht anonymisiert (akzeptiert)', col: '#b45309' };
       };
       const rows = decided.map(d => {
         const o = outcome(d);
-        const conf = (d.confidence != null) ? Number(d.confidence) : null;
-        const confTxt = (conf != null && !isNaN(conf)) ? conf.toFixed(2) : '';
+        const conf = (d.confidence != null && !isNaN(Number(d.confidence)))
+          ? Number(d.confidence).toFixed(2) : '';
         const fake = fakeMap[d.value];
         const valCell = fake
-          ? esc(d.value || '') + ' <span style="color:var(--text-400)">→</span> <span style="color:#047857">' + esc(fake) + '</span>'
-          : esc(d.value || '');
-        return '<div style="display:flex;align-items:baseline;gap:8px;padding:3px 0;border-top:1px solid var(--border-100)">' +
-            '<span style="flex:none;min-width:88px;color:var(--text-300);font-size:10.5px">' + esc(ruleLbl(d.rule_id)) + '</span>' +
-            '<span style="flex:1;font-family:ui-monospace,monospace;font-size:11px;color:var(--text-200);word-break:break-all">' + valCell + '</span>' +
-            (confTxt ? '<span style="flex:none;font-size:10px;color:var(--text-400);font-variant-numeric:tabular-nums">' + confTxt + '</span>' : '') +
-            '<span style="flex:none;font-size:10px;color:' + o.col + ';white-space:nowrap">' + esc(o.txt) + '</span>' +
+          ? esc(d.value) + ' <span style="color:var(--text-400)">→</span> <span style="color:#047857">' + esc(fake) + '</span>'
+          : esc(d.value);
+        // Two lines per finding: (value · confidence) then the outcome — keeps a
+        // long value + long outcome label from squeezing each other into a
+        // one-char-per-line column.
+        return '<div style="padding:4px 0;border-top:1px solid var(--border-100)">' +
+            '<div style="display:flex;align-items:baseline;gap:8px">' +
+              '<span style="flex:1;font-family:ui-monospace,monospace;font-size:11px;color:var(--text-200);word-break:break-all">' + valCell + '</span>' +
+              (conf ? '<span style="flex:none;font-size:10px;color:var(--text-400);font-variant-numeric:tabular-nums">' + conf + '</span>' : '') +
+            '</div>' +
+            '<div style="font-size:10px;color:' + o.col + ';margin-top:1px">' + esc(o.txt) + '</div>' +
           '</div>';
       }).join('');
       sections.push(head('Bereits geprüft · ' + decided.length + ' Treffer') + rows);
     } else {
-      // History PII present but not yet reviewed — show a count only, no raw
-      // values. (The dialog will surface the actual findings when sent.)
+      // No per-finding decisions yet → fall back to the proven label→count list
+      // (this is what always worked). Shows e.g. "E-Mail-Adresse  1".
       const counts = historyChat._piiHistoryCounts || {};
-      const n = Object.values(counts).reduce((a, v) => a + (v || 0), 0);
-      if (n > 0) sections.push(head('Verlauf · ' + n + ' personenbezogene Treffer (noch nicht geprüft)'));
+      const entries = Object.entries(counts).filter(([, v]) => (v || 0) > 0)
+                            .sort((a, b) => (b[1] || 0) - (a[1] || 0));
+      if (entries.length > 0) {
+        const total = entries.reduce((a, [, v]) => a + (v || 0), 0);
+        const rows = entries.map(([k, v]) =>
+          '<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0">' +
+            '<span style="color:var(--text-200)">' + esc(k) + '</span>' +
+            '<span style="font-weight:600;color:var(--text-100)">' + v + '</span>' +
+          '</div>').join('');
+        sections.push(head('Verlauf · ' + total + ' Treffer in früheren Turns') + rows);
+      }
     }
   }
 

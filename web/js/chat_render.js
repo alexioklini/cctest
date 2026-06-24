@@ -97,14 +97,19 @@ function renderMessages() {
            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
          </button>`
       : '';
-    // GDPR highlight overlay on the turn-header hint text. Mirrors the
-    // assistant-side behavior: when the user message was anonymised on the
-    // way out, the original PII values get the yellow <mark> overlay so the
-    // request side of every anonymised turn matches the response side. Gated
-    // by the same composer toggle (state.showGdprDetails).
-    const userSpans = t.userMsg?.metadata?.gdpr_restored_spans;
-    const showUserGdpr = state.showGdprDetails && Array.isArray(userSpans) && userSpans.length;
-    const hintInner = showUserGdpr
+    // GDPR highlight overlay on the turn-header hint text (the user message in
+    // the grouped view). Two kinds of <mark>:
+    //   amber (gdpr_restored_spans) = anonymised — DETAIL, gated by the
+    //         state.showGdprDetails toggle.
+    //   red (cleartext) = detected PII that went out IN CLEAR (accepted /
+    //         false-positive) — a SECURITY signal, ALWAYS shown (not gated), so
+    //         the user always sees what left unprotected.
+    const _restored = state.showGdprDetails
+      ? (t.userMsg?.metadata?.gdpr_restored_spans || []) : [];
+    const _clear = (state.activeChat && state.activeChat._piiDecisions)
+      ? buildGdprCleartextSpans(fullQ, state.activeChat._piiDecisions) : [];
+    const userSpans = [..._restored, ..._clear];
+    const hintInner = userSpans.length
       ? renderPlainTextWithGdprHighlights(fullQ, userSpans)
       : esc(fullQ);
     // Turn-start time lives in the per-turn stats line (renderAssistantMessage),
@@ -1443,7 +1448,12 @@ function renderPlainTextWithGdprHighlights(text, spans) {
       if (i < 0) break;
       const j = i + orig.length;
       if (!overlaps(i, j)) {
-        located.push({ start: i, end: j, original: orig, fake: sp.fake || '', category: sp.category || 'unknown' });
+        // Carry type + fp through so cleartext-accepted PII renders as the red
+        // gdpr-cleartext mark (tooltip "nicht anonymisiert"), not the amber
+        // "anonymised" one. Dropping these made the accepted phone number show
+        // a false "wurde mit '' anonymisiert" tooltip.
+        located.push({ start: i, end: j, original: orig, fake: sp.fake || '',
+          category: sp.category || 'unknown', type: sp.type || 'restored', fp: !!sp.fp });
         claimed.push([i, j]);
       }
       from = j;
