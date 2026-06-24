@@ -593,9 +593,30 @@ class AdminConfigHandlers:
                 self._send_json({"error": "gdpr_scanner must be an object"}, 400)
                 return
             gs = server_config.setdefault("gdpr_scanner", {})
-            for key in ("enabled", "server_log", "server_block"):
+            for key in ("enabled", "server_log", "name_precision_gate",
+                        "block_unscannable_on_cloud"):
                 if key in gs_in:
                     gs[key] = bool(gs_in[key])
+            # server_block removed 9.195.0 — drop it from any saved config so the
+            # stale flag doesn't linger.
+            gs.pop("server_block", None)
+            # Confidence band thresholds (global lower/upper).
+            for key in ("confidence_lower", "confidence_upper"):
+                if key in gs_in:
+                    try:
+                        gs[key] = min(max(float(gs_in[key]), 0.0), 1.0)
+                    except (TypeError, ValueError):
+                        self._send_json({"error": f"{key} must be a number 0..1"}, 400)
+                        return
+            if gs.get("confidence_upper", 0.85) <= gs.get("confidence_lower", 0.50):
+                self._send_json({"error": "confidence_upper must be > confidence_lower"}, 400)
+                return
+            if "background_ask_action" in gs_in:
+                v = gs_in["background_ask_action"]
+                if v not in ("anonymise", "swap_to_local", "ignore"):
+                    self._send_json({"error": "background_ask_action must be one of: anonymise, swap_to_local, ignore"}, 400)
+                    return
+                gs["background_ask_action"] = v
             if "default_local_fallback_model" in gs_in:
                 mid = str(gs_in["default_local_fallback_model"] or "")
                 # Validate: must be a known, enabled, local model (empty = disabled)
@@ -663,7 +684,8 @@ class AdminConfigHandlers:
                     out_ovr[rid] = act
                 gs["rule_overrides"] = out_ovr
 
-            # Per-rule min_occurrences — reject unknown rule_ids; clamp to >=1.
+            # Per-rule min_occurrences — legacy seed for count_points (no longer a
+            # gate). Reject unknown rule_ids; clamp to >=1.
             if "min_occurrences" in gs_in:
                 mo_in = gs_in["min_occurrences"] or {}
                 if not isinstance(mo_in, dict):
@@ -681,6 +703,33 @@ class AdminConfigHandlers:
                         self._send_json({"error": f"min_occurrences[{rid}] must be an integer >= 1"}, 400)
                         return
                 gs["min_occurrences"] = out_mo
+
+            # Per-rule count_points [lo, hi] — count→score calibration (9.195.0).
+            if "count_points" in gs_in:
+                cp_in = gs_in["count_points"] or {}
+                if not isinstance(cp_in, dict):
+                    self._send_json({"error": "gdpr_scanner.count_points must be an object"}, 400)
+                    return
+                out_cp = {}
+                valid_rules = set(engine.PII_RULE_CATEGORIES.keys())
+                for rid, pair in cp_in.items():
+                    if rid not in valid_rules:
+                        self._send_json({"error": f"count_points: unknown rule_id '{rid}'"}, 400)
+                        return
+                    if not (isinstance(pair, (list, tuple)) and len(pair) == 2):
+                        self._send_json({"error": f"count_points[{rid}] must be [lo, hi]"}, 400)
+                        return
+                    try:
+                        lo, hi = int(pair[0]), int(pair[1])
+                    except (TypeError, ValueError):
+                        self._send_json({"error": f"count_points[{rid}] must be integers"}, 400)
+                        return
+                    lo = max(1, lo)
+                    if hi <= lo:
+                        self._send_json({"error": f"count_points[{rid}]: hi must be > lo"}, 400)
+                        return
+                    out_cp[rid] = [lo, hi]
+                gs["count_points"] = out_cp
 
             # Email allowlist — strip/lowercase/dedupe. Accept "x@y.com" and
             # "@y.com" patterns; reject anything with internal whitespace.

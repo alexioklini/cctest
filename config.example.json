@@ -2559,7 +2559,6 @@
   "gdpr_scanner": {
     "enabled": true,
     "server_log": false,
-    "server_block": true,
     "default_local_fallback_model": "gemma-4-12B-it-qat-4bit",
     "categories": {
       "secrets": {
@@ -2680,7 +2679,13 @@
     ],
     "background_pii_action": "anonymise",
     "background_anonymise_fail_action": "swap_to_local",
-    "name_precision_gate": true
+    "name_precision_gate": true,
+    "count_points": {
+      "name": [
+        2,
+        3
+      ]
+    }
   },
   "quotas": {
     "enabled": true,
@@ -4220,10 +4225,10 @@
     "extra_patterns": []
   },
   "classification_scanner": {
-    "enabled": true,
+    "enabled": false,
     "server_block": false,
     "server_log": false,
-    "default_local_fallback_model": "",
+    "default_local_fallback_model": "gemma-4-12B-it-qat-4bit",
     "per_level_action": {
       "public": "ignore",
       "internal": "warn",

@@ -30,6 +30,22 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.19x — Dokument-Erzeugung, KI-Projektanweisungen, PII-Präzision ──
     {
+        "version": "9.195.0",
+        "date": "2026-06-24",
+        "title": "Datenschutz-Prüfung mit Konfidenz-Schwellen",
+        "body": "Die Datenschutz-Prüfung entscheidet jetzt feiner, wann sie eingreift: Jeder gefundene "
+                "personenbezogene Treffer erhält eine Konfidenz-Bewertung, und zwei einstellbare "
+                "Schwellenwerte teilen das Ergebnis in drei Bereiche. Unsichere Funde mit niedriger "
+                "Konfidenz werden ignoriert und stören den Arbeitsfluss nicht mehr; im mittleren Bereich "
+                "wird nachgefragt, was geschehen soll (ignorieren, anonymisieren oder lokal verarbeiten); "
+                "nur bei hoher Konfidenz greift automatisch die für die jeweilige Regel hinterlegte Aktion. "
+                "Wie oft derselbe Treffer in einem Dokument vorkommt, fließt dabei in die Bewertung ein — "
+                "mehrfaches Auftreten erhöht die Konfidenz. Die bisherige globale „Hart-Blockieren“-Option "
+                "entfällt; die Schwellenwerte ersetzen sie und sind im DSGVO-Tab einstellbar.",
+        "audience": "admin",
+        "versions": ["9.194.0", "9.195.0"],
+    },
+    {
         "version": "9.193.0",
         "date": "2026-06-24",
         "title": "Treffsicherere Erkennung personenbezogener Daten",

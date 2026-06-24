@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.194.0"
+VERSION = "9.195.0"
 VERSION_DATE = "2026-06-24"
 CHANGELOG = [
+    ("9.195.0", "2026-06-24", "feat(gdpr-thresholds): die PII-Durchsetzung laeuft jetzt ueber ZWEI globale Konfidenz-Schwellen (lower/upper) statt ueber den server_block-Schalter — auf Nutzerwunsch (drei Konfidenz-Bereiche). MODELL: jeder Befund hat einen Konfidenz-Score (0..1); zwei globale Grenzen (gdpr_scanner.confidence_lower=0.50, confidence_upper=0.85) teilen ihn in DREI Bereiche: (a) < lower → geringe Konfidenz → IGNORIEREN (Benutzer nicht behelligen, nichts tun); (b) lower..upper → unsicher/moeglicher Falschtreffer → BENUTZER FRAGEN (ignorieren/anonymisieren/lokal); (c) >= upper → hohe Konfidenz → die KONFIGURIERTE Regel-Aktion ausfuehren (Block → Auto-Anonymisierung/Fallback je nach Config; Warnen → fragen; Ignore → nichts). Die Grenzen gelten fuer ALLE Regeln. Single decision seam: brain._pii_resolve_disposition(finding,cfg) → 'ignore'|'ask'|'anonymise'; _pii_band + _pii_confidence_thresholds + _pii_worst_disposition. ENTFERNT: gdpr_scanner.server_block (der Schwellen-Bereich ersetzt den Block→Warn-Master-Schalter). _pii_effective_action liefert jetzt die ROHE konfigurierte Aktion (kein server_block-Downgrade mehr); die Aktion (ignore/warn/block bleibt per Kategorie/Regel) regiert NUR noch den HIGH-Bereich. min_occurrences GATET NICHT mehr (ueberall entfernt): der Count fliesst jetzt AUSSCHLIESSLICH in den Score — pro Regel zwei Count-Punkte (c_lo,c_hi) kalibrieren, wo dieser Count den Score auf SCORE_LO bzw. SCORE_HI hebt (brain._pii_count_points, aus min_occurrences geseedet, config count_points pro Regel ueberschreibbar). Beispiel (Nutzer): email count_points (3,7) → 1-2× unter unterer Grenze (ignorieren), 3-6× im Nachfrage-Bereich, >=7× hoch. _pii_confidence kombiniert jetzt zwei Tracks per max(): Track A = Regel-Klassen-Evidenz (Checksumme/Secret/email hoch bei 1×; NER per Kontext-Distanz), Track B = Count-Kalibrierung — so ist eine gepruefte IBAN bei 1× hoch, ein blosser Name steigt mit Wiederholung. HINTERGRUND-AUFRUFE (kein Benutzer zum Fragen): neuer gdpr_scanner.background_ask_action (anonymise|swap_to_local|ignore, default anonymise) loest den Nachfrage-Bereich nicht-interaktiv auf; gdpr_pick_model_for_background nutzt jetzt _pii_worst_disposition statt worst-ACTION. AUDIO-Gate (translate_tools, war an server_block gekoppelt) → neuer expliziter gdpr_scanner.block_unscannable_on_cloud (default false = altes Verhalten). KLASSIFIZIERUNG UNVERAENDERT (eigener server_block + strict-always-block §1.11 bleiben — bewusst nicht angefasst). API: POST /v1/gdpr/scan-text liefert pro Finding band+disposition + worst_disposition (fuer den Client-Dialog). UI (DSGVO-Tab): server_block-Checkbox → zwei Schwellen-Slider (live-Wert); neuer Hintergrund-Nachfrage-Selektor; Status-Chip zeigt jetzt die Schwellen; pro Regel ZWEI Anzahl-Felder (untere/obere Count-Grenze) statt des einen min_occurrences-Felds — sie kalibrieren, ab wie vielen Treffern der Score die untere bzw. obere Schwelle erreicht (gdpr-rule-count-lo/-hi → count_points beim Speichern). Config-Reader/-Saver/-Reflection (brain + admin_config + admin_artifacts) auf die neuen Felder umgestellt, server_block wird beim Speichern entfernt. NOCH OFFEN (bewusst, spaeter): der dreigeteilte Nachfrage-Dialog im interaktiven Chat (Server liefert band+disposition pro Finding bereits). js_gate gruen (eslint clean, net-globals 1473 unveraendert, Playwright 5/5). py_compile (brain+pii_ner+classification-unberuehrt+chat+admin_config+admin_artifacts+translate_tools+tool_schemas) OK; live verifiziert (IBAN high+block→anonymise, mid→ask, low→ignore, email count-bands exakt wie spezifiziert). Brain-Neustart noetig."),
     ("9.194.0", "2026-06-24", "feat(gdpr-confidence): jeder PII-Treffer UND jedes Klassifizierungs-Ergebnis traegt jetzt einen evidenzbasierten Confidence-Score (0..1) — Grundlage fuer eine spaetere Schwellen-Leiter (ignore < ask < anonymise/fallback). Auf Nutzerwunsch ('we need for every pii rule a probability of correctness and also for document classification, so we can later add thresholds'). EHRLICH: das ist KEINE kalibrierte Wahrscheinlichkeit P(korrekt) — die Detektoren liefern sowas nicht nativ — sondern ein TRANSPARENTER, deterministischer Score aus der Evidenz, die das System ohnehin berechnet (vom Nutzer gewaehlt: evidence-based rule scoring, Score jetzt exponieren / Schwellen spaeter). PII (_pii_confidence in engine/pii_ner.py): eine Regel-Klassen-PRIOR (Checksumme/IBAN/Luhn/Verhoeff 0.98, Secrets/API-Keys 0.95, email 0.92, Kontext-verankert *_ctx/ipv4 0.82, NER mit Praezisions-Gate 0.72 sonst 0.55, bare_identifier 0.45) wird durch ZWEI dynamische Signale bewegt, die der Nutzer benannt hat: (1) der PER-FILE Occurrence-Counter — je mehr DISTINKTE Treffer derselben Regel, desto hoeher (saettigende Kurve bis +0.15; 'Thomas Bergmann' 1× → 0.72, 4× → 0.83); (2) die KONTEXT-DISTANZ — fuer Findings, deren Korrektheit an einem nahen Anker haengt (NER date/address mit Personen-Naehe-Gate), wird der tatsaechliche Zeichen-Abstand gemessen (closer = hoeher, ±0.15 ueber [0, 120ch]; address direkt neben Person 0.94 vs weit weg 0.59). DAFUER wurden die Proximity-Gates _name_within/_date_has_birth_context um distanz-liefernde Varianten (_name_distance/_birth_context_distance) erweitert — sie gaben bisher nur True/False zurueck und warfen den Abstand weg. Checksum/Secret/email sind RIGID (Distanz ignoriert, nur Korroboration nach oben — Mathe/High-Stakes), Secrets mit Floor 0.90. Klassifizierung (_classification_confidence in engine/classification.py): expliziter Per-Page-Marker high/med/low × coverage_pct → 0.65..0.95; reiner Dateiname-Hinweis 0.45; nur Content-Heuristik 0.40; Marker/Inhalt-Mismatch senkt um bis 0.25. Exponiert: PII-Findings tragen `confidence` (auch im full-mode-Scan-Endpoint), Klassifizierungs-Result traegt `confidence`. NOCH NICHT verdrahtet (bewusst, Nutzer-Wahl): die ignore→ask→anonymise/fallback-Schwellen — erst Score-Verteilungen auf echtem Traffic beobachten, dann Cutoffs setzen. py_compile (pii_ner+classification+chat+brain) OK; live verifiziert (IBAN 0.98, AWS-Key 0.95, address-neben-Person 0.94, name 1×→4× 0.72→0.83, Klassifizierung Marker 0.83 vs Dateiname 0.45). Brain-Neustart noetig. Skill 05-internals + skill_version nachgezogen."),
     ("9.193.1", "2026-06-24", "feat(gdpr-precision): das NER-Praezisions-Gate (9.193.0) jetzt auch fuer `address` — auf Nutzerwunsch ('gate addresses also'). DIAGNOSE (kg-real-policies): spaCy taggt BLOSSE Toponyme (Wien, Oesterreich, Zuerich) als address, und das bestehende Personen-Naehe-Gate laesst sie durch, weil in Policy-Texten fast immer eine Person in der Naehe steht — aber eine blosse Stadt/ein Land ist keine identifizierende Anschrift. Zusaetzlich fragmentiert spaCy echte Adressen auf den Strassennamen ('Seestrasse' ohne Hausnummer). FIX (_passes_address_precision_gate, deterministisch): ein `address`-Finding wird nur akzeptiert, wenn im unmittelbaren nachfolgenden Kontext (~30 Zeichen) eine Hausnummer ODER eine PLZ steht ('Seestrasse 27, 8002 Zuerich' bleibt; blosses 'Wien'/'Hamburg'/'Oesterreich' faellt). VERIFIZIERT: 6/6 echte Strassenadressen behalten, 5/5 blosse Toponyme gedroppt; handcrafted Gesamt-Praezision 0.78→0.83. KOSTEN/EHRLICH: handcrafted address-Recall 0.86→0.57 — davon ist der Grossteil GEWOLLT (blosse Staedte wie 'Hamburg'/'Frankfurt' waren als address-Gold gelabelt, sollen aber per Nutzer-Spec fallen) bzw. liegt an spaCy-Recall-Loechern (z.B. 'Maximilianstrasse 14' wird vom Modell GAR NICHT als LOC erkannt — kein Gate-Effekt). Das Gate selbst droppt keine erkannte Strassenadresse mit Nummer. NER-only; Regex/Checksummen unberuehrt; teil von gdpr_scanner.name_precision_gate (ein Flag deckt name+organisation+address). py_compile OK; live verifiziert. Brain-Neustart noetig. Skill 05-internals + skill_version nachgezogen."),
     ("9.193.0", "2026-06-24", "feat(gdpr-precision): NER-Praezisions-Gate gegen die dominante spaCy-Falschpositiv-Quelle bei Personennamen UND Organisationen — gdpr_scanner.name_precision_gate (default AN). ANLASS (Nutzerproblem): 'Erkennung von Personennamen in Kombination mit Adresse/Geburtsdatum aktivieren erzeugt viele Falschpositive.' DIAGNOSE (gegen den echten kg-real-policies-Korpus gemessen, NICHT behauptet): das de_core_news_md-Modell taggt deutsche Komposita/Allgemeinbegriffe als PER ('Datenschutzvorfall', 'Benutzerkennwoerter', 'Administratorenrechten', 'Notfallkontakte') und interne/juristische Abkuerzungen + KI-/IT-Konzepte als ORG ('ARL','DSG','UWG','KI-Gremium','KI-Systeme'). Das alte Shape-Gate verlangte nur EIN grossgeschriebenes Token — und da im Deutschen JEDES Substantiv grossgeschrieben ist, leakte es. GEMESSEN auf dem Policy-Korpus: name-Praezision 0.15, organisation-Praezision 0.05. FIX (engine/pii_ner.py, deterministisch, CLAUDE.md-Regel 5 — kein Modell): (1) _passes_name_precision_gate — ein `name` wird nur akzeptiert mit Personen-Evidenz: Honorific/Titel angrenzend (Herr/Frau/Dr./Mag./Prof.) ODER >=2 grossgeschriebene Tokens, von denen KEINES wie ein deutsches Substantiv (Suffix -ung/-heit/-vorfall/-kontakte/…) oder ein bekanntes Tech-/Generikum-Wort aussieht; ein einzelnes Token reicht nie (Praezision-first). (2) _passes_org_precision_gate — droppt eine kuratierte Stoppliste juristischer/interner Abkuerzungen (ARL/ANW/DSG/DSGVO/BWG/UWG/VStG/FM-GwG/ISMS/…) + KI-/IT-/EU-/DSG-/VVT-Konzept-Praefixe; ECHTE Produkt-/Systemnamen (SWIFT/ELBA/ZAK) bleiben erhalten, weil sie NICHT per pauschalem 'kurz+Grossbuchstaben=droppen' gekillt werden (das wuerde sie treffen) sondern nur via Stoppliste. (3) NEBENFIX: PDF-Zeilenumbrueche INNERHALB einer NER-Span ('Alexander\\n\\nKlinsky') werden jetzt zu einem Leerzeichen kollabiert (_value + full-mode-Endpoint), sonst matchte derselbe Name inline nie und die distinct-value-Zaehlung/De-Anonymisierungs-Token-Stabilitaet brach. GATE-VERHALTEN: nur NER-Findings (name/organisation), Regex/Checksummen unberuehrt; gated per cfg, name_precision an scan_text durchgereicht. GEMESSEN (eval/pii_eval, Wert-Level P/R/F1, 2 Korpora): Policy-Korpus Praezision 0.07→0.16 (2,3×), F1 0.12→0.24 (2×); name-Praezision 0.15→~0.89; handcrafted F1 unveraendert 0.81, name-Recall haelt 0.89 — KEIN Verlust echter PII. KOSTEN: org-Recall auf Policy 0.47→0.40 (Stoppliste droppt mehrdeutige Abkuerzungen wie WPB) — kleiner, vertretbarer Trade fuer 2× Praezision. date-Gate BEWUSST NICHT gebaut (Diagnose: date-Praezision bereits 0.50 auf Policy, durch min_occurrences=10 + Personen-Naehe-Gate kontrolliert — ein Non-Problem). Begleitet von einer kompletten PII-Detektor-Eval-Suite (eval/pii_eval/): handcrafted Exakt-Gold-Korpus (50 Faelle) + kg-real-policies; vier Detektor-Stacks vermessen (ours+spaCy, ours+GLiNER, Presidio+spaCy, Presidio+GLiNER, M4-7B) — Ergebnis separat dokumentiert (Presidio scheitert an DE-Steuer-ID/AHV/BSN+Secrets mit 0.00; GLiNER schlaegt spaCy NICHT; M4-7B stark aber zu langsam fuer den synchronen Pre-Send-Gate, ~2,5s vs 15ms). py_compile (pii_ner+chat+brain) OK; Live gegen echte FPs verifiziert. Brain-Neustart noetig (engine-Aenderung)."),
@@ -7830,6 +7831,23 @@ def _pii_worst_action(findings: list[dict]) -> str:
     return worst
 
 
+def _pii_worst_disposition(findings: list[dict], cfg: dict | None = None) -> str:
+    """Most-severe confidence-BAND disposition across findings:
+    'anonymise' > 'ask' > 'ignore' (9.195.0 — replaces worst-ACTION as the
+    enforcement signal). Each finding resolved via _pii_resolve_disposition
+    (confidence band × configured action)."""
+    if cfg is None:
+        cfg = _get_gdpr_scanner_config()
+    worst = "ignore"
+    for f in findings:
+        d = _pii_resolve_disposition(f, cfg)
+        if d == "anonymise":
+            return "anonymise"
+        if d == "ask" and worst != "anonymise":
+            worst = "ask"
+    return worst
+
+
 # --- Rate Limiting --- (RateLimiter + _rate_limiter extracted to
 # engine/quotas.py, B4 — re-exported via the cost/quota block above.)
 
@@ -8846,33 +8864,43 @@ def _get_gdpr_scanner_config() -> dict:
     Shape:
       {"enabled": bool,                  # master on/off (default True)
        "server_log": bool,               # audit.db entries on findings (default True)
-       "server_block": bool,             # master switch for "block" actions (default False)
-                                         #   false → block actions downgrade to warn (back-compat)
-                                         #   true  → block actions refuse unless model is local
+       "confidence_lower": float,        # band edge: <lower ⇒ ignore (default 0.50)
+       "confidence_upper": float,        # band edge: ≥upper ⇒ act on rule action (0.85)
+       "count_points": {<rule_id>: [lo, hi]},  # per-rule count→score calibration
        "default_local_fallback_model": str,
-       "background_pii_action": str,     # anonymise | swap_to_local | abort  (default anonymise)
-                                         # Policy for non-interactive LLM calls when PII is found.
-       "background_anonymise_fail_action": str,  # swap_to_local | abort  (default swap_to_local)
-                                         # What to do when pseudonymisation itself fails.
-       "categories": {<cat>: {"action": "ignore|warn|block"}},
+       "background_pii_action": str,     # anonymise | swap_to_local | abort | skip
+                                         # HIGH-band policy for non-interactive calls.
+       "background_ask_action": str,     # anonymise | swap_to_local | ignore (default
+                                         # anonymise) — what the MID band does when
+                                         # there's no user to prompt (background calls).
+       "background_anonymise_fail_action": str,  # swap_to_local | abort
+       "block_unscannable_on_cloud": bool,  # audio/etc → local fallback (default False)
+       "categories": {<cat>: {"action": "ignore|warn|block"}},  # governs HIGH band only
        "rule_overrides": {<rule_id>: "ignore|warn|block"},
        "email_allowlist": [str, ...],    # full addresses or "@domain" patterns
        "name_precision_gate": bool}      # tighten name/org NER FPs (default True)
+
+    REMOVED 9.195.0: `server_block` (the three-band confidence threshold
+    replaces the block-downgrade master switch) and the min_occurrences GATE
+    (count now only feeds the confidence score via count_points). `min_occurrences`
+    is still READ as the legacy seed for count_points migration.
     """
     global _gdpr_scanner_cache, _gdpr_scanner_cache_time
     now = time.time()
     if _gdpr_scanner_cache is not None and (now - _gdpr_scanner_cache_time) < 30:
         return _gdpr_scanner_cache
     cfg = {
-        "enabled": True, "server_log": True, "server_block": False,
+        "enabled": True, "server_log": True,
+        "confidence_lower": 0.50, "confidence_upper": 0.85,
+        "count_points": {},
         "default_local_fallback_model": "",
         "background_pii_action": "anonymise",
+        "background_ask_action": "anonymise",
         "background_anonymise_fail_action": "swap_to_local",
+        "block_unscannable_on_cloud": False,
         "categories": {cat: {"action": act} for cat, act in PII_DEFAULT_CATEGORY_ACTIONS.items()},
         "rule_overrides": {},
-        # Per-rule minimum DISTINCT occurrences before a rule fires (see
-        # PII_DEFAULT_MIN_OCCURRENCES). Seeded from defaults; admin overrides
-        # merge over them. Default 1 for any rule not present.
+        # Legacy seed for count_points migration (no longer a detection gate).
         "min_occurrences": dict(PII_DEFAULT_MIN_OCCURRENCES),
         "email_allowlist": [],
         # NER-precision gate (9.193.0): tighten name/organisation against the
@@ -8883,13 +8911,34 @@ def _get_gdpr_scanner_config() -> dict:
     try:
         with open(cfg_path) as f:
             loaded = json.load(f).get("gdpr_scanner") or {}
-        for k in ("enabled", "server_log", "server_block", "name_precision_gate"):
+        for k in ("enabled", "server_log", "name_precision_gate",
+                  "block_unscannable_on_cloud"):
             if k in loaded:
                 cfg[k] = bool(loaded[k])
+        for k in ("confidence_lower", "confidence_upper"):
+            if k in loaded:
+                try:
+                    cfg[k] = min(max(float(loaded[k]), 0.0), 1.0)
+                except (TypeError, ValueError):
+                    pass
+        # keep upper strictly above lower
+        if cfg["confidence_upper"] <= cfg["confidence_lower"]:
+            cfg["confidence_upper"] = min(1.0, cfg["confidence_lower"] + 0.01)
+        cp_in = loaded.get("count_points") or {}
+        if isinstance(cp_in, dict):
+            for rid, pair in cp_in.items():
+                if rid in PII_RULE_CATEGORIES and isinstance(pair, (list, tuple)) and len(pair) == 2:
+                    try:
+                        lo, hi = int(pair[0]), int(pair[1])
+                        cfg["count_points"][rid] = [max(1, lo), max(max(1, lo) + 1, hi)]
+                    except (TypeError, ValueError):
+                        pass
         if "default_local_fallback_model" in loaded:
             cfg["default_local_fallback_model"] = str(loaded["default_local_fallback_model"] or "")
-        if loaded.get("background_pii_action") in ("anonymise", "swap_to_local", "abort"):
+        if loaded.get("background_pii_action") in ("anonymise", "swap_to_local", "abort", "skip"):
             cfg["background_pii_action"] = loaded["background_pii_action"]
+        if loaded.get("background_ask_action") in ("anonymise", "swap_to_local", "ignore"):
+            cfg["background_ask_action"] = loaded["background_ask_action"]
         if loaded.get("background_anonymise_fail_action") in ("swap_to_local", "abort"):
             cfg["background_anonymise_fail_action"] = loaded["background_anonymise_fail_action"]
         cats_in = loaded.get("categories") or {}
@@ -8926,30 +8975,33 @@ def _get_gdpr_scanner_config() -> dict:
 
 
 def _pii_effective_action(rule_id: str, cfg: dict | None = None) -> str:
-    """Return effective action for a rule_id — 'ignore', 'warn', or 'block'.
+    """Return the CONFIGURED action for a rule_id — 'ignore', 'warn', or 'block'.
 
     Precedence: rule_overrides[rule_id] > categories[cat].action > default.
-    When `server_block` is false, any 'block' is downgraded to 'warn' so the
-    master switch stays meaningful.
-    """
+
+    NOTE (9.195.0): the old `server_block`-false → block-downgrades-to-warn
+    behaviour is GONE. server_block was removed; the confidence-band resolver
+    (_pii_resolve_disposition) now decides enforcement — this returns the raw
+    configured action, which governs only the HIGH confidence band."""
     if cfg is None:
         cfg = _get_gdpr_scanner_config()
     ovr = (cfg.get("rule_overrides") or {}).get(rule_id)
     if ovr in ("ignore", "warn", "block"):
-        action = ovr
-    else:
-        cat = PII_RULE_CATEGORIES.get(rule_id, "personal")
-        cat_cfg = (cfg.get("categories") or {}).get(cat) or {}
-        action = cat_cfg.get("action") or PII_DEFAULT_CATEGORY_ACTIONS.get(cat, "warn")
-    if action == "block" and not cfg.get("server_block", False):
-        action = "warn"
-    return action
+        return ovr
+    cat = PII_RULE_CATEGORIES.get(rule_id, "personal")
+    cat_cfg = (cfg.get("categories") or {}).get(cat) or {}
+    return cat_cfg.get("action") or PII_DEFAULT_CATEGORY_ACTIONS.get(cat, "warn")
 
 
 def _pii_min_occurrences(rule_id: str, cfg: dict | None = None) -> int:
     """Minimum DISTINCT occurrences a rule needs before it fires for a document.
     Resolves config `min_occurrences[rule_id]` → PII_DEFAULT_MIN_OCCURRENCES →
-    1. Always ≥1."""
+    1. Always ≥1.
+
+    NOTE (9.195.0): min_occurrences NO LONGER GATES detection — count now only
+    feeds the confidence score via _pii_count_points. This function is retained
+    for legacy callers / migration seeding only; the GATE in _pii_scan_text was
+    removed. Prefer _pii_count_points for the count→score calibration."""
     if cfg is None:
         cfg = _get_gdpr_scanner_config()
     mo = (cfg.get("min_occurrences") or {}).get(rule_id)
@@ -8959,6 +9011,100 @@ def _pii_min_occurrences(rule_id: str, cfg: dict | None = None) -> int:
         return max(1, int(mo))
     except (TypeError, ValueError):
         return 1
+
+
+def _pii_count_points(rule_id: str, cfg: dict | None = None) -> tuple[int, int]:
+    """Per-rule (c_lo, c_hi) distinct-occurrence count-points that calibrate how
+    this rule's confidence score crosses the global lower/upper thresholds:
+    at c_lo occurrences the count-track score reaches SCORE_LO (~lower band
+    edge), at c_hi it reaches SCORE_HI (~upper edge).
+
+    Resolution: config `count_points[rule_id]` (a [lo, hi] pair) → derived from
+    the legacy `min_occurrences` value (that min becomes c_hi; c_lo = ceil(hi/2))
+    so existing tuning carries over → default (1, 2). Always 1 ≤ c_lo < c_hi."""
+    if cfg is None:
+        cfg = _get_gdpr_scanner_config()
+    cp = (cfg.get("count_points") or {}).get(rule_id)
+    if isinstance(cp, (list, tuple)) and len(cp) == 2:
+        try:
+            lo, hi = int(cp[0]), int(cp[1])
+            lo = max(1, lo)
+            return lo, max(lo + 1, hi)
+        except (TypeError, ValueError):
+            pass
+    # Seed from legacy min_occurrences (its threshold = the high count-point).
+    hi = (cfg.get("min_occurrences") or {}).get(rule_id)
+    if hi is None:
+        hi = PII_DEFAULT_MIN_OCCURRENCES.get(rule_id, 2)
+    try:
+        hi = max(2, int(hi))
+    except (TypeError, ValueError):
+        hi = 2
+    lo = max(1, (hi + 1) // 2)
+    return (lo, max(lo + 1, hi))
+
+
+def _pii_confidence_thresholds(cfg: dict | None = None) -> tuple[float, float]:
+    """Global (lower, upper) confidence band edges. < lower ⇒ ignore; mid ⇒ ask;
+    ≥ upper ⇒ act on the rule's configured action. Defaults align with the
+    per-rule count-point score anchors (SCORE_LO 0.50 / SCORE_HI 0.85)."""
+    if cfg is None:
+        cfg = _get_gdpr_scanner_config()
+    try:
+        lo = float(cfg.get("confidence_lower", 0.50))
+    except (TypeError, ValueError):
+        lo = 0.50
+    try:
+        hi = float(cfg.get("confidence_upper", 0.85))
+    except (TypeError, ValueError):
+        hi = 0.85
+    lo = min(max(lo, 0.0), 1.0)
+    hi = min(max(hi, lo + 0.01), 1.0)
+    return lo, hi
+
+
+def _pii_band(confidence: float, cfg: dict | None = None) -> str:
+    """Map a confidence score onto the band id: 'low' | 'mid' | 'high'."""
+    lo, hi = _pii_confidence_thresholds(cfg)
+    if confidence < lo:
+        return "low"
+    if confidence < hi:
+        return "mid"
+    return "high"
+
+
+def _pii_resolve_disposition(finding: dict, cfg: dict | None = None) -> str:
+    """The single PII decision seam (replaces the server_block downgrade model).
+
+    Combines the finding's confidence BAND with the rule's configured action to
+    return a disposition the enforcement sites act on:
+
+      'ignore'    — do nothing, don't surface (low band, OR high band but the
+                    rule's action is 'ignore').
+      'ask'       — prompt the user (ignore / anonymise / go-local): the MID
+                    band for any actionable rule, OR the high band when the
+                    rule's action is 'warn'.
+      'anonymise' — high band + rule action 'block': auto-enforce per config
+                    (anonymise, else fallback-to-local).
+
+    Per-rule/category action (ignore/warn/block) governs ONLY the high band;
+    the mid band always asks; the low band is always ignored. Background
+    (no-user) callers map 'ask' to their configured non-interactive default."""
+    if cfg is None:
+        cfg = _get_gdpr_scanner_config()
+    conf = finding.get("confidence")
+    if conf is None:
+        conf = 0.5
+    band = _pii_band(conf, cfg)
+    if band == "low":
+        return "ignore"
+    action = _pii_effective_action(finding.get("rule_id", ""), cfg)
+    if action == "ignore":
+        return "ignore"
+    if band == "mid":
+        return "ask"
+    # high band
+    return "anonymise" if action == "block" else "ask"
 
 
 def _pii_email_allowed(email: str, allowlist: list[str]) -> bool:
@@ -9097,8 +9243,7 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = ""):
                             `abort` → raise GDPRBlockedError).
       * `swap_to_local`  — legacy behaviour: swap to
                             `default_local_fallback_model`, or raise/warn
-                            when no usable local route exists (governed by
-                            `server_block`).
+                            when no usable local route exists.
       * `abort`          — always raise GDPRBlockedError on findings.
 
     `texts` accepts str or iterable-of-str. Unexpected errors in scanning or
@@ -9171,9 +9316,20 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = ""):
     _sid = get_request_context().current_session_id or ""
     _n = len(all_findings)
     _log_audit = bool(cfg.get("server_log", True) and _audit_log)
-    _worst_action = _pii_worst_action(all_findings)
-    _server_block = (_worst_action == "block")
+    # Confidence-band disposition (9.195.0) replaces the worst-ACTION/server_block
+    # signal. 'ignore' → nothing to enforce; 'ask' → no user on a background call,
+    # so fall back to a configured non-interactive default; 'anonymise' → enforce.
+    _worst_disp = _pii_worst_disposition(all_findings, cfg)
     _policy = cfg.get("background_pii_action", "anonymise")
+    # What the MID ('ask') band does on a background call (no user to prompt).
+    _ask_default = cfg.get("background_ask_action", "anonymise")  # anonymise|swap_to_local|ignore
+    if _worst_disp == "ignore":
+        # Every finding is low-confidence or ignore-action — pass through clean.
+        return (model, samples if not _input_was_str else samples[0], _identity_deanon)
+    if _worst_disp == "ask":
+        if _ask_default == "ignore":
+            return (model, samples if not _input_was_str else samples[0], _identity_deanon)
+        _policy = _ask_default  # resolve the ask-band to its background default
 
     # Always audit the detection.
     try:

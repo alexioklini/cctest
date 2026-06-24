@@ -4983,9 +4983,14 @@ class ChatHandlerMixin:
                     "category": f.get("category", "personal"),
                     "action": f.get("action", "warn"),
                     "confidence": f.get("confidence"),
+                    "band": engine._pii_band(f.get("confidence") or 0.5, cfg),
+                    "disposition": engine._pii_resolve_disposition(f, cfg),
                     "start": start, "end": end, "value": val,
                 })
-            self._send_json({"findings": items, "finding_count": len(items)})
+            self._send_json({
+                "findings": items, "finding_count": len(items),
+                "worst_disposition": engine._pii_worst_disposition(findings, cfg),
+            })
             return
 
         # Same aggregation as /v1/attachments/scan: one entry per rule_id
@@ -5002,8 +5007,18 @@ class ChatHandlerMixin:
                 "count": 0,
                 "samples": [],
                 "source": source,
+                # Confidence band fields (9.195.0): per-rule worst confidence +
+                # disposition so the client modal can render ignore/ask/act.
+                "confidence": 0.0,
+                "disposition": "ignore",
             })
             entry["count"] += 1
+            conf = f.get("confidence") or 0.0
+            if conf > entry["confidence"]:
+                entry["confidence"] = conf
+            disp = engine._pii_resolve_disposition(f, cfg)
+            if disp == "anonymise" or (disp == "ask" and entry["disposition"] == "ignore"):
+                entry["disposition"] = disp
             if len(entry["samples"]) < 3:
                 start, end = f.get("start", 0), f.get("end", 0)
                 if 0 <= start < end <= len(text):
@@ -5014,4 +5029,5 @@ class ChatHandlerMixin:
             "groups": groups_list,
             "categories": cats,
             "finding_count": sum(g["count"] for g in groups_list),
+            "worst_disposition": engine._pii_worst_disposition(findings, cfg),
         })

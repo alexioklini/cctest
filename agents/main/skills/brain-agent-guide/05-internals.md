@@ -949,6 +949,23 @@ preamble goes in first-user-message instead.
     no real-PII recall loss. PDF line-breaks inside an NER span
     (`Alexander\n\nKlinsky`) are collapsed to one space. NER-only — regex/checksum
     rules untouched. (Full eval: `eval/pii_eval/`.)
+  - **Confidence-threshold bands (9.195.0)**: PII enforcement runs off the
+    confidence score, not the removed `server_block`. Two global edges
+    (`gdpr_scanner.confidence_lower` 0.50 / `confidence_upper` 0.85) split every
+    finding into three bands: `<lower` → **ignore** (silent); `lower..upper` →
+    **ask** (user picks ignore/anonymise/local); `≥upper` → act on the rule's
+    configured action (`block`→anonymise/fallback, `warn`→ask, `ignore`→nothing).
+    Single seam `_pii_resolve_disposition(finding,cfg)` → ignore|ask|anonymise;
+    `_pii_band`, `_pii_worst_disposition` (replaces worst-ACTION in
+    `gdpr_pick_model_for_background`). Per-rule/category action governs ONLY the
+    high band. **min_occurrences NO LONGER GATES** (everywhere) — count feeds the
+    score via per-rule count-points `_pii_count_points` (c_lo→SCORE_LO,
+    c_hi→SCORE_HI; seeded from min_occurrences, config `count_points`
+    overridable; e.g. email (3,7): 1-2×→ignore, 3-6×→ask, ≥7×→act). Background
+    (no user): `background_ask_action` resolves the mid band. `server_block`
+    removed; audio-gate now `block_unscannable_on_cloud`. Classification keeps
+    its own `server_block` + strict-always-block (§1.11) — untouched.
+    `/v1/gdpr/scan-text` returns `band`+`disposition` per finding + `worst_disposition`.
   - **Confidence score (9.194.0)**: every PII finding carries `confidence`
     (0..1) and every `detect_classification` result carries `confidence` — an
     evidence-based, deterministic score (NOT a calibrated P(correct)) for a

@@ -105,12 +105,12 @@ async function _genTab_server(C) {
           <span style="font-size:13px;color:var(--text-200);flex:1">Limits pro Benutzer und Rolle mit Zurücksetzung im Abrechnungszyklus.</span>
           <button class="btn-secondary" style="font-size:12px;padding:4px 10px" onclick="switchGeneralTab('quotas', document.querySelector('.modal-tab[onclick*=\\'quotas\\']'))">Konfigurieren &rarr;</button>
         </div>
-        ${SEC('DSGVO / PII-Scanner', 'Schnellüberblick über den PII-Scanner. Die vollständige Konfiguration — granulare Kategorie-Aktionen, E-Mail-Allowlist und das lokale Fallback-Modell — liegt im eigenen DSGVO-Tab. „Hard-Block an" bedeutet: erkannte personenbezogene Daten werden vor dem Senden an ein Nicht-lokales Modell hart blockiert (statt nur zu warnen oder lokal zu ersetzen).')}
+        ${SEC('DSGVO / PII-Scanner', 'Schnellüberblick über den PII-Scanner. Die vollständige Konfiguration — Konfidenz-Schwellen, granulare Kategorie-Aktionen, E-Mail-Allowlist und das lokale Fallback-Modell — liegt im eigenen DSGVO-Tab. Jeder Befund erhält einen Konfidenz-Score; zwei Schwellen entscheiden zwischen ignorieren, nachfragen und automatisch handeln.')}
         <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
           ${DOT((srv.gdpr_scanner||{}).enabled !== false)}
           <span style="font-size:13px;color:var(--text-200);flex:1">
             ${(srv.gdpr_scanner||{}).enabled !== false ? 'Scanner aktiv' : 'Scanner deaktiviert'}
-            ${(srv.gdpr_scanner||{}).server_block ? ' &middot; <b style="color:var(--warning,#b45309)">Hard-Block an</b>' : ''}
+            ${(srv.gdpr_scanner||{}).enabled !== false ? ` &middot; Schwellen ${(+((srv.gdpr_scanner||{}).confidence_lower ?? 0.50)).toFixed(2)} / ${(+((srv.gdpr_scanner||{}).confidence_upper ?? 0.85)).toFixed(2)}` : ''}
           </span>
           <button class="btn-secondary" style="font-size:12px;padding:4px 10px" onclick="switchGeneralTab('gdpr', document.querySelector('.modal-tab[onclick*=\\'gdpr\\']'))">Konfigurieren &rarr;</button>
         </div>
@@ -1465,7 +1465,7 @@ async function _genTab_gdpr(C) {
 
       const policyCats = gs.categories || {};
       const policyOverrides = gs.rule_overrides || {};
-      const policyMinOcc = gs.min_occurrences || {};
+      const policyCountPoints = gs.count_points || {};
 
       // Build per-category rule expander
       const catRows = Object.keys(PIIScanner.categoryLabels).map(cat => {
@@ -1475,11 +1475,16 @@ async function _genTab_gdpr(C) {
         const overrideCount = rules.filter(r => policyOverrides[r]).length;
         const ruleRows = rules.map(rid => {
           const ovr = policyOverrides[rid] || '';
-          const mo = policyMinOcc[rid];
+          const cp = policyCountPoints[rid] || [];
+          const cLo = (cp[0] != null) ? cp[0] : 1;
+          const cHi = (cp[1] != null) ? cp[1] : 2;
           return `<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border-100)">
             <code style="font-size:10px;color:var(--text-400);min-width:160px">${esc(rid)}</code>
             <span style="flex:1;font-size:11px;color:var(--text-200)">${esc(ruleLabel(rid))}</span>
-            <input type="number" min="1" class="form-input gdpr-rule-minocc" data-rule="${esc(rid)}" value="${mo!=null?esc(String(mo)):'1'}" title="Mindestanzahl UNTERSCHIEDLICHER Treffer im Dokument, bevor diese Regel auslöst (1 = bei jedem Treffer)" style="width:64px;font-size:11px">
+            <span style="font-size:10px;color:var(--text-400)" title="Count-Punkte: bei wie vielen unterschiedlichen Treffern im Dokument der Score die untere bzw. obere Konfidenz-Grenze erreicht. Mehr Treffer ⇒ höhere Konfidenz.">Anzahl</span>
+            <input type="number" min="1" class="form-input gdpr-rule-count-lo" data-rule="${esc(rid)}" value="${esc(String(cLo))}" title="Untere Count-Grenze — ab so vielen unterschiedlichen Treffern erreicht der Score die untere Konfidenz-Grenze (Nachfrage-Bereich)" style="width:52px;font-size:11px">
+            <span style="font-size:10px;color:var(--text-400)">–</span>
+            <input type="number" min="2" class="form-input gdpr-rule-count-hi" data-rule="${esc(rid)}" value="${esc(String(cHi))}" title="Obere Count-Grenze — ab so vielen unterschiedlichen Treffern erreicht der Score die obere Konfidenz-Grenze (hohe Konfidenz)" style="width:52px;font-size:11px">
             <select class="form-select gdpr-rule-override" data-rule="${esc(rid)}" style="width:150px;font-size:11px">
               <option value="">Kategorie verwenden (${catAction})</option>
               <option value="ignore" ${ovr==='ignore'?'selected':''}>Ignorieren</option>
@@ -1505,9 +1510,11 @@ async function _genTab_gdpr(C) {
         <div style="padding:12px 14px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
           <div style="font-size:13px;color:var(--text-100);margin-bottom:6px"><b>Wie Aktionen funktionieren</b></div>
           <div style="font-size:11px;color:var(--text-300);line-height:1.55">
+            Die Aktion einer Kategorie/Regel greift nur im <b>hohen Konfidenz-Bereich</b> (≥ obere Schwelle). Im mittleren Bereich wird immer nachgefragt, im niedrigen ignoriert.<br>
             <b style="color:${ACT_COLORS.ignore}">Ignorieren</b>: Regel wird vollständig übersprungen — kein Scan, kein Log.<br>
-            <b style="color:${ACT_COLORS.warn}">Warnen</b>: zeigt vor dem Senden den bernsteinfarbenen Bestätigungsdialog. Der Benutzer kann ihn schließen und fortfahren.<br>
-            <b style="color:${ACT_COLORS.block}">Blockieren</b>: Das Senden wird abgelehnt, sofern das aktuelle Modell nicht lokal ist — das Eingabefeld leitet automatisch zum Fallback-Modell um. Erfordert den Master-Schalter <i>Anfragen mit PII blockieren</i> unten; andernfalls werden Block-Aktionen auf Warnen herabgestuft.
+            <b style="color:${ACT_COLORS.warn}">Warnen</b>: bei hoher Konfidenz wird vor dem Senden nachgefragt.<br>
+            <b style="color:${ACT_COLORS.block}">Blockieren</b>: bei hoher Konfidenz wird automatisch anonymisiert bzw. auf das lokale Fallback-Modell umgeleitet (gemäß Konfiguration).<br>
+            <b>Anzahl-Felder</b> pro Regel: kalibrieren, ab wie vielen unterschiedlichen Treffern im Dokument der Score die untere bzw. obere Schwelle erreicht — häufigeres Auftreten erhöht die Konfidenz.
           </div>
         </div>
 
@@ -1521,10 +1528,24 @@ async function _genTab_gdpr(C) {
             <input type="checkbox" id="gdpr-serverlog" ${gs.server_log!==false?'checked':''}>
             <span><b>Serverseitiges Audit-Log</b> — jede Erkennung in <code>audit.db</code> aufzeichnen</span>
           </label>
-          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
-            <input type="checkbox" id="gdpr-block" ${gs.server_block?'checked':''}>
-            <span><b>Anfragen mit PII blockieren</b> — berücksichtigt <i>Block</i>-Aktionen der Kategorien. Wenn aus, wird Blockieren überall auf Warnen herabgestuft.</span>
-          </label>
+          <div style="margin-top:8px;padding:10px;border:1px solid var(--border-200,#3a3a3a);border-radius:6px;display:flex;flex-direction:column;gap:8px">
+            <div style="font-size:12px;color:var(--text-200)"><b>Konfidenz-Schwellen</b> — jeder Befund erhält einen Konfidenz-Score (0–1). Zwei globale Grenzen teilen ihn in drei Bereiche:</div>
+            <div style="font-size:11px;color:var(--text-400);line-height:1.5">
+              <b>&lt; untere Grenze</b>: geringe Konfidenz → ignorieren (Benutzer wird nicht behelligt).<br>
+              <b>zwischen den Grenzen</b>: unsicher (evtl. Falschtreffer) → Benutzer fragen (ignorieren / anonymisieren / lokal).<br>
+              <b>&ge; obere Grenze</b>: hohe Konfidenz → konfigurierte Aktion der Regel ausführen (<i>Block</i> → Auto-Anonymisierung/Fallback, <i>Warnen</i> → fragen).
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span style="font-size:12px;color:var(--text-300);min-width:130px">Untere Grenze</span>
+              <input type="range" id="gdpr-conf-lower" min="0" max="1" step="0.01" value="${gs.confidence_lower!=null?gs.confidence_lower:0.50}" style="flex:1" oninput="document.getElementById('gdpr-conf-lower-val').textContent=(+this.value).toFixed(2)">
+              <span id="gdpr-conf-lower-val" style="font-size:12px;font-variant-numeric:tabular-nums;min-width:34px;text-align:right">${(+(gs.confidence_lower!=null?gs.confidence_lower:0.50)).toFixed(2)}</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span style="font-size:12px;color:var(--text-300);min-width:130px">Obere Grenze</span>
+              <input type="range" id="gdpr-conf-upper" min="0" max="1" step="0.01" value="${gs.confidence_upper!=null?gs.confidence_upper:0.85}" style="flex:1" oninput="document.getElementById('gdpr-conf-upper-val').textContent=(+this.value).toFixed(2)">
+              <span id="gdpr-conf-upper-val" style="font-size:12px;font-variant-numeric:tabular-nums;min-width:34px;text-align:right">${(+(gs.confidence_upper!=null?gs.confidence_upper:0.85)).toFixed(2)}</span>
+            </div>
+          </div>
           <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
             <span style="font-size:12px;color:var(--text-300);min-width:200px">Standard-Fallback-Modell (lokal)</span>
             <select class="form-select" id="gdpr-fallback" style="flex:1" ${hasLocals?'':'disabled'}>
@@ -1549,12 +1570,20 @@ async function _genTab_gdpr(C) {
         </div>
         <div style="display:flex;flex-direction:column;gap:10px">
           <div style="display:flex;gap:8px;align-items:center">
-            <span style="font-size:12px;color:var(--text-300);min-width:200px">Wenn PII erkannt wird</span>
+            <span style="font-size:12px;color:var(--text-300);min-width:200px">Hohe Konfidenz (≥ obere Grenze, Regel = Block)</span>
             <select class="form-select" id="gdpr-bg-pii-action" style="flex:1">
               <option value="anonymise"${(gs.background_pii_action||'anonymise')==='anonymise'?' selected':''}>Auto-Anonymisierung (pseudonymisieren, dann Antwort de-anonymisieren)</option>
               <option value="swap_to_local"${gs.background_pii_action==='swap_to_local'?' selected':''}>Zum lokalen Fallback-Modell wechseln</option>
               <option value="skip"${gs.background_pii_action==='skip'?' selected':''}>Überspringen (kein Aufruf, leer fortfahren)</option>
               <option value="abort"${gs.background_pii_action==='abort'?' selected':''}>Aufruf abbrechen</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:12px;color:var(--text-300);min-width:200px">Mittlere Konfidenz (Nachfrage-Bereich, kein Benutzer)</span>
+            <select class="form-select" id="gdpr-bg-ask-action" style="flex:1">
+              <option value="anonymise"${(gs.background_ask_action||'anonymise')==='anonymise'?' selected':''}>Anonymisieren (sicherheitshalber)</option>
+              <option value="swap_to_local"${gs.background_ask_action==='swap_to_local'?' selected':''}>Zum lokalen Fallback-Modell wechseln</option>
+              <option value="ignore"${gs.background_ask_action==='ignore'?' selected':''}>Ignorieren (durchlassen)</option>
             </select>
           </div>
           <div style="display:flex;gap:8px;align-items:center">

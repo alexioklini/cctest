@@ -522,12 +522,22 @@ class AdminArtifactsHandlers:
                 "gdpr_scanner": {
                     "enabled": bool(server_config.get("gdpr_scanner", {}).get("enabled", True)),
                     "server_log": bool(server_config.get("gdpr_scanner", {}).get("server_log", True)),
-                    "server_block": bool(server_config.get("gdpr_scanner", {}).get("server_block", False)),
+                    "name_precision_gate": bool(server_config.get("gdpr_scanner", {}).get("name_precision_gate", True)),
+                    "block_unscannable_on_cloud": bool(server_config.get("gdpr_scanner", {}).get("block_unscannable_on_cloud", False)),
+                    # Confidence-band thresholds (9.195.0) — replaced server_block.
+                    "confidence_lower": float(server_config.get("gdpr_scanner", {}).get("confidence_lower", 0.50)),
+                    "confidence_upper": float(server_config.get("gdpr_scanner", {}).get("confidence_upper", 0.85)),
                     "default_local_fallback_model": str(server_config.get("gdpr_scanner", {}).get("default_local_fallback_model") or ""),
                     "background_pii_action": (
                         server_config.get("gdpr_scanner", {}).get("background_pii_action")
                         if server_config.get("gdpr_scanner", {}).get("background_pii_action")
                             in ("anonymise", "swap_to_local", "skip", "abort")
+                        else "anonymise"
+                    ),
+                    "background_ask_action": (
+                        server_config.get("gdpr_scanner", {}).get("background_ask_action")
+                        if server_config.get("gdpr_scanner", {}).get("background_ask_action")
+                            in ("anonymise", "swap_to_local", "ignore")
                         else "anonymise"
                     ),
                     "background_anonymise_fail_action": (
@@ -551,6 +561,14 @@ class AdminArtifactsHandlers:
                     "min_occurrences": {
                         **dict(engine.PII_DEFAULT_MIN_OCCURRENCES),
                         **(server_config.get("gdpr_scanner", {}).get("min_occurrences") or {}),
+                    },
+                    # Per-rule count_points [lo,hi] — count→score calibration. The
+                    # effective points (resolved via _pii_count_points, which
+                    # seeds from min_occurrences) so the UI shows real values even
+                    # before the admin edits them.
+                    "count_points": {
+                        rid: list(engine._pii_count_points(rid))
+                        for rid in engine.PII_RULE_CATEGORIES
                     },
                     "email_allowlist": server_config.get("gdpr_scanner", {}).get("email_allowlist") or [],
                 },

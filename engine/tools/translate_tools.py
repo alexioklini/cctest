@@ -327,20 +327,22 @@ def tool_transcribe_audio(args: dict) -> str:
         return _err(f"transcribe_audio: {e}")
     wire = (route.get("wire") or "").lower()
 
-    # GDPR gate: when server_block is master-on and the chosen backend is cloud
-    # (i.e. not mlx_whisper), swap to the configured local fallback. We can't scan
-    # audio content, so this is a conservative blanket policy — voice notes can
-    # carry PII the scanner would otherwise catch in text.
+    # GDPR gate: audio content can't be scanned, so when GDPR is enabled and the
+    # admin opts into blocking unscannable content on cloud backends, swap to the
+    # local fallback. This was tied to the removed `server_block` master switch
+    # (9.195.0); it now uses the explicit `gdpr_scanner.block_unscannable_on_cloud`
+    # flag (default false — preserves the prior default, where server_block was
+    # off and this gate did not fire).
     fallback_used_reason = ""
     if wire != "mlx_whisper":
         try:
             cfg_root = json.load(open(os.path.join(os.path.dirname(os.path.abspath(_brain.__file__)), "config.json")))
             gdpr = cfg_root.get("gdpr_scanner") or {}
-            if gdpr.get("enabled") and gdpr.get("server_block"):
+            if gdpr.get("enabled") and gdpr.get("block_unscannable_on_cloud"):
                 fb_id = (_transcription_config().get("fallback_model") or "whisper-base")
                 model_id, route = _transcription_resolve(fb_id)
                 wire = (route.get("wire") or "").lower()
-                fallback_used_reason = "gdpr_server_block"
+                fallback_used_reason = "gdpr_block_unscannable_on_cloud"
                 try:
                     if _brain._audit_log:
                         _agent = get_request_context().current_agent or _brain._current_agent

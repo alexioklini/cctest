@@ -1282,21 +1282,62 @@ _PII_CONTEXT_RULES = {
 }
 
 
-def _pii_confidence(finding: dict, *, gated: bool, occurrences: int,
-                    min_occ: int, ctx_dist: int | None = None) -> float:
-    """Evidence-based 0..1 confidence. The rule-class base is a PRIOR; the
-    dynamic evidence the system actually observed — how many times the value
-    recurred (corroboration) and how CLOSE the disambiguating context sits —
-    moves it substantially (±~0.20). So a 1× bare name with a far anchor can
-    fall to ~0.45 while an 8× hit or a touching keyword rises toward ~0.95.
+# Score anchors the per-rule COUNT calibration maps onto. The two per-rule
+# count-points (c_lo, c_hi) say: "this rule reaches SCORE_LO at c_lo distinct
+# occurrences and SCORE_HI at c_hi". The default global band thresholds
+# (gdpr_scanner.confidence_lower / _upper) are aligned to these anchors so the
+# count bands the user described land in the intended band:
+#   email count-points (3, 7): 1-2 occ → <lower (ignore), 3-6 → mid (ask),
+#   >=7 → high (act). Per-rule overridable; SCORE anchors are global constants.
+_PII_SCORE_LO = 0.50    # == default confidence_lower
+_PII_SCORE_HI = 0.85    # == default confidence_upper
+_PII_SCORE_BELOW = 0.30  # count below c_lo floor (still surfaced for audit)
 
-    Deterministic + explainable: checksum/secret rules are near-fixed (math /
-    high-stakes), NER + context rules are where the dynamic signals bite."""
+
+def _count_calibrated_score(occurrences: int, c_lo: int, c_hi: int) -> float:
+    """Map a distinct-occurrence count onto a 0..1 score via the rule's two
+    count-points. Piecewise-linear: 1→BELOW, c_lo→SCORE_LO, c_hi→SCORE_HI,
+    saturating above c_hi. This is the user's calibration: counts are how each
+    rule's score crosses the GLOBAL lower/upper thresholds."""
+    n = max(1, occurrences)
+    c_lo = max(1, c_lo)
+    c_hi = max(c_lo + 1, c_hi)
+    if n <= 1:
+        return _PII_SCORE_BELOW
+    if n < c_lo:
+        # ramp from BELOW(at 1) to SCORE_LO(at c_lo)
+        frac = (n - 1) / max(1, c_lo - 1)
+        return _PII_SCORE_BELOW + frac * (_PII_SCORE_LO - _PII_SCORE_BELOW)
+    if n < c_hi:
+        frac = (n - c_lo) / (c_hi - c_lo)
+        return _PII_SCORE_LO + frac * (_PII_SCORE_HI - _PII_SCORE_LO)
+    # at/above c_hi → high, small extra credit toward 0.99
+    over = min(0.10, 0.02 * (n - c_hi))
+    return min(0.99, _PII_SCORE_HI + over)
+
+
+def _pii_confidence(finding: dict, *, gated: bool, occurrences: int,
+                    count_points: tuple[int, int], ctx_dist: int | None = None
+                    ) -> float:
+    """Evidence-based 0..1 confidence. TWO independent evidence tracks, combined
+    by max() (the agreed hybrid):
+
+      A) Rule-class EVIDENCE — a checksum/secret/email is high-trust at a single
+         occurrence (math / high-stakes / very specific regex); NER/context
+         findings start lower and are moved by context distance. This track
+         answers "is THIS hit real on its own merits".
+
+      B) COUNT CALIBRATION — the per-rule (c_lo, c_hi) count-points map the
+         per-file distinct-occurrence count onto the score (user's design: more
+         hits ⇒ higher band). This track answers "does recurrence corroborate".
+
+    final = max(A, B): a checksummed IBAN is high via A even at count 1; a bare
+    name climbs via B as it recurs. Deterministic + explainable."""
     rid = finding.get("rule_id", "")
     cat = finding.get("category", "")
     source = finding.get("source", "")
 
-    # 1) Rule-class prior.
+    # ── Track A: rule-class evidence ──
     if cat == "secrets":
         base = 0.95
     elif rid in _PII_CHECKSUM_RULES:
@@ -1316,25 +1357,21 @@ def _pii_confidence(finding: dict, *, gated: bool, occurrences: int,
     else:
         base = 0.55
 
-    # Checksum + secret detections are deterministic by construction — the
-    # dynamic signals shouldn't drag them around. Only corroborate upward.
     rigid = (cat == "secrets") or (rid in _PII_CHECKSUM_RULES) or (rid == "email")
 
-    # 2) Corroboration from the per-file occurrence counter (user's point):
-    #    more distinct hits ⇒ more trust. Saturating curve, up to +0.15.
-    extra = max(0, occurrences - max(min_occ, 1))
-    occ_boost = 0.15 * (1.0 - 1.0 / (1.0 + extra)) if extra else 0.0
-
-    # 3) Context distance (user's point): for findings whose correctness hinges
-    #    on a nearby anchor (NER date/address w/ a recorded gap), a CLOSE anchor
-    #    raises confidence, a FAR one lowers it. Linear over [0, proximity].
+    # context distance moves only the non-rigid evidence track (NER date/address)
     dist_adj = 0.0
     if ctx_dist is not None and not rigid:
         prox = float(_DATE_ADDRESS_NAME_PROXIMITY)
-        closeness = max(0.0, 1.0 - min(ctx_dist, prox) / prox)  # 1=touching,0=far
+        closeness = max(0.0, 1.0 - min(ctx_dist, prox) / prox)
         dist_adj = (closeness - 0.5) * 0.30                     # ±0.15
+    evidence = base + (0.0 if rigid else dist_adj)
 
-    score = base + occ_boost + (0.0 if rigid else dist_adj)
+    # ── Track B: count calibration ──
+    c_lo, c_hi = count_points
+    count_score = _count_calibrated_score(occurrences, c_lo, c_hi)
+
+    score = max(evidence, count_score)
     if cat == "secrets":
         score = max(score, 0.90)   # high-stakes floor — bias toward catching
     return round(max(0.05, min(score, 0.99)), 2)
@@ -1484,34 +1521,26 @@ def _pii_scan_text(text: str, max_findings: int = 100,
         kept.append(f)
     findings = kept
 
-    # ── min_occurrences gate (per rule, distinct values, whole document) ──────
-    # A rule contributes ZERO findings unless ≥ N DISTINCT matched values are
-    # present. Counted per call (= per whole document where the caller passes
-    # full-document text). Gates the WHOLE rule for the document.
-    if findings:
-        by_rule: dict[str, set] = {}
-        for f in findings:
-            by_rule.setdefault(f["rule_id"], set()).add(f.get("_value", ""))
-        dropped_rules = {
-            rid for rid, vals in by_rule.items()
-            if len(vals) < _pii_min_occurrences(rid, cfg)
-        }
-        if dropped_rules:
-            findings = [f for f in findings if f["rule_id"] not in dropped_rules]
-
-    # ── Per-finding confidence (evidence-based) ──────────────────────────────
-    # Count distinct values per rule (corroboration signal) and whether the NER
-    # precision gate was active (gated NER findings are higher-trust).
-    occ_by_rule: dict[str, int] = {}
+    # ── Distinct-occurrence count per rule (whole document) ──────────────────
+    # Was the min_occurrences GATE (drop-whole-rule-below-N); since 9.195.0 the
+    # count NO LONGER gates — it feeds the confidence score via the per-rule
+    # count-points. We compute DISTINCT values per rule (the agreed counting
+    # scope) and pass it to _pii_confidence; the three-band threshold resolver
+    # downstream decides ignore/ask/act from the resulting score.
+    distinct_by_rule: dict[str, set] = {}
     for f in findings:
-        occ_by_rule[f["rule_id"]] = occ_by_rule.get(f["rule_id"], 0) + 1
+        distinct_by_rule.setdefault(f["rule_id"], set()).add(f.get("_value", ""))
+    occ_by_rule = {rid: len(vals) for rid, vals in distinct_by_rule.items()}
+
+    # ── Per-finding confidence (evidence + count calibration) ────────────────
     ner_gated = bool((cfg or {}).get("name_precision_gate"))
+    import brain as _brain2
     for f in findings:
         rid = f["rule_id"]
         gated = ner_gated and f.get("source") == "ner"
         f["confidence"] = _pii_confidence(
             f, gated=gated, occurrences=occ_by_rule.get(rid, 1),
-            min_occ=_pii_min_occurrences(rid, cfg),
+            count_points=_brain2._pii_count_points(rid, cfg),
             ctx_dist=f.get("_ctx_dist"))
 
     # Strip internal keys before returning (audit/UI never see them).

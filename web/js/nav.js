@@ -501,9 +501,14 @@ function piiHistoryWorstAction(chat) {
 function collectGdprFormConfig() {
   const enabled = document.getElementById('gdpr-enabled')?.checked !== false;
   const serverLog = document.getElementById('gdpr-serverlog')?.checked !== false;
-  const serverBlock = !!document.getElementById('gdpr-block')?.checked;
+  // server_block removed (9.195.0) — replaced by confidence thresholds.
+  const confLowerRaw = parseFloat(document.getElementById('gdpr-conf-lower')?.value);
+  const confUpperRaw = parseFloat(document.getElementById('gdpr-conf-upper')?.value);
+  const confLower = Number.isFinite(confLowerRaw) ? confLowerRaw : 0.50;
+  const confUpper = Number.isFinite(confUpperRaw) ? confUpperRaw : 0.85;
   const fallback = document.getElementById('gdpr-fallback')?.value || '';
   const bgPii = document.getElementById('gdpr-bg-pii-action')?.value || 'anonymise';
+  const bgAsk = document.getElementById('gdpr-bg-ask-action')?.value || 'anonymise';
   const bgFail = document.getElementById('gdpr-bg-fail-action')?.value || 'swap_to_local';
 
   const categories = {};
@@ -519,27 +524,37 @@ function collectGdprFormConfig() {
     if (rid && sel.value) rule_overrides[rid] = sel.value;
   }
 
-  // Per-rule min_occurrences — write EVERY rule (full snapshot, like
-  // categories), so config.json is the single source of truth and blanking a
-  // field never silently reverts to a hidden code default. A blank/invalid
-  // input means the universal floor 1 (fire on any single match).
-  const min_occurrences = {};
-  for (const inp of document.querySelectorAll('.gdpr-rule-minocc')) {
+  // Per-rule count_points [lo, hi] — write EVERY rule (full snapshot), the
+  // count→score calibration. lo<hi enforced (hi auto-bumped to lo+1 if needed).
+  // Blank/invalid lo → 1. These replaced the min_occurrences gate (9.195.0).
+  const count_points = {};
+  const _loByRule = {};
+  for (const inp of document.querySelectorAll('.gdpr-rule-count-lo')) {
     const rid = inp.dataset.rule;
     if (!rid) continue;
     const n = parseInt((inp.value || '').trim(), 10);
-    min_occurrences[rid] = (Number.isFinite(n) && n >= 1) ? n : 1;
+    _loByRule[rid] = (Number.isFinite(n) && n >= 1) ? n : 1;
+  }
+  for (const inp of document.querySelectorAll('.gdpr-rule-count-hi')) {
+    const rid = inp.dataset.rule;
+    if (!rid) continue;
+    const lo = _loByRule[rid] != null ? _loByRule[rid] : 1;
+    let hi = parseInt((inp.value || '').trim(), 10);
+    if (!Number.isFinite(hi) || hi <= lo) hi = lo + 1;
+    count_points[rid] = [lo, hi];
   }
 
   const allowlistRaw = document.getElementById('gdpr-email-allowlist')?.value || '';
   const email_allowlist = allowlistRaw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
 
   return {
-    enabled, server_log: serverLog, server_block: serverBlock,
+    enabled, server_log: serverLog,
+    confidence_lower: confLower, confidence_upper: confUpper,
     default_local_fallback_model: fallback,
     background_pii_action: bgPii,
+    background_ask_action: bgAsk,
     background_anonymise_fail_action: bgFail,
-    categories, rule_overrides, min_occurrences, email_allowlist,
+    categories, rule_overrides, count_points, email_allowlist,
   };
 }
 
@@ -744,10 +759,14 @@ async function quotaOpenUserBreakdown(userId, displayName) {
 function applyGdprConfigToScanner(gs) {
   gs = gs || {};
   state.piiScannerEnabled = gs.enabled !== false;
-  state.piiServerBlock = !!gs.server_block;
+  // server_block removed (9.195.0). The confidence-band thresholds + per-rule
+  // action now drive enforcement SERVER-SIDE (the scan endpoint returns a
+  // disposition per finding). The client-side composer interlock is advisory:
+  // it dims cloud models when the server reports a high-band block disposition.
+  state.piiConfidenceLower = (gs.confidence_lower != null) ? gs.confidence_lower : 0.50;
+  state.piiConfidenceUpper = (gs.confidence_upper != null) ? gs.confidence_upper : 0.85;
   state.piiLocalFallback = gs.default_local_fallback_model || '';
   PIIScanner.policy.enabled = state.piiScannerEnabled;
-  PIIScanner.policy.serverBlock = state.piiServerBlock;
   PIIScanner.policy.categories = gs.categories || null;
   PIIScanner.policy.ruleOverrides = gs.rule_overrides || {};
   PIIScanner.policy.emailAllowlist = Array.isArray(gs.email_allowlist) ? gs.email_allowlist : [];
@@ -762,7 +781,10 @@ function applyGdprConfigToScanner(gs) {
 // composer disables cloud-model selection and auto-picks a local model, even
 // if the current draft is empty.
 function piiBlockActive(chat) {
-  if (!state.piiServerBlock || state.piiScannerEnabled === false) return false;
+  // server_block removed (9.195.0). Enforcement is server-side via confidence
+  // bands; this client interlock is advisory — dim cloud models when the regex
+  // pre-scan sees a block-action finding. Gated only on the scanner being on.
+  if (state.piiScannerEnabled === false) return false;
   chat = chat || state.activeChat;
   if (!chat) return false;
   if (sessionStorage.getItem('pii-suppress:' + (chat.sessionId || '_new'))) return false;

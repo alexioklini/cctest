@@ -419,25 +419,20 @@ const PIIScanner = {
   // Current policy — refreshed from /v1/services/status. Defaults are safe.
   policy: {
     enabled: true,
-    serverBlock: false,
     categories: null,        // {cat: 'ignore'|'warn'|'block'} — null means use defaults
     ruleOverrides: {},       // {rule_id: 'ignore'|'warn'|'block'}
     emailAllowlist: [],
   },
 
-  // Resolve effective action for a rule_id. Mirrors _pii_effective_action.
+  // Resolve the CONFIGURED action for a rule_id. Mirrors _pii_effective_action.
+  // server_block removed (9.195.0): the action is now raw (the confidence-band
+  // resolver server-side decides ignore/ask/act). No master-switch downgrade.
   effectiveAction(ruleId) {
     const ovr = this.policy.ruleOverrides?.[ruleId];
-    if (ovr === 'ignore' || ovr === 'warn' || ovr === 'block') {
-      return this._applyMasterSwitch(ovr);
-    }
+    if (ovr === 'ignore' || ovr === 'warn' || ovr === 'block') return ovr;
     const cat = this.ruleCategories[ruleId] || 'personal';
     const catCfg = this.policy.categories?.[cat];
-    const catAct = (catCfg && (catCfg.action || catCfg)) || this.defaultCategoryActions[cat] || 'warn';
-    return this._applyMasterSwitch(catAct);
-  },
-  _applyMasterSwitch(action) {
-    return (action === 'block' && !this.policy.serverBlock) ? 'warn' : action;
+    return (catCfg && (catCfg.action || catCfg)) || this.defaultCategoryActions[cat] || 'warn';
   },
 
   emailAllowed(email) {
