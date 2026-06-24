@@ -1401,9 +1401,18 @@ budget.
 modal). `POST /v1/chat/handover {session_id}` → the chat's resolved model
 writes a structured handover doc; the endpoint returns it PLUS a second doc
 with the full verbatim source transcript (so the new chat works from the
-summary and opens the history only when it needs detail). The client opens a
-new chat, attaches BOTH .md files, and seeds a "continue where we left off"
-prompt.
+summary and opens the history only when it needs detail). The summary is ALSO
+saved server-side as an artifact (`Übergabe-<ts>.md`, role=output) in the
+SOURCE session's artifact folder — `_generate_handover_document` pins
+`current_session_id` to the source session before calling
+`_save_handover_artifact` → `_register_artifact_version`; `artifact_saved` in
+the response is the filename. The client shows a progress→preview modal
+(`_showHandoverModal` in `chat_send.js`): an indeterminate progress bar while
+the doc generates, then the rendered summary MD with Übernehmen/Abbrechen.
+Only on approval does it open a new chat, attach BOTH .md files, and seed a
+"continue where we left off" prompt. On cancel nothing else happens — the
+artifact is already saved in the source chat. No zip bundle is attached (the
+model can't read inside a zip; the zip-bundle export is a separate feature).
 
 ## Tools — adding a new one
 

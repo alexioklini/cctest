@@ -1295,17 +1295,46 @@ def _generate_chat_summary(session):
             pass
 
 
-def _generate_handover_document(session) -> tuple[str, str]:
-    """Generate the HANDOVER artifacts for `session`: a (summary_md, transcript_md)
-    pair. The SUMMARY is the chat's RESOLVED model's structured handover (goal /
-    state / decisions / open items / next steps). The TRANSCRIPT is the verbatim
-    full history of the source chat, returned as a SEPARATE document so the new
-    chat can work from the summary alone and only open the (potentially large)
-    history when it needs the detail. Returns ("", "") on failure. Routes the
-    summary through sidecar_proxy.background_call (same GDPR/quota/cost seam)."""
+def _save_handover_artifact(session, summary_doc: str) -> str:
+    """Write `summary_doc` into the SOURCE session's artifact folder and register
+    it as an artifact version. The caller has already pinned
+    `current_session_id` to the source session, so both the disk folder and the
+    DB row target the original chat. Best-effort — returns the artifact filename
+    on success, "" on any failure (the handover must not break on a save error)."""
+    try:
+        from datetime import datetime as _dt
+        folder = engine._get_artifact_session_folder(session.id)
+        agent_id = session.agent_id
+        art_dir = os.path.join(engine.AGENTS_DIR, agent_id, "artifacts", folder)
+        os.makedirs(art_dir, exist_ok=True)
+        name = f"Übergabe-{_dt.now().strftime('%Y-%m-%d_%H%M%S')}.md"
+        path = os.path.join(art_dir, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(summary_doc)
+        engine._register_artifact_version(path, "created", agent_id)
+        return name
+    except Exception as e:
+        print(f"  [WARN] handover artifact save: {e}", flush=True)
+        return ""
+
+
+def _generate_handover_document(session) -> tuple[str, str, str]:
+    """Generate the HANDOVER artifacts for `session`: a (summary_md, transcript_md,
+    artifact_name) triple. The SUMMARY is the chat's RESOLVED model's structured
+    handover (goal / state / decisions / open items / next steps). The TRANSCRIPT
+    is the verbatim full history of the source chat, returned as a SEPARATE
+    document so the new chat can work from the summary alone and only open the
+    (potentially large) history when it needs the detail. The SUMMARY is also
+    saved as an artifact in the SOURCE session's artifact folder — `artifact_name`
+    is its filename ("" if the save failed). Returns ("", "", "") on failure.
+    Routes the summary through sidecar_proxy.background_call (same GDPR/quota/cost
+    seam)."""
     with engine.request_context():
         engine.get_request_context().current_agent = session.agent
         engine.get_request_context().current_user_id = (getattr(session, "user_id", "") or "")
+        # Pin the artifact context to the SOURCE session so the saved handover
+        # MD lands in the original chat's artifact folder (not the new chat's).
+        engine.get_request_context().current_session_id = session.id
         engine.get_request_context().cost_purpose = "handover"
         # Build a compact transcript: user + final-assistant turns (skip thinking/
         # tool rows — they're not in session.messages persisted form anyway).
@@ -1328,7 +1357,7 @@ def _generate_handover_document(session) -> tuple[str, str]:
             lines.append(f"### {who}\n{content.strip()[:6000]}")
         transcript = "\n\n".join(lines)
         if not transcript.strip():
-            return "", ""
+            return "", "", ""
 
         system_prompt = (
             "Du schreibst ein ÜBERGABE-Dokument (handover) für einen neuen Chat, "
@@ -1374,10 +1403,10 @@ def _generate_handover_document(session) -> tuple[str, str]:
             max_tokens=4000,
         )
         if _res.get("error"):
-            return "", ""
+            return "", "", ""
         summary = _deanon(_res.get("reply") or "").strip()
         if not summary:
-            return "", ""
+            return "", "", ""
         # Lead-in note on the summary doc so the model knows the full history is
         # available as a SECOND document if it needs the detail.
         summary_doc = (
@@ -1394,7 +1423,11 @@ def _generate_handover_document(session) -> tuple[str, str]:
             + "Übergabe-Dokument._\n\n"
             + _deanon(transcript)
         )
-        return summary_doc, transcript_doc
+        # Persist the summary as an artifact in the SOURCE session's artifact
+        # folder (current_session_id pinned above). Best-effort — a failure here
+        # must not break the handover; the new chat still receives both docs.
+        artifact_name = _save_handover_artifact(session, summary_doc)
+        return summary_doc, transcript_doc, artifact_name
 
 
 def _attach_usage_meta(meta: dict, usage_totals: dict, sid: str):
@@ -4832,7 +4865,7 @@ class ChatHandlerMixin:
                              "message": "Dieser Chat hat noch keinen Verlauf für eine Übergabe."}, 400)
             return
         try:
-            summary_md, transcript_md = _generate_handover_document(session)
+            summary_md, transcript_md, artifact_name = _generate_handover_document(session)
         except engine.GDPRBlockedError as e:
             self._send_json({"error": "gdpr_blocked", "message": str(e)}, 409)
             return
@@ -4845,7 +4878,8 @@ class ChatHandlerMixin:
             return
         title = (session.title or session.summary or "Chat").strip()[:80]
         self._send_json({"session_id": session_id, "markdown": summary_md,
-                         "transcript": transcript_md, "source_title": title})
+                         "transcript": transcript_md, "source_title": title,
+                         "artifact_saved": artifact_name})
 
     def _handle_attachment_scan(self):
         """POST /v1/attachments/scan — upload-time PII scan for one attachment.

@@ -164,8 +164,11 @@ streaming call, per-USER history, fixed read-only tool set. See
   pre-send PII modal (`block`, `proceed_local`, `proceed_pseudo`, …)
 - `POST /v1/chat/handover` — `{session_id}` generate a handover for a chat.
   The resolved model writes a structured handover doc; returns `{markdown,
-  transcript, source_title}` (transcript = the full verbatim source history as
-  a SEPARATE doc). The client opens a new chat with both attached.
+  transcript, source_title, artifact_saved}` (transcript = the full verbatim
+  source history as a SEPARATE doc; `artifact_saved` = the filename of the
+  summary saved as an artifact in the SOURCE session, `""` if the save failed).
+  The client shows a progress→preview modal; the user inspects the summary and
+  only on approval does the client open a new chat with both docs attached.
 
 ### Manage
 - `POST /v1/sessions` — create empty session

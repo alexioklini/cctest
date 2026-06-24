@@ -30,6 +30,19 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.2xx — Datenschutz-Prüfung serverseitig ──
     {
+        "version": "9.202.0",
+        "date": "2026-06-24",
+        "title": "Übergabe mit Vorschau und Ablage im Ursprungs-Chat",
+        "body": "Beim Erstellen einer Übergabe in einen neuen Chat sehen Sie jetzt zuerst eine "
+                "Vorschau der Zusammenfassung und entscheiden selbst, ob Sie sie übernehmen oder "
+                "verwerfen — statt dass der neue Chat sofort und ungeprüft geöffnet wird. Während die "
+                "Übergabe erstellt wird, zeigt ein Fortschritts-Hinweis den Status an. Die fertige "
+                "Übergabe wird zudem automatisch als Dokument im ursprünglichen Chat abgelegt, sodass "
+                "Sie jederzeit darauf zurückgreifen können.",
+        "audience": "user",
+        "versions": ["9.202.0"],
+    },
+    {
         "version": "9.201.0",
         "date": "2026-06-24",
         "title": "Anonymisierte Daten bleiben dauerhaft geschützt",

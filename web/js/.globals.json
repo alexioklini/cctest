@@ -360,6 +360,7 @@
     "_shareUserCache": "writable",
     "_showAgentMcpAdd": "writable",
     "_showBundleProgressModal": "writable",
+    "_showHandoverModal": "writable",
     "_sidebarSectionEl": "writable",
     "_sizedCavemanSvg": "writable",
     "_startSyncRunPoll": "writable",

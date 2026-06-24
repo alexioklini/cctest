@@ -1147,11 +1147,16 @@ Dialog, ob du es erneut versuchen oder einen neuen Chat (leer oder **mit
 
 **F: Was macht der Übergabe-Knopf im Eingabefeld?**
 A: Er erstellt aus dem aktuellen Chat ein **Übergabe-Dokument** (Ziel, Stand,
-Entscheidungen, offene Punkte) und öffnet einen **neuen Chat** mit zwei
-angehängten Dokumenten: der kompakten Übergabe und dem **vollständigen
-Verlauf** des Ursprungs-Chats. Das Modell arbeitet aus der Übergabe und öffnet
-den vollen Verlauf nur bei Bedarf — du machst nahtlos dort weiter, wo du
-aufgehört hast.
+Entscheidungen, offene Punkte). Während die Übergabe erstellt wird, zeigt ein
+**Fortschritts-Fenster** den Status; danach siehst du eine **Vorschau** der
+Übergabe und entscheidest selbst: **Übernehmen** öffnet einen **neuen Chat**
+mit zwei angehängten Dokumenten — der kompakten Übergabe und dem
+**vollständigen Verlauf** des Ursprungs-Chats; **Abbrechen** verwirft den
+neuen Chat. Das Modell arbeitet aus der Übergabe und öffnet den vollen Verlauf
+nur bei Bedarf — du machst nahtlos dort weiter, wo du aufgehört hast. Die
+Übergabe wird außerdem **als Dokument (Artefakt) im ursprünglichen Chat
+gespeichert** (`Übergabe-<Zeitstempel>.md`), unabhängig davon, ob du sie in
+einen neuen Chat übernimmst.
 
 **F: Was bedeuten die farbigen Badges an Web-Abrufen (raw / markitdown /
 crawl4ai)?**

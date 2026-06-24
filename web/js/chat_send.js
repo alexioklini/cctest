@@ -1558,27 +1558,99 @@ async function restoreLCM(sessionId) {
 function _utf8ToBase64(str) {
   return btoa(unescape(encodeURIComponent(str)));
 }
-// Generate a handover document for a session and open a NEW chat with it
+// Handover modal: a single overlay that starts in a PROGRESS state ("Übergabe
+// wird erstellt…", indeterminate) and, once the document is ready, switches to
+// a PREVIEW state showing the rendered summary MD + Übernehmen/Abbrechen.
+// Returns {preview(md, artifactName), close(), onApprove(cb), onCancel(cb)}.
+function _showHandoverModal() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:720px;width:90vw;display:flex;flex-direction:column;max-height:86vh">
+      <div class="modal-header"><h2 class="modal-title">Übergabe</h2></div>
+      <div class="modal-body handover-body" style="padding:24px;overflow:auto;flex:1 1 auto">
+        <div class="handover-progress">
+          <p style="margin:0 0 14px;color:var(--text-400);font-size:13px">Übergabe wird erstellt — das kann einige Sekunden dauern…</p>
+          <div style="background:var(--bg-300,#2a2a2a);border-radius:6px;height:8px;overflow:hidden">
+            <div class="handover-bar" style="height:100%;width:40%;background:var(--accent-brand,#6c8cff);border-radius:6px;animation:handover-indet 1.1s ease-in-out infinite"></div>
+          </div>
+        </div>
+        <div class="handover-preview" style="display:none">
+          <p class="handover-saved-note" style="margin:0 0 14px;color:var(--text-400);font-size:12px"></p>
+          <div class="handover-md msg-content" style="border:1px solid var(--border-200,#333);border-radius:8px;padding:16px 18px;background:var(--bg-200,#1c1c1c)"></div>
+        </div>
+      </div>
+      <div class="modal-footer handover-footer" style="display:none;gap:8px;justify-content:flex-end;padding:14px 24px;border-top:1px solid var(--border-200,#333)">
+        <button class="btn btn-secondary handover-cancel">Abbrechen</button>
+        <button class="btn btn-primary handover-approve">Übernehmen — neuen Chat starten</button>
+      </div>
+    </div>`;
+  if (!document.getElementById('handover-indet-kf')) {
+    const st = document.createElement('style');
+    st.id = 'handover-indet-kf';
+    st.textContent = '@keyframes handover-indet{0%{margin-left:-40%}100%{margin-left:100%}}';
+    document.head.appendChild(st);
+  }
+  document.body.appendChild(overlay);
+  let _approve = null, _cancel = null;
+  const close = () => overlay.remove();
+  overlay.querySelector('.handover-cancel').onclick = () => { close(); if (_cancel) _cancel(); };
+  overlay.querySelector('.handover-approve').onclick = () => { close(); if (_approve) _approve(); };
+  return {
+    preview: (md, artifactName) => {
+      overlay.querySelector('.handover-progress').style.display = 'none';
+      overlay.querySelector('.handover-preview').style.display = '';
+      overlay.querySelector('.handover-footer').style.display = 'flex';
+      overlay.querySelector('.handover-md').innerHTML =
+        (typeof renderMarkdown === 'function') ? renderMarkdown(md) : md;
+      const note = overlay.querySelector('.handover-saved-note');
+      note.textContent = artifactName
+        ? `Diese Übergabe wurde als Artefakt „${artifactName}“ im ursprünglichen Chat gespeichert. Prüfe sie und übernimm sie in einen neuen Chat — oder brich ab.`
+        : 'Prüfe die Übergabe und übernimm sie in einen neuen Chat — oder brich ab.';
+    },
+    close,
+    onApprove: (cb) => { _approve = cb; },
+    onCancel: (cb) => { _cancel = cb; },
+  };
+}
+// Generate a handover document for a session, show it in a progress/preview
+// modal for the user to inspect, and ONLY on approval open a NEW chat with it
 // attached + a "continue where we left off" prompt seeded in the composer.
-// Shared by the composer button (composerHandover) and the auto-LCM
-// over-threshold modal. `sessionId` defaults to the active chat.
+// The summary is also saved server-side as an artifact in the SOURCE session
+// (regardless of whether the user approves the new chat). Shared by the
+// composer button (composerHandover) and the auto-LCM over-threshold modal.
+// `sessionId` defaults to the active chat.
 async function startHandoverChat(sessionId) {
   sessionId = sessionId || state.activeChat?.sessionId;
   if (!sessionId) { showToast('Keine aktive Sitzung', true); return; }
   // Capture the source chat's mode (general vs project-based) BEFORE newChat()
   // clears the binding — the handover chat must inherit it.
   const _srcProject = state.activeChat?.project || '';
-  showToast('Übergabe wird erstellt…');
-  let md, transcript, srcTitle;
+  const modal = _showHandoverModal();
+  let md, transcript, srcTitle, artifactName;
   try {
     const res = await API.post('/v1/chat/handover', { session_id: sessionId });
     md = res.markdown;
     transcript = res.transcript || '';
     srcTitle = res.source_title || 'Chat';
-    if (!md) { showToast('Übergabe konnte nicht erstellt werden', true); return; }
+    artifactName = res.artifact_saved || '';
+    if (!md) { modal.close(); showToast('Übergabe konnte nicht erstellt werden', true); return; }
   } catch (e) {
+    modal.close();
     const msg = (e && e.message) ? e.message : String(e);
     showToast('Übergabe fehlgeschlagen: ' + msg, true);
+    return;
+  }
+  // Show the preview and wait for the user to approve or cancel. On cancel we
+  // stop here — the artifact is already saved in the source chat, nothing else
+  // happens. On approve, fall through to the new-chat seeding below.
+  const approved = await new Promise((resolve) => {
+    modal.onApprove(() => resolve(true));
+    modal.onCancel(() => resolve(false));
+    modal.preview(md, artifactName);
+  });
+  if (!approved) {
+    if (artifactName) showToast('Übergabe als Artefakt gespeichert.');
     return;
   }
   // Fresh chat FIRST (newChat clears _pendingFiles), then seed BOTH docs as
