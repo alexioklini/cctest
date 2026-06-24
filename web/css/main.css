@@ -1483,6 +1483,24 @@ textarea { resize: none; }
 .turn-group-collapsed-hint mark.gdpr-restored:hover {
   background: color-mix(in srgb, var(--warning, #d97706) 42%, transparent);
 }
+/* Detected-but-NOT-anonymised PII (accepted in clear / false positive). Red
+   tint to signal the value left the system unprotected — distinct from the
+   amber anonymised mark. */
+.msg-content mark.gdpr-cleartext,
+.msg-user mark.gdpr-cleartext,
+.turn-group-collapsed-hint mark.gdpr-cleartext {
+  background: color-mix(in srgb, var(--error, #dc2626) 22%, transparent);
+  color: inherit;
+  padding: 0.05em 0.2em;
+  border-radius: 3px;
+  cursor: help;
+  border-bottom: 1px dotted color-mix(in srgb, var(--error, #dc2626) 60%, transparent);
+}
+.msg-content mark.gdpr-cleartext:hover,
+.msg-user mark.gdpr-cleartext:hover,
+.turn-group-collapsed-hint mark.gdpr-cleartext:hover {
+  background: color-mix(in srgb, var(--error, #dc2626) 36%, transparent);
+}
 
 /* Tables */
 .msg-content table { border-collapse: collapse; margin: 0.5em 0; width: 100%; font-size: 14px; }

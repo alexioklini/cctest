@@ -710,8 +710,14 @@ function renderUserMessage(msg, idx) {
   // GDPR highlight overlay for the request side — mirrors the assistant
   // path but skips the markdown pipeline since user messages render as
   // plain escaped text. Gated by the same composer toggle.
-  const userSpans = msg.metadata?.gdpr_restored_spans;
-  const showGdpr = state.showGdprDetails && Array.isArray(userSpans) && userSpans.length;
+  const restoredSpans = msg.metadata?.gdpr_restored_spans || [];
+  // Cleartext-accepted PII (detected but NOT anonymised — Trotzdem senden / FP)
+  // from this chat's decisions. Combined with the anonymised spans so both get
+  // a coloured <mark> overlay (different colour + tooltip).
+  const clearSpans = (state.activeChat && state.activeChat._piiDecisions)
+    ? buildGdprCleartextSpans(textContent, state.activeChat._piiDecisions) : [];
+  const userSpans = [...restoredSpans, ...clearSpans];
+  const showGdpr = state.showGdprDetails && userSpans.length;
   const userTextHtml = showGdpr
     ? renderPlainTextWithGdprHighlights(textContent, userSpans)
     : esc(textContent);
@@ -1450,11 +1456,42 @@ function renderPlainTextWithGdprHighlights(text, spans) {
   for (const sp of located) {
     out += esc(text.substring(cursor, sp.start));
     const label = GDPR_CATEGORY_LABELS[sp.category] || sp.category || 'Personenbezogener Wert';
-    const tip = `${label} — "${sp.original}" wurde mit "${sp.fake}" anonymisiert`;
-    out += `<mark class="gdpr-restored" data-category="${esc(sp.category)}" title="${esc(tip)}">${esc(text.substring(sp.start, sp.end))}</mark>`;
+    if (sp.type === 'cleartext') {
+      // Detected PII the user ACCEPTED in clear (Trotzdem senden / false
+      // positive) — NOT anonymised. Different colour + honest tooltip.
+      const tip = `${label} — als personenbezogen erkannt, aber NICHT anonymisiert` +
+        (sp.fp ? ' (als Falschtreffer markiert)' : ' (akzeptiert)');
+      out += `<mark class="gdpr-cleartext" data-category="${esc(sp.category)}" title="${esc(tip)}">${esc(text.substring(sp.start, sp.end))}</mark>`;
+    } else {
+      const tip = `${label} — "${sp.original}" wurde mit "${sp.fake}" anonymisiert`;
+      out += `<mark class="gdpr-restored" data-category="${esc(sp.category)}" title="${esc(tip)}">${esc(text.substring(sp.start, sp.end))}</mark>`;
+    }
     cursor = sp.end;
   }
   out += esc(text.substring(cursor));
+  return out;
+}
+
+// Build cleartext-PII spans for a user message from the chat's decisions:
+// values that were detected but sent in CLEAR (false positive, or the turn's
+// verdict was 'send'/'local' rather than anonymise). Shape matches the
+// gdpr_restored_spans entries the highlighter expects, tagged type:'cleartext'.
+function buildGdprCleartextSpans(text, decisions) {
+  if (!text || !decisions) return [];
+  const out = [];
+  for (const d of Object.values(decisions)) {
+    const val = d && d.value;
+    if (!val || text.indexOf(val) < 0) continue;
+    const anonymised = !d.false_positive &&
+      (d.turn_action === 'anonymise');
+    if (anonymised) continue;   // those are covered by gdpr_restored_spans
+    out.push({
+      original: val,
+      category: PIIScanner.ruleCategories?.[d.rule_id] || 'personal',
+      type: 'cleartext',
+      fp: !!d.false_positive,
+    });
+  }
   return out;
 }
 // Sentinel markers — single chars unlikely to appear in normal text and

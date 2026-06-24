@@ -119,23 +119,13 @@ function updateStatusBar() {
     hBtn.style.display = canHandover ? '' : 'none';
   }
 
-  // Transparent-anonymisation sticky preference indicator (step 6.3). Shows
-  // a shield-with-checkmark next to the composer when chat.gdprActionPref
-  // is set, so the user sees PII handling is automatic for this chat and
-  // can reset with a click. Hidden when no preference is active.
-  const gdprPref = (chat.gdprActionPref || '').trim();
-  const gdprLabel = {
-    'anonymise':   'Personenbezogene Daten werden vor dem Senden automatisch anonymisiert',
-    'local_model': 'Nachrichten mit personenbezogenen Daten werden automatisch an ein lokales Modell geleitet',
-    'continue':    'PII-Warnungen werden automatisch übergangen',
-  }[gdprPref] || '';
+  // 9.198.0: the sticky-preference shield button is GONE. The "override PII
+  // warnings for the whole chat" mechanism is replaced by the automated
+  // new-findings trigger (the dialog re-fires whenever a NEW value appears, and
+  // already-decided values are honoured automatically). There's nothing for the
+  // user to manually reset, so the button stays hidden.
   for (const gBtn of _composerToggleEls('btn-gdpr-pref')) {
-    if (gdprPref && gdprLabel) {
-      gBtn.style.display = '';
-      gBtn.title = `${gdprLabel} — zum Zurücksetzen klicken`;
-    } else {
-      gBtn.style.display = 'none';
-    }
+    gBtn.style.display = 'none';
   }
 
   // Warmup indicator

@@ -291,7 +291,11 @@ async function sendMessage() {
         if (Array.isArray(decisions) && decisions.length && chat.sessionId) {
           chat._piiDecisions = chat._piiDecisions || {};
           for (const d of decisions) {
-            chat._piiDecisions[(d.rule_id || '') + '|' + (d.value || '')] = d;
+            // Stamp the turn-level verdict onto each cached decision so the
+            // history tooltip + chat marks can tell anonymised from accepted-
+            // cleartext (verdict 'send'/'local') without a server round-trip.
+            chat._piiDecisions[(d.rule_id || '') + '|' + (d.value || '')] =
+              Object.assign({ turn_action: verdict }, d);
           }
           API.recordPiiDecisions(chat.sessionId, verdict, decisions).catch(() => {});
         }

@@ -30,6 +30,20 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.19x — Dokument-Erzeugung, KI-Projektanweisungen, PII-Präzision ──
     {
+        "version": "9.198.0",
+        "date": "2026-06-24",
+        "title": "Datenschutz im Chat-Verlauf sichtbar",
+        "body": "Personenbezogene Daten sind jetzt direkt im Chat-Verlauf farblich markiert: anonymisierte "
+                "Werte in Gelb (mit Anzeige des verwendeten Pseudonyms, z. B. „a@b.de → person1@…“), und "
+                "Werte, die Sie bewusst im Klartext gesendet oder als Falschtreffer eingestuft haben, in Rot "
+                "mit dem Hinweis „nicht anonymisiert“ — so sehen Sie auf einen Blick, was geschützt wurde und "
+                "was nicht. Der Tooltip am Schild-Symbol zeigt nun zu jedem Treffer Wert, Konfidenz und "
+                "Ausgang im Detail. Der frühere Knopf zum Zurücksetzen der Datenschutz-Wahl entfällt — die "
+                "Prüfung läuft automatisch und fragt nur bei wirklich neuen Funden nach.",
+        "audience": "user",
+        "versions": ["9.198.0"],
+    },
+    {
         "version": "9.197.0",
         "date": "2026-06-24",
         "title": "Datenschutz-Hinweis nur noch bei neuen Funden",

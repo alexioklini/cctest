@@ -287,16 +287,25 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
     }
     const unitLabel = src => (src === 'message' || src === 'text')
       ? 'Nachrichtentext' : (src || '').replace(/^file:/, 'Anhang · ') || 'Anhang';
+    // original→fake from the chat's anonymisation spans, to show the pseudonym
+    // on already-anonymised (seen) findings.
+    const fakeMap = (typeof _gdprOriginalToFakeMap === 'function')
+      ? _gdprOriginalToFakeMap(chat) : {};
 
     function renderFindingRow(f, ratable) {
       const conf = (f.confidence != null) ? f.confidence : 0;
       const checked = (!ratable && f._priorFp) ? ' checked' : '';
+      const fake = (!ratable && !f._priorFp) ? fakeMap[f.value] : null;
       const fpCell = ratable
         ? ('<label class="pii-finding-fp" title="Als Falschtreffer markieren — bleibt im Klartext, wird für diesen Chat gemerkt">' +
              '<input type="checkbox" class="pii-fp-check"> falsch</label>')
         // seen → fixed: show the prior decision, no editable control
         : ('<span class="pii-finding-fp pii-finding-fixed" title="Entscheidung vom ersten Sehen — nicht mehr änderbar">' +
-             (f._priorFp ? 'als falsch markiert' : 'bestätigt') + '</span>');
+             (f._priorFp ? 'als falsch markiert' : (fake ? 'anonymisiert' : 'bestätigt')) + '</span>');
+      // Value cell — show the pseudonym for anonymised seen findings.
+      const valHtml = fake
+        ? esc(f.value || '') + ' <span style="color:var(--text-400)">→</span> <span style="color:#047857">' + esc(fake) + '</span>'
+        : esc(f.value || '');
       return '<div class="pii-finding pii-finding-row' + (ratable ? '' : ' pii-finding-seen') + '" ' +
           'data-pii-rule="' + esc(f.rule_id || '') + '" ' +
           'data-pii-value="' + esc(f.value || '') + '" ' +
@@ -306,7 +315,7 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
           'data-pii-seen="' + (ratable ? '0' : '1') + '"' + checked + '>' +
         '<span class="pii-finding-sev' + sevClass(f.action || 'warn') + '" title="' + esc(f.action || 'warn') + '"></span>' +
         '<span class="pii-finding-label">' + esc(f.label || f.rule_id) + '</span>' +
-        '<span class="pii-finding-val" style="font-family:var(--font-mono,monospace)">' + esc(f.value || '') + '</span>' +
+        '<span class="pii-finding-val" style="font-family:var(--font-mono,monospace)">' + valHtml + '</span>' +
         '<span class="pii-finding-conf" title="Konfidenz ' + conf.toFixed(2) + '">' + conf.toFixed(2) + ' · ' + bandLabel(f.band) + '</span>' +
         fpCell +
       '</div>';
@@ -1020,18 +1029,37 @@ function _piiHistoryShowPopover(anchorBtn, payload) {
     const head = (txt) => '<div style="font-weight:600;font-size:11.5px;color:var(--text-200);margin-top:' +
       (draftScan ? '10px' : '4px') + '">' + txt + '</div>';
     if (decided.length > 0) {
-      const fp = decided.filter(d => d.false_positive);
-      const handled = decided.filter(d => !d.false_positive);
-      const row = (label, n, color) =>
-        '<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0">' +
-          '<span style="color:' + color + '">' + esc(label) + '</span>' +
-          '<span style="font-weight:600;color:var(--text-100)">' + n + '</span>' +
-        '</div>';
-      sections.push(
-        head('Bereits geprüft · ' + decided.length + ' Treffer in früheren Turns') +
-        (handled.length ? row('bestätigt (anonymisiert/verarbeitet)', handled.length, 'var(--text-200)') : '') +
-        (fp.length ? row('als Falschtreffer markiert', fp.length, 'var(--text-300)') : '')
-      );
+      // 9.198.0: full detail per finding (like the decision modal) — value,
+      // confidence, and the outcome. Outcome = false-positive (clear, marked),
+      // anonymised, or accepted-cleartext (Trotzdem senden / local).
+      const ruleLbl = rid => (PIIScanner.categoryLabels &&
+        PIIScanner.categoryLabels[PIIScanner.ruleCategories?.[rid]]) || rid;
+      // Map original→fake from the chat's persisted anonymisation spans so we
+      // can show the pseudonym a value was replaced with.
+      const fakeMap = _gdprOriginalToFakeMap(historyChat);
+      const outcome = d => {
+        if (d.false_positive) return { txt: 'Falschtreffer — nicht anonymisiert', col: '#92400e' };
+        if (d.turn_action === 'anonymise') return { txt: 'anonymisiert', col: '#047857' };
+        if (d.turn_action === 'local' || d.turn_action === 'local_model')
+          return { txt: 'lokal verarbeitet', col: '#047857' };
+        return { txt: 'akzeptiert — nicht anonymisiert', col: '#b45309' };
+      };
+      const rows = decided.map(d => {
+        const o = outcome(d);
+        const conf = (d.confidence != null) ? Number(d.confidence) : null;
+        const confTxt = (conf != null && !isNaN(conf)) ? conf.toFixed(2) : '';
+        const fake = fakeMap[d.value];
+        const valCell = fake
+          ? esc(d.value || '') + ' <span style="color:var(--text-400)">→</span> <span style="color:#047857">' + esc(fake) + '</span>'
+          : esc(d.value || '');
+        return '<div style="display:flex;align-items:baseline;gap:8px;padding:3px 0;border-top:1px solid var(--border-100)">' +
+            '<span style="flex:none;min-width:88px;color:var(--text-300);font-size:10.5px">' + esc(ruleLbl(d.rule_id)) + '</span>' +
+            '<span style="flex:1;font-family:ui-monospace,monospace;font-size:11px;color:var(--text-200);word-break:break-all">' + valCell + '</span>' +
+            (confTxt ? '<span style="flex:none;font-size:10px;color:var(--text-400);font-variant-numeric:tabular-nums">' + confTxt + '</span>' : '') +
+            '<span style="flex:none;font-size:10px;color:' + o.col + ';white-space:nowrap">' + esc(o.txt) + '</span>' +
+          '</div>';
+      }).join('');
+      sections.push(head('Bereits geprüft · ' + decided.length + ' Treffer') + rows);
     } else {
       // History PII present but not yet reviewed — show a count only, no raw
       // values. (The dialog will surface the actual findings when sent.)
@@ -1053,6 +1081,19 @@ function _piiHistoryShowPopover(anchorBtn, payload) {
     '</div>';
   document.body.appendChild(pop);
   _piiHistoryPopover = pop;
+}
+// Build {original: fake} from a chat's persisted anonymisation spans, so the
+// history tooltip + modal can show what a value was pseudonymised to.
+function _gdprOriginalToFakeMap(chat) {
+  const map = {};
+  for (const m of (chat?.messages || [])) {
+    const spans = m?.metadata?.gdpr_restored_spans;
+    if (!Array.isArray(spans)) continue;
+    for (const sp of spans) {
+      if (sp && sp.original && sp.fake) map[sp.original] = sp.fake;
+    }
+  }
+  return map;
 }
 function _piiHistoryHidePopover() {
   if (_piiHistoryPopover) {
