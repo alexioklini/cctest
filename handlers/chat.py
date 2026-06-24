@@ -1378,7 +1378,18 @@ def _generate_handover_document(session) -> tuple[str, str, str]:
             "Hier ist der Gesprächsverlauf, den du übergeben sollst:\n\n"
             + transcript)
 
+        # session.model may be a ROUTING DIRECTIVE ("auto"/"auto-cloud"/
+        # "auto-local"), not a concrete model id — the per-turn chat router
+        # resolves it, but a background call can't. Resolve it to a real model
+        # here, else background_call fails and the handover comes back empty
+        # (generation_failed). Read-only: don't mutate session.model.
         model = session.model
+        if model in ("auto", "auto-cloud", "auto-local"):
+            _pool = "local" if model == "auto-local" else "cloud"
+            _resolved = (engine._resolve_auto_model_tiered(None, pool=_pool)
+                         or engine.resolve_model("auto"))
+            if _resolved and _resolved != "auto":
+                model = _resolved
         sample = [prompt]
         _deanon = engine._identity_deanon
         try:
