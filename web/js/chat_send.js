@@ -187,18 +187,13 @@ async function sendMessage() {
     if (_gdprOverride === 'anonymise') chat.hasGdprMapping = true;
     if (chat.sessionId) API.updateGdprActionPref(chat.sessionId, _gdprOverride).catch(() => {});
   } else if (state.piiScannerEnabled !== false) {
-    // Sticky session preference: if the user previously made a choice in
-    // this chat OR the session already has an anonymisation mapping (which
-    // implies the user picked Anonymise earlier), skip the modal and reuse
-    // that choice. The server applies the same rule independently — both
-    // sides agree that once a session anonymises, it keeps anonymising
-    // until the user clears the pref via the composer shield button.
-    const stickyPref = (chat.gdprActionPref || '').trim();
-    if (stickyPref && ['anonymise', 'local_model', 'continue'].includes(stickyPref)) {
-      gdprAction = stickyPref;
-    } else if (chat.hasGdprMapping) {
-      gdprAction = 'anonymise';
-    } else {
+    // 9.197.0: NO sticky short-circuit. The dialog fires iff there are NEW
+    // (not-yet-seen) PII findings. Findings already shown to the user in a prior
+    // turn are tagged _seen and displayed FIXED (not re-ratable); only NEW ones
+    // are ratable. When there are no NEW findings at all, we skip the dialog and
+    // apply the prior decision (FP values stay clear, the rest follows the last
+    // chosen action). "Seen" = the (rule|value) was shown before (chat._piiDecisions).
+    {
       const scan = PIIScanner.scanPayload(text, state._pendingFiles);
       // Server-side NER coverage: the browser scanner is regex-only, so
       // names / addresses / organisations that only spaCy can see
@@ -221,17 +216,11 @@ async function sendMessage() {
           // superseded here.
           const srv = await API.scanText(text, 'message', { full: true });
           let srvFindings = Array.isArray(srv?.findings) ? srv.findings : [];
-          // Re-analysis: drop findings whose (rule|value) was ALREADY decided in
-          // this chat — the user shouldn't be re-asked about a value they
-          // already judged (FP or anonymise). Decided values are cached in
-          // chat._piiDecisions (this session) + loaded from the server on chat
-          // open (openSession). Only NEW values reach the dialog.
-          const decided = chat._piiDecisions || {};
-          srvFindings = srvFindings.filter(
-            f => !decided[(f.rule_id || '') + '|' + (f.value || '')]);
+          // Tag each finding _seen if its (rule|value) was already shown/decided
+          // in this chat (cached in chat._piiDecisions, loaded on chat open).
+          // SEEN findings are shown FIXED in the dialog; NEW ones are ratable.
+          // We keep BOTH (don't drop) so the dialog can show the seen/new split.
           delete scan.bySource['text'];   // drop the regex-only typed-text source
-          // Rebuild scan.findings without the old typed-text regex hits, then
-          // add the server findings (carry confidence/band/disposition through).
           scan.findings = (scan.findings || []).filter(
             f => f._source && f._source !== 'text');
           if (srvFindings.length) {
@@ -243,7 +232,6 @@ async function sendMessage() {
             }));
             scan.bySource['message'] = srvForModal;
             for (const f of srvForModal) scan.findings.push(f);
-            // Recompute worstAction/worstDisposition from the server truth.
             if (srv.worst_disposition) scan.worstDisposition = srv.worst_disposition;
           }
         } catch (e) {
@@ -258,24 +246,13 @@ async function sendMessage() {
       // history we're about to ship. The outgoing-only scan above misses
       // this because the new typed text + new attachments are clean. Fold
       // a history scan into the modal trigger so the user gets asked
-      // again on every PII-bearing follow-up.
-      let historyHas = false;
-      try { historyHas = !!piiHistoryHasFindings(chat); } catch (e) {}
-      if (historyHas) {
-        const counts = chat._piiHistoryCounts || {};
-        const histFindings = Object.entries(counts).map(([label, count]) => ({
-          rule_id: label, label, count, samples: [],
-          category: 'history', action: chat._piiHistoryWorst || 'warn', match: '',
-        }));
-        if (histFindings.length) {
-          // Inject as a synthetic "history" source so the modal lists it
-          // alongside text + attachments.
-          scan.bySource['history'] = histFindings;
-          for (const hf of histFindings) {
-            for (let i = 0; i < hf.count; i++) scan.findings.push(hf);
-          }
-        }
-      }
+      // 9.197.0: history findings are NO LONGER injected into the dialog. Prior-
+      // turn PII is, by definition, already SEEN — the user decided it on the
+      // turn it first appeared. It's surfaced via the composer history badge
+      // (which now shows the DECISION, not raw values), not re-listed in the
+      // dialog. The dialog deals only with this turn's message + attachments,
+      // split into seen/new. (Anything genuinely new here is a fresh value.)
+
       // Collect classified attachments (warn / force_local / block).
       // These compose with PII findings in the unified modal: the same
       // dialog now surfaces both signals and offers the strictest
@@ -287,7 +264,22 @@ async function sendMessage() {
             || c.effective_action === 'force_local'
             || c.effective_action === 'block';
       });
-      if (scan.findings.length || classifiedFiles.length) {
+      // Unified seen-tagging: tag EVERY per-finding entry (message + each
+      // attachment) by whether its (rule|value) was already decided in this
+      // chat. Seen → fixed in the dialog; new → ratable. One pass so message
+      // and attachment findings are treated identically.
+      const decided = chat._piiDecisions || {};
+      for (const f of (scan.findings || [])) {
+        if (f.value == null) continue;   // aggregated/legacy entries can't be matched
+        const prior = decided[(f.rule_id || '') + '|' + (f.value || '')];
+        f._seen = !!prior;
+        f._priorFp = !!(prior && prior.false_positive);
+      }
+      // Are there NEW (unseen) per-finding hits this turn? Only those open the
+      // dialog. (Aggregated/legacy findings without a value also count as new.)
+      const newFindings = (scan.findings || []).filter(f => !f._seen);
+      const seenFindings = (scan.findings || []).filter(f => f._seen);
+      if (newFindings.length || classifiedFiles.length) {
         const localActive = isModelLocal(chat.model || '');
         unifiedModalRan = true;
         const { verdict, askAfter, decisions } = await gdprActionModal(scan, chat, localActive, classifiedFiles);
@@ -321,15 +313,27 @@ async function sendMessage() {
         } else if (verdict === 'send') {
           gdprAction = 'continue';
         }
-        // Always persist the choice — the modal is the consent gate, and
-        // every subsequent turn of this session continues that consent
-        // until the user explicitly clears it via the composer shield
-        // button (`btn-gdpr-pref`). 'cancel' was filtered above. Fire-and-
-        // forget: a persist failure shouldn't block the send.
+        // Remember the last action so an only-seen follow-up (no dialog) can
+        // reuse it (anonymise / local / continue). NOT sticky-consent — the
+        // dialog still re-fires whenever NEW findings appear; this just carries
+        // the prior choice for unchanged content. hasGdprMapping stays true so
+        // the worker keeps a live mapping for anonymise sessions.
         if (gdprAction && chat.sessionId) {
           chat.gdprActionPref = gdprAction;
           if (gdprAction === 'anonymise') chat.hasGdprMapping = true;
           API.updateGdprActionPref(chat.sessionId, gdprAction).catch(() => {});
+        }
+      } else if (seenFindings.length) {
+        // Only ALREADY-SEEN findings this turn (content unchanged / re-decided
+        // values). No dialog — apply the prior decision: FP values stay clear
+        // (the server's _filter_pii_false_positives honours them), the rest
+        // follows the last chosen action (default anonymise if PII was ever
+        // anonymised here, else continue).
+        const prior = (chat.gdprActionPref || '').trim();
+        if (['anonymise', 'local_model', 'continue'].includes(prior)) {
+          gdprAction = prior;
+        } else if (chat.hasGdprMapping) {
+          gdprAction = 'anonymise';
         }
       }
     }

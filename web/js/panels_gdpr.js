@@ -181,6 +181,24 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
         }
         .pii-finding-fp input { margin:0; cursor:pointer; }
         .pii-finding-row.pii-is-fp { opacity:.5; text-decoration:line-through; }
+        .pii-group { margin-bottom:12px; }
+        .pii-group-title {
+          font-size:12px; font-weight:600; color:var(--text-100);
+          margin:0 0 6px 2px; display:flex; align-items:baseline; gap:8px;
+        }
+        .pii-group-sub { font-size:10.5px; font-weight:400; color:var(--text-400); }
+        .pii-unit-caret { flex:none; font-size:11px; color:var(--text-400); }
+        .pii-unit-bulk {
+          flex:none; font-size:10.5px; color:var(--text-300); white-space:nowrap;
+          display:inline-flex; align-items:center; gap:4px; cursor:pointer; margin-left:8px;
+        }
+        .pii-unit-bulk input { margin:0; cursor:pointer; }
+        .pii-source-card.pii-collapsed .pii-unit-rows { display:none; }
+        .pii-finding-seen { opacity:.78; }
+        .pii-finding-fixed {
+          flex:none; font-size:10.5px; color:var(--text-400); white-space:nowrap;
+          font-style:italic;
+        }
         .pii-footer {
           flex:none;
           display:flex; flex-direction:column; gap:10px;
@@ -252,96 +270,93 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
     // aggregated `groups` carry `count` + `samples`; render one row per
     // rule_id with the total + up to 3 sample previews. Plain client-side
     // findings (text or legacy file scan) still render per-fragment.
-    const sections = [];
-    for (const [source, findings] of Object.entries(scan.bySource)) {
-      // NEW per-finding shape (server full-mode): each finding carries a value
-      // + confidence/band/disposition. Render the full value (user must see it
-      // to judge a false positive), the confidence, and a per-finding
-      // "falsch erkannt" (false-positive) checkbox. Default = correct (=will be
-      // anonymised if its disposition says so).
-      const isServerFindings = findings.length > 0 &&
-        (findings[0].disposition != null || findings[0].confidence != null) &&
-        typeof findings[0].count !== 'number';
-      let rows = '';
-      let total = 0;
-      if (isServerFindings) {
-        const bandLabel = b => b === 'high' ? 'hoch' : (b === 'mid' ? 'mittel' : 'niedrig');
-        const dispLabel = d => d === 'anonymise' ? 'wird anonymisiert'
-          : (d === 'ask' ? 'unsicher — bitte prüfen' : 'ignoriert');
-        rows = findings.map((f, i) => {
-          const conf = (f.confidence != null) ? f.confidence : 0;
-          const fpId = 'pii-fp-' + esc(source) + '-' + i;
-          // dataset carries everything the persistence layer needs on submit.
-          return '<div class="pii-finding pii-finding-row" ' +
-              'data-pii-rule="' + esc(f.rule_id || '') + '" ' +
-              'data-pii-value="' + esc(f.value || '') + '" ' +
-              'data-pii-conf="' + esc(String(conf)) + '" ' +
-              'data-pii-disp="' + esc(f.disposition || '') + '" ' +
-              'data-pii-source="' + esc(source) + '">' +
-            '<span class="pii-finding-sev' + sevClass(f.action || 'warn') + '" title="' + esc(f.action || 'warn') + '"></span>' +
-            '<span class="pii-finding-label">' + esc(f.label || f.rule_id) + '</span>' +
-            '<span class="pii-finding-val" style="font-family:var(--font-mono,monospace)">' + esc(f.value || '') + '</span>' +
-            '<span class="pii-finding-conf" title="Konfidenz ' + conf.toFixed(2) + ' · Band ' + bandLabel(f.band) + ' · ' + dispLabel(f.disposition) + '">' +
-              conf.toFixed(2) + ' · ' + bandLabel(f.band) +
-            '</span>' +
-            '<label class="pii-finding-fp" title="Als Falschtreffer markieren — wird NICHT anonymisiert und für diesen Chat gemerkt">' +
-              '<input type="checkbox" class="pii-fp-check" id="' + fpId + '"> falsch' +
-            '</label>' +
-          '</div>';
-        }).join('');
-        total = findings.length;
-      } else if (typeof findings[0]?.count === 'number') {
-        // Aggregated shape (attachments / history): one entry per rule_id.
-        // Dedupe — `all` was inflated by count, but bySource[] still holds
-        // one entry per rule_id.
-        const grouped = new Map();
-        for (const f of findings) {
-          if (!grouped.has(f.rule_id)) grouped.set(f.rule_id, f);
+    // ── Seen / New × Nachrichtentext / Anhang structure (9.197.0) ──
+    // All per-finding (server full-mode) findings carry _seen + _source +
+    // confidence/band/disposition. We group them into two top-level sections —
+    // BEREITS GESEHEN (fixed, not ratable) and NEU (ratable) — each split by
+    // source unit (Nachrichtentext = 'message', Anhang = 'file:<name>'). A unit
+    // with >1 finding collapses + offers a bulk FP toggle for the whole unit.
+    const bandLabel = b => b === 'high' ? 'hoch' : (b === 'mid' ? 'mittel' : 'niedrig');
+    const allPerFinding = [];
+    for (const findings of Object.values(scan.bySource)) {
+      for (const f of findings) {
+        if (f && (f.confidence != null || f.disposition != null) && typeof f.count !== 'number') {
+          allPerFinding.push(f);
         }
-        const ordered = [...grouped.values()].sort((a, b) => (b.count || 0) - (a.count || 0));
-        rows = ordered.map(f => {
-          const action = f.action || 'warn';
-          const samples = (f.samples || []).map(s => mask(s)).join(', ');
-          const samplesEsc = samples ? ('<span class="pii-finding-val" style="opacity:.7">e.g. ' + esc(samples) + '</span>') : '';
-          return '<div class="pii-finding">' +
-            '<span class="pii-finding-sev' + sevClass(action) + '" title="' + esc(action) + '"></span>' +
-            '<span class="pii-finding-label">' + esc(f.label) + '</span>' +
-            '<span class="pii-finding-cat">×' + f.count + '</span>' +
-            samplesEsc +
-          '</div>';
-        }).join('');
-        for (const f of grouped.values()) total += (f.count || 0);
-      } else {
-        // Stable order: by position within the source, when known.
-        const ordered = [...findings].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-        rows = ordered.map(f => {
-          const action = f.action || 'warn';
-          const loc = Number.isFinite(f.index) ? ('char ' + f.index) : '';
-          return '<div class="pii-finding">' +
-            '<span class="pii-finding-sev' + sevClass(action) + '" title="' + esc(action) + '"></span>' +
-            '<span class="pii-finding-label">' + esc(f.label) + '</span>' +
-            '<span class="pii-finding-cat">' + esc(f.category || '') + '</span>' +
-            '<span class="pii-finding-val">' + esc(mask(f.match)) + '</span>' +
-            '<span class="pii-finding-loc">' + esc(loc) + '</span>' +
-          '</div>';
-        }).join('');
-        total = findings.length;
       }
-      const sourceLabel = (source === 'text' || source === 'message')
-        ? 'Nachrichtentext'
-        : source === 'history'
-          ? 'Chat-Verlauf (frühere Turns)'
-          : source.replace(/^file:/, 'Anhang · ');
-      sections.push(
-        '<div class="pii-source-card">' +
-          '<div class="pii-source-head">' +
-            '<div class="pii-source-name">' + esc(sourceLabel) + '</div>' +
-            '<div class="pii-source-count">' + total + ' ' + (total === 1 ? 'Treffer' : 'Treffer') + '</div>' +
-          '</div>' +
-          rows +
-        '</div>'
-      );
     }
+    const unitLabel = src => (src === 'message' || src === 'text')
+      ? 'Nachrichtentext' : (src || '').replace(/^file:/, 'Anhang · ') || 'Anhang';
+
+    function renderFindingRow(f, ratable) {
+      const conf = (f.confidence != null) ? f.confidence : 0;
+      const checked = (!ratable && f._priorFp) ? ' checked' : '';
+      const fpCell = ratable
+        ? ('<label class="pii-finding-fp" title="Als Falschtreffer markieren — bleibt im Klartext, wird für diesen Chat gemerkt">' +
+             '<input type="checkbox" class="pii-fp-check"> falsch</label>')
+        // seen → fixed: show the prior decision, no editable control
+        : ('<span class="pii-finding-fp pii-finding-fixed" title="Entscheidung vom ersten Sehen — nicht mehr änderbar">' +
+             (f._priorFp ? 'als falsch markiert' : 'bestätigt') + '</span>');
+      return '<div class="pii-finding pii-finding-row' + (ratable ? '' : ' pii-finding-seen') + '" ' +
+          'data-pii-rule="' + esc(f.rule_id || '') + '" ' +
+          'data-pii-value="' + esc(f.value || '') + '" ' +
+          'data-pii-conf="' + esc(String(conf)) + '" ' +
+          'data-pii-disp="' + esc(f.disposition || '') + '" ' +
+          'data-pii-source="' + esc(f._source || '') + '" ' +
+          'data-pii-seen="' + (ratable ? '0' : '1') + '"' + checked + '>' +
+        '<span class="pii-finding-sev' + sevClass(f.action || 'warn') + '" title="' + esc(f.action || 'warn') + '"></span>' +
+        '<span class="pii-finding-label">' + esc(f.label || f.rule_id) + '</span>' +
+        '<span class="pii-finding-val" style="font-family:var(--font-mono,monospace)">' + esc(f.value || '') + '</span>' +
+        '<span class="pii-finding-conf" title="Konfidenz ' + conf.toFixed(2) + '">' + conf.toFixed(2) + ' · ' + bandLabel(f.band) + '</span>' +
+        fpCell +
+      '</div>';
+    }
+
+    function renderUnit(src, items, ratable, gi) {
+      const collapsible = items.length > 1;
+      const rows = items.map(f => renderFindingRow(f, ratable)).join('');
+      const bulk = (ratable && collapsible)
+        ? ('<label class="pii-unit-bulk" title="Alle Treffer dieser Einheit als Falschtreffer markieren">' +
+             '<input type="checkbox" class="pii-bulk-check"> alle falsch</label>')
+        : '';
+      const caret = collapsible
+        ? '<span class="pii-unit-caret" style="cursor:pointer">&#9662;</span>' : '';
+      const head =
+        '<div class="pii-source-head"' + (collapsible ? ' style="cursor:pointer"' : '') + '>' +
+          caret +
+          '<div class="pii-source-name">' + esc(unitLabel(src)) + '</div>' +
+          '<div class="pii-source-count">' + items.length + ' Treffer</div>' +
+          bulk +
+        '</div>';
+      return '<div class="pii-source-card" data-pii-unit="' + esc(gi) + '">' + head +
+        '<div class="pii-unit-rows">' + rows + '</div></div>';
+    }
+
+    function renderGroup(title, findings, ratable, keyPrefix) {
+      if (!findings.length) return '';
+      // split by source unit, message first then attachments
+      const byUnit = new Map();
+      for (const f of findings) {
+        const u = f._source || 'message';
+        if (!byUnit.has(u)) byUnit.set(u, []);
+        byUnit.get(u).push(f);
+      }
+      const order = [...byUnit.keys()].sort((a, b) =>
+        (a === 'message' ? -1 : 0) - (b === 'message' ? -1 : 0));
+      const units = order.map((u, i) => renderUnit(u, byUnit.get(u), ratable, keyPrefix + '-' + i)).join('');
+      return '<div class="pii-group">' +
+        '<div class="pii-group-title">' + esc(title) +
+          ' <span class="pii-group-sub">' + (ratable ? 'neu — bitte prüfen' : 'bereits gesehen — fixiert') + '</span>' +
+        '</div>' + units + '</div>';
+    }
+
+    const newF = allPerFinding.filter(f => !f._seen);
+    const seenF = allPerFinding.filter(f => f._seen);
+    const sections = [];
+    const newHtml = renderGroup('Neue Treffer', newF, true, 'new');
+    const seenHtml = renderGroup('Bereits gesehen', seenF, false, 'seen');
+    if (newHtml) sections.push(newHtml);
+    if (seenHtml) sections.push(seenHtml);
 
     // ─── Append a classification section, when active ───
     // Renders one card per classified file with the German level label
@@ -438,13 +453,19 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
       subtitle = 'Bitte vor dem Senden prüfen — die Auswahl gilt für beide Befunde.';
     } else {
       title = 'Personenbezogene Daten in der Nachricht erkannt';
-      subtitle = 'Bitte vor dem Senden prüfen — Werte sind teilweise maskiert.';
+      subtitle = newF.length
+        ? 'Bitte die neuen Treffer prüfen — als Falschtreffer markierte Werte bleiben im Klartext.'
+        : 'Bereits geprüfte Treffer — keine neuen personenbezogenen Daten.';
     }
-    const sourcesN = Object.keys(scan.bySource).length;
-    const statBadge = (hasPiiFindings ? total + ' Treffer · ' : '') +
-      (sourcesN ? sourcesN + ' Quelle' + (sourcesN === 1 ? '' : 'n') : '') +
+    // Count from the new seen/new structure (no maskdance, no double-count).
+    const totalFindings = allPerFinding.length;
+    const statBadge = (totalFindings
+        ? (newF.length ? newF.length + ' neu' : '') +
+          (newF.length && seenF.length ? ' · ' : '') +
+          (seenF.length ? seenF.length + ' gesehen' : '')
+        : '') +
       (clsActive
-        ? (sourcesN ? ' · ' : '') + classifiedFiles.length + ' klassifiziert'
+        ? (totalFindings ? ' · ' : '') + classifiedFiles.length + ' klassifiziert'
         : '');
 
     // Shield SVG (same vocabulary as the inline composer badge)
@@ -510,8 +531,10 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
       // and whether the user marked it a false positive) so the caller can
       // persist the analysis + decision and honour FP values for the rest of
       // the chat. Only the server-finding rows carry these datasets.
+      // Collect decisions ONLY for NEW (ratable) findings — seen rows are
+      // fixed and already persisted. data-pii-seen="0" marks a ratable row.
       const decisions = [];
-      for (const row of overlay.querySelectorAll('.pii-finding-row')) {
+      for (const row of overlay.querySelectorAll('.pii-finding-row[data-pii-seen="0"]')) {
         const fp = row.querySelector('.pii-fp-check');
         decisions.push({
           rule_id: row.dataset.piiRule || '',
@@ -532,6 +555,28 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
     for (const cb of overlay.querySelectorAll('.pii-fp-check')) {
       cb.addEventListener('change', (e) => {
         e.target.closest('.pii-finding-row')?.classList.toggle('pii-is-fp', e.target.checked);
+      });
+    }
+    // Collapse/expand a multi-finding unit when its header is clicked (but not
+    // when clicking the bulk checkbox/label inside the header).
+    for (const head of overlay.querySelectorAll('.pii-source-card .pii-source-head')) {
+      if (!head.querySelector('.pii-unit-caret')) continue;
+      head.addEventListener('click', (e) => {
+        if (e.target.closest('.pii-unit-bulk')) return;
+        const card = head.closest('.pii-source-card');
+        const collapsed = card.classList.toggle('pii-collapsed');
+        const caret = head.querySelector('.pii-unit-caret');
+        if (caret) caret.innerHTML = collapsed ? '&#9656;' : '&#9662;';
+      });
+    }
+    // Bulk FP: tick/untick every FP checkbox in the unit.
+    for (const bulk of overlay.querySelectorAll('.pii-bulk-check')) {
+      bulk.addEventListener('change', (e) => {
+        const card = e.target.closest('.pii-source-card');
+        for (const cb of card.querySelectorAll('.pii-fp-check')) {
+          cb.checked = e.target.checked;
+          cb.closest('.pii-finding-row')?.classList.toggle('pii-is-fp', e.target.checked);
+        }
       });
     }
     document.getElementById('pii-cancel-btn').onclick = () => cleanup('cancel');
@@ -968,22 +1013,31 @@ function _piiHistoryShowPopover(anchorBtn, payload) {
   }
 
   if (historyChat) {
-    const counts = historyChat._piiHistoryCounts || {};
-    const entries = Object.entries(counts).filter(([, v]) => (v || 0) > 0)
-                          .sort((a, b) => (b[1] || 0) - (a[1] || 0));
-    if (entries.length > 0) {
-      const total = entries.reduce((a, [, v]) => a + (v || 0), 0);
-      const rows = entries.map(([k, v]) =>
+    // 9.197.0: the history badge shows the DECISION per already-seen finding,
+    // NOT raw values or rule counts. Driven by chat._piiDecisions (the persisted
+    // per-finding outcomes). Grouped by decision: false-positive vs handled.
+    const decided = Object.values(historyChat._piiDecisions || {});
+    const head = (txt) => '<div style="font-weight:600;font-size:11.5px;color:var(--text-200);margin-top:' +
+      (draftScan ? '10px' : '4px') + '">' + txt + '</div>';
+    if (decided.length > 0) {
+      const fp = decided.filter(d => d.false_positive);
+      const handled = decided.filter(d => !d.false_positive);
+      const row = (label, n, color) =>
         '<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0">' +
-          '<span style="color:var(--text-200)">' + esc(k) + '</span>' +
-          '<span style="font-weight:600;color:var(--text-100)">' + v + '</span>' +
-        '</div>'
-      ).join('');
+          '<span style="color:' + color + '">' + esc(label) + '</span>' +
+          '<span style="font-weight:600;color:var(--text-100)">' + n + '</span>' +
+        '</div>';
       sections.push(
-        '<div style="font-weight:600;font-size:11.5px;color:var(--text-200);margin-top:' +
-          (draftScan ? '10px' : '4px') + '">Verlauf · ' + total + ' Treffer in früheren Turns</div>' +
-        rows
+        head('Bereits geprüft · ' + decided.length + ' Treffer in früheren Turns') +
+        (handled.length ? row('bestätigt (anonymisiert/verarbeitet)', handled.length, 'var(--text-200)') : '') +
+        (fp.length ? row('als Falschtreffer markiert', fp.length, 'var(--text-300)') : '')
       );
+    } else {
+      // History PII present but not yet reviewed — show a count only, no raw
+      // values. (The dialog will surface the actual findings when sent.)
+      const counts = historyChat._piiHistoryCounts || {};
+      const n = Object.values(counts).reduce((a, v) => a + (v || 0), 0);
+      if (n > 0) sections.push(head('Verlauf · ' + n + ' personenbezogene Treffer (noch nicht geprüft)'));
     }
   }
 

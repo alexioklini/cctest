@@ -1128,9 +1128,27 @@ const PIIScanner = {
       if (fs.length) { bySource.text = fs; all.push(...fs); }
     }
     for (const f of (files || [])) {
-      // Prefer server-side aggregated `groups` (one entry per rule_id with
-      // count + samples) — collapses thousands of identical findings on big
-      // spreadsheets. Each group becomes a pseudo-finding for the modal.
+      // 9.197.0: prefer the server's PER-FINDING records (findings_full) so an
+      // attachment gets the same finding-by-finding review as the typed text —
+      // full value + confidence/band/disposition + FP checkbox. (Attachments
+      // are the COMMONER PII case: documents/spreadsheets with names/IDs.)
+      const ff = (f.scan && f.scan.scanned && Array.isArray(f.scan.findings_full))
+        ? f.scan.findings_full : null;
+      if (ff && ff.length) {
+        const src = 'file:' + f.name;
+        const asFindings = ff.map(g => ({
+          rule_id: g.rule_id, label: g.label || g.rule_id,
+          category: g.category || this.ruleCategories?.[g.rule_id] || 'personal',
+          action: g.action || 'warn',
+          confidence: g.confidence, band: g.band, disposition: g.disposition,
+          value: g.value, _source: src,
+        }));
+        bySource[src] = asFindings;
+        for (const af of asFindings) all.push(af);
+        continue;
+      }
+      // Fallback: server returned only aggregated `groups` (older server or
+      // truncation) — one entry per rule_id with count + samples.
       const groups = (f.scan && f.scan.scanned && Array.isArray(f.scan.groups))
         ? f.scan.groups : null;
       if (groups && groups.length) {

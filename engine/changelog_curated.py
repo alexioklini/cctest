@@ -30,6 +30,21 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.19x — Dokument-Erzeugung, KI-Projektanweisungen, PII-Präzision ──
     {
+        "version": "9.197.0",
+        "date": "2026-06-24",
+        "title": "Datenschutz-Hinweis nur noch bei neuen Funden",
+        "body": "Der Hinweis vor dem Senden erscheint jetzt nur noch, wenn wirklich NEUE personenbezogene "
+                "Treffer dabei sind, die Sie noch nicht geprüft haben — bereits geprüfte Werte lösen ihn "
+                "nicht erneut aus. Im Dialog sind die Treffer übersichtlich in „bereits gesehen“ (fixiert) "
+                "und „neu“ (zu prüfen) sowie nach Nachrichtentext und Anhang gegliedert; bei vielen Treffern "
+                "lassen sich die Bereiche auf- und zuklappen und gesammelt als Falschtreffer markieren. "
+                "Auch Treffer in Anhängen (Dokumente, Tabellen) werden jetzt einzeln mit vollem Wert und "
+                "Konfidenz angezeigt und sind einzeln bewertbar. Die Verlaufsanzeige zeigt statt der Rohwerte, "
+                "wie viele Treffer bestätigt bzw. als Falschtreffer eingestuft wurden.",
+        "audience": "user",
+        "versions": ["9.197.0"],
+    },
+    {
         "version": "9.196.0",
         "date": "2026-06-24",
         "title": "Datenschutz-Dialog: Treffer einzeln prüfen",

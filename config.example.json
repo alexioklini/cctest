@@ -2447,7 +2447,7 @@
       "_caps_canonical": true,
       "is_local": true,
       "auto_lcm": true,
-      "warmup": true,
+      "warmup": false,
       "warmup_mode": "minimal"
     }
   },
@@ -2681,11 +2681,314 @@
     "background_anonymise_fail_action": "swap_to_local",
     "name_precision_gate": true,
     "count_points": {
+      "anthropic_key": [
+        1,
+        2
+      ],
+      "aws_access_key": [
+        1,
+        2
+      ],
+      "aws_secret_key": [
+        1,
+        2
+      ],
+      "azure_account_key": [
+        1,
+        2
+      ],
+      "azure_storage_conn": [
+        1,
+        2
+      ],
+      "basic_auth_url": [
+        1,
+        2
+      ],
+      "generic_secret_assignment": [
+        2,
+        3
+      ],
+      "github_app_token": [
+        1,
+        2
+      ],
+      "github_pat": [
+        1,
+        2
+      ],
+      "google_api_key": [
+        1,
+        2
+      ],
+      "google_oauth_client": [
+        1,
+        2
+      ],
+      "jwt": [
+        1,
+        2
+      ],
+      "mailgun_key": [
+        1,
+        2
+      ],
+      "openai_key": [
+        1,
+        2
+      ],
+      "pem_private_key": [
+        1,
+        2
+      ],
+      "sendgrid_key": [
+        1,
+        2
+      ],
+      "slack_token": [
+        1,
+        2
+      ],
+      "slack_webhook": [
+        1,
+        2
+      ],
+      "stripe_live": [
+        1,
+        2
+      ],
+      "stripe_test": [
+        1,
+        2
+      ],
+      "twilio_sid": [
+        1,
+        2
+      ],
+      "ar_dni": [
+        1,
+        2
+      ],
+      "at_svnr": [
+        2,
+        3
+      ],
+      "be_national": [
+        3,
+        5
+      ],
+      "bg_egn": [
+        3,
+        5
+      ],
+      "br_cpf": [
+        1,
+        2
+      ],
+      "ca_sin": [
+        3,
+        5
+      ],
+      "ch_ahv": [
+        1,
+        2
+      ],
+      "cz_rc": [
+        3,
+        5
+      ],
+      "de_steuerid": [
+        1,
+        2
+      ],
+      "dk_cpr": [
+        3,
+        5
+      ],
+      "es_dni_nie": [
+        3,
+        5
+      ],
+      "fr_insee": [
+        1,
+        2
+      ],
+      "gr_amka": [
+        3,
+        5
+      ],
+      "hu_taj": [
+        1,
+        2
+      ],
+      "ie_pps": [
+        1,
+        2
+      ],
+      "in_aadhaar": [
+        1,
+        2
+      ],
+      "it_codicefiscale": [
+        1,
+        2
+      ],
+      "jp_mynumber": [
+        5,
+        10
+      ],
+      "kr_rrn": [
+        1,
+        2
+      ],
+      "mx_curp": [
+        1,
+        2
+      ],
+      "nl_bsn": [
+        1,
+        2
+      ],
+      "no_fnr": [
+        3,
+        5
+      ],
+      "pl_pesel": [
+        3,
+        5
+      ],
+      "pt_nif": [
+        1,
+        2
+      ],
+      "ro_cnp": [
+        3,
+        5
+      ],
+      "se_personnummer": [
+        3,
+        5
+      ],
+      "sg_nric": [
+        1,
+        2
+      ],
+      "tw_nid": [
+        1,
+        2
+      ],
+      "uk_nhs": [
+        3,
+        5
+      ],
+      "uk_nino": [
+        1,
+        2
+      ],
+      "us_ssn": [
+        2,
+        3
+      ],
+      "us_ssn_ctx": [
+        1,
+        2
+      ],
+      "drivers_license_ctx": [
+        2,
+        3
+      ],
+      "health_insurance_ctx": [
+        2,
+        3
+      ],
+      "id_card_ctx": [
+        2,
+        3
+      ],
+      "insurance_number_ctx": [
+        2,
+        3
+      ],
+      "passport_ctx_loose": [
+        2,
+        3
+      ],
+      "ssn_ctx_loose": [
+        2,
+        3
+      ],
+      "svnr_ctx": [
+        2,
+        3
+      ],
+      "bank_account_ctx": [
+        2,
+        3
+      ],
+      "credit_card": [
+        2,
+        3
+      ],
+      "iban": [
+        1,
+        2
+      ],
+      "br_cnpj": [
+        1,
+        2
+      ],
+      "organisation": [
+        1,
+        2
+      ],
+      "tax_id_ctx": [
+        1,
+        2
+      ],
+      "email": [
+        2,
+        3
+      ],
       "name": [
         2,
         3
+      ],
+      "phone": [
+        1,
+        2
+      ],
+      "ipv4": [
+        1,
+        2
+      ],
+      "ipv6": [
+        1,
+        2
+      ],
+      "address": [
+        2,
+        3
+      ],
+      "date": [
+        5,
+        10
+      ],
+      "dob": [
+        2,
+        3
+      ],
+      "passport": [
+        1,
+        2
+      ],
+      "bare_identifier": [
+        1,
+        2
       ]
-    }
+    },
+    "confidence_lower": 0.5,
+    "confidence_upper": 0.85,
+    "background_ask_action": "anonymise"
   },
   "quotas": {
     "enabled": true,

@@ -392,7 +392,7 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 
 ## GDPR / PII
 
-- `POST /v1/attachments/scan` — `{path, mime, ...}` returns PII findings
+- `POST /v1/attachments/scan` — `{name, content(b64), media_type}` returns PII findings: aggregated `groups` (count/samples) + per-finding `findings_full` (value/confidence/band/disposition, deduped, cap 200/file + `findings_truncated`) + `worst_disposition` (9.197.0) + `classification` block
 - `POST /v1/gdpr/scan-text` — `{text, full?, raw_detection?, name_precision?}` returns findings; `full:true` adds per-finding `value`/`confidence`/`band`/`disposition` + `worst_disposition`
 - `GET /v1/gdpr/ner-models` — admin: list spaCy NER model state
 - `POST /v1/gdpr/ner-models` — `{action: "load"|"unload", lang}` toggle

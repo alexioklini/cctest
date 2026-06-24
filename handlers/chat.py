@@ -4893,19 +4893,57 @@ class ChatHandlerMixin:
         except Exception:
             pass
 
+        # Per-finding full records (9.197.0) so the modal can review attachment
+        # PII finding-by-finding (value + confidence/band/disposition + FP
+        # checkbox), the same UX as the typed message. Deduped by (rule|value)
+        # and capped (a 50k-row spreadsheet must not return 50k rows to the UI —
+        # human review of >FULL_CAP distinct values is impractical; the
+        # aggregated `groups` above still reflects the true total). Whitespace
+        # collapsed in the value (PDF line-breaks).
+        import re as _re_af
+        # The scan ran in a worker thread; re-fetch cfg here for band/disposition.
+        cfg_af = engine._get_gdpr_scanner_config()
+        findings_full = []
+        seen_vals = set()
+        FULL_CAP = 200
+        for f in findings:
+            s, e = int(f.get("start", 0)), int(f.get("end", 0))
+            val = full_text[s:e] if 0 <= s < e <= len(full_text) else ""
+            val = _re_af.sub(r"\s+", " ", val).strip()
+            if not val:
+                continue
+            key = (f.get("rule_id") or "") + "|" + val.lower()
+            if key in seen_vals:
+                continue
+            seen_vals.add(key)
+            findings_full.append({
+                "rule_id": f.get("rule_id") or "?",
+                "label": f.get("label") or f.get("rule_id") or "?",
+                "category": f.get("category", "personal"),
+                "action": f.get("action", "warn"),
+                "confidence": f.get("confidence"),
+                "band": engine._pii_band(f.get("confidence") or 0.5, cfg_af),
+                "disposition": engine._pii_resolve_disposition(f, cfg_af),
+                "value": val,
+            })
+            if len(findings_full) >= FULL_CAP:
+                break
+
         resp = {
             "scanned": True,
             "attachment_id": attachment_id,
             "source_name": name,
             # Server-side aggregation: one entry per rule_id, with the
-            # total count + up to 3 sample previews. Client modal renders
-            # straight from this — no per-finding records.
+            # total count + up to 3 sample previews. Kept for the count/badge.
             "groups": groups_list,
-            # Legacy fields kept for older clients that still iterate
-            # findings; safe to drop later.
+            # Per-finding records for the review dialog (deduped + capped).
+            "findings_full": findings_full,
+            "findings_truncated": len(seen_vals) >= FULL_CAP,
+            # Legacy field kept for older clients.
             "findings": [],
             "categories": cats,
             "finding_count": sum(g["count"] for g in groups_list),
+            "worst_disposition": engine._pii_worst_disposition(findings, cfg_af),
         }
         if classification_block is not None:
             resp["classification"] = classification_block
