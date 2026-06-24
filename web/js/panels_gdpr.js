@@ -170,6 +170,17 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
           color:var(--text-300); word-break:break-all; font-size:11.5px;
         }
         .pii-finding-loc { flex:none; font-size:10px; color:var(--text-400); white-space:nowrap; }
+        .pii-finding-conf {
+          flex:none; font-size:10.5px; font-variant-numeric:tabular-nums;
+          color:var(--text-400); white-space:nowrap; padding:1px 6px;
+          border:1px solid var(--border-100); border-radius:10px;
+        }
+        .pii-finding-fp {
+          flex:none; font-size:11px; color:var(--text-300); white-space:nowrap;
+          display:inline-flex; align-items:center; gap:4px; cursor:pointer;
+        }
+        .pii-finding-fp input { margin:0; cursor:pointer; }
+        .pii-finding-row.pii-is-fp { opacity:.5; text-decoration:line-through; }
         .pii-footer {
           flex:none;
           display:flex; flex-direction:column; gap:10px;
@@ -243,10 +254,44 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
     // findings (text or legacy file scan) still render per-fragment.
     const sections = [];
     for (const [source, findings] of Object.entries(scan.bySource)) {
-      const isAggregated = findings.length > 0 && typeof findings[0].count === 'number';
+      // NEW per-finding shape (server full-mode): each finding carries a value
+      // + confidence/band/disposition. Render the full value (user must see it
+      // to judge a false positive), the confidence, and a per-finding
+      // "falsch erkannt" (false-positive) checkbox. Default = correct (=will be
+      // anonymised if its disposition says so).
+      const isServerFindings = findings.length > 0 &&
+        (findings[0].disposition != null || findings[0].confidence != null) &&
+        typeof findings[0].count !== 'number';
       let rows = '';
       let total = 0;
-      if (isAggregated) {
+      if (isServerFindings) {
+        const bandLabel = b => b === 'high' ? 'hoch' : (b === 'mid' ? 'mittel' : 'niedrig');
+        const dispLabel = d => d === 'anonymise' ? 'wird anonymisiert'
+          : (d === 'ask' ? 'unsicher — bitte prüfen' : 'ignoriert');
+        rows = findings.map((f, i) => {
+          const conf = (f.confidence != null) ? f.confidence : 0;
+          const fpId = 'pii-fp-' + esc(source) + '-' + i;
+          // dataset carries everything the persistence layer needs on submit.
+          return '<div class="pii-finding pii-finding-row" ' +
+              'data-pii-rule="' + esc(f.rule_id || '') + '" ' +
+              'data-pii-value="' + esc(f.value || '') + '" ' +
+              'data-pii-conf="' + esc(String(conf)) + '" ' +
+              'data-pii-disp="' + esc(f.disposition || '') + '" ' +
+              'data-pii-source="' + esc(source) + '">' +
+            '<span class="pii-finding-sev' + sevClass(f.action || 'warn') + '" title="' + esc(f.action || 'warn') + '"></span>' +
+            '<span class="pii-finding-label">' + esc(f.label || f.rule_id) + '</span>' +
+            '<span class="pii-finding-val" style="font-family:var(--font-mono,monospace)">' + esc(f.value || '') + '</span>' +
+            '<span class="pii-finding-conf" title="Konfidenz ' + conf.toFixed(2) + ' · Band ' + bandLabel(f.band) + ' · ' + dispLabel(f.disposition) + '">' +
+              conf.toFixed(2) + ' · ' + bandLabel(f.band) +
+            '</span>' +
+            '<label class="pii-finding-fp" title="Als Falschtreffer markieren — wird NICHT anonymisiert und für diesen Chat gemerkt">' +
+              '<input type="checkbox" class="pii-fp-check" id="' + fpId + '"> falsch' +
+            '</label>' +
+          '</div>';
+        }).join('');
+        total = findings.length;
+      } else if (typeof findings[0]?.count === 'number') {
+        // Aggregated shape (attachments / history): one entry per rule_id.
         // Dedupe — `all` was inflated by count, but bySource[] still holds
         // one entry per rule_id.
         const grouped = new Map();
@@ -282,7 +327,7 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
         }).join('');
         total = findings.length;
       }
-      const sourceLabel = source === 'text'
+      const sourceLabel = (source === 'text' || source === 'message')
         ? 'Nachrichtentext'
         : source === 'history'
           ? 'Chat-Verlauf (frühere Turns)'
@@ -366,9 +411,12 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
         ' — Versand nur an ein lokales Modell möglich.';
     } else if (scan.worstAction === 'block') {
       title = 'Hochsensible personenbezogene Daten erkannt';
-      subtitle = canSend
+      // Subtitle reflects the ACTUALLY selected model — localActive, not canSend
+      // (canSend is also true for a local model, but here we describe where the
+      // data would go). With a cloud model selected, say so honestly.
+      subtitle = localActive
         ? 'Hochsensible Daten erkannt — das gewählte Modell ist lokal, die Daten verlassen das System nicht.'
-        : 'Hochsensible Daten erkannt — können nicht an ein Cloud-Modell gesendet werden. Bitte Anonymisierung oder lokales Modell wählen.';
+        : 'Hochsensible Daten erkannt — das gewählte Modell ist ein Cloud-Modell. Bitte je Treffer prüfen und anonymisieren, ein lokales Modell wählen, oder bewusst trotzdem senden.';
     } else if (clsActive && !hasPiiFindings) {
       // Find the worst file's marker_level for an honest subtitle —
       // never call something "Unmarkiert" classified.
@@ -458,12 +506,34 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
       // meaningful when the user actually proceeds (not on cancel).
       const askAfter = !!document.getElementById('pii-ask-after')?.checked
                        && verdict !== 'cancel';
+      // Collect the per-finding decisions (value, rule, confidence, disposition,
+      // and whether the user marked it a false positive) so the caller can
+      // persist the analysis + decision and honour FP values for the rest of
+      // the chat. Only the server-finding rows carry these datasets.
+      const decisions = [];
+      for (const row of overlay.querySelectorAll('.pii-finding-row')) {
+        const fp = row.querySelector('.pii-fp-check');
+        decisions.push({
+          rule_id: row.dataset.piiRule || '',
+          value: row.dataset.piiValue || '',
+          confidence: parseFloat(row.dataset.piiConf || '0') || 0,
+          disposition: row.dataset.piiDisp || '',
+          source: row.dataset.piiSource || '',
+          false_positive: !!(fp && fp.checked),
+        });
+      }
       overlay.remove();
-      resolve({ verdict, askAfter });
+      resolve({ verdict, askAfter, decisions });
     };
     const onKey = (e) => { if (e.key === 'Escape') cleanup('cancel'); };
     document.addEventListener('keydown', onKey);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup('cancel'); });
+    // FP checkbox: strike through the row so the user sees what they excluded.
+    for (const cb of overlay.querySelectorAll('.pii-fp-check')) {
+      cb.addEventListener('change', (e) => {
+        e.target.closest('.pii-finding-row')?.classList.toggle('pii-is-fp', e.target.checked);
+      });
+    }
     document.getElementById('pii-cancel-btn').onclick = () => cleanup('cancel');
     document.getElementById('pii-local-btn')?.addEventListener('click', () => cleanup('local'));
     document.getElementById('pii-anon-btn')?.addEventListener('click', () => cleanup('anonymise'));
@@ -764,10 +834,10 @@ function updatePIIBadge() {
   const historyHas = !!(chat && piiHistoryHasFindings(chat));
   const draftHas = draftScan.findings.length > 0;
 
-  // Side-effect kept from the pre-collapse code: when block-mode is active
-  // and the draft has PII, this swaps the model to the local fallback before
-  // sendMessage runs. Surfaced in the popover below.
-  if (draftHas) piiEnsureLocalModel();
+  // 9.196.0: the automatic PII-driven swap-to-local was REMOVED. PII findings
+  // no longer change the model behind the user's back — the pre-send dialog +
+  // server-side confidence bands handle enforcement. The badge below still
+  // surfaces that PII was detected (informational).
 
   _updatePIIComposerBadge(chat, draftScan, historyHas, draftHas);
 }

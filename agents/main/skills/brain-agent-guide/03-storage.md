@@ -225,6 +225,20 @@ Admin only — see `/v1/sessions/<sid>/gdpr-maps[/<id>]`.
 Also holds the de-anon index for a `data_reviews` anonymisation (session id
 `review:<review_id>`).
 
+### chats.db → pii_decisions (per-finding interactive review, 9.196.0)
+```
+decision_id PK, session_id, user_id, turn_id, created_at,
+rule_id, value_hash (sha256(rule|value), per-session dedupe), raw_value (capped 512),
+confidence REAL, band, disposition, turn_action, false_positive INTEGER, source
+```
+One row per PII finding the user reviewed in the pre-send dialog. Drives:
+(1) "already analysed" — a decided value isn't re-asked; (2) FP-for-chat — a
+`false_positive=1` value skips anonymisation server-side
+(`handlers/chat._filter_pii_false_positives`); (3) global learning —
+`ChatDB.pii_decision_stats()` = per-rule FP-rate. Methods:
+`record_pii_decisions` / `get_session_pii_decisions` / `pii_decision_stats` /
+`delete_session_pii_decisions`. Endpoints under `/v1/gdpr/decisions`.
+
 ### chats.db → data_reviews (GDPR + classification document reviews)
 ```
 review_id TEXT PK, user_id TEXT, created_at/updated_at REAL,

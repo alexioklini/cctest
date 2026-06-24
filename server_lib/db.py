@@ -704,6 +704,47 @@ class ChatDB:
                 "CREATE INDEX IF NOT EXISTS idx_data_reviews_hash "
                 "ON data_reviews(content_hash)"
             )
+            # ── Per-finding PII decisions (9.196.0) ──
+            # One row per PII finding the user reviewed in the interactive
+            # pre-send dialog: its value, rule, confidence/band/disposition, the
+            # chosen turn action, and whether the user flagged it a FALSE
+            # POSITIVE. Drives three things: (1) "already analysed" — a value
+            # decided in this chat isn't asked again; (2) FP values skip
+            # anonymisation for the rest of the chat; (3) aggregate evaluation +
+            # global learning (which rules over-fire). `value_hash` =
+            # sha256(rule_id|value) so the same value/rule dedupes per session
+            # without storing the raw value in the index. `raw_value` IS stored
+            # (the dialog needs it; the chat already holds the PII) but capped.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS pii_decisions (
+                    decision_id   TEXT PRIMARY KEY,
+                    session_id    TEXT NOT NULL DEFAULT '',
+                    user_id       TEXT NOT NULL DEFAULT '',
+                    turn_id       TEXT NOT NULL DEFAULT '',
+                    created_at    REAL NOT NULL DEFAULT (strftime('%s','now')),
+                    rule_id       TEXT NOT NULL DEFAULT '',
+                    value_hash    TEXT NOT NULL DEFAULT '',
+                    raw_value     TEXT NOT NULL DEFAULT '',
+                    confidence    REAL NOT NULL DEFAULT 0,
+                    band          TEXT NOT NULL DEFAULT '',
+                    disposition   TEXT NOT NULL DEFAULT '',
+                    turn_action   TEXT NOT NULL DEFAULT '',
+                    false_positive INTEGER NOT NULL DEFAULT 0,
+                    source        TEXT NOT NULL DEFAULT ''
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pii_decisions_session "
+                "ON pii_decisions(session_id, created_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pii_decisions_session_hash "
+                "ON pii_decisions(session_id, value_hash)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pii_decisions_rule_fp "
+                "ON pii_decisions(rule_id, false_positive)"
+            )
             # Migration: add anon_text to a data_reviews table created before
             # the stored-anonymised-text design (the CREATE above only applies
             # to a brand-new table).
@@ -2550,6 +2591,99 @@ class ChatDB:
                     (cutoff,)).rowcount or 0
             conn.commit()
         return deleted
+
+    # ── PII decisions (per-finding review outcomes, 9.196.0) ──────────────────
+    @staticmethod
+    @_db_safe(default=0)
+    def record_pii_decisions(session_id, user_id, turn_id, turn_action,
+                             decisions):
+        """Persist one row per reviewed PII finding. `decisions` is a list of
+        dicts: {rule_id, value, confidence, band, disposition, false_positive,
+        source}. `value_hash` = sha256(rule_id|value) for per-session dedupe.
+        Returns the number of rows written."""
+        import hashlib
+        import uuid
+        if not decisions:
+            return 0
+        now = time.time()
+        rows = []
+        for d in decisions:
+            rid = str(d.get("rule_id") or "")
+            val = str(d.get("value") or "")
+            vh = hashlib.sha256(f"{rid}|{val}".encode("utf-8")).hexdigest()
+            rows.append((
+                uuid.uuid4().hex, session_id or "", user_id or "",
+                turn_id or "", now, rid, vh, val[:512],
+                float(d.get("confidence") or 0), str(d.get("band") or ""),
+                str(d.get("disposition") or ""), str(turn_action or ""),
+                1 if d.get("false_positive") else 0, str(d.get("source") or ""),
+            ))
+        with _db_conn() as conn:
+            conn.executemany(
+                "INSERT INTO pii_decisions (decision_id, session_id, user_id, "
+                "turn_id, created_at, rule_id, value_hash, raw_value, confidence, "
+                "band, disposition, turn_action, false_positive, source) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            conn.commit()
+        return len(rows)
+
+    @staticmethod
+    @_db_safe(default=dict)
+    def get_session_pii_decisions(session_id):
+        """Return the session's prior decisions as a map keyed by value_hash →
+        {rule_id, value, false_positive, disposition, turn_action}. Latest row
+        per value_hash wins. Used to (a) skip re-asking already-decided values
+        ('bereits analysiert') and (b) honour FP values for the rest of the
+        chat (FP = don't anonymise)."""
+        out = {}
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT value_hash, rule_id, raw_value, false_positive, "
+                "disposition, turn_action, created_at "
+                "FROM pii_decisions WHERE session_id = ? "
+                "ORDER BY created_at ASC", (session_id,)).fetchall()
+        for r in rows:
+            out[r[0]] = {
+                "rule_id": r[1], "value": r[2],
+                "false_positive": bool(r[3]),
+                "disposition": r[4], "turn_action": r[5],
+            }
+        return out
+
+    @staticmethod
+    @_db_safe(default=list)
+    def pii_decision_stats():
+        """Aggregate per-rule decision stats for global learning / evaluation:
+        [{rule_id, total, false_positives, fp_rate, avg_confidence}]. Surfaces
+        rules that over-fire (high FP rate) so the admin can retune
+        count_points / thresholds."""
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT rule_id, COUNT(*) AS n, "
+                "SUM(false_positive) AS fps, AVG(confidence) AS avgc "
+                "FROM pii_decisions GROUP BY rule_id ORDER BY fps DESC, n DESC"
+            ).fetchall()
+        out = []
+        for r in rows:
+            n = r[1] or 0
+            fps = r[2] or 0
+            out.append({
+                "rule_id": r[0], "total": n, "false_positives": fps,
+                "fp_rate": round(fps / n, 3) if n else 0.0,
+                "avg_confidence": round(r[3] or 0, 3),
+            })
+        return out
+
+    @staticmethod
+    @_db_safe(default=0)
+    def delete_session_pii_decisions(session_id):
+        """Drop all decisions for a session (e.g. user clears the GDPR pref /
+        starts the analysis over via the composer shield button)."""
+        with _db_conn() as conn:
+            n = conn.execute("DELETE FROM pii_decisions WHERE session_id = ?",
+                             (session_id,)).rowcount or 0
+            conn.commit()
+        return n
 
     @staticmethod
     @_db_safe(default=list)

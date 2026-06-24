@@ -183,16 +183,31 @@ function openProject(agentId, projectName) {
     _pchat.saveToMemory = _def.saveToMemory;
     _pchat.memoryMode = _def.memoryMode;
     _pchat.thinkingLevel = _def.thinkingLevel;
-    // Sticky PII / GDPR consent is per-conversation — a fresh project chat
-    // must re-prompt rather than inherit the prior chat's shield state.
-    _pchat.gdprActionPref = '';
-    _pchat.gdprFeedbackAsk = false;
-    _pchat.hasGdprMapping = false;
-    _pchat._piiHistoryScanLen = -1;
-    _pchat._piiHistoryHas = false;
-    _pchat._piiHistoryCounts = {};
+    // Fresh project chat → agent's DEFAULT model, never the last picked one
+    // (mirrors newChat(); without this the model selector keeps the prior
+    // chat's model). autoPicked/autoReason cleared so no stale auto-route hint.
+    if (typeof state.defaultModelForAgent === 'function') {
+      _pchat.model = state.defaultModelForAgent(agentId);
+    }
+    _pchat.autoPicked = null;
+    _pchat.autoReason = '';
+    // Fresh project chat → ALL GDPR/PII state to defaults (consent, mapping,
+    // per-finding decisions, history scans) via the single reset point, so no
+    // analysis leaks from the prior conversation. (Was a partial reset that
+    // missed _piiDecisions + the server/worst history caches.)
+    resetChatGdprState(_pchat);
     // Fresh project chat → empty Websuche basket (mirrors newChat()).
     _pchat.webBasket = [];
+    // Repaint the composer controls from the freshly-reset state. The
+    // 'project-detail' nav branch does NOT run updateChatView()/updateStatusBar()
+    // (per feedback_composer_controls_are_source_of_truth), so without this the
+    // GDPR shield / thinking / Websuche / model controls keep showing the
+    // PREVIOUS chat's state and the stale button wins at send time.
+    if (typeof refreshThinkingButton === 'function') refreshThinkingButton();
+    if (typeof _refreshWebsuche === 'function') _refreshWebsuche();
+    if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay(_pchat.model);
+    if (typeof updateStatusBar === 'function') updateStatusBar();
+    if (typeof schedulePIIBadgeUpdate === 'function') schedulePIIBadgeUpdate();
   }
   // Default to the Active tab on entry; the tab UI also resets visually below.
   state._projectChatsFilter = 'active';

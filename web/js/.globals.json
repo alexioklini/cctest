@@ -1011,6 +1011,7 @@
     "researchRunDeep": "writable",
     "researchRunFast": "writable",
     "researchStart": "writable",
+    "resetChatGdprState": "writable",
     "resetGdprActionPref": "writable",
     "resetGdprCategories": "writable",
     "resetResearchModeDiscipline": "writable",

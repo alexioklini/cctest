@@ -114,13 +114,14 @@ async function openSession(sessionId, agentId) {
   chat.sessionId = sessionId;
   chat.messages = [];
   // Clear per-session fields up front so the prior chat's values can't render
-  // during the async load window. All four are repopulated from `data` below
-  // (summary/title/gdpr pref restored from the opened session's own state).
+  // during the async load window. Summary/title/gdpr pref are repopulated from
+  // `data` below (restored from the opened session's own state).
   chat.chatSummary = '';
   chat.chatTitle = '';
-  chat.gdprActionPref = '';
-  chat.gdprFeedbackAsk = false;
-  chat.hasGdprMapping = false;
+  // ALL GDPR/PII state back to defaults up front (single reset point); the
+  // session's own values + decisions are reloaded from `data` / the decisions
+  // endpoint further down, overwriting these fresh defaults.
+  resetChatGdprState(chat);
   chat.streamingText = '';
   chat.thinkingText = '';
   chat.files = [];
@@ -179,6 +180,19 @@ async function openSession(sessionId, agentId) {
     chat.allowFurtherWeb = !!data.allow_further_web;
     // Sticky opt-in for the post-turn GDPR feedback modal.
     chat.gdprFeedbackAsk = !!data.gdpr_feedback_ask;
+    // Per-finding PII decisions already made in this chat (9.196.0): keyed by
+    // rule|value so follow-up turns skip re-asking decided values and honour
+    // false-positive markings. Fire-and-forget; absence just means re-ask.
+    chat._piiDecisions = {};
+    if (chat.sessionId) {
+      API.getPiiDecisions(chat.sessionId).then(r => {
+        const out = {};
+        for (const d of Object.values((r && r.decisions) || {})) {
+          out[(d.rule_id || '') + '|' + (d.value || '')] = d;
+        }
+        chat._piiDecisions = out;
+      }).catch(() => {});
+    }
     // Per-session Websuche basket — load THIS session's own curated sources.
     // Never inherit the basket of the chat we just left.
     if (typeof webBasketLoadFromJson === 'function') webBasketLoadFromJson(data.web_basket || '');
@@ -464,11 +478,8 @@ async function openSession(sessionId, agentId) {
     if (typeof updateSendButton === 'function') updateSendButton();
   } catch (e) {}
 
-  // Invalidate the history PII cache — new session = new content to scan.
-  // updatePIIBadge() below will populate it and show the banner if needed.
-  chat._piiHistoryScanLen = -1;
-  chat._piiHistoryHas = false;
-  chat._piiHistoryCounts = {};
+  // (History PII cache already invalidated by resetChatGdprState at the top of
+  // openSession; updatePIIBadge() below repopulates it.)
 
   // Trigger warmup for the restored session's model if provider supports it
   stopWarmupPoll(chat);
@@ -574,11 +585,10 @@ function newChat(opts) {
   // URLs from silently coming along into the new conversation.
   chat.webBasket = [];
   if (typeof _refreshWebsuche === 'function') _refreshWebsuche();
-  // Sticky PII consent ("auto-continue past warnings") is per-session — a
-  // fresh chat must re-prompt, never inherit the prior chat's consent.
-  chat.gdprActionPref = '';
-  chat.gdprFeedbackAsk = false;
-  chat.hasGdprMapping = false;
+  // Fresh chat → ALL GDPR/PII state back to defaults (consent, mapping,
+  // per-finding decisions, history scans). Single reset point so nothing leaks
+  // from the prior conversation and the field list can't drift.
+  resetChatGdprState(chat);
   chat.messages = [];
   chat.totalTokens = 0;
   chat.maxContext = 0;
@@ -592,9 +602,7 @@ function newChat(opts) {
   chat._lastSpeed = null;
   chat._lastApiIn = 0;
   chat._lcmState = null;
-  chat._piiHistoryScanLen = -1;
-  chat._piiHistoryHas = false;
-  chat._piiHistoryCounts = {};
+  // (GDPR/PII history-scan fields reset above via resetChatGdprState.)
   // Project binding for the fresh chat:
   //  - opts.inheritProject given → use it verbatim (handover keeps the base
   //    chat's mode: a project name binds to that project, '' forces general).

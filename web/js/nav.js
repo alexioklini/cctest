@@ -431,11 +431,11 @@ function piiHistoryHasFindings(chat) {
     chat._piiHistoryCountsLocal = counts;
     chat._piiHistoryWorstLocal = worst;
     chat._piiHistoryHasLocal = has;
-    // Re-merge with any prior server NER result so the union stays correct
-    // across turn-count refreshes. The server fetch below will overwrite
-    // _piiHistoryCountsServer once it finishes.
-    _piiHistoryMergeAndCache(chat);
+    // Set the current turn-count BEFORE caching so the server-currency check in
+    // _piiHistoryMergeAndCache compares against THIS turn (a new turn shows the
+    // local scan until the server scan for the same turn count returns).
     chat._piiHistoryScanLen = len;
+    _piiHistoryMergeAndCache(chat);
     // Kick the async server scan unless one's already in flight or we've
     // already got a fresh result for this turn count.
     if (chat._piiHistoryServerScanLen !== len && !chat._piiHistoryServerInFlight) {
@@ -446,21 +446,25 @@ function piiHistoryHasFindings(chat) {
 }
 
 function _piiHistoryMergeAndCache(chat) {
-  const local = chat._piiHistoryCountsLocal || {};
-  const server = chat._piiHistoryCountsServer || {};
-  // Union by label — server-side findings include the regex hits the
-  // client already saw, so prefer the server count where it exists (it's
-  // strictly >= local for shared labels).
-  const merged = Object.assign({}, local);
-  for (const [k, v] of Object.entries(server)) {
-    merged[k] = Math.max(merged[k] || 0, v || 0);
+  // The server scan (regex + NER) is a strict SUPERSET of the client regex.
+  // Once it has run for this chat, it is the SINGLE source of truth — we do NOT
+  // union with the local counts. Unioning double-counted the same value because
+  // client + server label the same rule differently ("E-Mail-Adresse" vs
+  // "Email address"), so a label-keyed merge never collapsed them. The local
+  // counts are only the interim display until the server result lands.
+  // "server result is current" = a server scan ran AND for this turn count.
+  // On a brand-new turn the local scan shows first; once the server scan for
+  // that same turn count returns, it takes over (superset, no double-count).
+  const sLen = (chat._piiHistoryServerScanLen != null) ? chat._piiHistoryServerScanLen : -1;
+  const serverCurrent = sLen >= 0 && sLen === (chat._piiHistoryScanLen ?? -2);
+  if (serverCurrent) {
+    chat._piiHistoryCounts = Object.assign({}, chat._piiHistoryCountsServer || {});
+    chat._piiHistoryWorst = chat._piiHistoryWorstServer || 'ignore';
+  } else {
+    chat._piiHistoryCounts = Object.assign({}, chat._piiHistoryCountsLocal || {});
+    chat._piiHistoryWorst = chat._piiHistoryWorstLocal || 'ignore';
   }
-  chat._piiHistoryCounts = merged;
-  const worstRank = (a) => a === 'block' ? 2 : a === 'warn' ? 1 : 0;
-  const lw = chat._piiHistoryWorstLocal || 'ignore';
-  const sw = chat._piiHistoryWorstServer || 'ignore';
-  chat._piiHistoryWorst = worstRank(sw) > worstRank(lw) ? sw : lw;
-  chat._piiHistoryHas = Object.keys(merged).length > 0;
+  chat._piiHistoryHas = Object.keys(chat._piiHistoryCounts).length > 0;
 }
 
 function _piiHistoryFetchServer(chat, expectLen) {
@@ -776,26 +780,44 @@ function applyGdprConfigToScanner(gs) {
   }
 }
 
-// True when the active chat's draft OR its loaded history contains a
-// block-severity finding AND the master block switch is on. In that state the
-// composer disables cloud-model selection and auto-picks a local model, even
-// if the current draft is empty.
+// SINGLE source of truth for resetting a chat's GDPR/PII state to defaults.
+// The per-agent chat object is REUSED across conversations (state.ensureAgentChat
+// returns the same object), so without an explicit reset a fresh chat inherits
+// the previous conversation's analysis (decisions, history scans, sticky consent).
+// Called by BOTH newChat() and openSession() so "fresh chat = no GDPR leftovers"
+// can never drift as new _pii* fields are added — add the field HERE only.
+function resetChatGdprState(chat) {
+  if (!chat) return;
+  // Sticky consent / mapping (per-session, never inherited).
+  chat.gdprActionPref = '';
+  chat.gdprFeedbackAsk = false;
+  chat.hasGdprMapping = false;
+  // Per-finding review decisions (already-analysed + FP-for-chat).
+  chat._piiDecisions = {};
+  // History-scan caches (client regex + server NER), worst-action, in-flight.
+  chat._piiHistoryScanLen = -1;
+  chat._piiHistoryServerScanLen = -1;
+  chat._piiHistoryServerInFlight = false;
+  chat._piiHistoryHas = false;
+  chat._piiHistoryHasLocal = false;
+  chat._piiHistoryCounts = {};
+  chat._piiHistoryCountsLocal = {};
+  chat._piiHistoryCountsServer = {};
+  chat._piiHistoryWorst = 'ignore';
+  chat._piiHistoryWorstLocal = 'ignore';
+  chat._piiHistoryWorstServer = 'ignore';
+}
+
+// Composer model-restriction gate. As of 9.196.0 the PII-driven restriction is
+// REMOVED — PII findings NO LONGER dim cloud models or auto-swap to local. PII
+// enforcement now lives entirely in the pre-send dialog + the server-side
+// confidence bands (anonymise / ask / act), so locking the model picker up front
+// was redundant and got in the way. The ONLY remaining composer restriction is
+// document CLASSIFICATION (ARL §1.11 strict / force_local on attachments) — a
+// hard regulatory rule, intentionally kept.
 function piiBlockActive(chat) {
-  // server_block removed (9.195.0). Enforcement is server-side via confidence
-  // bands; this client interlock is advisory — dim cloud models when the regex
-  // pre-scan sees a block-action finding. Gated only on the scanner being on.
-  if (state.piiScannerEnabled === false) return false;
   chat = chat || state.activeChat;
   if (!chat) return false;
-  if (sessionStorage.getItem('pii-suppress:' + (chat.sessionId || '_new'))) return false;
-  const input = _composerInputEl();
-  const text = input?.value || '';
-  const draftScan = PIIScanner.scanPayload(text, state._pendingFiles || []);
-  if (draftScan.worstAction === 'block') return true;
-  if (piiHistoryWorstAction(chat) === 'block') return true;
-  // Phase B: classification gate. Any attached file whose detected level
-  // has effective_action='block' or 'force_local' forces the composer
-  // into local-only mode (parallels piiBlockActive).
   return classificationBlockActive(chat);
 }
 
@@ -829,13 +851,14 @@ function classificationStrictBlockActive(chat) {
   return false;
 }
 
-// If PII is present + block is on + the current model is cloud, swap to the
-// configured local fallback (or first local model). Returns true if a swap
-// happened. Safe to call idempotently.
+// Swap the current chat to the configured local fallback (or first local
+// model). Returns true if a swap happened. Safe to call idempotently.
+// As of 9.196.0 this is called ONLY when the user EXPLICITLY chooses "Lokales
+// Modell verwenden" in the pre-send dialog (no automatic PII-driven swap any
+// more) — so it no longer self-guards on piiBlockActive; the caller decides.
 function piiEnsureLocalModel() {
   const chat = state.activeChat;
   if (!chat) return false;
-  if (!piiBlockActive(chat)) return false;
   const cur = chat.model || '';
   if (cur && isModelLocal(cur)) return false;
   const mc = state.modelsConfig?.models || {};

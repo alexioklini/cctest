@@ -605,6 +605,40 @@ def deliver_background_group(session_id: str, group_id: str, members: list) -> b
             _bg_delivery_inflight.discard(session_id)
 
 
+def _filter_pii_false_positives(findings, text, session_id):
+    """Drop findings whose value the user marked as a FALSE POSITIVE in this
+    chat (pii_decisions). FP values must reach the model in the clear — the user
+    judged them not to be real PII. Match on the finding's substring value,
+    whitespace-collapsed + lowercased (same normalisation the decision used).
+    Fail-open: any error returns the findings unchanged (never lose anonymisation
+    on a lookup bug)."""
+    if not findings or not session_id:
+        return findings
+    try:
+        decided = ChatDB.get_session_pii_decisions(session_id) or {}
+        fp_values = {
+            (d.get("value") or "").strip().lower()
+            for d in decided.values() if d.get("false_positive")
+        }
+        fp_values.discard("")
+        if not fp_values:
+            return findings
+        out = []
+        for f in findings:
+            s, e = f.get("start", 0), f.get("end", 0)
+            val = _re_ws.sub(" ", text[s:e]).strip().lower() if 0 <= s < e <= len(text) else ""
+            if val and val in fp_values:
+                continue  # user said this is not PII — leave it in the clear
+            out.append(f)
+        return out
+    except Exception:
+        return findings
+
+
+import re as _re_ws_mod
+_re_ws = _re_ws_mod.compile(r"\s+")
+
+
 def _pseudonymize_history_for_wire(messages, mapping, scanner_cfg):
     """Walk prior `session.messages` and produce a wire-only pseudonymised
     copy. The reused mapping's `forward` table short-circuits already-known
@@ -2078,6 +2112,12 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             nonlocal_message)
                         _findings = engine._pii_scan_text(
                             _typed, cfg=_scanner_cfg)
+                        # Honour false-positive decisions: a value the user
+                        # marked "falsch erkannt" in this chat must NOT be
+                        # anonymised. Filter those findings out before
+                        # pseudonymising (matched on the finding's value).
+                        _findings = _filter_pii_false_positives(
+                            _findings, _typed, session.id)
                         if _findings:
                             _pseudo = pseudonymizer.pseudonymize_text(
                                 _typed, _findings,
@@ -5031,3 +5071,71 @@ class ChatHandlerMixin:
             "finding_count": sum(g["count"] for g in groups_list),
             "worst_disposition": engine._pii_worst_disposition(findings, cfg),
         })
+
+    def _handle_gdpr_decisions_post(self):
+        """POST /v1/gdpr/decisions — persist the per-finding review outcome from
+        the interactive pre-send dialog. Body: {session_id, turn_id?,
+        turn_action, decisions: [{rule_id, value, confidence, band, disposition,
+        false_positive, source}]}. Records one pii_decisions row per finding —
+        drives 'already analysed' (skip re-asking decided values), FP-for-chat
+        (FP values skip anonymisation), and global-learning stats."""
+        user = self._require_auth()
+        if user is None:
+            return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._send_json({"error": "invalid JSON body"}, 400)
+            return
+        sid = (body.get("session_id") or "").strip()
+        if not sid:
+            self._send_json({"error": "session_id required"}, 400)
+            return
+        decisions = body.get("decisions") or []
+        if not isinstance(decisions, list):
+            self._send_json({"error": "decisions must be a list"}, 400)
+            return
+        uid = (user.get("user_id") or "") if isinstance(user, dict) else ""
+        try:
+            n = ChatDB.record_pii_decisions(
+                sid, uid, (body.get("turn_id") or "").strip(),
+                (body.get("turn_action") or "").strip(), decisions)
+        except Exception as e:
+            print(f"[gdpr_decisions] record failed: {e}", flush=True)
+            self._send_json({"error": "record failed"}, 500)
+            return
+        self._send_json({"recorded": n})
+
+    def _handle_gdpr_decisions_get(self):
+        """GET /v1/gdpr/decisions?session_id=X — prior decisions for a session,
+        keyed by value_hash. Lets the client skip re-asking already-decided
+        values and honour FP markings on follow-up turns."""
+        user = self._require_auth()
+        if user is None:
+            return
+        from urllib.parse import urlparse, parse_qs
+        q = parse_qs(urlparse(self.path).query)
+        sid = (q.get("session_id", [""])[0] or "").strip()
+        if not sid:
+            self._send_json({"error": "session_id required"}, 400)
+            return
+        try:
+            decisions = ChatDB.get_session_pii_decisions(sid)
+        except Exception as e:
+            print(f"[gdpr_decisions] get failed: {e}", flush=True)
+            decisions = {}
+        self._send_json({"decisions": decisions, "session_id": sid})
+
+    def _handle_gdpr_decisions_stats_get(self):
+        """GET /v1/gdpr/decisions/stats — aggregate per-rule FP stats for global
+        learning / threshold tuning (admin)."""
+        user = self._require_role("admin")
+        if user is None:
+            return
+        try:
+            stats = ChatDB.pii_decision_stats()
+        except Exception as e:
+            print(f"[gdpr_decisions] stats failed: {e}", flush=True)
+            stats = []
+        self._send_json({"stats": stats})

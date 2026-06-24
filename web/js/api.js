@@ -215,8 +215,26 @@ class API {
   // resolve to `{groups: [], finding_count: 0}` — fail-open so a server
   // hiccup never blocks a send. Callers must still respect their own
   // client-side scanner; this is additive.
-  static scanText(text, source) {
-    return this.post('/v1/gdpr/scan-text', { text, source: source || 'compose' });
+  static scanText(text, source, opts) {
+    const body = { text, source: source || 'compose' };
+    // full:true → per-finding values + confidence/band/disposition (the modal
+    // needs these for the per-finding review UI). Default off (grouped shape).
+    if (opts && opts.full) body.full = true;
+    return this.post('/v1/gdpr/scan-text', body);
+  }
+
+  // Per-finding PII review decisions (9.196.0).
+  static recordPiiDecisions(sessionId, turnAction, decisions, turnId) {
+    return this.post('/v1/gdpr/decisions', {
+      session_id: sessionId, turn_action: turnAction,
+      decisions: decisions || [], turn_id: turnId || '',
+    });
+  }
+  static getPiiDecisions(sessionId) {
+    return this.get('/v1/gdpr/decisions?session_id=' + encodeURIComponent(sessionId));
+  }
+  static getPiiDecisionStats() {
+    return this.get('/v1/gdpr/decisions/stats');
   }
 
   // Admin-only audit endpoints for transparent anonymisation (step 6.4).

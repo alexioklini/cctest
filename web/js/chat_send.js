@@ -211,37 +211,40 @@ async function sendMessage() {
       // typed text is empty (attachment-only sends).
       if (text && text.trim()) {
         try {
-          const srv = await API.scanText(text, 'compose');
-          const srvGroups = Array.isArray(srv?.groups) ? srv.groups : [];
-          if (srvGroups.length) {
-            // Drop client-side dupes — if regex already found `email`, we
-            // don't want to render the same rule twice. The server scan
-            // is the superset (regex + NER), so prefer it for rule_ids
-            // present on both sides.
-            const srvRuleIds = new Set(srvGroups.map(g => g.rule_id));
-            scan.bySource['compose'] = srvGroups;
-            // Bring NER findings into scan.findings so the
-            // `scan.findings.length` check below sees them.
-            for (const g of srvGroups) {
-              const count = Math.max(1, g.count || 0);
-              for (let i = 0; i < count; i++) {
-                scan.findings.push({
-                  rule_id: g.rule_id,
-                  label: g.label || g.rule_id,
-                  category: g.category || 'personal',
-                  action: g.action || 'warn',
-                  count: g.count,
-                  samples: g.samples,
-                });
-              }
-            }
-            // Strip duplicate-rule-id entries from the original `text`
-            // bySource (regex-only) so the modal doesn't double-count.
-            if (Array.isArray(scan.bySource['text'])) {
-              scan.bySource['text'] = scan.bySource['text'].filter(
-                f => !srvRuleIds.has(f.rule_id));
-              if (!scan.bySource['text'].length) delete scan.bySource['text'];
-            }
+          // Server scan is the SINGLE source of truth for the typed text — it
+          // runs regex + NER + confidence/band/disposition, a strict superset
+          // of the client regex. So we REPLACE the client 'text' source with
+          // the server result instead of merging (merging double-counted the
+          // same email under both the client rule_id and the server rule_id —
+          // "Nachrichtentext" + "compose"). The client scan still covers
+          // attachments (file sources) below; only the typed-text source is
+          // superseded here.
+          const srv = await API.scanText(text, 'message', { full: true });
+          let srvFindings = Array.isArray(srv?.findings) ? srv.findings : [];
+          // Re-analysis: drop findings whose (rule|value) was ALREADY decided in
+          // this chat — the user shouldn't be re-asked about a value they
+          // already judged (FP or anonymise). Decided values are cached in
+          // chat._piiDecisions (this session) + loaded from the server on chat
+          // open (openSession). Only NEW values reach the dialog.
+          const decided = chat._piiDecisions || {};
+          srvFindings = srvFindings.filter(
+            f => !decided[(f.rule_id || '') + '|' + (f.value || '')]);
+          delete scan.bySource['text'];   // drop the regex-only typed-text source
+          // Rebuild scan.findings without the old typed-text regex hits, then
+          // add the server findings (carry confidence/band/disposition through).
+          scan.findings = (scan.findings || []).filter(
+            f => f._source && f._source !== 'text');
+          if (srvFindings.length) {
+            const srvForModal = srvFindings.map(f => ({
+              rule_id: f.rule_id, label: f.label || f.rule_id,
+              category: f.category || 'personal', action: f.action || 'warn',
+              confidence: f.confidence, band: f.band, disposition: f.disposition,
+              value: f.value, _source: 'message',
+            }));
+            scan.bySource['message'] = srvForModal;
+            for (const f of srvForModal) scan.findings.push(f);
+            // Recompute worstAction/worstDisposition from the server truth.
+            if (srv.worst_disposition) scan.worstDisposition = srv.worst_disposition;
           }
         } catch (e) {
           // Server scan unreachable — keep going with client findings only.
@@ -287,8 +290,19 @@ async function sendMessage() {
       if (scan.findings.length || classifiedFiles.length) {
         const localActive = isModelLocal(chat.model || '');
         unifiedModalRan = true;
-        const { verdict, askAfter } = await gdprActionModal(scan, chat, localActive, classifiedFiles);
+        const { verdict, askAfter, decisions } = await gdprActionModal(scan, chat, localActive, classifiedFiles);
         if (verdict === 'cancel') return;
+        // Persist the per-finding decisions (value, confidence, disposition, and
+        // FP flags) so this chat doesn't re-ask decided values, FP values skip
+        // anonymisation, and the analysis is auditable / feeds global learning.
+        // Also cache locally for the in-session 'already analysed' check.
+        if (Array.isArray(decisions) && decisions.length && chat.sessionId) {
+          chat._piiDecisions = chat._piiDecisions || {};
+          for (const d of decisions) {
+            chat._piiDecisions[(d.rule_id || '') + '|' + (d.value || '')] = d;
+          }
+          API.recordPiiDecisions(chat.sessionId, verdict, decisions).catch(() => {});
+        }
         // "Frag mich nachher wies gelaufen ist" — opt into the post-turn
         // feedback modal for this session. Persist + cache locally so the
         // done-handler knows to fire it without a round-trip.

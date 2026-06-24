@@ -1657,6 +1657,10 @@ class BrainAgentHandler(
             self._handle_research_mode_disciplines_get()
         elif path == "/v1/gdpr/ner-models":
             self._handle_gdpr_ner_models_get()
+        elif path == "/v1/gdpr/decisions/stats":
+            self._handle_gdpr_decisions_stats_get()
+        elif path.startswith("/v1/gdpr/decisions"):
+            self._handle_gdpr_decisions_get()
         elif path == "/v1/quotas/admin/users":
             self._handle_quota_admin_users()
         elif path.startswith("/v1/quotas/admin/breakdown"):
@@ -2094,6 +2098,8 @@ class BrainAgentHandler(
             self._handle_attachment_scan()
         elif path == "/v1/gdpr/scan-text":
             self._handle_gdpr_scan_text()
+        elif path == "/v1/gdpr/decisions":
+            self._handle_gdpr_decisions_post()
         elif path == "/v1/notifications/settings":
             self._handle_notifications_settings_post()
         elif path == "/v1/notifications/dismiss":

@@ -30,6 +30,21 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.19x — Dokument-Erzeugung, KI-Projektanweisungen, PII-Präzision ──
     {
+        "version": "9.196.0",
+        "date": "2026-06-24",
+        "title": "Datenschutz-Dialog: Treffer einzeln prüfen",
+        "body": "Der Hinweis vor dem Senden zeigt jetzt zu jedem erkannten personenbezogenen Treffer den "
+                "vollständigen Wert und eine Konfidenz-Bewertung — und Sie können jeden Treffer einzeln als "
+                "Falschtreffer markieren. Als falsch markierte Werte werden nicht anonymisiert und für den "
+                "restlichen Chat gemerkt, sodass Sie nicht erneut gefragt werden; nur neu hinzugekommene "
+                "Treffer lösen den Dialog wieder aus. Ihre Entscheidungen werden gespeichert und lassen sich "
+                "auswerten. Die Modellauswahl ist außerdem nicht mehr durch erkannte Daten eingeschränkt — "
+                "Sie wählen das Modell frei, der Dialog regelt Anonymisieren bzw. lokale Verarbeitung. "
+                "(Die Sperre für streng vertraulich klassifizierte Dokumente bleibt unverändert bestehen.)",
+        "audience": "user",
+        "versions": ["9.196.0"],
+    },
+    {
         "version": "9.195.0",
         "date": "2026-06-24",
         "title": "Datenschutz-Prüfung mit Konfidenz-Schwellen",

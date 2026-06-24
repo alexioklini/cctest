@@ -393,9 +393,12 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 ## GDPR / PII
 
 - `POST /v1/attachments/scan` — `{path, mime, ...}` returns PII findings
-- `POST /v1/gdpr/scan-text` — `{text}` returns findings
+- `POST /v1/gdpr/scan-text` — `{text, full?, raw_detection?, name_precision?}` returns findings; `full:true` adds per-finding `value`/`confidence`/`band`/`disposition` + `worst_disposition`
 - `GET /v1/gdpr/ner-models` — admin: list spaCy NER model state
 - `POST /v1/gdpr/ner-models` — `{action: "load"|"unload", lang}` toggle
+- `POST /v1/gdpr/decisions` — persist per-finding review outcome `{session_id, turn_action, decisions:[{rule_id,value,confidence,band,disposition,false_positive,source}]}` (9.196.0)
+- `GET /v1/gdpr/decisions?session_id=X` — prior decisions keyed by value_hash (already-analysed + FP-for-chat)
+- `GET /v1/gdpr/decisions/stats` — admin: per-rule FP-rate aggregate (global learning)
 
 ## Document Review (GDPR + Classification reviewer)
 
