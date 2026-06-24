@@ -460,6 +460,9 @@ def detect_classification(text: str,
         for f in findings[:5]
     ]
 
+    confidence = _classification_confidence(
+        marker_level, marker_meta, filename_hint, heuristic, mismatch)
+
     return {
         "marker_level": marker_level,
         "marker_meta": marker_meta,
@@ -472,7 +475,39 @@ def detect_classification(text: str,
         },
         "mismatch": mismatch,
         "final_level": final_level,
+        # Evidence-based 0..1 confidence in `final_level` (NOT a calibrated
+        # probability) — for a future threshold ladder. High when an explicit
+        # per-page marker is present; low when only a filename hint or a content
+        # heuristic drove it; reduced when marker and content disagree.
+        "confidence": confidence,
     }
+
+
+def _classification_confidence(marker_level, marker_meta, filename_hint,
+                               heuristic, mismatch) -> float:
+    """Derive a 0..1 confidence in the final classification from the evidence.
+
+    An explicit document marker found on most pages is the strongest signal; a
+    filename-only hint or a content-keyword heuristic is weak; a marker/content
+    mismatch lowers trust (the document contradicts itself)."""
+    conf_tier = (marker_meta or {}).get("confidence")
+    source = (marker_meta or {}).get("source")
+    coverage = (marker_meta or {}).get("coverage_pct", 0) or 0
+
+    if marker_level and source != "filename":
+        base = {"high": 0.95, "med": 0.80, "low": 0.65}.get(conf_tier, 0.70)
+        # blend in coverage (per-page marker presence)
+        base = base * 0.85 + (coverage / 100.0) * 0.15
+    elif filename_hint:
+        base = 0.45                      # filename-only hint
+    elif heuristic and heuristic != "public":
+        base = 0.40                      # content heuristic only, no marker
+    else:
+        base = 0.55                      # unmarked/public with nothing notable
+    if mismatch:
+        sev = (mismatch or {}).get("severity")
+        base -= {"high": 0.25, "med": 0.15}.get(sev, 0.10)
+    return round(max(0.05, min(base, 0.99)), 2)
 
 
 # ── PDF footer-fallback (markitdown drops repeating page footers) ────────

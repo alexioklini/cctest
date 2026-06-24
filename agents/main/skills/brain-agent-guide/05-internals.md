@@ -934,6 +934,35 @@ preamble goes in first-user-message instead.
     event keyword OR a spaCy person name (~120ch); old `dob` merged in.
     `address` fires only near a person name. (`_name_within` +
     `_date_has_birth_context`.)
+  - **NER-precision gate (9.193.0, config `gdpr_scanner.name_precision_gate`,
+    default ON)**: tightens the three dominant spaCy FP modes. `name` is accepted
+    only with person-evidence — an adjacent honorific (Herr/Frau/Dr./Mag./Prof.)
+    OR ≥2 capitalised tokens none of which looks like a German common noun
+    (noun-suffix) or a known tech word; a lone token is never a name
+    (`_passes_name_precision_gate`). `organisation` drops a curated legal/internal
+    abbreviation stoplist (ARL/DSG/DSGVO/UWG/…) + KI-/IT-/EU- concept prefixes
+    while keeping real product names like SWIFT/ELBA (`_passes_org_precision_gate`).
+    `address` requires identifying specificity — a house number or postal code in
+    the span's trailing context (`Seestraße 27, 8002 Zürich` keeps; bare
+    `Wien`/`Österreich`/`Hamburg` drop) (`_passes_address_precision_gate`).
+    Measured on the policy corpus: precision 0.07→0.16, name-precision 0.15→~0.89,
+    no real-PII recall loss. PDF line-breaks inside an NER span
+    (`Alexander\n\nKlinsky`) are collapsed to one space. NER-only — regex/checksum
+    rules untouched. (Full eval: `eval/pii_eval/`.)
+  - **Confidence score (9.194.0)**: every PII finding carries `confidence`
+    (0..1) and every `detect_classification` result carries `confidence` — an
+    evidence-based, deterministic score (NOT a calibrated P(correct)) for a
+    future threshold ladder (ignore<ask<anonymise/fallback; thresholds NOT yet
+    wired). PII (`_pii_confidence`): a rule-class prior (checksum 0.98 / secret
+    0.95 / email 0.92 / context-anchored 0.82 / gated-NER 0.72 / bare 0.45)
+    moved by two dynamic signals — the per-file **occurrence count** (more
+    distinct hits → higher, +≤0.15) and the **context distance** (NER date/
+    address: closer person/birth anchor → higher, ±0.15; gates now return the
+    gap via `_name_distance`/`_birth_context_distance`). Checksum/secret/email
+    are rigid (distance ignored, corroborate upward only; secrets floored 0.90).
+    Classification (`_classification_confidence`): per-page marker high/med/low
+    × coverage → 0.65–0.95; filename-only 0.45; heuristic-only 0.40; marker/
+    content mismatch −≤0.25. PII `confidence` is in the full-mode scan endpoint.
   - **`business_id`** category (default ignore) — company IDs (`br_cnpj`,
     `tax_id_ctx`, `organisation`) are not personal data.
   - `dk_cpr` keyword-anchored; `generic_secret_assignment` entropy bar = len≥24

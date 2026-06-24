@@ -88,6 +88,13 @@ reports/
 # crawl4ai render service venv (heavy: browser + deps)
 .venv_crawl4ai/
 
+# PII-eval venv (heavy: torch + presidio + gliner + spaCy de model, ~1.5G)
+.venv_pii_eval/
+
+# PII-eval per-run outputs (keep the harness + data + FINDINGS.md, drop run noise)
+eval/pii_eval/results/2*/
+eval/pii_eval/results/*.log
+
 # embedded decompiled source (not a registered submodule)
 docs/research/claude-code-source/
 diagram_render/node_modules/

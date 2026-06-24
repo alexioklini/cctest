@@ -4925,6 +4925,37 @@ class ChatHandlerMixin:
                 "disabled": True,
             })
             return
+        # Eval-only: `{"raw_detection": true}` makes the scan report raw
+        # DETECTION capability rather than the production enforcement POLICY.
+        # Two production gates are neutralized:
+        #   1. min_occurrences — a rule normally needs N distinct values per doc
+        #      (name/email/phone=3, date=10, ...); we force every rule to 1.
+        #   2. action=='ignore' — _pii_scan_text skips whole categories whose
+        #      effective action is 'ignore' (contact/network/business_id in this
+        #      deployment), so email/phone/name/IP/org never even surface. We
+        #      force every rule's effective action to 'warn' via a rule_overrides
+        #      dict whose .get always returns 'warn' (top precedence in
+        #      _pii_effective_action). UI never sets raw_detection.
+        if body.get("raw_detection"):
+            # NB: these must be NON-EMPTY — _pii_effective_action /
+            # _pii_min_occurrences do `(cfg.get(key) or {})`, and an empty dict
+            # is falsy, which would silently discard the override. The sentinel
+            # key keeps them truthy; `.get()` ignores it anyway.
+            class _AllOnes(dict):
+                def get(self, *a, **k):
+                    return 1
+
+            class _AllWarn(dict):
+                def get(self, *a, **k):
+                    return "warn"
+            cfg = dict(cfg)
+            cfg["min_occurrences"] = _AllOnes(_sentinel=1)
+            cfg["rule_overrides"] = _AllWarn(_sentinel="warn")
+        # Eval-only: allow toggling the opt-in name-precision gate per request so
+        # the harness can A/B it without flipping the persisted config.
+        if "name_precision" in body:
+            cfg = dict(cfg)
+            cfg["name_precision_gate"] = bool(body.get("name_precision"))
         try:
             findings = engine._pii_scan_text(text, cfg=cfg, max_findings=100)
         except Exception as e:
@@ -4933,6 +4964,28 @@ class ChatHandlerMixin:
                 "groups": [], "categories": {}, "finding_count": 0,
                 "error": "scan failed",
             })
+            return
+
+        # Eval-only escape hatch: `{"full": true}` returns EVERY finding with its
+        # raw value + offsets, uncapped, so the PII-detector eval harness can do
+        # value-level scoring without losing occurrences to the 3-sample cap.
+        # Off by default; the UI path never sets it, so render behaviour is
+        # unchanged.
+        if body.get("full"):
+            import re as _re_full
+            items = []
+            for f in findings:
+                start, end = f.get("start", 0), f.get("end", 0)
+                val = text[start:end] if 0 <= start < end <= len(text) else ""
+                val = _re_full.sub(r"\s+", " ", val).strip()  # collapse PDF line-breaks
+                items.append({
+                    "rule_id": f.get("rule_id") or "?",
+                    "category": f.get("category", "personal"),
+                    "action": f.get("action", "warn"),
+                    "confidence": f.get("confidence"),
+                    "start": start, "end": end, "value": val,
+                })
+            self._send_json({"findings": items, "finding_count": len(items)})
             return
 
         # Same aggregation as /v1/attachments/scan: one entry per rule_id

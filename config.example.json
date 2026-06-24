@@ -2679,7 +2679,8 @@
       "@wienerprivatbank.com"
     ],
     "background_pii_action": "anonymise",
-    "background_anonymise_fail_action": "swap_to_local"
+    "background_anonymise_fail_action": "swap_to_local",
+    "name_precision_gate": true
   },
   "quotas": {
     "enabled": true,

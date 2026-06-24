@@ -49,6 +49,95 @@ _MIN_ENTITY_CHARS = 3
 _MAX_SCAN_CHARS = 50_000
 
 
+# ── Name-precision gate (opt-in) ─────────────────────────────────────────────
+# The de_core_news_md model's dominant FP mode is tagging German common/compound
+# nouns and product/tech terms as PER ("Datenschutzvorfall", "Benutzerkennwörter",
+# "Cryptshare", "Delete Button"). The base shape gate only requires ONE
+# capitalised token — and in German EVERY noun is capitalised, so it leaks. This
+# tighter gate requires positive person-evidence before accepting a `name`:
+#   1. a person honorific/title near the span (Herr/Frau/Dr./Mag./Prof. …), OR
+#   2. >= 2 capitalised tokens, NONE of which looks like a German common noun
+#      (noun-suffix) or a known tech/generic word.
+# A lone capitalised token is never enough (precision-first). Verified on the
+# kg-real-policies corpus: 12/12 real names kept, 21/21 spaCy FPs dropped.
+# Gated by gdpr_scanner.name_precision_gate (default off until A/B-validated).
+_HONORIFICS = {"herr", "frau", "hr", "fr", "dr", "mag", "prof", "dipl",
+               "ing", "mmag", "ddr", "dipl.-ing", "frau dr", "herr dr"}
+_NAME_NOUN_SUFFIX = _re.compile(
+    r"(ung|heit|keit|schaft|tion|rechten|recht|kontakte|vorfall|vorfalls|"
+    r"prinzip|vorschläge|wörter|person|personen|verarbeitern|verarbeitung|"
+    r"button|binding|transformer)$", _re.IGNORECASE)
+_NON_NAME_TOKENS = {"pre-trained", "transformer", "delete", "button", "admin",
+                    "rechten", "binding", "data", "owner", "ticket", "review"}
+_HONORIFIC_NEAR = _re.compile(
+    r"\b(Herr|Frau|Hr|Fr|Dr|Mag|Prof|Dipl|Ing|MMag|DDr)\.?\s*$")
+
+
+def _name_has_person_context(text: str, start: int) -> bool:
+    """True if a person honorific/title immediately precedes the span."""
+    prefix = text[max(0, start - 12):start]
+    return bool(_HONORIFIC_NEAR.search(prefix))
+
+
+# Organisation FP mode: spaCy tags internal/legal abbreviations (ARL, DSG, UWG,
+# VStG…) and concept compounds (KI-Gremium, KI-Systeme) as ORG. Real product/
+# system names (SWIFT, ELBA, ZAK) are shape-identical to legal acronyms, so a
+# blanket "short all-caps = drop" would kill them — instead we drop only (a) a
+# curated legal/internal abbreviation stoplist and (b) KI-/IT-/EU- concept
+# prefixes. Verified on kg-real-policies: 17/17 real orgs kept, 21/21 FPs dropped.
+_ORG_CONCEPT_PREFIX = _re.compile(r"^(KI|IT|HR|EU|DSG|VVT)[- ]", _re.IGNORECASE)
+_ORG_LEGAL_ABBR = {
+    "arl", "anw", "dsg", "dsgvo", "bwg", "uwg", "vstg", "fm-gwg", "dpf", "dsb",
+    "vvt", "mwi", "wpb", "gdpr", "bgb", "agb", "tom", "toms", "dsfa", "euc",
+    "dor", "isms", "achtung", "kyc", "aml", "pb", "ikt",
+}
+
+
+def _passes_org_precision_gate(value: str) -> bool:
+    t = value.strip()
+    if _ORG_CONCEPT_PREFIX.match(t):
+        return False
+    if t.lower() in _ORG_LEGAL_ABBR:
+        return False
+    return True
+
+
+# Address FP mode: spaCy's LOC tags bare toponyms (Wien, Österreich, Zürich) as
+# `address`, and the existing person-proximity gate passes them because a person
+# is usually nearby in policy text — but a bare city/country is not a person's
+# identifiable address. spaCy also fragments real addresses to the street name
+# only ("Seestraße"), dropping the number. So we require IDENTIFYING specificity:
+# a house number or postal code in the span's immediate trailing context (the
+# number sits right after the street: "Seestraße 27, 8002 Zürich"). Verified on
+# handcrafted + kg-real-policies: 6/6 real street addresses kept, bare toponyms
+# (Wien/Österreich/Zürich/Hamburg/Frankfurt) dropped.
+_ADDR_HOUSE_NO = _re.compile(r"\b\d{1,4}\s*[-–]?\s*\d{0,4}[a-zA-Z]?\b")
+_ADDR_PLZ = _re.compile(r"\b\d{4,5}\b")
+
+
+def _passes_address_precision_gate(value: str, text: str, start: int) -> bool:
+    end = start + len(value)
+    after = text[end:end + 30]
+    return bool(_ADDR_HOUSE_NO.search(after) or _ADDR_PLZ.search(after))
+
+
+def _passes_name_precision_gate(value: str, text: str, start: int) -> bool:
+    v = value.strip()
+    if _name_has_person_context(text, start):
+        return True
+    toks = [t for t in _re.split(r"\s+", v.replace(",", " ")) if t]
+    core = [t for t in toks if t.lower().strip(".") not in _HONORIFICS]
+    cap = [t for t in core if t[:1].isupper() and t[:1].isalpha() and len(t) >= 2]
+    if "." in v and len(cap) < 2:        # "Behoerde.dotx", "II."
+        return False
+    if len(cap) >= 2:
+        if any(_NAME_NOUN_SUFFIX.search(t) or t.lower() in _NON_NAME_TOKENS
+               for t in cap):
+            return False
+        return True
+    return False                          # lone token is never a name
+
+
 def _passes_shape_gate(value: str, rule_id: str) -> bool:
     """Heuristic post-filter for NER findings on `de_core_news_sm`.
 
@@ -205,7 +294,8 @@ def list_loaded() -> list[dict]:
 
 
 def scan_text(text: str, *, lang: str = "de",
-              max_findings: int = 100) -> list[dict]:
+              max_findings: int = 100,
+              name_precision: bool = False) -> list[dict]:
     """Run NER over `text`, return findings shaped like brain._pii_scan_text.
 
     Findings carry:
@@ -243,6 +333,18 @@ def scan_text(text: str, *, lang: str = "de",
         if len(value) < _MIN_ENTITY_CHARS:
             continue
         if not _passes_shape_gate(value, rule_id):
+            continue
+        # Opt-in NER-precision gate: tighten `name` (German-common-noun FP mode)
+        # and `organisation` (legal-abbrev / concept-prefix FP mode). Caller
+        # passes name_precision from cfg (gdpr_scanner.name_precision_gate).
+        if name_precision and rule_id == "name" and \
+                not _passes_name_precision_gate(value, text, ent.start_char):
+            continue
+        if name_precision and rule_id == "organisation" and \
+                not _passes_org_precision_gate(value):
+            continue
+        if name_precision and rule_id == "address" and \
+                not _passes_address_precision_gate(value, text, ent.start_char):
             continue
         findings.append({
             "rule_id": rule_id,
@@ -1092,28 +1194,150 @@ _BIRTH_CONTEXT_RE = _re.compile(
     _re.IGNORECASE)
 
 
-def _name_within(start: int, end: int, name_spans: list, max_dist: int) -> bool:
-    """True if any person-name span is within `max_dist` chars of [start,end)."""
+def _name_distance(start: int, end: int, name_spans: list) -> int | None:
+    """Smallest char-gap from [start,end) to any person-name span, or None if
+    there are no name spans. 0 = adjacent/overlapping. Used both as a gate
+    (gap <= max_dist) and as a CONFIDENCE signal (closer name → higher trust)."""
+    best = None
     for ns, ne in name_spans:
-        # Gap between the two spans (0 if they overlap).
         if ne <= start:
             gap = start - ne
         elif ns >= end:
             gap = ns - end
         else:
             gap = 0
-        if gap <= max_dist:
-            return True
-    return False
+        if best is None or gap < best:
+            best = gap
+    return best
+
+
+def _name_within(start: int, end: int, name_spans: list, max_dist: int) -> bool:
+    """True if any person-name span is within `max_dist` chars of [start,end)."""
+    d = _name_distance(start, end, name_spans)
+    return d is not None and d <= max_dist
+
+
+def _birth_context_distance(text: str, start: int, end: int,
+                            window: int = 30) -> int | None:
+    """Char-gap from the span to the nearest birth/life-event keyword within
+    `window`, or None if none. 0 = keyword touches the span."""
+    lo = max(0, start - window)
+    hi = min(len(text), end + window)
+    seg = text[lo:hi]
+    nearest = None
+    for m in _BIRTH_CONTEXT_RE.finditer(seg):
+        ks, ke = lo + m.start(), lo + m.end()
+        if ke <= start:
+            gap = start - ke
+        elif ks >= end:
+            gap = ks - end
+        else:
+            gap = 0
+        if nearest is None or gap < nearest:
+            nearest = gap
+    return nearest
 
 
 def _date_has_birth_context(text: str, start: int, end: int,
                             window: int = 30) -> bool:
     """True if a birth/life-event keyword sits within `window` chars before/after
     the date span — the merged dob check (date + born/geboren/hire/…)."""
-    lo = max(0, start - window)
-    hi = min(len(text), end + window)
-    return bool(_BIRTH_CONTEXT_RE.search(text[lo:hi]))
+    return _birth_context_distance(text, start, end, window) is not None
+
+
+# ── Per-finding confidence (evidence-based, NOT a calibrated probability) ────
+# A transparent 0..1 score derived from the evidence each finding already
+# carries. Intended to drive a future threshold ladder (ignore < ask <
+# anonymise/fallback) — exposed now, thresholds added later once score
+# distributions are observed. Honest about its nature: this is rule/evidence
+# strength, not a statistical P(correct).
+#
+# Tiers (base by detection strength):
+#   checksum-validated structured PII (IBAN/CC/national-IDs w/ a validator) 0.98
+#   secrets w/ structural validator (key prefix / JWT shape)                0.95
+#   context-keyword-anchored (Steuer-ID, ipv4, *_ctx rules)                 0.85
+#   NER passing the precision gate (name+honorific, address+number, org)    0.78
+#   NER passing only the base shape gate                                    0.55
+#   loose/bare patterns (no checksum, no context anchor)                    0.50
+# Modifiers: +0.02 per extra distinct occurrence over the min (capped +0.06);
+#            secrets floored at 0.90 (a leaked key is high-stakes even if the
+#            pattern is loose — bias the score toward catching it).
+
+# Rules whose match is gated by a checksum / structural validator (the `ok` fn
+# in _pii_rules). Kept as an explicit set so the confidence model is auditable
+# and independent of regex-parsing the rules table.
+_PII_CHECKSUM_RULES = {
+    "iban", "credit_card", "br_cpf", "br_cnpj", "ca_sin", "in_aadhaar",
+    "us_ssn", "fr_insee", "es_dni_nie", "it_codicefiscale", "nl_bsn",
+    "pl_pesel", "be_national", "pt_nif", "se_personnummer", "dk_cpr",
+    "no_fnr", "ch_ahv", "cz_rc", "ro_cnp", "hu_taj", "gr_amka", "bg_egn",
+    "ie_pps", "at_svnr", "de_steuerid", "kr_rrn", "sg_nric", "tw_nid",
+    "jp_mynumber", "mx_curp", "ar_dni", "uk_nino", "uk_nhs",
+}
+# Context-keyword-anchored rules (the *_ctx family + keyword-gated ipv4/passport).
+_PII_CONTEXT_RULES = {
+    "svnr_ctx", "ssn_ctx_loose", "insurance_number_ctx", "id_card_ctx",
+    "drivers_license_ctx", "passport_ctx_loose", "health_insurance_ctx",
+    "bank_account_ctx", "tax_id_ctx", "ipv4", "ipv6", "passport", "dob",
+}
+
+
+def _pii_confidence(finding: dict, *, gated: bool, occurrences: int,
+                    min_occ: int, ctx_dist: int | None = None) -> float:
+    """Evidence-based 0..1 confidence. The rule-class base is a PRIOR; the
+    dynamic evidence the system actually observed — how many times the value
+    recurred (corroboration) and how CLOSE the disambiguating context sits —
+    moves it substantially (±~0.20). So a 1× bare name with a far anchor can
+    fall to ~0.45 while an 8× hit or a touching keyword rises toward ~0.95.
+
+    Deterministic + explainable: checksum/secret rules are near-fixed (math /
+    high-stakes), NER + context rules are where the dynamic signals bite."""
+    rid = finding.get("rule_id", "")
+    cat = finding.get("category", "")
+    source = finding.get("source", "")
+
+    # 1) Rule-class prior.
+    if cat == "secrets":
+        base = 0.95
+    elif rid in _PII_CHECKSUM_RULES:
+        base = 0.98
+    elif rid == "email":
+        base = 0.92
+    elif rid in _PII_CONTEXT_RULES:
+        base = 0.82
+    elif source == "ner":
+        base = 0.72 if gated else 0.55
+    elif rid in ("phone", "credit_card"):
+        base = 0.68
+    elif rid == "date":
+        base = 0.65
+    elif rid == "bare_identifier":
+        base = 0.45
+    else:
+        base = 0.55
+
+    # Checksum + secret detections are deterministic by construction — the
+    # dynamic signals shouldn't drag them around. Only corroborate upward.
+    rigid = (cat == "secrets") or (rid in _PII_CHECKSUM_RULES) or (rid == "email")
+
+    # 2) Corroboration from the per-file occurrence counter (user's point):
+    #    more distinct hits ⇒ more trust. Saturating curve, up to +0.15.
+    extra = max(0, occurrences - max(min_occ, 1))
+    occ_boost = 0.15 * (1.0 - 1.0 / (1.0 + extra)) if extra else 0.0
+
+    # 3) Context distance (user's point): for findings whose correctness hinges
+    #    on a nearby anchor (NER date/address w/ a recorded gap), a CLOSE anchor
+    #    raises confidence, a FAR one lowers it. Linear over [0, proximity].
+    dist_adj = 0.0
+    if ctx_dist is not None and not rigid:
+        prox = float(_DATE_ADDRESS_NAME_PROXIMITY)
+        closeness = max(0.0, 1.0 - min(ctx_dist, prox) / prox)  # 1=touching,0=far
+        dist_adj = (closeness - 0.5) * 0.30                     # ±0.15
+
+    score = base + occ_boost + (0.0 if rigid else dist_adj)
+    if cat == "secrets":
+        score = max(score, 0.90)   # high-stakes floor — bias toward catching
+    return round(max(0.05, min(score, 0.99)), 2)
 
 
 def _pii_scan_text(text: str, max_findings: int = 100,
@@ -1202,7 +1426,9 @@ def _pii_scan_text(text: str, max_findings: int = 100,
     name_spans: list[tuple[int, int]] = []
     try:
         if is_available("de"):
-            ner_findings = scan_text(text, lang="de", max_findings=max_findings)
+            ner_findings = scan_text(
+                text, lang="de", max_findings=max_findings,
+                name_precision=bool((cfg or {}).get("name_precision_gate")))
             for f in ner_findings:
                 if f.get("rule_id") == "name":
                     name_spans.append((f["start"], f["end"]))
@@ -1217,7 +1443,11 @@ def _pii_scan_text(text: str, max_findings: int = 100,
                     continue
                 spans.append((s, e))
                 f["action"] = action
-                f["_value"] = text[s:e].strip().lower()
+                # Collapse internal whitespace: PDF line-breaks inside a span
+                # ("Alexander\n\nKlinsky") otherwise produce a value that never
+                # matches the same name written inline, inflating distinct-value
+                # counts and breaking de-anonymisation token stability.
+                f["_value"] = _re.sub(r"\s+", " ", text[s:e]).strip().lower()
                 findings.append(f)
     except Exception as e:
         # NER must never break the regex pipeline.
@@ -1234,15 +1464,23 @@ def _pii_scan_text(text: str, max_findings: int = 100,
     for f in findings:
         rid = f.get("rule_id")
         if rid == "address":
-            # Only a person-linked address is personal data.
-            if not _name_within(f["start"], f["end"], name_spans, _prox):
+            # Only a person-linked address is personal data. Record the gap to
+            # the nearest person name as a confidence signal (closer = stronger).
+            d = _name_distance(f["start"], f["end"], name_spans)
+            if d is None or d > _prox:
                 continue
+            f["_ctx_dist"] = d
         elif rid == "date":
             # A bare date is not PII; keep only person- or birth-linked dates.
-            near_name = _name_within(f["start"], f["end"], name_spans, _prox)
-            near_birth = _date_has_birth_context(text, f["start"], f["end"])
-            if not (near_name or near_birth):
+            dn = _name_distance(f["start"], f["end"], name_spans)
+            db = _birth_context_distance(text, f["start"], f["end"])
+            near_name = dn is not None and dn <= _prox
+            if not (near_name or db is not None):
                 continue
+            # Confidence distance = nearest of the two anchors that fired.
+            cands = [x for x in (dn if near_name else None, db) if x is not None]
+            if cands:
+                f["_ctx_dist"] = min(cands)
         kept.append(f)
     findings = kept
 
@@ -1261,7 +1499,23 @@ def _pii_scan_text(text: str, max_findings: int = 100,
         if dropped_rules:
             findings = [f for f in findings if f["rule_id"] not in dropped_rules]
 
-    # Strip the internal _value key before returning (audit/UI never see it).
+    # ── Per-finding confidence (evidence-based) ──────────────────────────────
+    # Count distinct values per rule (corroboration signal) and whether the NER
+    # precision gate was active (gated NER findings are higher-trust).
+    occ_by_rule: dict[str, int] = {}
+    for f in findings:
+        occ_by_rule[f["rule_id"]] = occ_by_rule.get(f["rule_id"], 0) + 1
+    ner_gated = bool((cfg or {}).get("name_precision_gate"))
+    for f in findings:
+        rid = f["rule_id"]
+        gated = ner_gated and f.get("source") == "ner"
+        f["confidence"] = _pii_confidence(
+            f, gated=gated, occurrences=occ_by_rule.get(rid, 1),
+            min_occ=_pii_min_occurrences(rid, cfg),
+            ctx_dist=f.get("_ctx_dist"))
+
+    # Strip internal keys before returning (audit/UI never see them).
     for f in findings:
         f.pop("_value", None)
+        f.pop("_ctx_dist", None)
     return findings

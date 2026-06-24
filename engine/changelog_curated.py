@@ -28,7 +28,24 @@ Reihenfolge: NEUESTE zuerst (so wird es auch angezeigt).
 from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
-    # ── 9.19x — Dokument-Erzeugung, KI-Projektanweisungen, Aufräumen ──
+    # ── 9.19x — Dokument-Erzeugung, KI-Projektanweisungen, PII-Präzision ──
+    {
+        "version": "9.193.0",
+        "date": "2026-06-24",
+        "title": "Treffsicherere Erkennung personenbezogener Daten",
+        "body": "Die Datenschutz-Prüfung erkennt Personennamen, Organisationen und Anschriften jetzt "
+                "deutlich treffsicherer: Statt jedes großgeschriebene Wort zu markieren, wird ein Name nur "
+                "noch dann als personenbezogen gewertet, wenn echte Personen-Hinweise vorliegen (z. B. eine "
+                "Anrede wie „Herr/Frau/Dr.“ oder ein klarer Vor- und Nachname). Häufige Fehlalarme auf "
+                "deutschen Fachbegriffen („Datenschutzvorfall“, „Benutzerkennwörter“) und auf internen "
+                "Abkürzungen („ARL“, „DSG“, „DSGVO“) entfallen, während echte Produkt- und Systemnamen "
+                "weiterhin erkannt werden. Auch Anschriften zählen nur noch dann, wenn sie konkret "
+                "identifizieren (mit Hausnummer oder Postleitzahl) — eine bloße Stadt oder ein Land allein "
+                "löst keinen Treffer mehr aus. Die Trefferquote auf echten personenbezogenen Daten bleibt "
+                "dabei erhalten.",
+        "audience": "admin",
+        "versions": ["9.193.0", "9.193.1"],
+    },
     {
         "version": "9.190.0",
         "date": "2026-06-23",
