@@ -39,7 +39,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "Datenschutz-Details ein- oder ausgeblendet sind, und stellt diese Ansicht beim "
                 "Wiederöffnen wieder her.",
         "audience": "user",
-        "versions": ["9.199.0"],
+        "versions": ["9.199.0", "9.199.1"],
     },
     {
         "version": "9.198.0",

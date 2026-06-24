@@ -4363,6 +4363,60 @@ class ChatHandlerMixin:
         else:
             session._gdpr_local_swap = ""
 
+        # Persist CLEARTEXT-accepted PII server-side. When the user accepted the
+        # findings in the clear — "continue" (send via cloud as-is) or
+        # "local_model" (send to a local model unredacted) — the PII goes out
+        # un-anonymised, and the chat view marks those values RED. That mark is
+        # read back from the pii_decisions table, so without a row the accepted
+        # value never gets coloured on reload (the reported bug: the client's
+        # modal only persisted "ratable" DOM rows, so an only-"seen" finding —
+        # or a stale-JS client — wrote nothing). We re-scan the outgoing text
+        # here and persist one row per finding, INDEPENDENT of the client. This
+        # is the authoritative seam — the same place the anonymise path mints
+        # its pseudonym map. Best-effort: a scan/record failure must never block
+        # the send.
+        if gdpr_action in ("continue", "local_model") and isinstance(message, str) and message.strip():
+            try:
+                import re as _re_pii
+                _cfg = engine._get_gdpr_scanner_config()
+                if _cfg.get("enabled", True):
+                    _findings = engine._pii_scan_text(message, cfg=_cfg, max_findings=100)
+                    _seen_vals = set()
+                    _decisions = []
+                    for _f in (_findings or []):
+                        _s, _e = _f.get("start", 0), _f.get("end", 0)
+                        _val = message[_s:_e] if 0 <= _s < _e <= len(message) else ""
+                        _val = _re_pii.sub(r"\s+", " ", _val).strip()
+                        if not _val:
+                            continue
+                        _key = (_f.get("rule_id") or "", _val)
+                        if _key in _seen_vals:
+                            continue
+                        _seen_vals.add(_key)
+                        _decisions.append({
+                            "rule_id": _f.get("rule_id") or "",
+                            "value": _val,
+                            "confidence": _f.get("confidence") or 0,
+                            "band": engine._pii_band(_f.get("confidence") or 0.5, _cfg),
+                            "disposition": engine._pii_resolve_disposition(_f, _cfg),
+                            "false_positive": False,
+                            "source": "message",
+                        })
+                    if _decisions:
+                        _uid = ""
+                        try:
+                            _u = getattr(self, "_auth_user", None)
+                            _uid = (_u.get("user_id") or "") if isinstance(_u, dict) else ""
+                        except Exception:
+                            _uid = ""
+                        # turn_action mirrors the client's verdict vocabulary so
+                        # buildGdprCleartextSpans treats it as accepted-cleartext:
+                        # 'send' for continue, 'local' for local_model.
+                        _ta = "send" if gdpr_action == "continue" else "local"
+                        ChatDB.record_pii_decisions(sid, _uid, "", _ta, _decisions)
+            except Exception as _e:
+                print(f"[gdpr] cleartext decision persist failed: {_e}", flush=True)
+
         # gdpr_action="anonymise" runs INSIDE the worker thread (below) so the
         # SSE response is already open + the client is listening when we emit
         # `synthetic_tool_use` / `gdpr_recovery_required` events. Doing the
