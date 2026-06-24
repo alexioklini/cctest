@@ -112,6 +112,9 @@ extra_member_user_ids TEXT (JSON list),
 excluded_user_ids TEXT (JSON list),
 last_system_prompt TEXT, gdpr_action_pref TEXT,
 allow_further_web INTEGER (0/1, sticky; lifts the Websuche tool lockout),
+gdpr_feedback_ask INTEGER (0/1, sticky post-turn GDPR feedback opt-in),
+gdpr_details_visible INTEGER (0/1, per-chat "Datenschutz-Details sichtbar"
+  shield toggle — GDPR mark overlays + detail block; restored on reopen),
 web_basket TEXT (JSON list of curated Websuche sources
   {url,title,snippet,query,enabled} — PER SESSION, never shared across
   chats; '' = empty),

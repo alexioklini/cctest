@@ -494,6 +494,15 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN gdpr_feedback_ask INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+            # Per-session "Datenschutz-Details sichtbar" toggle (the shield
+            # detail switch in the composer): when 1, the chat view shows the
+            # anonymisation/cleartext <mark> overlays + the expandable GDPR
+            # detail block. Persisted per chat so reopening a chat restores the
+            # state the user left it in (was a single global before). Default 0.
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN gdpr_details_visible INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             # Per-session Websuche basket: the user-curated set of web sources
             # (JSON list of {url,title,snippet,query,enabled}). Stored per
             # session so it never leaks between chats — a fresh chat starts
@@ -2329,6 +2338,16 @@ class ChatDB:
         value: truthy -> 1 (show the post-turn feedback modal), falsy -> 0."""
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET gdpr_feedback_ask = ? WHERE id = ?",
+                        (1 if value else 0, session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_gdpr_details_visible(session_id, value):
+        """Per-session 'Datenschutz-Details sichtbar' toggle (shield detail
+        switch). value: truthy -> 1 (show GDPR marks + detail block), falsy -> 0."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET gdpr_details_visible = ? WHERE id = ?",
                         (1 if value else 0, session_id))
             conn.commit()
 

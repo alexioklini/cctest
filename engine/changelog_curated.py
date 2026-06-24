@@ -30,6 +30,18 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.19x — Dokument-Erzeugung, KI-Projektanweisungen, PII-Präzision ──
     {
+        "version": "9.199.0",
+        "date": "2026-06-24",
+        "title": "Datenschutz-Markierung zuverlässiger, Ansicht pro Chat gemerkt",
+        "body": "Personenbezogene Daten, die Sie bewusst im Klartext gesendet haben (z. B. „Trotzdem "
+                "senden“ über ein Cloud-Modell), werden jetzt zuverlässig im Chat farblich markiert — "
+                "auch nach dem Neuladen der Seite. Zusätzlich merkt sich jeder Chat einzeln, ob die "
+                "Datenschutz-Details ein- oder ausgeblendet sind, und stellt diese Ansicht beim "
+                "Wiederöffnen wieder her.",
+        "audience": "user",
+        "versions": ["9.199.0"],
+    },
+    {
         "version": "9.198.0",
         "date": "2026-06-24",
         "title": "Datenschutz im Chat-Verlauf sichtbar",

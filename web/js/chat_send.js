@@ -297,7 +297,41 @@ async function sendMessage() {
             chat._piiDecisions[(d.rule_id || '') + '|' + (d.value || '')] =
               Object.assign({ turn_action: verdict }, d);
           }
-          API.recordPiiDecisions(chat.sessionId, verdict, decisions).catch(() => {});
+          // Persist server-side so the cleartext/anonymised marks survive a
+          // reload (the chat marks read these rows back via getPiiDecisions).
+          // Do NOT swallow the error silently — a dropped write means an
+          // ACCEPTED-in-clear PII value (e.g. the user chose "Trotzdem senden"
+          // / continue with the cloud model) never gets coloured on reload,
+          // which is exactly the bug reported for the email case. Surface it.
+          API.recordPiiDecisions(chat.sessionId, verdict, decisions)
+            .catch(e => console.error('[gdpr] recordPiiDecisions failed — '
+              + 'accepted PII will not be marked on reload:', e?.message || e));
+        } else if (chat.sessionId && (verdict === 'send' || verdict === 'local')) {
+          // No ratable rows were collected, yet the user actively ACCEPTED PII
+          // in the clear (continue-with-cloud or local-model). This happens when
+          // the dialog showed only already-"seen" rows (data-pii-seen="1"),
+          // which the cleanup() collector skips. Without a persisted row the
+          // accepted value can't be coloured on reload. Re-derive the decisions
+          // straight from the scan findings (every value the dialog surfaced)
+          // and persist them so the cleartext mark works in this case too.
+          const fromScan = (scan.findings || [])
+            .filter(f => f && f.value)
+            .map(f => ({
+              rule_id: f.rule_id || '', value: f.value,
+              confidence: f.confidence || 0, band: f.band || '',
+              disposition: f.disposition || '', source: f._source || 'message',
+              false_positive: !!f._priorFp,
+            }));
+          if (fromScan.length) {
+            chat._piiDecisions = chat._piiDecisions || {};
+            for (const d of fromScan) {
+              chat._piiDecisions[(d.rule_id || '') + '|' + (d.value || '')] =
+                Object.assign({ turn_action: verdict }, d);
+            }
+            API.recordPiiDecisions(chat.sessionId, verdict, fromScan)
+              .catch(e => console.error('[gdpr] recordPiiDecisions (seen-fallback) '
+                + 'failed:', e?.message || e));
+          }
         }
         // "Frag mich nachher wies gelaufen ist" — opt into the post-turn
         // feedback modal for this session. Persist + cache locally so the

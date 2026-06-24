@@ -272,6 +272,17 @@ class API {
     });
   }
 
+  // Per-session "Datenschutz-Details sichtbar" toggle (shield detail switch).
+  // Persisted per chat so the mark overlays + detail block visibility restore
+  // on reload of the chat.
+  static updateGdprDetailsVisible(sessionId, value) {
+    return this.post('/v1/sessions/manage', {
+      action: 'gdpr_details_visible',
+      session_id: sessionId,
+      value: !!value,
+    });
+  }
+
   // Projects
   static getProjects(agent) { return this.get(`/v1/agents/${agent}/projects`); }
   static createProject(agent, body) {

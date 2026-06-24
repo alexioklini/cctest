@@ -1084,10 +1084,7 @@ function _piiHistoryShowPopover(anchorBtn, payload) {
     '<div style="display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:4px;color:' + headerColor + '">' +
       shieldSvg + esc(headerText) +
     '</div>' +
-    sections.join('') +
-    '<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border-100);color:var(--text-400);font-size:11px">' +
-      'Die Prüfung erfolgt lokal im Browser.' +
-    '</div>';
+    sections.join('');
   document.body.appendChild(pop);
   _piiHistoryPopover = pop;
 }

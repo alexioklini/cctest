@@ -361,6 +361,11 @@ class Session:
         # ticks "Frag mich nachher" in the pre-send modal; cleared when they
         # untick "Frag mich weiter" in the feedback modal. Persists in sessions DB.
         self.gdpr_feedback_ask: bool = False
+        # Per-session "Datenschutz-Details sichtbar" toggle (shield detail
+        # switch in the composer): when True, the chat view shows the GDPR
+        # mark overlays + the expandable detail block. Persisted per chat so
+        # reopening restores the state the user left it in. Persists in DB.
+        self.gdpr_details_visible: bool = False
         # Per-session Websuche basket (curated web sources). JSON string of a
         # list of {url,title,snippet,query,enabled}. Persists in sessions DB so
         # it never bleeds across chats. Empty string = no basket.
@@ -451,6 +456,7 @@ class Session:
                                                 else bool(_rmo))
                 self.allow_further_web = bool(info.get("allow_further_web", 0))
                 self.gdpr_feedback_ask = bool(info.get("gdpr_feedback_ask", 0))
+                self.gdpr_details_visible = bool(info.get("gdpr_details_visible", 0))
                 self.web_basket = info.get("web_basket", "") or ""
                 _pref = info.get("gdpr_action_pref", "") or ""
                 self.gdpr_action_pref = (_pref if _pref in

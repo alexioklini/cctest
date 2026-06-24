@@ -179,6 +179,9 @@ streaming call, per-USER history, fixed read-only tool set. See
    per-session escape hatch that lifts the Websuche tool lockout.
    `caveman_mode {mode:0..3}` + `thinking_level {level:"none"|"low"|"medium"|"high"}`
    persist the per-session composer toggles (restored on reload).
+   `gdpr_details_visible {value}` persists the per-chat "Datenschutz-Details
+   sichtbar" shield toggle (GDPR mark overlays + detail block), restored on
+   reopen; `gdpr_feedback_ask {value}` the sticky post-turn GDPR feedback opt-in.
 
 ## Agents
 

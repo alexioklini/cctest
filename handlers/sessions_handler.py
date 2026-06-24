@@ -639,6 +639,7 @@ class SessionsHandlerMixin:
             resp["research_mode_override"] = (None if _rmo is None else bool(_rmo))
             resp["allow_further_web"] = bool(getattr(session, "allow_further_web", False))
             resp["gdpr_feedback_ask"] = bool(getattr(session, "gdpr_feedback_ask", False))
+            resp["gdpr_details_visible"] = bool(getattr(session, "gdpr_details_visible", False))
             resp["web_basket"] = getattr(session, "web_basket", "") or ""
             resp["gdpr_action_pref"] = getattr(session, "gdpr_action_pref", "") or ""
             resp["has_gdpr_mapping"] = bool(
@@ -665,6 +666,7 @@ class SessionsHandlerMixin:
                                                    else bool(_rmo_db))
                 resp["allow_further_web"] = bool(info.get("allow_further_web", 0))
                 resp["gdpr_feedback_ask"] = bool(info.get("gdpr_feedback_ask", 0))
+                resp["gdpr_details_visible"] = bool(info.get("gdpr_details_visible", 0))
                 resp["web_basket"] = info.get("web_basket", "") or ""
                 _pref_db = info.get("gdpr_action_pref", "") or ""
                 resp["gdpr_action_pref"] = (_pref_db if _pref_db in
@@ -1800,6 +1802,16 @@ class SessionsHandlerMixin:
             if s:
                 s.gdpr_feedback_ask = ask
             self._send_json({"status": "ok", "gdpr_feedback_ask": ask, "session_id": sid})
+        elif action == "gdpr_details_visible":
+            # Per-session "Datenschutz-Details sichtbar" toggle (shield detail
+            # switch in the composer). Persisted per chat so reopening the chat
+            # restores the GDPR mark overlays + detail block visibility.
+            vis = bool(body.get("value"))
+            ChatDB.update_session_gdpr_details_visible(sid, vis)
+            s = sessions.peek(sid)
+            if s:
+                s.gdpr_details_visible = vis
+            self._send_json({"status": "ok", "gdpr_details_visible": vis, "session_id": sid})
         elif action == "web_basket":
             # Persist the per-session Websuche basket. value is the basket list
             # (array of {url,title,snippet,query,enabled}); we store it as JSON.

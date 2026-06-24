@@ -191,6 +191,16 @@ async function openSession(sessionId, agentId) {
           out[(d.rule_id || '') + '|' + (d.value || '')] = d;
         }
         chat._piiDecisions = out;
+        // Decisions load ASYNC after the chat first renders. The turn-header
+        // cleartext PII marks (buildGdprCleartextSpans) read _piiDecisions, so
+        // the first render — which ran with an empty map — shows the accepted
+        // email/phone UNMARKED. Re-render once the map arrives so the marks
+        // appear on chat open / page reload (not only after a manual toggle).
+        // Guard: only if this is still the active chat.
+        if (state.activeChat === chat && Object.keys(out).length &&
+            typeof renderMessages === 'function') {
+          renderMessages();
+        }
       }).catch(() => {});
     }
     // Per-session Websuche basket — load THIS session's own curated sources.
@@ -200,6 +210,19 @@ async function openSession(sessionId, agentId) {
     // ask each time. Other allowed values map 1:1 to body.gdpr_action.
     chat.gdprActionPref = ['anonymise', 'local_model', 'continue']
       .includes(data.gdpr_action_pref) ? data.gdpr_action_pref : '';
+    // Per-chat "Datenschutz-Details sichtbar" toggle. Persisted per session so
+    // reopening this chat restores the GDPR mark overlays + detail block in the
+    // state the user left them. Drives the global state.showGdprDetails (read
+    // by the render path) for the duration this chat is active; the toggle
+    // writes it back to the server. Fall back to the localStorage default for
+    // chats predating the per-chat column (data.gdpr_details_visible absent).
+    chat.gdprDetailsVisible = (data.gdpr_details_visible != null)
+      ? !!data.gdpr_details_visible
+      : state.showGdprDetails;
+    state.showGdprDetails = chat.gdprDetailsVisible;
+    // Repaint the composer shield-detail button to match (the button DOM is the
+    // source of truth at send/render time — see composer-controls feedback).
+    if (typeof refreshGdprDetailsButton === 'function') refreshGdprDetailsButton();
     // True when this session has any persisted pseudonym map. Used by
     // sendMessage to skip the modal on follow-up turns of an
     // already-anonymising session — once consent was given, every send

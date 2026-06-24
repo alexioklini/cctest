@@ -908,6 +908,7 @@
     "refineSchedPrompt": "writable",
     "refreshBackgroundTasksPill": "writable",
     "refreshCodeWorkingTree": "writable",
+    "refreshGdprDetailsButton": "writable",
     "refreshGdprNerPill": "writable",
     "refreshMemorizedTurns": "writable",
     "refreshProjectSyncStatus": "writable",

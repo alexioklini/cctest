@@ -237,16 +237,33 @@ function _applyRefineTierComposer() {
 // only the header counts remain. When on, restored spans get tooltips and
 // the disclosure expands as designed. localStorage-scoped, with an immediate
 // re-render of the currently visible messages.
-function toggleGdprDetails() {
-  state.showGdprDetails = !state.showGdprDetails;
-  localStorage.setItem('showGdprDetails', state.showGdprDetails);
-
+// Paint the composer "Datenschutz-Details" shield button to match the current
+// state.showGdprDetails. Shared by the toggle and by openSession (the button
+// DOM is read at render/send time, so it must be repainted whenever the active
+// chat's persisted value is loaded — see composer-controls feedback).
+function refreshGdprDetailsButton() {
   for (const btn of _composerToggleEls('btn-toggle-gdpr-details')) {
     btn.style.color = state.showGdprDetails ? 'var(--warning, #d97706)' : '';
     btn.title = state.showGdprDetails
       ? 'Datenschutz-Details: sichtbar (Markierungen + aufklappbarer Block)'
       : 'Datenschutz-Details: ausgeblendet (nur Statistik im Block)';
   }
+}
+
+function toggleGdprDetails() {
+  state.showGdprDetails = !state.showGdprDetails;
+  // localStorage holds the DEFAULT for new/unloaded chats; the active chat's
+  // value is persisted PER SESSION below so reopening the chat restores it.
+  localStorage.setItem('showGdprDetails', state.showGdprDetails);
+  const chat = state.activeChat;
+  if (chat) {
+    chat.gdprDetailsVisible = state.showGdprDetails;
+    if (chat.sessionId) {
+      API.updateGdprDetailsVisible(chat.sessionId, state.showGdprDetails).catch(() => {});
+    }
+  }
+
+  refreshGdprDetailsButton();
 
   renderMessages();
   showToast(state.showGdprDetails
