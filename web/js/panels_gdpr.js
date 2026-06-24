@@ -1,5 +1,89 @@
 // panels_gdpr.js — GDPR/classification modals + PII badge UI. Split from panels.js (Tier F Phase 3). Global <script>, no modules.
 
+/* ─── Cancellable server PII scan (9.200.0) ─────────────────────
+ * Detection is server-only now, so the pre-send typed-text scan is a network
+ * round-trip (regex + spaCy NER). Show a small progress overlay with a Cancel
+ * button while it runs so a slow scan never freezes the composer silently.
+ *
+ * Resolves with the scan JSON, OR rejects with an Error tagged `_cancelled`
+ * when the user cancels (the send flow treats that as "abort send"). Network
+ * errors reject normally (the caller fails open). The overlay is always torn
+ * down. A short delay before showing the overlay avoids a flash on fast scans. */
+function runCancellableGdprScan(text) {
+  return new Promise((resolve, reject) => {
+    const ctrl = new AbortController();
+    let cancelled = false;
+    let overlay = null;
+    // Only show the overlay if the scan takes longer than ~250ms — most scans
+    // are instant and a flashing modal would be noise.
+    const showTimer = setTimeout(() => {
+      overlay = document.createElement('div');
+      overlay.className = 'gdpr-scan-overlay';
+      overlay.innerHTML =
+        '<div class="gdpr-scan-box" role="dialog" aria-live="polite">' +
+          '<div class="gdpr-scan-spinner" aria-hidden="true"></div>' +
+          '<div class="gdpr-scan-text">Datenschutz-Prüfung läuft …</div>' +
+          '<button type="button" class="gdpr-scan-cancel">Abbrechen</button>' +
+        '</div>';
+      _injectGdprScanStyles();
+      overlay.querySelector('.gdpr-scan-cancel').onclick = () => {
+        cancelled = true;
+        ctrl.abort();
+      };
+      // Esc cancels too.
+      overlay._onKey = (e) => { if (e.key === 'Escape') { cancelled = true; ctrl.abort(); } };
+      document.addEventListener('keydown', overlay._onKey);
+      document.body.appendChild(overlay);
+    }, 250);
+
+    const teardown = () => {
+      clearTimeout(showTimer);
+      if (overlay) {
+        if (overlay._onKey) document.removeEventListener('keydown', overlay._onKey);
+        overlay.remove();
+        overlay = null;
+      }
+    };
+
+    API.scanText(text, 'message', { full: true, signal: ctrl.signal })
+      .then(res => { teardown(); resolve(res); })
+      .catch(err => {
+        teardown();
+        if (cancelled || (err && err.name === 'AbortError')) {
+          const e = new Error('PII-Prüfung abgebrochen');
+          e._cancelled = true;
+          reject(e);
+        } else {
+          reject(err);
+        }
+      });
+  });
+}
+
+function _injectGdprScanStyles() {
+  if (document.getElementById('gdpr-scan-styles')) return;
+  const st = document.createElement('style');
+  st.id = 'gdpr-scan-styles';
+  st.textContent = `
+    .gdpr-scan-overlay { position:fixed; inset:0; z-index:10001;
+      background:rgba(0,0,0,.32); display:flex; align-items:center;
+      justify-content:center; }
+    .gdpr-scan-box { background:var(--bg-100,#fff); border:1px solid var(--border-200,#ddd);
+      border-radius:12px; padding:22px 26px; display:flex; flex-direction:column;
+      align-items:center; gap:14px; min-width:240px;
+      box-shadow:0 8px 32px rgba(0,0,0,.2); }
+    .gdpr-scan-spinner { width:28px; height:28px; border-radius:50%;
+      border:3px solid var(--border-200,#ddd); border-top-color:var(--accent,#3b82f6);
+      animation:gdpr-scan-spin .8s linear infinite; }
+    @keyframes gdpr-scan-spin { to { transform:rotate(360deg); } }
+    .gdpr-scan-text { font-size:13px; color:var(--text-200,#333); }
+    .gdpr-scan-cancel { font-size:12px; padding:6px 16px; border-radius:6px;
+      border:1px solid var(--border-300,#ccc); background:var(--bg-200,#f5f5f5);
+      color:var(--text-100,#111); cursor:pointer; }
+    .gdpr-scan-cancel:hover { background:var(--bg-300,#eaeaea); }`;
+  document.head.appendChild(st);
+}
+
 /* ─── GDPR / PII detection modal ───────────────────────────── */
 // Auto-displayed during an interactive chat when the PII scanner flags personal
 // data in the outgoing message or its text attachments. Lists exactly which
@@ -881,19 +965,21 @@ function updatePIIBadge() {
     _updatePIIComposerBadge(null, null, null, false);
     return;
   }
-  const input = _composerInputEl();
-  const text = input?.value || '';
-  const draftScan = PIIScanner.scanPayload(text, state._pendingFiles);
+  // 9.200.0: detection is SERVER-ONLY. There is no as-you-type DRAFT scan any
+  // more (the browser regex scanner was removed) — surfacing draft PII would
+  // mean a request per keystroke. The composer badge now reflects only the
+  // chat HISTORY scan (already server-driven, async). The draft's PII is
+  // surfaced by the pre-send dialog instead (which runs the server scan with a
+  // cancellable progress overlay). No draft attachment PII pre-badge either.
   const chat = state.activeChat;
   const historyHas = !!(chat && piiHistoryHasFindings(chat));
-  const draftHas = draftScan.findings.length > 0;
 
   // 9.196.0: the automatic PII-driven swap-to-local was REMOVED. PII findings
   // no longer change the model behind the user's back — the pre-send dialog +
   // server-side confidence bands handle enforcement. The badge below still
-  // surfaces that PII was detected (informational).
+  // surfaces that PII is present in the conversation (informational).
 
-  _updatePIIComposerBadge(chat, draftScan, historyHas, draftHas);
+  _updatePIIComposerBadge(chat, null, historyHas, false);
 }
 
 // Single composer-toolbar icon for draft + history PII. Severity:
@@ -1029,8 +1115,7 @@ function _piiHistoryShowPopover(anchorBtn, payload) {
     if (decided.length > 0) {
       // Detail per reviewed finding (like the decision modal): label · value
       // (· pseudonym when anonymised) · confidence · outcome.
-      const ruleLbl = rid => (typeof PIIScanner !== 'undefined' && PIIScanner.categoryLabels &&
-        PIIScanner.categoryLabels[PIIScanner.ruleCategories?.[rid]]) || rid || '';
+      const ruleLbl = rid => gdprCategoryLabel(gdprRuleCategory(rid)) || rid || '';
       const fakeMap = (typeof _gdprOriginalToFakeMap === 'function')
         ? _gdprOriginalToFakeMap(historyChat) : {};
       const outcome = d => {

@@ -1423,27 +1423,22 @@ async function _genTab_gdpr(C) {
         .join('');
       const hasLocals = localOpts.length > 0;
 
-      // Build category list with rule memberships
+      // Build category list with rule memberships. The PII catalog now comes
+      // from the server (state.gdprCatalog) — the browser-side scanner was
+      // removed in 9.200.0, so there's no PIIScanner object to read here.
+      const catalog = state.gdprCatalog || {};
+      const ruleCategories = catalog.ruleCategories || {};
+      const categoryLabels = catalog.categoryLabels || {};
+      const defaultCategoryActions = catalog.defaultCategoryActions || {};
       const catMembers = {};
-      for (const [rid, cat] of Object.entries(PIIScanner.ruleCategories)) {
+      for (const [rid, cat] of Object.entries(ruleCategories)) {
         (catMembers[cat] = catMembers[cat] || []).push(rid);
       }
       // Sort rules within each category alphabetically for stable layout
       for (const cat of Object.keys(catMembers)) catMembers[cat].sort();
 
-      // Labels for rule_ids that have no client-side detector (server-only,
-      // e.g. spaCy NER). Listed explicitly so the admin UI is readable
-      // instead of just showing the raw rid.
-      const SERVER_ONLY_RULE_LABELS = {
-        name: 'Name (spaCy NER, German)',
-        address: 'Adresse / Ort (spaCy NER, German)',
-        organisation: 'Organisation (spaCy NER, German)',
-      };
-      const ruleLabel = (rid) => {
-        const r = PIIScanner.rules.find(x => x.id === rid);
-        if (r) return r.label;
-        return SERVER_ONLY_RULE_LABELS[rid] || rid;
-      };
+      // Human label per rule_id (server catalog; includes server-only NER rules).
+      const ruleLabel = (rid) => gdprRuleLabel(rid);
 
       const ACT_DESC = {
         ignore: 'Diese Kategorie nicht markieren.',
@@ -1468,9 +1463,9 @@ async function _genTab_gdpr(C) {
       const policyCountPoints = gs.count_points || {};
 
       // Build per-category rule expander
-      const catRows = Object.keys(PIIScanner.categoryLabels).map(cat => {
+      const catRows = Object.keys(categoryLabels).map(cat => {
         const catCfg = policyCats[cat] || {};
-        const catAction = catCfg.action || PIIScanner.defaultCategoryActions[cat] || 'warn';
+        const catAction = catCfg.action || defaultCategoryActions[cat] || 'warn';
         const rules = catMembers[cat] || [];
         const overrideCount = rules.filter(r => policyOverrides[r]).length;
         const ruleRows = rules.map(rid => {
@@ -1496,7 +1491,7 @@ async function _genTab_gdpr(C) {
         return `<div style="border:1px solid var(--border-100);border-radius:8px;margin-bottom:6px;background:var(--bg-100)">
           <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer" onclick="const n=this.nextElementSibling;n.style.display=n.style.display==='none'?'block':'none';this.querySelector('.gdpr-cat-caret').textContent=n.style.display==='none'?'&#9656;':'&#9662;'">
             <span class="gdpr-cat-caret" style="color:var(--text-400);font-size:11px">&#9656;</span>
-            <span style="font-size:13px;font-weight:500;color:var(--text-100);flex:1">${esc(PIIScanner.categoryLabels[cat])}</span>
+            <span style="font-size:13px;font-weight:500;color:var(--text-100);flex:1">${esc(categoryLabels[cat])}</span>
             <span style="font-size:10px;color:var(--text-400)">${rules.length} Regel${rules.length===1?'':'n'}${overrideCount?` &middot; <b style="color:#b45309">${overrideCount} Überschreibung${overrideCount===1?'':'en'}</b>`:''}</span>
             <span onclick="event.stopPropagation()">${actionSelect(cat, catAction)}</span>
           </div>

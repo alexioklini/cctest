@@ -194,49 +194,66 @@ async function sendMessage() {
     // apply the prior decision (FP values stay clear, the rest follows the last
     // chosen action). "Seen" = the (rule|value) was shown before (chat._piiDecisions).
     {
-      const scan = PIIScanner.scanPayload(text, state._pendingFiles);
-      // Server-side NER coverage: the browser scanner is regex-only, so
-      // names / addresses / organisations that only spaCy can see
-      // (German PER/LOC/ORG) never trigger the modal. Hit the
-      // server-side scan endpoint and fold its findings into the same
-      // bySource map so the modal lists them alongside regex findings.
-      // Fail-open: if the request errors or the server has the scanner
-      // disabled, we keep the client findings as-is (worst case = same
-      // gap we had before this fix). Skip the call entirely when the
-      // typed text is empty (attachment-only sends).
-      if (text && text.trim()) {
+      // SERVER-ONLY scan (9.200.0 — the browser-side detector was removed).
+      // Detection runs entirely on the server: the typed text via the
+      // scan-text endpoint (regex + spaCy NER + confidence/band/disposition),
+      // and attachments via their upload-time /v1/attachments/scan result
+      // (f.scan.findings_full). We just ASSEMBLE those into the {findings,
+      // bySource, worstAction, worstDisposition} shape the modal expects.
+      //
+      // The typed-text scan adds a round-trip, so it runs behind a cancellable
+      // progress indicator (gdprScanProgress) — a slow NER pass / large
+      // attachment shouldn't freeze the composer with no feedback or escape.
+      const scan = { findings: [], bySource: {}, worstAction: 'ignore',
+                     worstDisposition: 'ignore' };
+      const _pushSrc = (src, arr) => {
+        if (!arr || !arr.length) return;
+        scan.bySource[src] = arr;
+        for (const f of arr) {
+          scan.findings.push(f);
+          const a = f.action || 'warn';
+          if (a === 'block') scan.worstAction = 'block';
+          else if (a === 'warn' && scan.worstAction !== 'block') scan.worstAction = 'warn';
+        }
+      };
+      // Attachments: reuse the per-finding records the server produced at
+      // upload time (findings_full). No client-side file scan.
+      for (const f of (state._pendingFiles || [])) {
+        const ff = (f.scan && f.scan.scanned && Array.isArray(f.scan.findings_full))
+          ? f.scan.findings_full : null;
+        if (!ff || !ff.length) continue;
+        const src = 'file:' + f.name;
+        _pushSrc(src, ff.map(g => ({
+          rule_id: g.rule_id, label: g.label || gdprRuleLabel(g.rule_id),
+          category: g.category || gdprRuleCategory(g.rule_id),
+          action: g.action || 'warn',
+          confidence: g.confidence, band: g.band, disposition: g.disposition,
+          value: g.value, _source: src,
+        })));
+      }
+      // Typed text: server scan-text (the only detector for the message).
+      // Cancellable — a cancel aborts the whole send.
+      if (text && text.trim() && state.piiScannerEnabled !== false) {
+        let srv;
         try {
-          // Server scan is the SINGLE source of truth for the typed text — it
-          // runs regex + NER + confidence/band/disposition, a strict superset
-          // of the client regex. So we REPLACE the client 'text' source with
-          // the server result instead of merging (merging double-counted the
-          // same email under both the client rule_id and the server rule_id —
-          // "Nachrichtentext" + "compose"). The client scan still covers
-          // attachments (file sources) below; only the typed-text source is
-          // superseded here.
-          const srv = await API.scanText(text, 'message', { full: true });
-          let srvFindings = Array.isArray(srv?.findings) ? srv.findings : [];
-          // Tag each finding _seen if its (rule|value) was already shown/decided
-          // in this chat (cached in chat._piiDecisions, loaded on chat open).
-          // SEEN findings are shown FIXED in the dialog; NEW ones are ratable.
-          // We keep BOTH (don't drop) so the dialog can show the seen/new split.
-          delete scan.bySource['text'];   // drop the regex-only typed-text source
-          scan.findings = (scan.findings || []).filter(
-            f => f._source && f._source !== 'text');
-          if (srvFindings.length) {
-            const srvForModal = srvFindings.map(f => ({
-              rule_id: f.rule_id, label: f.label || f.rule_id,
-              category: f.category || 'personal', action: f.action || 'warn',
-              confidence: f.confidence, band: f.band, disposition: f.disposition,
-              value: f.value, _source: 'message',
-            }));
-            scan.bySource['message'] = srvForModal;
-            for (const f of srvForModal) scan.findings.push(f);
-            if (srv.worst_disposition) scan.worstDisposition = srv.worst_disposition;
-          }
+          srv = await runCancellableGdprScan(text);
         } catch (e) {
-          // Server scan unreachable — keep going with client findings only.
+          if (e && e._cancelled) return;   // user cancelled the scan → abort send
+          // Scan failed/unreachable — fail-open (send proceeds without the
+          // typed-text findings, same as before this feature existed).
           console.warn('[gdpr-scan] server scan failed:', e?.message || e);
+          srv = null;
+        }
+        const srvFindings = Array.isArray(srv?.findings) ? srv.findings : [];
+        if (srvFindings.length) {
+          _pushSrc('message', srvFindings.map(f => ({
+            rule_id: f.rule_id, label: f.label || gdprRuleLabel(f.rule_id),
+            category: f.category || gdprRuleCategory(f.rule_id),
+            action: f.action || 'warn',
+            confidence: f.confidence, band: f.band, disposition: f.disposition,
+            value: f.value, _source: 'message',
+          })));
+          if (srv.worst_disposition) scan.worstDisposition = srv.worst_disposition;
         }
       }
 

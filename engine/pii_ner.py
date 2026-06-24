@@ -456,6 +456,83 @@ PII_DEFAULT_CATEGORY_ACTIONS: dict[str, str] = {
     "business_id":     "ignore",   # company/legal-entity IDs — not personal data
 }
 
+# German UI labels per category. Single source of truth for the Settings → GDPR
+# panel (moved here from web/js/utils.js when the browser-side scanner was
+# removed in 9.200.0 — the client now renders the catalog from the server config
+# instead of a duplicated JS object).
+PII_CATEGORY_LABELS: dict[str, str] = {
+    "secrets":         "Secrets & API-Keys",
+    "national_id":     "Nationale IDs (prüfsummengeprüft)",
+    "national_id_ctx": "ID-ähnliche Werte (kontextbasiert)",
+    "financial":       "Finanzen (IBAN, Karten, Konten)",
+    "business_id":     "Unternehmens-IDs (keine personenbezogenen Daten)",
+    "contact":         "Kontaktdaten (E-Mails, Telefon, Namen)",
+    "network":         "Netzwerkadressen (IP)",
+    "personal":        "Biografisch (Reisepass, Geburtsdatum, Adresse)",
+    "bare_id":         "Reine numerische Bezeichner",
+}
+
+# Per-rule human labels (German) for the Settings → GDPR per-rule expander.
+# Was PIIScanner.rules[*].label in the browser; moved server-side with the
+# scanner removal. Server-only rules (spaCy NER) included.
+PII_RULE_LABELS: dict[str, str] = {
+    "pem_private_key": "Privater Schlüssel",
+    "aws_access_key": "AWS-Access-Key-ID",
+    "aws_secret_key": "AWS Secret Access Key",
+    "github_app_token": "GitHub-App-Token",
+    "github_pat": "Persönliches GitHub-Zugriffstoken",
+    "slack_token": "Slack token", "slack_webhook": "Slack webhook URL",
+    "google_api_key": "Google-API-Key",
+    "google_oauth_client": "Google-OAuth-Client-ID",
+    "stripe_live": "Stripe-Live-Key", "stripe_test": "Stripe-Test-Key",
+    "openai_key": "OpenAI-API-Key", "anthropic_key": "Anthropic-API-Key",
+    "twilio_sid": "Twilio-Account-SID", "sendgrid_key": "SendGrid-API-Key",
+    "mailgun_key": "Mailgun-API-Key", "jwt": "JWT",
+    "azure_storage_conn": "Azure-Storage-Verbindungszeichenfolge",
+    "azure_account_key": "Azure-Account-Key",
+    "basic_auth_url": "Zugangsdaten in URL",
+    "generic_secret_assignment": "Fest codiertes Secret",
+    "email": "E-Mail-Adresse", "iban": "IBAN",
+    "ipv4": "IPv4-Adresse", "ipv6": "IPv6-Adresse",
+    "us_ssn": "US-Sozialversicherungsnummer",
+    "us_ssn_ctx": "US-Sozialversicherungsnummer",
+    "at_svnr": "Österreichische Sozialversicherungsnummer",
+    "fr_insee": "Französische INSEE / NIR",
+    "de_steuerid": "Deutsche Steuer-ID",
+    "uk_nino": "UK National Insurance Number", "uk_nhs": "UK-NHS-Nummer",
+    "nl_bsn": "Niederländische BSN", "be_national": "Belgische Nationalnummer",
+    "pl_pesel": "Polnische PESEL", "pt_nif": "Portugiesische NIF",
+    "se_personnummer": "Schwedische Personnummer", "dk_cpr": "Dänische CPR",
+    "no_fnr": "Norwegische Fødselsnummer", "ch_ahv": "Schweizer AHV",
+    "cz_rc": "Tschechische rodné číslo", "ro_cnp": "Rumänische CNP",
+    "hu_taj": "Ungarische TAJ", "gr_amka": "Griechische AMKA",
+    "bg_egn": "Bulgarische EGN", "ie_pps": "Irische PPS",
+    "br_cpf": "Brasilianische CPF", "br_cnpj": "Brasilianische CNPJ",
+    "ca_sin": "Kanadische SIN", "mx_curp": "Mexikanische CURP",
+    "ar_dni": "Argentinische DNI", "in_aadhaar": "Indische Aadhaar",
+    "jp_mynumber": "Japanische My Number", "kr_rrn": "Koreanische RRN",
+    "sg_nric": "Singapurische NRIC/FIN", "tw_nid": "Taiwanesische National-ID",
+    "credit_card": "Kreditkartennummer", "phone": "Telefonnummer",
+    "es_dni_nie": "Spanische DNI/NIE",
+    "it_codicefiscale": "Italienische Codice Fiscale",
+    "passport": "Reisepassnummer (heuristisch)", "dob": "Geburtsdatum",
+    "date": "Datum (personenbezogen-gegated)",
+    "svnr_ctx": "Sozialversicherungsnummer (wahrscheinlich)",
+    "ssn_ctx_loose": "Sozialversicherungsnummer (wahrscheinlich)",
+    "tax_id_ctx": "Steueridentifikationsnummer (wahrscheinlich)",
+    "insurance_number_ctx": "Versicherungsnummer (wahrscheinlich)",
+    "id_card_ctx": "Ausweisnummer (wahrscheinlich)",
+    "drivers_license_ctx": "Führerscheinnummer (wahrscheinlich)",
+    "passport_ctx_loose": "Reisepassnummer (wahrscheinlich)",
+    "bank_account_ctx": "Bankkontonummer (wahrscheinlich)",
+    "health_insurance_ctx": "Krankenversicherungsnummer (wahrscheinlich)",
+    # Server-only (spaCy NER, German)
+    "name": "Name (spaCy NER, Deutsch)",
+    "address": "Adresse / Ort (spaCy NER, Deutsch)",
+    "organisation": "Organisation (spaCy NER, Deutsch)",
+    "bare_identifier": "Reiner numerischer Bezeichner",
+}
+
 # Per-rule minimum DISTINCT occurrences required before a rule fires for a
 # document. A rule contributes ZERO findings unless ≥ N distinct matched values
 # appear (counted per whole document; chat = per message). Default 1 (fire on

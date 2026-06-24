@@ -1497,7 +1497,7 @@ function buildGdprCleartextSpans(text, decisions) {
     if (anonymised) continue;   // those are covered by gdpr_restored_spans
     out.push({
       original: val,
-      category: PIIScanner.ruleCategories?.[d.rule_id] || 'personal',
+      category: gdprRuleCategory(d.rule_id),
       type: 'cleartext',
       fp: !!d.false_positive,
     });

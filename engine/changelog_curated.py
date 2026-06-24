@@ -28,6 +28,19 @@ Reihenfolge: NEUESTE zuerst (so wird es auch angezeigt).
 from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
+    # ── 9.2xx — Datenschutz-Prüfung serverseitig ──
+    {
+        "version": "9.200.0",
+        "date": "2026-06-24",
+        "title": "Datenschutz-Prüfung mit Fortschritt und Abbrechen",
+        "body": "Die Erkennung personenbezogener Daten läuft jetzt vollständig auf dem Server — eine "
+                "einheitliche, zuverlässige Prüfung statt zwei parallelen. Vor dem Senden erscheint bei "
+                "längeren Prüfungen ein Fortschritts-Hinweis mit Abbrechen-Schaltfläche, sodass eine "
+                "aufwändige Prüfung (z. B. großer Text oder Anhang) Sie nie ohne Rückmeldung warten "
+                "lässt und jederzeit abgebrochen werden kann.",
+        "audience": "user",
+        "versions": ["9.200.0"],
+    },
     # ── 9.19x — Dokument-Erzeugung, KI-Projektanweisungen, PII-Präzision ──
     {
         "version": "9.199.0",

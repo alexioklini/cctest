@@ -571,6 +571,17 @@ class AdminArtifactsHandlers:
                         for rid in engine.PII_RULE_CATEGORIES
                     },
                     "email_allowlist": server_config.get("gdpr_scanner", {}).get("email_allowlist") or [],
+                    # Static PII catalog (rule→category map, category labels,
+                    # default actions, rule labels). Single source of truth for
+                    # the Settings → GDPR panel + chat-view labels. Moved here
+                    # from the deleted browser-side PIIScanner object (9.200.0)
+                    # so the client never duplicates the rule catalog again.
+                    "catalog": {
+                        "rule_categories": dict(engine.PII_RULE_CATEGORIES),
+                        "category_labels": dict(engine.PII_CATEGORY_LABELS),
+                        "default_category_actions": dict(engine.PII_DEFAULT_CATEGORY_ACTIONS),
+                        "rule_labels": dict(engine.PII_RULE_LABELS),
+                    },
                 },
                 "available_tools": sorted(engine.TOOL_DISPATCH.keys()),
             },

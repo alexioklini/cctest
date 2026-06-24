@@ -396,7 +396,8 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 ## GDPR / PII
 
 - `POST /v1/attachments/scan` — `{name, content(b64), media_type}` returns PII findings: aggregated `groups` (count/samples) + per-finding `findings_full` (value/confidence/band/disposition, deduped, cap 200/file + `findings_truncated`) + `worst_disposition` (9.197.0) + `classification` block
-- `POST /v1/gdpr/scan-text` — `{text, full?, raw_detection?, name_precision?}` returns findings; `full:true` adds per-finding `value`/`confidence`/`band`/`disposition` + `worst_disposition`
+- `POST /v1/gdpr/scan-text` — `{text, full?, raw_detection?, name_precision?}` returns findings; `full:true` adds per-finding `value`/`confidence`/`band`/`disposition` + `worst_disposition`. Server-ONLY PII detector for the typed message (browser scanner removed 9.200.0); the pre-send dialog calls it behind a cancellable progress overlay
+- `GET /v1/services/status` → `gdpr_scanner.catalog` (9.200.0) — `{rule_categories, category_labels, default_category_actions, rule_labels}`, the static PII catalog the client renders the Settings GDPR panel + chat-view labels from (was the deleted browser `PIIScanner` object)
 - `GET /v1/gdpr/ner-models` — admin: list spaCy NER model state
 - `POST /v1/gdpr/ner-models` — `{action: "load"|"unload", lang}` toggle
 - `POST /v1/gdpr/decisions` — persist per-finding review outcome `{session_id, turn_action, decisions:[{rule_id,value,confidence,band,disposition,false_positive,source}]}` (9.196.0)

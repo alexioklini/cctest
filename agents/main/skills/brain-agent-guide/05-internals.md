@@ -920,8 +920,18 @@ preamble goes in first-user-message instead.
 
 ## GDPR / PII scanner
 
-- ~70 regex rules in JS (`web/index.html → PIIScanner`) mirrored in Python
-  (`engine/pii_ner.py → _pii_rules` + `_pii_scan_text` + `_pii_scan_bare_identifiers`).
+- **SERVER-ONLY detection (9.200.0)**: the browser-side `PIIScanner` (the
+  ~70 JS regex rules + Luhn/Mod11 validators) was DELETED. PII is detected
+  exclusively in Python (`engine/pii_ner.py → _pii_rules` + `_pii_scan_text` +
+  `_pii_scan_bare_identifiers` + spaCy NER). The pre-send dialog calls
+  `POST /v1/gdpr/scan-text` (cancellable progress overlay client-side);
+  attachments via `/v1/attachments/scan` at upload. The rule catalog the
+  Settings panel + chat-view labels render (rule→category, German category +
+  rule labels) is served in `gdpr_scanner.catalog` (`/v1/services/status`) from
+  `PII_RULE_CATEGORIES` / `PII_CATEGORY_LABELS` / `PII_DEFAULT_CATEGORY_ACTIONS`
+  / `PII_RULE_LABELS` (`engine/pii_ner.py`); the client caches it in
+  `state.gdprCatalog`. No browser as-you-type draft scan anymore — the composer
+  shield badge reflects only the (server-async) history scan.
 - NER: spaCy adds `name|address|organisation`. `name` stays `contact`/ignore;
   `address` → `personal`/warn but ONLY when a person name is adjacent (~120ch);
   `organisation` → `business_id`/ignore. Runtime control: `GET/POST /v1/gdpr/ner-models`.

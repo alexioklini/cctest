@@ -208,18 +208,31 @@ class API {
     });
   }
 
-  // Server-side text scan used by the pre-send composer check. Returns
-  // aggregated findings (same shape as scanAttachment) so the client's
-  // regex-only `PIIScanner` can be supplemented with spaCy NER findings
-  // before deciding whether to open the GDPR modal. Network failures
-  // resolve to `{groups: [], finding_count: 0}` — fail-open so a server
-  // hiccup never blocks a send. Callers must still respect their own
-  // client-side scanner; this is additive.
+  // Server-side text scan — the ONLY PII detector for the typed message
+  // (9.200.0: the browser regex scanner was removed). Runs the full
+  // _pii_scan_text pipeline (regex + spaCy NER + confidence bands). With
+  // {full:true} returns per-finding values the pre-send modal needs; with
+  // {signal} the scan is cancellable. Network failures reject (the caller
+  // fails open and sends without typed-text findings).
   static scanText(text, source, opts) {
     const body = { text, source: source || 'compose' };
     // full:true → per-finding values + confidence/band/disposition (the modal
     // needs these for the per-finding review UI). Default off (grouped shape).
     if (opts && opts.full) body.full = true;
+    // opts.signal → AbortSignal so the pre-send progress UI can CANCEL a slow
+    // scan (NER on a large message). Aborted fetch rejects with an AbortError,
+    // which the caller maps to a "send cancelled". Without a signal, behaves
+    // exactly like before.
+    if (opts && opts.signal) {
+      return (async () => {
+        const r = await fetch(`${BASE_URL}/v1/gdpr/scan-text`, {
+          method: 'POST', headers: this._headers(),
+          body: JSON.stringify(body), signal: opts.signal,
+        });
+        if (!r.ok) throw new Error(`POST /v1/gdpr/scan-text: ${r.status}`);
+        return r.json();
+      })();
+    }
     return this.post('/v1/gdpr/scan-text', body);
   }
 

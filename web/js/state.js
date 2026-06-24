@@ -35,6 +35,12 @@ const state = {
   // Datenschutz statistics header (count of anonymisations / de-anonymisations)
   // shows by default.
   showGdprDetails: localStorage.getItem('showGdprDetails') === 'true',
+  // PII catalog (rule→category map, labels, default actions) + live policy,
+  // both loaded from the server gdpr_scanner config (applyGdprConfigToScanner).
+  // The browser-side detector was removed in 9.200.0 — these are reference data
+  // only (Settings panel + chat-view labels), never used to detect PII.
+  gdprCatalog: { ruleCategories: {}, categoryLabels: {}, defaultCategoryActions: {}, ruleLabels: {} },
+  gdprPolicy: { enabled: true, categories: null, ruleOverrides: {}, emailAllowlist: [] },
   _pendingImages: [],
   _pendingFiles: [],
 

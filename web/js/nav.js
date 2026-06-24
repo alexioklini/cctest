@@ -370,39 +370,6 @@ function isModelLocal(mid) {
   return false;
 }
 
-// Extract all user + assistant text (and attachment metadata) from a chat's
-// in-memory history into a single string so PIIScanner can sweep it in one
-// pass. Tool calls/results are excluded — they're downstream of the user's
-// intent and would create noise (URLs, search snippets, etc.).
-function piiHistoryText(chat) {
-  if (!chat || !Array.isArray(chat.messages) || !chat.messages.length) return '';
-  const parts = [];
-  for (const m of chat.messages) {
-    if (!m) continue;
-    const role = m.role;
-    if (role !== 'human' && role !== 'user' && role !== 'assistant') continue;
-    const c = m.content;
-    if (typeof c === 'string') {
-      if (c) parts.push(c);
-    } else if (Array.isArray(c)) {
-      for (const b of c) {
-        if (b && typeof b === 'object' && b.type === 'text' && typeof b.text === 'string') {
-          parts.push(b.text);
-        }
-      }
-    }
-    if (Array.isArray(m.files)) {
-      for (const f of m.files) {
-        if (f && typeof f === 'object') {
-          const bits = [f.name, f.filename, f.path, f.mime, f.type].filter(Boolean);
-          if (bits.length) parts.push(bits.join(' '));
-        }
-      }
-    }
-  }
-  return parts.join('\n');
-}
-
 // Scan the chat's loaded history for PII and cache the worst-action result.
 // Cache key is the message count so it refreshes on every new turn; callers
 // can force a re-scan by setting `chat._piiHistoryScanLen = -1`.
@@ -420,20 +387,14 @@ function piiHistoryHasFindings(chat) {
   const len = chat.messages.length;
   if (!len) return false;
   if (chat._piiHistoryScanLen !== len) {
-    const text = piiHistoryText(chat);
-    let has = false, worst = 'ignore', counts = {};
-    try {
-      const scan = PIIScanner.scanPayload(text, []);
-      has = scan.findings.length > 0;
-      worst = scan.worstAction || 'ignore';
-      counts = scan.counts || {};
-    } catch (e) {}
-    chat._piiHistoryCountsLocal = counts;
-    chat._piiHistoryWorstLocal = worst;
-    chat._piiHistoryHasLocal = has;
-    // Set the current turn-count BEFORE caching so the server-currency check in
-    // _piiHistoryMergeAndCache compares against THIS turn (a new turn shows the
-    // local scan until the server scan for the same turn count returns).
+    // 9.200.0: detection is SERVER-ONLY (the browser regex scanner was
+    // removed). The history badge now reflects only the async server scan
+    // (regex + spaCy NER). Until that returns for this turn count the badge
+    // stays at its previous state — no instant local interim. Empty local
+    // caches keep _piiHistoryMergeAndCache's "not yet current" branch quiet.
+    chat._piiHistoryCountsLocal = {};
+    chat._piiHistoryWorstLocal = 'ignore';
+    chat._piiHistoryHasLocal = false;
     chat._piiHistoryScanLen = len;
     _piiHistoryMergeAndCache(chat);
     // Kick the async server scan unless one's already in flight or we've
@@ -468,9 +429,8 @@ function _piiHistoryMergeAndCache(chat) {
 }
 
 function _piiHistoryFetchServer(chat, expectLen) {
-  // Scanner disabled → no server-side NER round-trip either (the local scan is
-  // already gated in PIIScanner.scan; this stops the network call too so
-  // "PII check" truly does nothing when the admin turned the feature off).
+  // Scanner disabled → no server-side NER round-trip ("PII check" truly does
+  // nothing when the admin turned the feature off).
   if (state.piiScannerEnabled === false) return;
   // No sessionId = new chat not yet persisted. Server has no history to
   // scan — local regex result is authoritative until the first send.
@@ -579,10 +539,11 @@ async function saveGdprConfig() {
 }
 
 function resetGdprCategories() {
+  const defaults = (state.gdprCatalog && state.gdprCatalog.defaultCategoryActions) || {};
   for (const sel of document.querySelectorAll('.gdpr-cat-action')) {
     const cat = sel.dataset.cat;
-    if (cat && PIIScanner.defaultCategoryActions[cat]) {
-      sel.value = PIIScanner.defaultCategoryActions[cat];
+    if (cat && defaults[cat]) {
+      sel.value = defaults[cat];
     }
   }
   for (const sel of document.querySelectorAll('.gdpr-rule-override')) {
@@ -757,9 +718,12 @@ async function quotaOpenUserBreakdown(userId, displayName) {
   }
 }
 
-// Apply server-side gdpr_scanner config to both state and PIIScanner.policy so
-// the scanner knows which categories are ignored, warned on, or blocked. Call
-// this anywhere state.pii* is updated from the /v1/services/status response.
+// Apply server-side gdpr_scanner config to client state. The browser-side
+// PII scanner was removed in 9.200.0 — detection now runs ONLY on the server.
+// This still mirrors the policy thresholds (advisory composer interlock) and
+// caches the static PII catalog (rule→category map, labels, default actions)
+// the Settings panel + chat-view labels render from. Call this anywhere
+// state.pii* is updated from the /v1/services/status response.
 function applyGdprConfigToScanner(gs) {
   gs = gs || {};
   state.piiScannerEnabled = gs.enabled !== false;
@@ -770,14 +734,46 @@ function applyGdprConfigToScanner(gs) {
   state.piiConfidenceLower = (gs.confidence_lower != null) ? gs.confidence_lower : 0.50;
   state.piiConfidenceUpper = (gs.confidence_upper != null) ? gs.confidence_upper : 0.85;
   state.piiLocalFallback = gs.default_local_fallback_model || '';
-  PIIScanner.policy.enabled = state.piiScannerEnabled;
-  PIIScanner.policy.categories = gs.categories || null;
-  PIIScanner.policy.ruleOverrides = gs.rule_overrides || {};
-  PIIScanner.policy.emailAllowlist = Array.isArray(gs.email_allowlist) ? gs.email_allowlist : [];
+  // PII catalog from the server (replaces the deleted PIIScanner.ruleCategories
+  // / categoryLabels / defaultCategoryActions / rules[*].label). Kept on state
+  // so the Settings GDPR panel + chat-render labels read it. Fall back to the
+  // prior cached catalog if the server omitted it (older server / partial resp).
+  const cat = gs.catalog;
+  if (cat && typeof cat === 'object') {
+    state.gdprCatalog = {
+      ruleCategories: cat.rule_categories || {},
+      categoryLabels: cat.category_labels || {},
+      defaultCategoryActions: cat.default_category_actions || {},
+      ruleLabels: cat.rule_labels || {},
+    };
+  }
+  // Live policy (categories / overrides / allowlist) used to render the
+  // Settings panel's CURRENT selections — distinct from the static catalog.
+  state.gdprPolicy = {
+    enabled: state.piiScannerEnabled,
+    categories: gs.categories || null,
+    ruleOverrides: gs.rule_overrides || {},
+    emailAllowlist: Array.isArray(gs.email_allowlist) ? gs.email_allowlist : [],
+  };
   // Drop any cached per-chat history scans — action changes invalidate them.
   for (const c of (state.chats || [])) {
     if (c) c._piiHistoryScanLen = -1;
   }
+}
+
+// Catalog accessors — single lookup point so call sites don't reach into
+// state.gdprCatalog shape directly. Safe when the catalog hasn't loaded yet.
+function gdprRuleCategory(ruleId) {
+  return (state.gdprCatalog && state.gdprCatalog.ruleCategories &&
+    state.gdprCatalog.ruleCategories[ruleId]) || 'personal';
+}
+function gdprCategoryLabel(cat) {
+  return (state.gdprCatalog && state.gdprCatalog.categoryLabels &&
+    state.gdprCatalog.categoryLabels[cat]) || cat || '';
+}
+function gdprRuleLabel(ruleId) {
+  return (state.gdprCatalog && state.gdprCatalog.ruleLabels &&
+    state.gdprCatalog.ruleLabels[ruleId]) || ruleId || '';
 }
 
 // SINGLE source of truth for resetting a chat's GDPR/PII state to defaults.
