@@ -48,11 +48,12 @@ CURATED_CHANGELOG: list[dict] = [
         "title": "Datenschutz-Markierung zuverlässiger, Ansicht pro Chat gemerkt",
         "body": "Personenbezogene Daten, die Sie bewusst im Klartext gesendet haben (z. B. „Trotzdem "
                 "senden“ über ein Cloud-Modell), werden jetzt zuverlässig im Chat farblich markiert — "
-                "auch nach dem Neuladen der Seite. Zusätzlich merkt sich jeder Chat einzeln, ob die "
-                "Datenschutz-Details ein- oder ausgeblendet sind, und stellt diese Ansicht beim "
-                "Wiederöffnen wieder her.",
+                "auch nach dem Neuladen der Seite. Der Schalter „Datenschutz-Details sichtbar“ steuert "
+                "dabei einheitlich alle Markierungen: ist er aus, bleibt der Chat unmarkiert. Zusätzlich "
+                "merkt sich jeder Chat einzeln, ob die Details ein- oder ausgeblendet sind, und stellt "
+                "diese Ansicht beim Wiederöffnen wieder her.",
         "audience": "user",
-        "versions": ["9.199.0", "9.199.1"],
+        "versions": ["9.199.0", "9.199.1", "9.200.1"],
     },
     {
         "version": "9.198.0",

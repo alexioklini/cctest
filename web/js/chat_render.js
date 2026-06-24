@@ -98,15 +98,13 @@ function renderMessages() {
          </button>`
       : '';
     // GDPR highlight overlay on the turn-header hint text (the user message in
-    // the grouped view). Two kinds of <mark>:
-    //   amber (gdpr_restored_spans) = anonymised — DETAIL, gated by the
-    //         state.showGdprDetails toggle.
-    //   red (cleartext) = detected PII that went out IN CLEAR (accepted /
-    //         false-positive) — a SECURITY signal, ALWAYS shown (not gated), so
-    //         the user always sees what left unprotected.
+    // the grouped view). Two kinds of <mark> — amber (anonymised) + red
+    // (cleartext-accepted PII). BOTH are gated by the state.showGdprDetails
+    // composer toggle: when the user switches the Datenschutz-Details off, no
+    // marks render at all (matches renderUserMessage + the assistant path).
     const _restored = state.showGdprDetails
       ? (t.userMsg?.metadata?.gdpr_restored_spans || []) : [];
-    const _clear = (state.activeChat && state.activeChat._piiDecisions)
+    const _clear = (state.showGdprDetails && state.activeChat && state.activeChat._piiDecisions)
       ? buildGdprCleartextSpans(fullQ, state.activeChat._piiDecisions) : [];
     const userSpans = [..._restored, ..._clear];
     const hintInner = userSpans.length
