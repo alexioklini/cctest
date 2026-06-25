@@ -941,7 +941,18 @@ preamble goes in first-user-message instead.
   early-return in `updatePIIBadge` (9.203.1) — else a scanner-off chat with prior
   decisions stays hidden (the 9.203.0 fix missed this).
   `openSession` re-fires `schedulePIIBadgeUpdate()` after decisions load (the
-  reload-button fix). **Click** opens `openPiiHistoryModal()` (`panels_gdpr.js`),
+  reload-button fix). **Click** opens `openPiiHistoryModal()` (`panels_gdpr.js`).
+  9.204.0: the modal uses the SAME `.pii-card` structure + General-Settings
+  tokens as the pre-send modal (they look identical). Source groups are
+  default-COLLAPSED (head shows count + status-mix minichips), with a per-group
+  50-row render budget + "+N weitere" (simple virtualisation) for chats with
+  hundreds of findings; search/filter force-expand. Each finding has a "Verlauf"
+  toggle rendering the shared `_piiRenderHistoryBlock(history)` — the who/what/
+  when trail from `decision_history` (resolved display names + timestamps). The
+  pre-send modal's SEEN findings get the same toggle (trail lazily fetched via
+  `getSessionPiiHistoryDetail`, looked up by `_piiValueHash` = client sha256
+  rule|value). `ChatDB.get_session_pii_decision_history` returns the full
+  chronological trail per value_hash (collapsing consecutive identical events).
   a large `.modal-content.x-wide` modal: it loads `GET …/pii-history-detail`
   (per-finding, source-attributed, masked) + `GET /v1/gdpr/decisions` in
   parallel, joins each finding to its decision via `value_hash` to derive a

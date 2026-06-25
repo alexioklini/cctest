@@ -2690,6 +2690,44 @@ class ChatDB:
         return out
 
     @staticmethod
+    @_db_safe(default=dict)
+    def get_session_pii_decision_history(session_id):
+        """Return the FULL chronological decision history per value_hash (not just
+        the latest, unlike get_session_pii_decisions). Map value_hash → list of
+        events oldest-first: [{rule_id, value, false_positive, disposition,
+        turn_action, fake_value, user_id, created_at}]. Powers the 'who decided
+        what when' history block shared by the pre-send + history modals.
+        Consecutive identical events (same action+fp+user) are collapsed so a
+        value re-confirmed every turn doesn't render dozens of dupe rows."""
+        out = {}
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT value_hash, rule_id, raw_value, false_positive, "
+                "disposition, turn_action, fake_value, user_id, created_at "
+                "FROM pii_decisions WHERE session_id = ? "
+                "ORDER BY created_at ASC", (session_id,)).fetchall()
+        for r in rows:
+            vh = r[0]
+            ev = {
+                "rule_id": r[1], "value": r[2],
+                "false_positive": bool(r[3]),
+                "disposition": r[4], "turn_action": r[5],
+                "fake_value": r[6] or "", "user_id": r[7] or "",
+                "created_at": r[8],
+            }
+            lst = out.setdefault(vh, [])
+            # Collapse a repeat of the immediately-prior identical decision
+            # (same action + fp + user) — keep the FIRST occurrence's timestamp.
+            if lst:
+                p = lst[-1]
+                if (p["turn_action"] == ev["turn_action"]
+                        and p["false_positive"] == ev["false_positive"]
+                        and p["user_id"] == ev["user_id"]):
+                    continue
+            lst.append(ev)
+        return out
+
+    @staticmethod
     @_db_safe(default=list)
     def pii_decision_stats():
         """Aggregate per-rule decision stats for global learning / evaluation:

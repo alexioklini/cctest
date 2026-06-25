@@ -1171,7 +1171,13 @@ gezielt einzelne Funde; per **Auswahl** (einzeln oder ganze Gruppe) kannst du
 mehrere Funde auf einmal **als Falschtreffer markieren**, **als Klartext
 akzeptieren** oder die **Entscheidung zurücksetzen** und mit **Änderungen
 speichern** sichern. So erledigst du das Datenschutz-Thema in einem Durchgang,
-statt jeden Fund einzeln beim Senden zu behandeln. (Das eigentliche
+statt jeden Fund einzeln beim Senden zu behandeln. Pro Fund kannst du den
+**Verlauf** aufklappen — er zeigt **wer wann was** entschieden hat (mit Name und
+Zeitpunkt); denselben Verlauf siehst du auch im Hinweis-Dialog vor dem Senden
+bei bereits behandelten Funden, beide Dialoge sind gleich aufgebaut. Bei sehr
+vielen Funden sind die Quellen (Nachrichten, Verlauf, einzelne Anhänge)
+standardmäßig **eingeklappt** (mit Anzahl + Status-Vorschau), lange Listen
+werden schrittweise nachgeladen. (Das eigentliche
 **Anonymisieren** geschieht weiterhin im Hinweis-Dialog *vor dem Senden* — die
 Übersicht zeigt den Anonymisierungs-Status und kann ihn zurücksetzen.) Das
 Schild bleibt auch nach dem **Neuladen** des Chats erreichbar.

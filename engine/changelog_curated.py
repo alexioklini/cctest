@@ -30,6 +30,22 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.2xx — Datenschutz-Prüfung serverseitig ──
     {
+        "version": "9.204.0",
+        "date": "2026-06-25",
+        "title": "Datenschutz-Übersicht: Verlauf und einheitliches Design",
+        "body": "Die Datenschutz-Übersicht (Schild-Symbol im Eingabefeld) sieht jetzt genauso aus wie "
+                "der Hinweis-Dialog vor dem Senden — gleiches Design, gleiche Bedienung, sodass Sie "
+                "sich sofort zurechtfinden. Zu jedem erkannten Datum sehen Sie nun den vollständigen "
+                "Entscheidungs-Verlauf: WER WANN WAS entschieden hat (anonymisiert, im Klartext "
+                "gesendet, als Falschtreffer markiert oder zurückgesetzt) — sowohl in der Übersicht "
+                "als auch im Hinweis-Dialog. Für Chats mit sehr vielen Funden sind die Quellen "
+                "(Nachrichten, Verlauf, einzelne Anhänge) jetzt standardmäßig eingeklappt und zeigen "
+                "pro Gruppe die Anzahl und eine Status-Vorschau; lange Listen werden schrittweise "
+                "nachgeladen, damit alles übersichtlich und schnell bedienbar bleibt.",
+        "audience": "user",
+        "versions": ["9.204.0"],
+    },
+    {
         "version": "9.203.0",
         "date": "2026-06-25",
         "title": "Datenschutz-Übersicht: alles auf einen Blick erledigen",

@@ -9,6 +9,43 @@ import uuid
 import brain as engine
 from handlers import sidecar_proxy
 from server_lib.sse_stream import encode_sse
+from server_lib import auth as _auth_mod
+
+
+def _pii_decision_history_with_names(session_id: str) -> dict:
+    """value_hash → chronological decision events with resolved display names,
+    in the shape both GDPR modals render: [{turn_action, false_positive,
+    fake_value, by, by_id, at}] (oldest-first). Best-effort — any failure
+    yields {} so the scan still returns. `by` falls back to 'System' for the
+    empty user_id of non-interactive / legacy rows."""
+    try:
+        from server_lib.db import ChatDB as _ChatDB
+        raw = _ChatDB.get_session_pii_decision_history(session_id)
+    except Exception:
+        return {}
+    # Resolve user_id → display name once.
+    names = {}
+    try:
+        for u in (_auth_mod.AuthDB.list_users() or []):
+            names[u.get("id") or ""] = (u.get("display_name")
+                                        or u.get("username") or "")
+    except Exception:
+        pass
+    out = {}
+    for vh, events in (raw or {}).items():
+        rows = []
+        for ev in events:
+            uid = ev.get("user_id") or ""
+            rows.append({
+                "turn_action": ev.get("turn_action") or "",
+                "false_positive": bool(ev.get("false_positive")),
+                "fake_value": ev.get("fake_value") or "",
+                "by_id": uid,
+                "by": names.get(uid) or (uid and "Unbekannt") or "System",
+                "at": ev.get("created_at"),
+            })
+        out[vh] = rows
+    return out
 
 # One-time download tokens for chat-bundle zips. The SSE build endpoint writes
 # the zip to a temp file and registers a token here; the download endpoint
@@ -1193,19 +1230,30 @@ class SessionsHandlerMixin:
         history modal reads cleartext only from the user's own prior decisions
         via /v1/gdpr/decisions). Feeds web/js/panels_gdpr.js openPiiHistoryModal.
 
+        Each finding (and the top-level `decision_history` map, keyed by
+        value_hash) carries the full chronological 'who decided what when'
+        history with resolved display names — the SAME shape the pre-send modal
+        reuses for its 'already seen' findings, so both modals look identical.
+
         Returns: {session_id, findings: [{rule_id, label, category, action,
-        confidence, masked, value_hash, source, source_label}], counts,
-        finding_count, worst_action, truncated}
+        confidence, masked, value_hash, source, source_label, history:[...]}],
+        decision_history: {value_hash: [{turn_action, false_positive, fake_value,
+        by, by_id, at}]}, counts, finding_count, worst_action, truncated}
         """
         sid = path.split("/")[3]
         if self._session_access_check(sid) is None:
             return
+        # Decision history is INDEPENDENT of the scanner toggle — resolve it
+        # first so even a disabled-scanner response carries the prior decisions
+        # (the history modal merges them in; the badge shows the button).
+        decision_history = _pii_decision_history_with_names(sid)
         cfg = engine._get_gdpr_scanner_config()
         if not cfg.get("enabled", True):
             self._send_json({
                 "session_id": sid, "findings": [], "counts": {},
                 "finding_count": 0, "worst_action": "ignore",
                 "disabled": True, "truncated": False,
+                "decision_history": decision_history,
             })
             return
         try:
@@ -1273,6 +1321,7 @@ class SessionsHandlerMixin:
                     "value_hash": vh,
                     "source": source,
                     "source_label": source_label,
+                    "history": decision_history.get(vh, []),
                 })
 
         for idx, m in enumerate(msgs or []):
@@ -1313,6 +1362,7 @@ class SessionsHandlerMixin:
             "finding_count": len(findings),
             "worst_action": worst,
             "truncated": truncated,
+            "decision_history": decision_history,
         })
 
     def _handle_get_session_files(self, path):
