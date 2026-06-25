@@ -30,6 +30,19 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.2xx — Datenschutz-Prüfung serverseitig ──
     {
+        "version": "9.204.8",
+        "date": "2026-06-25",
+        "title": "Anonymisierte Werte überall im Verlauf markiert",
+        "body": "Wenn Sie eine Angabe anonymisieren, die mehrfach im Chat vorkommt, wird sie jetzt in "
+                "jedem betroffenen Beitrag farblich markiert — in Ihren Fragen wie in den Antworten —, "
+                "nicht mehr nur an der Stelle, an der Sie sie anonymisiert haben. Das entspricht dem, was "
+                "tatsächlich geschützt an das Sprachmodell übermittelt wird: Der Wert geht in allen "
+                "betroffenen Beiträgen pseudonymisiert hinaus, und die Markierung im Verlauf zeigt das nun "
+                "durchgängig an.",
+        "audience": "user",
+        "versions": ["9.204.8"],
+    },
+    {
         "version": "9.204.6",
         "date": "2026-06-25",
         "title": "Datenschutz-Übersicht zeigt verlässlich Ihre Entscheidungen",

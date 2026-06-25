@@ -816,8 +816,20 @@ function renderAssistantMessage(msg, idx) {
   // (privacy-first default), the reply renders identically to a non-
   // anonymised one — no yellow tint, no tooltip. Toggle on → restored
   // spans get `<mark class="gdpr-restored">` with category/value tooltip.
-  const gdprSpans = msg.metadata?.gdpr_restored_spans;
-  const showGdpr = state.showGdprDetails && Array.isArray(gdprSpans) && gdprSpans.length;
+  // Per-message restored spans (set on the turn this reply was anonymised in)
+  // PLUS ledger-driven restored spans for ANY anonymised value that occurs in
+  // this reply — so an earlier turn's assistant line ("Dein Geburtsdatum ist
+  // 15.07.1985") gets the amber mark too once the value was anonymised in a
+  // later turn, matching the server wire-pass. Only 'restored' (anonymise)
+  // spans here — the markdown highlighter renders amber marks; cleartext-
+  // accepted PII stays unmarked in assistant text. Dedup is handled by the
+  // highlighter's claim-non-overlapping pass.
+  const _ownSpans = msg.metadata?.gdpr_restored_spans || [];
+  const _ledgerSpans = (state.showGdprDetails && state.activeChat && state.activeChat._piiDecisions)
+    ? buildGdprCleartextSpans(content, state.activeChat._piiDecisions).filter(s => s.type === 'restored')
+    : [];
+  const gdprSpans = [..._ownSpans, ..._ledgerSpans];
+  const showGdpr = state.showGdprDetails && gdprSpans.length;
   const rendered = showGdpr
     ? renderMarkdownWithGdprHighlights(content, gdprSpans)
     : renderMarkdown(content);
@@ -1480,25 +1492,39 @@ function renderPlainTextWithGdprHighlights(text, spans) {
   return out;
 }
 
-// Build cleartext-PII spans for a user message from the chat's decisions:
-// values that were detected but sent in CLEAR (false positive, or the turn's
-// verdict was 'send'/'local' rather than anonymise). Shape matches the
-// gdpr_restored_spans entries the highlighter expects, tagged type:'cleartext'.
+// Build GDPR highlight spans from the chat's decision ledger (see body).
 function buildGdprCleartextSpans(text, decisions) {
+  // Build highlight spans for EVERY decided PII value that occurs in `text`,
+  // ledger-driven from chat._piiDecisions (rule|value → decision). Two kinds:
+  //   • anonymise → amber 'restored' span (with the → fake pseudonym), shown in
+  //     EVERY message the value appears in — not just the turn it was first
+  //     anonymised in (whose per-message gdpr_restored_spans covered only it).
+  //     This matches the server wire-pass, which replaces the value everywhere.
+  //   • accepted / false-positive (NOT anonymised) → red 'cleartext' span.
+  // (Name kept for back-compat; it now returns restored spans too.) The caller
+  // merges these with any per-message gdpr_restored_spans; the highlighter's
+  // claim-non-overlapping dedup prevents double-marking the origin turn.
   if (!text || !decisions) return [];
   const out = [];
   for (const d of Object.values(decisions)) {
     const val = d && d.value;
     if (!val || text.indexOf(val) < 0) continue;
-    const anonymised = !d.false_positive &&
-      (d.turn_action === 'anonymise');
-    if (anonymised) continue;   // those are covered by gdpr_restored_spans
-    out.push({
-      original: val,
-      category: gdprRuleCategory(d.rule_id),
-      type: 'cleartext',
-      fp: !!d.false_positive,
-    });
+    const anonymised = !d.false_positive && (d.turn_action === 'anonymise');
+    if (anonymised) {
+      out.push({
+        original: val,
+        fake: d.fake_value || '',
+        category: gdprRuleCategory(d.rule_id),
+        type: 'restored',
+      });
+    } else {
+      out.push({
+        original: val,
+        category: gdprRuleCategory(d.rule_id),
+        type: 'cleartext',
+        fp: !!d.false_positive,
+      });
+    }
   }
   return out;
 }
