@@ -30,6 +30,20 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.2xx — Datenschutz-Prüfung serverseitig ──
     {
+        "version": "9.205.0",
+        "date": "2026-06-25",
+        "title": "Anhänge: Datenschutz-Prüfung mit Fortschritt beim Senden",
+        "body": "Angehängte Dokumente werden für die Datenschutz-Prüfung jetzt beim Absenden geprüft — "
+                "gemeinsam mit Ihrer Nachricht und unter einem einzigen Fortschritts-Fenster mit "
+                "Abbrechen-Schaltfläche. Da die aufwändige Analyse (Texterkennung großer Dokumente) bei "
+                "den Anhängen liegt, sehen Sie den Fortschritt nun dort, wo er tatsächlich anfällt "
+                "(„Anhang wird geprüft …“), und können eine lange Prüfung jederzeit abbrechen. Die "
+                "erkannten Daten werden anschließend wie gewohnt im Hinweis-Dialog vor dem Senden zur "
+                "Entscheidung vorgelegt.",
+        "audience": "user",
+        "versions": ["9.205.0"],
+    },
+    {
         "version": "9.204.8",
         "date": "2026-06-25",
         "title": "Anonymisierte Werte überall im Verlauf markiert",

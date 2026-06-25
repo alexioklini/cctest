@@ -146,27 +146,24 @@ async function sendMessage() {
   // scan shouldn't hard-block them (same philosophy as archive/media, which are
   // already accepted non-blocking gaps). Only structural rejections
   // (unsupported format, over the size cap) stay blocking.
+  // 9.205.0: attachments are scanned at SEND time (below), so there's no
+  // attach-time 'pending' to wait on here. Structural rejections
+  // (unsupported / too_large) surface AFTER the send-time scan and are checked
+  // there (_blockingFileToast) before the modal opens.
   const BLOCKING_REASONS = new Set([
     'unsupported', 'too_large',
   ]);
-  const pendingScan = (state._pendingFiles || []).find(
-    f => f.scan && f.scan.state === 'pending');
-  if (pendingScan) {
-    showToast('Wird gescannt: ' + pendingScan.name + ' — kurz warten …', true);
-    return;
-  }
-  const blockingFile = (state._pendingFiles || []).find(
-    f => f.scan && f.scan.scanned === false && BLOCKING_REASONS.has(f.scan.reason));
-  if (blockingFile) {
+  const _blockingFileToast = () => {
+    const bf = (state._pendingFiles || []).find(
+      f => f.scan && f.scan.scanned === false && BLOCKING_REASONS.has(f.scan.reason));
+    if (!bf) return false;
     const reasonLabel = {
       'too_large': 'zu groß (>50 MB)',
-      'extract_timeout': 'Scan-Zeitüberschreitung (>30 s)',
-      'extract_failed': 'Scan fehlgeschlagen',
       'unsupported': 'nicht unterstütztes Format',
-    }[blockingFile.scan.reason] || blockingFile.scan.reason;
-    showToast(`Senden nicht möglich: ${blockingFile.name} — ${reasonLabel}. Zum Fortfahren entfernen.`, true);
-    return;
-  }
+    }[bf.scan.reason] || bf.scan.reason;
+    showToast(`Senden nicht möglich: ${bf.name} — ${reasonLabel}. Zum Fortfahren entfernen.`, true);
+    return true;
+  };
 
   let gdprAction = '';
   // Tracks whether the unified PII+classification modal has already
@@ -216,8 +213,25 @@ async function sendMessage() {
           else if (a === 'warn' && scan.worstAction !== 'block') scan.worstAction = 'warn';
         }
       };
-      // Attachments: reuse the per-finding records the server produced at
-      // upload time (findings_full). No client-side file scan.
+      // 9.205.0: scan typed text AND deferred attachments together under ONE
+      // cancellable progress overlay (the attachment extract/OCR/NER is the
+      // heavy part — that's where progress + cancel belong). Attachments are
+      // scanned in place (their .scan populated); the text result is returned.
+      let srv = null;
+      if (state.piiScannerEnabled !== false) {
+        try {
+          srv = await runCancellableGdprScan(text, state._pendingFiles || []);
+        } catch (e) {
+          if (e && e._cancelled) return;   // user cancelled → abort the send
+          console.warn('[gdpr-scan] scan failed:', e?.message || e);
+          srv = null;
+        }
+        // A file the server rejected structurally (too large / unsupported)
+        // can't be safely sent — surface it and abort (now known post-scan).
+        if (_blockingFileToast()) { renderFilePreviews(); return; }
+      }
+      // Attachments: read the per-finding records the server just produced
+      // (findings_full now populated by the send-time scan above).
       for (const f of (state._pendingFiles || [])) {
         const ff = (f.scan && f.scan.scanned && Array.isArray(f.scan.findings_full))
           ? f.scan.findings_full : null;
@@ -231,19 +245,8 @@ async function sendMessage() {
           value: g.value, _source: src,
         })));
       }
-      // Typed text: server scan-text (the only detector for the message).
-      // Cancellable — a cancel aborts the whole send.
-      if (text && text.trim() && state.piiScannerEnabled !== false) {
-        let srv;
-        try {
-          srv = await runCancellableGdprScan(text);
-        } catch (e) {
-          if (e && e._cancelled) return;   // user cancelled the scan → abort send
-          // Scan failed/unreachable — fail-open (send proceeds without the
-          // typed-text findings, same as before this feature existed).
-          console.warn('[gdpr-scan] server scan failed:', e?.message || e);
-          srv = null;
-        }
+      // Typed text findings.
+      {
         const srvFindings = Array.isArray(srv?.findings) ? srv.findings : [];
         if (srvFindings.length) {
           _pushSrc('message', srvFindings.map(f => ({

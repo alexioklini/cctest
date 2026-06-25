@@ -9,13 +9,24 @@
  * when the user cancels (the send flow treats that as "abort send"). Network
  * errors reject normally (the caller fails open). The overlay is always torn
  * down. A short delay before showing the overlay avoids a flash on fast scans. */
-function runCancellableGdprScan(text) {
+// Cancellable pre-send PII scan covering BOTH the typed text AND the deferred
+// attachments (9.205.0: attachment scanning moved from attach-time to send-time
+// so the heavy work — extract/OCR/NER — runs under THIS one progress+cancel
+// overlay). `files` is state._pendingFiles; each deferred entry is scanned and
+// its `.scan` populated in place (so the caller's assembly reads findings_full
+// as before). Returns the TEXT scan result; attachment results live on the
+// entries. Throws an error with `_cancelled=true` if the user aborts.
+function runCancellableGdprScan(text, files) {
+  files = Array.isArray(files) ? files : [];
+  const deferred = files.filter(f => f && f.scan && f.scan.state === 'deferred');
   return new Promise((resolve, reject) => {
     const ctrl = new AbortController();
     let cancelled = false;
     let overlay = null;
-    // Only show the overlay if the scan takes longer than ~250ms — most scans
-    // are instant and a flashing modal would be noise.
+    let stageEl = null;
+    const setStage = (msg) => { if (stageEl) stageEl.textContent = msg; };
+    // Only show the overlay if the work takes longer than ~250ms — a tiny
+    // text-only scan is instant and a flashing modal would be noise.
     const showTimer = setTimeout(() => {
       overlay = document.createElement('div');
       overlay.className = 'gdpr-scan-overlay';
@@ -26,11 +37,10 @@ function runCancellableGdprScan(text) {
           '<button type="button" class="gdpr-scan-cancel">Abbrechen</button>' +
         '</div>';
       _injectGdprScanStyles();
+      stageEl = overlay.querySelector('.gdpr-scan-text');
       overlay.querySelector('.gdpr-scan-cancel').onclick = () => {
-        cancelled = true;
-        ctrl.abort();
+        cancelled = true; ctrl.abort();
       };
-      // Esc cancels too.
       overlay._onKey = (e) => { if (e.key === 'Escape') { cancelled = true; ctrl.abort(); } };
       document.addEventListener('keydown', overlay._onKey);
       document.body.appendChild(overlay);
@@ -41,22 +51,52 @@ function runCancellableGdprScan(text) {
       if (overlay) {
         if (overlay._onKey) document.removeEventListener('keydown', overlay._onKey);
         overlay.remove();
-        overlay = null;
+        overlay = null; stageEl = null;
       }
     };
+    const _cancelErr = () => { const e = new Error('PII-Prüfung abgebrochen'); e._cancelled = true; return e; };
 
-    API.scanText(text, 'message', { full: true, signal: ctrl.signal })
-      .then(res => { teardown(); resolve(res); })
-      .catch(err => {
-        teardown();
-        if (cancelled || (err && err.name === 'AbortError')) {
-          const e = new Error('PII-Prüfung abgebrochen');
-          e._cancelled = true;
-          reject(e);
-        } else {
-          reject(err);
+    (async () => {
+      // 1) Attachments first (the heavy part) — scan each deferred file in turn,
+      //    mutating its .scan. A blocking/failed reason is recorded on the entry;
+      //    the caller decides what to do (block vs warn) as before.
+      for (let i = 0; i < deferred.length; i++) {
+        if (cancelled) throw _cancelErr();
+        const f = deferred[i];
+        setStage(`Anhang wird geprüft (${i + 1}/${deferred.length}): ${f.name}`);
+        if (state.piiScannerEnabled === false) {
+          f.scan = { state: 'done', scanned: false, reason: 'scanner_disabled' };
+          continue;
         }
-      });
+        try {
+          const sid = state.activeChat?.sessionId || '';
+          const res = await API.scanAttachment(sid, f, { signal: ctrl.signal });
+          f.scan = Object.assign({ state: 'done' }, res || {});
+        } catch (e) {
+          if (cancelled || (e && e.name === 'AbortError')) throw _cancelErr();
+          // Fail-open per file: mark scan failed (non-blocking) and continue.
+          f.scan = { state: 'done', scanned: false, reason: 'extract_failed',
+                     error: String(e && e.message || e) };
+        }
+      }
+      // 2) Typed text.
+      if (cancelled) throw _cancelErr();
+      if (text && text.trim() && state.piiScannerEnabled !== false) {
+        setStage('Nachricht wird geprüft …');
+        try {
+          return await API.scanText(text, 'message', { full: true, signal: ctrl.signal });
+        } catch (e) {
+          if (cancelled || (e && e.name === 'AbortError')) throw _cancelErr();
+          // Text-scan failure is fail-open (send proceeds without typed-text
+          // findings) — return null, not a throw.
+          console.warn('[gdpr-scan] text scan failed:', e?.message || e);
+          return null;
+        }
+      }
+      return null;
+    })()
+      .then(res => { teardown(); resolve(res); })
+      .catch(err => { teardown(); reject(err); });
   });
 }
 

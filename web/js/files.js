@@ -46,17 +46,18 @@ function handleFileSelect(event) {
         data: b64,
         encoding: 'base64',
         preview: isImage ? result : null,
-        // Upload-time scan state: 'pending' while in flight, 'done' with
-        // {findings, finding_count, categories} or {reason} after the
-        // /v1/attachments/scan response. Composer blocks send while any
-        // file is 'pending' OR has a blocking 'reason'.
-        scan: { state: 'pending' },
+        // Scan state. 'deferred' = NOT scanned at attach time (9.205.0): the
+        // attachment PII/classification scan now runs at SEND time, together
+        // with the typed-text scan, under one cancellable progress overlay —
+        // the heavy work (extract/OCR/NER) is the attachment scan, so showing
+        // its progress + cancel there is where it makes sense. The send flow
+        // turns this into {state:'done', findings_full, classification, …}.
+        scan: { state: 'deferred' },
       };
       state._pendingFiles.push(entry);
       renderFilePreviews();
       updateSendButton();
       schedulePIIBadgeUpdate();
-      scanPendingAttachment(entry);
     };
     reader.onerror = () => {
       showToast(`${file.name} konnte nicht gelesen werden: ${reader.error?.message || 'unbekannt'}`, true);
@@ -66,36 +67,9 @@ function handleFileSelect(event) {
   event.target.value = '';
 }
 
-// Background scan: POST the just-attached file to /v1/attachments/scan and
-// mutate the entry with the response. The composer's send-button gate +
-// the PII modal both read `entry.scan` to decide what to do.
-async function scanPendingAttachment(entry) {
-  // Scanner disabled → do NOT scan the attachment at all (this POST to
-  // /v1/attachments/scan is a SEPARATE path from PIIScanner.scan, so it needs
-  // its own guard; without it, adding a file still triggered a server-side PII
-  // scan even with the feature off). Mark the entry done+unscanned so the send
-  // gate never waits on it and no badge claims a finding.
-  if (state.piiScannerEnabled === false) {
-    entry.scan = { state: 'done', scanned: false, reason: 'scanner_disabled' };
-    renderFilePreviews();
-    updateSendButton();
-    return;
-  }
-  try {
-    // Empty string when no session exists yet (composer pre-create) — the
-    // server falls back to a per-user scratch dir. Server still requires
-    // auth, just not a session.
-    const sessionId = state.activeChat?.sessionId || '';
-    const res = await API.scanAttachment(sessionId, entry);
-    entry.scan = Object.assign({ state: 'done' }, res || {});
-  } catch (e) {
-    entry.scan = { state: 'done', scanned: false, reason: 'extract_failed',
-                   error: String(e && e.message || e) };
-  }
-  renderFilePreviews();
-  updateSendButton();
-  schedulePIIBadgeUpdate();
-}
+// (scanPendingAttachment removed in 9.205.0 — attachments are now scanned at
+// SEND time inside runCancellableGdprScan, under the shared progress overlay,
+// instead of in the background at attach time.)
 
 function renderImagePreviews() {
   // Legacy — images now unified into _pendingFiles with preview prop
@@ -373,13 +347,12 @@ function removePendingFile(idx) {
           data: b64,
           encoding: 'base64',
           preview: isImage ? result : null,
-          scan: { state: 'pending' },
+          scan: { state: 'deferred' },  // scanned at SEND time (see 9.205.0)
         };
         state._pendingFiles.push(entry);
         renderFilePreviews();
         updateSendButton();
         schedulePIIBadgeUpdate();
-        scanPendingAttachment(entry);
         resolve();
       };
       reader.onerror = () => {
@@ -464,12 +437,11 @@ function removePendingFile(idx) {
         }
         for (const result of results) {
           if (!result || result.error) continue;
-          result.scan = { state: 'pending' };
+          result.scan = { state: 'deferred' };  // scanned at SEND time (9.205.0)
           state._pendingFiles.push(result);
           renderFilePreviews();
           updateSendButton();
           schedulePIIBadgeUpdate();
-          scanPendingAttachment(result);
         }
         continue;
       }

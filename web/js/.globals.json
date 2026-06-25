@@ -1080,7 +1080,6 @@
     "saveUserSettingsPassword": "writable",
     "saveUserSettingsProfile": "writable",
     "saveWikiConfig": "writable",
-    "scanPendingAttachment": "writable",
     "schedulePIIBadgeUpdate": "writable",
     "scopeBadgeHtml": "writable",
     "scrollToBottom": "writable",

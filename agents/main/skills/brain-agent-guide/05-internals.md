@@ -923,9 +923,13 @@ preamble goes in first-user-message instead.
 - **SERVER-ONLY detection (9.200.0)**: the browser-side `PIIScanner` (the
   ~70 JS regex rules + Luhn/Mod11 validators) was DELETED. PII is detected
   exclusively in Python (`engine/pii_ner.py → _pii_rules` + `_pii_scan_text` +
-  `_pii_scan_bare_identifiers` + spaCy NER). The pre-send dialog calls
-  `POST /v1/gdpr/scan-text` (cancellable progress overlay client-side);
-  attachments via `/v1/attachments/scan` at upload. The rule catalog the
+  `_pii_scan_bare_identifiers` + spaCy NER). At SEND time (9.205.0) the client
+  runs `runCancellableGdprScan(text, files)`: it scans the typed text via
+  `POST /v1/gdpr/scan-text` AND each deferred attachment via
+  `POST /v1/attachments/scan` under ONE cancellable progress overlay (the heavy
+  extract/OCR/NER is the attachment scan, so progress+cancel live there). Files
+  are NO LONGER scanned at attach time (was: background scan on attach, marked
+  `scan.state='pending'`; now `'deferred'`, scanned on send). The rule catalog the
   Settings panel + chat-view labels render (rule→category, German category +
   rule labels) is served in `gdpr_scanner.catalog` (`/v1/services/status`) from
   `PII_RULE_CATEGORIES` / `PII_CATEGORY_LABELS` / `PII_DEFAULT_CATEGORY_ACTIONS`

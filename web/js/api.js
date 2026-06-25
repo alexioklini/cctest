@@ -204,14 +204,28 @@ class API {
   // {unsupported, too_large, extract_timeout, extract_failed} is BLOCKING
   // — the composer must refuse to send while any such attachment is
   // pending.
-  static scanAttachment(sessionId, file) {
-    return this.post('/v1/attachments/scan', {
+  static scanAttachment(sessionId, file, opts) {
+    const body = {
       session_id: sessionId,
       name: file.name,
       content: file.data,
       encoding: file.encoding || 'base64',
       media_type: file.type || 'application/octet-stream',
-    });
+    };
+    // opts.signal → AbortSignal so the SEND-time progress overlay can CANCEL a
+    // slow attachment scan (extract/OCR/NER on a large doc). Aborted fetch
+    // rejects with AbortError → caller maps to "send cancelled".
+    if (opts && opts.signal) {
+      return (async () => {
+        const r = await fetch(`${BASE_URL}/v1/attachments/scan`, {
+          method: 'POST', headers: this._headers(),
+          body: JSON.stringify(body), signal: opts.signal,
+        });
+        if (!r.ok) throw new Error(`POST /v1/attachments/scan: ${r.status}`);
+        return r.json();
+      })();
+    }
+    return this.post('/v1/attachments/scan', body);
   }
 
   // Server-side text scan — the ONLY PII detector for the typed message

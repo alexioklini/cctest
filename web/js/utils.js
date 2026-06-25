@@ -342,9 +342,9 @@ function updateSendButton() {
    The browser-side regex scanner (PIIScanner) was removed. PII
    detection now runs exclusively on the server (engine/pii_ner.py
    _pii_scan_text: regex catalog + spaCy NER + confidence bands).
-   The pre-send dialog calls /v1/gdpr/scan-text (with a cancellable
-   progress overlay); attachments are scanned at upload via
-   /v1/attachments/scan. The rule catalog / labels the Settings
+   The pre-send dialog calls /v1/gdpr/scan-text and (9.205.0) scans
+   attachments via /v1/attachments/scan AT SEND TIME — both under one
+   cancellable progress overlay. The rule catalog / labels the Settings
    panel + chat view render come from the server gdpr_scanner config
    (state.gdprCatalog, populated in applyGdprConfigToScanner).
    ═══════════════════════════════════════════════════════════ */
