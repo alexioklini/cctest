@@ -30,6 +30,20 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.2xx — Datenschutz-Prüfung serverseitig ──
     {
+        "version": "9.205.2",
+        "date": "2026-06-25",
+        "title": "Lokales Modell: keine Anonymisierung, keine Markierung",
+        "body": "Wenn Sie ein lokales Modell wählen, werden Ihre Daten nicht mehr anonymisiert — auch "
+                "dann nicht, wenn der Chat zuvor über ein Cloud-Modell lief und dort anonymisiert wurde. "
+                "Ein lokales Modell verarbeitet alles auf Ihrem Gerät; die Daten verlassen es nicht, "
+                "daher ist eine Anonymisierung weder nötig noch sinnvoll. Passend dazu blendet der "
+                "Chat-Verlauf die Datenschutz-Markierungen aus, solange ein lokales Modell ausgewählt "
+                "ist (es gibt nichts zu kennzeichnen). Wechseln Sie zurück zu einem Cloud-Modell, "
+                "erscheinen die Markierungen wieder.",
+        "audience": "user",
+        "versions": ["9.205.2"],
+    },
+    {
         "version": "9.205.0",
         "date": "2026-06-25",
         "title": "Anhänge: Datenschutz-Prüfung mit Fortschritt beim Senden",

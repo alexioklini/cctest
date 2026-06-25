@@ -990,6 +990,18 @@ preamble goes in first-user-message instead.
     window (§/Abs./Nr./Art. reference numbers are excluded via `_ADDR_REF_NUM`),
     and a lone abstract German noun tagged LOC is dropped (`_ADDR_NOUN_SUFFIX`:
     -vorhaben(s)/-ung/-konzept/…).
+  - **Local model → no anonymisation, no marks (9.205.2)**: a local model never
+    sends data off the machine, so anonymisation is pointless. Server-side
+    (`handlers/chat.py`): the sticky auto-anonymise path is suppressed when the
+    turn's model `is_model_local` (also when the modal choice is `local_model` →
+    swapped to the local fallback); the mapping is NOT rehydrated and the
+    `_apply_pii_decisions_to_wire` history pass is skipped → the local model gets
+    the REAL, unmodified data (text + history + attachments). An EXPLICIT
+    user `gdpr_action` is still honoured. Client-side (`chat_render.js`):
+    `_gdprMarksVisible()` gates all three highlight paths on the active model
+    being non-local — amber + red marks disappear while a local model is
+    selected; `selectModel` re-renders on a locality change so they toggle
+    immediately. Prior cloud turns' stored decisions are untouched.
   - **NER-precision gate (9.193.0, config `gdpr_scanner.name_precision_gate`,
     default ON)**: tightens the three dominant spaCy FP modes. `name` is accepted
     only with person-evidence — an adjacent honorific (Herr/Frau/Dr./Mag./Prof.)

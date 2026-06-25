@@ -146,6 +146,7 @@
     "_folderImportProgressOpen": "writable",
     "_folderImportProgressUpdate": "writable",
     "_folderImportShowResult": "writable",
+    "_gdprMarksVisible": "writable",
     "_gdprNerAction": "writable",
     "_gdprOriginalToFakeMap": "writable",
     "_genTab_agents": "writable",

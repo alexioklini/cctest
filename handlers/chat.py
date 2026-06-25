@@ -2692,9 +2692,18 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 # Accepted / false-positive / local values stay in clear (the
                 # user's choice); attachment-anonymised values are covered too
                 # (their decisions are in the same ledger).
+                # A LOCAL model never sends data off the machine, so the
+                # wire-history pseudonymisation is pointless there — skip it so a
+                # local turn sees the REAL history (a chat that was cloud+anonymise
+                # then switched to a local model must not anonymise the local turn).
                 _wire_messages = session.messages
+                _wire_is_local = False
                 try:
-                    _pii_decisions = ChatDB.get_session_pii_decisions(sid)
+                    _wire_is_local = bool(engine.is_model_local(session.model))
+                except Exception:
+                    _wire_is_local = False
+                try:
+                    _pii_decisions = {} if _wire_is_local else ChatDB.get_session_pii_decisions(sid)
                 except Exception:
                     _pii_decisions = {}
                 if _pii_decisions:
@@ -4478,7 +4487,29 @@ class ChatHandlerMixin:
         # ignore the user's opt-out. The flag is in-memory only — a reload
         # resets it to False, at which point a fresh PII find re-prompts.
         _opted_out = bool(getattr(session, "_gdpr_skip_auto", False))
-        if not gdpr_action and _pref == "anonymise":
+        # A LOCAL model never sends data off the machine, so anonymisation is
+        # pointless there — the sticky "session anonymised once → keep
+        # anonymising" rule must NOT fire when this turn runs on a local model
+        # (observed: a chat that was cloud+anonymise, then switched to a local
+        # model, still anonymised the local turn). An EXPLICIT gdpr_action from
+        # the client is still honoured (the user chose it). Only the IMPLICIT
+        # sticky/auto path is suppressed for local models.
+        # Effective locality of THIS turn: the currently-selected model is local,
+        # OR the user picked "local_model" in the decision modal (the turn will be
+        # swapped to the local fallback below). Both mean no off-machine egress →
+        # no anonymisation (new text, history, OR attachments).
+        _is_local_turn = False
+        try:
+            _is_local_turn = bool(engine.is_model_local(session.model))
+            if not _is_local_turn and gdpr_action == "local_model":
+                _fb = (engine._get_gdpr_scanner_config().get(
+                    "default_local_fallback_model") or "").strip()
+                _is_local_turn = bool(_fb and engine.is_model_local(_fb))
+        except Exception:
+            _is_local_turn = False
+        if _is_local_turn and not gdpr_action:
+            pass  # local model + no explicit choice → no auto-anonymise
+        elif not gdpr_action and _pref == "anonymise":
             gdpr_action = "anonymise"
         elif (not gdpr_action and _had_prior_mapping and not _opted_out
               and _pref not in ("local_model", "continue")):
@@ -4500,7 +4531,11 @@ class ChatHandlerMixin:
         # history protected from turn 5 on without re-anonymising the new value.
         if gdpr_action == "anonymise":
             rehydrate_session_gdpr_mapping(session)
-        elif _had_prior_mapping and not _opted_out:
+        elif _had_prior_mapping and not _opted_out and not _is_local_turn:
+            # Rehydrate the mapping so the reply de-anonymiser + mid-turn
+            # read_document pseudonymisation stay active — but NOT for a local
+            # turn: a local model gets the real values (no egress), so no
+            # mapping, no attachment pseudonymisation, no de-anon needed.
             rehydrate_session_gdpr_mapping(session)
         else:
             session._gdpr_mapping_id = None

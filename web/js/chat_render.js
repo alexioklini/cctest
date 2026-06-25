@@ -102,9 +102,10 @@ function renderMessages() {
     // (cleartext-accepted PII). BOTH are gated by the state.showGdprDetails
     // composer toggle: when the user switches the Datenschutz-Details off, no
     // marks render at all (matches renderUserMessage + the assistant path).
-    const _restored = state.showGdprDetails
+    const _gdprVis = _gdprMarksVisible();
+    const _restored = _gdprVis
       ? (t.userMsg?.metadata?.gdpr_restored_spans || []) : [];
-    const _clear = (state.showGdprDetails && state.activeChat && state.activeChat._piiDecisions)
+    const _clear = (_gdprVis && state.activeChat && state.activeChat._piiDecisions)
       ? buildGdprCleartextSpans(fullQ, state.activeChat._piiDecisions) : [];
     const userSpans = [..._restored, ..._clear];
     const hintInner = userSpans.length
@@ -720,7 +721,7 @@ function renderUserMessage(msg, idx) {
   const clearSpans = (state.activeChat && state.activeChat._piiDecisions)
     ? buildGdprCleartextSpans(textContent, state.activeChat._piiDecisions) : [];
   const userSpans = [...restoredSpans, ...clearSpans];
-  const showGdpr = state.showGdprDetails && userSpans.length;
+  const showGdpr = _gdprMarksVisible() && userSpans.length;
   const userTextHtml = showGdpr
     ? renderPlainTextWithGdprHighlights(textContent, userSpans)
     : esc(textContent);
@@ -824,12 +825,13 @@ function renderAssistantMessage(msg, idx) {
   // spans here — the markdown highlighter renders amber marks; cleartext-
   // accepted PII stays unmarked in assistant text. Dedup is handled by the
   // highlighter's claim-non-overlapping pass.
-  const _ownSpans = msg.metadata?.gdpr_restored_spans || [];
-  const _ledgerSpans = (state.showGdprDetails && state.activeChat && state.activeChat._piiDecisions)
+  const _gdprVis = _gdprMarksVisible();
+  const _ownSpans = _gdprVis ? (msg.metadata?.gdpr_restored_spans || []) : [];
+  const _ledgerSpans = (_gdprVis && state.activeChat && state.activeChat._piiDecisions)
     ? buildGdprCleartextSpans(content, state.activeChat._piiDecisions).filter(s => s.type === 'restored')
     : [];
   const gdprSpans = [..._ownSpans, ..._ledgerSpans];
-  const showGdpr = state.showGdprDetails && gdprSpans.length;
+  const showGdpr = _gdprVis && gdprSpans.length;
   const rendered = showGdpr
     ? renderMarkdownWithGdprHighlights(content, gdprSpans)
     : renderMarkdown(content);
@@ -1490,6 +1492,19 @@ function renderPlainTextWithGdprHighlights(text, spans) {
   }
   out += esc(text.substring(cursor));
   return out;
+}
+
+// Whether GDPR marks (amber anonymised + red cleartext) should render at all.
+// Gated by the Datenschutz-Details toggle AND — since 9.205.2 — by the active
+// model NOT being local: a local model sends nothing off the machine, so there
+// is nothing to mark (neither anonymisation nor cleartext-egress applies). When
+// a cloud+anonymise chat is switched to a local model, the marks disappear in
+// EVERY turn while local is selected; switching back to cloud restores them.
+function _gdprMarksVisible() {
+  if (!state.showGdprDetails) return false;
+  const m = state.activeChat && state.activeChat.model;
+  if (m && typeof isModelLocal === 'function' && isModelLocal(m)) return false;
+  return true;
 }
 
 // Build GDPR highlight spans from the chat's decision ledger (see body).

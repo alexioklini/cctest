@@ -979,6 +979,17 @@ function selectModel(mid) {
   if (mid === oldModel) return;
   stopWarmupPoll(chat);
   updateStatusBar();
+  // GDPR marks (amber/red) are hidden while a LOCAL model is selected (nothing
+  // leaves the machine → nothing to mark). If the locality changed, re-render
+  // the messages so the marks appear/disappear immediately (9.205.2).
+  try {
+    if (typeof isModelLocal === 'function'
+        && isModelLocal(oldModel) !== isModelLocal(mid)
+        && (chat.messages || []).length
+        && typeof renderMessages === 'function') {
+      renderMessages();
+    }
+  } catch (_) {}
   if (chat.messages.length === 0) {
     // Drop stale session-id; let the next send create one. No pre-create —
     // orphans stack up otherwise.
