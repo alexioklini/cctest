@@ -530,12 +530,15 @@ async function saveGdprConfig() {
     const r = await API.post('/v1/services/server', body);
     applyGdprConfigToScanner(r.gdpr_scanner);
     showToast('GDPR-Einstellungen gespeichert');
-    schedulePIIBadgeUpdate();
   } catch (e) {
     showToast('Fehlgeschlagen: ' + (e.message || e), true);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Alle GDPR-Einstellungen speichern'; }
   }
+  // Refresh the composer PII badge AFTER the save settles — guarded + outside
+  // the try so a stale/cached client missing this global can never flip the
+  // "gespeichert" success toast into a misleading "Fehlgeschlagen".
+  if (typeof schedulePIIBadgeUpdate === 'function') schedulePIIBadgeUpdate();
 }
 
 function resetGdprCategories() {
