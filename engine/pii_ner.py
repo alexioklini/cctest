@@ -1262,12 +1262,12 @@ _DATE_ADDRESS_NAME_PROXIMITY = 120
 # Birth / life-event keywords that make a nearby date personal even without an
 # NER name (the merged `dob` logic — geboren/born/died/married/hire/leave).
 _BIRTH_CONTEXT_RE = _re.compile(
-    r"\b(?:geboren|geburtsdatum|geb\.|born|date\s+of\s+birth|\bDOB\b|"
+    r"\b(?:geboren|geburts(?:datum|tag)|geb\.|born|birthday|birth\s*date|date\s+of\s+birth|\bDOB\b|"
     r"n[ée]|né|née|nacido|nata|nato|"
     r"gestorben|verstorben|died|deceased|d[ée]c[ée]d[ée]|"
     r"heirat|verheiratet|married|mariage|"
     r"eingestellt|eintritt|einstellungsdatum|date\s+of\s+hire|hired|"
-    r"austritt|ausgeschieden|date\s+of\s+leaving)\b",
+    r"austritt|ausgeschieden|date\s+of\s+leaving)(?!\w)",
     _re.IGNORECASE)
 
 
