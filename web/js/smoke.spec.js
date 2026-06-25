@@ -31,7 +31,10 @@ function attachConsoleGuard(page) {
 }
 
 async function login(page) {
-  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  // `load` (not just `domcontentloaded`) so all <script>s have at least been
+  // requested — important right after a server (re)start when asset serving is
+  // slow and a too-early evaluate sees undefined globals.
+  await page.goto(BASE, { waitUntil: 'load' });
   // Auth overlay may be hidden if a session cookie already exists.
   const userField = page.locator('#auth-username');
   if (await userField.isVisible().catch(() => false)) {
@@ -40,7 +43,26 @@ async function login(page) {
     await page.getByRole('button', { name: 'Anmelden' }).click();
   }
   // Welcome view is the post-login landing.
-  await expect(page.locator('#welcome-view')).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('#welcome-view')).toBeVisible({ timeout: 15000 });
+  // App-READINESS wait (mirrors the runtime readiness work, 9.205.4): don't let
+  // a test touch composer/globals until init() has finished AND the model
+  // config has loaded. Right after a server (re)start the config is empty for a
+  // few seconds (and some assets may have hit ERR_CONNECTION_RESET under the
+  // parallel load burst); ConnectionMonitor re-fetches it. Waiting on
+  // `state.modelsConfigReady` + a key global removes the flaky "composer-input
+  // not found" / "openGeneralSettings is not defined" false-positive failures.
+  // NB: `state` is a top-level `const` (state.js) → it is NOT a property of
+  // `window` (only `function`/`var` globals are). Reference it bare so it
+  // resolves in the page's global lexical scope; `window.X` would be undefined.
+  await page.waitForFunction(
+    () => typeof state === 'object'
+      && state
+      && state.modelsConfigReady === true
+      && typeof openGeneralSettings === 'function'
+      && typeof isModelLocal === 'function'
+      && !!document.querySelector('.composer-input'),
+    { timeout: 30000 },
+  );
 }
 
 test('login → welcome view, no console errors', async ({ page }) => {
