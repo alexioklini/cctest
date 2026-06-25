@@ -937,6 +937,9 @@ preamble goes in first-user-message instead.
   (`btn-pii-history`) shows when `piiHistoryHasFindings(chat)` (async server
   scan) OR `chat._piiDecisions` is non-empty — so it survives a reload even when
   the live scan finds nothing (anonymised stored text / scanner disabled).
+  `decisionsHas` is computed BEFORE the `state.piiScannerEnabled===false`
+  early-return in `updatePIIBadge` (9.203.1) — else a scanner-off chat with prior
+  decisions stays hidden (the 9.203.0 fix missed this).
   `openSession` re-fires `schedulePIIBadgeUpdate()` after decisions load (the
   reload-button fix). **Click** opens `openPiiHistoryModal()` (`panels_gdpr.js`),
   a large `.modal-content.x-wide` modal: it loads `GET …/pii-history-detail`

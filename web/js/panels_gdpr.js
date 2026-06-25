@@ -971,8 +971,19 @@ function classificationActionModal(classifiedFiles, chat) {
 function updatePIIBadge() {
   // Drop any leftover legacy pill so a hot-reload doesn't leave one behind.
   document.getElementById('pii-inline-badge')?.remove();
+  const chat = state.activeChat;
+  // Prior PII DECISIONS are historical facts, INDEPENDENT of whether the
+  // scanner is currently enabled — so the history button (→ overview modal)
+  // must surface them even when detection is off. Compute this BEFORE the
+  // scanner-disabled early-return (the bug: with the scanner off, the early
+  // return hid the button for chats that already had recorded decisions —
+  // chat 8bed3305). _piiDecisions is loaded on openSession (sessions.js).
+  const decisionsHas = !!(chat && chat._piiDecisions &&
+                          Object.keys(chat._piiDecisions).length);
   if (state.piiScannerEnabled === false) {
-    _updatePIIComposerBadge(null, null, null, false);
+    // No live detection, but still show the button if decisions exist so the
+    // user can review/edit them via the overview modal.
+    _updatePIIComposerBadge(chat, null, decisionsHas, false);
     return;
   }
   // 9.200.0: detection is SERVER-ONLY. There is no as-you-type DRAFT scan any
@@ -981,20 +992,12 @@ function updatePIIBadge() {
   // chat HISTORY scan (already server-driven, async). The draft's PII is
   // surfaced by the pre-send dialog instead (which runs the server scan with a
   // cancellable progress overlay). No draft attachment PII pre-badge either.
-  const chat = state.activeChat;
   const historyHas = !!(chat && piiHistoryHasFindings(chat));
 
   // 9.196.0: the automatic PII-driven swap-to-local was REMOVED. PII findings
   // no longer change the model behind the user's back — the pre-send dialog +
   // server-side confidence bands handle enforcement. The badge below still
   // surfaces that PII is present in the conversation (informational).
-
-  // Also surface the button whenever the chat carries prior PII DECISIONS —
-  // so the history modal stays reachable after a reload even if the live scan
-  // finds nothing (anonymised stored text, or scanner disabled). _piiDecisions
-  // is loaded on openSession (sessions.js) keyed by rule|value.
-  const decisionsHas = !!(chat && chat._piiDecisions &&
-                          Object.keys(chat._piiDecisions).length);
 
   _updatePIIComposerBadge(chat, null, historyHas || decisionsHas, false);
 }
@@ -1305,33 +1308,59 @@ async function openPiiHistoryModal() {
     bodyEl.innerHTML = '<div style="color:#b91c1c;font-size:13px;padding:24px 0;text-align:center">Laden fehlgeschlagen: ' + esc(e.message || String(e)) + '</div>';
     return;
   }
-  if (detail && detail.disabled) {
-    bodyEl.innerHTML = '<div style="color:var(--text-300);font-size:13px;padding:24px 0;text-align:center">Die Datenschutz-Prüfung ist derzeit deaktiviert.</div>';
-    return;
-  }
-
-  // Build the working set: every detected finding + its current decision.
+  // Build the working set by MERGING two independent sources:
+  //   (a) live findings from the detail scan (source-attributed, masked), and
+  //   (b) the user's PRIOR DECISIONS (rule|value, with cleartext + status).
+  // Decisions are independent of the scanner toggle, so this modal stays
+  // useful even when detection is disabled or the value was anonymised out of
+  // the stored text (chat 8bed3305: scanner off but 11 decisions → must show).
+  const scanDisabled = !!(detail && detail.disabled);
   const decMap = (decisions && decisions.decisions) || {};
-  const items = (detail.findings || []).map((f, i) => {
+  const items = [];
+  const seenHashes = new Set();
+
+  // Masking mirror for decision cleartext we render in the modal.
+  const _maskVal = (v) => {
+    if (!v) return '';
+    if (v.length <= 6) return v[0] + '•'.repeat(Math.max(0, v.length - 1));
+    return v.slice(0, 2) + '•'.repeat(v.length - 4) + v.slice(-2);
+  };
+
+  // (a) Live findings first — richest (source attribution).
+  for (const f of (detail && detail.findings) || []) {
     const dec = decMap[f.value_hash] || null;
-    return {
-      idx: i,
-      rule_id: f.rule_id,
-      label: f.label,
-      category: f.category,
-      masked: f.masked,
-      value_hash: f.value_hash,
-      source: f.source,
-      source_label: f.source_label,
+    seenHashes.add(f.value_hash);
+    items.push({
+      idx: items.length,
+      rule_id: f.rule_id, label: f.label, category: f.category,
+      masked: f.masked, value_hash: f.value_hash,
+      source: f.source, source_label: f.source_label,
       confidence: f.confidence,
-      // pending = the user's NEW choice in this modal session (null = unchanged)
-      pending: null,
-      baseStatus: _piiStatusOf(dec),
-      decision: dec,
-      sel: false,
-    };
-  });
-  _piiHistModalState = { sid, chat, items, overlay, truncated: !!detail.truncated };
+      pending: null, baseStatus: _piiStatusOf(dec), decision: dec, sel: false,
+    });
+  }
+  // (b) Decisions with no matching live finding — synthesise a row so a decided
+  // value never silently vanishes. value_hash keys the decisions map.
+  for (const [vh, dec] of Object.entries(decMap)) {
+    if (seenHashes.has(vh)) continue;
+    const label = (typeof gdprRuleLabel === 'function' && dec.rule_id)
+      ? gdprRuleLabel(dec.rule_id) : (dec.rule_id || 'Personenbezogene Daten');
+    items.push({
+      idx: items.length,
+      rule_id: dec.rule_id || '', label,
+      category: (typeof gdprRuleCategory === 'function' && dec.rule_id) ? gdprRuleCategory(dec.rule_id) : '',
+      masked: _maskVal(dec.value || ''),
+      value_hash: vh,
+      source: dec.source || 'history',
+      source_label: (dec.source && dec.source.indexOf('file:') === 0)
+        ? ('Anhang: ' + dec.source.slice(5))
+        : 'Frühere Entscheidung',
+      confidence: null,
+      pending: null, baseStatus: _piiStatusOf(dec), decision: dec, sel: false,
+    });
+  }
+  _piiHistModalState = { sid, chat, items, overlay,
+    truncated: !!(detail && detail.truncated), scanDisabled };
   _piiHistRender();
   _piiHistWireToolbar();
 }
@@ -1360,7 +1389,8 @@ function _piiHistRender() {
     chip(tally.accepted, _PII_STATUS_META.accepted) +
     chip(tally.local, _PII_STATUS_META.local) +
     chip(tally.fp, _PII_STATUS_META.fp) +
-    (S.truncated ? '<span style="font-size:11px;color:var(--text-400);margin-left:6px">(Liste gekürzt — sehr viele Funde)</span>' : '');
+    (S.truncated ? '<span style="font-size:11px;color:var(--text-400);margin-left:6px">(Liste gekürzt — sehr viele Funde)</span>' : '') +
+    (S.scanDisabled ? '<span style="font-size:11px;color:var(--text-400);margin-left:6px">(Live-Prüfung deaktiviert — gezeigt werden bisherige Entscheidungen)</span>' : '');
 
   // Filter, then group by source.
   const shown = S.items.filter((it) => {

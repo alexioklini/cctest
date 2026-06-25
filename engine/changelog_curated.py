@@ -44,7 +44,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "sodass Sie das Thema in einem Durchgang abschließen können. Außerdem behoben: das "
                 "Schild-Symbol bleibt nach dem Neuladen eines Chats zuverlässig erreichbar.",
         "audience": "user",
-        "versions": ["9.203.0"],
+        "versions": ["9.203.0", "9.203.1"],
     },
     {
         "version": "9.202.0",
