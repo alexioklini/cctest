@@ -1353,15 +1353,22 @@ function _piiHistRender() {
   // history group first, then files alphabetically.
   const order = [...groups.keys()].sort((a, b) =>
     (a === 'history' ? -1 : 0) - (b === 'history' ? -1 : 0) || a.localeCompare(b));
-  // A filter/search active → auto-expand so matches are visible; otherwise keep
-  // the user's per-group collapsed state (default collapsed).
+  // A filter/search active → auto-expand so matches are visible; otherwise use
+  // a SOURCE-DEPENDENT default that the user's explicit toggle overrides:
+  //   • "Frühere Entscheidungen" / chat history → EXPANDED (show the full trail)
+  //   • attachment groups (file:…) → COLLAPSED (they can hold many findings)
   const forceOpen = !!(query || fStatus);
 
   let html = '';
   for (const src of order) {
     const list = groups.get(src);
     const srcLabel = list[0].source_label || src;
-    const collapsed = forceOpen ? false : (S.collapsed[src] !== false);  // default collapsed
+    const isFile = String(src).indexOf('file:') === 0;
+    // S.collapsed[src] is the user's explicit choice (true/false); undefined =
+    // untouched → fall back to the per-source default (files collapsed, rest open).
+    const explicit = S.collapsed[src];
+    const collapsed = forceOpen ? false
+      : (explicit === undefined ? isFile : explicit);
     // Status mix for the group head.
     const gTally = {};
     for (const it of list) { const s = _piiHistEffectiveStatus(it); gTally[s] = (gTally[s] || 0) + 1; }
@@ -1463,8 +1470,12 @@ function _piiHistWireRows(bodyEl, forceOpen) {
 function _piiHistToggleGroup(src) {
   const S = _piiHistModalState;
   if (!S) return;
-  // default-collapsed: collapsed[src] === false means expanded.
-  S.collapsed[src] = (S.collapsed[src] === false) ? true : false;
+  // Flip relative to the CURRENT effective collapsed state. The default is
+  // source-dependent (files collapsed, rest expanded), so when untouched we
+  // derive it from the source; an explicit value flips directly.
+  const isFile = String(src).indexOf('file:') === 0;
+  const effective = (S.collapsed[src] === undefined) ? isFile : S.collapsed[src];
+  S.collapsed[src] = !effective;
   _piiHistRender();
 }
 
