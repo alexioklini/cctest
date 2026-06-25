@@ -1182,6 +1182,139 @@ class SessionsHandlerMixin:
             "worst_action": worst,
         })
 
+    def _handle_session_pii_history_detail(self, path):
+        """GET /v1/sessions/<id>/pii-history-detail — per-finding PII scan over
+        the session WITH source attribution.
+
+        Unlike pii-history-summary (which joins all text and returns only label
+        counts), this scans each message and each attachment SEPARATELY so every
+        finding carries where it came from (chat history vs which file). Values
+        are MASKED server-side — cleartext never crosses the wire here (the
+        history modal reads cleartext only from the user's own prior decisions
+        via /v1/gdpr/decisions). Feeds web/js/panels_gdpr.js openPiiHistoryModal.
+
+        Returns: {session_id, findings: [{rule_id, label, category, action,
+        confidence, masked, value_hash, source, source_label}], counts,
+        finding_count, worst_action, truncated}
+        """
+        sid = path.split("/")[3]
+        if self._session_access_check(sid) is None:
+            return
+        cfg = engine._get_gdpr_scanner_config()
+        if not cfg.get("enabled", True):
+            self._send_json({
+                "session_id": sid, "findings": [], "counts": {},
+                "finding_count": 0, "worst_action": "ignore",
+                "disabled": True, "truncated": False,
+            })
+            return
+        try:
+            msgs = ChatDB.load_messages(sid, include_compacted=True)
+        except Exception as e:
+            self._send_json({"error": f"db error: {e}"}, 500)
+            return
+
+        import hashlib
+
+        def _mask(v):
+            # Mirror web/js/panels_gdpr.js `mask` so client + server look alike.
+            if not v:
+                return ""
+            if len(v) <= 6:
+                return v[0] + ("•" * max(0, len(v) - 1))
+            return v[:2] + ("•" * (len(v) - 4)) + v[-2:]
+
+        MAX = 1000  # generous cap; the modal collapses groups so this is plenty
+        findings = []
+        counts = {}
+        worst = "ignore"
+        seen = set()  # (rule_id, value, source) dedupe
+        truncated = False
+
+        def _scan_one(text, source, source_label):
+            nonlocal worst, truncated
+            if not text or not isinstance(text, str):
+                return
+            try:
+                raw = engine._pii_scan_text(text, cfg=cfg, max_findings=200)
+            except Exception as e:
+                print(f"[pii_history_detail] scan failed: {e}", flush=True)
+                return
+            for f in raw:
+                if len(findings) >= MAX:
+                    truncated = True
+                    return
+                start, end = f.get("start"), f.get("end")
+                value = (text[start:end] if isinstance(start, int)
+                         and isinstance(end, int) else (f.get("value") or ""))
+                if not value:
+                    continue
+                rid = f.get("rule_id") or ""
+                key = (rid, value, source)
+                if key in seen:
+                    continue
+                seen.add(key)
+                label = f.get("label") or rid or "?"
+                action = f.get("action") or "warn"
+                if action == "block":
+                    worst = "block"
+                elif action == "warn" and worst != "block":
+                    worst = "warn"
+                counts[label] = counts.get(label, 0) + 1
+                # value_hash matches ChatDB.record_pii_decisions (sha256(rule|value))
+                vh = hashlib.sha256(f"{rid}|{value}".encode("utf-8")).hexdigest()
+                findings.append({
+                    "rule_id": rid,
+                    "label": label,
+                    "category": f.get("category") or "",
+                    "action": action,
+                    "confidence": f.get("confidence"),
+                    "masked": _mask(value),
+                    "value_hash": vh,
+                    "source": source,
+                    "source_label": source_label,
+                })
+
+        for idx, m in enumerate(msgs or []):
+            role = m.get("role") or ""
+            if role not in ("user", "human", "assistant"):
+                continue
+            # Message text → source 'history' (with a human label per role).
+            parts = []
+            c = m.get("content")
+            if isinstance(c, str):
+                if c:
+                    parts.append(c)
+            elif isinstance(c, list):
+                for b in c:
+                    if isinstance(b, dict) and b.get("type") == "text":
+                        t = b.get("text")
+                        if isinstance(t, str) and t:
+                            parts.append(t)
+            who = "Sie" if role in ("user", "human") else "Assistent"
+            _scan_one("\n".join(parts), "history",
+                      f"Chat-Verlauf ({who})")
+            # Each attachment scanned separately → source 'file:<name>'.
+            meta = m.get("metadata") or {}
+            for fobj in (meta.get("files") or []):
+                if not isinstance(fobj, dict):
+                    continue
+                fname = (fobj.get("name") or fobj.get("filename")
+                         or fobj.get("path") or "Anhang")
+                bits = [fobj.get(k) for k in ("name", "filename", "path",
+                                              "mime", "type") if fobj.get(k)]
+                _scan_one(" ".join(str(b) for b in bits),
+                          f"file:{fname}", f"Anhang: {fname}")
+
+        self._send_json({
+            "session_id": sid,
+            "findings": findings,
+            "counts": counts,
+            "finding_count": len(findings),
+            "worst_action": worst,
+            "truncated": truncated,
+        })
+
     def _handle_get_session_files(self, path):
         """GET /v1/sessions/<id>/files — returns all files from all messages (including compacted)"""
         parts = path.split("/")

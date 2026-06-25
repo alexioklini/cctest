@@ -403,9 +403,11 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 - `GET /v1/services/status` → `gdpr_scanner.catalog` (9.200.0) — `{rule_categories, category_labels, default_category_actions, rule_labels}`, the static PII catalog the client renders the Settings GDPR panel + chat-view labels from (was the deleted browser `PIIScanner` object)
 - `GET /v1/gdpr/ner-models` — admin: list spaCy NER model state
 - `POST /v1/gdpr/ner-models` — `{action: "load"|"unload", lang}` toggle
-- `POST /v1/gdpr/decisions` — persist per-finding review outcome `{session_id, turn_action, decisions:[{rule_id,value,confidence,band,disposition,false_positive,source}]}` (9.196.0)
+- `POST /v1/gdpr/decisions` — persist per-finding review outcome `{session_id, turn_action, decisions:[{rule_id,value,confidence,band,disposition,false_positive,source,value_hash?}]}` (9.196.0). `value_hash` optional (9.203.0): a caller that only knows the hash (the history modal — never holds cleartext) may pass it explicitly with empty `value`; the explicit hash then wins for the per-session dedupe row.
 - `GET /v1/gdpr/decisions?session_id=X` — prior decisions keyed by value_hash (already-analysed + FP-for-chat)
 - `GET /v1/gdpr/decisions/stats` — admin: per-rule FP-rate aggregate (global learning)
+- `GET /v1/sessions/<id>/pii-history-summary` — server-side PII scan over the session's user+assistant text → `{counts:{label:N}, finding_count, has, worst_action}` (label counts only; feeds the composer history badge)
+- `GET /v1/sessions/<id>/pii-history-detail` — per-finding history scan WITH source attribution (9.203.0). Scans each message + each attachment SEPARATELY → `{findings:[{rule_id,label,category,action,confidence,masked,value_hash,source,source_label}], counts, finding_count, worst_action, truncated}`. Values masked server-side (cleartext never crosses the wire here); `value_hash` joins to `/v1/gdpr/decisions`. Feeds the large GDPR history modal (`openPiiHistoryModal`).
 
 ## Document Review (GDPR + Classification reviewer)
 

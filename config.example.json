@@ -2449,6 +2449,25 @@
       "auto_lcm": true,
       "warmup": false,
       "warmup_mode": "minimal"
+    },
+    "voxtral-mini-tts-mellon-greek-2606-solutions": {
+      "enabled": true,
+      "shortname": "voxtral-mini-tts-mellon-greek-2606-solutions",
+      "display_name": "voxtral-mini-tts-mellon-greek-2606-solutions",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "tts"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_audio_backfilled": true,
+      "_caps_canonical": true
     }
   },
   "nodes": {},

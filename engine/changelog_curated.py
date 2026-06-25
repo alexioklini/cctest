@@ -30,6 +30,23 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.2xx — Datenschutz-Prüfung serverseitig ──
     {
+        "version": "9.203.0",
+        "date": "2026-06-25",
+        "title": "Datenschutz-Übersicht: alles auf einen Blick erledigen",
+        "body": "Das Bearbeiten erkannter personenbezogener Daten ist jetzt deutlich komfortabler — "
+                "gerade in Chats mit sehr vielen Funden. Das Hinweis-Fenster vor dem Senden ist größer "
+                "und übersichtlicher, mit nach Quelle gruppierten Funden. Neu ist eine große "
+                "Datenschutz-Übersicht, die Sie über das Schild-Symbol im Eingabefeld öffnen: Sie zeigt "
+                "ALLE erkannten Daten des gesamten Chats — aus Ihren Nachrichten, dem Verlauf und "
+                "Anhängen — gruppiert nach Herkunft, mit Suche, Filter und dem jeweiligen Status "
+                "(offen, anonymisiert, im Klartext gesendet, als Falschtreffer markiert). Mehrere Funde "
+                "lassen sich auf einmal als Falschtreffer markieren, akzeptieren oder zurücksetzen, "
+                "sodass Sie das Thema in einem Durchgang abschließen können. Außerdem behoben: das "
+                "Schild-Symbol bleibt nach dem Neuladen eines Chats zuverlässig erreichbar.",
+        "audience": "user",
+        "versions": ["9.203.0"],
+    },
+    {
         "version": "9.202.0",
         "date": "2026-06-24",
         "title": "Übergabe mit Vorschau und Ablage im Ursprungs-Chat",

@@ -2630,9 +2630,12 @@ class ChatDB:
                              decisions):
         """Persist one row per reviewed PII finding. `decisions` is a list of
         dicts: {rule_id, value, confidence, band, disposition, false_positive,
-        source, fake_value?}. `fake_value` is the pseudonym for an anonymised
-        finding (turn_action='anonymise'); '' otherwise. `value_hash` =
-        sha256(rule_id|value) for per-session dedupe. Returns rows written."""
+        source, fake_value?, value_hash?}. `fake_value` is the pseudonym for an
+        anonymised finding (turn_action='anonymise'); '' otherwise. `value_hash`
+        = sha256(rule_id|value) for per-session dedupe — normally derived from
+        rule_id|value, but a caller that only knows the hash (e.g. the history
+        modal, which never receives cleartext) may pass `value_hash` explicitly
+        and an empty `value`; the explicit hash then wins. Returns rows written."""
         import hashlib
         import uuid
         if not decisions:
@@ -2642,7 +2645,8 @@ class ChatDB:
         for d in decisions:
             rid = str(d.get("rule_id") or "")
             val = str(d.get("value") or "")
-            vh = hashlib.sha256(f"{rid}|{val}".encode("utf-8")).hexdigest()
+            vh = (str(d.get("value_hash") or "").strip()
+                  or hashlib.sha256(f"{rid}|{val}".encode("utf-8")).hexdigest())
             rows.append((
                 uuid.uuid4().hex, session_id or "", user_id or "",
                 turn_id or "", now, rid, vh, val[:512],

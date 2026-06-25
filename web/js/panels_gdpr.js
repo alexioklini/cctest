@@ -182,8 +182,8 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
           padding:20px;
         }
         .pii-card {
-          width:min(720px, 100%);
-          max-height:min(82vh, 720px);
+          width:min(1080px, calc(100% - 32px));
+          max-height:88vh;
           display:flex; flex-direction:column;
           background:var(--bg-000, #faf9f7);
           border-radius:14px;
@@ -266,6 +266,16 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
         .pii-finding-fp input { margin:0; cursor:pointer; }
         .pii-finding-row.pii-is-fp { opacity:.5; text-decoration:line-through; }
         .pii-group { margin-bottom:12px; }
+        /* On the wide modal, tile source-cards into a responsive grid so a chat
+           with many sources (history + several files) stays compact. Falls back
+           to one column under ~620px. The cards' own margin-top is neutralised
+           by the grid gap. */
+        .pii-units {
+          display:grid; gap:8px;
+          grid-template-columns:repeat(auto-fill, minmax(420px, 1fr));
+          align-items:start;
+        }
+        .pii-units .pii-source-card { margin-top:0; }
         .pii-group-title {
           font-size:12px; font-weight:600; color:var(--text-100);
           margin:0 0 6px 2px; display:flex; align-items:baseline; gap:8px;
@@ -440,7 +450,7 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
       return '<div class="pii-group">' +
         '<div class="pii-group-title">' + esc(title) +
           ' <span class="pii-group-sub">' + (ratable ? 'neu — bitte prüfen' : 'bereits gesehen — fixiert') + '</span>' +
-        '</div>' + units + '</div>';
+        '</div><div class="pii-units">' + units + '</div></div>';
     }
 
     const newF = allPerFinding.filter(f => !f._seen);
@@ -979,7 +989,14 @@ function updatePIIBadge() {
   // server-side confidence bands handle enforcement. The badge below still
   // surfaces that PII is present in the conversation (informational).
 
-  _updatePIIComposerBadge(chat, null, historyHas, false);
+  // Also surface the button whenever the chat carries prior PII DECISIONS —
+  // so the history modal stays reachable after a reload even if the live scan
+  // finds nothing (anonymised stored text, or scanner disabled). _piiDecisions
+  // is loaded on openSession (sessions.js) keyed by rule|value.
+  const decisionsHas = !!(chat && chat._piiDecisions &&
+                          Object.keys(chat._piiDecisions).length);
+
+  _updatePIIComposerBadge(chat, null, historyHas || decisionsHas, false);
 }
 
 // Single composer-toolbar icon for draft + history PII. Severity:
@@ -1029,6 +1046,8 @@ function _updatePIIComposerBadge(chat, draftScan, historyHas, draftHas) {
       blockOn, curLocal, chat,
     });
     btn.onblur = () => _piiHistoryHidePopover();
+    // Click opens the full history modal (the hover popover is a quick teaser).
+    btn.onclick = () => { _piiHistoryHidePopover(); openPiiHistoryModal(); };
   });
 }
 
@@ -1196,6 +1215,322 @@ function _piiHistoryHidePopover() {
   if (_piiHistoryPopover) {
     _piiHistoryPopover.remove();
     _piiHistoryPopover = null;
+  }
+}
+
+// ── Large GDPR history modal ──────────────────────────────────────────────
+// Opened from the composer shield button. Shows EVERY PII finding across the
+// whole chat (typed text, history, attachments) grouped by source, joined with
+// the user's prior decisions so each finding has a clear status, plus bulk
+// actions so the user can clear the topic in one pass. Uses the standard
+// .modal-overlay / .modal-content.x-wide pattern (same size as General
+// Settings). Findings come MASKED from /v1/sessions/<id>/pii-history-detail;
+// cleartext only ever comes from the user's own prior decisions.
+function _piiStatusOf(decision) {
+  // Map a prior decision (or none) to a display status.
+  if (!decision) return 'open';
+  if (decision.false_positive) return 'fp';
+  const a = decision.turn_action || '';
+  if (a === 'anonymise') return 'anon';
+  if (a === 'local' || a === 'local_model') return 'local';
+  if (a === 'send' || a === 'continue') return 'accepted';
+  return 'open';
+}
+const _PII_STATUS_META = {
+  open:     { label: 'Offen',          color: '#92400e', bg: '#fef3c7' },
+  anon:     { label: 'Anonymisiert',   color: '#3f6212', bg: '#ecfccb' },
+  accepted: { label: 'Klartext gesendet', color: '#b91c1c', bg: '#fee2e2' },
+  local:    { label: 'Lokal gesendet', color: '#3f6212', bg: '#ecfccb' },
+  fp:       { label: 'Falschtreffer',  color: '#525252', bg: '#e5e5e5' },
+};
+
+let _piiHistModalState = null;
+
+async function openPiiHistoryModal() {
+  const chat = state.activeChat;
+  const sid = chat && chat.sessionId;
+  if (!sid) { showToast('Keine gespeicherte Sitzung', true); return; }
+  _piiHistoryHidePopover();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content x-wide" style="display:flex;flex-direction:column;height:85vh;max-height:85vh">
+      <div class="modal-header">
+        <h2 class="modal-title">Datenschutz — Übersicht & Bearbeitung</h2>
+        <button class="modal-close" aria-label="Schließen">&times;</button>
+      </div>
+      <div class="pii-hist-toolbar" style="padding:14px 24px;border-bottom:1px solid var(--border-100);display:flex;flex-direction:column;gap:10px">
+        <div class="pii-hist-summary" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <input type="text" class="pii-hist-search" placeholder="Suchen (Kategorie, Wert, Quelle)…"
+            style="flex:1 1 240px;min-width:200px;padding:7px 11px;border:1px solid var(--border-200);border-radius:8px;background:var(--bg-000);color:var(--text-000);font-size:13px">
+          <select class="pii-hist-filter-status" style="padding:7px 11px;border:1px solid var(--border-200);border-radius:8px;background:var(--bg-000);color:var(--text-000);font-size:13px">
+            <option value="">Alle Status</option>
+            <option value="open">Offen</option>
+            <option value="anon">Anonymisiert</option>
+            <option value="accepted">Klartext gesendet</option>
+            <option value="local">Lokal gesendet</option>
+            <option value="fp">Falschtreffer</option>
+          </select>
+        </div>
+      </div>
+      <div class="pii-hist-body modal-body" style="flex:1 1 auto;overflow-y:auto;padding:16px 24px"></div>
+      <div class="modal-footer" style="flex-wrap:wrap;gap:10px">
+        <span class="pii-hist-selcount" style="font-size:12px;color:var(--text-300);margin-right:auto"></span>
+        <button class="btn-secondary pii-hist-bulk" data-act="fp" disabled>Als Falschtreffer markieren</button>
+        <button class="btn-secondary pii-hist-bulk" data-act="accepted" disabled>Als Klartext akzeptieren</button>
+        <button class="btn-secondary pii-hist-bulk" data-act="reset" disabled>Entscheidung zurücksetzen</button>
+        <button class="btn-primary pii-hist-save" disabled>Änderungen speichern</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => { overlay.remove(); _piiHistModalState = null; };
+  overlay.querySelector('.modal-close').onclick = close;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  const _esc = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', _esc); } };
+  document.addEventListener('keydown', _esc);
+
+  const bodyEl = overlay.querySelector('.pii-hist-body');
+  bodyEl.innerHTML = '<div style="color:var(--text-300);font-size:13px;padding:24px 0;text-align:center">Wird geladen…</div>';
+
+  let detail, decisions;
+  try {
+    [detail, decisions] = await Promise.all([
+      API.getSessionPiiHistoryDetail(sid),
+      API.getPiiDecisions(sid),
+    ]);
+  } catch (e) {
+    bodyEl.innerHTML = '<div style="color:#b91c1c;font-size:13px;padding:24px 0;text-align:center">Laden fehlgeschlagen: ' + esc(e.message || String(e)) + '</div>';
+    return;
+  }
+  if (detail && detail.disabled) {
+    bodyEl.innerHTML = '<div style="color:var(--text-300);font-size:13px;padding:24px 0;text-align:center">Die Datenschutz-Prüfung ist derzeit deaktiviert.</div>';
+    return;
+  }
+
+  // Build the working set: every detected finding + its current decision.
+  const decMap = (decisions && decisions.decisions) || {};
+  const items = (detail.findings || []).map((f, i) => {
+    const dec = decMap[f.value_hash] || null;
+    return {
+      idx: i,
+      rule_id: f.rule_id,
+      label: f.label,
+      category: f.category,
+      masked: f.masked,
+      value_hash: f.value_hash,
+      source: f.source,
+      source_label: f.source_label,
+      confidence: f.confidence,
+      // pending = the user's NEW choice in this modal session (null = unchanged)
+      pending: null,
+      baseStatus: _piiStatusOf(dec),
+      decision: dec,
+      sel: false,
+    };
+  });
+  _piiHistModalState = { sid, chat, items, overlay, truncated: !!detail.truncated };
+  _piiHistRender();
+  _piiHistWireToolbar();
+}
+
+function _piiHistEffectiveStatus(it) {
+  return it.pending || it.baseStatus;
+}
+
+function _piiHistRender() {
+  const S = _piiHistModalState;
+  if (!S) return;
+  const overlay = S.overlay;
+  const bodyEl = overlay.querySelector('.pii-hist-body');
+  const query = (overlay.querySelector('.pii-hist-search').value || '').trim().toLowerCase();
+  const fStatus = overlay.querySelector('.pii-hist-filter-status').value || '';
+
+  // Summary chips (always over the FULL set, not the filtered view).
+  const tally = { open: 0, anon: 0, accepted: 0, local: 0, fp: 0 };
+  for (const it of S.items) tally[_piiHistEffectiveStatus(it)]++;
+  const sumEl = overlay.querySelector('.pii-hist-summary');
+  const chip = (n, meta) => n ? '<span style="font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:999px;background:' + meta.bg + ';color:' + meta.color + '">' + n + ' ' + esc(meta.label) + '</span>' : '';
+  sumEl.innerHTML =
+    '<span style="font-size:13px;font-weight:600;color:var(--text-000);margin-right:6px">' + S.items.length + ' Funde gesamt</span>' +
+    chip(tally.open, _PII_STATUS_META.open) +
+    chip(tally.anon, _PII_STATUS_META.anon) +
+    chip(tally.accepted, _PII_STATUS_META.accepted) +
+    chip(tally.local, _PII_STATUS_META.local) +
+    chip(tally.fp, _PII_STATUS_META.fp) +
+    (S.truncated ? '<span style="font-size:11px;color:var(--text-400);margin-left:6px">(Liste gekürzt — sehr viele Funde)</span>' : '');
+
+  // Filter, then group by source.
+  const shown = S.items.filter((it) => {
+    if (fStatus && _piiHistEffectiveStatus(it) !== fStatus) return false;
+    if (query) {
+      const hay = (it.label + ' ' + it.masked + ' ' + it.source_label + ' ' + it.category).toLowerCase();
+      if (!hay.includes(query)) return false;
+    }
+    return true;
+  });
+  if (!shown.length) {
+    bodyEl.innerHTML = '<div style="color:var(--text-300);font-size:13px;padding:24px 0;text-align:center">' +
+      (S.items.length ? 'Keine Funde für diesen Filter.' : 'Keine personenbezogenen Daten in diesem Chat gefunden.') + '</div>';
+    _piiHistUpdateFooter();
+    return;
+  }
+  const groups = new Map();
+  for (const it of shown) {
+    if (!groups.has(it.source)) groups.set(it.source, []);
+    groups.get(it.source).push(it);
+  }
+  // history group first, then files alphabetically.
+  const order = [...groups.keys()].sort((a, b) =>
+    (a === 'history' ? -1 : 0) - (b === 'history' ? -1 : 0) || a.localeCompare(b));
+
+  let html = '';
+  for (const src of order) {
+    const list = groups.get(src);
+    const srcLabel = list[0].source_label || src;
+    html += '<div class="pii-hist-group" style="margin-bottom:14px;border:1px solid var(--border-100);border-radius:10px;overflow:hidden">' +
+      '<div class="pii-hist-grouphead" style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--bg-100);cursor:pointer">' +
+        '<span class="pii-hist-caret" style="font-size:11px;color:var(--text-400)">▾</span>' +
+        '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer" onclick="event.stopPropagation()">' +
+          '<input type="checkbox" class="pii-hist-group-sel" data-src="' + esc(src) + '">' +
+          '<span style="font-size:13px;font-weight:600;color:var(--text-000)">' + esc(srcLabel) + '</span>' +
+        '</label>' +
+        '<span style="font-size:11px;color:var(--text-300);background:var(--bg-200);padding:1px 8px;border-radius:999px;margin-left:auto">' + list.length + ' Treffer</span>' +
+      '</div>' +
+      '<div class="pii-hist-rows">';
+    for (const it of list) {
+      const st = _piiHistEffectiveStatus(it);
+      const meta = _PII_STATUS_META[st] || _PII_STATUS_META.open;
+      const changed = it.pending && it.pending !== it.baseStatus;
+      // cleartext value only if the user already decided it (in decMap); else masked.
+      const shownVal = (it.decision && it.decision.value) ? it.decision.value : it.masked;
+      const fakeBit = (it.decision && it.decision.fake_value)
+        ? '<span style="font-size:11px;color:var(--text-400)"> → ' + esc(it.decision.fake_value) + '</span>' : '';
+      html += '<div class="pii-hist-row" data-idx="' + it.idx + '" style="display:flex;align-items:center;gap:10px;padding:7px 12px;border-top:1px solid var(--border-050,var(--border-100))' + (changed ? ';background:#fffbeb' : '') + '">' +
+        '<input type="checkbox" class="pii-hist-row-sel" data-idx="' + it.idx + '"' + (it.sel ? ' checked' : '') + '>' +
+        '<span style="flex:none;min-width:140px;font-size:12.5px;font-weight:500;color:var(--text-100)">' + esc(it.label) + '</span>' +
+        '<span style="flex:1 1 auto;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--text-300);word-break:break-all">' + esc(shownVal) + fakeBit + '</span>' +
+        '<span style="flex:none;font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;background:' + meta.bg + ';color:' + meta.color + '">' + esc(meta.label) + (changed ? ' *' : '') + '</span>' +
+      '</div>';
+    }
+    html += '</div></div>';
+  }
+  bodyEl.innerHTML = html;
+
+  // Row checkbox wiring.
+  for (const cb of bodyEl.querySelectorAll('.pii-hist-row-sel')) {
+    cb.onchange = () => {
+      const it = S.items[+cb.dataset.idx];
+      if (it) it.sel = cb.checked;
+      _piiHistUpdateFooter();
+    };
+  }
+  for (const cb of bodyEl.querySelectorAll('.pii-hist-group-sel')) {
+    cb.onchange = () => {
+      const src = cb.dataset.src;
+      for (const it of S.items) if (it.source === src) it.sel = cb.checked;
+      _piiHistRender();
+    };
+  }
+  for (const head of bodyEl.querySelectorAll('.pii-hist-grouphead')) {
+    head.onclick = () => {
+      const rows = head.nextElementSibling;
+      const caret = head.querySelector('.pii-hist-caret');
+      const hidden = rows.style.display === 'none';
+      rows.style.display = hidden ? '' : 'none';
+      if (caret) caret.textContent = hidden ? '▾' : '▸';
+    };
+  }
+  _piiHistUpdateFooter();
+}
+
+function _piiHistUpdateFooter() {
+  const S = _piiHistModalState;
+  if (!S) return;
+  const overlay = S.overlay;
+  const selCount = S.items.filter((it) => it.sel).length;
+  const dirty = S.items.some((it) => it.pending && it.pending !== it.baseStatus);
+  overlay.querySelector('.pii-hist-selcount').textContent =
+    selCount ? (selCount + ' ausgewählt') : '';
+  for (const b of overlay.querySelectorAll('.pii-hist-bulk')) b.disabled = !selCount;
+  overlay.querySelector('.pii-hist-save').disabled = !dirty;
+}
+
+function _piiHistWireToolbar() {
+  const S = _piiHistModalState;
+  if (!S) return;
+  const overlay = S.overlay;
+  overlay.querySelector('.pii-hist-search').oninput = () => _piiHistRender();
+  overlay.querySelector('.pii-hist-filter-status').onchange = () => _piiHistRender();
+  for (const b of overlay.querySelectorAll('.pii-hist-bulk')) {
+    b.onclick = () => {
+      const act = b.dataset.act; // fp | accepted | reset
+      for (const it of S.items) {
+        if (!it.sel) continue;
+        if (act === 'reset') it.pending = it.baseStatus === 'open' ? null : 'open';
+        else if (act === 'fp') it.pending = 'fp';
+        else if (act === 'accepted') it.pending = 'accepted';
+        it.sel = false;
+      }
+      _piiHistRender();
+    };
+  }
+  overlay.querySelector('.pii-hist-save').onclick = () => _piiHistSave();
+}
+
+async function _piiHistSave() {
+  const S = _piiHistModalState;
+  if (!S) return;
+  const changed = S.items.filter((it) => it.pending && it.pending !== it.baseStatus);
+  if (!changed.length) return;
+  const saveBtn = S.overlay.querySelector('.pii-hist-save');
+  saveBtn.disabled = true; saveBtn.textContent = 'Wird gespeichert…';
+  // Map the modal status to the persisted turn_action / false_positive shape.
+  // 'reset' (→ open) records a neutral 'continue' row with FP cleared so the
+  // latest-row-wins logic drops the prior verdict. We persist by value_hash
+  // (the modal never holds cleartext for undecided findings).
+  const decisions = changed.map((it) => {
+    const st = it.pending;
+    const fp = st === 'fp';
+    const turn_action = (st === 'accepted') ? 'send'
+      : (st === 'fp') ? 'continue'
+      : 'continue'; // reset/open → neutral
+    return {
+      rule_id: it.rule_id,
+      value: (it.decision && it.decision.value) || '',
+      value_hash: it.value_hash,
+      false_positive: fp,
+      source: it.source,
+      disposition: 'history-modal',
+      turn_action,
+    };
+  });
+  try {
+    // turn_action at the call level is required by the API; the per-decision
+    // turn_action above is what record_pii_decisions stores per row.
+    await API.recordPiiDecisions(S.sid, 'history_edit', decisions);
+    // Reflect saved state locally: bake pending into base, refresh chat cache.
+    for (const it of changed) {
+      it.baseStatus = it.pending;
+      it.pending = null;
+      // keep decision object roughly in sync for status display
+      it.decision = Object.assign({}, it.decision || {}, {
+        false_positive: it.baseStatus === 'fp',
+        turn_action: it.baseStatus === 'accepted' ? 'send' : 'continue',
+      });
+    }
+    // Drop the chat's decision cache so a re-open re-reads from server.
+    if (S.chat) S.chat._piiDecisions = null;
+    showToast('Datenschutz-Entscheidungen gespeichert');
+    if (typeof schedulePIIBadgeUpdate === 'function') schedulePIIBadgeUpdate();
+    _piiHistRender();
+  } catch (e) {
+    showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
+  } finally {
+    saveBtn.textContent = 'Änderungen speichern';
+    _piiHistUpdateFooter();
   }
 }
 

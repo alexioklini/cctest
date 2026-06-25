@@ -1552,6 +1552,11 @@ class BrainAgentHandler(
             # local regex scan so soft-PII (name/address/organisation) that
             # only NER detects still surfaces.
             self._handle_session_pii_history_summary(path)
+        elif path.startswith("/v1/sessions/") and path.endswith("/pii-history-detail"):
+            # Per-finding history scan WITH source attribution (chat text /
+            # history / which attachment) + masked value. Feeds the large
+            # GDPR history modal (web/js/panels_gdpr.js openPiiHistoryModal).
+            self._handle_session_pii_history_detail(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/messages"):
             self._handle_get_messages(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/next-prompt"):

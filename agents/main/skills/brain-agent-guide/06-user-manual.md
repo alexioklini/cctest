@@ -121,6 +121,7 @@ Chat:
 - ✨ Verfeinern — den Entwurf vor dem Senden überarbeiten
 - 🔧 Verfeinerungs-Modus (Polish ↔ Engineer) — der Schalter direkt neben ✨. **Polish** (Standard) säubert nur Grammatik/Klarheit und lässt die Absicht unverändert. **Engineer** (akzentfarben, wenn aktiv) strukturiert den Prompt um: präzisiert die Aufgabe, nutzt das aktive Modell + verfügbare Tools + Projekt-Anweisungen als Kontext, fragt bei hoffnungslos vagen Entwürfen nach (statt Details zu erfinden) und lässt bereits gute Entwürfe unangetastet. Pro Oberfläche gemerkt (Chat, geplante Aufgaben, Soul-Editor)
 - 🛡️ GDPR-Details (PII-Funde inline aus-/einblenden)
+- 🛡️ Datenschutz-Übersicht (Schild-Symbol, erscheint nur wenn der Chat personenbezogene Daten oder frühere Datenschutz-Entscheidungen enthält) — **Klick** öffnet die große Datenschutz-Übersicht (siehe FAQ unten); kurzes **Überfahren** zeigt eine schnelle Vorschau
 - 💾 In-Gedächtnis-speichern-Zyklus (aus / an / auto)
 - 🪨 Caveman-Modus (knappe Antworten)
 
@@ -1157,6 +1158,23 @@ nur bei Bedarf — du machst nahtlos dort weiter, wo du aufgehört hast. Die
 Übergabe wird außerdem **als Dokument (Artefakt) im ursprünglichen Chat
 gespeichert** (`Übergabe-<Zeitstempel>.md`), unabhängig davon, ob du sie in
 einen neuen Chat übernimmst.
+
+**F: Was macht das Schild-Symbol (Datenschutz-Übersicht) im Eingabefeld?**
+A: Es erscheint, sobald in deinem Chat personenbezogene Daten erkannt wurden
+oder du dazu schon Entscheidungen getroffen hast. Ein **Klick** öffnet die
+**Datenschutz-Übersicht** — ein großes Fenster, das **alle** erkannten Daten
+des gesamten Chats zeigt: aus deinen Nachrichten, dem Verlauf und Anhängen,
+**gruppiert nach Herkunft**. Pro Fund siehst du Kategorie, einen maskierten
+Wert und den **Status** (offen · anonymisiert · im Klartext gesendet · lokal
+gesendet · Falschtreffer). Mit **Suche** und **Status-Filter** findest du
+gezielt einzelne Funde; per **Auswahl** (einzeln oder ganze Gruppe) kannst du
+mehrere Funde auf einmal **als Falschtreffer markieren**, **als Klartext
+akzeptieren** oder die **Entscheidung zurücksetzen** und mit **Änderungen
+speichern** sichern. So erledigst du das Datenschutz-Thema in einem Durchgang,
+statt jeden Fund einzeln beim Senden zu behandeln. (Das eigentliche
+**Anonymisieren** geschieht weiterhin im Hinweis-Dialog *vor dem Senden* — die
+Übersicht zeigt den Anonymisierungs-Status und kann ihn zurücksetzen.) Das
+Schild bleibt auch nach dem **Neuladen** des Chats erreichbar.
 
 **F: Was bedeuten die farbigen Badges an Web-Abrufen (raw / markitdown /
 crawl4ai)?**

@@ -201,6 +201,16 @@ async function openSession(sessionId, agentId) {
             typeof renderMessages === 'function') {
           renderMessages();
         }
+        // The composer history button (and thus the history modal) must be
+        // reachable whenever the chat has prior PII decisions — even if the
+        // live history scan finds nothing (e.g. values were anonymised in the
+        // stored text, or the server scanner is disabled). Decisions load
+        // async after openSession's initial schedulePIIBadgeUpdate(), so repaint
+        // the badge once they arrive. This is the fix for "button missing after
+        // reload". Guard: still the active chat.
+        if (state.activeChat === chat && typeof schedulePIIBadgeUpdate === 'function') {
+          schedulePIIBadgeUpdate();
+        }
       }).catch(() => {});
     }
     // Per-session Websuche basket — load THIS session's own curated sources.

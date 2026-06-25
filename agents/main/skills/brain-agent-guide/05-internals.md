@@ -931,7 +931,23 @@ preamble goes in first-user-message instead.
   `PII_RULE_CATEGORIES` / `PII_CATEGORY_LABELS` / `PII_DEFAULT_CATEGORY_ACTIONS`
   / `PII_RULE_LABELS` (`engine/pii_ner.py`); the client caches it in
   `state.gdprCatalog`. No browser as-you-type draft scan anymore — the composer
-  shield badge reflects only the (server-async) history scan.
+  shield badge reflects the (server-async) history scan AND whether the chat
+  carries prior decisions.
+- **Composer shield + history modal (9.203.0)**: the shield button
+  (`btn-pii-history`) shows when `piiHistoryHasFindings(chat)` (async server
+  scan) OR `chat._piiDecisions` is non-empty — so it survives a reload even when
+  the live scan finds nothing (anonymised stored text / scanner disabled).
+  `openSession` re-fires `schedulePIIBadgeUpdate()` after decisions load (the
+  reload-button fix). **Click** opens `openPiiHistoryModal()` (`panels_gdpr.js`),
+  a large `.modal-content.x-wide` modal: it loads `GET …/pii-history-detail`
+  (per-finding, source-attributed, masked) + `GET /v1/gdpr/decisions` in
+  parallel, joins each finding to its decision via `value_hash` to derive a
+  status (open / anonymised / accepted-cleartext / local / false-positive),
+  groups by source (history per role / each attachment), and offers search +
+  status filter + **bulk** mark-FP / accept / reset → `POST /v1/gdpr/decisions`
+  (with explicit `value_hash` since the modal holds no cleartext for undecided
+  findings). Anonymise is NOT offered here (it needs a send-time pseudonym map) —
+  only shown/resettable. The hover popover stays as a quick teaser.
 - NER: spaCy adds `name|address|organisation`. `name` stays `contact`/ignore;
   `address` → `personal`/warn but ONLY when a person name is adjacent (~120ch);
   `organisation` → `business_id`/ignore. Runtime control: `GET/POST /v1/gdpr/ner-models`.
