@@ -721,7 +721,27 @@ def _trigger_warmup(session):
     Delegates to engine.run_model_warmup so there's a single payload shape
     (matches the keeper daemon's prime exactly) and the global _warmup_state
     registry gets updated — the UI's green/gray dot reads from that registry.
+
+    NO-OP when the prefix this would prime is already warm. run_model_warmup
+    always primes the BARE main full prefix (it doesn't apply the session's
+    project/domain context), so the right pre-check is "is the bare full prefix
+    — or, for minimal-mode models, any warm prefix — already warm?". Without
+    this, every new chat (incl. switching between a normal chat and a project
+    chat on the same local model, where the pool can't serve a claim) re-fired a
+    full prime even though the model was already warm — the mid-session re-warm.
     """
+    try:
+        mcfg = engine.resolve_model_settings(session.model) or {}
+        if mcfg.get("warmup"):
+            want_minimal = (mcfg.get("warmup_mode") or "full").lower() == "minimal"
+            pid = engine.MINIMAL_PREFIX_ID if want_minimal else \
+                engine._bare_full_prefix_id(session.model, "main")
+            if pid is not None and engine.prefix_is_warm(
+                    session.model, pid, minimal=want_minimal):
+                return  # already warm — don't re-prime
+    except Exception:
+        pass  # on any doubt, fall through and prime (safe default)
+
     with session._warmup_lock:
         if session._warmup_active:
             session._warmup_cancel.set()

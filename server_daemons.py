@@ -3315,16 +3315,23 @@ def _warmup_keeper_loop(srv):
                 desired_mode = (cfg.get("warmup_mode") or "full").lower()
                 if desired_mode not in ("full", "minimal"):
                     desired_mode = "full"
-                st = engine.get_warmup_state(mid)
-                state_name = st.get("state", "idle")
-                if state_name in ("warming", "skipped_cloud"):
-                    continue
-                if state_name == "warm":
-                    prev_mode = st.get("mode", "full")
-                    if prev_mode == desired_mode:
-                        engine.set_warmup_state(mid, next_due_ts=0)
+                # Prefix-keyed decision: is the prefix this prime would create
+                # already warm? For a full prime that's the model's bare full
+                # prefix; for a minimal prime the subset rule means ANY warm full
+                # prefix on the model already covers it (weights loaded). This
+                # replaces the old mode-string compare that ping-ponged whenever
+                # session warmup (full) and the keeper (minimal) disagreed.
+                want_minimal = (desired_mode == "minimal")
+                if want_minimal:
+                    target_pid = engine.MINIMAL_PREFIX_ID
+                else:
+                    target_pid = engine._bare_full_prefix_id(mid, "main")
+                    if target_pid is None:
+                        # Can't build the prefix (transient) — skip this cycle.
                         continue
-                    # Mode flipped — fall through to re-prime.
+                if engine.prefix_is_warm(mid, target_pid, minimal=want_minimal):
+                    continue
+                st = engine.get_warmup_state(mid, target_pid if not want_minimal else None)
                 last = max(st.get("last_warmup_ts", 0), st.get("last_used_ts", 0))
                 age = now - last if last else 10 ** 9
                 prov_info = engine.resolve_provider_for_model(mid) or {}
@@ -3370,8 +3377,18 @@ def _warmup_keeper_loop(srv):
                 cfg = engine.resolve_model_settings(mid)
                 if not cfg.get("warmup") or not cfg.get("enabled", True):
                     continue
-                st = engine.get_warmup_state(mid)
-                if st.get("state") != "warm":
+                # Build the pool once the model is warm under ANY prefix. A
+                # pooled slot is just a pre-created bare main session (try_build
+                # fires NO prefill) that lets "new chat" skip the cold session
+                # setup; it reuses whatever the GPU already has resident. For a
+                # full-mode model that's the bare full KV prefix; for a
+                # minimal-mode model it's the loaded weights (no KV prefix, but
+                # still warmer than cold). Gating on the bare-FULL prefix here
+                # was wrong: a minimal-mode model (e.g. gemma-4-12B) never warms
+                # a full prefix, so the pool stayed empty (0/N in the status bar)
+                # even though the model was warm (green dot). Use the model-level
+                # best state instead.
+                if engine.get_warmup_state(mid).get("state") != "warm":
                     continue
                 prov_info = engine.resolve_provider_for_model(mid) or {}
                 if pq.provider_busy(prov_info.get("provider_name", ""),

@@ -655,11 +655,10 @@ class ProvidersHandlerMixin:
                 now_on = bool(now.get("warmup"))
                 if was_on and not now_on:
                     warm_pool.invalidate_model(mid, reason="warmup flag off")
-                    engine.set_warmup_state(mid, state="idle", last_error="")
+                    engine.invalidate_model_warmup(mid)
                 elif now_on and prev != now:
                     warm_pool.invalidate_model(mid, reason="config changed")
-                    engine.set_warmup_state(mid, state="idle",
-                                             last_warmup_ts=0, last_error="")
+                    engine.invalidate_model_warmup(mid)
             # Newly-enabled warmup models (weren't in prev snapshot)
             for mid, cfg in (engine._models_config or {}).items():
                 if cfg.get("warmup") and mid not in prev_model_snapshot:

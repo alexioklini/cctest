@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.205.5"
+VERSION = "9.206.1"
 VERSION_DATE = "2026-06-25"
 CHANGELOG = [
+    ("9.206.1", "2026-06-25", "fix(warmup): Pool-Top-up-Gate-Regression aus 9.206.0 behoben — die Statuszeile zeigte '0/10' im Pool, obwohl der Composer-Punkt GRUEN (warm) war. URSACHE: der 9.206.0-Umbau gatete das Pool-Building (server_daemons.py, zweiter Keeper-Pass) auf prefix_is_warm(BARE-FULL-Prefix). Das einzige Warmup-Modell hier (gemma-4-12B-it-qat-4bit) laeuft mit warmup_mode='minimal' und waermt deshalb NIE einen full-Prefix → das Gate war nie erfuellt → der Pool blieb leer (0/N), obwohl das Modell warm ist (minimal → state='warm' → gruener Punkt). Ein gepoolter Slot ist nur eine VORAB ERZEUGTE bare main-Session (try_build feuert KEINEN Prefill) und beschleunigt 'neuer Chat' durch Ueberspringen des Session-Cold-Starts; er nutzt, was die GPU schon resident hat (full-Modus: der bare full-KV-Prefix; minimal-Modus: die geladenen Gewichte) — also auch fuer minimal-Modelle sinnvoll, und es war das Vor-9.206.0-Verhalten (altes Gate: state=='warm'). FIX: das Gate ist wieder modell-weit 'ist irgendein Prefix warm?' via get_warmup_state(mid).state=='warm' (==_best_entry, deckt full UND minimal). Die PRIME-Entscheidung des ERSTEN Keeper-Passes bleibt prefix-gekeyt (das war der eigentliche 9.206.0-Fix, unveraendert) — nur das POOL-BUILD-Gate war zu streng. Reine server_daemons.py-Aenderung; py_compile OK. Server-Restart noetig (Daemon-Loop)."),
+    ("9.206.0", "2026-06-25", "fix(warmup): das Warmup ist jetzt PREFIX-GEKEYT statt modell-gekeyt — behebt das wiederkehrende 'mitten in der Session wird grundlos neu gewarmt, obwohl gerade eben warm'. URSACHE (vom Nutzer korrekt als Abwesenheit einer Invariante diagnostiziert, nicht als Einzel-Bugs): _warmup_state war dict[model] und die Warmup-Entscheidung lief ueber PROXYS (mode-String-Vergleich, claim()-Shape, hartkodiertes 'full') statt ueber 'ist GENAU dieser KV-Prefix schon warm?'. Folgen: (a) MODE-PING-PONG — der Keeper wollte warmup_mode='minimal' fuer gemma-4-12B, _trigger_warmup erzwang 'full'; jeder Keeper-Tick sah mode!=desired und re-primte, jeder neue Chat flippte zurueck → Dauerschleife. (b) PROJEKT-WECHSEL — Wechsel normaler Chat ↔ Projekt-Chat auf demselben lokalen Modell erzeugte jedes Mal einen Voll-Warmup, weil claim() (zurecht) nur bare main-Sessions bedient und _trigger_warmup blind 'full' feuerte. (c) THINKING-RE-PRIME — maybe_reprime_for_thinking flippte thinking_primed gegen den Keeper, der immer thinking=False primt. LOESUNG (eine Invariante, kein Szenario-Spezialfall): NEU brain.compute_prefix_id(system_prompt, sorted(active_tool_names), thinking_in_prefix) = sha1-Kurz-Hash; _warmup_state ist jetzt dict[model][prefix_id]->{state,mode,thinking_primed,minimal,ts...}. NEU prefix_is_warm(model, prefix_id, minimal=) = DIE einzige Entscheidung, mit SUBSET-REGEL (ein 'minimal'-Bedarf — nur Gewichte, kein echter Prefix — ist durch JEDEN warmen full-Prefix desselben Modells gedeckt; ein 'minimal'-Prime wird unter dem Sentinel MINIMAL_PREFIX_ID gefuehrt). thinking geht NUR dann in die prefix_id ein, wenn es den tokenisierten Prompt aendert (prefix_thinking_relevant = oMLX-Provider mit supports_chat_template_kwargs + thinking_format!=none → enable_thinking; bei cloud reasoning_effort bleibt der Prefix gleich → KEIN Fork). evict_prefixes_except(model, keep) spiegelt, dass ein frischer Voll-Prefill die anderen residenten GPU-Prefixe verdraengt (oMLX-LRU) — verhindert, dass ein veralteter Prefix als warm gemeldet wird. WORAUS sich (a)/(b)/(c) AUTOMATISCH ergeben: run_model_warmup keyt jeden Prime auf seine prefix_id; der Keeper (server_daemons.py) skippt per prefix_is_warm(bare-full-prefix bzw. minimal-subset) statt per mode-String → kein Ping-Pong; _trigger_warmup (server.py) ist NO-OP, wenn der bare-full-Prefix (das, was es tatsaechlich primt) schon warm ist → Projekt/Normal-Wechsel re-warmt nicht mehr; der blinde thinking-Re-Prime im Chat-Worker (handlers/chat.py) ENTFAELLT — stattdessen ruft der Worker nach dem Prefix-Bau mark_prefix_used(model, prefix_id) + evict_prefixes_except, sodass ein echter Turn seinen Prefix als warm verbucht (Nutzen IST der beste Warmup) und der thinking-Prefix bei erster Nutzung natuerlich warm wird. NEU _bare_full_prefix_id() baut den bare main full-Prefix ueber dieselbe build_first_turn_prefix wie run_model_warmup (byte-identisch). EHRLICHE EINSCHRAENKUNG: der residente KV-Prefix lebt in der GPU (oMLX/vLLM-LRU), Brain fuehrt nur eine OPTIMISTISCHE Spiegelung — verdraengt ein konkurrierender Prime einen Prefix, kann die Spiegelung ihn faelschlich warm fuehren → gelegentlicher transparenter Cache-Miss (voller Prefill, KEINE Korrektheitsverletzung), strikt besser als der garantierte Re-Prime-Ping-Pong. handlers/providers.py Config-Change nutzt jetzt invalidate_model_warmup(model) (alle Prefixe droppen). all_warmup_states() rollt fuer die UI weiterhin pro Modell auf den 'besten' Prefix-Eintrag zusammen (UI unveraendert). compute_prefix_id/prefix_is_warm/subset/evict/mark/invalidate unit-getestet (7/7). py_compile OK (brain/server/server_daemons/chat/providers). Server-Restart noetig (brain.py-Aenderung → Warmup re-primt). Reiner Infrastruktur-Fix, kein nutzersichtbares Feature → KEIN kuratierter Changelog-Eintrag."),
     ("9.205.5", "2026-06-25", "test(js-gate): den Playwright-Smoke-Test gegen die wiederkehrenden FALSE-POSITIVE-Fehlschlaege gehaertet (Nutzer-Wunsch: die Runtime-Readiness-Logik auch im Test nutzen). URSACHE der Flakes: login() wartete nur auf #welcome-view, nicht darauf, dass die App-Init wirklich fertig ist — direkt nach einem Server-(Neu)Start ist state.modelsConfig ein paar Sekunden leer und einige der ~51 JS-Assets koennen unter dem parallelen Lade-Burst ein ERR_CONNECTION_RESET kassieren, sodass Tests zu frueh auf noch undefinierte Globals/den Composer zugriffen ('composer-input not found', 'openGeneralSettings is not defined'). FIX (smoke.spec.js): login() wartet jetzt via waitForFunction, bis state.modelsConfigReady===true UND die Schluessel-Globals (openGeneralSettings/isModelLocal) definiert sind UND .composer-input existiert — dieselbe Readiness, die 9.205.4 zur Laufzeit eingefuehrt hat. WICHTIG: `state` ist ein top-level `const` (state.js) → KEINE window-Eigenschaft; im waitForFunction daher BARE `state` referenzieren (nicht window.state, das ist undefined; function-Globals wie openGeneralSettings sind dagegen auf window). goto nutzt jetzt waitUntil:'load'. CONFIG (playwright.config.js): actionTimeout 8s→20s (Platz fuer das Warmup-Nachladen der Modell-Config), test-timeout 30s→45s, retries 0→1 (ein Retry absorbiert einen transienten Asset-Reset; eine ECHTE Regression faellt in BEIDEN Versuchen → kein Maskieren von Breaks). Verifiziert: 5/5 Gate-Laeufe gruen, inkl. mehrfach SOFORT nach Server-Restart (der zuvor zuverlaessig flaky Worst Case). Reine Test-Aenderung (smoke.spec.js, playwright.config.js); kein Produktionscode, kein Server-Restart."),
     ("9.205.4", "2026-06-25", "fix(gdpr)+ux(status): (1) bei aktivem LOKALEM Modell wird der gesamte Pre-Send-PII-Scan uebersprungen — kein Text-Scan, KEIN Anhang-Scan, kein Entscheidungs-Modal (chat 626dfd9a: lokales Modell, Anhang wurde trotzdem PII-gescannt). Der 9.205.2-Fix entschaerfte nur den Anonymise-Pfad + die Einfaerbung; der eigentliche SCAN lief weiter, weil die Send-Gate (chat_send.js) nur an state.piiScannerEnabled hing, nicht am Modell. FIX: die Pre-Send-GDPR-Gate ist jetzt zusaetzlich an 'aktuelles Modell NICHT lokal' gebunden (`!isModelLocal(chat.model) && chat.model !== 'auto-local'`); der Klassifizierungs-Fallback war bereits `!curLocal`-gegated. (2) WURZEL des Problems war zusaetzlich: isModelLocal liest state.modelsConfig, das nach einem Server-(Neu)Start ein paar Sekunden LEER ist (/v1/models/config noch nicht voll bereit) → isModelLocal liefert dann faelschlich 'nicht lokal' → Scan laeuft doch. FIX: state.modelsConfigReady-Flag (in init.js gesetzt, sobald models nicht leer); ConnectionMonitor (monitors.js) holt die Config waehrend des Hochfahrens alle 2s nach (statt 10s) bis sie da ist, dann zurueck auf 10s. STATUSZEILE: der Verbindungs-Punkt zeigt jetzt AMBER 'Server wird bereit … (Modelle werden geladen)' solange die Config laedt, und erst GRUEN 'verbunden' wenn voll da (neue _paintDot-Logik; nutzt die bestehende .connecting-CSS). SEND-GUARD: ist der Scanner aktiv aber modelsConfigReady===false, haelt das Senden mit Hinweis 'Server wird noch bereit — einen Moment' an, statt auf unbekannter Lokalitaet falsch zu gaten. Verifiziert headless: nach Laden ist isModelLocal('gemma-4-12B-it-qat-4bit')=true, Scan-Gate fuer alle lokalen Modelle + auto-local = kein Scan, Cloud + auto-cloud = Scan; Dot connected. Reine Client-Aenderung (chat_send.js/init.js/monitors.js); js_gate gruen (5/5, net-globals unveraendert). KEIN Server-Restart noetig — Seite neu laden."),
     ("9.205.2", "2026-06-25", "fix(gdpr): ein LOKALES Modell anonymisiert nicht mehr — und die Verlauf-Einfaerbung verschwindet, solange ein lokales Modell gewaehlt ist. Hintergrund (chat 8bed3305): ein Chat, der vorher cloud-basiert + anonymisiert war, anonymisierte beim Wechsel auf ein lokales Modell den lokalen Turn weiter — sinnlos, da lokale Modelle die Maschine nicht verlassen. SERVER (handlers/chat.py): (1) der Sticky-Auto-Anonymise-Pfad feuert nicht mehr, wenn der Turn auf einem lokalen Modell laeuft (is_model_local(session.model)); ein EXPLIZITES gdpr_action des Nutzers wird weiter geehrt. (2) _is_local_turn deckt auch die Modal-Wahl 'lokales Modell' ab (gdpr_action=='local_model' → der Turn wird auf den lokalen Fallback geswappt → effektiv lokal). (3) bei lokalem Turn wird die Mapping NICHT rehydriert (kein Reply-De-Anonymisierer, keine mid-turn read_document-Pseudonymisierung) UND der Wire-History-Pseudonymisierungs-Pass wird uebersprungen → das lokale Modell bekommt die ECHTEN, unveraenderten Daten (neuer Text, Verlauf, Anhaenge). Bereits gespeicherte Entscheidungen vergangener Cloud-Turns bleiben unangetastet. CLIENT (chat_render.js + nav.js): neue _gdprMarksVisible() gated ALLE drei Einfaerbungs-Pfade (Turn-Header, Nutzer-Bubble, Assistent-Antwort) zusaetzlich auf 'aktuelles Modell NICHT lokal' — bei lokalem Modell verschwinden gelbe (anonymisiert) UND rote (Klartext) Marken komplett (es verlaesst nichts die Maschine, also nichts zu markieren). selectModel ruft renderMessages, wenn sich die Lokalitaet aendert → Marken erscheinen/verschwinden sofort beim Modellwechsel; zurueck auf Cloud stellt sie wieder her. Headless verifiziert an 8bed3305 (lokales Modell aktiv → 0 Marken; gdprVis=false). py_compile OK; js_gate gruen (5/5; net-globals 1497→1498: +_gdprMarksVisible). Server-Restart noetig (chat.py)."),
@@ -5898,15 +5900,83 @@ from engine.model_select import (  # noqa: E402
 
 # --- Warmup Registry ---
 #
-# Per-model warmup state tracker. A background keeper daemon (in server.py)
+# Per-PREFIX warmup state tracker. A background keeper daemon (in server.py)
 # fires minimal prefill requests against local model endpoints so the first
 # real user turn hits a warm KV cache and time-to-first-token is minimised.
-# Each model's warmup is opt-in via models_config[id].warmup + warmup_ttl_seconds.
+# Each model's warmup is opt-in via models_config[id].warmup.
 #
-# State values: "idle" (never warmed), "warming", "warm", "failed", "skipped_cloud"
+# WHY prefix-keyed and not model-keyed:
+#   The thing that's actually warm on the GPU is a *KV prefix* — the tokenised
+#   (system prompt + tools [+ enable_thinking]) the prefill primed. The SAME
+#   model can be needed under several different prefixes within one session:
+#   a bare chat, a project chat (project instructions in the system prompt), a
+#   thinking-on turn (oMLX enable_thinking changes the tokens). Tracking state
+#   by model alone made every prefix-changing context switch *look* like the
+#   model "went cold", so the keeper / session-warmup kept re-priming a prefix
+#   that was actually already warm — the mid-session re-warm the user saw.
+#   Keying by (model, prefix_id) makes the only decision "is THIS prefix warm?"
+#   — no per-scenario special-casing.
+#
+# Shape: _warmup_state[model] = { prefix_id: {state, mode, last_warmup_ts,
+#   last_used_ts, last_error, thinking_primed, minimal} }
+# State values: "idle"/absent (never warmed), "warming", "warm", "failed",
+# "skipped_cloud".
+#
+# `minimal` mode (weights-only, no system/tools prefix) is a degenerate prefix:
+# it primes nothing the KV cache reuses, only the resident weights — which a
+# `full` prime of ANY prefix on the same model already covers. So a minimal
+# need is satisfied by any warm full prefix on the model (the SUBSET rule in
+# prefix_is_warm), and a minimal prime is recorded under the sentinel prefix
+# id MINIMAL_PREFIX_ID rather than a real hash.
+
+import hashlib as _hashlib
 
 _warmup_state: dict[str, dict] = {}
 _warmup_state_lock = threading.Lock()
+
+# Sentinel prefix id for weights-only ("minimal") primes — they have no real
+# system/tools prefix to hash.
+MINIMAL_PREFIX_ID = "__minimal__"
+
+
+def compute_prefix_id(system_prompt: str, active_tool_names,
+                      thinking_in_prefix: bool) -> str:
+    """Canonical id of a KV prefix.
+
+    Two primes share a prefix id IFF they would prime byte-identical KV — i.e.
+    same system prompt, same active tool-name set, same enable_thinking (only
+    when thinking actually changes the tokenised prefix; see
+    prefix_thinking_relevant). Tool *names* (sorted) stand in for the full tool
+    serialization: build_first_turn_prefix guarantees the name set determines
+    the wire tools, and the OpenAI/Anthropic shape difference is KV-irrelevant
+    (same rationale as build_first_turn_prefix's is_openai_shape note).
+    """
+    h = _hashlib.sha1()
+    h.update((system_prompt or "").encode("utf-8"))
+    h.update(b"\x00")
+    for n in sorted(active_tool_names or []):
+        h.update(n.encode("utf-8"))
+        h.update(b"\x00")
+    h.update(b"\x01think" if thinking_in_prefix else b"\x00nothink")
+    return h.hexdigest()[:16]
+
+
+def prefix_thinking_relevant(model: str) -> bool:
+    """Does toggling thinking actually change this model's KV prefix?
+
+    Only for oMLX-style providers that accept chat_template_kwargs AND a
+    non-`none` thinking_format — there `enable_thinking` is rendered INTO the
+    tokenised prompt (see _apply_inference_to_payload). For cloud reasoning
+    formats (mistral_blocks / reasoning_field over a non-template provider) the
+    toggle is just an API field (reasoning_effort) and leaves the prefix
+    unchanged, so it must NOT enter the prefix id (else a harmless toggle would
+    fork the warm prefix and trigger a pointless re-prime).
+    """
+    cfg = _models_config.get(model, {}) or {}
+    if cfg.get("thinking_format", "none") == "none":
+        return False
+    prov = resolve_provider_for_model(model) or {}
+    return _provider_supports_chat_template_kwargs(prov.get("provider_name", ""))
 
 
 # --- Provider Concurrency Queue ---
@@ -6296,59 +6366,137 @@ def get_provider_queue() -> LocalProviderQueue:
     return _provider_queue
 
 
-def get_warmup_state(model: str) -> dict:
-    """Get a copy of the current warmup state for a model."""
-    with _warmup_state_lock:
-        return dict(_warmup_state.get(model, {
-            "state": "idle",
-            "last_warmup_ts": 0,
-            "last_used_ts": 0,
-            "last_error": "",
-            "next_due_ts": 0,
-        }))
+def _blank_warmup_entry() -> dict:
+    return {
+        "state": "idle",
+        "last_warmup_ts": 0,
+        "last_used_ts": 0,
+        "last_error": "",
+        "next_due_ts": 0,
+        "mode": "full",
+        "thinking_primed": False,
+        "minimal": False,
+    }
 
 
-def set_warmup_state(model: str, **fields):
-    """Update warmup state fields for a model."""
+# Rank used to pick the "best" prefix entry for a model when the UI / keeper
+# asks model-level (prefix_id=None). A warm full prefix is the most useful
+# thing to report; warming next; then everything else.
+def _entry_rank(e: dict) -> tuple:
+    st = e.get("state", "idle")
+    state_score = {"warm": 3, "warming": 2}.get(st, 1)
+    full_score = 0 if e.get("minimal") else 1
+    recency = max(e.get("last_warmup_ts", 0), e.get("last_used_ts", 0))
+    return (state_score, full_score, recency)
+
+
+def _best_entry(model: str) -> dict:
+    """Lock-held: the highest-ranked prefix entry for a model, or a blank."""
+    prefixes = _warmup_state.get(model) or {}
+    if not prefixes:
+        return _blank_warmup_entry()
+    return max(prefixes.values(), key=_entry_rank)
+
+
+def get_warmup_state(model: str, prefix_id: str | None = None) -> dict:
+    """Copy of warmup state. With prefix_id → that exact prefix's entry (blank
+    if unknown). Without → the model's best entry (UI / coarse callers)."""
     with _warmup_state_lock:
-        cur = _warmup_state.setdefault(model, {
-            "state": "idle",
-            "last_warmup_ts": 0,
-            "last_used_ts": 0,
-            "last_error": "",
-            "next_due_ts": 0,
-        })
+        if prefix_id is not None:
+            entry = (_warmup_state.get(model) or {}).get(prefix_id)
+            return dict(entry) if entry else _blank_warmup_entry()
+        return dict(_best_entry(model))
+
+
+def set_warmup_state(model: str, prefix_id: str, **fields):
+    """Update fields on one (model, prefix_id) warmup entry."""
+    with _warmup_state_lock:
+        cur = _warmup_state.setdefault(model, {}).setdefault(
+            prefix_id, _blank_warmup_entry())
         cur.update(fields)
 
 
-def mark_model_used(model: str):
-    """Call when a real request hits a model.
+def prefix_is_warm(model: str, prefix_id: str, *, minimal: bool = False) -> bool:
+    """The ONE warmup decision: is the KV prefix the next turn needs already
+    primed (and not known-stale)?
 
-    A real turn keeps the model loaded in GPU memory and leaves a valid KV
-    prefix cached — effectively, using the model is itself the best warmup.
-    So we bump both last_used_ts and (if currently cold/idle) flip the state
-    to warm so the UI reflects reality without triggering a redundant prime.
+    Subset rule: a `minimal` need (weights only, no real prefix) is satisfied by
+    ANY warm full prefix on the model — a full prime loaded the weights too. So
+    a model that's warm under any full prefix never needs a separate minimal
+    prime, and switching from a full chat to a (hypothetically minimal) context
+    doesn't re-warm.
+
+    A prefix that's currently `warming` also counts as "don't start another" —
+    the in-flight prime will cover it.
     """
+    with _warmup_state_lock:
+        prefixes = _warmup_state.get(model) or {}
+        if minimal:
+            # Any warm/warming full prefix covers a minimal need (weights loaded).
+            for pid, e in prefixes.items():
+                if pid == MINIMAL_PREFIX_ID:
+                    continue
+                if e.get("state") in ("warm", "warming"):
+                    return True
+            e = prefixes.get(MINIMAL_PREFIX_ID)
+            return bool(e and e.get("state") in ("warm", "warming"))
+        e = prefixes.get(prefix_id)
+        return bool(e and e.get("state") in ("warm", "warming"))
+
+
+def mark_prefix_used(model: str, prefix_id: str, *, minimal: bool = False):
+    """Call when a real request hits a model under a known prefix. Using the
+    prefix keeps it resident on the GPU — using it IS the best warmup — so we
+    bump last_used_ts and (if cold/idle) flip it warm so the UI matches reality
+    without a redundant prime."""
     now = time.time()
     with _warmup_state_lock:
-        cur = _warmup_state.setdefault(model, {
-            "state": "idle",
-            "last_warmup_ts": 0,
-            "last_used_ts": 0,
-            "last_error": "",
-            "next_due_ts": 0,
-        })
+        cur = _warmup_state.setdefault(model, {}).setdefault(
+            prefix_id, _blank_warmup_entry())
         cur["last_used_ts"] = now
+        cur["minimal"] = bool(minimal)
         if cur.get("state") in ("idle", "cold", "failed"):
             cur["state"] = "warm"
             cur["last_warmup_ts"] = now
             cur["last_error"] = ""
 
 
-def all_warmup_states() -> dict:
-    """Return snapshot of all tracked warmup states."""
+def evict_prefixes_except(model: str, keep_prefix_id: str):
+    """A fresh full prime on `keep_prefix_id` evicts the model's OTHER KV
+    prefixes on the GPU (oMLX keeps a bounded number of resident prefixes; a new
+    prefill on a different prompt pushes others out via the gateway's LRU). Our
+    optimistic mirror must reflect that, or it would keep reporting a stale
+    prefix as warm and (worse) suppress a needed re-prime. We demote the others
+    to idle but keep their entries so last_used_ts/history survive."""
     with _warmup_state_lock:
-        return {k: dict(v) for k, v in _warmup_state.items()}
+        prefixes = _warmup_state.get(model) or {}
+        for pid, e in prefixes.items():
+            if pid == keep_prefix_id:
+                continue
+            if e.get("state") in ("warm", "warming"):
+                e["state"] = "idle"
+
+
+def invalidate_model_warmup(model: str):
+    """Drop ALL prefix entries for a model. Used when KV-prefix-relevant config
+    changed (system prompt / tools / context / provider) — every primed prefix
+    is now stale, so the keeper must re-prime from scratch."""
+    with _warmup_state_lock:
+        _warmup_state.pop(model, None)
+
+
+def all_warmup_states() -> dict:
+    """Per-MODEL snapshot (best prefix entry per model) for the UI, which keys
+    its warmup indicators by model id."""
+    with _warmup_state_lock:
+        return {m: dict(_best_entry(m)) for m in _warmup_state}
+
+
+def all_prefix_states() -> dict:
+    """Full (model → {prefix_id → entry}) snapshot for diagnostics."""
+    with _warmup_state_lock:
+        return {m: {p: dict(e) for p, e in prefs.items()}
+                for m, prefs in _warmup_state.items()}
 
 
 # Inflight tracker for thinking-mode re-primes — prevents stacking concurrent
@@ -6357,27 +6505,41 @@ _reprime_inflight: set = set()
 _reprime_inflight_lock = threading.Lock()
 
 
-def maybe_reprime_for_thinking(model: str, thinking: bool, agent_id: str = "main") -> bool:
-    """Trigger a background re-prime if the requested thinking mode differs
-    from what's currently primed. No-op when:
+def maybe_reprime_for_thinking(model: str, thinking: bool, agent_id: str = "main",
+                               *, system_prompt: str | None = None,
+                               active_tool_names=None) -> bool:
+    """Pre-warm the prefix the NEXT turn will need when toggling thinking would
+    change the KV prefix. No-op when:
       - the model has no warmup configured
-      - the model has thinking_format=none (toggle is a no-op anyway)
+      - toggling thinking doesn't change the prefix (cloud reasoning_effort —
+        prefix_thinking_relevant False)
+      - the target prefix is already warm/warming (prefix_is_warm)
       - a re-prime for this model is already in flight
-      - the cached state already matches the requested mode
+
+    The caller passes the turn's resolved system_prompt + active_tool_names so
+    we hash the EXACT prefix the next turn will hit (project chat, etc.); when
+    omitted we fall back to a bare full prefix.
 
     Returns True if a re-prime thread was kicked off.
     """
     cfg = _models_config.get(model, {}) or {}
     if not cfg.get("warmup"):
         return False
-    if cfg.get("thinking_format", "none") == "none":
+    if not prefix_thinking_relevant(model):
+        return False  # toggle is just an API field — prefix unchanged
+
+    think_in_prefix = bool(thinking)  # relevant by the guard above
+    # Hash the prefix the next turn will actually need.
+    if system_prompt is None or active_tool_names is None:
+        pid = _bare_full_prefix_id(model, agent_id, thinking_in_prefix=think_in_prefix)
+        if pid is None:
+            return False
+    else:
+        pid = compute_prefix_id(system_prompt, active_tool_names, think_in_prefix)
+
+    if prefix_is_warm(model, pid):
         return False
-    state = get_warmup_state(model)
-    # If we've never primed yet, the first real turn does the work — skip.
-    if state.get("state") not in ("warm", "warming"):
-        return False
-    if bool(state.get("thinking_primed")) == bool(thinking):
-        return False
+
     with _reprime_inflight_lock:
         if model in _reprime_inflight:
             return False
@@ -6387,8 +6549,10 @@ def maybe_reprime_for_thinking(model: str, thinking: bool, agent_id: str = "main
         try:
             allow_cloud = bool(cfg.get("warmup_allow_cloud"))
             mode = (cfg.get("warmup_mode") or "full").lower()
+            # A thinking re-prime must prime the REAL prefix (full), not minimal —
+            # minimal has no prefix to differ on thinking.
             run_model_warmup(model, allow_cloud=allow_cloud,
-                             agent_id=agent_id, mode=mode, thinking=thinking)
+                             agent_id=agent_id, mode="full", thinking=thinking)
         finally:
             with _reprime_inflight_lock:
                 _reprime_inflight.discard(model)
@@ -6396,6 +6560,30 @@ def maybe_reprime_for_thinking(model: str, thinking: bool, agent_id: str = "main
     threading.Thread(target=_bg, daemon=True,
                      name=f"reprime-{model[:20]}-think{int(thinking)}").start()
     return True
+
+
+def _bare_full_prefix_id(model: str, agent_id: str = "main", *,
+                         thinking_in_prefix: bool = False) -> str | None:
+    """Prefix id of the bare main full prefix for a model — the prefix the
+    keeper primes and the warm pool hands out. Builds it through the shared
+    build_first_turn_prefix so it matches run_model_warmup exactly. Returns None
+    if the prefix can't be built (treated as 'unknown' by callers)."""
+    try:
+        agent_config = AgentConfig(agent_id)
+        _ctx = ExecutionContext(mode="chat", agent_id=agent_id,
+                                mcp_manager=_mcp_manager)
+        with request_context():
+            init_thread_context(_ctx, agent_config=agent_config)
+            system_prompt, _tools, atn = build_first_turn_prefix(
+                model, agent_id,
+                mcp_manager=_mcp_manager,
+                discovered_tools=set(),
+                is_openai_shape=True,
+                purpose="interactive",
+            )
+        return compute_prefix_id(system_prompt, atn, thinking_in_prefix)
+    except Exception:
+        return None
 
 
 # --- Shared domain context + tool_context construction -----------------
@@ -6587,20 +6775,27 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
     first thinking-on turn cache-misses and pays full prefill cost.
     """
     t0 = time.time()
-    # The helpdesk (Brainy) side-prime warms a SECOND, different prefix for the
-    # same model. It must NOT clobber the model's reported warmup state (the
-    # keeper keys state by model and would think the model needs re-priming).
-    # track_state=False routes every state write through this no-op.
-    def _set_state(*a, **k):
-        if track_state:
-            set_warmup_state(*a, **k)
+    is_minimal = (mode != "full")
+    thinking_in_prefix = bool(thinking) and prefix_thinking_relevant(model)
+    # Prefix id keys the warmup state entry. For minimal primes (no real
+    # system/tools prefix) we use the sentinel; for full primes it's the hash of
+    # the prefix we're about to build — computed once the prefix is known, below.
+    prefix_id = MINIMAL_PREFIX_ID if is_minimal else None
+
+    # The helpdesk (Brainy) side-prime warms a DIFFERENT prefix (its own system
+    # prompt + tool set) — now naturally a distinct prefix_id, so it no longer
+    # clobbers the main prefix's state. track_state=False is still honoured for
+    # callers (helpdesk) that want zero state writes at all.
+    def _set_state(pid, **k):
+        if track_state and pid is not None:
+            set_warmup_state(model, pid, **k)
     prov = resolve_provider_for_model(model)
     base_url = prov.get("base_url", "")
     api_key = prov.get("api_key", "")
 
     if not base_url:
         err = "no base_url"
-        _set_state(model, state="failed", last_error=err)
+        _set_state(prefix_id, state="failed", last_error=err, minimal=is_minimal)
         return {"ok": False, "state": "failed", "error": err, "duration_ms": 0, "mode": mode}
 
     # `prov` (resolve_provider_for_model) returns only {api_key, base_url,
@@ -6610,13 +6805,17 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
     # fix. Use the authoritative resolver, which reads the provider's is_local
     # flag from config by name.
     if not allow_cloud and not is_model_local(model):
-        _set_state(model, state="skipped_cloud",
-                   last_error="cloud provider (warmup.allow_cloud=false)")
+        _set_state(prefix_id, state="skipped_cloud",
+                   last_error="cloud provider (warmup.allow_cloud=false)",
+                   minimal=is_minimal)
         return {"ok": False, "state": "skipped_cloud",
                 "error": "cloud skipped", "duration_ms": 0, "mode": mode}
 
-    _set_state(model, state="warming", last_error="", mode=mode,
-               thinking_primed=bool(thinking))
+    # For minimal we already know the prefix id; mark it warming now. For full
+    # we mark warming after the prefix is built (prefix_id known).
+    if is_minimal:
+        _set_state(prefix_id, state="warming", last_error="", mode=mode,
+                   thinking_primed=bool(thinking), minimal=True)
 
     try:
         agent_config = AgentConfig(agent_id)
@@ -6669,6 +6868,14 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": "."},
                 ]
+                # Now that the prefix is built, key the state by its hash and
+                # mark it warming. active_tool_names from build_first_turn_prefix
+                # is the canonical name set (we discard `all_tools` shape here).
+                _atn = {(t.get("function", {}) or {}).get("name", "") or t.get("name", "")
+                        for t in (all_tools or [])}
+                prefix_id = compute_prefix_id(system_prompt, _atn, thinking_in_prefix)
+                _set_state(prefix_id, state="warming", last_error="", mode=mode,
+                           thinking_primed=bool(thinking), minimal=False)
             else:  # "minimal"
                 # Weights-only prime: no system prompt, no tools. all_tools must
                 # still be bound (the shared payload-build below reads it) — empty
@@ -6720,9 +6927,14 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
                     resp.read()
             dur_ms = int((time.time() - t0) * 1000)
             now = time.time()
-            _set_state(model, state="warm", last_warmup_ts=now,
+            _set_state(prefix_id, state="warm", last_warmup_ts=now,
                        last_error="", mode=mode,
-                       thinking_primed=bool(thinking))
+                       thinking_primed=bool(thinking), minimal=is_minimal)
+            # A full prime evicts the model's other resident KV prefixes on the
+            # GPU — reflect that so the mirror doesn't report a stale prefix as
+            # warm. Minimal primes touch no prefix, so they evict nothing.
+            if track_state and not is_minimal and prefix_id is not None:
+                evict_prefixes_except(model, prefix_id)
             return {"ok": True, "state": "warm", "duration_ms": dur_ms,
                     "error": "", "mode": mode, "thinking": bool(thinking)}
     except urllib.error.HTTPError as e:
@@ -6731,14 +6943,14 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
         except Exception:
             body = ""
         err = f"HTTP {e.code}: {body or e.reason}"
-        _set_state(model, state="failed", last_error=err,
-                   last_warmup_ts=time.time(), mode=mode)
+        _set_state(prefix_id, state="failed", last_error=err,
+                   last_warmup_ts=time.time(), mode=mode, minimal=is_minimal)
         return {"ok": False, "state": "failed", "error": err,
                 "duration_ms": int((time.time() - t0) * 1000), "mode": mode}
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
-        _set_state(model, state="failed", last_error=err,
-                   last_warmup_ts=time.time(), mode=mode)
+        _set_state(prefix_id, state="failed", last_error=err,
+                   last_warmup_ts=time.time(), mode=mode, minimal=is_minimal)
         return {"ok": False, "state": "failed", "error": err,
                 "duration_ms": int((time.time() - t0) * 1000), "mode": mode}
 

@@ -2585,13 +2585,15 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     inf_params.pop("thinking", None)
                     inf_params.pop("thinking_budget", None)
                     inf_params.pop("thinking_level", None)
-                # If thinking-mode flipped vs what the warmup keeper primed,
-                # kick off a background re-prime so the *next* turn's KV
-                # prefix matches. Current turn still pays the cold cost.
-                # No-op when model isn't warmup-flagged or has thinking_format=none.
-                _wants_thinking = bool(inf_params.get("thinking"))
-                engine.maybe_reprime_for_thinking(session.model, _wants_thinking,
-                                                  agent_id=session.agent_id)
+                # NOTE: the thinking-mode KV prefix is now warmed naturally —
+                # mark_prefix_used (after the prefix build below) records the
+                # exact prefix each turn hits, thinking included where it changes
+                # the tokenised prompt (oMLX enable_thinking). So a thinking turn
+                # warms its own prefix on first use; no speculative re-prime of
+                # the opposite mode is needed (and the old model-keyed re-prime
+                # ping-ponged against the keeper). engine.maybe_reprime_for_thinking
+                # remains available for callers that want to PRE-warm a known
+                # prefix, but the chat path no longer fires it blind.
 
                 # --- Auto-LCM (per-model automatic context compaction) ---
                 # Runs BEFORE the wire build (session.messages is read at the wire
@@ -2636,6 +2638,23 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     is_openai_shape=False,
                     breakdown=_tool_breakdown,
                 )
+                # Record the prefix this turn actually hits as warm/used. Running
+                # a real turn keeps its KV prefix resident on the GPU — using it
+                # IS the best warmup — so the warmup mirror must reflect that, or
+                # the keeper / session-warmup would re-prime an already-resident
+                # prefix (the mid-session re-warm). thinking enters the prefix id
+                # only when it changes the tokenised prompt (oMLX enable_thinking).
+                try:
+                    _think_in_prefix = (bool(inf_params.get("thinking"))
+                                        and engine.prefix_thinking_relevant(session.model))
+                    _pid = engine.compute_prefix_id(
+                        _system_prompt, _active_tool_names, _think_in_prefix)
+                    engine.mark_prefix_used(session.model, _pid)
+                    # This turn's prefill evicts the model's other resident
+                    # prefixes — mirror that so a stale prefix isn't reported warm.
+                    engine.evict_prefixes_except(session.model, _pid)
+                except Exception:
+                    pass
                 # Stash the GROUND-TRUTH per-turn tool resolution (in_prompt /
                 # deferred / excluded — exactly what resolve_active_tools handed
                 # the wire this turn) for the classification inspector. Runs on
