@@ -1051,7 +1051,7 @@ function _updatePIIComposerBadge(chat, draftScan, historyHas, draftHas) {
     if (!show) {
       btn.style.display = 'none';
       _piiHistoryHidePopover();
-      btn.onmouseenter = btn.onmouseleave = btn.onfocus = btn.onblur = null;
+      btn.onclick = null;
       return;
     }
     btn.style.display = '';
@@ -1071,173 +1071,16 @@ function _updatePIIComposerBadge(chat, draftScan, historyHas, draftHas) {
     if (blockOn && !curLocal) color = '#b91c1c';   // red
     else if (blockOn && curLocal) color = '#3f6212'; // green
     btn.style.color = color;
-    btn.setAttribute('title', titleScope);
-    // Popover content depends on what's present — let the renderer read the
-    // scan + chat off the closure each hover so counts stay fresh.
-    btn.onmouseenter = () => _piiHistoryShowPopover(btn, {
-      draft: draftHas ? draftScan : null,
-      history: historyHas ? chat : null,
-      blockOn, curLocal, chat,
-    });
-    btn.onmouseleave = () => _piiHistoryHidePopover();
-    btn.onfocus = () => _piiHistoryShowPopover(btn, {
-      draft: draftHas ? draftScan : null,
-      history: historyHas ? chat : null,
-      blockOn, curLocal, chat,
-    });
-    btn.onblur = () => _piiHistoryHidePopover();
-    // Click opens the full history modal (the hover popover is a quick teaser).
-    btn.onclick = () => { _piiHistoryHidePopover(); openPiiHistoryModal(); };
+    // Native title only — the old hover popover was retired (9.204.1); the full
+    // history/overview modal IS the single view. Click opens it.
+    btn.setAttribute('title', titleScope + ' — klicken für die Datenschutz-Übersicht');
+    btn.onclick = () => openPiiHistoryModal();
   });
 }
 
 let _piiHistoryPopover = null;
-function _piiHistoryShowPopover(anchorBtn, payload) {
-  _piiHistoryHidePopover();
-  // Backwards-compat: a plain counts object (legacy callers) is treated as
-  // history-only. Current callers pass {draft, history, blockOn, curLocal, chat}.
-  let draftScan = null, historyChat = null, blockOn = false, curLocal = false, chat = null;
-  if (payload && typeof payload === 'object' &&
-      ('draft' in payload || 'history' in payload)) {
-    draftScan = payload.draft || null;
-    historyChat = payload.history || null;
-    blockOn = !!payload.blockOn;
-    curLocal = !!payload.curLocal;
-    chat = payload.chat || null;
-  } else {
-    // Legacy shape: object of {rule_id: count}
-    historyChat = { _piiHistoryCounts: payload || {} };
-  }
-  const rect = anchorBtn.getBoundingClientRect();
-  const pop = document.createElement('div');
-  pop.id = 'pii-history-popover';
-  pop.style.cssText = [
-    'position:fixed',
-    'left:' + Math.round(rect.left) + 'px',
-    'bottom:' + Math.round(window.innerHeight - rect.top + 8) + 'px',
-    'z-index:9000',
-    'background:var(--bg-000)',
-    'color:var(--text-100)',
-    'border:1px solid var(--border-200)',
-    'border-radius:10px',
-    'box-shadow:0 10px 28px -8px rgba(31,30,29,.25), 0 0 0 1px rgba(31,30,29,.04)',
-    'padding:10px 12px',
-    'font-size:12px',
-    'line-height:1.45',
-    'min-width:240px',
-    'max-width:340px',
-    'pointer-events:none',
-  ].join(';');
-  const shieldSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.6" fill="currentColor"/></svg>';
-  const headerColor =
-    blockOn && !curLocal ? '#b91c1c' :
-    blockOn && curLocal  ? '#3f6212' :
-    '#92400e';
-  const headerText =
-    (draftScan && historyChat) ? 'Personenbezogene Daten in Entwurf und Verlauf'
-    : draftScan ? 'Personenbezogene Daten in der Nachricht'
-    : 'Personenbezogene Daten im Verlauf';
-
-  const sections = [];
-
-  if (draftScan) {
-    const counts = draftScan.counts || {};
-    const entries = Object.entries(counts).filter(([, v]) => (v || 0) > 0)
-                          .sort((a, b) => (b[1] || 0) - (a[1] || 0));
-    const total = entries.reduce((a, [, v]) => a + (v || 0), 0);
-    const rows = entries.map(([k, v]) =>
-      '<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0">' +
-        '<span style="color:var(--text-200)">' + esc(k) + '</span>' +
-        '<span style="font-weight:600;color:var(--text-100)">' + v + '</span>' +
-      '</div>'
-    ).join('');
-    let statusLine = '';
-    if (blockOn && !curLocal) {
-      statusLine = '<div style="color:#b91c1c;font-size:11px;margin-top:6px">Cloud-Versand blockiert — bitte lokales Modell wählen.</div>';
-    } else if (blockOn && curLocal) {
-      const localName = chat && chat.model ? modelShortName(chat.model) : 'lokales Modell';
-      statusLine = '<div style="color:#3f6212;font-size:11px;margin-top:6px">Läuft über lokales Modell <b>' + esc(localName) + '</b> — Daten verlassen das Netzwerk nicht.</div>';
-    } else {
-      statusLine = '<div style="color:var(--text-400);font-size:11px;margin-top:6px">Vor dem Senden erscheint eine Auswahl (Anonymisieren / lokales Modell / weiter).</div>';
-    }
-    sections.push(
-      '<div style="font-weight:600;font-size:11.5px;color:var(--text-200);margin-top:4px">Entwurf · ' + total + ' Treffer</div>' +
-      rows + statusLine
-    );
-  }
-
-  if (historyChat) {
-    const head = (txt) => '<div style="font-weight:600;font-size:11.5px;color:var(--text-200);margin-top:' +
-      (draftScan ? '10px' : '4px') + '">' + txt + '</div>';
-
-    // (A) COMPLETE picture — the server history scan's label→count list. This
-    // is the authoritative "Gesamtheit der PII im Verlauf": it covers EVERY
-    // value across all turns (email from turn 1 AND phone from turn 5), unlike
-    // the per-finding decisions below which only exist for values the user
-    // actively decided (accepted-cleartext / anonymise). Always shown so prior-
-    // turn PII never disappears when a new turn adds a finding (the bug in chat
-    // 6f034721: only the latest decided value, the phone, was showing).
-    const counts = historyChat._piiHistoryCounts || {};
-    const entries = Object.entries(counts).filter(([, v]) => (v || 0) > 0)
-                          .sort((a, b) => (b[1] || 0) - (a[1] || 0));
-    if (entries.length > 0) {
-      const total = entries.reduce((a, [, v]) => a + (v || 0), 0);
-      const rows = entries.map(([k, v]) =>
-        '<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0">' +
-          '<span style="color:var(--text-200)">' + esc(k) + '</span>' +
-          '<span style="font-weight:600;color:var(--text-100)">' + v + '</span>' +
-        '</div>').join('');
-      sections.push(head('Im Verlauf · ' + total + ' Treffer') + rows);
-    }
-
-    // (B) Per-finding DECISION detail — an ADDITIONAL section (not a
-    // replacement) shown when the user has decided specific values. Each row:
-    // value (· pseudonym when anonymised) · confidence · outcome.
-    const decided = Object.values(historyChat._piiDecisions || {})
-      .filter(d => d && d.value);   // only entries with a real value are detailed
-    if (decided.length > 0) {
-      const fakeMap = (typeof _gdprOriginalToFakeMap === 'function')
-        ? _gdprOriginalToFakeMap(historyChat) : {};
-      const outcome = d => {
-        if (d.false_positive) return { txt: 'nicht anonymisiert (Falschtreffer)', col: '#b45309' };
-        if (d.turn_action === 'anonymise') return { txt: 'anonymisiert', col: '#047857' };
-        if (d.turn_action === 'local' || d.turn_action === 'local_model')
-          return { txt: 'lokal verarbeitet', col: '#047857' };
-        return { txt: 'nicht anonymisiert (akzeptiert)', col: '#b45309' };
-      };
-      const rows = decided.map(d => {
-        const o = outcome(d);
-        const conf = (d.confidence != null && !isNaN(Number(d.confidence)))
-          ? Number(d.confidence).toFixed(2) : '';
-        const fake = fakeMap[d.value];
-        const valCell = fake
-          ? esc(d.value) + ' <span style="color:var(--text-400)">→</span> <span style="color:#047857">' + esc(fake) + '</span>'
-          : esc(d.value);
-        // Two lines per finding: (value · confidence) then the outcome — keeps a
-        // long value + long outcome label from squeezing each other into a
-        // one-char-per-line column.
-        return '<div style="padding:4px 0;border-top:1px solid var(--border-100)">' +
-            '<div style="display:flex;align-items:baseline;gap:8px">' +
-              '<span style="flex:1;font-family:ui-monospace,monospace;font-size:11px;color:var(--text-200);word-break:break-all">' + valCell + '</span>' +
-              (conf ? '<span style="flex:none;font-size:10px;color:var(--text-400);font-variant-numeric:tabular-nums">' + conf + '</span>' : '') +
-            '</div>' +
-            '<div style="font-size:10px;color:' + o.col + ';margin-top:1px">' + esc(o.txt) + '</div>' +
-          '</div>';
-      }).join('');
-      sections.push(head('Geprüfte Werte · ' + decided.length) + rows);
-    }
-  }
-
-  if (sections.length === 0) return;
-
-  pop.innerHTML =
-    '<div style="display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:4px;color:' + headerColor + '">' +
-      shieldSvg + esc(headerText) +
-    '</div>' +
-    sections.join('');
-  document.body.appendChild(pop);
-  _piiHistoryPopover = pop;
-}
+// _piiHistoryShowPopover (hover popover) retired in 9.204.1 — the shield
+// button now opens openPiiHistoryModal() on click; no hover preview.
 // Build {original: fake} from a chat's persisted anonymisation spans, so the
 // history tooltip + modal can show what a value was pseudonymised to.
 function _gdprOriginalToFakeMap(chat) {

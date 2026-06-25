@@ -226,7 +226,6 @@
     "_piiHistoryHidePopover": "writable",
     "_piiHistoryMergeAndCache": "writable",
     "_piiHistoryPopover": "writable",
-    "_piiHistoryShowPopover": "writable",
     "_piiHistRender": "writable",
     "_piiHistRowHtml": "writable",
     "_piiHistSave": "writable",

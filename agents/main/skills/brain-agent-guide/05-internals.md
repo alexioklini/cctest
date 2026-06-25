@@ -961,7 +961,9 @@ preamble goes in first-user-message instead.
   status filter + **bulk** mark-FP / accept / reset → `POST /v1/gdpr/decisions`
   (with explicit `value_hash` since the modal holds no cleartext for undecided
   findings). Anonymise is NOT offered here (it needs a send-time pseudonym map) —
-  only shown/resettable. The hover popover stays as a quick teaser.
+  only shown/resettable. 9.204.1: the old hover popover is retired — the shield
+  opens the modal on CLICK only; hover shows a native `title` tooltip.
+  `_piiHistoryShowPopover` was deleted (dead).
 - NER: spaCy adds `name|address|organisation`. `name` stays `contact`/ignore;
   `address` → `personal`/warn but ONLY when a person name is adjacent (~120ch);
   `organisation` → `business_id`/ignore. Runtime control: `GET/POST /v1/gdpr/ner-models`.
