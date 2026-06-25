@@ -980,10 +980,16 @@ preamble goes in first-user-message instead.
     config `gdpr_scanner.min_occurrences`): a rule yields nothing unless ≥N
     DISTINCT matched values appear, counted per WHOLE document (gates the whole
     rule). Default 1; GUI-editable per rule. Applied as a post-pass in `_pii_scan_text`.
-  - **Context gates**: `date` is not PII alone — fires only near a birth/life-
-    event keyword OR a spaCy person name (~120ch); old `dob` merged in.
-    `address` fires only near a person name. (`_name_within` +
-    `_date_has_birth_context`.)
+  - **Context gates**: `date` is not PII alone — since 9.205.1 it fires ONLY
+    near a birth/life-event keyword (`_date_has_birth_context`:
+    geboren/Geburtstag/geb. am/born/heirat/…); person-NAME proximity alone is NO
+    LONGER enough (a document date next to a signature was a systematic FP). Old
+    `dob` rule merged in. `address` fires only with IDENTIFYING specificity: a
+    house number ANCHORED immediately after the street name
+    (`_ADDR_HOUSE_NO`, "Seestraße 27") or a PLZ — NOT a loose number in the
+    window (§/Abs./Nr./Art. reference numbers are excluded via `_ADDR_REF_NUM`),
+    and a lone abstract German noun tagged LOC is dropped (`_ADDR_NOUN_SUFFIX`:
+    -vorhaben(s)/-ung/-konzept/…).
   - **NER-precision gate (9.193.0, config `gdpr_scanner.name_precision_gate`,
     default ON)**: tightens the three dominant spaCy FP modes. `name` is accepted
     only with person-evidence — an adjacent honorific (Herr/Frau/Dr./Mag./Prof.)

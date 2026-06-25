@@ -111,14 +111,40 @@ def _passes_org_precision_gate(value: str) -> bool:
 # number sits right after the street: "Seestraße 27, 8002 Zürich"). Verified on
 # handcrafted + kg-real-policies: 6/6 real street addresses kept, bare toponyms
 # (Wien/Österreich/Zürich/Hamburg/Frankfurt) dropped.
-_ADDR_HOUSE_NO = _re.compile(r"\b\d{1,4}\s*[-–]?\s*\d{0,4}[a-zA-Z]?\b")
+# House number must sit IMMEDIATELY after the street name ("Seestraße 27"),
+# allowing only a comma/space in between — anchored at the start of the trailing
+# context. The old gate matched ANY 1-4 digit number within 30 chars, which
+# falsely fired on "§ 25", "Abs. 5", "Nr. 3" further downstream (9.205.1 FP:
+# "Auslagerungsvorhabens … § 25" passed because "25" was in-window).
+_ADDR_HOUSE_NO = _re.compile(r"^[\s,]{0,3}\d{1,4}\s*[-–]?\s*\d{0,4}[a-zA-Z]?\b")
 _ADDR_PLZ = _re.compile(r"\b\d{4,5}\b")
+# A reference number, NOT a house number: "§ 25", "Abs. 5", "Nr. 3", "Art. 6".
+_ADDR_REF_NUM = _re.compile(
+    r"(?:§|\bAbs\.?|\bNr\.?|\bArt\.?|\bZ\.?|\blit\.?)\s*\d", _re.IGNORECASE)
+# Single-token abstract German nouns spaCy mislabels as LOC — never an address.
+# Suffix-based (covers -vorhaben(s), -ung(en), -heit, -keit, -schaft, -prozess…).
+_ADDR_NOUN_SUFFIX = _re.compile(
+    r"(vorhaben|vorhabens|ung|ungen|heit|keit|schaft|prozess|prozesses|"
+    r"verfahren|verfahrens|wesen|tätigkeit|massnahme|maßnahme|massnahmen|"
+    r"maßnahmen|konzept|konzepts|projekt|projekts|projektes)$", _re.IGNORECASE)
 
 
 def _passes_address_precision_gate(value: str, text: str, start: int) -> bool:
+    v = value.strip()
+    # Reject a lone abstract noun mislabelled as a place (single token, no space).
+    if " " not in v and _ADDR_NOUN_SUFFIX.search(v):
+        return False
     end = start + len(value)
     after = text[end:end + 30]
-    return bool(_ADDR_HOUSE_NO.search(after) or _ADDR_PLZ.search(after))
+    # A house number must be ADJACENT (anchored) and not a §/Abs./Nr. reference.
+    if _ADDR_HOUSE_NO.search(after):
+        return True
+    # A PLZ anywhere in the window still qualifies (postal codes are 4-5 digits,
+    # distinctive), but only if it isn't a reference number like "§ 25".
+    m = _ADDR_PLZ.search(after)
+    if m and not _ADDR_REF_NUM.search(after[max(0, m.start() - 6):m.end()]):
+        return True
+    return False
 
 
 def _passes_name_precision_gate(value: str, text: str, start: int) -> bool:
@@ -1600,16 +1626,17 @@ def _pii_scan_text(text: str, max_findings: int = 100,
                 continue
             f["_ctx_dist"] = d
         elif rid == "date":
-            # A bare date is not PII; keep only person- or birth-linked dates.
-            dn = _name_distance(f["start"], f["end"], name_spans)
+            # A bare date is not PII; keep ONLY dates with a real birth/life-
+            # event keyword nearby (geboren/Geburtstag/born/heirat/…). Person-
+            # NAME proximity alone is NOT enough: in formal documents a date
+            # sits next to a signature ("Anzeige … 02.04.2025 … Gertraud Wisiak")
+            # which is a DOCUMENT date, not a birthday — keeping those was a
+            # systematic false positive (9.205.1). The birth-context keyword is
+            # the only reliable signal that a date is personal.
             db = _birth_context_distance(text, f["start"], f["end"])
-            near_name = dn is not None and dn <= _prox
-            if not (near_name or db is not None):
+            if db is None:
                 continue
-            # Confidence distance = nearest of the two anchors that fired.
-            cands = [x for x in (dn if near_name else None, db) if x is not None]
-            if cands:
-                f["_ctx_dist"] = min(cands)
+            f["_ctx_dist"] = db
         kept.append(f)
     findings = kept
 
