@@ -28,6 +28,20 @@ Reihenfolge: NEUESTE zuerst (so wird es auch angezeigt).
 from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
+    {
+        "version": "9.206.0",
+        "date": "2026-06-25",
+        "title": "Lokale Modelle ohne unnötige Wartezeit",
+        "body": "Lokale Modelle stehen jetzt so schnell wie möglich bereit: Sie werden im "
+                "Hintergrund vorgewärmt und einmal vorgewärmt auch warm gehalten, ohne dazwischen "
+                "grundlos neu aufzuheizen. Bisher konnte ein bereits warmes Modell mitten in der "
+                "Sitzung erneut aufwärmen — etwa beim Wechsel zwischen einem normalen Chat und einem "
+                "Projekt-Chat auf demselben lokalen Modell — was eine kurze, unnötige Verzögerung "
+                "verursachte. Das ist behoben: Es wird nur noch dann aufgewärmt, wenn es wirklich "
+                "nötig ist. Spürbar ist das vor allem an einem schnelleren ersten Antwort-Beginn.",
+        "audience": "user",
+        "versions": ["9.206.0", "9.206.1"],
+    },
     # ── 9.2xx — Datenschutz-Prüfung serverseitig ──
     {
         "version": "9.205.2",
