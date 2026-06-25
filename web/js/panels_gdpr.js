@@ -1111,16 +1111,8 @@ function _piiHistoryHidePopover() {
 // only the purpose differs (review/edit history vs decide-before-send).
 // Findings come MASKED from /v1/sessions/<id>/pii-history-detail; cleartext
 // only ever comes from the user's own prior decisions.
-function _piiStatusOf(decision) {
-  // Map a prior decision (or none) to a display status.
-  if (!decision) return 'open';
-  if (decision.false_positive) return 'fp';
-  const a = decision.turn_action || '';
-  if (a === 'anonymise') return 'anon';
-  if (a === 'local' || a === 'local_model') return 'local';
-  if (a === 'send' || a === 'continue') return 'accepted';
-  return 'open';
-}
+// (_piiStatusOf retired in 9.204.6 — the DB-only pii-decisions-view endpoint
+// returns the per-value status directly, so the client no longer derives it.)
 const _PII_STATUS_META = {
   open:     { label: 'Offen',          color: '#92400e', bg: '#fef3c7' },
   anon:     { label: 'Anonymisiert',   color: '#3f6212', bg: '#ecfccb' },
@@ -1199,7 +1191,7 @@ async function openPiiHistoryModal() {
         </div>
         <div class="pii-header-text">
           <h2 id="pii-hist-title" class="pii-title">Datenschutz — Übersicht &amp; Bearbeitung</h2>
-          <p class="pii-subtitle">Alle erkannten personenbezogenen Daten dieses Chats — aus Nachrichten, Verlauf und Anhängen — mit Status und Entscheidungs-Verlauf.</p>
+          <p class="pii-subtitle">Alle Datenschutz-Entscheidungen dieses Chats — je Wert mit aktuellem Status und vollständigem Verlauf (wer, wann, was).</p>
         </div>
         <button class="pii-hist-close pii-btn pii-btn-text" aria-label="Schließen" style="font-size:20px;line-height:1;padding:2px 8px">&times;</button>
       </div>
@@ -1241,66 +1233,36 @@ async function openPiiHistoryModal() {
   const bodyEl = overlay.querySelector('.pii-hist-body');
   bodyEl.innerHTML = '<div class="pii-hist-msg">Wird geladen…</div>';
 
-  let detail, decisions;
+  // DB-ONLY: the modal reads the persisted decision ledger (one row per decided
+  // value, with status + who/when trail) — it does NOT re-scan the chat. A live
+  // re-scan produced phantom "open" duplicates because its string form for a
+  // value differed from the stored decision's, so the value_hash join missed.
+  // Reading the ledger means every row has a decision by definition.
+  let view;
   try {
-    [detail, decisions] = await Promise.all([
-      API.getSessionPiiHistoryDetail(sid),
-      API.getPiiDecisions(sid),
-    ]);
+    view = await API.getSessionPiiDecisionsView(sid);
   } catch (e) {
     bodyEl.innerHTML = '<div class="pii-hist-msg" style="color:#b91c1c">Laden fehlgeschlagen: ' + esc(e.message || String(e)) + '</div>';
     return;
   }
-  // Merge two independent sources: (a) live findings (source-attributed, masked)
-  // and (b) prior decisions (cleartext + status). Decisions are independent of
-  // the scanner toggle, so the modal stays useful even when a value was
-  // anonymised out of the stored text (chat 8bed3305).
-  const histMap = (detail && detail.decision_history) || {};
-  const decMap = (decisions && decisions.decisions) || {};
-  const items = [];
-  const seenHashes = new Set();
-  const _maskVal = (v) => {
-    if (!v) return '';
-    if (v.length <= 6) return v[0] + '•'.repeat(Math.max(0, v.length - 1));
-    return v.slice(0, 2) + '•'.repeat(v.length - 4) + v.slice(-2);
-  };
-  for (const f of (detail && detail.findings) || []) {
-    const dec = decMap[f.value_hash] || null;
-    seenHashes.add(f.value_hash);
-    items.push({
-      idx: items.length,
-      rule_id: f.rule_id, label: f.label, category: f.category,
-      masked: f.masked, value_hash: f.value_hash,
-      source: f.source, source_label: f.source_label,
-      confidence: f.confidence, history: f.history || histMap[f.value_hash] || [],
-      pending: null, baseStatus: _piiStatusOf(dec), decision: dec,
-      sel: false, expanded: false,
-    });
-  }
-  for (const [vh, dec] of Object.entries(decMap)) {
-    if (seenHashes.has(vh)) continue;
-    const label = (typeof gdprRuleLabel === 'function' && dec.rule_id)
-      ? gdprRuleLabel(dec.rule_id) : (dec.rule_id || 'Personenbezogene Daten');
-    items.push({
-      idx: items.length,
-      rule_id: dec.rule_id || '', label,
-      category: (typeof gdprRuleCategory === 'function' && dec.rule_id) ? gdprRuleCategory(dec.rule_id) : '',
-      masked: _maskVal(dec.value || ''),
-      value_hash: vh,
-      source: dec.source || 'history',
-      source_label: (dec.source && dec.source.indexOf('file:') === 0)
-        ? ('Anhang: ' + dec.source.slice(5))
-        : 'Frühere Entscheidung',
-      confidence: null, history: histMap[vh] || [],
-      pending: null, baseStatus: _piiStatusOf(dec), decision: dec,
-      sel: false, expanded: false,
-    });
-  }
-  // Default-collapsed groups + a per-group render budget (virtualisation) so a
-  // chat with hundreds of findings stays responsive.
+  const items = (view && view.items || []).map((it, i) => ({
+    idx: i,
+    rule_id: it.rule_id,
+    label: it.label || (typeof gdprRuleLabel === 'function' ? gdprRuleLabel(it.rule_id) : it.rule_id),
+    category: it.category || '',
+    masked: it.masked,
+    value_hash: it.value_hash,
+    source: it.source || 'history',
+    source_label: it.source_label || 'Chat-Verlauf',
+    // The decision object so the value/fake render the same as before.
+    decision: { value: it.masked, fake_value: it.fake_value,
+                false_positive: it.false_positive, turn_action: it.turn_action },
+    history: it.history || [],
+    pending: null, baseStatus: it.status || 'open',
+    sel: false, expanded: false,
+  }));
   _piiHistModalState = { sid, chat, items, overlay,
-    truncated: !!(detail && detail.truncated),
-    collapsed: {}, shownCount: {} };
+    truncated: false, collapsed: {}, shownCount: {} };
   _piiHistRender();
   _piiHistWireToolbar();
 }
@@ -1323,7 +1285,7 @@ function _piiHistRender() {
   const sumEl = overlay.querySelector('.pii-hist-summary');
   const chip = (n, meta) => n ? '<span class="pii-hist-chip" style="background:' + meta.bg + ';color:' + meta.color + '">' + n + ' ' + esc(meta.label) + '</span>' : '';
   sumEl.innerHTML =
-    '<span class="pii-hist-total">' + S.items.length + ' Funde gesamt</span>' +
+    '<span class="pii-hist-total">' + S.items.length + ' Einträge gesamt</span>' +
     chip(tally.open, _PII_STATUS_META.open) +
     chip(tally.anon, _PII_STATUS_META.anon) +
     chip(tally.accepted, _PII_STATUS_META.accepted) +
@@ -1341,7 +1303,8 @@ function _piiHistRender() {
   });
   if (!shown.length) {
     bodyEl.innerHTML = '<div class="pii-hist-msg">' +
-      (S.items.length ? 'Keine Funde für diesen Filter.' : 'Keine personenbezogenen Daten in diesem Chat gefunden.') + '</div>';
+      (S.items.length ? 'Keine Einträge für diesen Filter.'
+        : 'Für diesen Chat wurden noch keine Datenschutz-Entscheidungen getroffen.') + '</div>';
     _piiHistUpdateFooter();
     return;
   }

@@ -234,7 +234,6 @@
     "_piiHistWireRows": "writable",
     "_piiHistWireToolbar": "writable",
     "_piiRenderHistoryBlock": "writable",
-    "_piiStatusOf": "writable",
     "_piiValueHash": "writable",
     "_playChatQueue": "writable",
     "_pmAdd": "writable",

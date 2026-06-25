@@ -180,6 +180,9 @@ class API {
   static getSessionPiiHistoryDetail(id) {
     return this.get(`/v1/sessions/${encodeURIComponent(id)}/pii-history-detail`);
   }
+  static getSessionPiiDecisionsView(id) {
+    return this.get(`/v1/sessions/${encodeURIComponent(id)}/pii-decisions-view`);
+  }
   static manageSession(body) { return this.post('/v1/sessions/manage', body); }
   static webSearch(query) { return this.post('/v1/web/search', { query }); }
   static inspectSession(sessionId) { return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/inspect`); }

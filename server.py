@@ -1557,6 +1557,12 @@ class BrainAgentHandler(
             # history / which attachment) + masked value. Feeds the large
             # GDPR history modal (web/js/panels_gdpr.js openPiiHistoryModal).
             self._handle_session_pii_history_detail(path)
+        elif path.startswith("/v1/sessions/") and path.endswith("/pii-decisions-view"):
+            # DB-ONLY view for the GDPR history modal: one row per DECIDED value
+            # (latest decision), grouped-ready, with status + who/when trail. No
+            # live re-scan — avoids the phantom-"open" duplicates a live scan
+            # produces when its string form differs from the stored decision.
+            self._handle_session_pii_decisions_view(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/messages"):
             self._handle_get_messages(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/next-prompt"):

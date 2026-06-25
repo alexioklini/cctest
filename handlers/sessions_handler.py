@@ -1365,6 +1365,88 @@ class SessionsHandlerMixin:
             "decision_history": decision_history,
         })
 
+    def _handle_session_pii_decisions_view(self, path):
+        """GET /v1/sessions/<id>/pii-decisions-view — DB-ONLY modal data.
+
+        One row per DECIDED value (the latest decision = current status), built
+        purely from the persisted pii_decisions ledger — NO live re-scan. This
+        is what the GDPR history modal renders: a live scan produced phantom
+        "open" duplicates because its string form for a value (e.g. a phone
+        number formatted with spaces in the assistant reply) differed from the
+        stored decision's string, so the value_hash join missed and the value
+        showed twice (once decided, once "open"). Reading only the ledger means
+        every row has a decision by definition — no phantom-open, no dupes.
+
+        Returns: {session_id, items: [{rule_id, label, category, masked,
+        value_hash, source, source_label, status, false_positive, turn_action,
+        fake_value, history:[{turn_action,false_positive,fake_value,by,by_id,at}]}],
+        counts: {status: N}}
+        """
+        sid = path.split("/")[3]
+        if self._session_access_check(sid) is None:
+            return
+        history = _pii_decision_history_with_names(sid)  # value_hash → trail (named)
+        try:
+            from server_lib.db import ChatDB as _ChatDB
+            raw = _ChatDB.get_session_pii_decision_history(sid)  # value_hash → events
+        except Exception:
+            raw = {}
+
+        def _mask(v):
+            if not v:
+                return ""
+            if len(v) <= 6:
+                return v[0] + ("•" * max(0, len(v) - 1))
+            return v[:2] + ("•" * (len(v) - 4)) + v[-2:]
+
+        def _status_of(ev):
+            if ev.get("false_positive"):
+                return "fp"
+            a = ev.get("turn_action") or ""
+            if a == "anonymise":
+                return "anon"
+            if a in ("local", "local_model"):
+                return "local"
+            if a in ("send", "continue"):
+                return "accepted"
+            return "open"
+
+        items = []
+        counts = {}
+        for vh, events in (raw or {}).items():
+            if not events:
+                continue
+            latest = events[-1]            # newest decision = current status
+            rid = latest.get("rule_id") or ""
+            value = latest.get("value") or ""
+            src = latest.get("source") or "history"
+            status = _status_of(latest)
+            counts[status] = counts.get(status, 0) + 1
+            src_label = ("Anhang: " + src[5:]) if src.startswith("file:") else (
+                "Chat-Verlauf" if src in ("", "history", "message") else src)
+            # Resolve a human label server-side from the rule catalog (client
+            # also has gdprRuleLabel, but sending it keeps the row self-contained).
+            label = (engine.PII_RULE_LABELS.get(rid) if hasattr(engine, "PII_RULE_LABELS") else None) or rid
+            items.append({
+                "rule_id": rid,
+                "label": label,
+                "category": (engine.PII_RULE_CATEGORIES.get(rid, "")
+                             if hasattr(engine, "PII_RULE_CATEGORIES") else ""),
+                "masked": _mask(value),
+                "value_hash": vh,
+                "source": src,
+                "source_label": src_label,
+                "status": status,
+                "false_positive": bool(latest.get("false_positive")),
+                "turn_action": latest.get("turn_action") or "",
+                "fake_value": latest.get("fake_value") or "",
+                "history": history.get(vh, []),
+            })
+        self._send_json({
+            "session_id": sid, "items": items, "counts": counts,
+            "item_count": len(items),
+        })
+
     def _handle_get_session_files(self, path):
         """GET /v1/sessions/<id>/files — returns all files from all messages (including compacted)"""
         parts = path.split("/")

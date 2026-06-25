@@ -2703,7 +2703,7 @@ class ChatDB:
         with _db_conn() as conn:
             rows = conn.execute(
                 "SELECT value_hash, rule_id, raw_value, false_positive, "
-                "disposition, turn_action, fake_value, user_id, created_at "
+                "disposition, turn_action, fake_value, user_id, created_at, source "
                 "FROM pii_decisions WHERE session_id = ? "
                 "ORDER BY created_at ASC", (session_id,)).fetchall()
         for r in rows:
@@ -2713,7 +2713,7 @@ class ChatDB:
                 "false_positive": bool(r[3]),
                 "disposition": r[4], "turn_action": r[5],
                 "fake_value": r[6] or "", "user_id": r[7] or "",
-                "created_at": r[8],
+                "created_at": r[8], "source": r[9] or "",
             }
             lst = out.setdefault(vh, [])
             # Collapse a repeat of the immediately-prior identical decision

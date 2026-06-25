@@ -30,6 +30,22 @@ from __future__ import annotations
 CURATED_CHANGELOG: list[dict] = [
     # ── 9.2xx — Datenschutz-Prüfung serverseitig ──
     {
+        "version": "9.204.6",
+        "date": "2026-06-25",
+        "title": "Datenschutz-Übersicht zeigt verlässlich Ihre Entscheidungen",
+        "body": "Die Datenschutz-Übersicht (Schild-Symbol) zeigt jetzt genau einen Eintrag pro Angabe, "
+                "zu der Sie eine Entscheidung getroffen haben — mit aktuellem Status und vollständigem "
+                "Verlauf (wer, wann, was). Zuvor konnten einzelne Angaben doppelt erscheinen — einmal mit "
+                "Status und einmal fälschlich als „offen“ —, weil die Ansicht den Chat zusätzlich live "
+                "durchsuchte und denselben Wert in leicht abweichender Schreibweise nicht zuordnen konnte. "
+                "Die Übersicht liest die Einträge nun direkt aus den gespeicherten Entscheidungen, sodass "
+                "keine Dubletten und keine irreführenden „offenen“ Einträge mehr entstehen. Neue, noch "
+                "nicht behandelte personenbezogene Daten werden weiterhin wie gewohnt im Hinweis-Dialog "
+                "vor dem Senden abgefragt.",
+        "audience": "user",
+        "versions": ["9.204.6"],
+    },
+    {
         "version": "9.204.0",
         "date": "2026-06-25",
         "title": "Datenschutz-Übersicht: Verlauf und einheitliches Design",

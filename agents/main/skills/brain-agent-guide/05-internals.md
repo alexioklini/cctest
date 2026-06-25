@@ -953,17 +953,21 @@ preamble goes in first-user-message instead.
   `getSessionPiiHistoryDetail`, looked up by `_piiValueHash` = client sha256
   rule|value). `ChatDB.get_session_pii_decision_history` returns the full
   chronological trail per value_hash (collapsing consecutive identical events).
-  a large `.modal-content.x-wide` modal: it loads `GET …/pii-history-detail`
-  (per-finding, source-attributed, masked) + `GET /v1/gdpr/decisions` in
-  parallel, joins each finding to its decision via `value_hash` to derive a
-  status (open / anonymised / accepted-cleartext / local / false-positive),
-  groups by source (history per role / each attachment), and offers search +
-  status filter + **bulk** mark-FP / accept / reset → `POST /v1/gdpr/decisions`
-  (with explicit `value_hash` since the modal holds no cleartext for undecided
-  findings). Anonymise is NOT offered here (it needs a send-time pseudonym map) —
-  only shown/resettable. 9.204.1: the old hover popover is retired — the shield
-  opens the modal on CLICK only; hover shows a native `title` tooltip.
-  `_piiHistoryShowPopover` was deleted (dead).
+  a large `.modal-content.x-wide` modal. 9.204.6: it loads ONLY
+  `GET …/pii-decisions-view` (DB-only, one row per decided value with status +
+  trail) — NOT a live re-scan. The prior live-scan + `/v1/gdpr/decisions` merge
+  produced phantom "open" duplicates: the live scan's string form for a value
+  (e.g. a space-formatted phone number in an assistant reply, or an IBAN with
+  surrounding markdown) differed from the stored decision's, so the value_hash
+  join missed and the value showed twice (once decided, once "open"). Reading the
+  ledger means every row has a status by definition. Trade-off: never-decided PII
+  (e.g. newly detectable after a rule fix) does NOT appear here — the modal is a
+  decision/audit view; new PII is handled in the pre-send dialog. Groups by
+  source, search + status filter + **bulk** mark-FP / accept / reset →
+  `POST /v1/gdpr/decisions` (explicit `value_hash`). Anonymise is NOT offered
+  here (needs a send-time pseudonym map) — only shown/resettable. 9.204.1: the
+  hover popover is retired — the shield opens the modal on CLICK only (native
+  `title` tooltip on hover).
 - NER: spaCy adds `name|address|organisation`. `name` stays `contact`/ignore;
   `address` → `personal`/warn but ONLY when a person name is adjacent (~120ch);
   `organisation` → `business_id`/ignore. Runtime control: `GET/POST /v1/gdpr/ner-models`.
