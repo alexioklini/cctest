@@ -43,7 +43,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "pro Gruppe die Anzahl und eine Status-Vorschau; lange Listen werden schrittweise "
                 "nachgeladen, damit alles übersichtlich und schnell bedienbar bleibt.",
         "audience": "user",
-        "versions": ["9.204.0", "9.204.1"],
+        "versions": ["9.204.0", "9.204.1", "9.204.2"],
     },
     {
         "version": "9.203.0",

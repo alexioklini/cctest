@@ -1548,14 +1548,54 @@ async function _piiHistSave() {
   }
 }
 
-// Styles specific to the history modal — reuse the .pii-* tokens from the
-// pre-send modal (#pii-modal-styles-v3) + a few history-only additions. The
-// .pii-card / .pii-overlay / .pii-finding-* / .pii-btn-* base styles are shared.
+// Styles for the history modal. CRITICAL: this injects the BASE .pii-overlay /
+// .pii-card / .pii-finding-* / .pii-btn-* / header/body/footer rules too — the
+// history modal must NOT depend on #pii-modal-styles-v3 (that block is only
+// injected when the pre-send gdprActionModal runs; a user who clicks the shield
+// without ever seeing the pre-send dialog would otherwise get an UNSTYLED,
+// invisible overlay — the "click opens nothing" bug). All rules are scoped or
+// idempotent so coexisting with #pii-modal-styles-v3 is harmless.
 function _injectPiiHistStyles() {
   if (document.getElementById('pii-hist-styles')) return;
   const st = document.createElement('style');
   st.id = 'pii-hist-styles';
   st.textContent = `
+    @keyframes pii-hist-fade { from{opacity:0} to{opacity:1} }
+    #pii-history-modal.pii-overlay { position:fixed; inset:0; z-index:9999; display:flex; align-items:center; justify-content:center; background:rgba(20,18,16,.52); -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px); padding:20px; animation:pii-hist-fade .15s ease-out; }
+    #pii-history-modal .pii-card { display:flex; flex-direction:column; background:var(--bg-000,#faf9f7); border-radius:14px; box-shadow:0 20px 50px -16px rgba(31,30,29,.32), 0 0 0 1px rgba(31,30,29,.06); overflow:hidden; }
+    #pii-history-modal .pii-header { display:flex; align-items:flex-start; gap:14px; padding:20px 24px 16px; border-bottom:1px solid var(--border-100); }
+    #pii-history-modal .pii-shield { flex:none; width:36px; height:36px; border-radius:9px; background:#fef3c7; color:#b45309; display:flex; align-items:center; justify-content:center; margin-top:1px; }
+    #pii-history-modal .pii-header-text { flex:1; min-width:0; }
+    #pii-history-modal .pii-title { font-size:15.5px; font-weight:600; letter-spacing:-.005em; line-height:1.3; margin:0; color:var(--text-000); }
+    #pii-history-modal .pii-subtitle { font-size:12.5px; margin:3px 0 0; color:var(--text-300); line-height:1.45; }
+    #pii-history-modal .pii-body { flex:1 1 auto; overflow-y:auto; padding:14px 24px 16px; }
+    #pii-history-modal .pii-source-card { padding:0; border:1px solid var(--border-100); border-radius:10px; background:var(--bg-050,var(--bg-100)); margin-top:8px; overflow:hidden; }
+    #pii-history-modal .pii-source-card:first-child { margin-top:0; }
+    #pii-history-modal .pii-source-head { display:flex; align-items:center; gap:10px; padding:9px 12px; background:var(--bg-100); }
+    #pii-history-modal .pii-source-name { font-size:13px; font-weight:600; color:var(--text-000); }
+    #pii-history-modal .pii-source-count { font-size:10.5px; color:var(--text-300); background:var(--bg-200); padding:1px 7px; border-radius:999px; }
+    #pii-history-modal .pii-unit-caret { flex:none; font-size:11px; color:var(--text-400); }
+    #pii-history-modal .pii-unit-rows { padding:0 12px 6px; }
+    #pii-history-modal .pii-source-card.pii-collapsed .pii-unit-rows { display:none; }
+    #pii-history-modal .pii-finding { display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid var(--border-050,var(--border-100)); font-size:12px; line-height:1.4; }
+    #pii-history-modal .pii-finding:first-child { border-top:none; }
+    #pii-history-modal .pii-finding-sev { flex:none; width:6px; height:6px; border-radius:50%; margin-top:0; background:#d97706; }
+    #pii-history-modal .pii-finding-sev.is-block { background:#dc2626; }
+    #pii-history-modal .pii-finding-label { flex:none; font-weight:500; color:var(--text-100); }
+    #pii-history-modal .pii-finding-val { flex:1 1 auto; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--text-300); word-break:break-all; font-size:11.5px; }
+    #pii-history-modal .pii-finding-fixed { color:var(--text-400); }
+    #pii-history-modal .pii-footer { flex:none; display:flex; flex-direction:column; gap:10px; padding:14px 24px 16px; border-top:1px solid var(--border-100); background:var(--bg-050,var(--bg-100)); }
+    #pii-history-modal .pii-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    #pii-history-modal .pii-actions-spacer { flex:1; }
+    #pii-history-modal .pii-suppress-note { margin:0; font-size:11px; color:var(--text-300); line-height:1.4; }
+    #pii-history-modal .pii-btn { padding:7px 13px; border-radius:8px; font-size:12.5px; font-weight:500; border:1px solid transparent; cursor:pointer; white-space:nowrap; }
+    #pii-history-modal .pii-btn[disabled] { opacity:.45; cursor:not-allowed; }
+    #pii-history-modal .pii-btn-text { background:transparent; border-color:transparent; color:var(--text-300); }
+    #pii-history-modal .pii-btn-text:hover:not([disabled]) { color:var(--text-100); background:var(--bg-200); }
+    #pii-history-modal .pii-btn-secondary { background:var(--bg-000); border-color:var(--border-200); color:var(--text-100); }
+    #pii-history-modal .pii-btn-secondary:hover:not([disabled]) { background:var(--bg-200); }
+    #pii-history-modal .pii-btn-primary { background:#047857; color:#fff; border-color:#047857; }
+    #pii-history-modal .pii-btn-primary:hover:not([disabled]) { background:#065f46; }
     #pii-history-modal .pii-card { width:min(1080px, calc(100% - 32px)); max-height:88vh; }
     .pii-hist-toolbar { flex:none; display:flex; flex-direction:column; gap:10px; padding:12px 24px; border-bottom:1px solid var(--border-100); }
     .pii-hist-summary { display:flex; flex-wrap:wrap; gap:7px; align-items:center; }
