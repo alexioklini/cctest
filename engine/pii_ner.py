@@ -1482,7 +1482,22 @@ def _pii_scan_text(text: str, max_findings: int = 100,
     # Track distinct matched values per rule_id for the min_occurrences gate.
     # `value` (normalised, lowercased) is stashed on each finding so the post-
     # pass can both count distinct values AND drop a whole rule below threshold.
-    for rule in _pii_rules():
+    #
+    # CONTEXT-RULE PRIORITY: rules whose match is anchored by an explicit keyword
+    # ("Sozialversicherungsnummer", "SSN", …) — category `national_id_ctx` —
+    # reserve their span FIRST, before the blind country-pattern national-ID
+    # rules (cz_rc, no_fnr, …). Otherwise a number that merely FITS a foreign
+    # pattern (e.g. 9 digits matching the Czech rodné číslo shape) gets that
+    # label even when the user literally wrote "Sozialversicherungsnummer". This
+    # does NOT reorder _PII_RULES (the array + its first-match-wins invariant are
+    # untouched) — it only splits the iteration into a context-first pass + the
+    # rest in original order. Within each pass the array order still decides ties.
+    _all_rules = _pii_rules()
+    _ctx_rules = [r for r in _all_rules
+                  if PII_RULE_CATEGORIES.get(r["id"]) == "national_id_ctx"]
+    _rest_rules = [r for r in _all_rules
+                   if PII_RULE_CATEGORIES.get(r["id"]) != "national_id_ctx"]
+    for rule in (_ctx_rules + _rest_rules):
         rid = rule["id"]
         action = _pii_effective_action(rid, cfg)
         if action == "ignore":
