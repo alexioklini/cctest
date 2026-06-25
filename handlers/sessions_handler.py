@@ -1419,11 +1419,21 @@ class SessionsHandlerMixin:
             latest = events[-1]            # newest decision = current status
             rid = latest.get("rule_id") or ""
             value = latest.get("value") or ""
-            src = latest.get("source") or "history"
+            raw_src = latest.get("source") or ""
             status = _status_of(latest)
             counts[status] = counts.get(status, 0) + 1
-            src_label = ("Anhang: " + src[5:]) if src.startswith("file:") else (
-                "Chat-Verlauf" if src in ("", "history", "message") else src)
+            # NORMALISE the source key so the client groups by it correctly.
+            # Decisions are persisted with inconsistent source values for the
+            # SAME origin: the pre-send dialog writes 'message', the auto-
+            # anonymise path writes '' — both mean "from the chat text". Collapse
+            # every non-file source to the canonical 'history' so they form ONE
+            # "Chat-Verlauf" group instead of two (the bug in the screenshot).
+            if raw_src.startswith("file:"):
+                src = raw_src
+                src_label = "Anhang: " + raw_src[5:]
+            else:
+                src = "history"
+                src_label = "Chat-Verlauf"
             # Resolve a human label server-side from the rule catalog (client
             # also has gdprRuleLabel, but sending it keeps the row self-contained).
             label = (engine.PII_RULE_LABELS.get(rid) if hasattr(engine, "PII_RULE_LABELS") else None) or rid
@@ -1432,6 +1442,10 @@ class SessionsHandlerMixin:
                 "label": label,
                 "category": (engine.PII_RULE_CATEGORIES.get(rid, "")
                              if hasattr(engine, "PII_RULE_CATEGORIES") else ""),
+                # It's the user's OWN chat — show the real value (the cleartext
+                # already lives in the visible chat history). `masked` kept for
+                # any caller that prefers it.
+                "value": value,
                 "masked": _mask(value),
                 "value_hash": vh,
                 "source": src,

@@ -39,11 +39,13 @@ CURATED_CHANGELOG: list[dict] = [
                 "Status und einmal fälschlich als „offen“ —, weil die Ansicht den Chat zusätzlich live "
                 "durchsuchte und denselben Wert in leicht abweichender Schreibweise nicht zuordnen konnte. "
                 "Die Übersicht liest die Einträge nun direkt aus den gespeicherten Entscheidungen, sodass "
-                "keine Dubletten und keine irreführenden „offenen“ Einträge mehr entstehen. Neue, noch "
-                "nicht behandelte personenbezogene Daten werden weiterhin wie gewohnt im Hinweis-Dialog "
-                "vor dem Senden abgefragt.",
+                "keine Dubletten und keine irreführenden „offenen“ Einträge mehr entstehen. Die Werte "
+                "werden im Klartext angezeigt (es ist Ihr eigener Chat) statt verdeckt, und Einträge aus "
+                "dem Chat-Text erscheinen in einer einzigen Gruppe statt mehreren. Neue, noch nicht "
+                "behandelte personenbezogene Daten werden weiterhin wie gewohnt im Hinweis-Dialog vor "
+                "dem Senden abgefragt.",
         "audience": "user",
-        "versions": ["9.204.6"],
+        "versions": ["9.204.6", "9.204.7"],
     },
     {
         "version": "9.204.0",

@@ -1250,12 +1250,14 @@ async function openPiiHistoryModal() {
     rule_id: it.rule_id,
     label: it.label || (typeof gdprRuleLabel === 'function' ? gdprRuleLabel(it.rule_id) : it.rule_id),
     category: it.category || '',
-    masked: it.masked,
+    // Show the real value (the user's own chat — cleartext is in the visible
+    // history anyway); fall back to masked if the server omitted it.
+    masked: it.value || it.masked,
     value_hash: it.value_hash,
     source: it.source || 'history',
     source_label: it.source_label || 'Chat-Verlauf',
     // The decision object so the value/fake render the same as before.
-    decision: { value: it.masked, fake_value: it.fake_value,
+    decision: { value: it.value || it.masked, fake_value: it.fake_value,
                 false_positive: it.false_positive, turn_action: it.turn_action },
     history: it.history || [],
     pending: null, baseStatus: it.status || 'open',
