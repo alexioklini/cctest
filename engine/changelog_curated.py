@@ -41,7 +41,21 @@ CURATED_CHANGELOG: list[dict] = [
                 "ist (es gibt nichts zu kennzeichnen). Wechseln Sie zurück zu einem Cloud-Modell, "
                 "erscheinen die Markierungen wieder.",
         "audience": "user",
-        "versions": ["9.205.2"],
+        "versions": ["9.205.2", "9.205.3", "9.205.4"],
+    },
+    {
+        "version": "9.205.4",
+        "date": "2026-06-25",
+        "title": "Anzeige, wenn der Dienst noch hochfährt",
+        "body": "Direkt nach einem Neustart braucht der Dienst einige Sekunden, bis alle Modelle "
+                "geladen sind. Diese Phase ist jetzt sichtbar: der Verbindungspunkt in der Statuszeile "
+                "leuchtet währenddessen gelb mit dem Hinweis „Server wird bereit …“ und wechselt erst "
+                "auf grün „verbunden“, wenn alles geladen ist. Senden Sie in dieser kurzen Phase eine "
+                "Nachricht, werden Sie mit einem kurzen Hinweis gebeten, einen Moment zu warten — so "
+                "ist sichergestellt, dass die Datenschutz-Prüfung mit den korrekten Modell-"
+                "Informationen arbeitet.",
+        "audience": "user",
+        "versions": ["9.205.4"],
     },
     {
         "version": "9.205.0",

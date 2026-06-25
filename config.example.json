@@ -1949,9 +1949,7 @@
       "display_name": "mistral-ocr-latest",
       "icon": "🌬️",
       "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
+      "capabilities": [],
       "thinking_format": "none",
       "max_context": 131072,
       "max_output": 16384,
@@ -2290,9 +2288,7 @@
       "display_name": "Qwen2.5-7B Instruct 4bit (M4 local)",
       "icon": "🐎",
       "priority": 34,
-      "capabilities": [
-        "chat"
-      ],
+      "capabilities": [],
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
@@ -2316,9 +2312,7 @@
       "display_name": "Qwen2.5-7B-Instruct-4bit",
       "icon": "🐼",
       "priority": 50,
-      "capabilities": [
-        "chat"
-      ],
+      "capabilities": [],
       "thinking_format": "none",
       "max_context": 131072,
       "max_output": 16384,
@@ -2447,7 +2441,7 @@
       "_caps_canonical": true,
       "is_local": true,
       "auto_lcm": true,
-      "warmup": false,
+      "warmup": true,
       "warmup_mode": "minimal"
     },
     "voxtral-mini-tts-mellon-greek-2606-solutions": {
@@ -2462,12 +2456,13 @@
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
-      "inference": {},
       "raw_formats": [],
       "provider": "mistral-direct",
       "profile": "balanced",
       "_audio_backfilled": true,
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     }
   },
   "nodes": {},

@@ -1209,6 +1209,14 @@ async function init() {
     state.providers = Array.isArray(providersData) ? providersData : (providersData.providers || []);
     state.teamStructure = teamsData || {};
     state.modelsConfig = modelsConfigData || {};
+    // Readiness: the server needs a few seconds after (re)start before
+    // /v1/models/config returns the full model list. Until it does, model
+    // locality (isModelLocal) is unknown, which would mis-gate the GDPR scan
+    // (9.205.4). Flag it so the status bar can show "wird bereit" and the send
+    // path can hold off until config is loaded. ConnectionMonitor re-fetches.
+    state.modelsConfigReady = !!(state.modelsConfig
+      && state.modelsConfig.models
+      && Object.keys(state.modelsConfig.models).length);
     applyGdprConfigToScanner((servicesData.server || {}).gdpr_scanner);
     state.mempalaceClassifier = clfData || {};
     if (composerDefData && typeof composerDefData === 'object' && !composerDefData.error) {
@@ -1265,12 +1273,13 @@ async function init() {
   // Fill Brainy's floating action button with its symbol (buddy or 🧠).
   if (typeof brainyRefreshBubble === 'function') brainyRefreshBubble();
 
-  // Start connection health monitor
+  // Start connection health monitor. Paint via the monitor so a connected-but-
+  // still-warming server (model config not yet loaded) shows the amber "wird
+  // bereit" dot instead of a premature green.
   ConnectionMonitor._connected = state.connected;
-  const dot = document.getElementById('status-connection-dot');
-  if (dot) dot.className = 'connection-dot ' + (state.connected ? 'connected' : 'disconnected');
-  const cWrap = document.getElementById('status-connection');
-  if (cWrap) cWrap.title = state.connected ? 'Server: verbunden' : 'Server: getrennt';
+  if (typeof ConnectionMonitor._paintDot === 'function') {
+    ConnectionMonitor._paintDot(state.connected);
+  }
   ConnectionMonitor.start();
   MempalaceActivityMonitor.start();
   WarmupMonitor.start();

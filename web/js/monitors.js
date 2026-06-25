@@ -9,7 +9,20 @@ const ConnectionMonitor = {
 
   start() {
     this._check();
-    this._interval = setInterval(() => this._check(), this._pollMs);
+    this._reschedule();
+  },
+
+  // Poll fast (2s) while the server is still warming (config not yet loaded) so
+  // the "wird bereit" → "verbunden" transition is snappy; back off to 10s once
+  // ready. Re-evaluated after each check.
+  _reschedule() {
+    if (this._interval) clearInterval(this._interval);
+    const ms = state.modelsConfigReady ? 10000 : 2000;
+    this._interval = setInterval(() => {
+      this._check();
+      const want = state.modelsConfigReady ? 10000 : 2000;
+      if (want !== ms) this._reschedule();
+    }, ms);
   },
 
   stop() {
@@ -29,6 +42,11 @@ const ConnectionMonitor = {
       if (resp.ok) {
         this._setConnected(true);
         this._failCount = 0;
+        // Connected but the model config may still be warming up after a
+        // (re)start — re-fetch it until it arrives so model-locality (and the
+        // GDPR scan gate that depends on it) becomes reliable. Refresh the dot.
+        if (!state.modelsConfigReady) this._refreshConfig();
+        else this._paintDot(true);
       } else {
         this._setConnected(false);
       }
@@ -38,15 +56,44 @@ const ConnectionMonitor = {
     }
   },
 
-  _setConnected(connected) {
-    if (this._connected === connected) return;
-    this._connected = connected;
-    state.connected = connected;
+  async _refreshConfig() {
+    try {
+      const cfg = await API.getModelsConfig();
+      if (cfg && cfg.models && Object.keys(cfg.models).length) {
+        state.modelsConfig = cfg;
+        state.modelsConfigReady = true;
+      }
+    } catch { /* keep warming */ }
+    this._paintDot(true);
+  },
+
+  // Paint the connection dot: amber "wird bereit" while connected-but-warming,
+  // green "verbunden" once the model config is loaded, red when disconnected.
+  _paintDot(connected) {
     const dot = document.getElementById('status-connection-dot');
     const wrap = document.getElementById('status-connection');
     if (!dot || !wrap) return;
-    dot.className = 'connection-dot ' + (connected ? 'connected' : 'disconnected');
-    wrap.title = connected ? 'Server: verbunden' : 'Server: getrennt';
+    if (!connected) {
+      dot.className = 'connection-dot disconnected';
+      wrap.title = 'Server: getrennt';
+    } else if (!state.modelsConfigReady) {
+      dot.className = 'connection-dot connecting';
+      wrap.title = 'Server wird bereit … (Modelle werden geladen)';
+    } else {
+      dot.className = 'connection-dot connected';
+      wrap.title = 'Server: verbunden';
+    }
+  },
+
+  _setConnected(connected) {
+    if (this._connected === connected) {
+      // Even on no transition, keep the dot in sync (warming → ready).
+      if (connected) this._paintDot(true);
+      return;
+    }
+    this._connected = connected;
+    state.connected = connected;
+    this._paintDot(connected);
     renderUserMenu();
     if (connected && this._failCount === 0) return;
     if (connected) showToast('Wieder mit dem Server verbunden');

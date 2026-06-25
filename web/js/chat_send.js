@@ -174,6 +174,17 @@ async function sendMessage() {
   // chat_render.js). The user already saw the previous turn's GDPR outcome
   // and explicitly chose a different mode — honour it directly, skipping the
   // scan + modal. One-shot: consumed here so the next normal send re-scans.
+  // Readiness guard (9.205.4): the GDPR scan gate below depends on knowing
+  // whether the model is LOCAL (isModelLocal → state.modelsConfig). Right after
+  // a server (re)start the config can still be loading, during which
+  // isModelLocal returns false for everything — which would mis-gate the scan
+  // (e.g. wrongly scan a local-model turn). If the scanner is enabled but the
+  // config isn't ready yet, hold the send briefly with a hint instead of acting
+  // on unknown locality. The status bar shows the "wird bereit" dot meanwhile.
+  if (state.piiScannerEnabled !== false && state.modelsConfigReady === false) {
+    showToast('Server wird noch bereit — einen Moment, dann erneut senden.', true);
+    return;
+  }
   const _gdprOverride = (state._gdprActionOverride || '').trim();
   state._gdprActionOverride = '';
   if (_gdprOverride && ['anonymise', 'local_model', 'continue'].includes(_gdprOverride)) {
@@ -183,7 +194,16 @@ async function sendMessage() {
     chat.gdprActionPref = _gdprOverride;
     if (_gdprOverride === 'anonymise') chat.hasGdprMapping = true;
     if (chat.sessionId) API.updateGdprActionPref(chat.sessionId, _gdprOverride).catch(() => {});
-  } else if (state.piiScannerEnabled !== false) {
+  } else if (state.piiScannerEnabled !== false
+             && !isModelLocal(chat.model || '')
+             && (chat.model || '') !== 'auto-local') {
+    // 9.205.3: when a LOCAL model is selected, skip the WHOLE pre-send GDPR
+    // pass — no text scan, no attachment scan, no decision modal. A local model
+    // runs on this machine; nothing leaves it, so there is nothing to detect,
+    // decide, or anonymise (matches the server-side no-anonymise + the hidden
+    // history marks for local models, 9.205.2). The user reported a local-model
+    // turn still PII-scanning its attachment (chat 626dfd9a) — this is the gate.
+    //
     // 9.197.0: NO sticky short-circuit. The dialog fires iff there are NEW
     // (not-yet-seen) PII findings. Findings already shown to the user in a prior
     // turn are tagged _seen and displayed FIXED (not re-ratable); only NEW ones

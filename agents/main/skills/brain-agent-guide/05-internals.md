@@ -1001,7 +1001,19 @@ preamble goes in first-user-message instead.
     `_gdprMarksVisible()` gates all three highlight paths on the active model
     being non-local — amber + red marks disappear while a local model is
     selected; `selectModel` re-renders on a locality change so they toggle
-    immediately. Prior cloud turns' stored decisions are untouched.
+    immediately. Prior cloud turns' stored decisions are untouched. And (9.205.4)
+    the entire PRE-SEND scan in `chat_send.js` is skipped for a local model
+    (`!isModelLocal(chat.model) && chat.model !== 'auto-local'`) — no text scan,
+    no attachment scan, no decision modal (a local-model turn was still
+    PII-scanning its attachment because the gate only checked
+    `piiScannerEnabled`, not the model). **Readiness caveat**: `isModelLocal`
+    reads `state.modelsConfig`, EMPTY for a few seconds after a server (re)start
+    until `/v1/models/config` is fully up — during which isModelLocal falsely
+    returns non-local. `state.modelsConfigReady` (init.js) tracks this;
+    `ConnectionMonitor` (monitors.js) re-fetches config every 2s while warming
+    (then 10s) and paints the status dot AMBER "wird bereit" → GREEN "verbunden";
+    the send path holds with a hint while `modelsConfigReady` is false rather
+    than acting on unknown locality.
   - **NER-precision gate (9.193.0, config `gdpr_scanner.name_precision_gate`,
     default ON)**: tightens the three dominant spaCy FP modes. `name` is accepted
     only with person-evidence — an adjacent honorific (Herr/Frau/Dr./Mag./Prof.)
