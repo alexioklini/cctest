@@ -41,11 +41,15 @@ header:
   font_size: 9
   color: "#666666"
 footer:
-  text: Intern (die Informationen in dem Dokument wurden mit Hilfe von KI erzeugt)
+  # Manual footer text only — the classification + AI-disclosure + page number
+  # lines are added AUTOMATICALLY (own lines) and must NOT be hand-typed here.
+  text: ""
   align: center
   font_size: 9
   color: "#666666"
   page_numbers: true
+  classification: true   # auto content-based "Klassifizierung: <Stufe>" line
+  ai_disclosure: true    # auto EU-AI-Act transparency line
 logo:
   position: header
   align: left

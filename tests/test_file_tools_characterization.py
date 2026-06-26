@@ -308,6 +308,50 @@ class TestDocumentPolish(_FileToolFixture):
         doc, _ = self._render_docx()
         self.assertIn("<w:keepNext", doc)
 
+    def _render_footer_xml(self, content):
+        """Return the concatenated footer*.xml of a rendered docx."""
+        import zipfile
+        from engine.tools import file_tools as ft
+        res = json.loads(ft.tool_write_document(
+            {"path": "footer_report.docx", "content": content, "style": "corporate"}))
+        self.assertEqual(res.get("status"), "written")
+        z = zipfile.ZipFile(res["path"])
+        return "\n".join(z.read(n).decode() for n in z.namelist()
+                         if n.startswith("word/footer"))
+
+    def test_footer_page_number_own_line_and_format(self):
+        """Page number renders as `Seite - ` + a PAGE field (own paragraph),
+        not the old inline `Seite {page}`."""
+        foot = self._render_footer_xml(self._MD)
+        self.assertIn("Seite - ", foot)
+        self.assertIn("PAGE", foot)          # live page field
+        self.assertNotIn("Seite {page}", foot)
+
+    def test_footer_has_classification_and_ai_disclosure(self):
+        """Both automatic footer lines appear; a corporate report floors to Intern."""
+        foot = self._render_footer_xml(self._MD)
+        self.assertIn("Klassifizierung:", foot)
+        self.assertIn("künstlicher Intelligenz", foot)
+
+    def test_classification_reflects_content(self):
+        """A confidential-keyworded doc classifies higher than a bland one."""
+        from engine.tools import file_tools as ft
+        style = ft._load_doc_style("corporate")
+        bland = ft._auto_footer_lines("# Bericht\n\nNeutraler Text.\n", style)[0]
+        conf = ft._auto_footer_lines(
+            "# Streng vertraulicher Bericht\n\nEnthält vertrauliche "
+            "Kundendaten und Geschäftsgeheimnisse.\n", style)[0]
+        self.assertEqual(bland, "Klassifizierung: Intern")
+        self.assertIn("Vertraulich", conf)
+
+    def test_ai_disclosure_can_be_disabled(self):
+        """footer.ai_disclosure: false suppresses the disclosure line."""
+        from engine.tools import file_tools as ft
+        style = ft._load_doc_style("corporate")
+        style["footer"]["ai_disclosure"] = False
+        lines = ft._auto_footer_lines("# X\n\nText.\n", style)
+        self.assertFalse(any("Intelligenz" in l for l in lines))
+
 
 if __name__ == "__main__":
     unittest.main()

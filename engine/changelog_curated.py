@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.208.0",
+        "date": "2026-06-26",
+        "title": "Berichte: Fußzeile, Klassifizierung & KI-Hinweis",
+        "body": "Erzeugte Word- und PDF-Berichte tragen in der Fußzeile jetzt automatisch drei "
+                "saubere, jeweils eigene Zeilen: eine inhaltsbasierte Klassifizierung "
+                "(Öffentlich / Intern / Vertraulich / Streng vertraulich, automatisch aus dem "
+                "Dokumentinhalt abgeleitet), einen Transparenzhinweis gemäß EU-AI-Act, dass das "
+                "Dokument mit Unterstützung künstlicher Intelligenz erstellt wurde, sowie die "
+                "Seitenzahl im Format „Seite - N“ in derselben Schrift wie der übrige Fußzeilentext. "
+                "Diese Angaben müssen nicht mehr von Hand eingetragen werden — die manuelle "
+                "Fußzeile bleibt für eigene Inhalte frei. Außerdem überlappt ein Logo in der "
+                "Kopfzeile nicht mehr die erste Überschrift.",
+        "audience": "user",
+        "versions": ["9.208.0"],
+    },
+    {
         "version": "9.207.0",
         "date": "2026-06-26",
         "title": "Word- und PDF-Berichte: sauberes Layout",

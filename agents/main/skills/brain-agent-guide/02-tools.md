@@ -118,7 +118,15 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   output "im Format von / wie die Referenz" (.docx output only; lifts named-style
   + margin definitions, not the full visual template/themes) (v9.190.0).
   Header/footer text supports `{page}`/`{date}` tokens; the logo + footer render
-  on docx/pdf pages, pptx slides, and the html header/footer bands.
+  on docx/pdf pages, pptx slides, and the html header/footer bands. **Automatic
+  footer lines** (v9.208.0, each on its own line, in the footer font): a
+  content-derived **classification** `Klassifizierung: <Stufe>` (Öffentlich/Intern/
+  Vertraulich/Streng vertraulich, from the ARL heuristic over the document text,
+  no LLM; business reports floor at Intern), an **EU-AI-Act AI-generation
+  disclosure**, and the **page number** as `Seite - N` (own line, same font/size).
+  All three are added automatically — `footer.text` is for manual content only;
+  toggle via `footer.{classification,ai_disclosure,page_numbers}` in the preset. A
+  header logo auto-clears the first heading (top margin pushed down).
   **Automatic .docx polish** (v9.191.0, deterministic, every model): cover page
   (from the first `# H1` + leading `Key: value` lines) + table of contents for
   substantial reports — the TOC is **pre-filled with real, page-numbered entries**

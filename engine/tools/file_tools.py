@@ -516,7 +516,11 @@ _DEFAULT_DOC_STYLE = {
     # `text` supports {page} and {date} tokens (page-number / current date).
     "header": {"text": "", "align": "left", "font_size": 9, "color": "#666666"},
     "footer": {"text": "", "align": "center", "font_size": 9,
-               "color": "#666666", "page_numbers": False},
+               "color": "#666666", "page_numbers": False,
+               # `classification: true` adds an automatic, content-derived
+               # sensitivity line ("Klassifizierung: Vertraulich") on its own
+               # footer line. Heuristic-only (engine/classification.py), no LLM.
+               "classification": True},
     "logo": {"file": "", "width_inch": 1.2, "align": "right", "position": "header"},
 }
 
@@ -864,7 +868,69 @@ def _apply_pptx_logo_footer(prs, style: dict):
                 pass
 
 
-def _make_pdf_hdrftr_cb(style: dict, pagesize, margin, inch, hexcolor):
+# EU AI Act transparency disclosure — always present on generated documents so a
+# reader can tell the content was AI-assisted. Fixed text; preset may override via
+# footer.ai_disclosure_text, or disable with footer.ai_disclosure: false.
+_AI_DISCLOSURE_DEFAULT = (
+    "Dieses Dokument wurde mit Unterstützung künstlicher Intelligenz erstellt."
+)
+
+
+def _classification_footer_line(content: str, style: dict) -> str:
+    """Derive an automatic, CONTENT-based sensitivity classification for a
+    generated document and return a footer line like `Klassifizierung: Vertraulich`
+    — or "" when disabled.
+
+    Uses the existing ARL content heuristic (engine/classification.py, regex +
+    keyword + PII, NO LLM). The generated doc carries no explicit marker, so we
+    take the content `heuristic_level`. A corporate report floors at 'internal' —
+    freshly generated business content is never labelled "Öffentlich".
+    """
+    ftr = style.get("footer") or {}
+    if not ftr.get("classification", False):
+        return ""
+    try:
+        from engine import classification as _cls
+        import brain as _brain
+        try:
+            cfg = _brain._server_config()
+        except Exception:
+            cfg = None
+        res = _cls.detect_classification(content or "", cfg=cfg)
+        level = (res.get("content_signals") or {}).get("heuristic_level") or "internal"
+        if level == "public":
+            level = "internal"
+        label = _cls.LEVEL_LABEL_DE.get(level, "Intern")
+        return f"Klassifizierung: {label}"
+    except Exception:
+        return ""
+
+
+def _ai_disclosure_footer_line(style: dict) -> str:
+    """The EU AI Act transparency line, automatic on every generated document
+    unless the preset disables it (footer.ai_disclosure: false). Preset may set a
+    custom footer.ai_disclosure_text."""
+    ftr = style.get("footer") or {}
+    if not ftr.get("ai_disclosure", True):
+        return ""
+    return str(ftr.get("ai_disclosure_text") or _AI_DISCLOSURE_DEFAULT).strip()
+
+
+def _auto_footer_lines(content: str, style: dict) -> list[str]:
+    """Ordered automatic footer lines (each rendered on its OWN line, in the
+    footer's font/size): classification first, then the AI-disclosure. The page
+    number is handled separately (it must be the LAST line)."""
+    lines = []
+    cls = _classification_footer_line(content, style)
+    if cls:
+        lines.append(cls)
+    ai = _ai_disclosure_footer_line(style)
+    if ai:
+        lines.append(ai)
+    return lines
+
+
+def _make_pdf_hdrftr_cb(style: dict, pagesize, margin, inch, hexcolor, content: str = ""):
     """Build a reportlab onPage(canvas, doc) callback drawing the preset's running
     header/footer text (with {page}/{date} tokens) + logo on every page. Returns
     None if the preset has no header/footer/logo to render."""
@@ -876,8 +942,9 @@ def _make_pdf_hdrftr_cb(style: dict, pagesize, margin, inch, hexcolor):
     hdr_text = str(hdr.get("text") or "").strip()
     ftr_text = str(ftr.get("text") or "").strip()
     page_nums = bool(ftr.get("page_numbers"))
+    auto_lines = _auto_footer_lines(content, style)  # classification + AI-disclosure
     has_logo = bool(logo_path) and logo_pos in ("header", "footer")
-    if not (hdr_text or ftr_text or page_nums or has_logo):
+    if not (hdr_text or ftr_text or page_nums or auto_lines or has_logo):
         return None
     pw, ph = pagesize
     left, right = margin, pw - margin
@@ -931,11 +998,25 @@ def _make_pdf_hdrftr_cb(style: dict, pagesize, margin, inch, hexcolor):
         fy = margin - 0.35 * inch        # footer baseline, inside bottom margin
         if hdr_text:
             _draw_text(canvas, hdr, hdr_text, hy, pn)
-        f_raw = ftr_text
-        if page_nums and "{page}" not in f_raw:
-            f_raw = (f_raw + "  Seite {page}").strip() if f_raw else "Seite {page}"
-        if f_raw:
-            _draw_text(canvas, ftr, f_raw, fy, pn)
+        # Footer is a STACK of lines, all in the footer's font/size, bottom-
+        # anchored and growing upward (so the page number sits lowest):
+        #   [footer text] / [classification] / [AI-disclosure] / [Seite - N]
+        # Build bottom→top; the page line is last (drawn at the lowest baseline).
+        _explicit_page = "{page}" in ftr_text
+        _want_page_line = page_nums and not _explicit_page
+        _fsize = float(ftr.get("font_size") or 9)
+        _line_h = _fsize + 2
+        _stack = []  # top→bottom order
+        if ftr_text:
+            _stack.append(ftr_text)
+        _stack.extend(auto_lines)
+        if _want_page_line:
+            _stack.append(_PAGE_LINE_PREFIX + "{page}")
+        # Lowest line at fy; each earlier line one line-height higher.
+        n = len(_stack)
+        for i, line in enumerate(_stack):
+            _y = fy + (n - 1 - i) * _line_h
+            _draw_text(canvas, ftr, line, _y, pn)
         if logo_pos == "header":
             _draw_logo(canvas, hy, in_header=True)
         elif logo_pos == "footer":
@@ -1072,22 +1153,33 @@ def _render_markdown_html(content: str, style: dict, doc_dir: str) -> str:
 
     def _band(spec, where):
         txt = _hdrftr_text(spec.get("text"), page=True)
+        # Page number renders on its OWN line as `Seite - N` (print-only CSS
+        # counter), in the same font/size as the footer text — unless the preset
+        # text already embeds an explicit {page} token (then honour it inline).
+        page_line_html = ""
         if where == "footer" and spec.get("page_numbers") and "{page}" not in txt:
-            txt = (txt + "  " if txt else "") + "Seite {page}"
+            page_line_html = (f'<div class="doc-pageline">'
+                              f'{_html.escape(_PAGE_LINE_PREFIX)}'
+                              f'<span class="pagenum"></span></div>')
+        # Automatic footer lines (classification + AI-disclosure), each own line.
+        auto_html = ""
+        if where == "footer":
+            for _auto in _auto_footer_lines(content, style):
+                auto_html += f'<div class="doc-autoline">{_html.escape(_auto)}</div>'
         # {page} → a print-only CSS counter span; on screen it shows nothing.
         parts = txt.split("{page}")
         html_txt = _html.escape(parts[0])
         for seg in parts[1:]:
             html_txt += '<span class="pagenum"></span>' + _html.escape(seg)
         logo_html = _logo_img(where)
-        if not (html_txt.strip() or logo_html):
+        if not (html_txt.strip() or logo_html or page_line_html or auto_html):
             return ""
         align = spec.get("align") or ("center" if where == "footer" else "left")
         size = spec.get("font_size") or 9
         col = spec.get("color") or "#666666"
         return (f'<div class="doc-{where}" style="text-align:{_html.escape(str(align))};'
                 f'font-size:{float(size):.0f}pt;color:{_html.escape(str(col))}">'
-                f'{logo_html}{html_txt}</div>')
+                f'{logo_html}{html_txt}{auto_html}{page_line_html}</div>')
 
     # ── body: reuse the same line-walk as the other branches ──
     body = []
@@ -1180,12 +1272,23 @@ def _docx_align(name: str):
         (name or "left").lower(), _A.LEFT)
 
 
-def _docx_add_page_field(paragraph):
-    """Append a Word PAGE field (live page number) to a paragraph run.
+# Footer page-number line: rendered as `Seite - N` on its own line, the number a
+# live Word PAGE field in the same font/size as the surrounding footer text.
+_PAGE_LINE_PREFIX = "Seite - "
+
+
+def _docx_add_page_field(paragraph, *, size=None, color=None):
+    """Append a Word PAGE field (live page number) to a paragraph run, optionally
+    styled to a point size + RGB colour so it matches the footer text.
     python-docx has no field API, so emit the field XML directly."""
+    from docx.shared import Pt, RGBColor
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
     run = paragraph.add_run()
+    if size:
+        run.font.size = Pt(float(size))
+    if color:
+        run.font.color.rgb = RGBColor(*color)
     fld_begin = OxmlElement("w:fldChar"); fld_begin.set(qn("w:fldCharType"), "begin")
     instr = OxmlElement("w:instrText"); instr.set(qn("xml:space"), "preserve")
     instr.text = "PAGE"
@@ -1193,10 +1296,15 @@ def _docx_add_page_field(paragraph):
     run._r.append(fld_begin); run._r.append(instr); run._r.append(fld_end)
 
 
-def _docx_fill_hdrftr(container, spec: dict, *, logo_path, logo_spec, page_token: bool):
+def _docx_fill_hdrftr(container, spec: dict, *, logo_path, logo_spec, page_token: bool,
+                      page_line: bool = False):
     """Populate a docx header/footer container (section.header/footer) with the
     preset text (+{page}/{date} tokens), alignment, size, color, and optional
-    logo picture. `container` is a _Header/_Footer; reuses its first paragraph."""
+    logo picture. `container` is a _Header/_Footer; reuses its first paragraph.
+
+    `page_line=True` renders the live page number on ITS OWN paragraph as
+    `Seite - N` (same font/size/colour as the footer text), instead of trailing
+    the footer text on the same line."""
     from docx.shared import Pt, RGBColor, Inches
     para = container.paragraphs[0] if container.paragraphs else container.add_paragraph()
     para.alignment = _docx_align(spec.get("align"))
@@ -1212,21 +1320,40 @@ def _docx_fill_hdrftr(container, spec: dict, *, logo_path, logo_spec, page_token
                 para.add_run("  ")
         except Exception:
             pass
-    # Text, splitting on {page} so the page field renders live.
-    segments = text.split("{page}") if page_token else [_hdrftr_text(text)]
+
+    def _style_run(r):
+        if size:
+            r.font.size = Pt(float(size))
+        if col:
+            r.font.color.rgb = RGBColor(*col)
+
+    # Text, splitting on {page} so the page field renders live (when not on its
+    # own line). With page_line, {page} tokens are stripped from the main text and
+    # the number goes on a dedicated second paragraph below.
+    segments = text.split("{page}") if (page_token and not page_line) else [_hdrftr_text(text)]
     for idx, seg in enumerate(segments):
         seg = _hdrftr_text(seg) if page_token else seg
         if seg:
-            r = para.add_run(seg)
-            if size:
-                r.font.size = Pt(float(size))
-            if col:
-                r.font.color.rgb = RGBColor(*col)
-        if page_token and idx < len(segments) - 1:
+            _style_run(para.add_run(seg))
+        if page_token and not page_line and idx < len(segments) - 1:
             _docx_add_page_field(para)
 
+    # Automatic footer lines (classification, AI-disclosure), each on its own
+    # line in the same font/size/colour as the footer text.
+    for _auto in (spec.get("_auto_lines") or []):
+        ap = container.add_paragraph()
+        ap.alignment = _docx_align(spec.get("align"))
+        _style_run(ap.add_run(str(_auto)))
 
-def _apply_docx_header_footer(doc, style: dict, doc_dir: str):
+    if page_line:
+        # Dedicated page-number line: `Seite - N`, same font/size/colour.
+        pl = container.add_paragraph()
+        pl.alignment = _docx_align(spec.get("align"))
+        _style_run(pl.add_run(_PAGE_LINE_PREFIX))
+        _docx_add_page_field(pl, size=size, color=col)
+
+
+def _apply_docx_header_footer(doc, style: dict, doc_dir: str, content: str = ""):
     """Apply preset header/footer/logo to every section of a docx."""
     hdr = style.get("header") or {}
     ftr = style.get("footer") or {}
@@ -1234,25 +1361,64 @@ def _apply_docx_header_footer(doc, style: dict, doc_dir: str):
     logo_path = _resolve_style_logo(style)
     logo_pos = (logo.get("position") or "header").lower()
     has_hdr = bool(str(hdr.get("text") or "").strip()) or (logo_path and logo_pos == "header")
-    # Footer renders if it has text, page numbers, or holds the logo.
+    # Automatic footer lines (classification + AI-disclosure), each own line.
+    auto_lines = _auto_footer_lines(content, style)
+    # Footer renders if it has text, page numbers, automatic lines, or the logo.
     ftr_text = str(ftr.get("text") or "").strip()
-    has_ftr = bool(ftr_text) or bool(ftr.get("page_numbers")) or (logo_path and logo_pos == "footer")
+    has_ftr = (bool(ftr_text) or bool(ftr.get("page_numbers")) or bool(auto_lines)
+               or (logo_path and logo_pos == "footer"))
     if not (has_hdr or has_ftr):
         return
+    # A tall header logo overflows Word's default 0.5" header distance and spills
+    # into the body. Measure the rendered logo height and, if the header carries
+    # it, push the header distance + top margin down to clear it (+ a little air).
+    from docx.shared import Inches
+    _logo_h_in = 0.0
+    if logo_path and logo_pos in ("header", "footer"):
+        try:
+            from PIL import Image
+            with Image.open(logo_path) as _im:
+                _iw, _ih = _im.size
+            _w_in = float(logo.get("width_inch") or 1.2)
+            _logo_h_in = _w_in * (_ih / _iw) if _iw else _w_in
+        except Exception:
+            _logo_h_in = float(logo.get("width_inch") or 1.2)  # square fallback
     for sec in doc.sections:
+        if logo_pos == "header" and _logo_h_in > 0:
+            try:
+                _hdist = Inches(0.4)
+                sec.header_distance = _hdist
+                # logo bottom = header_distance + logo height; body must start a
+                # comfortable gap below that so a heading never crowds the logo.
+                _need_top = _hdist + Inches(_logo_h_in) + Inches(0.35)
+                if int(sec.top_margin) < int(_need_top):
+                    sec.top_margin = _need_top
+            except Exception:
+                pass
+        elif logo_pos == "footer" and _logo_h_in > 0:
+            try:
+                _fdist = Inches(0.35)
+                sec.footer_distance = _fdist
+                _need_bot = _fdist + Inches(_logo_h_in) + Inches(0.15)
+                if int(sec.bottom_margin) < int(_need_bot):
+                    sec.bottom_margin = _need_bot
+            except Exception:
+                pass
         if has_hdr:
             _docx_fill_hdrftr(sec.header, hdr,
                               logo_path=logo_path if logo_pos == "header" else None,
                               logo_spec=logo, page_token=True)
         if has_ftr:
-            # Auto-append a page number if page_numbers is on and {page} absent.
+            # The page number renders on its OWN line as `Seite - N` (page_line),
+            # not trailing the footer text. If the preset text itself contains an
+            # explicit {page} token we honour that inline instead.
             f_spec = dict(ftr)
-            if ftr.get("page_numbers") and "{page}" not in str(f_spec.get("text") or ""):
-                base = str(f_spec.get("text") or "").strip()
-                f_spec["text"] = (base + "  Seite {page}").strip() if base else "Seite {page}"
+            f_spec["_auto_lines"] = auto_lines
+            _explicit_page = "{page}" in str(f_spec.get("text") or "")
+            _want_page_line = bool(ftr.get("page_numbers")) and not _explicit_page
             _docx_fill_hdrftr(sec.footer, f_spec,
                               logo_path=logo_path if logo_pos == "footer" else None,
-                              logo_spec=logo, page_token=True)
+                              logo_spec=logo, page_token=True, page_line=_want_page_line)
 
 
 # ── Markdown → block model (markdown-it-py) ────────────────────────────────
@@ -2076,7 +2242,7 @@ def tool_write_document(args: dict) -> str:
             # Running header / footer + logo (deterministic). python-docx exposes
             # section.header/footer paragraphs; the page-number is a Word field.
             try:
-                _apply_docx_header_footer(doc, _style, _doc_dir)
+                _apply_docx_header_footer(doc, _style, _doc_dir, content)
             except Exception:
                 pass
             _dx = _style["docx"]
@@ -2517,8 +2683,20 @@ def tool_write_document(args: dict) -> str:
             _marg = float(_style["pdf"].get("margin_inch", 1.0)) * _rl_inch
             _pdf_want_toc = bool(_pdf_dx.get("toc", True))
             _pdf_toc_active = False  # True once a ToC flowable is actually placed
+            # Reserve bottom space for the full footer stack (text + classification
+            # + AI-disclosure + page line) so the running footer never collides
+            # with the body. Footer baseline is margin-0.35in; each extra line adds
+            # one line-height above it.
+            _ftr = _style.get("footer") or {}
+            _ftr_lines = (1 if str(_ftr.get("text") or "").strip() else 0)
+            _ftr_lines += len(_auto_footer_lines(content, _style))
+            if _ftr.get("page_numbers") and "{page}" not in str(_ftr.get("text") or ""):
+                _ftr_lines += 1
+            _ftr_fsize = float(_ftr.get("font_size") or 9)
+            _ftr_reserve = max(0, _ftr_lines - 1) * (_ftr_fsize + 2) + 0.45 * _rl_inch
+            _bot_marg = max(_marg, _ftr_reserve)
             doc_pdf = SimpleDocTemplate(path, pagesize=_psize, topMargin=_marg,
-                                        bottomMargin=_marg, leftMargin=_marg, rightMargin=_marg)
+                                        bottomMargin=_bot_marg, leftMargin=_marg, rightMargin=_marg)
             # PDF table-of-contents: reportlab fills a ToC flowable over a 2-pass
             # build (multiBuild) driven by 'TOCEntry' notifications. We tag each
             # heading flowable with a bookmark key + emit the notify in an
@@ -2838,7 +3016,7 @@ def tool_write_document(args: dict) -> str:
                     if _t is not None:
                         story.append(_t); story.append(Spacer(1, 12))
             _pdf_flush_kpis()
-            _pdf_cb = _make_pdf_hdrftr_cb(_style, _psize, _marg, _rl_inch, _RLHex)
+            _pdf_cb = _make_pdf_hdrftr_cb(_style, _psize, _marg, _rl_inch, _RLHex, content)
             # multiBuild (2 passes) resolves the ToC page numbers; plain build
             # otherwise. The header/footer canvas callback runs on every page.
             _build = doc_pdf.multiBuild if _pdf_toc_active else doc_pdf.build
