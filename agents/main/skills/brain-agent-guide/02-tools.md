@@ -120,14 +120,22 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   Header/footer text supports `{page}`/`{date}` tokens; the logo + footer render
   on docx/pdf pages, pptx slides, and the html header/footer bands.
   **Automatic .docx polish** (v9.191.0, deterministic, every model): cover page
-  (from the first `# H1` + leading `Key: value` lines) + Word TOC for substantial
-  reports, dark table headers + zebra rows, `---` → real divider, leading emoji
-  stripped from headings, inline `**bold**`/`*italic*` parsed in headings AND
-  table cells (no longer leaked verbatim), and **colour-coded risk badges** — a
-  table column of gering/mittel/erhöht/hoch ratings is auto-shaded green/amber/
-  red. The model triggers ONE feature explicitly: `::kpi VALUE | LABEL | risk`
-  lines render a coloured KPI stat-box strip. All toggled by `docx.{cover,toc,
-  zebra_fill,rule_color,strip_emoji,risk_badges}` in the preset.
+  (from the first `# H1` + leading `Key: value` lines) + table of contents for
+  substantial reports — the TOC is **pre-filled with real, page-numbered entries**
+  (one per H1-H3) and refreshes on open / F9 (v9.207.0; before that it could stay
+  an empty placeholder), dark table headers + zebra rows, `---` → real divider,
+  leading emoji stripped from headings, inline `**bold**`/`*italic*` parsed in
+  headings AND table cells (no longer leaked verbatim), and **colour-coded risk
+  badges** — a table column of gering/mittel/erhöht/hoch ratings is auto-shaded
+  green/amber/red. **Page-break hygiene + layout** (v9.207.0): headings stay with
+  their text (no stranded heading at a page bottom), table rows never break across
+  a page and the header row repeats on each page, and table columns are sized to
+  their content so a narrow column no longer wraps one character per line. A
+  section headed **`## Versionshistorie`** (or `## Änderungshistorie`) starts on a
+  fresh page and is left out of the TOC — use it for a change-history table at the
+  document end. The model triggers ONE feature explicitly: `::kpi VALUE | LABEL |
+  risk` lines render a coloured KPI stat-box strip. All toggled by `docx.{cover,
+  toc,zebra_fill,rule_color,strip_emoji,risk_badges}` in the preset.
   **Markdown engine** (v9.192.0; pptx parity v9.192.2): the .docx/.pdf/.pptx body
   is parsed with markdown-it-py (a real CommonMark parser), so standard markdown
   converts NATIVELY — nested bullet/ordered lists, `> ` blockquotes, fenced code
