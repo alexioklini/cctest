@@ -76,6 +76,10 @@ async function sendMessage() {
     // these two were missed). Snapshot and restore them across newChat().
     const _carryThinking = _preChat ? _preChat.thinkingLevel : undefined;
     const _carryCaveman = _preChat ? _preChat.cavemanMode : undefined;
+    // Deep Research toggle: same trap — newChat() resets chat.deepResearch to
+    // false, so a research turn started from the PROJECT-LANDING composer was
+    // silently downgraded to a normal chat. Snapshot + restore across newChat().
+    const _carryDeepResearch = _preChat ? !!_preChat.deepResearch : false;
     newChat();
     state._pendingFiles = _carryFiles;
     state._pendingImages = _carryImages;
@@ -90,7 +94,9 @@ async function sendMessage() {
       const _freshChat = state.ensureAgentChat(state.activeAgentId);
       if (_carryThinking !== undefined) _freshChat.thinkingLevel = _carryThinking;
       if (_carryCaveman !== undefined) _freshChat.cavemanMode = _carryCaveman;
+      _freshChat.deepResearch = _carryDeepResearch;
       if (typeof refreshThinkingButton === 'function') refreshThinkingButton();
+      if (typeof refreshDeepResearchButton === 'function') refreshDeepResearchButton();
       if (typeof updateStatusBar === 'function') updateStatusBar();
     }
     if (typeof renderFilePreviews === 'function') renderFilePreviews();
