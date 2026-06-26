@@ -265,21 +265,18 @@ class TestDocumentPolish(_FileToolFixture):
         return (z.read("word/document.xml").decode(),
                 z.read("word/settings.xml").decode())
 
-    def test_toc_is_prepopulated_and_recalc_requested(self):
+    def test_toc_is_native_field_with_recalc(self):
+        """A NATIVE Word TOC field (so Word fills it + correct page numbers on
+        open) — marked dirty + settings.xml updateFields. NOT manual PAGEREF
+        entries, which resolved every entry to page 1 in Word (the user bug)."""
         doc, settings = self._render_docx()
-        # global field recalc on open
-        self.assertIn("<w:updateFields", settings)
-        # a live TOC field …
-        self.assertIn("TOC \\o", doc.replace("\\\\", "\\"))
-        # … that is pre-filled: a PAGEREF entry per heading + the section names
-        self.assertIn("PAGEREF", doc)
-        self.assertIn("Zusammenfassung", doc)
-        # Versionshistorie is excluded from the TOC: its heading has NO _Toc
-        # bookmark (only TOC-listed headings get one), so no PAGEREF targets it.
-        vhist_bookmarked = bool(
-            re.search(r'_Toc_h\d+"[^>]*?/>\s*<[^>]*?>[^<]*?Versionshistorie', doc))
-        self.assertFalse(vhist_bookmarked,
-                         "Versionshistorie should not be a TOC entry")
+        self.assertIn("<w:updateFields", settings)        # recalc on open
+        self.assertIn("TOC \\o", doc.replace("\\\\", "\\"))  # native TOC field
+        self.assertIn('w:dirty="true"', doc)              # → Word recomputes
+        # The manual-PAGEREF approach is gone (it caused all-page-1).
+        self.assertNotIn("PAGEREF", doc)
+        # Headings carry real Heading styles — that's what the native TOC reads.
+        self.assertIn('w:val="Heading', doc)
 
     def test_rows_cant_split_and_header_repeats(self):
         doc, _ = self._render_docx()
@@ -351,6 +348,45 @@ class TestDocumentPolish(_FileToolFixture):
         style["footer"]["ai_disclosure"] = False
         lines = ft._auto_footer_lines("# X\n\nText.\n", style)
         self.assertFalse(any("Intelligenz" in l for l in lines))
+
+    def test_footer_lines_are_tightly_spaced(self):
+        """Footer paragraphs set space-before/after 0 + single line spacing so the
+        stacked lines don't have big gaps."""
+        foot = self._render_footer_xml(self._MD)
+        self.assertIn('w:before="0"', foot)
+        self.assertIn('w:after="0"', foot)
+
+    def test_mermaid_block_detection(self):
+        """A bare ```gantt / flowchart block (no `mermaid` lang) is recognised as a
+        Mermaid diagram so it gets rendered, not dumped as code."""
+        from engine.tools.image_gen import looks_like_mermaid
+        self.assertTrue(looks_like_mermaid("%% comment %%\ngantt\n  title X\n"))
+        self.assertTrue(looks_like_mermaid("flowchart TD\n A-->B\n"))
+        self.assertFalse(looks_like_mermaid("def foo():\n    return 1\n"))
+        self.assertFalse(looks_like_mermaid("SELECT * FROM t;\n"))
+
+    def test_mermaid_block_embedded_not_codeblock(self):
+        """A Mermaid code block in write_document content is rendered to an image
+        and embedded (docx gets a picture), not written as a literal code block.
+        Skips gracefully if mermaid-cli isn't installed in this environment."""
+        import zipfile
+        from engine.tools import file_tools as ft
+        from engine.tools.image_gen import _mmdc_invocation
+        if not _mmdc_invocation():
+            self.skipTest("mermaid-cli not available")
+        md = ("# Bericht\n\n## Plan\n\n```mermaid\nflowchart TD\n"
+              "    A[Start] --> B[Ende]\n```\n")
+        res = json.loads(ft.tool_write_document(
+            {"path": "diag.docx", "content": md, "style": "corporate"}))
+        self.assertEqual(res.get("status"), "written")
+        z = zipfile.ZipFile(res["path"])
+        # An embedded picture → a media part + a drawing in the document.
+        self.assertTrue(any(n.startswith("word/media/") for n in z.namelist()),
+                        "no embedded image — diagram was not rendered")
+        doc = z.read("word/document.xml").decode()
+        self.assertIn("<w:drawing", doc)
+        # The raw mermaid source must NOT appear as a code block.
+        self.assertNotIn("flowchart TD", doc)
 
 
 if __name__ == "__main__":

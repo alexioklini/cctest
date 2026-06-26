@@ -1203,6 +1203,36 @@ def _render_markdown_html(content: str, style: dict, doc_dir: str) -> str:
                 body.append(f'<p>[Bild nicht gefunden: {_html.escape(m_img.group(2))}]</p>')
             i += 1
             continue
+        # Fenced code block: gather to the closing fence. A Mermaid block →
+        # render to PNG + inline it; any other code block → <pre><code>.
+        m_fence = re.match(r'^(```+|~~~+)\s*([A-Za-z0-9_-]*)\s*$', line)
+        if m_fence:
+            fence, flang = m_fence.group(1)[0], m_fence.group(2).lower()
+            i += 1
+            code_lines = []
+            while i < len(lines) and not lines[i].strip().startswith(fence * 3):
+                code_lines.append(lines[i])
+                i += 1
+            i += 1  # skip closing fence
+            code_text = "\n".join(code_lines)
+            _blk = {"type": "code", "text": code_text, "lang": flang}
+            _emb = None
+            if _is_mermaid_block(_blk, style):
+                _png = _render_mermaid_block_to_file(code_text, style, doc_dir)
+                if _png:
+                    _pp = _resolve_doc_image(_png, doc_dir)
+                    try:
+                        ct = mimetypes.guess_type(_pp)[0] or "image/png"
+                        with open(_pp, "rb") as fh:
+                            uri = f"data:{ct};base64,{base64.b64encode(fh.read()).decode('ascii')}"
+                        _emb = f'<p class="figure"><img src="{uri}" alt="Diagramm"></p>'
+                    except Exception:
+                        _emb = None
+            if _emb:
+                body.append(_emb)
+            else:
+                body.append(f'<pre><code>{_html.escape(code_text)}</code></pre>')
+            continue
         m_h = re.match(r'^(#{1,6})\s+(.*)', line)
         if m_h:
             lvl = len(m_h.group(1))
@@ -1327,6 +1357,17 @@ def _docx_fill_hdrftr(container, spec: dict, *, logo_path, logo_spec, page_token
         if col:
             r.font.color.rgb = RGBColor(*col)
 
+    def _tighten(p):
+        # Multi-line footers stack as separate paragraphs; kill the default
+        # space-before/after + loosen-to-1.0 line spacing so the lines sit close.
+        pf = p.paragraph_format
+        pf.space_before = Pt(0)
+        pf.space_after = Pt(0)
+        from docx.enum.text import WD_LINE_SPACING
+        pf.line_spacing_rule = WD_LINE_SPACING.SINGLE
+
+    _tighten(para)
+
     # Text, splitting on {page} so the page field renders live (when not on its
     # own line). With page_line, {page} tokens are stripped from the main text and
     # the number goes on a dedicated second paragraph below.
@@ -1339,16 +1380,18 @@ def _docx_fill_hdrftr(container, spec: dict, *, logo_path, logo_spec, page_token
             _docx_add_page_field(para)
 
     # Automatic footer lines (classification, AI-disclosure), each on its own
-    # line in the same font/size/colour as the footer text.
+    # line in the same font/size/colour as the footer text, tightly spaced.
     for _auto in (spec.get("_auto_lines") or []):
         ap = container.add_paragraph()
         ap.alignment = _docx_align(spec.get("align"))
+        _tighten(ap)
         _style_run(ap.add_run(str(_auto)))
 
     if page_line:
         # Dedicated page-number line: `Seite - N`, same font/size/colour.
         pl = container.add_paragraph()
         pl.alignment = _docx_align(spec.get("align"))
+        _tighten(pl)
         _style_run(pl.add_run(_PAGE_LINE_PREFIX))
         _docx_add_page_field(pl, size=size, color=col)
 
@@ -1728,6 +1771,82 @@ def _docx_render_quote_para(doc, runs, style):
         r.italic = True
 
 
+def _is_mermaid_block(blk: dict, style: dict) -> bool:
+    """A code block that holds a Mermaid diagram — either fenced as ```mermaid or
+    a bare ```gantt/flowchart/sequenceDiagram… block the model wrote without the
+    `mermaid` language tag (the bdb6a1e7 case). Gated on `mermaid.embed` (default
+    on) so a preset can opt out of auto-rendering."""
+    if (style.get("mermaid") or {}).get("embed", True) is False:
+        return False
+    if blk.get("type") != "code":
+        return False
+    lang = (blk.get("lang") or "").strip().lower()
+    if lang in ("mermaid", "mmd"):
+        return True
+    if lang and lang not in ("", "text", "plain"):
+        return False  # an explicit non-mermaid language → leave as code
+    try:
+        from engine.tools.image_gen import looks_like_mermaid
+        return looks_like_mermaid(blk.get("text") or "")
+    except Exception:
+        return False
+
+
+_MERMAID_DOC_SEQ = {}  # doc_dir → counter, for unique auto-diagram filenames
+
+
+def _render_mermaid_block_to_file(code: str, style: dict, doc_dir: str, fmt: str = "png"):
+    """Render a Mermaid code block to an image FILE inside the document folder and
+    return its basename (so the existing image-embed path can place it), or None on
+    any failure (caller then falls back to rendering the raw code block)."""
+    try:
+        from engine.tools.image_gen import render_mermaid_file
+        _n = _MERMAID_DOC_SEQ.get(doc_dir, 0) + 1
+        _MERMAID_DOC_SEQ[doc_dir] = _n
+        out_name = f"_auto_diagram_{_n}.{fmt}"
+        out_path = os.path.join(doc_dir, out_name)
+        merm = style.get("mermaid") or {}
+        bg = (merm.get("background") or "white").lower()
+        res = render_mermaid_file(code, out_path=out_path, full_style=style,
+                                  fmt=fmt, theme=merm.get("theme"),
+                                  background=bg, explicit_theme=False)
+        if res and os.path.exists(out_path):
+            try:
+                import brain as _brain
+                _ag = _brain.get_request_context().current_agent or _brain._current_agent
+                _brain._after_file_write(out_path, "created", _ag.agent_id if _ag else "main")
+            except Exception:
+                pass
+            return out_name
+    except Exception:
+        pass
+    return None
+
+
+def _docx_add_fitted_picture(doc, img_path):
+    """Insert an image scaled to fit the section's usable width AND height (so a
+    wide/tall auto-rendered diagram doesn't overflow the page). Centred."""
+    from docx.shared import Emu
+    sec = doc.sections[0]
+    usable_w = int(sec.page_width) - int(sec.left_margin) - int(sec.right_margin)
+    usable_h = int(sec.page_height) - int(sec.top_margin) - int(sec.bottom_margin)
+    usable_h = int(usable_h * 0.92)  # leave a little vertical air
+    try:
+        from PIL import Image
+        with Image.open(img_path) as im:
+            iw, ih = im.size  # pixels
+        # python-docx maps px→EMU at 96 dpi by default (9525 EMU/px).
+        nat_w = iw * 9525
+        nat_h = ih * 9525
+        ratio = min(usable_w / nat_w, usable_h / nat_h, 1.0)
+        p = doc.add_paragraph()
+        p.alignment = 1  # center
+        p.add_run().add_picture(img_path, width=Emu(int(nat_w * ratio)))
+    except Exception:
+        from docx.shared import Inches
+        doc.add_picture(img_path, width=Inches(6.0))
+
+
 def _docx_render_code(doc, blk, style):
     """A fenced code block: monospace runs on a light-shaded paragraph, one Word
     line per source line (no \\n in a run — Word needs separate breaks)."""
@@ -1937,30 +2056,40 @@ def _docx_force_update_fields(doc):
 
 def _docx_bookmark_heading(paragraph, name):
     """Wrap a heading paragraph's runs in a bookmark so a TOC PAGEREF can target
-    it. Returns the bookmark name."""
+    it. The bookmarkStart MUST go AFTER <w:pPr> (pPr must stay the first child of
+    <w:p> per the OOXML schema) — inserting it at index 0 puts it before pPr, which
+    makes Word bind the bookmark wrong and resolve every PAGEREF to page 1.
+    Returns the bookmark name."""
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
+    bid = str(abs(hash(name)) % 1_000_000)
     start = OxmlElement("w:bookmarkStart")
-    start.set(qn("w:id"), str(abs(hash(name)) % 1_000_000))
+    start.set(qn("w:id"), bid)
     start.set(qn("w:name"), name)
     end = OxmlElement("w:bookmarkEnd")
-    end.set(qn("w:id"), str(abs(hash(name)) % 1_000_000))
+    end.set(qn("w:id"), bid)
     p = paragraph._p
-    p.insert(0, start)
+    pPr = p.find(qn("w:pPr"))
+    if pPr is not None:
+        pPr.addnext(start)   # bookmarkStart immediately AFTER pPr
+    else:
+        p.insert(0, start)
     p.append(end)
     return name
 
 
 def _add_toc_field(doc, headings=None):
-    """Insert a Word Table-of-Contents that is BOTH a live TOC field (F9 / open
-    refreshes it) AND pre-populated with visible, page-numbered entries — so a TOC
-    is shown immediately in any renderer (Word, LibreOffice headless export),
-    not just an empty 'press F9' placeholder.
+    """Insert a NATIVE Word Table-of-Contents field (heading levels 1-3). Word
+    generates the entries + correct page numbers itself from the Heading 1-3
+    styles when the document is opened (the field is marked dirty + settings.xml
+    requests a recalc), so the TOC fills in automatically and F9 only re-flows.
+    A short placeholder shows until that first open. Deterministic, no model input.
 
-    `headings` = list of (level, text, bookmark_name) collected during body render
-    (levels 1-3). Each entry is `text … <PAGEREF bookmark>` — Word computes the
-    page number; we render it inside the TOC field result so it's visible now and
-    re-flows on update. Deterministic, no model input."""
+    The earlier approach pre-built manual PAGEREF entries, but those resolved
+    every entry to page 1 (bookmarks placed before pagination) — the native field
+    is what makes the page numbers correct in Word. `headings` is kept for
+    signature compatibility but unused now.
+    """
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
     from docx.shared import Pt
@@ -1969,73 +2098,18 @@ def _add_toc_field(doc, headings=None):
     for r in title.runs:
         r.bold = True
         r.font.size = Pt(16)
-
-    # The TOC field spans multiple paragraphs: begin/instr/separate in the first
-    # entry paragraph, the PAGEREF entries in between, end in the last.
-    def _field_char(kind, *, dirty=False):
-        fc = OxmlElement("w:fldChar"); fc.set(qn("w:fldCharType"), kind)
-        if dirty:
-            fc.set(qn("w:dirty"), "true")
-        return fc
-
-    headings = [h for h in (headings or []) if (h[1] or "").strip()]
-    if not headings:
-        # No headings → keep a minimal field (nothing to list yet).
-        p = doc.add_paragraph(); run = p.add_run()
-        run._r.append(_field_char("begin", dirty=True))
-        instr = OxmlElement("w:instrText"); instr.set(qn("xml:space"), "preserve")
-        instr.text = 'TOC \\o "1-3" \\h \\z \\u'; run._r.append(instr)
-        run._r.append(_field_char("separate"))
-        ph = OxmlElement("w:t"); ph.text = "(keine Überschriften)"; run._r.append(ph)
-        run._r.append(_field_char("end"))
-        _docx_force_update_fields(doc)
-        return
-
-    n = len(headings)
-    for idx, (level, text, bm) in enumerate(headings):
-        p = doc.add_paragraph()
-        p.paragraph_format.left_indent = Pt(12 * (max(1, level) - 1))
-        # tab stop with dot leader pushing the page number to the right margin
-        from docx.enum.text import WD_TAB_ALIGNMENT, WD_TAB_LEADER
-        try:
-            p.paragraph_format.tab_stops.add_tab_stop(
-                __import__("docx").shared.Inches(6.0),
-                WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
-        except Exception:
-            pass
-        run = p.add_run()
-        if idx == 0:
-            run._r.append(_field_char("begin", dirty=True))
-            instr = OxmlElement("w:instrText"); instr.set(qn("xml:space"), "preserve")
-            instr.text = 'TOC \\o "1-3" \\h \\z \\u'; run._r.append(instr)
-            run._r.append(_field_char("separate"))
-        # entry text → internal hyperlink to the heading bookmark
-        _hl = OxmlElement("w:hyperlink"); _hl.set(qn("w:anchor"), bm)
-        _tr = OxmlElement("w:r")
-        _trPr = OxmlElement("w:rPr")
-        _rStyle = OxmlElement("w:rStyle"); _rStyle.set(qn("w:val"), "Hyperlink")
-        _trPr.append(_rStyle); _tr.append(_trPr)
-        _tt = OxmlElement("w:t"); _tt.set(qn("xml:space"), "preserve")
-        _tt.text = (text or "").strip(); _tr.append(_tt)
-        _hl.append(_tr)
-        p._p.append(_hl)
-        # tab + PAGEREF field (the page number Word computes)
-        _tabr = OxmlElement("w:r"); _tab = OxmlElement("w:tab"); _tabr.append(_tab)
-        p._p.append(_tabr)
-        _pr = OxmlElement("w:r"); _pr.append(_field_char("begin"))
-        _pi = OxmlElement("w:instrText"); _pi.set(qn("xml:space"), "preserve")
-        _pi.text = f' PAGEREF {bm} \\h '; _pr.append(_pi)
-        _pr.append(_field_char("separate"))
-        # Placeholder shown only until Word/LibreOffice recalcs the PAGEREF on open
-        # (settings.xml updateFields). Keep it unobtrusive — a non-breaking space.
-        _pt = OxmlElement("w:t"); _pt.set(qn("xml:space"), "preserve"); _pt.text = " "
-        _pr.append(_pt)
-        _pr.append(_field_char("end"))
-        p._p.append(_pr)
-        if idx == n - 1:
-            _endr = OxmlElement("w:r"); _endr.append(_field_char("end"))
-            p._p.append(_endr)
-    # Request a global field recalc on open so PAGEREFs resolve to real numbers.
+    p = doc.add_paragraph()
+    run = p.add_run()
+    fb = OxmlElement("w:fldChar"); fb.set(qn("w:fldCharType"), "begin")
+    fb.set(qn("w:dirty"), "true")
+    instr = OxmlElement("w:instrText"); instr.set(qn("xml:space"), "preserve")
+    instr.text = 'TOC \\o "1-3" \\h \\z \\u'
+    sep = OxmlElement("w:fldChar"); sep.set(qn("w:fldCharType"), "separate")
+    ph = OxmlElement("w:t"); ph.set(qn("xml:space"), "preserve")
+    ph.text = "Inhaltsverzeichnis \u2014 wird beim \u00d6ffnen in Word automatisch erzeugt (sonst F9)."
+    fe = OxmlElement("w:fldChar"); fe.set(qn("w:fldCharType"), "end")
+    run._r.append(fb); run._r.append(instr); run._r.append(sep)
+    run._r.append(ph); run._r.append(fe)
     try:
         _docx_force_update_fields(doc)
     except Exception:
@@ -2415,7 +2489,19 @@ def tool_write_document(args: dict) -> str:
                         elif qb.get("type") == "list":
                             _docx_render_list(doc, qb, _style)
                 elif bt == "code":
-                    _docx_render_code(doc, blk, _style)
+                    # A Mermaid diagram block → render to PNG + embed as a picture
+                    # (don't dump raw `gantt …` source as a code block). Falls back
+                    # to the code block if rendering is unavailable / fails.
+                    _merm_png = (_render_mermaid_block_to_file(blk["text"], _style, _doc_dir)
+                                 if _is_mermaid_block(blk, _style) else None)
+                    if _merm_png:
+                        _mp = _resolve_doc_image(_merm_png, _doc_dir)
+                        try:
+                            _docx_add_fitted_picture(doc, _mp)
+                        except Exception:
+                            _docx_render_code(doc, blk, _style)
+                    else:
+                        _docx_render_code(doc, blk, _style)
                 elif bt == "table":
                     _docx_render_table_block(blk)
             _flush_kpis()
@@ -3010,7 +3096,25 @@ def tool_write_document(args: dict) -> str:
                 elif bt == "quote":
                     _pdf_render_quote(blk)
                 elif bt == "code":
-                    _pdf_render_code(blk)
+                    # Mermaid diagram → render to PNG + embed; else a code block.
+                    _merm_png = (_render_mermaid_block_to_file(blk["text"], _style, _doc_dir)
+                                 if _is_mermaid_block(blk, _style) else None)
+                    _mp = _resolve_doc_image(_merm_png, _doc_dir) if _merm_png else None
+                    if _mp and not _mp.lower().endswith(".svg"):
+                        try:
+                            img = _RLImage(_mp)
+                            # Fit within the printable area by BOTH width and height
+                            # (a wide gantt/flowchart otherwise overflows the frame
+                            # → reportlab "too large on page" error).
+                            maxw = 6.5 * _rl_inch
+                            maxh = (_psize[1] - 2 * _marg) - 0.6 * _rl_inch
+                            _ratio = min(maxw / img.drawWidth, maxh / img.drawHeight, 1.0)
+                            img.drawWidth *= _ratio; img.drawHeight *= _ratio
+                            story.append(img); story.append(Spacer(1, 12))
+                        except Exception:
+                            _pdf_render_code(blk)
+                    else:
+                        _pdf_render_code(blk)
                 elif bt == "table":
                     _t = _pdf_table_flowable(blk)
                     if _t is not None:

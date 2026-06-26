@@ -3,7 +3,7 @@ name: Document Styles
 description: Editable per-format style presets (fonts, colors, layout) that write_document and render_diagram apply DETERMINISTICALLY when creating .docx/.pptx/.pdf files and diagrams. Not interpreted by the model — Python reads the YAML and sets the styling, so output looks consistent regardless of model strength.
 metadata:
   type: doc-style
-  version: 1.6.0
+  version: 1.7.0
 ---
 
 # Document Styles
@@ -66,14 +66,16 @@ full preset — so markdown + a named style is the most consistent.)
   - `cover: true` → a title page from the FIRST `# H1` + leading `Key: value`
     frontmatter lines, rendered only for substantial reports (≥4 headings, OR an
     H1+frontmatter block, OR ≥30 non-blank lines — a short memo stays one page).
-  - `toc: true` → a **pre-populated, page-numbered** table of contents after the
-    cover: each H1–H3 becomes a real entry (internal hyperlink + `PAGEREF` page
-    number) wrapped in a live Word `TOC` field, and `settings.xml` requests a
-    field recalc on open — so a filled ToC is visible immediately (no "press F9"
-    placeholder) and F9 only re-flows page numbers. The SAME `cover`/`toc` keys
-    drive the **.pdf** cover page + a clickable, page-numbered ToC (reportlab
-    2-pass build). A **Versionshistorie / Änderungshistorie** section (see below)
-    is deliberately EXCLUDED from the ToC.
+  - `toc: true` → a **native Word `TOC` field** (heading levels 1–3) after the
+    cover. Word builds the entries + correct page numbers itself from the Heading
+    1–3 styles when the document is opened (the field is marked dirty and
+    `settings.xml` requests a recalc); F9 only re-flows. A short placeholder shows
+    until that first open. (An earlier build pre-filled manual `PAGEREF` entries,
+    but those resolved every entry to page 1 in Word — the native field is what
+    makes the page numbers correct, v9.209.0.) The SAME `cover`/`toc` keys drive
+    the **.pdf** cover page + a clickable, page-numbered ToC (reportlab 2-pass
+    build — the PDF ToC IS fully resolved, since reportlab paginates itself). A
+    **Versionshistorie / Änderungshistorie** section (see below) is excluded.
   - **Page-break hygiene (deterministic, every doc)**: headings get `keepNext`/
     `keepLines` (a heading never strands alone at a page bottom — no Schusterjunge);
     every table row gets `cantSplit` (a row never breaks mid-row, killing the
@@ -120,6 +122,11 @@ full preset — so markdown + a named style is the most consistent.)
   `position`) is placed as a corner image and the footer text + page band is
   drawn on every slide.
 - **diagrams**: `render_diagram(style=…)` inherits `mermaid.theme/background` so
-  charts match the document they're embedded in.
+  charts match the document they're embedded in. Additionally, a **Mermaid code
+  block written directly in `write_document` content** (```mermaid, or a bare
+  ```gantt/```flowchart…) is auto-rendered to a brand-themed PNG and embedded in
+  docx/pdf/html (v9.209.0) — the model no longer has to call render_diagram +
+  embed by hand. On a Mermaid syntax error it falls back to the raw code block.
+  Disable auto-embed with `mermaid.embed: false`.
 
 `corporate.yaml` is the starter preset (navy headings, Calibri, neutral mermaid).

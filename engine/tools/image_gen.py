@@ -378,6 +378,84 @@ def _mermaid_theme_config(style: dict) -> dict | None:
     return {"theme": "base", "themeVariables": tv}
 
 
+_MERMAID_DIAGRAM_KEYWORDS = (
+    "graph", "flowchart", "sequencediagram", "classdiagram", "statediagram",
+    "erdiagram", "gantt", "pie", "journey", "gitgraph", "mindmap", "timeline",
+    "quadrantchart", "requirementdiagram", "c4context", "sankey", "xychart",
+    "block-beta", "architecture-beta",
+)
+
+
+def looks_like_mermaid(code: str) -> bool:
+    """True if a code block's body opens with a Mermaid diagram keyword — so a
+    bare ```gantt / flowchart block (no ```mermaid fence) is still recognised.
+    Skips leading `%%` directive/comment lines before testing the first real line."""
+    for raw in (code or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("%%"):
+            continue
+        head = re.split(r'[\s:]', line, 1)[0].lower()
+        return head in _MERMAID_DIAGRAM_KEYWORDS
+    return False
+
+
+def render_mermaid_file(code: str, *, out_path: str, full_style: dict | None = None,
+                        fmt: str = "png", theme: str | None = None,
+                        background: str = "white", scale: float = 4.0,
+                        width: int = 2000, explicit_theme: bool = False) -> str | None:
+    """Render Mermaid `code` to `out_path` via mermaid-cli. Returns out_path on
+    success, None on any failure (caller falls back). Shared by tool_render_diagram
+    and the write_document auto-embed path so both render identically (same brand
+    theming, high-DPI raster, working-node PATH fix)."""
+    import subprocess
+    import tempfile
+    mmdc = _mmdc_invocation()
+    if not mmdc:
+        return None
+    _mm_config = None
+    if not explicit_theme:
+        _mm_config = _mermaid_theme_config(full_style or {})
+    theme = (theme or "default").lower()
+    if theme not in ("default", "dark", "forest", "neutral"):
+        theme = "default"
+    if background not in ("transparent", "white"):
+        background = "white"
+    tmp_in = tmp_conf = None
+    try:
+        fd, tmp_in = tempfile.mkstemp(suffix=".mmd", prefix="brain-diagram-")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(code)
+        cmd = mmdc + ["-i", tmp_in, "-o", out_path, "-b", background]
+        if _mm_config:
+            import json as _json
+            fd2, tmp_conf = tempfile.mkstemp(suffix=".json", prefix="brain-mmconf-")
+            with os.fdopen(fd2, "w", encoding="utf-8") as cf:
+                _json.dump(_mm_config, cf)
+            cmd += ["-c", tmp_conf]
+        else:
+            cmd += ["-t", theme]
+        if fmt in ("png", "pdf"):
+            cmd += ["-s", str(scale), "-w", str(width)]
+        env = dict(os.environ)
+        env.setdefault("HOME", os.path.expanduser("~"))
+        _nodedir = os.path.dirname(mmdc[0]) if mmdc and os.path.sep in mmdc[0] else ""
+        if _nodedir:
+            env["PATH"] = _nodedir + os.pathsep + env.get("PATH", "")
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
+        if proc.returncode != 0 or not os.path.exists(out_path):
+            return None
+        return out_path
+    except Exception:
+        return None
+    finally:
+        for _tmp in (tmp_in, tmp_conf):
+            if _tmp:
+                try:
+                    os.remove(_tmp)
+                except OSError:
+                    pass
+
+
 def tool_render_diagram(args: dict) -> str:
     """Render a Mermaid diagram to a real image artifact (SVG/PNG/PDF).
 

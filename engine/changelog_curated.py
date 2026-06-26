@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.209.0",
+        "date": "2026-06-26",
+        "title": "Berichte: Diagramme & Inhaltsverzeichnis",
+        "body": "Diagramme in Word- und PDF-Berichten werden jetzt korrekt als Bild dargestellt: "
+                "Ein im Text beschriebenes Ablauf- oder Gantt-Diagramm (Mermaid) wird automatisch "
+                "in eine saubere, an das Corporate-Design angepasste Grafik umgewandelt und "
+                "eingebettet — statt wie bisher als Roh-Text zu erscheinen. Außerdem füllt sich "
+                "das Inhaltsverzeichnis in Word jetzt mit den richtigen Seitenzahlen, wenn das "
+                "Dokument geöffnet wird (zuvor wurde fälschlich überall Seite 1 angezeigt), und "
+                "die Abstände zwischen den Fußzeilenzeilen sind kompakter.",
+        "audience": "user",
+        "versions": ["9.209.0"],
+    },
+    {
         "version": "9.208.0",
         "date": "2026-06-26",
         "title": "Berichte: Fußzeile, Klassifizierung & KI-Hinweis",

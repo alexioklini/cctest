@@ -3,7 +3,7 @@ name: Document Markdown
 description: How to write markdown for write_document so it converts to a polished .docx / .pdf. The converter (markdown-it-py → our renderer) understands standard markdown PLUS two house conventions (::kpi stat boxes, a Bewertung/Risiko column for auto risk-badges). Read this before producing a report/letter/analysis as a Word or PDF file.
 metadata:
   type: guide
-  version: 1.2.0
+  version: 1.3.0
 ---
 
 # Document Markdown
@@ -38,6 +38,27 @@ polished look. Follow these and even a short report comes out on-brand.
    - Table: standard `| a | b |` with a `|---|---|` separator row
    - Divider: a line of `---`
    - Image/diagram: `![alt](file.png)` (render_diagram first, embed the file)
+
+## Diagrams (Mermaid)
+
+For a flowchart, Gantt chart, sequence diagram etc., write the **Mermaid source in
+a fenced code block** and it is rendered to a real image and embedded automatically
+(docx/pdf/html) — you do NOT have to call render_diagram + embed the file yourself:
+
+````
+```mermaid
+flowchart TD
+    A[Antrag] --> B{Vollständig?}
+    B -->|Ja| C[Prüfung]
+    B -->|Nein| D[Rückfrage]
+```
+````
+
+A bare ` ```gantt ` / ` ```flowchart ` block (without the `mermaid` language tag)
+is recognised too. The diagram inherits the document's brand colours/fonts. If the
+Mermaid source has a syntax error it falls back to showing the code block — so keep
+the syntax valid. (render_diagram is still available when you want to tune size/
+theme or reuse the image; for a quick inline diagram, the fenced block is enough.)
 
 ## House convention 1 — KPI stat boxes
 
@@ -97,9 +118,9 @@ The title + those `Key: value` lines become the cover; everything else flows
 into the body. A short memo (few headings, no frontmatter) stays single-page —
 don't force a cover with filler.
 
-The table of contents is **pre-filled with real, page-numbered entries** (one per
-`#`/`##`/`###` heading) — it shows up immediately, not as an empty "press F9"
-placeholder. So just write good headings; the ToC builds itself.
+The table of contents is a **native Word field** built from your `#`/`##`/`###`
+headings; Word fills it in with the correct page numbers automatically when the
+document is opened. So just write good headings — the ToC builds itself.
 
 ## Version history (Versionshistorie)
 

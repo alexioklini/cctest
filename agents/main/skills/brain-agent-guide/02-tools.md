@@ -129,9 +129,10 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   header logo auto-clears the first heading (top margin pushed down).
   **Automatic .docx polish** (v9.191.0, deterministic, every model): cover page
   (from the first `# H1` + leading `Key: value` lines) + table of contents for
-  substantial reports — the TOC is **pre-filled with real, page-numbered entries**
-  (one per H1-H3) and refreshes on open / F9 (v9.207.0; before that it could stay
-  an empty placeholder), dark table headers + zebra rows, `---` → real divider,
+  substantial reports — the TOC is a **native Word field** that Word fills with
+  correct page numbers on open (v9.209.0; the v9.207.0 pre-filled-PAGEREF variant
+  showed every entry as page 1 in Word and was reverted), dark table headers +
+  zebra rows, `---` → real divider,
   leading emoji stripped from headings, inline `**bold**`/`*italic*` parsed in
   headings AND table cells (no longer leaked verbatim), and **colour-coded risk
   badges** — a table column of gering/mittel/erhöht/hoch ratings is auto-shaded
@@ -404,8 +405,11 @@ write/exec tool is deliberately excluded.
   text). For org charts/flowcharts/structure/timeline/sequence/ER/gantt/etc.
   Returns `path` + `embed` snippets. **For a chat-only diagram**, just write an
   inline ` ```mermaid ` block (rendered live, no tool). **For a report/
-  presentation**: `render_diagram` → then embed the file via `write_document`
-  `![title](file.png)`. Default format is **PNG** (high-DPI, scale 4 / width
+  presentation**: either call `render_diagram` then embed `![title](file.png)`,
+  OR — simpler since v9.209.0 — just put the ` ```mermaid ` (or bare ` ```gantt `/
+  ` ```flowchart `) block straight into `write_document` content; it is
+  auto-rendered to a brand-themed PNG and embedded (docx/pdf/html), falling back to
+  the code block on a Mermaid syntax error. Default format is **PNG** (high-DPI, scale 4 / width
   2000) and embeds in PDF, DOCX AND HTML — take the default for reports. SVG is
   available (`format=svg`) but embeds in HTML ONLY (the PDF/DOCX writers cannot
   place an SVG → emit a "render as PNG" placeholder). write_document embeds
