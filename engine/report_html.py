@@ -53,6 +53,7 @@ _CATEGORY_LABEL = {
 _INLINE_CODE = re.compile(r"`([^`]+)`")
 _BOLD = re.compile(r"\*\*([^*]+)\*\*")
 _ITALIC = re.compile(r"(?<![*\w])\*([^*\n]+)\*(?![*\w])")
+_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"([^\"]*)\")?\)")
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
 
@@ -70,6 +71,20 @@ def _inline(text: str) -> str:
     out = _INLINE_CODE.sub(lambda m: f"<code>{m.group(1)}</code>", out)
     out = _BOLD.sub(lambda m: f"<strong>{m.group(1)}</strong>", out)
     out = _ITALIC.sub(lambda m: f"<em>{m.group(1)}</em>", out)
+
+    def _image(m):
+        # Images BEFORE links (![alt](url) starts with the link pattern). Only
+        # http(s) src embedded; alt/caption escaped. Non-http → drop to text.
+        alt, url, cap = m.group(1), m.group(2), m.group(3) or ""
+        if not re.match(r"^https?://", url, re.I):
+            return html.escape(m.group(0), quote=False)
+        safe_url = html.escape(url, quote=True)
+        safe_alt = html.escape(alt, quote=True)
+        caption = (f'<figcaption>{html.escape(cap)}</figcaption>') if cap else ""
+        return (f'<figure class="report-figure"><img src="{safe_url}" alt="{safe_alt}" '
+                f'loading="lazy" referrerpolicy="no-referrer">{caption}</figure>')
+
+    out = _IMAGE.sub(_image, out)
 
     def _link(m):
         label, url = m.group(1), m.group(2)
@@ -105,16 +120,30 @@ def _md_to_html(md: str) -> tuple[str, list[tuple[int, str, str]]]:
         line = lines[i]
         stripped = line.strip()
 
-        # Fenced code block
+        # Fenced code block (with language detection for mermaid / chart embeds)
         if stripped.startswith("```"):
             flush_para()
+            lang = stripped[3:].strip().lower()
             i += 1
             code: list[str] = []
             while i < n and not lines[i].strip().startswith("```"):
                 code.append(lines[i])
                 i += 1
             i += 1  # closing fence
-            body = html.escape("\n".join(code), quote=False)
+            code_text = "\n".join(code)
+            # ```mermaid → render to inline SVG (reuses the write_document pipeline).
+            if lang in ("mermaid", "mmd"):
+                fig = _render_mermaid_inline(code_text)
+                if fig:
+                    out.append(fig)
+                    continue
+            # ```chart → render a data chart from the JSON spec to inline SVG.
+            if lang == "chart":
+                fig = _render_chart_inline(code_text)
+                if fig:
+                    out.append(fig)
+                    continue
+            body = html.escape(code_text, quote=False)
             out.append(f"<pre><code>{body}</code></pre>")
             continue
 
@@ -204,6 +233,71 @@ def _render_table(lines: list[str], start: int, n: int) -> str:
         r = (r + [""] * len(header))[: len(header)]
         tbody += "<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in r) + "</tr>"
     return f"<table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>"
+
+
+# ---------------------------------------------------------------------------
+# Embedded graphics — mermaid diagrams + data charts (both → inline SVG)
+# ---------------------------------------------------------------------------
+
+def _strip_svg_for_inline(svg: str) -> str:
+    """Make a standalone SVG safe + responsive to inline inside the report:
+    drop any XML/doctype prolog, force width:100% (mmdc emits a fixed width),
+    and remove the absolute width/height attrs so it scales to the column."""
+    # Drop <?xml ...?> and <!DOCTYPE ...> prologs if present.
+    svg = re.sub(r"^\s*<\?xml[^>]*\?>", "", svg, flags=re.I).strip()
+    svg = re.sub(r"^\s*<!DOCTYPE[^>]*>", "", svg, flags=re.I).strip()
+    # Force the root <svg> to scale to the figure width.
+    def _fix_root(m):
+        tag = m.group(0)
+        tag = re.sub(r'\swidth="[^"]*"', "", tag)
+        tag = re.sub(r'\sheight="[^"]*"', "", tag)
+        return tag[:-1] + ' style="width:100%;height:auto;max-width:100%">'
+    return re.sub(r"<svg\b[^>]*>", _fix_root, svg, count=1)
+
+
+def _render_mermaid_inline(code: str) -> str | None:
+    """Render a ```mermaid block to an inline <figure><svg>…</figure>. Uses the
+    shared render_mermaid_file (mmdc) → SVG, then inlines the file content so the
+    report stays self-contained. None on any failure → caller shows raw code."""
+    code = (code or "").strip()
+    if not code:
+        return None
+    try:
+        import os
+        import tempfile
+        from engine.tools.image_gen import render_mermaid_file
+        fd, out_path = tempfile.mkstemp(suffix=".svg", prefix="report-mermaid-")
+        os.close(fd)
+        try:
+            res = render_mermaid_file(code, out_path=out_path, fmt="svg",
+                                      background="transparent")
+            if not res or not os.path.exists(out_path):
+                return None
+            with open(out_path, "r", encoding="utf-8") as f:
+                svg = f.read()
+        finally:
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+        if "<svg" not in svg:
+            return None
+        return ('<figure class="report-figure report-diagram">'
+                + _strip_svg_for_inline(svg) + "</figure>")
+    except Exception:
+        return None
+
+
+def _render_chart_inline(spec_json: str) -> str | None:
+    """Render a ```chart JSON spec to an inline <figure><svg>…</figure>."""
+    try:
+        from engine import report_charts
+        svg = report_charts.render_chart_svg(spec_json)
+        if not svg:
+            return None
+        return '<figure class="report-figure report-chart">' + svg + "</figure>"
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +573,25 @@ body::after {
 .content tr:last-child td { border-bottom: none; }
 .content tr:hover td { background: var(--accent-bg); }
 
+/* Embedded graphics — mermaid diagrams, data charts, source images */
+.report-figure { margin: 1.75rem 0; text-align: center; }
+.report-figure svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+.report-diagram svg, .report-chart svg {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem; box-shadow: var(--shadow-sm);
+}
+.report-figure img {
+  max-width: 100%; height: auto; border-radius: var(--radius);
+  border: 1px solid var(--border); box-shadow: var(--shadow-sm);
+}
+.report-figure figcaption { margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-muted); font-style: italic; }
+/* Hero image — sits below the headline, full content width. */
+.hero-image { max-width: var(--max-w); margin: 0 auto 1rem; padding: 0 2rem; }
+.hero-image img {
+  width: 100%; height: clamp(180px, 28vh, 320px); object-fit: cover;
+  border-radius: var(--radius); border: 1px solid var(--border); box-shadow: var(--shadow-md);
+}
+
 /* Sources */
 .sources-panel { margin-top: 3rem; border-top: 2px solid var(--border); padding-top: 1.5rem; }
 .sources-panel summary { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 1rem; font-weight: 600; color: var(--text); padding: 0.5rem 0; list-style: none; user-select: none; }
@@ -509,6 +622,18 @@ body::after {
 """
 
 
+def _hero_image_html(hero_image: Optional[str]) -> str:
+    """A full-width hero image below the headline. Only http(s) URLs are embedded
+    (defends against data:/javascript:); empty/invalid → no hero image."""
+    if not hero_image or not isinstance(hero_image, str):
+        return ""
+    if not re.match(r"^https?://", hero_image.strip(), re.I):
+        return ""
+    safe = html.escape(hero_image.strip(), quote=True)
+    return (f'<div class="hero-image"><img src="{safe}" alt="" loading="lazy" '
+            f'referrerpolicy="no-referrer"></div>')
+
+
 def render_report_html(
     markdown: str,
     title: str,
@@ -516,16 +641,21 @@ def render_report_html(
     sources: Optional[list] = None,
     category: Optional[str] = None,
     stats: Optional[dict] = None,
+    hero_image: Optional[str] = None,
 ) -> str:
     """Render a complete, self-contained HTML report document.
 
     Args:
-        markdown: the report body in our markdown subset.
+        markdown: the report body in our markdown subset. May contain ```mermaid
+            and ```chart fenced blocks, which render to inline SVG figures, and
+            standard ![alt](https-url) image markdown (embedded as <img>).
         title: report title (hero headline).
         meta: optional {model, tokens_in, tokens_out, cost, duration_s} footer.
         sources: optional [{title, url, trust_hint}] curated source list.
         category: one of _CATEGORY_LABEL keys → hero eyebrow label.
         stats: optional {rounds, queries, sources, urls, duration} stats strip.
+        hero_image: optional https URL of a lead image (e.g. an OG image from the
+            top source) shown full-width below the headline.
     """
     label = _CATEGORY_LABEL.get(category or "report", _CATEGORY_LABEL["report"])
     # A leading "# Title" in the body is redundant with the hero — drop it.
@@ -553,6 +683,7 @@ def render_report_html(
   <div class="hero-label">{html.escape(label)}</div>
   <h1>{safe_title}</h1>
 </header>
+{_hero_image_html(hero_image)}
 {_stats_html(stats)}
 {layout_open}
   {toc_html}

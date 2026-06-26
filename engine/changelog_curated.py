@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.213.0",
+        "date": "2026-06-26",
+        "title": "Deep Research: Grafiken & Projektwissen",
+        "body": "Die Deep-Research-Berichte enthalten jetzt, wo es den Inhalt klarer macht, "
+                "automatisch Grafiken: Ablauf- und Zeitdiagramme, Balken-/Linien-/Tortendiagramme "
+                "aus den im Bericht genannten Zahlen sowie passende Bilder aus den Quellen (inkl. "
+                "eines Titelbilds) — direkt in die hochwertige HTML-Ansicht eingebettet. In einem "
+                "Projekt-Chat bezieht die Recherche außerdem das gesamte Projektwissen mit ein "
+                "(die im Projektgedächtnis abgelegten Quellen und Zusammenhänge), genau wie ein "
+                "normaler Projekt-Chat — Anhänge und der bisherige Gesprächsverlauf fließen "
+                "ohnehin ein. Ist die freie Websuche für den Chat unterbunden, weist ein Hinweis "
+                "darauf hin, dass Deep Research erst mit aktivierter Websuche voll sinnvoll ist.",
+        "audience": "user",
+        "versions": ["9.213.0"],
+    },
+    {
         "version": "9.212.0",
         "date": "2026-06-26",
         "title": "Deep Research im normalen Chat",

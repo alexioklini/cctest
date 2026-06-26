@@ -156,6 +156,9 @@ async function openSession(sessionId, agentId) {
     chat.chatTitle = data.title || '';
     chat.chatSummary = data.summary || '';
     chat.cavemanMode = parseInt(data.caveman_mode) || 0;
+    // Deep Research is an EPHEMERAL per-turn intent, not a saved session setting —
+    // opening any existing chat starts with it OFF (never silently inherited).
+    chat.deepResearch = false;
     chat.workflowRunId = data.workflow_run_id || '';
     const memVal = parseInt(data.save_to_memory) || 0;
     chat.saveToMemory = memVal === 1;
@@ -615,6 +618,11 @@ function newChat(opts) {
   chat.memoryMode = _def.memoryMode;
   chat.thinkingLevel = _def.thinkingLevel;
   if (typeof refreshThinkingButton === 'function') refreshThinkingButton();
+  // Fresh chat → Deep Research always OFF (never inherited from the prior
+  // conversation, project or projectless). Reset the per-chat flag + repaint the
+  // composer toggle (the button is the source of truth at send time).
+  chat.deepResearch = false;
+  if (typeof refreshDeepResearchButton === 'function') refreshDeepResearchButton();
   // Fresh chat → empty Websuche basket. Prevents the previous chat's marked
   // URLs from silently coming along into the new conversation.
   chat.webBasket = [];

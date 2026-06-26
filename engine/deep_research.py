@@ -108,6 +108,47 @@ def _trust_hint(url: str) -> str:
     return "blog/forum" if any(host.endswith(d) for d in _LOW_TRUST) else ""
 
 
+_OG_IMAGE_RE = re.compile(
+    r'<meta[^>]+(?:property|name)=["\'](?:og:image|twitter:image)["\'][^>]*'
+    r'content=["\']([^"\']+)["\']', re.I)
+_OG_IMAGE_RE2 = re.compile(
+    r'<meta[^>]+content=["\']([^"\']+)["\'][^>]*(?:property|name)='
+    r'["\'](?:og:image|twitter:image)["\']', re.I)
+
+
+def _fetch_og_image(url: str) -> str:
+    """Best-effort: GET the page HTML and pull its og:image / twitter:image URL.
+    Returns an absolute https URL or "" (never raises). Used only to pick a hero
+    image for the report — a small, bounded read of the top source's <head>."""
+    try:
+        import urllib.request
+        from urllib.parse import urljoin
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; brain-agent-research/1.0)"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            ctype = resp.headers.get("Content-Type", "")
+            if "html" not in ctype.lower():
+                return ""
+            # Only need the <head>; cap the read so a huge page can't stall us.
+            raw = resp.read(200_000)
+        htmltext = raw.decode("utf-8", errors="ignore")
+        m = _OG_IMAGE_RE.search(htmltext) or _OG_IMAGE_RE2.search(htmltext)
+        if not m:
+            return ""
+        img = (m.group(1) or "").strip()
+        if not img:
+            return ""
+        # Resolve protocol-relative + relative URLs against the page URL.
+        if img.startswith("//"):
+            img = "https:" + img
+        elif img.startswith("/"):
+            img = urljoin(url, img)
+        # Only embed https images (http would mixed-content-warn; data: refused).
+        return img if img.lower().startswith("https://") else ""
+    except Exception:
+        return ""
+
+
 def _exa_available() -> bool:
     # Same gate as the chat agent: the admin's tool_settings.exa_search.enabled
     # toggle wins, AND a key must be configured. A disabled tool is never a
@@ -342,6 +383,26 @@ def _select_sources(topic, fetched, model, project_name, agent_id, user_id):
     return idxs or list(range(len(fetched)))
 
 
+# Graphics the report renderer can embed. The synthesizer is told to use them
+# WHERE THEY GENUINELY HELP — never decoratively. Two fenced-block conventions
+# (both render to inline SVG in the HTML report) + standard image markdown.
+_GRAPHICS_INSTRUCTIONS = (
+    "\nVISUALS — use these WHERE THEY GENUINELY CLARIFY the content (never "
+    "decoratively, never invent data):\n"
+    "- For a PROCESS, timeline, hierarchy, or relationship, emit a Mermaid "
+    "diagram in a ```mermaid fenced block (e.g. `graph LR`, `timeline`, "
+    "`flowchart TD`). Keep it small and labelled in the report's language.\n"
+    "- For QUANTITATIVE data actually present in the sources (prices, counts, "
+    "shares, values over time), emit a chart as a ```chart fenced block holding "
+    "JSON: {\"type\":\"bar\"|\"line\"|\"pie\", \"title\":\"…\", \"data\":"
+    "[{\"label\":\"…\",\"value\":<number>}, …]}. Only real numbers from the "
+    "sources — never fabricate figures to fill a chart.\n"
+    "- You MAY embed an image that a source explicitly provides using "
+    "![caption](https URL) — only real image URLs from the fetched sources.\n"
+    "- A report with no suitable process/data needs no diagrams; omit them "
+    "rather than forcing one.\n")
+
+
 # ─── Judgment point 3: grounded cited synthesis ────────────────────────────
 
 def _synthesize(topic, sources, coverage_note, model, project_name, agent_id, user_id,
@@ -364,7 +425,8 @@ def _synthesize(topic, sources, coverage_note, model, project_name, agent_id, us
         "## Sources (a bulleted list of the sources you used).\n"
         "- Use ONLY the provided sources. Do not add outside knowledge. If the "
         "sources don't cover part of the topic, say so plainly.\n"
-        "- Write in the language of the topic." + override_block)
+        "- Write in the language of the topic.\n"
+        + _GRAPHICS_INSTRUCTIONS + override_block)
     prompt = (f"Research topic: {topic}\n\n"
               f"{coverage_note}\n\n=== FETCHED SOURCES ===\n{corpus}")
     return _bg_text(prompt, sys, model, project_name, agent_id, user_id,
@@ -656,8 +718,9 @@ def effective_chat_budget(budget=None):
 
 def run_research_chat(*, agent_id, session_id, topic, user_id, budget=None,
                       progress=None, cancelled=None, extra_context=None,
-                      history_summary=None, preferred_model=None):
-    """Run Deep Research for a normal (non-project) chat turn, SYNCHRONOUSLY.
+                      history_summary=None, preferred_model=None,
+                      project_name=""):
+    """Run Deep Research for a chat turn, SYNCHRONOUSLY.
 
     `extra_context` (str, optional): pre-assembled context the turn already has —
     attachment text + curated web-source content + recent chat history — injected
@@ -665,6 +728,11 @@ def run_research_chat(*, agent_id, session_id, topic, user_id, budget=None,
     search. `history_summary` (str, optional): a short note about the prior
     conversation, woven into the planning/synthesis prompts so the research stays
     on-topic with the chat.
+
+    `project_name` (str, optional): when the chat is a PROJECT chat, the project's
+    MemPalace wing + KG are retrieved (project-scoped, like a normal project chat)
+    and folded into the research corpus + the LLM helpers run wing-scoped — so a
+    project deep-research draws on the project's own knowledge, not only the web.
 
     Returns a result dict:
       {"ok": True, "report_md": str, "html": str, "md_path": str, "html_path": str,
@@ -727,12 +795,30 @@ def run_research_chat(*, agent_id, session_id, topic, user_id, budget=None,
         if not active_backend():
             return {"ok": False, "error": "No search backend configured."}
 
-        # 1. Plan — classify genre + decompose (project_name="" → user wing scope).
+        # 0. PROJECT KNOWLEDGE: in a project chat, retrieve the project's MemPalace
+        #    wing (+ its KG is reachable via the same project scope) and fold it
+        #    into extra_context — so the report draws on the project's own sources
+        #    like a normal project chat, not only fresh web search.
+        if project_name:
+            try:
+                from engine import output_gen
+                _proj_corpus, _proj_n = output_gen._gather_sources(
+                    agent_id, project_name, topic, user_id)
+                if _proj_corpus:
+                    _proj_block = (f"### Projektwissen ({_proj_n} Quellpassagen aus dem "
+                                   f"Projektgedächtnis)\n{_proj_corpus}")
+                    extra_context = (extra_context + "\n\n---\n\n" + _proj_block
+                                     if extra_context else _proj_block)
+            except Exception as _e:
+                print(f"[deep_research] project knowledge retrieval failed: {_e}", flush=True)
+
+        # 1. Plan — classify genre + decompose. project_name scopes the LLM
+        #    helpers to the project wing when set (else the user wing).
         _emit("planning", subqueries=0)
         if _is_cancelled():
             return {"ok": False, "error": "cancelled"}
-        category = _classify_category(topic, model, "", agent_id, user_id)
-        subqueries = _decompose(topic, model, "", agent_id, user_id)
+        category = _classify_category(topic, model, project_name, agent_id, user_id)
+        subqueries = _decompose(topic, model, project_name, agent_id, user_id)
         _emit("searching", subqueries=len(subqueries), candidates=0)
 
         # 2. Search — fan out sub-queries (no project dedup → empty exclusion set).
@@ -803,7 +889,7 @@ def run_research_chat(*, agent_id, session_id, topic, user_id, budget=None,
         # 4. Select → ranked subset; 5. fit to token budget.
         if _is_cancelled():
             return {"ok": False, "error": "cancelled"}
-        keep_idx = _select_sources(topic, fetched, model, "", agent_id, user_id)
+        keep_idx = _select_sources(topic, fetched, model, project_name, agent_id, user_id)
         selected = [fetched[i] for i in keep_idx]
         synth_sources, n_dropped = _fit_corpus(selected, int(eff_budget.get("tokens", 80000)))
 
@@ -834,7 +920,7 @@ def run_research_chat(*, agent_id, session_id, topic, user_id, budget=None,
         _emit("writing", subqueries=len(subqueries), candidates=len(cand_list),
               fetched=fetches_used, kept=len(synth_sources))
         report_md, err = _synthesize(topic, synth_input, synth_note, model,
-                                     "", agent_id, user_id, category=category)
+                                     project_name, agent_id, user_id, category=category)
         if err or not report_md:
             return {"ok": False,
                     "error": ("Synthesis failed: " + err) if err else "Synthesis returned no text."}
@@ -875,9 +961,19 @@ def run_research_chat(*, agent_id, session_id, topic, user_id, budget=None,
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(body_md)
 
+        # Hero image: best-effort og:image from the top-ranked selected source,
+        # falling back to the next few if the first has none. Bounded so it never
+        # delays the report meaningfully.
+        hero_image = ""
+        for s in selected[:3]:
+            hero_image = _fetch_og_image(s.get("link", ""))
+            if hero_image:
+                break
+
         html_doc = report_html.render_report_html(
             f"{report_md}\n\n---\n*{coverage_note}*\n", title, meta=meta,
-            sources=html_sources, category=category, stats=html_stats)
+            sources=html_sources, category=category, stats=html_stats,
+            hero_image=hero_image)
         html_name = f"research-{rid}.html"
         html_path = os.path.join(outdir, html_name)
         with open(html_path, "w", encoding="utf-8") as f:

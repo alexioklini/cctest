@@ -594,7 +594,9 @@ wie bei der Websuche im Chat; eingestellt unter Einstellungen → Tools.) Zwei M
   inkl. der hochwertigen HTML-Ansicht). Das **Layout passt sich der Art der Frage an**:
   Produktempfehlungen als gerankte Liste mit Vergleichstabelle, ein Vergleich als
   Kriterien-Matrix, eine Anleitung Schritt-für-Schritt, ein Faktencheck als Belege
-  dafür/dagegen mit Bewertung. Der Fortschritt (Planen → Suchen → Lesen → Schreiben) und das Budget (max. Anzahl
+  dafür/dagegen mit Bewertung. Wo es den Inhalt klarer macht, bettet der Bericht
+  **Grafiken** ein: Ablauf-/Zeitdiagramme (Mermaid), Balken-/Linien-/Tortendiagramme
+  aus echten Zahlen der Quellen, Bilder aus den Quellen (inkl. Titelbild). Der Fortschritt (Planen → Suchen → Lesen → Schreiben) und das Budget (max. Anzahl
   Seitenabrufe) werden live angezeigt; der Lauf läuft weiter, auch wenn man den Tab
   verlässt, und lässt sich **abbrechen**. Am Ende: ein Link zum Bericht **und** eine
   Liste **vorgeschlagener Quellen** zum Import (nichts wird automatisch importiert —

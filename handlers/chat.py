@@ -2096,13 +2096,21 @@ def _run_deep_research_turn(session, sid, message, live, *, saved_paths=None,
     extra_context, history_summary = _build_deep_research_context(
         session, sid, message, saved_paths or [], web_urls or [], web_locked)
 
+    # Project scope: in a PROJECT chat, pass the project so the research also
+    # pulls the project's MemPalace wing + KG (like a normal project chat).
+    # Attachments + chat history are gathered above regardless of project (same
+    # as a non-project chat's deep research).
+    try:
+        _proj = engine.get_request_context().project or ""
+    except Exception:
+        _proj = ""
     result = deep_research.run_research_chat(
         agent_id=session.agent_id, session_id=sid, topic=message,
         user_id=session.user_id or "", progress=_progress, cancelled=_cancelled,
         extra_context=extra_context, history_summary=history_summary,
         # The chat's selected model wins (composer pick, or the auto-router's
         # resolved choice — session.model is already concrete by this point).
-        preferred_model=session.model)
+        preferred_model=session.model, project_name=_proj)
 
     if not result.get("ok"):
         err = result.get("error", "unknown error")
@@ -2172,7 +2180,19 @@ def _run_deep_research_turn(session, sid, message, live, *, saved_paths=None,
         stats.get("duration", ""),
         f"${meta.get('cost', 0):.4f}" if meta.get("cost") else "",
     ]))
+    # Web-lockout warning: the user has the Websuche basket active with
+    # allow_further_web OFF, so open web search is suppressed. Deep Research fans
+    # out fresh web searches and is only fully useful WITH web search — warn, but
+    # still produce a report (it could draw on the curated basket + project
+    # knowledge). The warning leads the card so the user can't miss it.
+    warn = ""
+    if web_locked:
+        warn = ("> ⚠️ **Hinweis:** Die freie Websuche ist für diesen Chat unterbunden "
+                "(Websuche-Korb aktiv, „Weitere Websuche erlauben\" aus). Deep Research "
+                "ist nur **mit** Websuche voll sinnvoll — schalten Sie „Weitere Websuche "
+                "erlauben\" im Websuche-Tab ein, damit breit recherchiert werden kann.\n\n")
     card = (
+        warn +
         f"## {cat_label} erstellt\n\n"
         f"**Thema:** {message}\n\n"
         f"Der vollständige Bericht öffnet sich rechts im **Artefakte-Panel** "
