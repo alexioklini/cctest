@@ -591,9 +591,13 @@ class CodeGraph:
 
                 fpath = os.path.join(dirpath, fname)
 
-                # Skip large files (>500KB)
+                # Skip pathologically large files (minified bundles, generated
+                # blobs). Cap is 3MB so a big-but-real orchestration module still
+                # indexes — brain.py (~1.6MB) parses to ~440 nodes in <1s and is
+                # exactly the file Brainy most needs; the old 500KB cap silently
+                # dropped it (and any other large source file) from the graph.
                 try:
-                    if os.path.getsize(fpath) > 500_000:
+                    if os.path.getsize(fpath) > 3_000_000:
                         stats["files_skipped"] += 1
                         continue
                 except OSError:
