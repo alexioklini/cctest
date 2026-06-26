@@ -1188,6 +1188,7 @@ function buildStreamCallbacks(chat, isActive) {
         if (d.cost !== undefined) { assistantMsg._cost = d.cost || 0; chat._sessionCost = d.cost || 0; }
         if (d.files?.length) assistantMsg._files = d.files;
         else if (chat.files.length) assistantMsg._files = chat.files;
+        if (d.deep_research) assistantMsg._deepResearch = true;
         if (chat.thinkingText) assistantMsg._thinking = chat.thinkingText;
         if (chat.thinkingSummary) assistantMsg._thinkingSummary = chat.thinkingSummary;
 

@@ -29,6 +29,40 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.212.0",
+        "date": "2026-06-26",
+        "title": "Deep Research im normalen Chat",
+        "body": "Die tiefe Recherche steht Ihnen jetzt auch im normalen Chat zur Verfügung — "
+                "nicht mehr nur im Projektbereich. Über den neuen Schalter (Mikroskop-Symbol) "
+                "unten im Eingabefeld aktivieren Sie sie: Ist der Schalter an, recherchiert die "
+                "KI zu Ihrer nächsten Frage gründlich im Web (zerlegt sie in Teilfragen, sucht, "
+                "liest die besten Quellen und schreibt einen belegten Bericht); ist er aus, "
+                "läuft alles wie ein gewöhnlicher Chat. Das Ergebnis erscheint als hochwertiger "
+                "HTML-Bericht im Artefakte-Bereich rechts (mit Quellenliste, druck- und teilbar) "
+                "und liegt zusätzlich als Markdown bei. Der Schalter ist ausgegraut, solange kein "
+                "Suchanbieter eingerichtet ist.",
+        "audience": "user",
+        "versions": ["9.212.0"],
+    },
+    {
+        "version": "9.211.0",
+        "date": "2026-06-26",
+        "title": "Berichte als hochwertige HTML-Dokumente",
+        "body": "Recherche-Berichte und Studio-Ausgaben erscheinen jetzt zusätzlich als "
+                "professionell gestaltetes, eigenständiges HTML-Dokument im redaktionellen "
+                "Magazin-Stil — mit gut lesbarer Typografie, automatischem Inhaltsverzeichnis, "
+                "Quellenliste und heller/dunkler Darstellung. Sie öffnen den Bericht direkt im "
+                "Studio in dieser ansprechenden Ansicht und können ihn per Klick herunterladen "
+                "oder als PDF drucken — ideal zum Teilen. Bei der Deep Research wird das Layout "
+                "zudem an die Art der Frage angepasst: Produktempfehlungen kommen als gerankte "
+                "Liste mit Vergleichstabelle, ein Vergleich als übersichtliche Kriterien-Matrix, "
+                "eine Anleitung als Schritt-für-Schritt und ein Faktencheck als Gegenüberstellung "
+                "von Belegen mit klarer Bewertung. Das bisherige Markdown bleibt als Quelle "
+                "erhalten; die HTML-Ansicht ist die neue, schönere Standarddarstellung.",
+        "audience": "user",
+        "versions": ["9.211.0"],
+    },
+    {
         "version": "9.209.0",
         "date": "2026-06-26",
         "title": "Berichte: Diagramme & Inhaltsverzeichnis",

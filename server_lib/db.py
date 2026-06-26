@@ -929,6 +929,14 @@ class ChatDB:
                     conn.execute(f"ALTER TABLE project_outputs ADD COLUMN {_col} {_decl}")
                 except sqlite3.OperationalError:
                     pass
+            # Styled HTML twin (migration): the report is saved as both a
+            # canonical .md and an editorial .html; this holds the .html artifact
+            # id. The UI offers the HTML as the primary view/download, falling
+            # back to artifact_id (the .md) when rendering was skipped/failed.
+            try:
+                conn.execute("ALTER TABLE project_outputs ADD COLUMN html_artifact_id TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             # Crash reconcile: any output still 'generating' at boot lost its
             # thread on the previous shutdown — mark it errored so the UI never
             # shows a zombie generating forever (mirrors background_tasks).
@@ -1297,7 +1305,8 @@ class ChatDB:
     def update_project_output(output_id, **fields):
         """Patch an output row. Whitelisted columns only; sets finished_at when
         status flips to a terminal state."""
-        allowed = ("status", "title", "path", "artifact_id", "error", "citations", "phase",
+        allowed = ("status", "title", "path", "artifact_id", "html_artifact_id",
+                   "error", "citations", "phase",
                    "model", "tokens_in", "tokens_out", "cost", "duration_s")
         sets, vals = [], []
         for k in allowed:

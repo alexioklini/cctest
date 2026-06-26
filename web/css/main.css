@@ -1122,6 +1122,14 @@ textarea { resize: none; }
   border-color: color-mix(in srgb, var(--accent-brand) 42%, transparent);
 }
 .turn-group-badge:active { transform: translateY(1px); }
+/* Deep-research turn marker inside the "Anfrage N" pill — terracotta to match
+   the report accent, sized to sit inline with the label. */
+.turn-dr-icon {
+  width: 13px;
+  height: 13px;
+  vertical-align: -2px;
+  color: #b8543a;
+}
 /* Long-press (expand/collapse all) took effect — brief pulse. */
 .turn-group-badge.lp-fired {
   animation: turn-badge-pulse 0.3s ease;

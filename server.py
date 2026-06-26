@@ -1692,6 +1692,8 @@ class BrainAgentHandler(
             self._handle_data_review_get(path)
         elif path == "/v1/research-mode/disciplines":
             self._handle_research_mode_disciplines_get()
+        elif path == "/v1/research/backend":
+            self._handle_research_backend_status()
         elif path == "/v1/gdpr/ner-models":
             self._handle_gdpr_ner_models_get()
         elif path == "/v1/gdpr/decisions/stats":

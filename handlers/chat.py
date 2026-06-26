@@ -1997,8 +1997,195 @@ def _finalize_recovery(session, live, sid, turn_id):
     # Thread-locals: this is a daemon thread; let them die with it. No globals.
 
 
+_DR_PHASE_LABELS = {
+    "planning": "Planen", "searching": "Suchen", "reading": "Lesen",
+    "writing": "Bericht schreiben",
+}
 
-def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto):
+
+def _build_deep_research_context(session, sid, message, saved_paths, web_urls, web_locked):
+    """Assemble the context the turn already has — attachment text + curated
+    web-source content + a short chat-history note — into (extra_context_str,
+    history_summary_str) for run_research_chat. Best-effort: any piece that fails
+    is simply omitted. Mirrors the normal-turn context sources so Deep Research
+    'sees' the same material a regular answer would."""
+    blocks = []
+    # 1. Attachments uploaded in this session (read their extracted text).
+    try:
+        att_paths = _session_attachment_paths(sid)
+        for p in att_paths[:8]:  # cap — a research corpus shouldn't be unbounded
+            try:
+                txt = engine.extract_attachment_text(p) or ""
+            except Exception:
+                txt = ""
+            if txt.strip():
+                blocks.append(f"### Anhang: {os.path.basename(p)}\n{txt[:8000]}")
+    except Exception:
+        pass
+    # 2. Curated web sources (the Websuche basket) — fetch fresh, like a normal turn.
+    try:
+        if web_urls:
+            _wire, _sources = _build_web_sources(web_urls, web_locked)
+            for s in (_sources or []):
+                if s.get("content"):
+                    blocks.append(f"### Webquelle: {s.get('title') or s.get('url')}\n"
+                                  f"{s['content'][:8000]}")
+    except Exception:
+        pass
+    extra_context = "\n\n---\n\n".join(blocks) if blocks else None
+
+    # 3. Short history note (the last few user/assistant turns) so the research
+    #    stays coherent with the conversation. Kept brief — it steers, not floods.
+    history_summary = None
+    try:
+        prior = [m for m in session.messages
+                 if m.get("role") in ("user", "assistant")
+                 and isinstance(m.get("content"), str)]
+        # Exclude the just-added current user message (last one).
+        prior = prior[:-1] if prior else prior
+        if prior:
+            tail = prior[-6:]
+            history_summary = " | ".join(
+                f"{m['role']}: {m['content'][:200]}" for m in tail)
+    except Exception:
+        pass
+    return extra_context, history_summary
+
+
+def _run_deep_research_turn(session, sid, message, live, *, saved_paths=None,
+                            web_urls=None, web_locked=False):
+    """Run a Deep Research turn (composer 🔬) and return a run_turn()-shaped
+    {"reply": <markdown card>, "error": ..., "_dr_meta": {...}} dict so the normal
+    persistence path handles it. Emits a SYNTHETIC tool_call/tool_result pair so
+    the run shows in the chat stream like a tool call (with live phase progress),
+    feeds the turn's existing context (attachments + web sources + history) into
+    the research, and registers the report .md + .html as session artifacts via
+    the standard _after_file_write pipeline (HTML last → client auto-opens it)."""
+    from engine import deep_research
+
+    # Synthetic tool_call so the chat view shows a live "deep_research" card with
+    # phase progress — the same surface the model's own tool calls use. The
+    # tool_use_id ties progress + the final result together.
+    _tuid = f"dr-{uuid.uuid4().hex[:12]}"
+    try:
+        live.emit("tool_call", {
+            "tool_use_id": _tuid, "name": "deep_research",
+            "args": {"topic": message},
+        })
+    except Exception:
+        pass
+
+    def _progress(phase, **counts):
+        label = _DR_PHASE_LABELS.get(phase, phase)
+        try:
+            live.emit("tool_progress", {
+                "tool_use_id": _tuid,
+                "tool_name": "deep_research",
+                "phase": label,
+                "note": " · ".join(f"{k}: {v}" for k, v in counts.items() if v),
+            })
+        except Exception:
+            pass
+
+    def _cancelled():
+        try:
+            return bool(session.cancel_token and session.cancel_token.cancelled)
+        except Exception:
+            return False
+
+    extra_context, history_summary = _build_deep_research_context(
+        session, sid, message, saved_paths or [], web_urls or [], web_locked)
+
+    result = deep_research.run_research_chat(
+        agent_id=session.agent_id, session_id=sid, topic=message,
+        user_id=session.user_id or "", progress=_progress, cancelled=_cancelled,
+        extra_context=extra_context, history_summary=history_summary,
+        # The chat's selected model wins (composer pick, or the auto-router's
+        # resolved choice — session.model is already concrete by this point).
+        preferred_model=session.model)
+
+    if not result.get("ok"):
+        err = result.get("error", "unknown error")
+        # Close the synthetic tool card with the error so it doesn't spin forever.
+        try:
+            live.emit("tool_result", {"tool_use_id": _tuid, "name": "deep_research",
+                                      "result": f"({err})"})
+        except Exception:
+            pass
+        if err == "cancelled":
+            return {"reply": "*(Deep Research abgebrochen.)*", "error": None}
+        return {"reply": f"*(Deep Research fehlgeschlagen: {err})*", "error": None}
+
+    # Register both files as session artifacts + emit artifact_updated. The
+    # _after_file_write pipeline does BOTH registration AND the SSE emit through
+    # get_request_context().event_callback — but the chat WORKER thread doesn't
+    # install that callback into its own context (only the tool-dispatch thread
+    # does, per-call). So install a callback here that BOTH appends to this
+    # turn's created_files (→ msg_metadata['files'] → chat-view badges) AND emits
+    # artifact_updated to the live stream (→ right panel). HTML registered LAST →
+    # the client auto-opens it. We collect the registered file records so the
+    # caller can stuff them into the turn metadata even though _after_file_write's
+    # own callback path is what the normal flow relies on.
+    _dr_files = []
+
+    def _dr_artifact_cb(event_type, data):
+        if event_type in ("file_created", "artifact_updated"):
+            _dr_files.append(data)
+        try:
+            live.emit(event_type, data)
+        except Exception:
+            pass
+
+    try:
+        _ctx = engine.get_request_context()
+        _prev_cb = _ctx.event_callback
+        _ctx.event_callback = _dr_artifact_cb
+        try:
+            engine._after_file_write(result["md_path"], "created", session.agent_id)
+            engine._after_file_write(result["html_path"], "created", session.agent_id)
+        finally:
+            _ctx.event_callback = _prev_cb
+    except Exception as _e:
+        print(f"[deep_research] artifact register failed: {_e}", flush=True)
+
+    meta = result.get("meta") or {}
+    stats = result.get("stats") or {}
+    cat_label = {
+        "product": "Produkt-Recherche", "comparison": "Vergleich",
+        "howto": "Anleitung", "factcheck": "Faktencheck",
+    }.get(result.get("category", "report"), "Recherchebericht")
+    # Close the synthetic tool card with a short result summary.
+    try:
+        live.emit("tool_result", {
+            "tool_use_id": _tuid, "name": "deep_research",
+            "result": (f"{cat_label}: {stats.get('sources', '?')} Quellen, "
+                       f"{stats.get('urls', '?')} URLs, {stats.get('duration', '')}")})
+    except Exception:
+        pass
+
+    note = ""
+    if extra_context:
+        note = " Anhänge/Websuche/Verlauf wurden einbezogen."
+    stat_line = " · ".join(filter(None, [
+        f"{stats.get('sources', '?')} Quellen",
+        f"{stats.get('urls', '?')} URLs gelesen",
+        stats.get("duration", ""),
+        f"${meta.get('cost', 0):.4f}" if meta.get("cost") else "",
+    ]))
+    card = (
+        f"## {cat_label} erstellt\n\n"
+        f"**Thema:** {message}\n\n"
+        f"Der vollständige Bericht öffnet sich rechts im **Artefakte-Panel** "
+        f"(`{result.get('html_name', 'research.html')}`) — hochwertige HTML-Ansicht, "
+        f"als PDF druckbar. Das Markdown (`{result.get('md_name', 'research.md')}`) "
+        f"liegt als Quelle daneben.{note}\n\n"
+        f"*{stat_line}*\n\n"
+        f"Fragen Sie mich gern etwas zum Bericht."
+    )
+    return {"reply": card, "error": None, "_dr_meta": meta, "_dr_files": _dr_files}
+
+
+def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto, deep_research=False):
     """Run one chat turn for `session`, end to end.
 
     Extracted verbatim from the former `_handle_chat.worker()` closure (it
@@ -2875,21 +3062,55 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 if _cav_eff and _cav_eff in engine.CAVEMAN_CHAT_PROMPTS:
                     _wire_messages = _append_to_wire_user(
                         _wire_messages, engine.CAVEMAN_CHAT_PROMPTS[_cav_eff])
-                _result = sidecar_proxy.run_turn(
-                    messages=_wire_messages,
-                    model=session.model,
-                    api_key=session.api_key,
-                    base_url=session.base_url,
-                    system_prompt=_system_prompt,
-                    purpose="interactive",
-                    tool_context=_tool_context,
-                    sampling=_sampling,
-                    thinking_level=(thinking_level if thinking_level and thinking_level != "none" else None),
-                    max_tokens=_max_tokens,
-                    max_rounds=_max_rounds,
-                    event_callback=event_callback,
-                    cancel_token=session.cancel_token,
-                )
+                if deep_research:
+                    # Deep Research turn (composer 🔬): run the bounded research
+                    # loop INSTEAD of the LLM chat turn. It writes the report as
+                    # .html + .md session artifacts and returns a card as the
+                    # assistant reply; all downstream persistence/done logic below
+                    # treats `_result` exactly like a normal run_turn() result.
+                    # Passes the turn's existing context (attachments + curated
+                    # web sources + chat history) into the research.
+                    _result = _run_deep_research_turn(
+                        session, sid, message, live,
+                        saved_paths=saved_paths, web_urls=web_urls,
+                        web_locked=web_locked)
+                    # Fold the research run's usage into the turn totals so the
+                    # status bar shows cost + tokens + context like a normal turn.
+                    _dr_meta = _result.pop("_dr_meta", None) or {}
+                    if _dr_meta:
+                        _usage_totals["tokens_in"] += int(_dr_meta.get("tokens_in", 0) or 0)
+                        _usage_totals["tokens_out"] += int(_dr_meta.get("tokens_out", 0) or 0)
+                        _usage_totals["last_tokens_in"] = int(_dr_meta.get("tokens_in", 0) or 0)
+                    # run_research_chat already logged each LLM call's cost to the
+                    # ledger KEYED BY THIS chat sid (background_call session_id=sid),
+                    # so get_session_cost(sid) below picks it up. Mark cost_logged
+                    # so the generic aggregate-log path doesn't double-count.
+                    _cb_state["cost_logged"] = True
+                    # Carry the registered report files into this turn's
+                    # created_files so they get msg_metadata['files'] → chat-view
+                    # badges (like write_file). Dedup by path.
+                    _dr_files = _result.pop("_dr_files", None) or []
+                    _seen = {f.get("path") for f in created_files if isinstance(f, dict)}
+                    for _f in _dr_files:
+                        if isinstance(_f, dict) and _f.get("path") not in _seen:
+                            created_files.append(_f)
+                            _seen.add(_f.get("path"))
+                else:
+                    _result = sidecar_proxy.run_turn(
+                        messages=_wire_messages,
+                        model=session.model,
+                        api_key=session.api_key,
+                        base_url=session.base_url,
+                        system_prompt=_system_prompt,
+                        purpose="interactive",
+                        tool_context=_tool_context,
+                        sampling=_sampling,
+                        thinking_level=(thinking_level if thinking_level and thinking_level != "none" else None),
+                        max_tokens=_max_tokens,
+                        max_rounds=_max_rounds,
+                        event_callback=event_callback,
+                        cancel_token=session.cancel_token,
+                    )
                 # On sidecar error: surface the message to the client AS PART
                 # of the assistant reply, but stay on the happy path so the
                 # downstream `done` event still fires. Raising here would
@@ -2970,6 +3191,11 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         pass
                     if created_files:
                         msg_metadata["files"] = created_files
+                    # Deep Research turn: flag it on the metadata so the chat view
+                    # marks the "Anfrage N" pill with a microscope icon (live + on
+                    # reload). Read back in sessions.js → msg._deepResearch.
+                    if deep_research:
+                        msg_metadata["deep_research"] = True
                     # Manual web-search: record the exact fetched source text
                     # this turn used (the freshly-fetched, ephemeral wire
                     # preamble). Stored on the assistant turn's metadata so
@@ -3338,6 +3564,9 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     # Include file attachments
                     if created_files:
                         done_data["files"] = created_files
+                    # Deep Research turn → live pill marker (reload reads metadata).
+                    if deep_research:
+                        done_data["deep_research"] = True
                     live.emit("done", done_data)
 
                     # Auto chat→wiki: when this session has memory ON/auto
@@ -4397,6 +4626,10 @@ class ChatHandlerMixin:
         # project knowledge, NOT injected per-turn here.)
         web_urls = body.get("web_urls_to_fetch") or []
         web_locked = bool(web_urls) and not bool(getattr(session, "allow_further_web", False))
+        # Deep Research toggle (composer 🔬): when on, this turn runs the bounded
+        # research loop instead of the LLM chat turn and drops the report as
+        # session artifacts. Independent of the other toggles (per the design).
+        deep_research = bool(body.get("deep_research", False))
         # First-turn preamble: the per-session artifact-folder pointer. It used
         # to live in the system prompt, but that made the prompt session-
         # dependent and broke the oMLX warm-pool KV-prefix match (warmup has no
@@ -4742,7 +4975,7 @@ class ChatHandlerMixin:
             saved_paths=saved_paths, web_urls=web_urls, web_locked=web_locked,
             project_name=project_name, preamble_text=preamble_text,
             content_blocks=content_blocks, disk_files=disk_files,
-            auto_route=auto_route, want_auto=want_auto,
+            auto_route=auto_route, want_auto=want_auto, deep_research=deep_research,
         )
 
         # Stream this turn's events to the originating connection. The worker is

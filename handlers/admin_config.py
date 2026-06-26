@@ -314,6 +314,17 @@ class AdminConfigHandlers:
             "section_order": list(engine.RESEARCH_MODE_DISCIPLINE_SECTIONS),
         })
 
+    def _handle_research_backend_status(self):
+        """GET /v1/research/backend — any logged-in user. Reports whether a
+        search backend (searxng/exa) is active, so the composer's Deep Research
+        toggle can gray itself out when none is configured.
+        Response: {"backend": "searxng"|"exa"|"", "available": bool}."""
+        if self._require_auth() is None:
+            return
+        from engine import deep_research
+        backend = deep_research.active_backend()
+        self._send_json({"backend": backend, "available": bool(backend)})
+
     def _handle_research_mode_disciplines_save(self):
         """POST /v1/research-mode/disciplines — admin-only. Saves the three
         sections atomically.

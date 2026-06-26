@@ -342,16 +342,24 @@ async function studioOpenOutput(outputId) {
   if (!o) return;
   if (!o.artifact_id) { showToast('Keine Datei für diese Ausgabe gefunden', true); return; }
   const isAudio = o.kind === 'audio_overview';
+  // The styled HTML twin is the primary view + download when present; the .md
+  // artifact is the fallback (older reports, or a render that was skipped).
+  const hasHtml = !!o.html_artifact_id && !isAudio;
+  const dlId = hasHtml ? o.html_artifact_id : o.artifact_id;
   const icon = `<span style="color:var(--text-300)">${studioIcon(o.kind)}</span>`;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  overlay.innerHTML = `<div class="modal-content" style="max-width:900px;width:90vw;max-height:88vh;display:flex;flex-direction:column">
+  // HTML reports render full-bleed in an iframe (they carry their own styling),
+  // so give the modal more room and drop the padding for that case.
+  const wide = hasHtml ? 'max-width:1040px' : 'max-width:900px';
+  const bodyPad = hasHtml ? 'padding:0' : 'padding:14px 18px';
+  overlay.innerHTML = `<div class="modal-content" style="${wide};width:92vw;max-height:90vh;display:flex;flex-direction:column">
     <div class="modal-header" style="display:flex;align-items:center;gap:10px">
       <span style="font-weight:600">${icon} ${esc(o.title || o.kind)}</span>
-      <a class="btn-secondary" style="margin-left:auto;padding:3px 10px;font-size:12px;text-decoration:none" href="${esc(API.getArtifactDownloadUrl(o.artifact_id))}" target="_blank" rel="noopener">Herunterladen</a>
+      <a class="btn-secondary" style="margin-left:auto;padding:3px 10px;font-size:12px;text-decoration:none" href="${esc(API.getArtifactDownloadUrl(dlId))}" target="_blank" rel="noopener">Herunterladen</a>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
     </div>
-    <div class="studio-view-body" style="flex:1;overflow:auto;padding:14px 18px"><div class="msg-content">Lädt…</div></div>
+    <div class="studio-view-body" style="flex:1;overflow:auto;${bodyPad}"><div class="msg-content">Lädt…</div></div>
   </div>`;
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   document.body.appendChild(overlay);
@@ -380,6 +388,20 @@ async function studioOpenOutput(outputId) {
     return;
   }
   try {
+    if (hasHtml) {
+      // Fetch the styled HTML (authenticated JSON) and render it into a
+      // sandboxed iframe via srcdoc — self-contained, so no auth/CORS issues
+      // and the report's own CSS/JS stays isolated from the app shell.
+      const data = await API.getArtifactContent(o.html_artifact_id);
+      const html = (data && data.content) || '';
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText = 'width:100%;height:100%;border:0;display:block;min-height:70vh';
+      iframe.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox allow-scripts');
+      iframe.srcdoc = html;
+      body.innerHTML = '';
+      body.appendChild(iframe);
+      return;
+    }
     const data = await API.getArtifactContent(o.artifact_id);
     const text = (data && data.content) || '';
     body.innerHTML = `<div class="msg-content">${renderMarkdown(text)}</div>`;
@@ -408,7 +430,7 @@ function studioOutputMenu(event, outputId) {
   menu.innerHTML =
     item('Umbenennen', `studioRenameOutput('${esc(outputId)}')`) +
     item('Neu generieren', `studioRegenerate('${esc(o.kind)}', '', 'std')`) +
-    item('Herunterladen', `window.open(API.getArtifactDownloadUrl('${esc(o.artifact_id)}'), '_blank')`) +
+    item('Herunterladen', `window.open(API.getArtifactDownloadUrl('${esc(o.html_artifact_id || o.artifact_id)}'), '_blank')`) +
     item('Löschen', `studioDeleteOutput('${esc(outputId)}')`, true);
   document.body.appendChild(menu);
   const r = event.target.getBoundingClientRect();

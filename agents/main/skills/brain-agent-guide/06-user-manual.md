@@ -118,6 +118,16 @@ Chat:
 - 📎 Dateien anhängen
 - 🧠 Thinking-Level (off / low / medium / high — nur bei Modellen, die es können)
 - 🔬 Recherche-Modus-Override (nur in Projekt-Chats)
+- 🔬 **Deep Research** (Mikroskop-Symbol) — wenn aktiviert, führt der **nächste
+  Turn eine tiefe Web-Recherche** aus (Unterfragen → Suche → Quellen lesen →
+  belegter Bericht) statt einer normalen Chat-Antwort; ist er aus, läuft alles
+  wie ein gewöhnlicher Chat. Funktioniert in **jedem** Chat (nicht nur Projekten)
+  und ist **unabhängig** von den anderen Schaltern. Das Ergebnis erscheint als
+  hochwertiger HTML-Bericht im **Artefakte-Panel** (öffnet sich automatisch) plus
+  als Markdown-Quelle; die Chat-Antwort ist eine kurze Karte. Der Schalter ist
+  **ausgegraut**, solange kein Suchanbieter aktiv ist (Einstellungen → Tools).
+  *(Nicht zu verwechseln mit dem Recherche-Modus-Override darüber — der steuert
+  nur die Zitier-/Refuse-Disziplin in Projekt-Chats, startet aber keine Recherche.)*
 - ✨ Verfeinern — den Entwurf vor dem Senden überarbeiten
 - 🔧 Verfeinerungs-Modus (Polish ↔ Engineer) — der Schalter direkt neben ✨. **Polish** (Standard) säubert nur Grammatik/Klarheit und lässt die Absicht unverändert. **Engineer** (akzentfarben, wenn aktiv) strukturiert den Prompt um: präzisiert die Aufgabe, nutzt das aktive Modell + verfügbare Tools + Projekt-Anweisungen als Kontext, fragt bei hoffnungslos vagen Entwürfen nach (statt Details zu erfinden) und lässt bereits gute Entwürfe unangetastet. Pro Oberfläche gemerkt (Chat, geplante Aufgaben, Soul-Editor)
 - 🛡️ GDPR-Details (PII-Funde inline aus-/einblenden)
@@ -545,10 +555,14 @@ fertige, belegte Dokumente erzeugen — vier Vorlagen:
   Fortschritt wird als Phase angezeigt (Sammeln → Skript → Vertonen N/M).
 
 Jede Text-Ausgabe wird **streng aus dem Projektgedächtnis** erzeugt und **verbatim
-zitiert** (`[Quelle: … — "…"]`); nichts wird hinzuerfunden. Das Ergebnis ist eine
-gespeicherte `.md`-Datei, die im Projekt erhalten bleibt (beim Audio Overview eine
-`.mp3`). Optional lassen sich ein **Fokus** (Schwerpunkt-Stichwort) und eine
-**Länge** (Kurz/Standard/Lang) angeben.
+zitiert** (`[Quelle: … — "…"]`); nichts wird hinzuerfunden. Das Ergebnis wird in
+**zwei Formaten** gespeichert: einer kanonischen `.md`-Datei (bleibt die Quelle der
+Wahrheit für Wiki, Suche und Audio Overview) **und** einem hochwertig gestalteten,
+eigenständigen **HTML-Dokument** im redaktionellen Magazin-Stil (Serif-Typografie,
+automatisches Inhaltsverzeichnis, helle/dunkle Darstellung, druck-/PDF-fertig). Die
+HTML-Ansicht ist die neue Standarddarstellung beim Öffnen. (Beim Audio Overview
+bleibt das Ergebnis eine `.mp3`.) Optional lassen sich ein **Fokus** (Schwerpunkt-
+Stichwort) und eine **Länge** (Kurz/Standard/Lang) angeben.
 
 > Der Audio Overview lässt sich auch **im Chat** erzeugen: in einem geöffneten
 > Projekt einfach nach einem „Podcast“ / „Audio-Überblick“ fragen — der Agent nutzt
@@ -559,9 +573,10 @@ Generierung läuft im Hintergrund (~20–40 s) — man kann die Seite verlassen,
 fertige Ausgabe taucht im Studio-Tab auf (er aktualisiert sich von selbst).
 
 Im **Studio**-Tab sind alle erzeugten Ausgaben nach Typ gruppiert aufgelistet
-(mit Anzahl der Zitate + Zeitpunkt). Pro Ausgabe: **Öffnen** (zeigt das belegte
-Dokument), und über das **⋯**-Menü **Umbenennen**, **Neu generieren** (erzeugt
-eine neue Ausgabe, die alte bleibt erhalten), **Herunterladen** und **Löschen**
+(mit Anzahl der Zitate + Zeitpunkt). Pro Ausgabe: **Öffnen** zeigt das belegte
+Dokument in der gestylten **HTML-Ansicht** (das zugehörige Markdown bleibt als
+Fallback erhalten), und über das **⋯**-Menü **Umbenennen**, **Neu generieren** (erzeugt
+eine neue Ausgabe, die alte bleibt erhalten), **Herunterladen** (lädt das HTML) und **Löschen**
 (entfernt Eintrag + Datei; während eine Ausgabe noch generiert, ist Löschen
 gesperrt). *(Hinweis: Inline-Zitat-Chips zum Anklicken folgen in einem späteren
 Schritt; aktuell stehen die Belege als `[Quelle: …]` im Text.)*
@@ -575,8 +590,11 @@ wie bei der Websuche im Chat; eingestellt unter Einstellungen → Tools.) Zwei M
   hinzugefügt und beim nächsten Sync ins Gedächtnis gemined (im Chat durchsuchbar).
   Bereits im Projekt vorhandene Treffer sind markiert und gesperrt.
 - **Deep** — die KI plant Unterfragen, sucht breit, liest die besten Quellen und
-  schreibt daraus einen **strukturierten, belegten Bericht** (im Studio gespeichert).
-  Der Fortschritt (Planen → Suchen → Lesen → Schreiben) und das Budget (max. Anzahl
+  schreibt daraus einen **strukturierten, belegten Bericht** (im Studio gespeichert,
+  inkl. der hochwertigen HTML-Ansicht). Das **Layout passt sich der Art der Frage an**:
+  Produktempfehlungen als gerankte Liste mit Vergleichstabelle, ein Vergleich als
+  Kriterien-Matrix, eine Anleitung Schritt-für-Schritt, ein Faktencheck als Belege
+  dafür/dagegen mit Bewertung. Der Fortschritt (Planen → Suchen → Lesen → Schreiben) und das Budget (max. Anzahl
   Seitenabrufe) werden live angezeigt; der Lauf läuft weiter, auch wenn man den Tab
   verlässt, und lässt sich **abbrechen**. Am Ende: ein Link zum Bericht **und** eine
   Liste **vorgeschlagener Quellen** zum Import (nichts wird automatisch importiert —

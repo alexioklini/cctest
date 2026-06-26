@@ -128,12 +128,18 @@ def render_metadata_footer(meta: dict) -> str:
         f"- **Kosten:** ${cost:.4f}\n")
 
 
-def save_report_output(output_id, agent_id, project_dir, kind, title, body_md, meta=None):
-    """SHARED: write a generated report as <pdir>/outputs/<kind>-<id>.md, register
-    it as an artifact, and flip the project_outputs row to ready. Used by the
-    preset generators AND Deep Research so every output saves + browses identically
-    in Studio. The project_outputs row must already exist (status=generating).
-    `meta` (model/tokens/cost/duration) is appended as a footer + stored on the row."""
+def save_report_output(output_id, agent_id, project_dir, kind, title, body_md, meta=None,
+                       category=None, sources=None, stats=None):
+    """SHARED: write a generated report as <pdir>/outputs/<kind>-<id>.md (canonical)
+    AND a styled <kind>-<id>.html (the editorial visual report), register BOTH as
+    artifacts, and flip the project_outputs row to ready. Used by the preset
+    generators AND Deep Research so every output saves + browses identically in
+    Studio. The .md stays the source of truth (wiki mining, search, audio overview,
+    the markdown editor all read it); the .html is the primary, downloadable
+    deliverable. The project_outputs row must already exist (status=generating).
+    `meta` (model/tokens/cost/duration) is appended as a footer + stored on the row.
+    `category`/`sources`/`stats` only style the HTML (Deep Research passes them;
+    Studio leaves them None → a clean default-styled report)."""
     outdir = _outputs_dir(project_dir)
     fname = f"{kind}-{output_id}.md"
     path = os.path.join(outdir, fname)
@@ -141,8 +147,28 @@ def save_report_output(output_id, agent_id, project_dir, kind, title, body_md, m
     with open(path, "w", encoding="utf-8") as f:
         f.write(body)
     artifact_id = _register_output_artifact(f"output-{output_id}", agent_id, path, fname) or ""
+
+    # Render the styled HTML twin from the SAME markdown body. Best-effort: a
+    # render failure must never block the (canonical) .md save — the row still
+    # goes ready with the markdown artifact. html_artifact_id is the primary the
+    # UI offers for viewing/download; falls back to the .md if rendering failed.
+    html_artifact_id = ""
+    try:
+        from engine import report_html
+        html_doc = report_html.render_report_html(
+            body_md, title, meta=meta, sources=sources, category=category, stats=stats)
+        html_name = f"{kind}-{output_id}.html"
+        html_path = os.path.join(outdir, html_name)
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_doc)
+        html_artifact_id = _register_output_artifact(
+            f"output-{output_id}", agent_id, html_path, html_name) or ""
+    except Exception as e:
+        print(f"[report_html] HTML render failed for {output_id}: {e}", flush=True)
+
     fields = dict(status="ready", title=title, path=path,
-                  artifact_id=artifact_id, citations=_count_citations(body_md))
+                  artifact_id=artifact_id, html_artifact_id=html_artifact_id,
+                  citations=_count_citations(body_md))
     if meta:
         fields.update(model=meta.get("model", ""), tokens_in=meta.get("tokens_in", 0),
                       tokens_out=meta.get("tokens_out", 0), cost=meta.get("cost", 0),

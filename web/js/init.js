@@ -459,6 +459,61 @@ async function refreshResearchModeButton() {
   }
 }
 
+// ── Deep Research toggle (composer microscope) ────────────────────────────
+// When active, the next turn runs the bounded research loop (sub-questions →
+// web search → read → cited HTML report saved as a session artifact) instead
+// of a normal chat answer. Per-chat boolean on state.activeChat.deepResearch;
+// read at send time by API.streamChat. Independent of the other toggles.
+// Cached search-backend availability so the button can disable itself when no
+// provider is configured (one fetch, then memoised).
+let _deepResearchBackendOk = null;  // null = unknown, true/false once fetched
+
+async function _deepResearchBackendAvailable() {
+  if (_deepResearchBackendOk !== null) return _deepResearchBackendOk;
+  try {
+    const r = await API.get('/v1/research/backend');
+    _deepResearchBackendOk = !!(r && r.available);
+  } catch {
+    _deepResearchBackendOk = false;
+  }
+  return _deepResearchBackendOk;
+}
+
+async function toggleDeepResearch() {
+  const chat = state.activeChat;
+  if (!chat) return;
+  const ok = await _deepResearchBackendAvailable();
+  if (!ok) {
+    showToast('Kein Suchanbieter aktiv — unter Einstellungen → Tools aktivieren', true);
+    return;
+  }
+  chat.deepResearch = !chat.deepResearch;
+  refreshDeepResearchButton();
+  showToast(chat.deepResearch
+    ? 'Deep Research: an — der nächste Turn führt eine tiefe Recherche aus'
+    : 'Deep Research: aus');
+}
+
+async function refreshDeepResearchButton() {
+  const btns = _composerToggleEls('btn-deep-research');
+  if (!btns.length) return;
+  const chat = state.activeChat;
+  const on = !!(chat && chat.deepResearch);
+  const ok = await _deepResearchBackendAvailable();
+  for (const btn of btns) {
+    btn.classList.toggle('active', on && ok);
+    btn.style.color = (on && ok) ? '#b8543a' : '';  // terracotta when on (report accent)
+    btn.style.opacity = ok ? '' : '0.4';
+    btn.disabled = !ok;
+    btn.style.cursor = ok ? '' : 'not-allowed';
+    btn.title = !ok
+      ? 'Deep Research: kein Suchanbieter aktiv — unter Einstellungen → Tools aktivieren'
+      : (on
+          ? 'Deep Research: an — der nächste Turn führt eine tiefe Recherche aus (klicken zum Ausschalten)'
+          : 'Deep Research: aus — klicken, um den nächsten Turn als tiefe Recherche auszuführen');
+  }
+}
+
 // Caveman mode icon set — one per level. Metaphor: off = fastest/modern
 // (spaceship), down through car, horse, to campfire = primitive.
 // Shared icon-toggle button used by every refine-with-AI surface

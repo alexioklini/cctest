@@ -190,10 +190,15 @@ def _bg_text(messages, system_prompt, model, project_name, agent_id, user_id, pu
     from handlers import sidecar_proxy
     # `purpose` here is the cost-ledger label (e.g. 'deep_research'); the
     # tool-resolution purpose stays 'transform' (no tools, single round).
+    # cost_session_id (set by the chat variant) keys the cost row to the chat
+    # session so the chat's status-bar session-cost reflects the research spend;
+    # the project worker leaves it unset (cost rows aren't session-scoped there).
+    _acc0 = getattr(_usage_tls, "acc", None) or {}
+    _cost_sid = _acc0.get("cost_session_id", "")
     res = sidecar_proxy.background_call(
         messages=[{"role": "user", "content": msg_safe}],
         model=safe_model, system_prompt=sys_safe, purpose="transform",
-        cost_purpose=purpose,
+        cost_purpose=purpose, session_id=_cost_sid,
         agent_id=agent_id, project=project_name, user_id=user_id,
         max_rounds=1, max_tokens=max_tokens)
     # Cost-count + accumulate (the actual model that ran is safe_model).
@@ -209,6 +214,80 @@ def _bg_text(messages, system_prompt, model, project_name, agent_id, user_id, pu
     if res.get("error"):
         return "", str(res["error"])
     return deanon((res.get("reply") or "").strip()), ""
+
+
+# ─── Category-aware report templating (mirrors Odysseus's CATEGORY_PROMPTS) ──
+# A cheap classifier picks the report genre; the matching format-override is
+# appended to the synthesis system prompt so a product report comes out as a
+# ranked list with a compare-table, a comparison as a criteria matrix, etc.
+# German, formal, to match the UI. "report" = the default long-form article (no
+# override). The category also styles the HTML (hero eyebrow label).
+_CATEGORIES = ("product", "comparison", "howto", "factcheck", "report")
+
+_CATEGORY_OVERRIDES = {
+    "product": (
+        "FORMAT FÜR PRODUKT-RECHERCHE:\n"
+        "- Strukturiere den Bericht als GERANKTE LISTE von Produkten/Optionen "
+        "(bestes zuerst).\n"
+        "- Beginne mit einer Markdown-Vergleichstabelle der Top-Empfehlungen "
+        "(Spalten: Name, Preis, Am besten für, Bewertung).\n"
+        "- Für JEDES Produkt: Name als ### Überschrift, ungefährer Preis, 2-3 "
+        "Sätze Zusammenfassung, **Vorteile:** als Aufzählung, **Nachteile:** als "
+        "Aufzählung, **Bezugsquelle:** als Link.\n"
+        "- Schließe mit einem ## Fazit ab, das 'Beste Wahl insgesamt' und 'Bestes "
+        "Preis-Leistungs-Verhältnis' benennt."),
+    "comparison": (
+        "FORMAT FÜR VERGLEICH:\n"
+        "- Erstelle eine ## Vergleichstabelle als Markdown-Tabelle, die ALLE "
+        "Optionen über die wichtigsten Kriterien vergleicht (Zeilen = Kriterien, "
+        "Spalten = Optionen).\n"
+        "- Schreibe je einen ## Abschnitt pro Option mit Stärken, Schwächen und "
+        "idealem Einsatzzweck.\n"
+        "- Schließe mit ## Empfehlung je nach Bedarf ab (z. B. '**Für kleine "
+        "Teams:** Option A, weil …').\n"
+        "- Ergänze einen ## Gemeinsame Aspekte-Abschnitt für alles, was für alle "
+        "Optionen gilt."),
+    "howto": (
+        "FORMAT FÜR ANLEITUNG:\n"
+        "- Beginne mit ## Kurzüberblick — eine knappe nummerierte Liste (eine "
+        "Zeile pro Schritt, nur die Aktion).\n"
+        "- Dann ## Voraussetzungen mit allem, was vorher nötig ist.\n"
+        "- Dann die detaillierten Schritte: ## Schritt 1: …, ## Schritt 2: …\n"
+        "- Nutze Blockzitate (> ) für Tipps und Warnungen: > **Tipp:** … bzw. "
+        "> **Warnung:** …\n"
+        "- Schließe mit ## Häufige Fehler ab. Nenne oben geschätzte Dauer und "
+        "Schwierigkeitsgrad."),
+    "factcheck": (
+        "FORMAT FÜR FAKTENCHECK:\n"
+        "- Beginne mit ## Die Behauptung, die das Geprüfte wiedergibt.\n"
+        "- Erstelle ## Belege dafür und ## Belege dagegen.\n"
+        "- Jeder Beleg als ### mit Quellenname, Befund und Belegstärke.\n"
+        "- Ergänze ## Bewertung mit einem von: **Bestätigt**, **Gemischte "
+        "Belege** oder **Nicht bestätigt**.\n"
+        "- Schließe mit ## Einordnung & Vorbehalte für wichtigen Kontext ab. "
+        "Sei ausgewogen und belege jede Aussage."),
+    "report": "",  # default long-form article — no override
+}
+
+
+def _classify_category(topic, model, project_name, agent_id, user_id):
+    """Pick the report genre for `topic`. Returns one of _CATEGORIES; defaults to
+    'report' on any failure (the generic long-form article). Cheap single call —
+    same budget shape as _decompose."""
+    sys = ("Classify the user's research topic into exactly ONE report genre. "
+           "Reply with ONLY one of these words, nothing else:\n"
+           "- product   (best/recommended products, buying guides, 'which X to buy')\n"
+           "- comparison (X vs Y, comparing options/tools/approaches)\n"
+           "- howto     (how to do/build/configure something, step-by-step)\n"
+           "- factcheck (is it true that…, verifying a claim)\n"
+           "- report    (anything else: general research, explanation, overview)")
+    reply, err = _bg_text(f"Topic: {topic}", sys, model, project_name, agent_id, user_id,
+                          purpose="deep_research", max_tokens=12)
+    if err:
+        return "report"
+    word = (reply or "").strip().lower().split()[0] if reply.strip() else ""
+    word = re.sub(r"[^a-z]", "", word)
+    return word if word in _CATEGORIES else "report"
 
 
 # ─── Judgment point 1: decompose the topic into sub-questions ──────────────
@@ -265,11 +344,16 @@ def _select_sources(topic, fetched, model, project_name, agent_id, user_id):
 
 # ─── Judgment point 3: grounded cited synthesis ────────────────────────────
 
-def _synthesize(topic, sources, coverage_note, model, project_name, agent_id, user_id):
-    """sources = [{title, link, content}] (selected). Returns (report_md, err)."""
+def _synthesize(topic, sources, coverage_note, model, project_name, agent_id, user_id,
+                category="report"):
+    """sources = [{title, link, content}] (selected). Returns (report_md, err).
+    `category` selects a genre-specific format override (product/comparison/
+    howto/factcheck); 'report' keeps the default long-form structure."""
     discipline = _brain.render_research_mode_disciplines()
     corpus = "\n\n".join(
         f"--- Source: {s['title']} ({s['link']}) ---\n{s['content']}" for s in sources)
+    override = _CATEGORY_OVERRIDES.get(category, "")
+    override_block = ("\n\n" + override) if override else ""
     sys = (
         "You are a research synthesizer producing a long-form, STRUCTURED, CITED "
         "report grounded strictly in the provided sources.\n\n" + discipline +
@@ -280,7 +364,7 @@ def _synthesize(topic, sources, coverage_note, model, project_name, agent_id, us
         "## Sources (a bulleted list of the sources you used).\n"
         "- Use ONLY the provided sources. Do not add outside knowledge. If the "
         "sources don't cover part of the topic, say so plainly.\n"
-        "- Write in the language of the topic.")
+        "- Write in the language of the topic." + override_block)
     prompt = (f"Research topic: {topic}\n\n"
               f"{coverage_note}\n\n=== FETCHED SOURCES ===\n{corpus}")
     return _bg_text(prompt, sys, model, project_name, agent_id, user_id,
@@ -324,10 +408,11 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
             ChatDB.update_research_run(run_id, status="error", error="No search backend configured.")
             return
 
-        # 1. Plan
+        # 1. Plan — classify the report genre (cheap) + decompose into sub-questions.
         _progress("planning", subqueries=0)
         if _cancelled():
             return ChatDB.update_research_run(run_id, status="cancelled")
+        category = _classify_category(topic, model, project_name, agent_id, user_id)
         subqueries = _decompose(topic, model, project_name, agent_id, user_id)
         _progress("searching", subqueries=len(subqueries), candidates=0)
 
@@ -453,7 +538,7 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
         _progress("writing", subqueries=len(subqueries), candidates=len(cand_list),
                   fetched=fetches_used, kept=len(synth_sources))
         report_md, err = _synthesize(topic, synth_sources, coverage_note, model,
-                                     project_name, agent_id, user_id)
+                                     project_name, agent_id, user_id, category=category)
         if err or not report_md:
             detail = ("Synthesis failed: " + err) if err else (
                 f"Synthesis returned no text (model produced an empty completion "
@@ -472,14 +557,24 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
                 "duration_s": round(_time.time() - _t0, 1)}
 
         # 8. Save as a project_outputs row (kind=research_report) — reuses the
-        #    SHARED save path so Studio browses it with zero new code.
+        #    SHARED save path so Studio browses it with zero new code. The shared
+        #    path also renders the styled HTML twin; pass the genre (category),
+        #    the curated sources (for the HTML sources panel), and the run stats
+        #    (for the HTML stats strip) so the report looks complete.
         output_id = uuid.uuid4().hex
         title = f"Research — {topic[:80]}"
         ChatDB.create_project_output(output_id, agent_id, project_id, "research_report",
-                                     title, json.dumps({"topic": topic}), user_id)
+                                     title, json.dumps({"topic": topic, "category": category}), user_id)
         body = f"{report_md}\n\n---\n*{coverage_note}*\n"
+        html_sources = [{"title": s["title"], "url": s["link"],
+                         "trust_hint": _trust_hint(s["link"])} for s in selected]
+        dur = meta.get("duration_s", 0)
+        html_stats = {"queries": len(subqueries), "sources": len(selected),
+                      "urls": fetches_used,
+                      "duration": (f"{int(dur // 60)} min" if dur >= 60 else f"{dur:.0f}s")}
         output_gen.save_report_output(output_id, agent_id, project_dir, "research_report",
-                                      title, body, meta=meta)
+                                      title, body, meta=meta, category=category,
+                                      sources=html_sources, stats=html_stats)
 
         # 9. Propose the selected sources for approval (dedup'd vs project already).
         proposed = [{"title": s["title"], "url": s["link"], "snippet": s.get("snippet", ""),
@@ -533,3 +628,269 @@ def start_research(*, agent_id, project, topic, budget, user_id):
                 "existing_norm_urls": existing, "user_id": user_id},
         daemon=True, name=f"deep_research_{run_id[:8]}").start()
     return run_id, eff_budget
+
+
+# ─── Chat-session variant (composer 🔬 toggle, NO project) ──────────────────
+# Runs the SAME pipeline as _run_research but with no project: no research_runs
+# row, no project dedup, no propose-sources. Progress goes to a callback (the
+# chat worker forwards it to the live SSE stream); the finished report is written
+# as .md + .html into the live session's artifact folder and registered as
+# session artifacts (so it shows in the Artifacts panel + is downloadable). Runs
+# SYNCHRONOUSLY on the caller's thread (already a background chat-worker thread).
+
+def effective_chat_budget(budget=None):
+    """Resolve the chat Deep Research budget the same way start_research does
+    (config research.* defaults → per-call override). Exposed so the handler can
+    report it back to the client."""
+    eff = {
+        "fetches": _research_int("fetches", DEFAULT_BUDGET["fetches"], 1, 500),
+        "tokens": _research_int("tokens", DEFAULT_BUDGET["tokens"], 4000, 1_000_000),
+        "rounds": _research_int("rounds", DEFAULT_BUDGET["rounds"], 1, 32),
+    }
+    if isinstance(budget, dict):
+        for k in ("fetches", "tokens", "rounds"):
+            if isinstance(budget.get(k), int) and budget[k] > 0:
+                eff[k] = budget[k]
+    return eff
+
+
+def run_research_chat(*, agent_id, session_id, topic, user_id, budget=None,
+                      progress=None, cancelled=None, extra_context=None,
+                      history_summary=None, preferred_model=None):
+    """Run Deep Research for a normal (non-project) chat turn, SYNCHRONOUSLY.
+
+    `extra_context` (str, optional): pre-assembled context the turn already has —
+    attachment text + curated web-source content + recent chat history — injected
+    as additional source material so the report draws on it, not just fresh web
+    search. `history_summary` (str, optional): a short note about the prior
+    conversation, woven into the planning/synthesis prompts so the research stays
+    on-topic with the chat.
+
+    Returns a result dict:
+      {"ok": True, "report_md": str, "html": str, "md_path": str, "html_path": str,
+       "md_artifact_id": str, "html_artifact_id": str, "title": str,
+       "category": str, "coverage_note": str, "meta": {...}, "sources": [...],
+       "stats": {...}}
+    or {"ok": False, "error": str} on failure / empty result / cancellation.
+
+    `progress(phase, **counts)` and `cancelled() -> bool` are optional callbacks;
+    the chat worker wires them to the live stream + the session cancel token."""
+    import os
+    import time as _time
+    from engine import report_html
+
+    def _emit(phase, **counts):
+        if progress:
+            try:
+                progress(phase, **counts)
+            except Exception:
+                pass
+
+    def _is_cancelled():
+        try:
+            return bool(cancelled and cancelled())
+        except Exception:
+            return False
+
+    eff_budget = effective_chat_budget(budget)
+    _t0 = _time.time()
+    # Per-run usage accumulator (thread-local; _bg_text adds to it) — same as the
+    # project worker, keyed by the session so cost rows are attributable.
+    # cost_session_id keys each LLM call's cost row to THIS chat session so the
+    # chat status-bar session-cost reflects the research spend.
+    _usage_tls.acc = {"run_id": f"chat-{session_id}", "cost_session_id": session_id,
+                      "tokens_in": 0, "tokens_out": 0, "cost": 0.0, "model": ""}
+    fetches_used = 0
+    try:
+        # Model precedence (chat Deep Research): the chat's selected model wins —
+        # whatever the composer shows, already resolved by the auto-router when the
+        # session is on Auto. Falls back to the dedicated deep_research_model knob,
+        # then the background default. (The project worker has no interactive
+        # model, so it starts at the deep_research_model knob — see _run_research.)
+        model = ""
+        try:
+            if preferred_model and _brain._is_model_available(preferred_model):
+                model = preferred_model
+        except Exception:
+            pass
+        if not model:
+            try:
+                _dr = (_brain._server_config().get("deep_research_model") or "").strip()
+                if _dr and _brain._is_model_available(_dr):
+                    model = _dr
+            except Exception:
+                pass
+        if not model:
+            model = _brain._background_model_default()
+        if not model:
+            return {"ok": False, "error": "No model available (set a server default model)."}
+        if not active_backend():
+            return {"ok": False, "error": "No search backend configured."}
+
+        # 1. Plan — classify genre + decompose (project_name="" → user wing scope).
+        _emit("planning", subqueries=0)
+        if _is_cancelled():
+            return {"ok": False, "error": "cancelled"}
+        category = _classify_category(topic, model, "", agent_id, user_id)
+        subqueries = _decompose(topic, model, "", agent_id, user_id)
+        _emit("searching", subqueries=len(subqueries), candidates=0)
+
+        # 2. Search — fan out sub-queries (no project dedup → empty exclusion set).
+        if _is_cancelled():
+            return {"ok": False, "error": "cancelled"}
+        queries = subqueries[:eff_budget.get("rounds", 8)]
+        candidates = {}
+        parent_ctx = contextvars.copy_context()
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=_io_workers("search_workers", _DEFAULT_SEARCH_WORKERS)) as ex:
+            futs = {ex.submit(parent_ctx.copy().run, _run_search, q): q for q in queries}
+            for fut in concurrent.futures.as_completed(futs):
+                if _is_cancelled():
+                    for f in futs:
+                        f.cancel()
+                    return {"ok": False, "error": "cancelled"}
+                try:
+                    results = fut.result()
+                except Exception:
+                    results = []
+                for r in results:
+                    key = _norm_url(r["link"])
+                    if key and key not in candidates:
+                        candidates[key] = r
+                _emit("searching", subqueries=len(subqueries), candidates=len(candidates))
+        cand_list = sorted(candidates.values(), key=lambda x: x.get("score", 0), reverse=True)
+        if not cand_list:
+            return {"ok": False, "error": "No sources found for this topic. Try broadening it."}
+
+        # 3. Fetch + read top candidates within the fetch budget.
+        if _is_cancelled():
+            return {"ok": False, "error": "cancelled"}
+        fetch_cap = min(len(cand_list), int(eff_budget.get("fetches", 60)))
+        fetched = []
+        parent_ctx = contextvars.copy_context()
+
+        def _fetch_one(c):
+            raw = _brain.tool_web_fetch({"url": c["link"], "max_length": _FETCH_MAX_LEN})
+            fr = json.loads(raw)
+            content = (fr.get("content") or "").strip()
+            if not fr.get("error") and len(content) >= _MIN_USABLE_CONTENT:
+                return {"title": c["title"] or c["link"], "link": c["link"],
+                        "snippet": c.get("snippet", ""), "content": content}
+            return None
+
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=_io_workers("fetch_workers", _DEFAULT_FETCH_WORKERS)) as ex:
+            futs = {ex.submit(parent_ctx.copy().run, _fetch_one, c): c
+                    for c in cand_list[:fetch_cap]}
+            for fut in concurrent.futures.as_completed(futs):
+                if _is_cancelled():
+                    for f in futs:
+                        f.cancel()
+                    return {"ok": False, "error": "cancelled"}
+                fetches_used += 1
+                try:
+                    item = fut.result()
+                except Exception:
+                    item = None
+                if item:
+                    fetched.append(item)
+                _emit("reading", subqueries=len(subqueries), candidates=len(cand_list),
+                      fetched=fetches_used, kept=len(fetched))
+        if not fetched:
+            return {"ok": False,
+                    "error": f"Searched {len(cand_list)} candidates but none could be fetched/read."}
+
+        # 4. Select → ranked subset; 5. fit to token budget.
+        if _is_cancelled():
+            return {"ok": False, "error": "cancelled"}
+        keep_idx = _select_sources(topic, fetched, model, "", agent_id, user_id)
+        selected = [fetched[i] for i in keep_idx]
+        synth_sources, n_dropped = _fit_corpus(selected, int(eff_budget.get("tokens", 80000)))
+
+        drop_note = (f" Dropped {n_dropped} lower-ranked source(s) to fit the "
+                     f"{eff_budget.get('tokens', 80000)}-token synthesis budget."
+                     if n_dropped else "")
+        coverage_note = (
+            f"Coverage: planned {len(subqueries)} sub-questions, found "
+            f"{len(cand_list)} candidate sources, fetched {fetches_used} within "
+            f"budget ({eff_budget.get('fetches')} max), synthesized from "
+            f"{len(synth_sources)}.{drop_note}")
+
+        # 6. Synthesize (genre-aware). Prepend the turn's existing context
+        #    (attachments + curated web sources + chat history) as a HIGH-PRIORITY
+        #    pseudo-source so the report draws on what the user already provided,
+        #    not just the freshly-searched web pages. history_summary nudges the
+        #    synthesis to stay coherent with the prior conversation.
+        synth_input = list(synth_sources)
+        if extra_context:
+            synth_input.insert(0, {
+                "title": "Vom Nutzer bereitgestellter Kontext (Anhänge / Websuche / Verlauf)",
+                "link": "user-context",
+                "content": str(extra_context)[:_FETCH_MAX_LEN * 2],
+            })
+        synth_note = coverage_note
+        if history_summary:
+            synth_note += f"\n\nGesprächskontext: {str(history_summary)[:1500]}"
+        _emit("writing", subqueries=len(subqueries), candidates=len(cand_list),
+              fetched=fetches_used, kept=len(synth_sources))
+        report_md, err = _synthesize(topic, synth_input, synth_note, model,
+                                     "", agent_id, user_id, category=category)
+        if err or not report_md:
+            return {"ok": False,
+                    "error": ("Synthesis failed: " + err) if err else "Synthesis returned no text."}
+
+        # Execution metadata (SUM across decompose+select+synthesize).
+        _acc = getattr(_usage_tls, "acc", None) or {}
+        meta = {"model": _acc.get("model", model),
+                "tokens_in": _acc.get("tokens_in", 0),
+                "tokens_out": _acc.get("tokens_out", 0),
+                "cost": round(_acc.get("cost", 0.0), 6),
+                "duration_s": round(_time.time() - _t0, 1)}
+
+        # 7. Write .md (canonical) + .html (styled) into the SESSION artifact
+        #    folder. The CALLER drives artifact registration + SSE via the
+        #    standard _after_file_write pipeline (so they show in the Artifacts
+        #    panel + the chat-view badge exactly like any agent-written file).
+        from engine.tool_exec import _get_artifact_session_folder
+        from engine import output_gen
+        # ABSOLUTE artifact dir (the helper returns only the <date>_<sid> folder
+        # NAME — the full path is AGENTS_DIR/<agent>/artifacts/<folder>). Writing
+        # here is what makes _is_artifact_path() True so _after_file_write
+        # registers + emits the artifact.
+        outdir = os.path.join(_brain.AGENTS_DIR, agent_id, "artifacts",
+                              _get_artifact_session_folder(session_id))
+        os.makedirs(outdir, exist_ok=True)
+        rid = uuid.uuid4().hex[:12]
+        title = f"Research — {topic[:80]}"
+        html_sources = [{"title": s["title"], "url": s["link"],
+                         "trust_hint": _trust_hint(s["link"])} for s in selected]
+        dur = meta.get("duration_s", 0)
+        html_stats = {"queries": len(subqueries), "sources": len(selected),
+                      "urls": fetches_used,
+                      "duration": (f"{int(dur // 60)} min" if dur >= 60 else f"{dur:.0f}s")}
+        body_md = f"# {title}\n\n{report_md}\n\n---\n*{coverage_note}*\n" + \
+            output_gen.render_metadata_footer(meta)
+        md_name = f"research-{rid}.md"
+        md_path = os.path.join(outdir, md_name)
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(body_md)
+
+        html_doc = report_html.render_report_html(
+            f"{report_md}\n\n---\n*{coverage_note}*\n", title, meta=meta,
+            sources=html_sources, category=category, stats=html_stats)
+        html_name = f"research-{rid}.html"
+        html_path = os.path.join(outdir, html_name)
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_doc)
+
+        return {"ok": True, "report_md": report_md, "html": html_doc,
+                "md_path": md_path, "html_path": html_path,
+                "md_name": md_name, "html_name": html_name,
+                "title": title, "category": category, "coverage_note": coverage_note,
+                "meta": meta, "sources": html_sources, "stats": html_stats}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:500]}
+    finally:
+        _usage_tls.acc = None

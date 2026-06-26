@@ -113,11 +113,26 @@ function renderMessages() {
       : esc(fullQ);
     // Turn-start time lives in the per-turn stats line (renderAssistantMessage),
     // not the group header.
+    // Deep Research turn marker: scan this turn's assistant message(s) for the
+    // _deepResearch flag (set live from the done event + on reload from
+    // metadata.deep_research). When present, a small microscope icon is added to
+    // the "Anfrage N" pill so the turn is recognisable as a research run.
+    let _isDeepResearch = false;
+    try {
+      const _msgs = (state.activeChat && state.activeChat.messages) || [];
+      for (const _idx of (t.memberIdxs || [])) {
+        const _mm = _msgs[_idx];
+        if (_mm && _mm.role === 'assistant' && _mm._deepResearch) { _isDeepResearch = true; break; }
+      }
+    } catch (_) {}
+    const _drIcon = _isDeepResearch
+      ? `<svg class="turn-dr-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Deep Research"><path d="M6 18h8"/><path d="M9 18v-4"/><path d="M11 18v-4"/><circle cx="10" cy="8" r="4"/><line x1="13" y1="11" x2="16" y2="14"/></svg> `
+      : '';
     const badge = t.turnNum > 0
       ? `<div class="turn-group-header">
-           <span class="turn-group-badge" onmousedown="turnBadgePressStart(event,${t.turnNum})" onmouseup="turnBadgePressEnd(event,${t.turnNum})" onmouseleave="turnBadgePressCancel(event)" ontouchstart="turnBadgePressStart(event,${t.turnNum})" ontouchend="turnBadgePressEnd(event,${t.turnNum})" title="Klick: Anfrage auf-/zuklappen · Halten: alle">
+           <span class="turn-group-badge" onmousedown="turnBadgePressStart(event,${t.turnNum})" onmouseup="turnBadgePressEnd(event,${t.turnNum})" onmouseleave="turnBadgePressCancel(event)" ontouchstart="turnBadgePressStart(event,${t.turnNum})" ontouchend="turnBadgePressEnd(event,${t.turnNum})" title="${_isDeepResearch ? 'Deep-Research-Anfrage · ' : ''}Klick: Anfrage auf-/zuklappen · Halten: alle">
              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-             Anfrage ${t.turnNum}
+             ${_drIcon}Anfrage ${t.turnNum}
            </span>
            <span class="${hintCls}">${hintInner}</span>
            ${chevron}

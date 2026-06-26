@@ -1706,6 +1706,7 @@ class ProjectsHandlerMixin:
             "status": row.get("status"),
             "path": row.get("path"),
             "artifact_id": row.get("artifact_id"),
+            "html_artifact_id": row.get("html_artifact_id") or "",
             "citations": row.get("citations") or 0,
             "error": row.get("error") or "",
             "phase": row.get("phase") or "",

@@ -563,6 +563,14 @@ class API {
     // through. Server validates; unknown values are treated as null.
     if (gdprAction) body.gdpr_action = gdprAction;
 
+    // Deep Research toggle (composer 🔬): when on for this chat, the turn runs
+    // the bounded research loop instead of a normal LLM answer and saves a
+    // cited HTML report as a session artifact. Read off the active chat state
+    // (set by toggleDeepResearch()); the button visual mirrors the same state.
+    if (state.activeChat && state.activeChat.deepResearch) {
+      body.deep_research = true;
+    }
+
     // Manual web-search: the enabled entries of the Websuche basket. The
     // server pre-fetches these URLs and injects their content, and (unless
     // the session's allow_further_web flag is on) hard-disables web_search/
