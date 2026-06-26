@@ -328,6 +328,13 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
 - `code_graph_impact(symbol)` — callers, dependents
 - `code_graph_enhance(symbol)` — pull docstring/summary
 
+Per-tenant (v9.210.0): each **code-mode project** gets its own graph DB under
+its project dir (built/queried against its working directory); the shared
+brain-source graph (what Brainy queries via `code_graph_query`) stays separate.
+In a normal chat these tools are deferred (discover via `tool_search`); in a
+code-mode project they're active. Querying an unbuilt project graph returns a
+"run `code_graph_build` first" hint rather than empty results.
+
 ## Git / GitHub
 
 - `git_command(cmd, cwd?)` — subset of git verbs

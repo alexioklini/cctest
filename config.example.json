@@ -3966,7 +3966,7 @@
       ],
       "state": "active",
       "states": {
-        "interactive": "active",
+        "interactive": "deferred",
         "transform": "inactive",
         "memory_summary": "inactive",
         "research_minimal": "inactive",
@@ -3985,7 +3985,7 @@
       ],
       "state": "active",
       "states": {
-        "interactive": "active",
+        "interactive": "deferred",
         "transform": "inactive",
         "memory_summary": "inactive",
         "research_minimal": "inactive",
@@ -4004,7 +4004,7 @@
       ],
       "state": "active",
       "states": {
-        "interactive": "active",
+        "interactive": "deferred",
         "transform": "inactive",
         "memory_summary": "inactive",
         "research_minimal": "inactive",
@@ -4023,7 +4023,7 @@
       ],
       "state": "active",
       "states": {
-        "interactive": "active",
+        "interactive": "deferred",
         "transform": "inactive",
         "memory_summary": "inactive",
         "research_minimal": "inactive",

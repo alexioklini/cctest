@@ -117,21 +117,56 @@ _CALL_TYPES = {
 }
 
 
+def _code_graph_db_path() -> str:
+    """Resolve which CodeGraph DB this request targets.
+
+    Per-tenant scoping (mirrors MemPalace wings): a code-mode project sets
+    `request_context.code_graph_db` (via apply_domain_context) to its own
+    <project_dir>/code-graph.db, so build/query/auto-update hit the project's
+    isolated graph. Everything else (Brainy/helpdesk, the miner daemon, normal
+    chats, background jobs — all of which have no code_graph_db on context)
+    resolves to the global brain-source DB. Daemon/pooled threads start with an
+    empty contextvar, so they correctly get the global DB.
+    """
+    try:
+        from engine.context import get_request_context
+        p = get_request_context().code_graph_db
+        if p:
+            return p
+    except Exception:
+        pass
+    return CODE_GRAPH_DB
+
+
 def _code_graph_conn():
-    """Thread-local SQLite connection for code graph DB."""
-    conn = getattr(_code_graph_db_pool, "conn", None)
+    """Thread-local SQLite connection for the context-resolved code graph DB.
+
+    Keyed by path: one connection per (thread, db_path) so a thread that
+    switches between the global DB and a project DB (different requests on a
+    pooled thread) never reuses the wrong handle. Schema is initialised the
+    first time a given path is opened.
+    """
+    db_path = _code_graph_db_path()
+    conns = getattr(_code_graph_db_pool, "conns", None)
+    if conns is None:
+        conns = {}
+        _code_graph_db_pool.conns = conns
+    conn = conns.get(db_path)
     if conn is None:
-        os.makedirs(os.path.dirname(CODE_GRAPH_DB), exist_ok=True)
-        conn = sqlite3.connect(CODE_GRAPH_DB, timeout=10, check_same_thread=False)
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
         conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA journal_mode = WAL")
-        _code_graph_db_pool.conn = conn
+        conns[db_path] = conn
+        _code_graph_init_db(conn)
     return conn
 
 
-def _code_graph_init_db():
-    """Initialize the code graph schema."""
-    conn = _code_graph_conn()
+def _code_graph_init_db(conn=None):
+    """Initialize the code graph schema on `conn` (the connection for the
+    context-resolved DB). Called once per newly-opened path by _code_graph_conn."""
+    if conn is None:
+        conn = _code_graph_conn()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS code_nodes (
             qualified_name TEXT PRIMARY KEY,
@@ -279,7 +314,9 @@ class CodeGraph:
     """AST-based code structure graph using Tree-sitter and SQLite."""
 
     def __init__(self):
-        _code_graph_init_db()
+        # Schema is initialised lazily per-DB-path in _code_graph_conn (the
+        # singleton serves all tenants; binding the global DB here would be
+        # wrong for a code-mode request whose first touch is its project DB).
         self._ts_available = None
 
     def _check_ts(self):
@@ -1159,6 +1196,26 @@ def _maybe_update_code_graph(path: str):
         pass
 
 
+def _unbuilt_project_graph_error():
+    """Leak-guard: in a code-mode project (request_context.code_graph_db set),
+    a read against an UNBUILT project graph must fail loud, not silently read
+    the wrong tenant. The DB path is already project-scoped so a query can never
+    reach the brain-source graph — but an empty/just-created project DB would
+    return zero results that look like 'symbol not found' rather than 'no graph
+    yet'. Return a clear build hint instead. Returns None when there's a graph
+    (or we're not in a code-mode project — global DB is the miner's job)."""
+    if not _code_graph_db_path() or _code_graph_db_path() == CODE_GRAPH_DB:
+        return None  # global brain-source tenant: not our concern here
+    try:
+        n = _code_graph_conn().execute("SELECT count(*) FROM code_nodes").fetchone()[0]
+    except Exception:
+        n = 0
+    if n == 0:
+        return _err("Code graph for this project is not built yet — run "
+                    "code_graph_build on the working directory first.")
+    return None
+
+
 def tool_code_graph_build(args: dict) -> str:
     """Build or rebuild the code structure graph."""
     path = args.get("path", ".")
@@ -1179,6 +1236,9 @@ def tool_code_graph_query(args: dict) -> str:
         return _err("Missing query_type")
     if not target:
         return _err("Missing target")
+    _guard = _unbuilt_project_graph_error()
+    if _guard:
+        return _guard
     cg = _get_code_graph()
     results = cg.query(query_type, target, limit)
     return _ok({"query_type": query_type, "target": target, "results": results, "count": len(results)})
@@ -1190,6 +1250,9 @@ def tool_code_graph_impact(args: dict) -> str:
     depth = args.get("depth", 2)
     if not files:
         return _err("Missing files list")
+    _guard = _unbuilt_project_graph_error()
+    if _guard:
+        return _guard
     cg = _get_code_graph()
     result = cg.impact_analysis(files, depth=depth)
     if "error" in result:

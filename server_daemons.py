@@ -464,6 +464,11 @@ def _mempalace_miner_loop(srv):
                 # break the mining cycle.
                 if src_wing == "brain_code":
                     try:
+                        # Runs on a daemon thread with an empty request context →
+                        # CodeGraph resolves to the GLOBAL brain-source DB
+                        # (agents/main/code-graph.db), which is exactly this
+                        # tenant. Per-project code-mode graphs live elsewhere and
+                        # are built by the agent in-session, never here.
                         _cg = engine._get_code_graph()
                         _cg_stats = _cg.build(clone_dir, incremental=True)
                         if isinstance(_cg_stats, dict) and _cg_stats.get("error"):

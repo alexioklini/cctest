@@ -2140,6 +2140,10 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 if _defer_extra or _undefer:
                     _ctx = engine.get_request_context()
                     _ctx.defer_extra_tools = _defer_extra
+                    # UNION, don't clobber: apply_domain_context may have already
+                    # set undefer_tools (code-mode promotes code_graph_* in-prompt).
+                    # A bare assign here would drop that and re-defer them.
+                    _undefer = list(dict.fromkeys((_ctx.undefer_tools or []) + list(_undefer or [])))
                     _ctx.undefer_tools = _undefer
 
             # Set note context for AI-assisted note editing

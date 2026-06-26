@@ -64,6 +64,10 @@ class RequestContext:
     # Code-mode working directory: when set (project.code_mode), file tools use
     # this as their cwd/write-root instead of the session artifact folder.
     working_dir: object = None
+    # Per-tenant CodeGraph DB path. Set (alongside working_dir) for code-mode
+    # projects → CodeGraph reads/writes <project_dir>/code-graph.db. None = the
+    # global brain-source DB (agents/main/code-graph.db, Brainy's tenant).
+    code_graph_db: object = None
     # --- chat / stream ---
     event_callback: object = None
     note_context: object = None
