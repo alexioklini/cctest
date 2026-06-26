@@ -223,5 +223,91 @@ class TestReadDocument(_FileToolFixture):
         self.assertIn("Title", out["content"])
 
 
+class TestDocumentPolish(_FileToolFixture):
+    """Pins the deterministic .docx polish for substantial reports (v9.207.0):
+      * the table-of-contents is PRE-POPULATED (real entries, not just an empty
+        'press F9' field) AND settings.xml requests a field recalc on open;
+      * table rows are marked cantSplit (no row breaks across a page) + the
+        header row repeats; the table uses a fixed layout with content-
+        proportional column widths (a narrow column doesn't collapse);
+      * a `## Versionshistorie` section is forced onto a fresh page;
+      * headings carry keepNext (no stranded heading at a page bottom).
+    These are renderer-side (no model judgement), so they're safe to pin exactly."""
+
+    _MD = (
+        "# Risikoanalyse Musterbericht\n"
+        "Stichtag: 31.12.2025\n"
+        "Verantwortlich: Risikomanagement\n\n"
+        "## Zusammenfassung\n\n"
+        "Fliesstext zur Zusammenfassung mit ausreichend Inhalt fuer einen Bericht.\n\n"
+        "## Kennzahlen\n\n"
+        "| Nr | Risiko | Bewertung | Beschreibung der Massnahme zur Risikominderung |\n"
+        "|----|--------|-----------|------------------------------------------------|\n"
+        "| 1 | Marktrisiko | hoch | Diversifikation des Portfolios ueber Anlageklassen |\n"
+        "| 2 | Kreditrisiko | mittel | Laufende Bonitaetspruefung der Gegenparteien |\n\n"
+        "## Detailanalyse\n\n"
+        "Ausfuehrliche Analyse mit mehreren Saetzen, damit der Bericht substanziell ist.\n\n"
+        "## Versionshistorie\n\n"
+        "| Version | Datum | Autor | Aenderung |\n"
+        "|---------|-------|-------|-----------|\n"
+        "| 1.0 | 01.01.2026 | RM | Ersterstellung |\n"
+    )
+
+    def _render_docx(self):
+        import zipfile
+        from engine.tools import file_tools as ft
+        # Relative name → lands in the session artifact folder (absolute paths are
+        # refused once a session context is set). Read the real path back.
+        res = json.loads(ft.tool_write_document(
+            {"path": "report.docx", "content": self._MD, "style": "corporate"}))
+        self.assertEqual(res.get("status"), "written")
+        z = zipfile.ZipFile(res["path"])
+        return (z.read("word/document.xml").decode(),
+                z.read("word/settings.xml").decode())
+
+    def test_toc_is_prepopulated_and_recalc_requested(self):
+        doc, settings = self._render_docx()
+        # global field recalc on open
+        self.assertIn("<w:updateFields", settings)
+        # a live TOC field …
+        self.assertIn("TOC \\o", doc.replace("\\\\", "\\"))
+        # … that is pre-filled: a PAGEREF entry per heading + the section names
+        self.assertIn("PAGEREF", doc)
+        self.assertIn("Zusammenfassung", doc)
+        # Versionshistorie is excluded from the TOC: its heading has NO _Toc
+        # bookmark (only TOC-listed headings get one), so no PAGEREF targets it.
+        vhist_bookmarked = bool(
+            re.search(r'_Toc_h\d+"[^>]*?/>\s*<[^>]*?>[^<]*?Versionshistorie', doc))
+        self.assertFalse(vhist_bookmarked,
+                         "Versionshistorie should not be a TOC entry")
+
+    def test_rows_cant_split_and_header_repeats(self):
+        doc, _ = self._render_docx()
+        self.assertIn("<w:cantSplit", doc)
+        self.assertIn("<w:tblHeader", doc)
+
+    def test_fixed_layout_and_nonuniform_columns(self):
+        import re as _re
+        doc, _ = self._render_docx()
+        self.assertIn('w:type="fixed"', doc)
+        grids = _re.findall(r"<w:tblGrid>(.*?)</w:tblGrid>", doc, _re.S)
+        self.assertTrue(grids, "no tblGrid emitted")
+        cols = _re.findall(r'w:w="(\d+)"', grids[0])
+        self.assertGreaterEqual(len(cols), 3)
+        # content-proportional → not all columns identical width
+        self.assertGreater(len(set(cols)), 1,
+                           f"columns are uniform (no width fix): {cols}")
+
+    def test_version_history_page_break(self):
+        doc, _ = self._render_docx()
+        # a page break exists before the Versionshistorie heading
+        head = doc.split("Versionshistorie")[0]
+        self.assertIn('w:type="page"', head)
+
+    def test_headings_keep_with_next(self):
+        doc, _ = self._render_docx()
+        self.assertIn("<w:keepNext", doc)
+
+
 if __name__ == "__main__":
     unittest.main()

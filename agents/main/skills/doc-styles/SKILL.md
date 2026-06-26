@@ -3,7 +3,7 @@ name: Document Styles
 description: Editable per-format style presets (fonts, colors, layout) that write_document and render_diagram apply DETERMINISTICALLY when creating .docx/.pptx/.pdf files and diagrams. Not interpreted by the model — Python reads the YAML and sets the styling, so output looks consistent regardless of model strength.
 metadata:
   type: doc-style
-  version: 1.4.0
+  version: 1.5.0
 ---
 
 # Document Styles
@@ -48,9 +48,31 @@ full preset — so markdown + a named style is the most consistent.)
   - `cover: true` → a title page from the FIRST `# H1` + leading `Key: value`
     frontmatter lines, rendered only for substantial reports (≥4 headings, OR an
     H1+frontmatter block, OR ≥30 non-blank lines — a short memo stays one page).
-  - `toc: true` → a Word table-of-contents field after the cover (F9 to update);
-    the SAME `cover`/`toc` keys also drive the **.pdf** cover page + a clickable,
-    page-numbered ToC (reportlab 2-pass build).
+  - `toc: true` → a **pre-populated, page-numbered** table of contents after the
+    cover: each H1–H3 becomes a real entry (internal hyperlink + `PAGEREF` page
+    number) wrapped in a live Word `TOC` field, and `settings.xml` requests a
+    field recalc on open — so a filled ToC is visible immediately (no "press F9"
+    placeholder) and F9 only re-flows page numbers. The SAME `cover`/`toc` keys
+    drive the **.pdf** cover page + a clickable, page-numbered ToC (reportlab
+    2-pass build). A **Versionshistorie / Änderungshistorie** section (see below)
+    is deliberately EXCLUDED from the ToC.
+  - **Page-break hygiene (deterministic, every doc)**: headings get `keepNext`/
+    `keepLines` (a heading never strands alone at a page bottom — no Schusterjunge);
+    every table row gets `cantSplit` (a row never breaks mid-row, killing the
+    "one line on the old page, the rest on the next" artefact), and the header row
+    repeats atop every page a long table spans.
+  - **Table column widths are content-proportional** (docx + pdf): each column is
+    sized by its longest cell with a per-column floor, so a narrow-header column
+    (e.g. "Nr") no longer collapses to a sliver that wraps every word.
+  - **Version history**: write a final section headed `## Versionshistorie` (or
+    `## Änderungshistorie`) containing a normal markdown table — recommended
+    columns `Version | Datum | Autor | Änderung`. The renderer starts it on a
+    fresh page (table stays whole) and keeps it out of the ToC. There is NO
+    special syntax — it's a plain markdown table the model writes; just use one of
+    the recognised headings so the page-break + ToC-exclusion fire. **One row per
+    version** — bundle ALL edits made within a single turn into ONE new version
+    row (don't add a row per `write_document` call); bump the version number once
+    per turn, at the end.
   - `zebra_fill` (#hex) → alternating body-row shading; table headers get
     `colors.table_header_bg`/`_text` (dark fill + white text).
   - `rule_color` (#hex) → `---` lines become real divider rules; H1 gets an

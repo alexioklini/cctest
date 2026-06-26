@@ -3,7 +3,7 @@ name: Document Markdown
 description: How to write markdown for write_document so it converts to a polished .docx / .pdf. The converter (markdown-it-py → our renderer) understands standard markdown PLUS two house conventions (::kpi stat boxes, a Bewertung/Risiko column for auto risk-badges). Read this before producing a report/letter/analysis as a Word or PDF file.
 metadata:
   type: guide
-  version: 1.1.0
+  version: 1.2.0
 ---
 
 # Document Markdown
@@ -97,6 +97,34 @@ The title + those `Key: value` lines become the cover; everything else flows
 into the body. A short memo (few headings, no frontmatter) stays single-page —
 don't force a cover with filler.
 
+The table of contents is **pre-filled with real, page-numbered entries** (one per
+`#`/`##`/`###` heading) — it shows up immediately, not as an empty "press F9"
+placeholder. So just write good headings; the ToC builds itself.
+
+## Version history (Versionshistorie)
+
+End a formal report with a change-history section so the document carries its own
+revision record. Use one of the recognised headings — **`## Versionshistorie`**
+or **`## Änderungshistorie`** — followed by a plain markdown table. The converter
+starts it on a fresh page (the table stays whole) and keeps it OUT of the ToC.
+
+```
+## Versionshistorie
+
+| Version | Datum | Autor | Änderung |
+|---|---|---|---|
+| 1.0 | 31.12.2025 | Risikomanagement | Ersterstellung |
+| 1.1 | 12.01.2026 | Risikomanagement | Kennzahlen Q4 aktualisiert, Fazit überarbeitet |
+```
+
+**One row = one version = one turn.** When you revise a document over several
+`write_document` calls within a SINGLE request, do NOT add a row (or bump the
+version) per call. Bundle everything you changed in that turn into ONE new row
+with ONE incremented version number, written when the document is finalised at
+the end of the turn. The "Änderung" cell summarises all the turn's edits together
+(e.g. "Kapitel 3 ergänzt, Tabelle 2 korrigiert, Quellen aktualisiert"), not each
+individual edit. Carry the prior rows forward unchanged.
+
 ## Slides (.pptx)
 
 For a `.pptx` deck, a `# ` or `## ` heading starts a **new slide** (its text
@@ -148,6 +176,11 @@ Kernpunkte:
 
 ## Fazit
 Schluss.
+
+## Versionshistorie
+| Version | Datum | Autor | Änderung |
+|---|---|---|---|
+| 1.0 | … | … | Ersterstellung |
 ```
 
 That's it — plain markdown in, polished document out. Pair with a `style=`

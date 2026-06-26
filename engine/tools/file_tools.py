@@ -1599,6 +1599,105 @@ def _shade_cell(cell, hex_color):
     tcPr.append(shd)
 
 
+def _section_usable_width_emu(doc):
+    """Page width minus left/right margins (EMU) for the first section — the room
+    a full-width table actually has. Falls back to ~6.5in (Letter, 1in margins)."""
+    try:
+        sec = doc.sections[0]
+        w = int(sec.page_width) - int(sec.left_margin) - int(sec.right_margin)
+        return w if w > 914400 else int(6.5 * 914400)
+    except Exception:
+        return int(6.5 * 914400)
+
+
+def _docx_keep_with_next(paragraph):
+    """Mark a paragraph 'keep with next' so a heading never strands at the bottom
+    of a page, split from the content it titles (Schusterjunge avoidance)."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    pPr = paragraph._p.get_or_add_pPr()
+    if pPr.find(qn("w:keepNext")) is None:
+        pPr.append(OxmlElement("w:keepNext"))
+    # widowControl: Word default is on, but a heading style may have cleared it.
+    if pPr.find(qn("w:keepLines")) is None:
+        pPr.append(OxmlElement("w:keepLines"))
+
+
+def _docx_row_cant_split(row):
+    """Forbid a single table row from breaking across a page (a row's cells stay
+    together — kills the 'one line on the old page, rest on the next' artefact)."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    trPr = row._tr.get_or_add_trPr()
+    if trPr.find(qn("w:cantSplit")) is None:
+        trPr.append(OxmlElement("w:cantSplit"))
+
+
+def _docx_row_repeat_header(row):
+    """Mark a row as a repeating header (re-drawn at the top of every page the
+    table spans) — so a multi-page table keeps its column titles."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    trPr = row._tr.get_or_add_trPr()
+    if trPr.find(qn("w:tblHeader")) is None:
+        trPr.append(OxmlElement("w:tblHeader"))
+
+
+def _content_col_widths(rows, max_cols, total_emu, *, min_emu):
+    """Distribute table width proportionally to each column's longest cell, with a
+    floor per column so a short-header column never collapses to a 1-char-wide
+    sliver that wraps every word. Returns a list of EMU widths summing to total."""
+    longest = [1] * max_cols
+    for r in rows:
+        for c in range(max_cols):
+            cell = r[c] if c < len(r) else ""
+            # cell may be runs (list) or already-plain text
+            txt = _runs_plain(cell) if isinstance(cell, list) else str(cell)
+            # longest single line drives width (a wrapped paragraph is fine)
+            longest[c] = max(longest[c], max((len(seg) for seg in txt.split("\n")), default=1))
+    # Cap any single column's influence so one giant cell doesn't starve others.
+    capped = [min(w, 60) for w in longest]
+    floor = min(min_emu, total_emu // max_cols)  # never demand more than equal share
+    free = total_emu - floor * max_cols
+    if free < 0:  # too many columns for the floor — fall back to equal split
+        return [total_emu // max_cols] * max_cols
+    denom = sum(capped) or 1
+    return [floor + int(free * (w / denom)) for w in capped]
+
+
+def _docx_apply_col_widths(table, widths_emu):
+    """Pin column widths on a docx table. Word reads a FIXED-layout table's widths
+    from the <w:tblGrid> (in twips) AND the per-cell <w:tcW>; we set BOTH so every
+    renderer (Word, LibreOffice) honours them and a narrow column can't collapse."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from docx.shared import Emu
+    table.autofit = False
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    layout = tblPr.find(qn("w:tblLayout"))
+    if layout is None:
+        layout = OxmlElement("w:tblLayout")
+        tblPr.append(layout)
+    layout.set(qn("w:type"), "fixed")
+    # Rewrite the table grid (EMU → twips: 1 twip = 635 EMU).
+    twips = [max(1, int(round(w / 635))) for w in widths_emu]
+    grid = tbl.find(qn("w:tblGrid"))
+    if grid is not None:
+        tbl.remove(grid)
+    grid = OxmlElement("w:tblGrid")
+    for tw in twips:
+        gc = OxmlElement("w:gridCol")
+        gc.set(qn("w:w"), str(tw))
+        grid.append(gc)
+    # tblGrid must directly follow tblPr.
+    tblPr.addnext(grid)
+    for ci, w in enumerate(widths_emu):
+        for row in table.rows:
+            if ci < len(row.cells):
+                row.cells[ci].width = Emu(w)
+
+
 # Risk-badge palette: (text-colour, fill). Order matters — most specific first
 # ('sehr gut' before 'gut', 'hoch' substring caught after 'erhöht').
 _RISK_BADGES = [
@@ -1622,6 +1721,19 @@ def _risk_badge(value: str):
 
 _BADGE_COL_HINTS = ("bewertung", "risiko", "rating", "einstufung", "risk", "stufe")
 
+# A heading that introduces the document's change/version history. When the model
+# writes one (per the doc-styles convention), the renderer starts it on a fresh
+# page so the history table isn't split across a page boundary.
+_VERSION_HISTORY_RE = re.compile(
+    r'^\s*(versions?historie|änderungs?historie|aenderungs?historie|'
+    r'dokumenten?historie|revisionshistorie|change\s*history|version\s*history|'
+    r'revision\s*history|document\s*history)\s*$',
+    re.IGNORECASE)
+
+
+def _is_version_history_heading(text: str) -> bool:
+    return bool(_VERSION_HISTORY_RE.match((text or "").strip()))
+
 
 def _add_hrule(doc, color):
     """Add a horizontal divider paragraph (--- in markdown) as a bottom border."""
@@ -1640,28 +1752,128 @@ def _add_hrule(doc, color):
     return p
 
 
-def _add_toc_field(doc):
-    """Insert a Word Table-of-Contents field (heading levels 1-3). It renders as
-    a grey 'right-click → update field' placeholder until Word/LibreOffice
-    repaginates — standard for generated docs. Deterministic, no model input."""
+def _docx_force_update_fields(doc):
+    """Set <w:updateFields val="true"/> in settings.xml so Word/LibreOffice
+    recalculates ALL fields (the TOC, page numbers) on open — without this the
+    TOC stays an empty placeholder forever (the user never sees a TOC). Idempotent."""
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
+    settings = doc.settings.element
+    # Word ignores updateFields unless it's the first child of <w:settings>.
+    existing = settings.find(qn("w:updateFields"))
+    if existing is not None:
+        existing.set(qn("w:val"), "true")
+        return
+    uf = OxmlElement("w:updateFields")
+    uf.set(qn("w:val"), "true")
+    settings.insert(0, uf)
+
+
+def _docx_bookmark_heading(paragraph, name):
+    """Wrap a heading paragraph's runs in a bookmark so a TOC PAGEREF can target
+    it. Returns the bookmark name."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    start = OxmlElement("w:bookmarkStart")
+    start.set(qn("w:id"), str(abs(hash(name)) % 1_000_000))
+    start.set(qn("w:name"), name)
+    end = OxmlElement("w:bookmarkEnd")
+    end.set(qn("w:id"), str(abs(hash(name)) % 1_000_000))
+    p = paragraph._p
+    p.insert(0, start)
+    p.append(end)
+    return name
+
+
+def _add_toc_field(doc, headings=None):
+    """Insert a Word Table-of-Contents that is BOTH a live TOC field (F9 / open
+    refreshes it) AND pre-populated with visible, page-numbered entries — so a TOC
+    is shown immediately in any renderer (Word, LibreOffice headless export),
+    not just an empty 'press F9' placeholder.
+
+    `headings` = list of (level, text, bookmark_name) collected during body render
+    (levels 1-3). Each entry is `text … <PAGEREF bookmark>` — Word computes the
+    page number; we render it inside the TOC field result so it's visible now and
+    re-flows on update. Deterministic, no model input."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from docx.shared import Pt
     title = doc.add_paragraph()
     _add_inline_md_runs(title, "Inhaltsverzeichnis")
     for r in title.runs:
         r.bold = True
-        r.font.size = __import__("docx").shared.Pt(16)
-    p = doc.add_paragraph()
-    run = p.add_run()
-    fb = OxmlElement("w:fldChar"); fb.set(qn("w:fldCharType"), "begin")
-    instr = OxmlElement("w:instrText"); instr.set(qn("xml:space"), "preserve")
-    instr.text = 'TOC \\o "1-3" \\h \\z \\u'
-    sep = OxmlElement("w:fldChar"); sep.set(qn("w:fldCharType"), "separate")
-    placeholder = OxmlElement("w:t")
-    placeholder.text = "Inhaltsverzeichnis — in Word mit F9 aktualisieren."
-    fe = OxmlElement("w:fldChar"); fe.set(qn("w:fldCharType"), "end")
-    run._r.append(fb); run._r.append(instr); run._r.append(sep)
-    run._r.append(placeholder); run._r.append(fe)
+        r.font.size = Pt(16)
+
+    # The TOC field spans multiple paragraphs: begin/instr/separate in the first
+    # entry paragraph, the PAGEREF entries in between, end in the last.
+    def _field_char(kind, *, dirty=False):
+        fc = OxmlElement("w:fldChar"); fc.set(qn("w:fldCharType"), kind)
+        if dirty:
+            fc.set(qn("w:dirty"), "true")
+        return fc
+
+    headings = [h for h in (headings or []) if (h[1] or "").strip()]
+    if not headings:
+        # No headings → keep a minimal field (nothing to list yet).
+        p = doc.add_paragraph(); run = p.add_run()
+        run._r.append(_field_char("begin", dirty=True))
+        instr = OxmlElement("w:instrText"); instr.set(qn("xml:space"), "preserve")
+        instr.text = 'TOC \\o "1-3" \\h \\z \\u'; run._r.append(instr)
+        run._r.append(_field_char("separate"))
+        ph = OxmlElement("w:t"); ph.text = "(keine Überschriften)"; run._r.append(ph)
+        run._r.append(_field_char("end"))
+        _docx_force_update_fields(doc)
+        return
+
+    n = len(headings)
+    for idx, (level, text, bm) in enumerate(headings):
+        p = doc.add_paragraph()
+        p.paragraph_format.left_indent = Pt(12 * (max(1, level) - 1))
+        # tab stop with dot leader pushing the page number to the right margin
+        from docx.enum.text import WD_TAB_ALIGNMENT, WD_TAB_LEADER
+        try:
+            p.paragraph_format.tab_stops.add_tab_stop(
+                __import__("docx").shared.Inches(6.0),
+                WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
+        except Exception:
+            pass
+        run = p.add_run()
+        if idx == 0:
+            run._r.append(_field_char("begin", dirty=True))
+            instr = OxmlElement("w:instrText"); instr.set(qn("xml:space"), "preserve")
+            instr.text = 'TOC \\o "1-3" \\h \\z \\u'; run._r.append(instr)
+            run._r.append(_field_char("separate"))
+        # entry text → internal hyperlink to the heading bookmark
+        _hl = OxmlElement("w:hyperlink"); _hl.set(qn("w:anchor"), bm)
+        _tr = OxmlElement("w:r")
+        _trPr = OxmlElement("w:rPr")
+        _rStyle = OxmlElement("w:rStyle"); _rStyle.set(qn("w:val"), "Hyperlink")
+        _trPr.append(_rStyle); _tr.append(_trPr)
+        _tt = OxmlElement("w:t"); _tt.set(qn("xml:space"), "preserve")
+        _tt.text = (text or "").strip(); _tr.append(_tt)
+        _hl.append(_tr)
+        p._p.append(_hl)
+        # tab + PAGEREF field (the page number Word computes)
+        _tabr = OxmlElement("w:r"); _tab = OxmlElement("w:tab"); _tabr.append(_tab)
+        p._p.append(_tabr)
+        _pr = OxmlElement("w:r"); _pr.append(_field_char("begin"))
+        _pi = OxmlElement("w:instrText"); _pi.set(qn("xml:space"), "preserve")
+        _pi.text = f' PAGEREF {bm} \\h '; _pr.append(_pi)
+        _pr.append(_field_char("separate"))
+        # Placeholder shown only until Word/LibreOffice recalcs the PAGEREF on open
+        # (settings.xml updateFields). Keep it unobtrusive — a non-breaking space.
+        _pt = OxmlElement("w:t"); _pt.set(qn("xml:space"), "preserve"); _pt.text = " "
+        _pr.append(_pt)
+        _pr.append(_field_char("end"))
+        p._p.append(_pr)
+        if idx == n - 1:
+            _endr = OxmlElement("w:r"); _endr.append(_field_char("end"))
+            p._p.append(_endr)
+    # Request a global field recalc on open so PAGEREFs resolve to real numbers.
+    try:
+        _docx_force_update_fields(doc)
+    except Exception:
+        pass
 
 
 def _extract_cover_and_body(content, dx):
@@ -1878,16 +2090,32 @@ def tool_write_document(args: dict) -> str:
 
             # Cover page + TOC (substantial reports only — see _extract_cover_and_body).
             _cover_title, _cover_front, _body_md = _extract_cover_and_body(content, _dx)
-            if _cover_title is not None:
-                _render_cover_page(doc, _style, _cover_title, _cover_front)
-                if _dx.get("toc", True):
-                    _add_toc_field(doc)
-                    doc.add_page_break()
 
             # Parse the body with markdown-it (real lists/quotes/code/links/tables)
             # then render the block model. ::kpi lines arrive as plain paragraphs —
             # we recognise + group them here into coloured stat-strips.
             _blocks = _markdown_to_blocks(_body_md)
+
+            # Pre-derive the (level, text, bookmark) list from headings ≤ level 3 so
+            # the TOC can be PRE-POPULATED (visible + page-numbered) before the body
+            # is rendered; the same bookmark names are pinned on the headings below.
+            _toc_headings = []
+            _bm_for_block = {}
+            for _bi, _blk in enumerate(_blocks):
+                if _blk.get("type") == "heading" and _blk.get("level", 9) <= 3:
+                    _htxt = _clean_heading_text(_runs_plain(_blk["runs"]), _strip_emoji)
+                    _htxt = re.sub(r'[*`]+', '', _htxt).strip()
+                    if not _htxt or _is_version_history_heading(_runs_plain(_blk["runs"])):
+                        continue  # skip the version-history appendix in the TOC
+                    _bm = f"_Toc_h{_bi}"
+                    _bm_for_block[_bi] = _bm
+                    _toc_headings.append((_blk["level"], _htxt, _bm))
+
+            if _cover_title is not None:
+                _render_cover_page(doc, _style, _cover_title, _cover_front)
+                if _dx.get("toc", True):
+                    _add_toc_field(doc, _toc_headings)
+                    doc.add_page_break()
 
             def _docx_render_table_block(blk):
                 rows = blk.get("rows") or []
@@ -1899,6 +2127,16 @@ def tool_write_document(args: dict) -> str:
                     table.style = _dx.get("table_style") or "Table Grid"
                 except (KeyError, Exception):
                     table.style = "Table Grid"
+                # Content-proportional column widths with a per-column floor, so a
+                # narrow-header column doesn't collapse and wrap to one char/line.
+                try:
+                    from docx.shared import Inches as _In
+                    _usable = _section_usable_width_emu(doc)
+                    _widths = _content_col_widths(rows, max_cols, _usable,
+                                                  min_emu=int(0.7 * 914400))
+                    _docx_apply_col_widths(table, _widths)
+                except Exception:
+                    pass
                 # Badge column by evidence (same rule as before, now over runs).
                 _badge_col = None
                 if _do_badges and len(rows) > 1:
@@ -1916,6 +2154,14 @@ def tool_write_document(args: dict) -> str:
                     _badge_col = _best
                 for ri, row in enumerate(rows):
                     is_header = ri == 0
+                    # Keep each row intact across a page break (no orphaned single
+                    # line); repeat the header row atop every page the table spans.
+                    try:
+                        _docx_row_cant_split(table.rows[ri])
+                        if is_header:
+                            _docx_row_repeat_header(table.rows[ri])
+                    except Exception:
+                        pass
                     for ci in range(max_cols):
                         cell = table.rows[ri].cells[ci]
                         cell.text = ""
@@ -1941,7 +2187,7 @@ def tool_write_document(args: dict) -> str:
                     _emit_kpi_strip(doc, _kpis, _style)
                     _kpis.clear()
 
-            for blk in _blocks:
+            for _blk_idx, blk in enumerate(_blocks):
                 bt = blk["type"]
                 # A paragraph that is only '::kpi …' lines → collect into a strip.
                 if bt == "paragraph":
@@ -1972,10 +2218,26 @@ def tool_write_document(args: dict) -> str:
                 _flush_kpis()
                 if bt == "heading":
                     htext = _clean_heading_text(_runs_plain(blk["runs"]), _strip_emoji)
+                    # Start the version-history section on a fresh page so its
+                    # table stays whole (and reads as a clear document appendix).
+                    if _is_version_history_heading(_runs_plain(blk["runs"])):
+                        doc.add_page_break()
                     h = doc.add_heading("", level=min(blk["level"], 9))
                     # keep inline emphasis inside the heading, but feed the
                     # emoji-cleaned plain text (headings rarely carry links)
                     _add_inline_md_runs(h, htext)
+                    # Pin the bookmark the TOC PAGEREF entry targets (same name).
+                    _bm = _bm_for_block.get(_blk_idx)
+                    if _bm:
+                        try:
+                            _docx_bookmark_heading(h, _bm)
+                        except Exception:
+                            pass
+                    # Don't let a heading strand alone at a page bottom.
+                    try:
+                        _docx_keep_with_next(h)
+                    except Exception:
+                        pass
                 elif bt == "hr":
                     _add_hrule(doc, _rule_col)
                 elif bt == "list":
@@ -2279,8 +2541,12 @@ def tool_write_document(args: dict) -> str:
                     styles["Normal"].textColor = _RLHex(_bc)
                 _hc = _style["colors"].get("heading")
                 for _hn in ("Heading1", "Heading2", "Heading3"):
-                    if _hn in styles and _hc:
-                        styles[_hn].textColor = _RLHex(_hc)
+                    if _hn in styles:
+                        if _hc:
+                            styles[_hn].textColor = _RLHex(_hc)
+                        # Keep a heading on the same page as the content it titles
+                        # (no heading stranded at a page bottom).
+                        styles[_hn].keepWithNext = 1
             except Exception:
                 pass
             # Inline markdown (**bold**/*italic*) → reportlab mini-HTML markup.
@@ -2440,7 +2706,13 @@ def tool_write_document(args: dict) -> str:
                         cells.append(Paragraph(_pdf_runs(runs) or "&nbsp;", _cs))
                     data.append(cells)
                 avail_w = _psize[0] - 2 * _marg
-                tbl = _RLTable(data, colWidths=[avail_w / max_cols] * max_cols, repeatRows=1)
+                # Content-proportional widths with a per-column floor so a narrow
+                # header doesn't wrap to one char/line; sum is pinned to avail_w.
+                _cw = _content_col_widths(rows, max_cols, int(avail_w),
+                                          min_emu=int(0.6 * _rl_inch))
+                _wsum = sum(_cw) or 1
+                _cw = [w * avail_w / _wsum for w in _cw]
+                tbl = _RLTable(data, colWidths=_cw, repeatRows=1)
                 tbl.setStyle(_RLTableStyle([
                     ("BACKGROUND", (0, 0), (-1, 0), _RLHex(_hdr_bg_hex)),
                     ("GRID", (0, 0), (-1, -1), 0.5, _RLHex(_grid_hex)),
@@ -2534,9 +2806,14 @@ def tool_write_document(args: dict) -> str:
                     style_name = f"Heading{min(level, 6)}"
                     if style_name not in styles:
                         style_name = "Heading1"
+                    # Version-history section starts on a fresh page (table stays
+                    # whole) and is kept OUT of the TOC (it's a document appendix).
+                    _is_vhist = _is_version_history_heading(_runs_plain(blk["runs"]))
+                    if _is_vhist:
+                        story.append(_RLPageBreak())
                     htext = _clean_heading_text(_runs_plain(blk["runs"]), _pdf_strip_emoji)
                     _plain = re.sub(r'[*`]+', '', htext).strip()
-                    if _pdf_toc_active and level <= 3 and _plain:
+                    if _pdf_toc_active and level <= 3 and _plain and not _is_vhist:
                         _pdf_hkey[0] += 1
                         _key = f"h{_pdf_hkey[0]}"
                         _para = Paragraph(f'<a name="{_key}"/>' + _esc(htext), styles[style_name])

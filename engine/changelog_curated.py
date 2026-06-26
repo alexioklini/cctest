@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.207.0",
+        "date": "2026-06-26",
+        "title": "Word- und PDF-Berichte: sauberes Layout",
+        "body": "Erzeugte Word- und PDF-Dokumente sehen jetzt deutlich professioneller aus. "
+                "Das Inhaltsverzeichnis ist sofort mit echten Einträgen und Seitenzahlen gefüllt "
+                "(bisher blieb es leer, bis man es manuell mit F9 aktualisierte). Überschriften und "
+                "Tabellenzeilen brechen nicht mehr ungünstig über den Seitenrand um — eine "
+                "Überschrift bleibt bei ihrem Text, eine Tabellenzeile bricht nicht mitten durch, und "
+                "lange Tabellen wiederholen ihre Kopfzeile auf jeder Seite. Tabellenspalten werden "
+                "nun nach ihrem Inhalt bemessen, sodass schmale Spalten nicht mehr jedes Wort "
+                "einzeln umbrechen. Und am Dokumentende lässt sich eine Versionshistorie als Tabelle "
+                "anführen, die automatisch auf einer eigenen Seite beginnt.",
+        "audience": "user",
+        "versions": ["9.207.0"],
+    },
+    {
         "version": "9.206.0",
         "date": "2026-06-25",
         "title": "Lokale Modelle ohne unnötige Wartezeit",
