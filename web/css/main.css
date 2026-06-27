@@ -606,6 +606,33 @@ textarea { resize: none; }
 /* show-hint addon: match the dark editor */
 .CodeMirror-hints { z-index: 10002; font-family: var(--font-mono);
   font-size: 12px; }
+/* Cypher search bar (power-user) */
+.code-cypher-box { width: min(820px, 92vw); max-height: 78vh; padding: 14px; gap: 10px; }
+.code-cypher-head { font-weight: 700; color: var(--text-100);
+  display: flex; align-items: baseline; gap: 10px; }
+.code-cypher-hint { font-weight: 400; font-size: 11px; color: var(--text-300); }
+#code-cypher-input { width: 100%; min-height: 64px; resize: vertical;
+  font-family: var(--font-mono); font-size: 13px; padding: 8px 10px;
+  background: var(--bg-100); color: var(--text-100);
+  border: 1px solid var(--border-100); border-radius: 6px; outline: none; }
+.code-cypher-examples { display: flex; flex-wrap: wrap; gap: 6px; }
+.code-cypher-ex { font-size: 11px; padding: 3px 8px; border-radius: 12px;
+  border: 1px solid var(--border-100); background: var(--bg-200);
+  color: var(--text-200); cursor: pointer; }
+.code-cypher-ex:hover { background: var(--bg-300); color: var(--text-100); }
+.code-cypher-actions { display: flex; align-items: center; gap: 10px; }
+.code-cypher-status { font-size: 12px; color: var(--text-300); }
+.code-cypher-results { overflow: auto; flex: 1; min-height: 0; }
+.code-cypher-err { color: #d66; }
+.code-cypher-table { width: 100%; border-collapse: collapse; font-size: 12px;
+  font-family: var(--font-mono); }
+.code-cypher-table th, .code-cypher-table td { text-align: left;
+  padding: 5px 8px; border-bottom: 1px solid var(--border-100);
+  white-space: nowrap; }
+.code-cypher-table th { position: sticky; top: 0; background: var(--bg-200);
+  color: var(--text-200); font-weight: 600; }
+.code-cypher-link { color: var(--accent-brand); cursor: pointer; }
+.code-cypher-link:hover { text-decoration: underline; }
 /* Tab right-click bulk-close menu. */
 .terminal-tab-menu { position: fixed; z-index: 9999; background: var(--bg-000);
   border: 1px solid var(--border-100); border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.3);

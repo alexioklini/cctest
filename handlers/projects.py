@@ -874,6 +874,8 @@ class ProjectsHandlerMixin:
           ?callers=<symbol>  → inbound callers of a symbol (who-calls)
           ?def=<symbol>      → definition + signature/docstring/caller counts
                                (go-to-definition + hover)
+          ?cypher=<query>    → raw read-only Cypher → {columns, rows}
+                               (power-user search bar)
         file paths from ?q are repo-RELATIVE; the frontend joins working_dir.
         Code-mode projects only."""
         from urllib.parse import urlparse, parse_qs
@@ -890,12 +892,15 @@ class ProjectsHandlerMixin:
         q = (qs.get("q", [""])[0] or "").strip()
         callers = (qs.get("callers", [""])[0] or "").strip()
         defn = (qs.get("def", [""])[0] or "").strip()
+        cypher = (qs.get("cypher", [""])[0] or "").strip()
         try:
             limit = int(qs.get("limit", ["30"])[0])
         except (TypeError, ValueError):
             limit = 30
         try:
-            if defn:
+            if cypher:
+                out = engine.cbm_code_query_raw(cypher, cache)
+            elif defn:
                 out = engine.cbm_code_def(defn, cache)
             elif callers:
                 out = engine.cbm_code_callers(callers, cache)

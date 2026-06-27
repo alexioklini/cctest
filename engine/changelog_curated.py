@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.220.0",
+        "date": "2026-06-27",
+        "title": "Code-Editor: Cypher-Abfragen (Power-User)",
+        "body": "Für technische Auswertungen bietet der Code-Editor jetzt eine "
+                "Cypher-Suchleiste (Knopf „Cypher“). Damit lassen sich gezielte "
+                "Fragen an den Code-Index stellen — etwa „die komplexesten Methoden“, "
+                "„alle Klassen mit Datei“ oder „Funktionen ohne Tests“. Fertige "
+                "Beispiel-Abfragen stehen auf Knopfdruck bereit; das Ergebnis "
+                "erscheint als Tabelle, und ein Klick auf einen Dateipfad öffnet die "
+                "Datei direkt im Editor.",
+        "audience": "admin",
+        "versions": ["9.220.0"],
+    },
+    {
         "version": "9.219.0",
         "date": "2026-06-27",
         "title": "Code-Editor: Symbole finden und verstehen",

@@ -413,6 +413,11 @@ Code-Index) und macht sie direkt nutzbar:
   Projekt-Symbole vor (rein aus dem Index, kein KI-Lauf, keine Wartezeit).
 - **Hover**: Mit der Maus über ein Symbol fahren zeigt dessen Signatur,
   Beschreibung (Docstring) und wie oft es aufgerufen wird.
+- **Cypher-Suchleiste** (Power-User, Knopf **Cypher**): gezielte Abfragen an
+  den Code-Index per Cypher (z. B. „komplexeste Methoden", „alle Klassen mit
+  Datei", „Funktionen ohne Tests"). Fertige Beispiel-Abfragen stehen als Chips
+  bereit, **Cmd/Strg+Enter** führt aus, das Ergebnis erscheint als Tabelle, und
+  ein Klick auf einen Dateipfad öffnet die Datei im Editor.
 
 **Projekt-Anweisungen + Begleitdateien**: Über **Anweisungen bearbeiten**
 öffnet sich ein Dialog mit dem Freitext-Feld (Hinweise, an die sich das

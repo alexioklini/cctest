@@ -345,6 +345,7 @@ async function terminalOpenFile(absPath) {
       <button class="btn-secondary ed-mode active" data-mode="render" onclick="terminalEditorMode('${id}','render')">Ansicht</button>
       <button class="btn-secondary ed-mode" data-mode="raw" onclick="terminalEditorMode('${id}','raw')">Bearbeiten</button>
       <button class="btn-secondary" onclick="codeSymbolPalette()" title="Symbol suchen (${_isMac()?'⌘':'Strg'}+P)">Symbole</button>
+      <button class="btn-secondary" onclick="codeCypherBar()" title="Code-Index per Cypher abfragen (Power-User)">Cypher</button>
       <span style="flex:1"></span>
       <button class="btn-secondary ed-save" onclick="terminalEditorSave('${id}')" disabled>Speichern</button>
       <button class="btn-secondary" onclick="terminalEditorDownload('${id}')">Herunterladen</button>
@@ -849,3 +850,92 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   codeSymbolPalette();
 });
+
+// ─── Cypher search bar (power-user) ──────────────────────────────────────────
+// Run read-only Cypher over the code index and show {columns, rows}. cbm honours
+// explicit property/aggregate projections (RETURN n.name, n.complexity); a bare
+// `RETURN n` collapses to the node name only — the examples reflect that.
+const _CYPHER_EXAMPLES = [
+  { label: 'Komplexeste Methoden', q: "MATCH (n:Method) WHERE n.complexity > 5 RETURN n.name, n.complexity, n.file_path ORDER BY n.complexity DESC LIMIT 20" },
+  { label: 'Alle Klassen + Datei', q: "MATCH (n:Class) RETURN n.name, n.file_path" },
+  { label: 'Methoden je Datei (Anzahl)', q: "MATCH (n:Method) RETURN n.file_path, count(n) ORDER BY count(n) DESC" },
+  { label: 'Funktionen ohne Tests', q: "MATCH (n:Method) WHERE NOT (n)-[:TESTED_BY]->() RETURN n.name, n.file_path LIMIT 30" },
+];
+
+function codeCypherBar() {
+  if (document.getElementById('code-cypher')) return;
+  const ov = document.createElement('div');
+  ov.id = 'code-cypher';
+  ov.className = 'code-palette-overlay';
+  const exHtml = _CYPHER_EXAMPLES.map((e, i) =>
+    `<button class="code-cypher-ex" onclick="_codeCypherExample(${i})">${esc(e.label)}</button>`).join('');
+  ov.innerHTML = `
+    <div class="code-palette code-cypher-box" onclick="event.stopPropagation()">
+      <div class="code-cypher-head">Cypher-Abfrage über den Code-Index
+        <span class="code-cypher-hint">${_isMac() ? '⌘' : 'Strg'}+Enter zum Ausführen · nur lesend</span></div>
+      <textarea id="code-cypher-input" spellcheck="false" autocomplete="off"
+        placeholder="MATCH (n:Method) WHERE n.complexity > 5 RETURN n.name, n.complexity ORDER BY n.complexity DESC LIMIT 20"></textarea>
+      <div class="code-cypher-examples">${exHtml}</div>
+      <div class="code-cypher-actions">
+        <button class="btn-primary" onclick="_codeCypherRun()">Ausführen</button>
+        <span id="code-cypher-status" class="code-cypher-status"></span>
+      </div>
+      <div id="code-cypher-results" class="code-cypher-results"></div>
+    </div>`;
+  ov.addEventListener('click', () => ov.remove());
+  document.body.appendChild(ov);
+  const ta = document.getElementById('code-cypher-input');
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { ov.remove(); return; }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); _codeCypherRun(); }
+  });
+  ta.focus();
+}
+
+function _codeCypherExample(i) {
+  const e = _CYPHER_EXAMPLES[i];
+  const ta = document.getElementById('code-cypher-input');
+  if (e && ta) { ta.value = e.q; ta.focus(); }
+}
+
+async function _codeCypherRun() {
+  const ta = document.getElementById('code-cypher-input');
+  const status = document.getElementById('code-cypher-status');
+  const box = document.getElementById('code-cypher-results');
+  if (!ta || !box) return;
+  const q = ta.value.trim();
+  if (!q) { return; }
+  if (status) status.textContent = 'Läuft …';
+  box.innerHTML = '';
+  const d = await _codeIndexFetch(`cypher=${encodeURIComponent(q)}`);
+  if (!d || d.error) {
+    if (status) status.textContent = '';
+    box.innerHTML = `<div class="code-palette-hint code-cypher-err">${esc((d && d.error) || 'Abfrage fehlgeschlagen')}</div>`;
+    return;
+  }
+  const cols = d.columns || [];
+  const rows = d.rows || [];
+  if (status) status.textContent = `${rows.length} Zeile${rows.length === 1 ? '' : 'n'}`;
+  if (!rows.length) { box.innerHTML = '<div class="code-palette-hint">Keine Treffer.</div>'; return; }
+  // a cell that looks like a repo-relative source path becomes a jump link
+  const head = cols.map(c => `<th>${esc(String(c))}</th>`).join('');
+  const body = rows.map(r => {
+    const cells = (Array.isArray(r) ? r : [r]).map(v => {
+      const s = v === null || v === undefined ? '' : String(v);
+      if (/\.[a-z]{1,4}$/i.test(s) && /[\/\\]/.test(s) && !/\s/.test(s)) {
+        return `<td><a class="code-cypher-link" onclick="_codeCypherJump('${esc(s)}')">${esc(s)}</a></td>`;
+      }
+      return `<td>${esc(s)}</td>`;
+    }).join('');
+    return `<tr>${cells}</tr>`;
+  }).join('');
+  box.innerHTML = `<table class="code-cypher-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+// Click a path cell → open that file in the editor (no line info in a generic
+// Cypher result, so just open at the top).
+function _codeCypherJump(relPath) {
+  const ov = document.getElementById('code-cypher');
+  if (ov) ov.remove();
+  _terminalJumpTo(_codeIndexAbs(relPath), 1);
+}

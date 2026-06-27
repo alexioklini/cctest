@@ -309,6 +309,38 @@ def code_def(qualified_or_name: str, cache_dir: str) -> dict:
     }
 
 
+def code_query_raw(cypher: str, cache_dir: str) -> dict:
+    """Run a read-only Cypher query and return the raw tabular result
+    ({columns, rows}) for the UI's Cypher search bar. Distinct from the agent
+    tool_code_query, which formats the result for the LLM. cbm honours explicit
+    property/aggregate projections (RETURN n.name, n.complexity / count(n)); a
+    bare `RETURN n` collapses to the node name only."""
+    q = (cypher or "").strip()
+    if not q:
+        return {"error": "leere Abfrage"}
+    st = index_status(cache_dir)
+    if not st.get("indexed"):
+        return {"error": "kein Index für dieses Projekt"}
+    d = _run("query_graph", {"query": q, "project": st["project"]}, cache_dir,
+             want_project=False)
+    if d.get("error"):
+        # cbm returns a 'no JSON' sentinel for an unparseable/invalid query;
+        # surface the engine's stderr (the actual parse error) when present so a
+        # power-user sees what was wrong, not an internal sentinel string.
+        err = d["error"]
+        if "no JSON" in err:
+            # cbm's stderr interleaves its init log ('level=info msg=mem.init …')
+            # with the real parse error — keep only the last non-log line.
+            lines = [ln.strip() for ln in (d.get("stderr") or "").splitlines()
+                     if ln.strip() and not ln.lstrip().startswith("level=")]
+            detail = lines[-1] if lines else ""
+            err = ("Ungültige Cypher-Abfrage" + (f": {detail}" if detail else
+                   " (Syntax prüfen — nur lesende MATCH/RETURN-Abfragen)"))
+        return {"error": err}
+    return {"columns": d.get("columns", []), "rows": d.get("rows", []),
+            "total": d.get("total")}
+
+
 def graph_overview(cache_dir: str, limit: int = 200) -> dict:
     """Lightweight graph-view payload: top nodes by degree + their edges, for a
     project graph visualisation. Best-effort."""
