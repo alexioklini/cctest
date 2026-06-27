@@ -798,12 +798,13 @@ main chat agent.
   (`HELPDESK_ONLY_SKILLS`) — hidden from normal chat unless helpdesk_mode.
 - **Fixed read-only tools** (`_HELPDESK_TOOLS`, 16 tools): `use_skill`, the
   three `helpdesk_*` tools, `mempalace_query`, the read/search/context
-  tools, the three web tools, and `code_graph_query`. No write/exec tools.
+  tools, the three web tools, and the code-intelligence tools
+  (`code_search`/`code_trace`/`code_query`/`code_snippet`). No write/exec tools.
 - **Source reach** (9.27.0): in helpdesk_mode `mempalace_query` additively
   searches the shared `brain_code` wing (mined brain-agent source) on top of
   its normal scope — a separate Chroma query pinned to `brain_code`, so the
-  project-isolation force-scope is untouched. `code_graph_query` adds exact
-  structure lookups (file_summary / callers_of / …) over the same source.
+  project-isolation force-scope is untouched. `code_search`/`code_trace` add
+  exact code lookups (find symbol / callers / callees) over the same source.
   See "Reading the brain-agent source" below.
 - **Per-turn tool enforcement** (9.22.0): `run_turn`/`run_turn_blocking`
   put the resolved tool names in `tool_context['allowed_tools']`;
@@ -848,19 +849,21 @@ fuzzy — the exact line you want may not be in the top chunk, and the most
 relevant file may be at rank 2-3 (or hinted at by a CLAUDE.md chunk). Use the
 hits + the repo map below to decide which ONE file actually holds the answer.
 
-**STEP 1b — STRUCTURE lookups with `code_graph_query`** (when you already
-know a symbol or file). The brain-agent source is also indexed as a code
-structure graph. `code_graph_query` takes `query_type` + `target`:
-- `file_summary` + a file path → every function/class/method defined in that
-  file (great for "what's in handlers/helpdesk.py" — returns qualified names
-  like `HelpdeskHandlerMixin._handle_helpdesk`).
-- `callers_of` / `callees_of` + a qualified name → who calls it / what it
-  calls. `imports_of` / `importers_of`, `inheritors_of`, `tests_for`.
-This is exact (not fuzzy) but relation-based: it answers "what's in this
-file" and "what relates to this symbol", NOT "find the file for this plain
-constant" — for the latter, lean on `mempalace_query` + the repo map. Paths
-in results may carry a local clone prefix; strip to the repo-relative part
-(everything after `.brain-source-clone/<wing>/`) before building a GitHub URL.
+**STEP 1b — CODE lookups with the code-intelligence tools** (when you already
+know a symbol, or want to find one). The brain-agent source is also indexed by
+the codebase-memory engine:
+- `code_search` → find a symbol/function: `query` (BM25 natural language),
+  `name_pattern` (regex), or `semantic_query` (keyword array, embedding search).
+  Best when you don't know the exact name.
+- `code_trace(function_name, direction=inbound|outbound)` → callers / callees.
+- `code_query(cypher)` → exact structural questions (e.g. all functions in a
+  file: `MATCH (n) WHERE n.file_path =~ '.*helpdesk.*' RETURN n.name`).
+- `code_snippet(qualified_name)` → read a symbol's source.
+`code_search` is good for discovery (fuzzy + exact); `code_trace`/`code_query`
+are exact relation lookups. For "find the file for this plain constant", lean
+on `mempalace_query` + the repo map. Paths in results may carry a local clone
+prefix; strip to the repo-relative part (everything after
+`.brain-source-clone/<wing>/`) before building a GitHub URL.
 
 **STEP 2 — read the FULL, CURRENT file from GitHub.** Once you've identified
 the file, fetch it raw with `web_fetch` and read the precise value there

@@ -8,8 +8,8 @@ metadata:
   #   reconciled against — a drift indicator. The pre-push hook warns when it
   #   falls behind brain.VERSION (override with SKILL_DOC_OK=1). Keep both in
   #   sync with the change that touches the skill.
-  skill_version: 1.100.23
-  brain_agent_version: 9.213.3
+  skill_version: 1.100.24
+  brain_agent_version: 9.215.0
 ---
 
 # Brain-Agent Operator Guide
@@ -52,7 +52,7 @@ Load it whenever the user:
    - Anything these files don't (fully) cover — an exact value, a limit, a
      default, "how does X work internally" → look it up in the actual
      brain-agent SOURCE: `mempalace_query` (searches the `brain_code` wing in
-     helpdesk mode) + `code_graph_query` to find the file, then `web_fetch`
+     helpdesk mode) + `code_search` to find the file, then `web_fetch`
      the raw file from GitHub for the precise current value. See
      `05-internals.md` "Reading the brain-agent source".
 2. **Read the file before acting.** These curated files are your primary
@@ -75,7 +75,7 @@ Load it whenever the user:
    incomplete, or you're unsure about an internal mechanism (a limit, a
    default, exact behaviour, "what happens when…"), you MUST look it up in the
    brain-agent source before answering: `mempalace_query` (the `brain_code`
-   wing) + `code_graph_query` to locate the file, then `web_fetch` the raw
+   wing) + `code_search` to locate the file, then `web_fetch` the raw
    GitHub file to read the precise value. THEN answer from what the source
    actually says, citing the file. Inventing an answer or wrongly claiming a
    feature is absent (e.g. "there is no tool-round limit" when the code has

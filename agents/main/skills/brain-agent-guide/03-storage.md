@@ -394,9 +394,13 @@ the anchor's `updated_at` (re-sorts it to the top of the admin list). Written by
 Nodes + edges of the lossless context manager DAG. `nodes(id, session_id,
 depth, content, token_count, …)`, `edges(parent_id, child_id, kind)`.
 
-### code-graph.db
-Tree-sitter AST snapshots. `files(path, sha256, lang, …)`,
-`symbols(qname, file_id, kind, …)`, `edges(src, dst, kind)`.
+### Code index (codebase-memory, v9.214.0+)
+The in-tree `code-graph.db` is retired. Code intelligence is now the
+codebase-memory engine: a per-tenant index under `.cbm-cache/` (one per
+code-mode project, under its project dir; plus a global brain-source index).
+Managed by the brain (CLI subprocess, not MCP); the binary is vendored under
+`.codebase-memory/` (gitignored, per-machine). Queried via the `code_search`/
+`code_trace`/`code_query`/`code_snippet` tools.
 
 ### MemPalace storage
 - Palace root: from `mempalace.yaml → palace_path`

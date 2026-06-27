@@ -321,19 +321,30 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
 (For create/edit/delete from a chat, hit the HTTP API — see `01-api.md`
 "Scheduler" + `04-recipes.md`.)
 
-## Code graph
+## Code intelligence (codebase-memory)
 
-- `code_graph_build(root)` — index a repo
-- `code_graph_query(name)` — find a symbol
-- `code_graph_impact(symbol)` — callers, dependents
-- `code_graph_enhance(symbol)` — pull docstring/summary
+As of v9.214.0 the code-graph subsystem is powered by the **codebase-memory-mcp**
+engine (a brain-managed binary, run per call as a CLI subprocess — not MCP),
+replacing the old in-tree tree-sitter CodeGraph. Four tools:
 
-Per-tenant (v9.210.0): each **code-mode project** gets its own graph DB under
-its project dir (built/queried against its working directory); the shared
-brain-source graph (what Brainy queries via `code_graph_query`) stays separate.
-In a normal chat these tools are deferred (discover via `tool_search`); in a
-code-mode project they're active. Querying an unbuilt project graph returns a
-"run `code_graph_build` first" hint rather than empty results.
+- `code_search(query | name_pattern | semantic_query)` — FIND code: BM25
+  natural-language (`query`), regex on names (`name_pattern`), or embedding
+  search (`semantic_query` = array of keywords). The discovery workhorse.
+- `code_trace(function_name, direction)` — callers (`inbound`) / callees
+  (`outbound`) of a function.
+- `code_query(cypher)` — read-only Cypher for complex/multi-hop structural
+  questions.
+- `code_snippet(qualified_name)` — read the source of a symbol.
+
+Per-tenant: each **code-mode project** gets its own index under its project dir
+(`.cbm-cache`, indexed from its working directory); the shared brain-source
+index (what Brainy queries) stays separate. In a normal chat these tools are
+deferred (discover via `tool_search`); in a code-mode project they're active.
+The index is built when BRAIN.md is written and kept fresh by a daemon that
+re-indexes on file changes. In the code-mode project view, operators get
+Refresh / Clean&rebuild / Graph-view / History buttons plus a per-file index
+state (indexed / stale / not-indexed). Querying an unbuilt index returns a
+"build it first" hint rather than empty results.
 
 ## Git / GitHub
 
@@ -446,8 +457,7 @@ web           web_fetch exa_search searxng_search
 email         gmail_inbox gmail_read gmail_search gmail_send gmail_reply
 delegation    delegate_task task_status task_cancel
 background     run_background_task
-code_graph    code_graph_build code_graph_query code_graph_impact
-              code_graph_enhance
+code_graph    code_search code_trace code_query code_snippet
 git           git_command github_command
 scheduler     schedule_list schedule_history
 mcp           mcp_connect mcp_disconnect mcp_servers
