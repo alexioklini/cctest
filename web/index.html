@@ -588,6 +588,13 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
               <button class="pt-act" type="button" title="Aktualisieren" onclick="refreshCodeWorkingTree()">⟳</button>
             </div>
             <div id="project-codemode-tree" class="project-source-tree"></div>
+            <!-- Legend: explain the per-file index dots. -->
+            <ul class="code-index-legend">
+              <li><span class="pt-dot" data-state="indexed"></span> Indexiert</li>
+              <li><span class="pt-dot" data-state="stale"></span> Veraltet — Datei wurde nach dem letzten Index geändert</li>
+              <li><span class="pt-dot" data-state="error"></span> Nicht indexiert — Quelldatei, sollte im Index sein (Fehler/noch nicht synchronisiert)</li>
+              <li><span class="pt-dot" data-state="muted"></span> Keine Quelldatei — wird nie indexiert (z.&nbsp;B. .md, .html, .txt)</li>
+            </ul>
             <!-- Code-Index (codebase-memory): status chip + icon actions, below
                  the files — mirrors normal projects' Speicher & Abgleich block. -->
             <div id="code-index-chip" class="project-sync-chip" style="display:flex;margin:10px 0 8px 0">

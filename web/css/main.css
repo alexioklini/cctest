@@ -3729,6 +3729,7 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 .pt-dot[data-state="pending"] { background: #d29922; }   /* amber */
 .pt-dot[data-state="error"]   { background: #f85149; }   /* red */
 .pt-dot[data-state="stale"]   { background: #8b949e; }   /* grey */
+.pt-dot[data-state="muted"]   { background: transparent; border: 1px solid #6e7681; }  /* hollow — never indexed by design */
 
 .pt-row {
   display: flex; align-items: center; gap: 6px;
@@ -4028,6 +4029,12 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   0%,100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(1.4); }
 }
+
+/* Code-index per-file dot legend. */
+.code-index-legend { list-style: none; margin: 8px 0 0; padding: 0;
+  font-size: 11px; color: var(--text-400); }
+.code-index-legend li { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.code-index-legend .pt-dot { flex-shrink: 0; }
 
 /* Code-index modal (graph overview + run history). Lightweight, matches the
  * app's panel look. */

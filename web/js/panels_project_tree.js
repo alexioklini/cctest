@@ -15,7 +15,8 @@ const _PT_STATE = {
   pending: { cls: 'pending', label: 'Ausstehend' },
   error:   { cls: 'error',   label: 'Fehler' },
   stale:   { cls: 'stale',   label: 'Veraltet' },
-  not_indexed: { cls: 'stale', label: 'Nicht indexiert' },
+  not_indexed: { cls: 'error', label: 'Nicht indexiert (sollte sein)' },
+  not_source:  { cls: 'muted', label: 'Keine Quelldatei (wird nicht indexiert)' },
 };
 
 // Feather-style SVG icons (match the rest of the app — no emoji). 14px, inherit
@@ -474,6 +475,17 @@ function _ptRenderFolderTree(nodes) {
 // Code-mode variant: render the working-directory tree WITHOUT MemPalace status
 // dots / KG / review badges (a code project has no project memory — files are
 // just files). Same collapse/expand interaction (ptToggleRealDir).
+// Strip the project's working-dir prefix off an absolute file path → the
+// repo-relative path used to key state._codeIndexFiles. Falls back to basename.
+function _ptRelToWorkingDir(absPath) {
+  if (!absPath) return '';
+  const wd = (state._projectDetail && state._projectDetail.working_dir) || '';
+  if (wd && absPath.indexOf(wd) === 0) {
+    return absPath.slice(wd.length).replace(/^\/+/, '');
+  }
+  return absPath.split('/').pop();
+}
+
 function _ptRenderCodeTree(nodes, openDirs) {
   if (!nodes || !nodes.length) return '<div class="pt-empty">Leer.</div>';
   openDirs = openDirs || new Set();
@@ -489,7 +501,9 @@ function _ptRenderCodeTree(nodes, openDirs) {
         <div class="pt-children" style="display:${isOpen ? '' : 'none'}">${_ptRenderCodeTree(n.children || [], openDirs)}</div>
       </div>`;
     }
-    const _ci = state._codeIndexFiles && state._codeIndexFiles[n.path || ''];
+    // _codeIndexFiles is keyed by repo-RELATIVE path; the folder-tree gives an
+    // ABSOLUTE n.path. Strip the working-dir prefix to match.
+    const _ci = state._codeIndexFiles && state._codeIndexFiles[_ptRelToWorkingDir(n.path)];
     const _dot = _ci ? _ptDot(_ci.state) : '';
     const _nodes = _ci && _ci.nodes ? ` <span class="pt-count" style="color:var(--text-400);font-size:10px">${_ci.nodes}</span>` : '';
     return `<div class="pt-row pt-realfile" title="${esc(n.path || n.name)}">
@@ -584,23 +598,35 @@ async function refreshCodeIndexStatus() {
     const live = d.live || {};
     const liveState = live.state;
     // Chip data-state mirrors MemPalace: idle (green) / syncing (pulsing accent)
-    // / error (red). The CSS .project-sync-chip[data-state=…] colors the dot.
+    // / error (red). End-user friendly wording — no "nodes/edges" jargon.
     let chipState = 'idle', txt = 'Code-Index', subtxt = '';
     if (liveState === 'indexing') {
-      chipState = 'syncing'; txt = 'Indexierung läuft …';
+      chipState = 'syncing'; txt = 'Code wird eingelesen …';
+      subtxt = 'Die Suche ist gleich einsatzbereit.';
     } else if (liveState === 'error') {
-      chipState = 'error'; txt = 'Index-Fehler';
+      chipState = 'error'; txt = 'Einlesen fehlgeschlagen';
+      subtxt = 'Der Code konnte nicht vollständig erfasst werden.';
     } else if (!d.indexed) {
-      chipState = 'syncing'; txt = 'Noch nicht indexiert';
+      chipState = 'syncing'; txt = 'Noch nicht eingelesen';
+      subtxt = 'Der Code wird beim ersten Mal automatisch erfasst.';
     } else {
-      chipState = 'idle'; txt = 'Indexiert';
-      const nodes = d.nodes != null ? d.nodes : '?';
-      const edges = d.edges != null ? d.edges : '?';
-      const nFiles = d.files ? Object.keys(d.files).length : 0;
-      const nStale = d.files ? Object.values(d.files).filter(f => f.state === 'stale' || f.state === 'not_indexed').length : 0;
-      subtxt = `${nodes} Knoten · ${edges} Kanten · ${nFiles} Dateien` + (nStale ? ` · ${nStale} veraltet` : '');
+      const fileVals = d.files ? Object.values(d.files) : [];
+      const nSource = fileVals.filter(f => f.state !== 'not_source').length;
+      const nStale = fileVals.filter(f => f.state === 'stale').length;
+      const nMiss = fileVals.filter(f => f.state === 'not_indexed').length;
+      if (nStale || nMiss) {
+        // something is out of date / missing → amber-ish "needs attention"
+        chipState = 'syncing'; txt = 'Aktualisierung nötig';
+        const bits = [];
+        if (nStale) bits.push(`${nStale} ${nStale === 1 ? 'Datei wurde' : 'Dateien wurden'} geändert`);
+        if (nMiss) bits.push(`${nMiss} ${nMiss === 1 ? 'Datei fehlt' : 'Dateien fehlen'} noch`);
+        subtxt = bits.join(' · ') + ' — auf „Aktualisieren“ klicken.';
+      } else {
+        chipState = 'idle'; txt = 'Code durchsuchbar';
+        subtxt = `${nSource} ${nSource === 1 ? 'Datei' : 'Dateien'} erfasst — der Assistent kennt den Code.`;
+      }
     }
-    if (live.error) subtxt = live.error;
+    if (live.error) subtxt = 'Der Code konnte nicht vollständig erfasst werden.';
     if (chip) chip.dataset.state = chipState;
     if (label) label.textContent = txt;
     if (sub) sub.textContent = subtxt;
@@ -670,8 +696,8 @@ async function codeIndexGraph() {
     const section = (title, html) => html ? `<div class="ci-sec"><div class="ci-sec-title">${esc(title)}</div>${html}</div>` : '';
     const body = `
       <div class="ci-graph-head">
-        <div class="ci-stat"><div class="ci-stat-num">${a.total_nodes != null ? a.total_nodes : (d.nodes || '?')}</div><div class="ci-stat-lbl">Knoten</div></div>
-        <div class="ci-stat"><div class="ci-stat-num">${a.total_edges != null ? a.total_edges : (d.edges || '?')}</div><div class="ci-stat-lbl">Kanten</div></div>
+        <div class="ci-stat"><div class="ci-stat-num">${a.total_nodes != null ? a.total_nodes : (d.nodes || '?')}</div><div class="ci-stat-lbl">Symbole</div></div>
+        <div class="ci-stat"><div class="ci-stat-num">${a.total_edges != null ? a.total_edges : (d.edges || '?')}</div><div class="ci-stat-lbl">Verknüpfungen</div></div>
         <div class="ci-stat"><div class="ci-stat-num">${langs.length}</div><div class="ci-stat-lbl">Sprachen</div></div>
         <div class="ci-stat"><div class="ci-stat-num">${pkgs.length}</div><div class="ci-stat-lbl">Pakete</div></div>
       </div>
@@ -702,7 +728,7 @@ async function codeIndexHistory() {
       const when = r.finished_at ? new Date(r.finished_at * 1000).toLocaleString() : '—';
       const dot = `<span class="project-sync-dot" style="background:${ok ? '#3fb950' : '#f85149'};margin-top:6px"></span>`;
       const meta = ok
-        ? `${r.nodes != null ? r.nodes : '?'} Knoten · ${r.edges != null ? r.edges : '?'} Kanten`
+        ? `${r.nodes != null ? r.nodes : '?'} Symbole · ${r.edges != null ? r.edges : '?'} Verknüpfungen`
         : `<span style="color:var(--danger)">${esc(r.error || 'Fehler')}</span>`;
       return `<div class="ci-run">
         ${dot}

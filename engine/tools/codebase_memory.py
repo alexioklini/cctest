@@ -26,6 +26,17 @@ from engine.tool_exec import _ok, _err
 
 _CLI_TIMEOUT = 90  # seconds; hard SIGKILL on overrun
 
+# Extensions cbm can extract code symbols from (the common subset of its 158
+# langs). Used only to classify a 0-symbol file as "genuine code that failed to
+# index" vs "non-source file that is never indexed by design" (.md/.yaml/…).
+_CODE_EXTS = {
+    ".py", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".rs",
+    ".java", ".kt", ".kts", ".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh",
+    ".cs", ".rb", ".php", ".swift", ".scala", ".sh", ".bash", ".zsh", ".lua",
+    ".zig", ".dart", ".m", ".mm", ".pl", ".pm", ".r", ".jl", ".ex", ".exs",
+    ".erl", ".hs", ".ml", ".mli", ".clj", ".cljs", ".vue", ".svelte", ".sql",
+}
+
 
 def _cfg() -> dict:
     import brain as _brain
@@ -146,11 +157,18 @@ def per_file_state(working_dir: str, cache_dir: str) -> dict:
     if not st.get("indexed"):
         return {"indexed": False, "files": {}}
     project = st["project"]
-    # node count per file_path
+    # Count only SYMBOL nodes per file (Function/Method/Class/…), NOT the
+    # per-file File/Module/Folder wrapper nodes — otherwise a non-code file
+    # (.md/.yaml) that only gets a File node would look "indexed" with count 1.
     cy = ("MATCH (n) WHERE n.file_path IS NOT NULL "
+          "AND NOT (n:File OR n:Module OR n:Folder OR n:Project) "
           "RETURN n.file_path AS f, count(n) AS c")
     res = _run("query_graph", {"query": cy, "project": project}, cache_dir,
                want_project=False)
+    # cbm returns file_path as repo-RELATIVE (e.g. "docs/api_reference.md"), so
+    # key counts by the normalised relpath and look them up by the file's relpath
+    # under working_dir (NOT abspath — that resolves against cwd and never
+    # matches, the bug that made every file read "not_indexed").
     counts: dict[str, int] = {}
     for row in (res or {}).get("rows", []) or []:
         # rows may be list-or-dict depending on cbm; handle both
@@ -161,7 +179,11 @@ def per_file_state(working_dir: str, cache_dir: str) -> dict:
         else:
             continue
         if f:
-            counts[os.path.abspath(str(f))] = int(c or 0)
+            try:
+                cnt = int(c)
+            except (TypeError, ValueError):
+                cnt = 0
+            counts[os.path.normpath(str(f))] = cnt
     # cbm index time ≈ the cache dir mtime (rewritten each index)
     try:
         idx_mtime = os.path.getmtime(cache_dir)
@@ -176,17 +198,22 @@ def per_file_state(working_dir: str, cache_dir: str) -> dict:
         for fn in filenames:
             fp = os.path.join(dirpath, fn)
             rel = os.path.relpath(fp, wd_abs)
-            n = counts.get(os.path.abspath(fp))
+            n = counts.get(os.path.normpath(rel))
             try:
                 fmt = os.path.getmtime(fp)
             except OSError:
                 fmt = 0
-            if n is None:
-                state = "not_indexed"
-            elif fmt > idx_mtime:
-                state = "stale"
+            is_source = os.path.splitext(fn)[1].lower() in _CODE_EXTS
+            if n:
+                # has symbols → indexed (or stale if edited after the last index)
+                state = "stale" if fmt > idx_mtime else "indexed"
+            elif not is_source:
+                # non-code file (.md/.html/.txt/.yaml/…): never indexed by design
+                state = "not_source"
             else:
-                state = "indexed"
+                # a code file with NO symbols: either empty/unparseable, or a
+                # genuine index miss (should have been indexed but wasn't)
+                state = "not_indexed"
             files[rel] = {"state": state, "nodes": n or 0}
     return {"indexed": True, "files": files, "indexed_at": idx_mtime,
             "nodes": st.get("nodes"), "edges": st.get("edges")}
