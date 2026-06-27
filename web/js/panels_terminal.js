@@ -344,6 +344,7 @@ async function terminalOpenFile(absPath) {
     <div class="editor-toolbar">
       <button class="btn-secondary ed-mode active" data-mode="render" onclick="terminalEditorMode('${id}','render')">Ansicht</button>
       <button class="btn-secondary ed-mode" data-mode="raw" onclick="terminalEditorMode('${id}','raw')">Bearbeiten</button>
+      <button class="btn-secondary" onclick="codeSymbolPalette()" title="Symbol suchen (${_isMac()?'⌘':'Strg'}+P)">Symbole</button>
       <span style="flex:1"></span>
       <button class="btn-secondary ed-save" onclick="terminalEditorSave('${id}')" disabled>Speichern</button>
       <button class="btn-secondary" onclick="terminalEditorDownload('${id}')">Herunterladen</button>
@@ -395,6 +396,11 @@ function _terminalEditorPaint(tab) {
       tab.cm = CodeMirror(cmEl, {
         value: tab.raw, mode: _cmModeFor(tab.ext), lineNumbers: true,
         lineWrapping: false, indentUnit: 4,
+        extraKeys: {
+          // index-fed autocomplete (project symbols from the cbm index)
+          'Ctrl-Space': (cm) => codeIndexComplete(cm),
+          'Cmd-Space': (cm) => codeIndexComplete(cm),
+        },
       });
       tab.cm.setSize('100%', '100%');
       tab.cm.on('change', () => {
@@ -402,6 +408,10 @@ function _terminalEditorPaint(tab) {
         const sv = tab.el.querySelector('.ed-save'); if (sv) sv.disabled = false;
         _terminalRenderTabs();
       });
+      // right-click a symbol → go-to-definition / who-calls menu
+      tab.cm.on('contextmenu', (cm, e) => _codeIndexContextMenu(cm, e, tab));
+      // hover a symbol → signature + docstring + caller count tooltip
+      _codeIndexAttachHover(tab);
     } else {
       // keep CM in sync if raw changed via save
       if (tab.cm.getValue() !== tab.raw && !tab.dirty) tab.cm.setValue(tab.raw);
@@ -537,3 +547,305 @@ function _terminalInitResize() {
     _terminalOnResize();
   });
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Code-index editor support — symbol palette, go-to-definition, who-calls,
+// autocomplete, hover. All fed by the cbm code index via the lean
+// .../code-index/symbols endpoint (?q= fuzzy search · ?def= definition+meta ·
+// ?callers= inbound callers). cbm returns ?q file paths REPO-RELATIVE, so we
+// join _term.wd to reach an absolute path for terminalOpenFile.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function _isMac() {
+  return /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+}
+
+// Query the code-index endpoint for the active code-mode project. `params` is a
+// query string (e.g. 'q=foo&limit=20'). Returns the parsed object or null.
+async function _codeIndexFetch(params) {
+  if (!_term.project) {
+    const ctx = await _terminalCtx();
+    if (!ctx) return null;
+    _term.agent = ctx.agent; _term.project = ctx.project; _term.wd = ctx.wd;
+  }
+  try {
+    return await API.get(`/v1/agents/${_term.agent}/projects/`
+      + `${encodeURIComponent(_term.project)}/code-index/symbols?${params}`);
+  } catch (e) { return null; }
+}
+
+// Join a repo-relative file path from cbm to an absolute path under working_dir.
+function _codeIndexAbs(relOrAbs) {
+  if (!relOrAbs) return '';
+  if (relOrAbs.startsWith('/')) return relOrAbs;       // already absolute
+  const wd = (_term.wd || '').replace(/\/+$/, '');
+  return wd ? `${wd}/${relOrAbs}` : relOrAbs;
+}
+
+// Open `absPath` in the editor and move the cursor to `line` (1-based), centred.
+async function _terminalJumpTo(absPath, line) {
+  if (!absPath) return;
+  await terminalOpenFile(absPath);
+  const id = 'edit-' + absPath;
+  const tab = _term.tabs.find(t => t.id === id);
+  if (!tab) return;
+  // jumping needs the CodeMirror instance → force raw (edit) mode
+  terminalEditorMode(id, 'raw');
+  const doJump = () => {
+    if (!tab.cm) { setTimeout(doJump, 40); return; }
+    const ln = Math.max(0, (parseInt(line, 10) || 1) - 1);
+    tab.cm.setCursor({ line: ln, ch: 0 });
+    // centre the target line in the viewport
+    const t = tab.cm.charCoords({ line: ln, ch: 0 }, 'local').top;
+    const h = tab.cm.getScrollInfo().clientHeight;
+    tab.cm.scrollTo(null, Math.max(0, t - h / 2));
+    tab.cm.addLineClass(ln, 'background', 'cm-jump-flash');
+    setTimeout(() => { try { tab.cm.removeLineClass(ln, 'background', 'cm-jump-flash'); } catch (_) {} }, 1200);
+    tab.cm.focus();
+  };
+  setTimeout(doJump, 60);
+}
+
+// ─── Symbol palette (Cmd/Ctrl-P) ─────────────────────────────────────────────
+let _codePaletteDebounce = null;
+
+function codeSymbolPalette() {
+  if (document.getElementById('code-palette')) return;  // already open
+  const ov = document.createElement('div');
+  ov.id = 'code-palette';
+  ov.className = 'code-palette-overlay';
+  ov.innerHTML = `
+    <div class="code-palette" onclick="event.stopPropagation()">
+      <input id="code-palette-input" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Symbol suchen (Funktion, Methode, Klasse) …">
+      <div id="code-palette-results" class="code-palette-results">
+        <div class="code-palette-hint">Tippen, um Projekt-Symbole zu durchsuchen.</div>
+      </div>
+    </div>`;
+  ov.addEventListener('click', codeSymbolPaletteClose);
+  document.body.appendChild(ov);
+  const input = document.getElementById('code-palette-input');
+  input.addEventListener('input', () => {
+    clearTimeout(_codePaletteDebounce);
+    _codePaletteDebounce = setTimeout(() => _codePaletteSearch(input.value), 160);
+  });
+  input.addEventListener('keydown', _codePaletteKeydown);
+  input.focus();
+}
+
+function codeSymbolPaletteClose() {
+  const ov = document.getElementById('code-palette');
+  if (ov) ov.remove();
+}
+
+async function _codePaletteSearch(q) {
+  const box = document.getElementById('code-palette-results');
+  if (!box) return;
+  q = (q || '').trim();
+  if (!q) { box.innerHTML = '<div class="code-palette-hint">Tippen, um Projekt-Symbole zu durchsuchen.</div>'; return; }
+  box.innerHTML = '<div class="code-palette-hint">Suche …</div>';
+  const d = await _codeIndexFetch(`q=${encodeURIComponent(q)}&limit=40`);
+  // the box may have been replaced by a newer query; only paint if still ours
+  const cur = document.getElementById('code-palette-input');
+  if (!cur || cur.value.trim() !== q) return;
+  if (!d || d.error) { box.innerHTML = `<div class="code-palette-hint">${esc((d && d.error) || 'Index nicht verfügbar')}</div>`; return; }
+  const syms = d.symbols || [];
+  if (!syms.length) { box.innerHTML = '<div class="code-palette-hint">Keine Treffer.</div>'; return; }
+  box.innerHTML = syms.map((s, i) => `
+    <div class="code-palette-row${i === 0 ? ' active' : ''}" data-idx="${i}"
+         onclick="_codePalettePick(${i})">
+      <span class="cp-label cp-${esc((s.label || '').toLowerCase())}">${esc(s.label || '')}</span>
+      <span class="cp-name">${esc(s.name || '')}</span>
+      <span class="cp-loc">${esc(s.file || '')}${s.line ? ':' + s.line : ''}</span>
+    </div>`).join('');
+  _codePaletteSyms = syms;
+}
+
+let _codePaletteSyms = [];
+
+function _codePaletteKeydown(e) {
+  const rows = Array.from(document.querySelectorAll('.code-palette-row'));
+  if (e.key === 'Escape') { codeSymbolPaletteClose(); return; }
+  if (!rows.length) return;
+  let idx = rows.findIndex(r => r.classList.contains('active'));
+  if (e.key === 'ArrowDown') { e.preventDefault(); idx = Math.min(rows.length - 1, idx + 1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); idx = Math.max(0, idx - 1); }
+  else if (e.key === 'Enter') { e.preventDefault(); _codePalettePick(idx < 0 ? 0 : idx); return; }
+  else return;
+  rows.forEach(r => r.classList.remove('active'));
+  rows[idx].classList.add('active');
+  rows[idx].scrollIntoView({ block: 'nearest' });
+}
+
+function _codePalettePick(idx) {
+  const s = _codePaletteSyms[idx];
+  if (!s) return;
+  codeSymbolPaletteClose();
+  _terminalJumpTo(_codeIndexAbs(s.file), s.line);
+}
+
+// ─── Index-fed autocomplete (CodeMirror show-hint) ───────────────────────────
+async function codeIndexComplete(cm) {
+  if (!cm || typeof cm.showHint !== 'function') return;
+  const cur = cm.getCursor();
+  const token = cm.getTokenAt(cur);
+  const word = (token.string || '').trim();
+  if (word.length < 2) return;   // need a couple chars to query the index
+  const d = await _codeIndexFetch(`q=${encodeURIComponent(word)}&limit=25`);
+  const syms = (d && d.symbols) || [];
+  // dedup by name, keep the symbol so we can show its kind
+  const seen = new Set();
+  const list = [];
+  for (const s of syms) {
+    if (!s.name || seen.has(s.name)) continue;
+    seen.add(s.name);
+    list.push({ text: s.name, displayText: `${s.name}  ·  ${s.label || ''}` });
+  }
+  if (!list.length) return;
+  const from = { line: cur.line, ch: token.start };
+  const to = { line: cur.line, ch: token.end };
+  cm.showHint({
+    hint: () => ({ list, from, to }),
+    completeSingle: false,
+  });
+}
+
+// ─── Right-click: go-to-definition / who-calls ───────────────────────────────
+function _wordAt(cm, pos) {
+  const token = cm.getTokenAt(pos);
+  let w = (token.string || '').trim();
+  if (!/^[A-Za-z_]\w*$/.test(w)) {
+    // fall back to a word-range probe (handles punctuation tokens)
+    const wr = cm.findWordAt(pos);
+    w = cm.getRange(wr.anchor, wr.head).trim();
+  }
+  return /^[A-Za-z_]\w*$/.test(w) ? w : '';
+}
+
+function _codeIndexContextMenu(cm, e, tab) {
+  const pos = cm.coordsChar({ left: e.clientX, top: e.clientY });
+  const word = _wordAt(cm, pos);
+  if (!word) return;   // not on a symbol → let the native menu show
+  e.preventDefault();
+  _codeIndexCloseMenu();
+  const menu = document.createElement('div');
+  menu.id = 'code-ctx-menu';
+  menu.className = 'code-ctx-menu';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  menu.innerHTML = `
+    <div class="code-ctx-head">${esc(word)}</div>
+    <div class="code-ctx-item" onclick="codeGotoDefinition('${esc(word)}')">Gehe zu Definition</div>
+    <div class="code-ctx-item" onclick="codeWhoCalls('${esc(word)}')">Wer ruft das auf?</div>`;
+  document.body.appendChild(menu);
+  // keep the menu on-screen
+  const r = menu.getBoundingClientRect();
+  if (r.right > window.innerWidth) menu.style.left = (window.innerWidth - r.width - 8) + 'px';
+  if (r.bottom > window.innerHeight) menu.style.top = (window.innerHeight - r.height - 8) + 'px';
+  setTimeout(() => document.addEventListener('mousedown', _codeIndexCloseMenu, { once: true }), 0);
+}
+
+function _codeIndexCloseMenu() {
+  const m = document.getElementById('code-ctx-menu');
+  if (m) m.remove();
+}
+
+async function codeGotoDefinition(word) {
+  _codeIndexCloseMenu();
+  const d = await _codeIndexFetch(`def=${encodeURIComponent(word)}`);
+  if (!d || d.error || !d.file) {
+    // fall back to BM25 search → first hit
+    const s = await _codeIndexFetch(`q=${encodeURIComponent(word)}&limit=5`);
+    const hit = s && s.symbols && s.symbols.find(x => x.name === word) || (s && s.symbols && s.symbols[0]);
+    if (hit) { _terminalJumpTo(_codeIndexAbs(hit.file), hit.line); return; }
+    if (typeof showToast === 'function') showToast('Keine Definition gefunden');
+    return;
+  }
+  // ?def returns an ABSOLUTE file_path (from get_code_snippet)
+  _terminalJumpTo(d.file, d.start_line);
+}
+
+async function codeWhoCalls(word) {
+  _codeIndexCloseMenu();
+  const d = await _codeIndexFetch(`callers=${encodeURIComponent(word)}`);
+  const callers = (d && d.callers) || [];
+  _codeIndexShowCallers(word, callers);
+}
+
+// Reuse the small modal shell the code-index status uses (_codeIndexShowModal),
+// falling back to a built-in overlay if it isn't present.
+function _codeIndexShowCallers(word, callers) {
+  const rows = callers.length
+    ? callers.map(c => {
+        const qn = esc(c.qualified_name || c.name || '');
+        const nm = esc(c.name || '');
+        return `<div class="code-callers-row" onclick="codeGotoDefinition('${esc(c.name || '')}')"
+                     title="${qn}"><span class="cp-name">${nm}</span>
+                <span class="cp-loc">${esc(c.qualified_name || '')}</span></div>`;
+      }).join('')
+    : '<div class="code-palette-hint">Keine Aufrufer gefunden (oder Symbol wird nur extern aufgerufen).</div>';
+  const html = `<div class="code-callers"><div class="code-callers-head">Aufrufer von „${esc(word)}"</div>${rows}</div>`;
+  _codeIndexOverlay(html);
+}
+
+function _codeIndexOverlay(innerHtml) {
+  const ov = document.createElement('div');
+  ov.className = 'code-palette-overlay';
+  ov.innerHTML = `<div class="code-palette" onclick="event.stopPropagation()">${innerHtml}</div>`;
+  ov.addEventListener('click', () => ov.remove());
+  document.body.appendChild(ov);
+}
+
+// ─── Hover: signature + docstring + caller count ─────────────────────────────
+let _codeHoverTimer = null;
+let _codeHoverTip = null;
+
+function _codeIndexAttachHover(tab) {
+  const wrap = tab.el.querySelector('.editor-cm');
+  if (!wrap) return;
+  wrap.addEventListener('mousemove', (e) => {
+    clearTimeout(_codeHoverTimer);
+    _codeHoverTimer = setTimeout(() => _codeIndexHover(tab, e), 450);
+  });
+  wrap.addEventListener('mouseleave', _codeIndexHideHover);
+}
+
+async function _codeIndexHover(tab, e) {
+  if (!tab.cm) return;
+  const pos = tab.cm.coordsChar({ left: e.clientX, top: e.clientY });
+  const word = _wordAt(tab.cm, pos);
+  if (!word) { _codeIndexHideHover(); return; }
+  const d = await _codeIndexFetch(`def=${encodeURIComponent(word)}`);
+  if (!d || d.error || !d.name) { _codeIndexHideHover(); return; }
+  _codeIndexHideHover();
+  const sig = d.signature ? esc(d.name + d.signature) : esc(d.name);
+  const doc = d.docstring ? `<div class="code-hover-doc">${esc(String(d.docstring).replace(/^["']+|["']+$/g, '').slice(0, 280))}</div>` : '';
+  const meta = `<div class="code-hover-meta">${esc(d.label || '')}`
+    + (typeof d.callers === 'number' ? ` · ${d.callers} Aufrufer` : '')
+    + (typeof d.callees === 'number' ? ` · ${d.callees} Aufrufe` : '') + '</div>';
+  const tip = document.createElement('div');
+  tip.className = 'code-hover-tip';
+  tip.innerHTML = `<div class="code-hover-sig">${sig}</div>${meta}${doc}`;
+  tip.style.left = Math.min(e.clientX + 12, window.innerWidth - 360) + 'px';
+  tip.style.top = (e.clientY + 16) + 'px';
+  document.body.appendChild(tip);
+  _codeHoverTip = tip;
+}
+
+function _codeIndexHideHover() {
+  clearTimeout(_codeHoverTimer);
+  if (_codeHoverTip) { _codeHoverTip.remove(); _codeHoverTip = null; }
+}
+
+// Global Cmd/Ctrl-P → symbol palette, but only in code-mode (and not while a
+// text input / the palette itself has focus, so it doesn't hijack normal typing).
+document.addEventListener('keydown', (e) => {
+  const isP = (e.key === 'p' || e.key === 'P');
+  if (!isP || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+  if (typeof terminalAvailable === 'function' && !terminalAvailable()) return;
+  const t = e.target;
+  if (t && (t.id === 'code-palette-input')) return;
+  // allow it to override the browser print dialog in code-mode
+  e.preventDefault();
+  codeSymbolPalette();
+});

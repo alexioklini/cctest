@@ -866,6 +866,47 @@ class ProjectsHandlerMixin:
             runs = []
         self._send_json({"agent": agent_id, "project": proj_name, "runs": runs})
 
+    def _handle_code_index_symbols(self, path: str):
+        """GET .../code-index/symbols — editor-support lookups over the code
+        index, dispatched by query param:
+          ?q=<text>          → fuzzy symbol search (BM25): name/label/file/line
+                               (symbol palette + autocomplete)
+          ?callers=<symbol>  → inbound callers of a symbol (who-calls)
+          ?def=<symbol>      → definition + signature/docstring/caller counts
+                               (go-to-definition + hover)
+        file paths from ?q are repo-RELATIVE; the frontend joins working_dir.
+        Code-mode projects only."""
+        from urllib.parse import urlparse, parse_qs
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        cache = self._code_cache_dir(agent_id, proj_name, project)
+        qs = parse_qs(urlparse(self.path).query)
+        q = (qs.get("q", [""])[0] or "").strip()
+        callers = (qs.get("callers", [""])[0] or "").strip()
+        defn = (qs.get("def", [""])[0] or "").strip()
+        try:
+            limit = int(qs.get("limit", ["30"])[0])
+        except (TypeError, ValueError):
+            limit = 30
+        try:
+            if defn:
+                out = engine.cbm_code_def(defn, cache)
+            elif callers:
+                out = engine.cbm_code_callers(callers, cache)
+            else:
+                out = engine.cbm_code_symbols(q, cache, limit=limit)
+        except Exception as e:
+            out = {"error": str(e)}
+        self._send_json({"agent": agent_id, "project": proj_name,
+                         "working_dir": (project.get("working_dir") or "").strip(),
+                         **out})
+
     def _handle_code_index_graph(self, path: str):
         """GET /v1/agents/{id}/projects/{name}/code-index/graph — architecture /
         graph-view payload for the code index."""

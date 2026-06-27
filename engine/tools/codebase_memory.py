@@ -219,6 +219,96 @@ def per_file_state(working_dir: str, cache_dir: str) -> dict:
             "nodes": st.get("nodes"), "edges": st.get("edges")}
 
 
+# ─── Editor support: symbol search / callers / definition (for the UI) ───────
+# These feed the in-editor features (symbol palette, go-to-def, who-calls,
+# autocomplete, hover) via the .../code-index/symbols endpoint. They reuse the
+# cbm CLI but shape the payload for the frontend: BM25 `query` mode is the only
+# search mode that returns start_line/end_line per result (name_pattern returns
+# null lines), so jump-to-definition is built on it. file_path comes back
+# repo-RELATIVE — the frontend joins it to working_dir for terminalOpenFile.
+_SYMBOL_LABELS = {"Function", "Method", "Class", "Variable", "Decorator",
+                  "Interface", "Struct", "Enum", "Trait", "Constant", "Field"}
+
+
+def code_symbols(query: str, cache_dir: str, limit: int = 30) -> dict:
+    """Fuzzy symbol search for the palette/autocomplete. BM25 over the index;
+    returns code symbols only (drops File/Module/Folder/Project/Section wrapper
+    nodes), each with file_path (repo-relative) + start_line for jumping."""
+    q = (query or "").strip()
+    if not q:
+        return {"symbols": []}
+    d = _run("search_graph", {"query": q, "limit": max(1, min(int(limit or 30), 100))},
+             cache_dir)
+    if d.get("error"):
+        return {"error": d["error"], "symbols": []}
+    out = []
+    for r in d.get("results", []) or []:
+        if r.get("label") not in _SYMBOL_LABELS:
+            continue
+        out.append({
+            "name": r.get("name"),
+            "label": r.get("label"),
+            "qualified_name": r.get("qualified_name"),
+            "file": r.get("file_path"),          # repo-relative
+            "line": r.get("start_line"),
+            "end_line": r.get("end_line"),
+        })
+    return {"symbols": out}
+
+
+def code_callers(qualified_or_name: str, cache_dir: str) -> dict:
+    """Inbound callers of a symbol (who-calls), each with file_path + line so
+    the editor can jump. Accepts a bare name or qualified name."""
+    fn = (qualified_or_name or "").strip()
+    if not fn:
+        return {"callers": []}
+    # trace_path keys on the bare function name; strip any qualifier
+    bare = fn.split(".")[-1]
+    d = _run("trace_path", {"function_name": bare, "direction": "inbound",
+                            "mode": "calls"}, cache_dir)
+    if d.get("error"):
+        return {"error": d["error"], "callers": []}
+    out = []
+    for c in d.get("callers", []) or []:
+        if isinstance(c, dict):
+            out.append({"name": c.get("name") or c.get("function"),
+                        "qualified_name": c.get("qualified_name"),
+                        "file": c.get("file_path"), "line": c.get("start_line")})
+        elif isinstance(c, str):
+            out.append({"name": c})
+    return {"callers": out, "function": bare}
+
+
+def code_def(qualified_or_name: str, cache_dir: str) -> dict:
+    """Definition + metadata for a symbol (go-to-def + hover): absolute
+    file_path, line range, signature, docstring, caller/callee counts. Resolves
+    a bare name to its qualified name via BM25 first when needed."""
+    qn = (qualified_or_name or "").strip()
+    if not qn:
+        return {"error": "no symbol"}
+    # get_code_snippet needs the qualified_name; if a bare name was given,
+    # resolve the best match via BM25 search first.
+    if "." not in qn:
+        s = code_symbols(qn, cache_dir, limit=10)
+        cand = next((x for x in s.get("symbols", []) if x.get("name") == qn), None)
+        cand = cand or (s.get("symbols") or [None])[0]
+        if cand and cand.get("qualified_name"):
+            qn = cand["qualified_name"]
+    d = _run("get_code_snippet", {"qualified_name": qn}, _tenant_cache_dir()
+             if cache_dir is None else cache_dir, want_project=True)
+    if d.get("error"):
+        return {"error": d["error"]}
+    return {
+        "name": d.get("name"), "qualified_name": d.get("qualified_name"),
+        "label": d.get("label"), "file": d.get("file_path"),  # absolute here
+        "start_line": d.get("start_line"), "end_line": d.get("end_line"),
+        "signature": d.get("signature"), "docstring": d.get("docstring"),
+        "callers": d.get("callers"), "callees": d.get("callees"),
+        "complexity": d.get("complexity"), "is_test": d.get("is_test"),
+        "source": d.get("source"),
+    }
+
+
 def graph_overview(cache_dir: str, limit: int = 200) -> dict:
     """Lightweight graph-view payload: top nodes by degree + their edges, for a
     project graph visualisation. Best-effort."""

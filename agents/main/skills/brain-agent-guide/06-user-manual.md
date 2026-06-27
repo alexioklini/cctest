@@ -399,6 +399,21 @@ Fehler). Der **Datei-Baum des Arbeitsverzeichnisses** darunter aktualisiert sich
 während `init` oder einer Chat-Antwort) — kein manuelles Neuladen nötig (der
 ⟳-Knopf bleibt für eine sofortige Aktualisierung).
 
+**Code-Index im Editor nutzen** (Code-Projekte): Der Code-Editor im unteren
+Bereich kennt alle Symbole des Projekts (aus dem automatisch gepflegten
+Code-Index) und macht sie direkt nutzbar:
+- **Symbol-Schnellsuche**: **Cmd/Strg+P** (oder der Knopf **Symbole** in der
+  Editor-Leiste) öffnet eine Suchleiste über alle Funktionen, Methoden und
+  Klassen. Tippen filtert live; mit **↑/↓** wählen, **Enter** oder Klick öffnet
+  die Datei und springt an die Definition (die Zeile blinkt kurz auf).
+- **Rechtsklick auf ein Symbol** im Editor: **Gehe zu Definition** (springt zur
+  Fundstelle) und **Wer ruft das auf?** (zeigt die aufrufenden Stellen als
+  klickbare Liste).
+- **Autovervollständigung**: **Strg-/Cmd-Leertaste** schlägt passende
+  Projekt-Symbole vor (rein aus dem Index, kein KI-Lauf, keine Wartezeit).
+- **Hover**: Mit der Maus über ein Symbol fahren zeigt dessen Signatur,
+  Beschreibung (Docstring) und wie oft es aufgerufen wird.
+
 **Projekt-Anweisungen + Begleitdateien**: Über **Anweisungen bearbeiten**
 öffnet sich ein Dialog mit dem Freitext-Feld (Hinweise, an die sich das
 Projekt in jeder Antwort hält — Tonfall, Sprache, Formatvorgaben; Markdown +

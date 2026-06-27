@@ -547,6 +547,65 @@ textarea { resize: none; }
 .editor-cm .CodeMirror { height: 100%; font-size: 13px; font-family: var(--font-mono); }
 .editor-pre { margin: 0; padding: 10px 12px; font-size: 12px; line-height: 1.5;
   font-family: var(--font-mono); white-space: pre; }
+/* ── Code-index editor support (symbol palette, go-to-def, hover) ─────────── */
+/* line-flash after a jump-to-symbol */
+.CodeMirror .cm-jump-flash { background: rgba(255, 213, 79, .28);
+  transition: background .9s ease-out; }
+/* Symbol palette (Cmd-P) + callers overlay */
+.code-palette-overlay { position: fixed; inset: 0; z-index: 10000;
+  background: rgba(0,0,0,.4); display: flex; align-items: flex-start;
+  justify-content: center; padding-top: 12vh; }
+.code-palette { width: min(640px, 90vw); background: var(--bg-000);
+  border: 1px solid var(--border-100); border-radius: 8px;
+  box-shadow: 0 12px 48px rgba(0,0,0,.45); overflow: hidden;
+  display: flex; flex-direction: column; max-height: 64vh; }
+#code-palette-input { border: 0; outline: 0; padding: 12px 14px; font-size: 15px;
+  background: var(--bg-000); color: var(--text-100);
+  border-bottom: 1px solid var(--border-100); font-family: var(--font-mono); }
+.code-palette-results { overflow-y: auto; }
+.code-palette-hint { padding: 14px; color: var(--text-300); font-size: 13px; }
+.code-palette-row { display: flex; align-items: baseline; gap: 8px;
+  padding: 7px 12px; cursor: pointer; font-size: 13px; }
+.code-palette-row.active, .code-palette-row:hover { background: var(--bg-200); }
+.cp-label { flex: 0 0 auto; font-size: 10px; text-transform: uppercase;
+  letter-spacing: .04em; padding: 1px 6px; border-radius: 4px;
+  background: var(--bg-300); color: var(--text-200); }
+.cp-method, .cp-function { background: #3b5; color: #fff; }
+.cp-class, .cp-struct, .cp-interface, .cp-enum { background: #58f; color: #fff; }
+.cp-variable, .cp-constant, .cp-field { background: #b85; color: #fff; }
+.cp-name { flex: 0 0 auto; font-family: var(--font-mono); color: var(--text-100);
+  font-weight: 600; }
+.cp-loc { flex: 1 1 auto; text-align: right; color: var(--text-300);
+  font-size: 12px; font-family: var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-callers-head, .code-callers-head { padding: 12px 14px 6px; font-weight: 700;
+  color: var(--text-100); }
+.code-callers-row { display: flex; gap: 10px; padding: 7px 14px; cursor: pointer;
+  font-size: 13px; }
+.code-callers-row:hover { background: var(--bg-200); }
+/* Right-click context menu (go-to-def / who-calls) */
+.code-ctx-menu { position: fixed; z-index: 10001; background: var(--bg-000);
+  border: 1px solid var(--border-100); border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.35); padding: 4px; min-width: 200px;
+  font-size: 13px; }
+.code-ctx-head { padding: 4px 10px 6px; color: var(--text-300); font-size: 11px;
+  font-family: var(--font-mono); border-bottom: 1px solid var(--border-100);
+  margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; }
+.code-ctx-item { padding: 6px 10px; border-radius: 4px; cursor: pointer; }
+.code-ctx-item:hover { background: var(--bg-200); }
+/* Hover tooltip (signature + docstring + caller count) */
+.code-hover-tip { position: fixed; z-index: 10001; max-width: 360px;
+  background: var(--bg-000); border: 1px solid var(--border-100);
+  border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.35);
+  padding: 8px 10px; font-size: 12px; pointer-events: none; }
+.code-hover-sig { font-family: var(--font-mono); color: var(--text-100);
+  font-weight: 600; white-space: pre-wrap; }
+.code-hover-meta { color: var(--text-300); font-size: 11px; margin-top: 3px; }
+.code-hover-doc { color: var(--text-200); margin-top: 6px; line-height: 1.4;
+  border-top: 1px solid var(--border-100); padding-top: 6px; white-space: pre-wrap; }
+/* show-hint addon: match the dark editor */
+.CodeMirror-hints { z-index: 10002; font-family: var(--font-mono);
+  font-size: 12px; }
 /* Tab right-click bulk-close menu. */
 .terminal-tab-menu { position: fixed; z-index: 9999; background: var(--bg-000);
   border: 1px solid var(--border-100); border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.3);

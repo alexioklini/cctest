@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.219.0",
+        "date": "2026-06-27",
+        "title": "Code-Editor: Symbole finden und verstehen",
+        "body": "Der Code-Editor kennt jetzt alle Symbole Ihres Projekts und macht sie "
+                "direkt nutzbar. Mit Cmd/Strg+P (oder dem Knopf „Symbole“) öffnen Sie "
+                "eine Schnellsuche über alle Funktionen, Methoden und Klassen und "
+                "springen mit einem Klick an die richtige Stelle. Ein Rechtsklick auf "
+                "ein Symbol bietet „Gehe zu Definition“ und „Wer ruft das auf?“. Beim "
+                "Tippen schlägt der Editor passende Symbole vor (Strg-/Cmd-Leertaste), "
+                "und wenn Sie mit der Maus über ein Symbol fahren, sehen Sie dessen "
+                "Signatur, Beschreibung und wie oft es aufgerufen wird — alles aus dem "
+                "Code-Index, ohne Wartezeit.",
+        "audience": "user",
+        "versions": ["9.219.0"],
+    },
+    {
         "version": "9.218.0",
         "date": "2026-06-27",
         "title": "Code-Projekte: integrierter Code-Editor",
