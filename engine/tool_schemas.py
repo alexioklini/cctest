@@ -1111,83 +1111,82 @@ TOOL_DEFINITIONS = [
         },
     },
     {
-        "name": "code_graph_build",
+        "name": "code_search",
         "description": (
-            "Build or rebuild the code structure graph for a directory. Parses source files "
-            "using Tree-sitter AST parsing to extract functions, classes, imports, and call "
-            "relationships. Supports Python, JavaScript, TypeScript, Go, Rust, Java, and more. "
-            "Use incremental=true (default) to only re-parse changed files."
+            "Search the code knowledge graph to FIND code — use this INSTEAD OF grep/glob "
+            "for discovering functions, classes, and routes in a large codebase. Three modes "
+            "(combine as needed): (1) query='natural language or keywords' — BM25 full-text "
+            "ranking with camelCase splitting, best for natural-language discovery; "
+            "(2) name_pattern='.*regex.*' — match symbol names; (3) semantic_query=['kw1','kw2'] "
+            "— embedding (vector) search, MUST be an array of keywords; results that score well "
+            "on ALL keywords rank highest, so keep the keyword set tight and on-topic. "
+            "Optional label ('Function'/'Method'/'Class') and limit. When you don't know the "
+            "symbol's name, start with query (BM25) or semantic_query."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Directory to parse (absolute path)"},
-                "incremental": {"type": "boolean", "description": "Only re-parse changed files (default: true)"},
-            },
-            "required": ["path"],
-        },
-    },
-    {
-        "name": "code_graph_query",
-        "description": (
-            "Query the code structure graph for structural relationships. Find callers/callees "
-            "of a function, imports, inheritance, test coverage, and more. Build the graph first "
-            "with code_graph_build."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query_type": {
-                    "type": "string",
-                    "enum": ["callers_of", "callees_of", "imports_of", "importers_of",
-                             "tests_for", "inheritors_of", "children_of", "file_summary"],
-                    "description": "Type of structural query",
-                },
-                "target": {"type": "string", "description": "Qualified name or function/class name to query"},
-                "limit": {"type": "integer", "description": "Max results (default: 20)"},
-            },
-            "required": ["query_type", "target"],
-        },
-    },
-    {
-        "name": "code_graph_impact",
-        "description": (
-            "Blast-radius analysis: given a list of changed files, find all functions, classes, "
-            "and files that could be affected. Uses BFS traversal of the code graph. "
-            "Build the graph first with code_graph_build."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "files": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of changed file paths",
-                },
-                "depth": {"type": "integer", "description": "Max traversal depth (default: 2)"},
-            },
-            "required": ["files"],
-        },
-    },
-    {
-        "name": "code_graph_enhance",
-        "description": (
-            "Enhance the code graph with LLM-generated summaries, architecture layer classification, "
-            "and a guided tour. Actions: 'all' (default), 'summaries' (LLM descriptions per function/class), "
-            "'layers' (classify as api/service/data/ui/util/test), 'tour' (dependency-ordered walkthrough)."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["all", "summaries", "layers", "tour"],
-                    "description": "What to generate (default: all)",
-                },
-                "batch_size": {"type": "integer", "description": "Max files to summarize per run (default: 20)"},
-                "root_dir": {"type": "string", "description": "Root directory for tour (default: last build dir)"},
+                "query": {"type": "string", "description": "Natural-language / keyword BM25 search"},
+                "name_pattern": {"type": "string", "description": "Regex over symbol names"},
+                "semantic_query": {"type": "array", "items": {"type": "string"},
+                                   "description": "Array of keywords for embedding search (NOT a single string)"},
+                "label": {"type": "string", "description": "Filter by node label: Function, Method, Class"},
+                "limit": {"type": "integer", "description": "Max results (default 200)"},
             },
             "required": [],
+        },
+    },
+    {
+        "name": "code_trace",
+        "description": (
+            "Trace call relationships through the code graph — find CALLERS or CALLEES of a "
+            "function/method. Use INSTEAD OF grep for 'who calls X' / 'what does X call' / "
+            "impact analysis. direction: 'inbound' (callers, default), 'outbound' (callees), "
+            "or 'both'. mode: 'calls' (default) or 'data_flow'. depth optional."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "function_name": {"type": "string", "description": "Function/method name (or qualified name)"},
+                "direction": {"type": "string", "enum": ["inbound", "outbound", "both"],
+                              "description": "inbound=callers (default), outbound=callees"},
+                "mode": {"type": "string", "enum": ["calls", "data_flow"],
+                         "description": "calls (default) follows CALLS edges"},
+                "depth": {"type": "integer", "description": "Max hops (default 1)"},
+            },
+            "required": ["function_name"],
+        },
+    },
+    {
+        "name": "code_query",
+        "description": (
+            "Run a read-only Cypher query over the code knowledge graph for complex/multi-hop "
+            "structural questions BM25/trace can't express. Node labels: Function, Method, Class, "
+            "Variable, File, Module, Route. Edge types include CALLS, IMPORTS, INHERITS. "
+            "Example: MATCH (c)-[:CALLS]->(f:Method) WHERE f.name='start' RETURN c.name, c.file_path"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Cypher query (read-only; MATCH/WHERE/RETURN)"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "code_snippet",
+        "description": (
+            "Read the source code for a function/class/symbol from the code graph. Pass the "
+            "qualified_name from a code_search result (or a short symbol name). "
+            "include_neighbors=true also returns directly related symbols."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "qualified_name": {"type": "string", "description": "Qualified name (from code_search) or short name"},
+                "include_neighbors": {"type": "boolean", "description": "Also return related symbols"},
+            },
+            "required": ["qualified_name"],
         },
     },
     {

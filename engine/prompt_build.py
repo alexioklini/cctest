@@ -331,15 +331,22 @@ def _build_system_prompt(include_memory_summary: bool = True,
                     f"directory:\n  {_code_wd}\n"
                     "Read, edit, create, and run files THERE (it is your working "
                     "directory — relative paths resolve to it; execute_command and "
-                    "python_exec run there). Use read_file/list/grep/glob to "
-                    "explore the tree and its subdirectories for information; do "
-                    "NOT call mempalace_query (it is disabled for this project). "
+                    "python_exec run there). Do NOT call mempalace_query (it is "
+                    "disabled for this project). "
                     "Write outputs into the working directory with relative paths, "
                     "not into a separate artifact folder.\n"
+                    "CODE INDEX: this project has an auto-updated code index — use "
+                    "code_search (find code by name/keyword/meaning), code_trace "
+                    "(callers/callees), code_query (Cypher), code_snippet (read a "
+                    "symbol) to answer ANY structural question (where is X, who "
+                    "calls Y, what's in file Z). The index is the FRESH source of "
+                    "truth for structure — prefer it over grep and over BRAIN.md "
+                    "for anything about files/functions/relationships.\n"
                 )
-                # BRAIN.md (if present at the working-dir root) IS the project
-                # memory in code mode: plain markdown, never mined. Injected
-                # verbatim so the model has the repo summary up front.
+                # BRAIN.md (if present at the working-dir root) holds DURABLE,
+                # non-derivable project knowledge (purpose, conventions, how to
+                # build/run) — NOT structure, which the auto-updated code index
+                # owns freshly. Plain markdown, never mined. Injected verbatim.
                 _brain_md = os.path.join(_code_wd, "BRAIN.md")
                 if os.path.isfile(_brain_md):
                     try:
@@ -349,17 +356,20 @@ def _build_system_prompt(include_memory_summary: bool = True,
                         _bmd = ""
                     if _bmd:
                         system_instruction += (
-                            "\nPROJECT MEMORY (BRAIN.md — the working directory's "
-                            "summary; treat as authoritative project context):\n"
+                            "\nPROJECT MEMORY (BRAIN.md — durable project context: "
+                            "purpose, conventions, how to build/run. For anything "
+                            "structural — files, functions, callers — use the code "
+                            "index tools, which are fresher than this file):\n"
                             f"{_bmd}\n\n"
                         )
                 else:
                     system_instruction += (
                         "No BRAIN.md exists yet in the working directory. If the "
-                        "user asks to 'init' (or to summarise/index the project), "
-                        "explore the working directory and write a BRAIN.md at its "
-                        "root summarising structure, key files, and how to work in "
-                        "it.\n\n"
+                        "user asks to 'init' (or to summarise the project), explore "
+                        "the working directory and write a BRAIN.md at its root with "
+                        "DURABLE knowledge only — purpose, conventions, how to "
+                        "build/run — NOT a file/function inventory (the code index "
+                        "owns structure and stays fresh).\n\n"
                     )
                 # Owner instructions still apply in code mode.
                 _ci = (proj_cfg.get("instructions") or "").strip()

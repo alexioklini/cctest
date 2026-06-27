@@ -27,21 +27,31 @@ import brain as _brain  # noqa: E402  (safe: code_init isn't imported at brain i
 
 
 _INIT_PROMPT = (
-    "Erkunde das aktuelle Arbeitsverzeichnis (dein cwd) und erstelle eine "
-    "Zusammenfassung als BRAIN.md im Wurzelverzeichnis.\n\n"
-    "Vorgehen:\n"
-    "1. Verschaffe dir mit list/glob/grep einen Überblick über die Struktur "
-    "(Verzeichnisse, Hauptdateien, Sprache/Framework).\n"
-    "2. Lies die aussagekräftigen Dateien — README, package.json/pyproject/"
-    "Cargo.toml o.ä., zentrale Konfigs, die wichtigsten Einstiegspunkte und ein "
-    "paar repräsentative Quelldateien. Du musst NICHT jede Datei lesen.\n"
-    "3. Schreibe BRAIN.md (write_file, relativer Pfad 'BRAIN.md') mit: kurzer "
-    "Projektzweck, Tech-Stack, Verzeichnis-/Architekturübersicht, wichtige "
-    "Dateien + wofür sie da sind, wie man baut/testet/startet (falls erkennbar), "
-    "und projektspezifische Konventionen/Invarianten, die man kennen muss.\n"
-    "Halte es prägnant und nützlich — es dient künftigen Turns als "
-    "Projektgedächtnis (analog CLAUDE.md). Wenn schon eine BRAIN.md existiert, "
-    "aktualisiere sie. Antworte am Ende nur mit einer kurzen Bestätigung."
+    "Erkunde das aktuelle Arbeitsverzeichnis (dein cwd) und schreibe eine "
+    "knappe BRAIN.md im Wurzelverzeichnis.\n\n"
+    "WICHTIG — Arbeitsteilung mit dem Code-Index: Dieses Projekt hat einen "
+    "automatisch aktualisierten Code-Index (Werkzeuge code_search/code_trace/"
+    "code_query/code_snippet). Der Index ist die FRISCHE Quelle der Wahrheit für "
+    "ALLES Strukturelle: welche Dateien/Funktionen/Klassen es gibt, was eine "
+    "Datei enthält, wer was aufruft, Importe, Vererbung. BRAIN.md wird nur einmal "
+    "geschrieben und veraltet — DUPLIZIERE daher NICHTS, was der Index liefert.\n\n"
+    "BRAIN.md enthält AUSSCHLIESSLICH dauerhaftes, NICHT aus dem Code ableitbares "
+    "Wissen:\n"
+    "- Wozu das Projekt dient (Zweck, Domäne, Ziele).\n"
+    "- Tech-Stack/Framework in einem Satz (nicht als Dateiliste).\n"
+    "- Wie man baut/testet/startet (Befehle, Einstiegspunkte NACH ABSICHT, z.B. "
+    "'API startet in …').\n"
+    "- Projektspezifische Konventionen, Invarianten, Stolperfallen, 'mach X nicht' "
+    "— also Urteils-/Erfahrungswissen, das nirgends im AST steht.\n\n"
+    "VERBOTEN in BRAIN.md (das macht der Index, frisch): Datei-Inventare, "
+    "Verzeichnisbäume, Auflistungen von Funktionen/Klassen pro Datei, 'Datei X "
+    "enthält a/b/c', Aufruf-/Abhängigkeitsgraphen. Verweise stattdessen auf die "
+    "Code-Werkzeuge ('für Struktur/Aufrufer: code_search/code_trace nutzen').\n\n"
+    "Vorgehen: mit list/glob/grep + README/package.json/pyproject o.ä. den ZWECK "
+    "und die KONVENTIONEN erfassen (du musst nicht jede Datei lesen), dann "
+    "BRAIN.md schreiben (write_file, relativer Pfad 'BRAIN.md'). Existiert schon "
+    "eine, aktualisiere sie. Halte es prägnant. Antworte am Ende nur mit einer "
+    "kurzen Bestätigung."
 )
 
 # Per-(agent,project) run state so the UI can show progress + cancel. One entry
@@ -176,6 +186,21 @@ def _worker(agent_id: str, project_name: str, working_dir: str,
         if err:
             _finish(key, "error", err)
         else:
+            # Init wrote BRAIN.md → build the code-intelligence index for this
+            # project now (the BRAIN.md-write trigger). Tenant cache lives under
+            # the project dir; same path apply_domain_context points the code_*
+            # tools at. Best-effort — index failure must not fail init.
+            try:
+                import os as _os
+                _pcfg = (_brain.ProjectManager(agent_id).get_project(project_name) or {})
+                _wd = (_pcfg.get("working_dir") or "").strip()
+                _pdir = _pcfg.get("dir") or _brain.ProjectManager._project_dir(agent_id, project_name)
+                if _wd and _os.path.isdir(_wd):
+                    _cache = _os.path.join(_pdir, ".cbm-cache")
+                    _brain.cbm_index_repository(_wd, cache_dir=_cache)
+            except Exception as _e:
+                print(f"[code-init] {agent_id}/{project_name}: index after BRAIN.md "
+                      f"failed: {type(_e).__name__}: {_e}", flush=True)
             _finish(key, "done")
     except Exception as e:
         print(f"[code-init] {agent_id}/{project_name} failed: "

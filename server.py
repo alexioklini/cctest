@@ -3581,6 +3581,7 @@ def main():
     server_config["sidecar"] = file_config.get("sidecar", {}) or {}
     server_config["searxng"] = file_config.get("searxng", {}) or {}
     server_config["crawl4ai"] = file_config.get("crawl4ai", {}) or {}
+    server_config["codebase_memory"] = file_config.get("codebase_memory", {}) or {}
     # warmup block was never loaded from config.json — every wcfg.get(...) in the
     # keeper + WarmSessionPool fell back to code defaults, so config.json →
     # warmup (interval, pool_depth, allow_cloud, …) was dead. Load it.
@@ -4326,6 +4327,13 @@ def main():
 
     threading.Thread(target=server_daemons._project_sync_loop, args=(_srv,),
                      daemon=True, name="mempalace-project-sync").start()
+
+    # Code-index sync daemon: keeps each code-mode project's codebase-memory
+    # index fresh by polling its working_dir fingerprint and re-indexing on
+    # change (debounced). Replaces the per-write CodeGraph update; also drains
+    # manual Refresh / clean-rebuild requests from the project UI.
+    threading.Thread(target=server_daemons._code_index_sync_loop, args=(_srv,),
+                     daemon=True, name="code-index-sync").start()
 
     # Per-user profile maintainer daemon (worker logic is at module level so
     # both the daemon and the /v1/auth/profile-doc/update-now HTTP handler

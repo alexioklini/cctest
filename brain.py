@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.213.3"
+VERSION = "9.214.0"
 VERSION_DATE = "2026-06-27"
 CHANGELOG = [
+    ("9.214.0", "2026-06-27", "feat(code-intelligence): der in-tree CodeGraph (Tree-sitter, engine/code_graph.py) wird durch die brain-verwaltete codebase-memory-mcp-Engine ersetzt — Phase A (Backend-Cutover). HINTERGRUND (vom Nutzer angestossen + eval-belegt): fuer PRODUKTIVE Code-Mode-Projekte in cctest-Groesse (~159k LOC) konnte der alte CodeGraph Code nicht ENTDECKEN — er hat keine Volltext-/semantische Suche, nur Struktur-Queries nach bekanntem Namen. In der agentischen E2E-Eval (eval/codegraph_e2e.py, 4 Modelle × 3 Reps) scheiterte der alte CodeGraph bei BEIDEN Entdeckungs-Aufgaben mit 0/3 ueber ALLE Modelle (das Modell ruderte 14-19 Tool-Calls und gab auf); codebase-memory-mcp + gemma-4-12B erreichte PERFEKTE 3/3/3 in 1-2 Calls (bestes Ergebnis ueberhaupt, schlaegt Cloud). Vollanalyse in memory project_codegraph_replacement_eval. INTEGRATION wie MemPalace (NICHT als MCP): die cbm-Binary (v0.8.1, darwin-arm64, .codebase-memory/bin/, gitignored) wird pro Tool-Call als CLI-Subprozess mit HARTEM Kill-Timeout aufgerufen (nur ein killbarer Subprozess begrenzt CPU). NEUE engine/tools/codebase_memory.py: Subprozess-Exec + Pro-Tenant-CBM_CACHE_DIR (aus request_context.code_graph_db, umgewidmet von Sqlite-Pfad → Cache-DIR) + 4 Agenten-Tools code_search (BM25/Regex/semantic_query), code_trace (Aufrufer/Aufgerufene), code_query (Cypher), code_snippet (Quelle lesen) + index_repository. Die 4 alten code_graph_*-Tools sind ueberall ersetzt (TOOL_DEFINITIONS, TOOL_GROUPS, TOOL_DISPATCH als Direkt-Fn-Refs, Plan-Mode-Read-Set, Helpdesk-Set fuer Brainy, Icon-/Label-Maps); engine/code_graph.py GELOESCHT; der _after_file_write-Pro-Datei-Update entfernt. PER-TENANT wie v9.210.0: globaler brain-Quell-Tenant (Miner-Daemon indiziert den frischen Klon via cbm statt cg.build) + ein Index pro Code-Mode-Projekt unter <pdir>/.cbm-cache. INDEX-LIFECYCLE: gebaut beim BRAIN.md-Schreiben (engine/code_init.py nach Init → cbm_index_repository) + frisch gehalten vom NEUEN code-index-sync-Daemon (server_daemons.py: pollt jedes Code-Mode-Arbeitsverzeichnis per mtime-Fingerprint, reindiziert bei Aenderung, entprellt — kein Git noetig; drainiert manuelle Refresh-/Clean-Rebuild-Requests fuer die Phase-B-UI). INVARIANTE: BRAIN.md darf NICHTS duplizieren, was der (auto-aktualisierte) Index liefert — _INIT_PROMPT + der Code-Mode-System-Prompt (engine/prompt_build.py) angewiesen, BRAIN.md nur fuer DAUERHAFTES Wissen (Zweck/Konventionen/Build) zu nutzen und fuer ALLES Strukturelle die Code-Tools (frischer). config.json codebase_memory{enabled,bin,cache_root} + server.py Boot-Seed. KV-sicher (Code-Mode-Prompt ist ohnehin eigener Prefix, Text pro Projekt byte-stabil). py_compile aller Module OK; 4-Site-Dispatch-Integritaet verifiziert. Lokales Code-Modell = gemma-4-12B (nicht Ornith-35B: langsamer + schlechter 3/1/0 vs gemma 3/3/3). NEUE Datei .codebase-memory/ (269MB Binary) gitignored, per-Maschine. Phase B (UI-Buttons Refresh/Clean/Graph/Sync + Pro-Datei-Index-Status) folgt. Server-Restart noetig. KEIN kuratierter Eintrag (Backend-/Architektur-Aenderung; das nutzersichtbare Code-Mode-Feature bleibt, nur die Engine darunter wechselt — Phase B bringt sichtbare Buttons)."),
     ("9.213.3", "2026-06-27", "fix(chat-ui: Denk-Anzeige + Streaming-Scroll): zwei vom Nutzer gemeldete Anzeigeprobleme im Chat. (1) DENK-BLOECKE waren kaum von Tool-Aufrufen und der finalen Antwort zu unterscheiden. Der alte Ansatz ('kursiv + blasser') war WIRKUNGSLOS — eine globale Typografie-Normalisierung am Dateiende (`* { font-style: normal !important }`, bewusste 'keine Kursivschrift'-Regel) ueberschrieb die Kursivschrift; die Code-Kommentare dazu waren veraltet. NEU: jeder Denk-Block bekommt eine linke Leiste (border-left) + ein kleines 'DENKEN'-Label (CSS ::before) + blassere Farbe — KEINE Kursivschrift (haelt die globale Regel ein, per Nutzer-Entscheid). Zusaetzlich werden AUFEINANDERFOLGENDE Denk-Runden zu EINEM Block zusammengefasst (eine Leiste, ein Label) statt einer Leiter wiederholter Labels — pro Runde entstand bisher eine eigene .msg-thinking-Zeile (an Chat c88fb466 verifiziert: 20 Bloecke → 2). web/css/main.css (.msg-thinking + ::before) + web/js/chat_render.js (neuer renderThinkingBlock, Coalescing-Schleife in renderActivity). (2) STREAMING-SCROLL: waehrend des Streamings einer mehrrundigen Antwort sprang die Ansicht ruckartig hoch/runter, und es wurde IMMER nach unten gescrollt — auch wenn der Nutzer hochgescrollt hatte, um zu lesen. NEU = Sticky-Bottom: scrollToBottom(force) scrollt bei neuen Streaming-Daten nur dann automatisch nach unten, wenn der Nutzer bereits am unteren Rand ist (≤80px, _stickToBottom-Flag via Scroll-Listener); hat er hochgescrollt, ist es ein No-Op. Echte Nutzeraktionen (Senden, Chat oeffnen, Runter-Pfeil) erzwingen das Scrollen (force=true) und stellen die Stickiness wieder her. Das Hoch/Runter-Ruckeln hatte zwei Ursachen: `scroll-behavior: smooth` animierte JEDEN Pin (ueberlappende Animationen bei schnellen Mehrrunden-Events) → jetzt INSTANT-Pin; und das Scroll-Anchoring des Browsers verschob scrollTop bei wachsendem Inhalt gegen unseren Pin → `overflow-anchor: none`. Plus ein Programmatic-Scroll-Guard, damit unsere eigenen Pin-Scroll-Events nicht als Nutzer-Hochscrollen fehlgedeutet werden. web/js/panels_chats.js (scrollToBottom + STICK_BOTTOM_PX/isStuckToBottom + Listener) + web/css/main.css (.messages-scroll). JS-Gate gruen (eslint clean, Smoke 5/5, net-globals 1502→1505: +renderThinkingBlock/STICK_BOTTOM_PX/isStuckToBottom, Baseline nachgezogen). Hard-Refresh noetig. KEIN kuratierter Eintrag (reine UI-Politur)."),
     ("9.213.2", "2026-06-27", "fix(code mode): im Code-Mode war das Modell verwirrt, WOHIN es schreiben soll — es legte Dateien korrekt im Arbeitsverzeichnis an, kopierte sie dann aber 'ins Artefakt-Verzeichnis' und behauptete am Ende, das Ergebnis liege im Session-Artefakt-Ordner (vom Nutzer an Chat c88fb466 gemeldet; trat in den Thinking-Bloecken auf). URSACHE: dem Modell wurden ZWEI widerspruechliche cwd-Aussagen geliefert. (1) Der Pro-Nachricht-Artefakt-Ordner-Hinweis ('[Session artifact folder (your working directory): …agents/main/artifacts/… Write output files with a RELATIVE filename so they land here.]') wurde TROTZ Code-Mode an die erste Nutzernachricht angehaengt. Der Hinweis-Helfer (engine/prompt_build._artifact_folder_preamble_text) unterdrueckt sich zwar selbst, wenn ctx.working_dir gesetzt ist — aber ctx.working_dir wird erst SPAETER von apply_domain_context (in run_session_turn) gesetzt, waehrend der Hinweis schon vorher in _handle_chat gebaut + an die Nachricht geprependet wird → Gate feuerte nie. FIX (handlers/chat.py): vor dem Bau des Hinweises wird code_mode direkt am Projekt geprueft (ProjectManager.get_project) und der Hinweis bei Code-Mode-Projekten gar nicht erst erzeugt. (2) Der GENERISCHE System-Prompt-cwd-Satz ('Working directory: your session's artifact folder … Always save output files there …') wurde im Code-Mode unbedingt mitgesendet — direkt gefolgt vom CODE-MODE-Block, der das Gegenteil sagt (ins working_dir schreiben, nicht in einen separaten Artefakt-Ordner). FIX (engine/prompt_build.py): der generische cwd-Satz wird unterdrueckt, wenn ctx.working_dir gesetzt ist (Code-Mode) — der CODE-MODE-Block nennt das cwd ohnehin. KV-cache-sicher: working_dir ist bereits im Cache-Key (_wd_key) und macht einen Code-Mode-Chat zu einem eigenen Warm-Prefix; geplante Tasks (task_working_dir, KEIN Code-Mode) behalten den Artefakt-Ordner-Satz. py_compile (brain/engine/handlers) OK. Server-Restart noetig. Reiner Code-Mode-Bugfix → KEIN kuratierter Eintrag (das Code-Mode-Feature selbst ist 9.161.0)."),
     ("9.213.1", "2026-06-26", "fix(deep-research): der Deep-Research-Toggle wurde verschluckt, wenn die Recherche aus dem PROJEKT-LANDING-Composer gestartet wurde (neuer Projekt-Chat lief als normaler Chat) — vom Nutzer gemeldet. URSACHE: dieselbe Falle wie beim Anhang-Drop (v9.157.2) und den Modell-/Denk-/Caveman-Picks: der project-detail-Sendepfad (web/js/chat_send.js sendMessage) ruft newChat(), und newChat() setzt seit v9.213.0 chat.deepResearch=false ZURUECK (korrekt: neuer Chat = DR aus) — aber dieser Reset lief VOR dem Aufbau des Turns, also wurde der am Projekt-Landing-Composer gesetzte Toggle stillschweigend verworfen und body.deep_research nie gesendet. FIX = denselben Snapshot/Restore-um-newChat()-Mechanismus nutzen, der bereits Dateien/Modell/Denkstufe/Caveman traegt: _carryDeepResearch vor newChat() schnappen, danach auf den frischen Chat zuruecksetzen + refreshDeepResearchButton(). state.activeChat IST der frische Chat (agentChats[activeAgentId]), also liest API.streamChat den wiederhergestellten Wert. Betrifft NUR das Projekt-Landing (welcome/chat-input rufen hier kein newChat(); ein bereits offener Projekt-Chat behaelt den Toggle ohnehin). Reiner Frontend-Fix. JS-Gate gruen (eslint clean, net-globals 1502 unveraendert, Smoke 5/5). Hard-Refresh noetig. Verfeinerung von 9.212.0 → KEIN kuratierter Eintrag."),
@@ -718,7 +719,7 @@ READONLY_TOOLS = frozenset({
     "context_search", "context_detail", "context_recall", "schedule_list",
     "schedule_history", "use_skill", "gmail_inbox", "gmail_read", "gmail_search",
     "read_document",
-    "code_graph_build", "code_graph_query",
+    "code_search", "code_trace", "code_query", "code_snippet",
 })
 
 PLAN_MODE_PROMPT = (
@@ -1016,8 +1017,7 @@ TOOL_GROUPS = {
     "documents": {"read_document", "write_document", "edit_document", "render_diagram"},
     "delegation": {"delegate_task", "task_status", "task_cancel"},
     "background": {"run_background_task"},
-    "code_graph": {"code_graph_build", "code_graph_query", "code_graph_impact",
-                   "code_graph_enhance"},
+    "code_graph": {"code_search", "code_trace", "code_query", "code_snippet"},
     "git": {"git_command", "github_command"},
     "scheduler": {"schedule_list", "schedule_history"},
     "mcp": {"mcp_connect", "mcp_disconnect", "mcp_servers"},
@@ -1685,11 +1685,11 @@ _HELPDESK_TOOLS = {
     # Web lookups (per the chosen "file reads + web search" scope).
     "web_fetch", "exa_search", "searxng_search",
     # Code structure graph (read-only query) — relation/summary lookups over
-    # the mined brain-agent source: file_summary (what a file contains),
-    # callers_of/callees_of, imports_of, tests_for, inheritors_of. Helps
-    # narrow WHICH source file holds a function/class before fetching it from
-    # GitHub. Build/enhance (write paths) deliberately excluded.
-    "code_graph_query",
+    # the mined brain-agent source: code_search (find by name/keyword/semantic),
+    # code_trace (callers/callees), code_query (Cypher), code_snippet (read a
+    # symbol). Helps narrow WHICH source file holds a function/class before
+    # fetching it from GitHub. (Index build is an operator/daemon path, excluded.)
+    "code_search", "code_trace", "code_query", "code_snippet",
 }
 
 # instruction_gen — default read+research tool set for AI-generation of project
@@ -6678,17 +6678,28 @@ def apply_domain_context(*, agent_id: str, project: str = "",
             _excl |= {"mempalace_query", "save_chat_to_memory",
                       "mempalace_get_drawer", "mempalace_list_drawers",
                       "read_document"}
-            # CodeGraph per-tenant scoping: this code-mode project gets its own
-            # graph DB under its project dir (never the global brain-source DB).
-            # And promote the code_graph_* tools in-prompt here — they ship as
-            # `deferred` for the interactive purpose (so a normal chat doesn't
-            # pay for them and the warm KV prefix stays identical), but code mode
-            # is exactly where structural code retrieval is wanted.
+            # Code-intelligence per-tenant scoping: this code-mode project gets
+            # its own codebase-memory index under its project dir (never the
+            # global brain-source index). request_context.code_graph_db carries
+            # the tenant CBM_CACHE_DIR (repurposed from the old sqlite path).
+            # Promote the code_* tools in-prompt here — they ship `deferred` for
+            # the interactive purpose (a normal chat doesn't pay for them and the
+            # warm KV prefix stays identical), but code mode is exactly where
+            # code retrieval is wanted.
             _pdir = _pcfg.get("dir") or ProjectManager._project_dir(agent_id, proj_name)
-            ctx.code_graph_db = os.path.join(_pdir, "code-graph.db")
+            _cbm_cache = os.path.join(_pdir, ".cbm-cache")
+            ctx.code_graph_db = _cbm_cache
             ctx.undefer_tools = list((ctx.undefer_tools or []) + [
-                "code_graph_build", "code_graph_query",
-                "code_graph_impact", "code_graph_enhance"])
+                "code_search", "code_trace", "code_query", "code_snippet"])
+            # Build the index on first code-mode entry (idempotent + fast,
+            # incremental). Repos may not be git, so we don't rely on cbm's
+            # git-watcher — index explicitly. Best-effort; failure must not break
+            # the turn (tools will report "no index" and the user can re-index).
+            try:
+                if _wd and os.path.isdir(_wd) and not os.path.isdir(_cbm_cache):
+                    cbm_index_repository(_wd, cache_dir=_cbm_cache)
+            except Exception:
+                pass
     ctx.exclude_tools = list(_excl) if _excl else None
 
 
@@ -8130,23 +8141,19 @@ def _pii_worst_disposition(findings: list[dict], cfg: dict | None = None) -> str
 # (refactor B2); re-exported below near the Scheduler alias block.
 
 
-# --- Code Structure Graph (extracted to engine/code_graph.py, A2) ---
-# The whole self-contained subsystem (own code-graph.db thread-local pool,
-# tree-sitter AST parsing, CodeGraph class, the 4 code_graph tools, and the
-# _maybe_update_code_graph hook called from _after_file_write) lives in
-# engine/code_graph.py. Re-exported here so TOOL_DISPATCH + _after_file_write
-# resolve unchanged.
-from engine.code_graph import (  # noqa: E402
-    CODE_GRAPH_DB,
-    CodeGraph,
-    _code_graph_conn,
-    _code_graph_init_db,
-    _get_code_graph,
-    _maybe_update_code_graph,
-    tool_code_graph_build,
-    tool_code_graph_query,
-    tool_code_graph_impact,
-    tool_code_graph_enhance,
+# --- Code Intelligence (codebase-memory-mcp, replaces in-tree CodeGraph) ---
+# As of the 2026-06-27 cutover the in-tree tree-sitter CodeGraph is retired in
+# favour of the brain-managed codebase-memory-mcp binary (see memory:
+# project_codegraph_replacement_eval). The binary is shelled out per call (CLI,
+# NOT MCP) with a hard-kill timeout; per-tenant index lives under a CBM_CACHE_DIR
+# carried on request_context.code_graph_db. Tools re-exported so TOOL_DISPATCH
+# resolves.
+from engine.tools.codebase_memory import (  # noqa: E402
+    index_repository as cbm_index_repository,
+    tool_code_search,
+    tool_code_trace,
+    tool_code_query,
+    tool_code_snippet,
 )
 
 
@@ -11997,7 +12004,7 @@ TOOL_ICONS = {
     "context_search": "c", "context_detail": "c", "context_recall": "c",
     "list_nodes": "n", "schedule_list": "t", "schedule_history": "h",
     "read_document": "D", "write_document": "D", "edit_document": "D",
-    "code_graph_build": "G", "code_graph_query": "G", "code_graph_impact": "G", "code_graph_enhance": "G",
+    "code_search": "G", "code_trace": "G", "code_query": "G", "code_snippet": "G",
     "git_command": "g", "github_command": "g",
 }
 
@@ -12014,7 +12021,7 @@ TOOL_VERBS = {
     "context_search": "Searching Context", "context_detail": "Context Detail", "context_recall": "Recalling",
     "list_nodes": "Listing Nodes", "schedule_list": "Schedules", "schedule_history": "History",
     "read_document": "Reading Document", "write_document": "Writing Document", "edit_document": "Editing Document",
-    "code_graph_build": "Building Graph", "code_graph_query": "Querying Graph", "code_graph_impact": "Impact Analysis", "code_graph_enhance": "Enhancing Graph",
+    "code_search": "Searching Code", "code_trace": "Tracing Calls", "code_query": "Querying Code", "code_snippet": "Reading Code",
     "git_command": "Git", "github_command": "GitHub",
 }
 
@@ -12531,10 +12538,10 @@ TOOL_DISPATCH = {
     "mcp_connect": tool_mcp_connect,
     "mcp_disconnect": tool_mcp_disconnect,
     "mcp_servers": tool_mcp_servers,
-    "code_graph_build": tool_code_graph_build,
-    "code_graph_query": tool_code_graph_query,
-    "code_graph_impact": tool_code_graph_impact,
-    "code_graph_enhance": tool_code_graph_enhance,
+    "code_search": tool_code_search,
+    "code_trace": tool_code_trace,
+    "code_query": tool_code_query,
+    "code_snippet": tool_code_snippet,
     "git_command": tool_git_command,
     "github_command": tool_github_command,
     "tool_search": lambda args: _tool_search(args),
@@ -13422,8 +13429,10 @@ def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
         except Exception:
             pass
 
-    # 4. Update code graph if source file
-    _maybe_update_code_graph(path)
+    # 4. Code index: no per-write update. The codebase-memory index is built on
+    #    code-mode entry (and re-indexed on demand); cbm indexing is incremental
+    #    + fast (~2s full repo), so a fresh re-index at next entry picks up the
+    #    agent's own edits — a per-write whole-repo reindex would be wasteful.
 
     # 5. External after_file_write hooks
     if agent_id:

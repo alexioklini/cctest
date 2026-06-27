@@ -2485,7 +2485,7 @@
       "is_local": true,
       "max_context": 256000,
       "max_output": 8192,
-      "warmup": true,
+      "warmup": false,
       "warmup_mode": "minimal"
     }
   },
@@ -4518,6 +4518,82 @@
         "helpdesk": "inactive",
         "instruction_gen": "inactive"
       }
+    },
+    "code_search": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "active",
+        "instruction_gen": "inactive"
+      }
+    },
+    "code_trace": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "active",
+        "instruction_gen": "inactive"
+      }
+    },
+    "code_query": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "active",
+        "instruction_gen": "inactive"
+      }
+    },
+    "code_snippet": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "active",
+        "instruction_gen": "inactive"
+      }
     }
   },
   "research_mode_disciplines": {
@@ -4616,5 +4692,10 @@
     "delete_after_days": 90,
     "run_interval_seconds": 3600
   },
-  "instruction_gen_model": "CLIProxyAPI/mistral-medium-3.5"
+  "instruction_gen_model": "CLIProxyAPI/mistral-medium-3.5",
+  "codebase_memory": {
+    "enabled": true,
+    "bin": "/Users/alexander/Documents/dev/cctest/.codebase-memory/bin/codebase-memory-mcp",
+    "cache_root": "/Users/alexander/Documents/dev/cctest/.codebase-memory/cache"
+  }
 }

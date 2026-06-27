@@ -464,18 +464,18 @@ def _mempalace_miner_loop(srv):
                 # break the mining cycle.
                 if src_wing == "brain_code":
                     try:
-                        # Runs on a daemon thread with an empty request context →
-                        # CodeGraph resolves to the GLOBAL brain-source DB
-                        # (agents/main/code-graph.db), which is exactly this
-                        # tenant. Per-project code-mode graphs live elsewhere and
-                        # are built by the agent in-session, never here.
-                        _cg = engine._get_code_graph()
-                        _cg_stats = _cg.build(clone_dir, incremental=True)
+                        # Index the fresh brain-source clone into the GLOBAL
+                        # codebase-memory tenant (cache_dir=None → cbm's _global
+                        # cache), which is what Brainy's code_* tools read with an
+                        # empty request context. Per-project code-mode indexes
+                        # live under their project dir, built on code-mode entry —
+                        # never here. cbm indexing is incremental + fast.
+                        _cg_stats = engine.cbm_index_repository(clone_dir, cache_dir=None)
                         if isinstance(_cg_stats, dict) and _cg_stats.get("error"):
-                            print(f"[mempalace-miner] code-graph build: "
+                            print(f"[mempalace-miner] code index: "
                                   f"{_cg_stats['error']}", flush=True)
                     except Exception as e:
-                        print(f"[mempalace-miner] code-graph build failed: "
+                        print(f"[mempalace-miner] code index failed: "
                               f"{type(e).__name__}: {e}", flush=True)
 
             for agent_id, folder_path, folder_name, kind in _list_chat_artifact_folders():
@@ -3168,6 +3168,149 @@ def _bgtask_group_timeout_loop(srv):
         except Exception as e:
             print(f"[bgtask-group-timeout] cycle error: {type(e).__name__}: {e}", flush=True)
         time.sleep(_BGTASK_GROUP_SWEEP_INTERVAL_SEC)
+
+
+# ── Code-index sync (codebase-memory) ────────────────────────────────────────
+# Mirrors the project-sync daemon's shape: polls every code-mode project's
+# working_dir via an mtime/size fingerprint and re-indexes (cbm, incremental,
+# ~2s) when it changes — debounced by the poll interval. Repos may not be git,
+# so we DON'T rely on cbm's git-watcher. Manual "Refresh" requests (Phase B UI)
+# queue in _code_index_requests and are drained at the top of each cycle.
+_CODE_INDEX_POLL_SEC = 20
+_code_index_fp: dict[tuple[str, str], str] = {}     # (agent,proj) -> last fingerprint
+_code_index_live: dict[tuple[str, str], dict] = {}  # (agent,proj) -> {state, indexed_at, ...}
+_code_index_requests: set[tuple[str, str]] = set()  # manual refresh / force
+_code_index_force: set[tuple[str, str]] = set()     # clean+rebuild (drop cache first)
+_code_index_lock = threading.Lock()
+
+
+_CODE_INDEX_SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv",
+                         ".cbm-cache", ".brain-extracted", ".trash", "dist", "build"}
+
+
+def _code_dir_fingerprint(root: str) -> str:
+    """mtime/size fingerprint of a working dir's source tree (skips heavy/derived
+    dirs). Same approach as the project source fingerprint, scoped to one dir."""
+    h = hashlib.sha256()
+    n = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _CODE_INDEX_SKIP_DIRS
+                             and not d.startswith("."))
+        for fn in sorted(filenames):
+            fp = os.path.join(dirpath, fn)
+            try:
+                st = os.stat(fp)
+                h.update(f"{fp}|{st.st_mtime_ns}|{st.st_size}\n".encode("utf-8", "replace"))
+                n += 1
+            except OSError:
+                h.update(f"{fp}|?\n".encode())
+    h.update(f"#count={n}".encode())
+    return h.hexdigest()
+
+
+def _code_index_request(agent_id: str, project_name: str, *, force: bool = False):
+    """Queue a manual re-index (Refresh) or clean rebuild (force) for a project."""
+    with _code_index_lock:
+        _code_index_requests.add((agent_id, project_name))
+        if force:
+            _code_index_force.add((agent_id, project_name))
+
+
+def _code_index_status(agent_id: str, project_name: str) -> dict | None:
+    with _code_index_lock:
+        r = _code_index_live.get((agent_id, project_name))
+        return dict(r) if r else None
+
+
+def _iter_code_mode_projects():
+    """Yield (agent_id, project_name, working_dir, project_dir) for every
+    code-mode project with a real working dir."""
+    try:
+        agents = engine.list_agents()
+    except Exception:
+        agents = ["main"]
+    for agent_id in agents:
+        try:
+            projs = engine.ProjectManager.list_projects(agent_id)
+        except Exception:
+            continue
+        for p in projs:
+            name = p.get("name") or ""
+            try:
+                cfg = engine.ProjectManager.get_project(agent_id, name) or {}
+            except Exception:
+                continue
+            if not cfg.get("code_mode"):
+                continue
+            wd = (cfg.get("working_dir") or "").strip()
+            if not wd or not os.path.isdir(wd):
+                continue
+            pdir = cfg.get("dir") or engine.ProjectManager._project_dir(agent_id, name)
+            yield agent_id, name, wd, pdir
+
+
+def _code_index_sync_loop(srv):
+    """Keep each code-mode project's codebase-memory index fresh."""
+    cm = (engine._server_config() or {}).get("codebase_memory", {}) or {}
+    if not cm.get("enabled"):
+        print("[code-index] disabled (codebase_memory.enabled = false)", flush=True)
+        return
+    if not (cm.get("bin") and os.path.exists(cm["bin"])):
+        print("[code-index] disabled (codebase_memory.bin missing)", flush=True)
+        return
+    import shutil
+    time.sleep(30)
+    while True:
+        try:
+            with _code_index_lock:
+                manual = set(_code_index_requests)
+                forced = set(_code_index_force)
+                _code_index_requests.clear()
+                _code_index_force.clear()
+            for agent_id, name, wd, pdir in _iter_code_mode_projects():
+                key = (agent_id, name)
+                cache = os.path.join(pdir, ".cbm-cache")
+                try:
+                    fp = _code_dir_fingerprint(wd)
+                except Exception:
+                    continue
+                changed = _code_index_fp.get(key) != fp
+                is_forced = key in forced
+                if is_forced:
+                    # clean + start fresh: drop the tenant cache before reindex
+                    try:
+                        shutil.rmtree(cache, ignore_errors=True)
+                    except Exception:
+                        pass
+                if not (changed or key in manual or is_forced):
+                    continue
+                with _code_index_lock:
+                    _code_index_live[key] = {"state": "indexing", "started_at": time.time()}
+                try:
+                    res = engine.cbm_index_repository(wd, cache_dir=cache) or {}
+                    ok = not res.get("error")
+                    _code_index_fp[key] = fp
+                    with _code_index_lock:
+                        _code_index_live[key] = {
+                            "state": "indexed" if ok else "error",
+                            "indexed_at": time.time(),
+                            "nodes": res.get("nodes"), "edges": res.get("edges"),
+                            "error": res.get("error"),
+                        }
+                    if ok:
+                        print(f"[code-index] {agent_id}/{name}: reindexed "
+                              f"nodes={res.get('nodes')} edges={res.get('edges')}", flush=True)
+                    else:
+                        print(f"[code-index] {agent_id}/{name}: {res.get('error')}", flush=True)
+                except Exception as e:
+                    with _code_index_lock:
+                        _code_index_live[key] = {"state": "error", "error": str(e),
+                                                 "indexed_at": time.time()}
+                    print(f"[code-index] {agent_id}/{name} failed: "
+                          f"{type(e).__name__}: {e}", flush=True)
+        except Exception as e:
+            print(f"[code-index] cycle error: {type(e).__name__}: {e}", flush=True)
+        time.sleep(_CODE_INDEX_POLL_SEC)
 
 
 def _user_profile_loop(srv):

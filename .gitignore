@@ -98,3 +98,7 @@ eval/pii_eval/results/*.log
 # embedded decompiled source (not a registered submodule)
 docs/research/claude-code-source/
 diagram_render/node_modules/
+
+# codebase-memory-mcp binary + per-tenant index caches (per-machine, large)
+.codebase-memory/
+.cbm-cache/
