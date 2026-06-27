@@ -30,6 +30,7 @@ import sqlite3
 import subprocess  # noqa: F401  (git clone/pull for source mining)
 import threading
 import time
+from pathlib import Path  # mine() needs Path file lists (not str) — see _mine_batched
 
 import brain as engine
 from server_lib import auth as _auth_mod  # noqa: F401  (miner/profile user lookups)
@@ -1755,9 +1756,14 @@ def _project_sync_loop(srv):
             buf = io.StringIO()
             try:
                 with contextlib.redirect_stdout(buf), _palace_write_lock:
+                    # mine() iterates `files` and calls Path methods (.read_text,
+                    # .suffix) on each, so it needs pathlib.Path — but the
+                    # pre-filter above keys on str (drawer source_file is str).
+                    # Convert back to Path ONLY at the mine() boundary.
                     mp_miner.mine(project_dir=folder, palace_path=palace_path,
                                   wing_override=wing, agent=agent_name,
-                                  respect_gitignore=respect_gitignore, files=files)
+                                  respect_gitignore=respect_gitignore,
+                                  files=[Path(f) for f in files])
                 filed += _parse_drawers_filed(buf.getvalue())
             except SystemExit:
                 pass
@@ -1778,7 +1784,7 @@ def _project_sync_loop(srv):
                         mp_miner.mine(project_dir=folder, palace_path=palace_path,
                                       wing_override=wing, agent=agent_name,
                                       respect_gitignore=respect_gitignore,
-                                      files=batch)
+                                      files=[Path(f) for f in batch])
                     filed += _parse_drawers_filed(buf.getvalue())
                 except SystemExit:
                     pass
