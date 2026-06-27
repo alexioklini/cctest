@@ -585,7 +585,12 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             <div class="project-panel-help" id="project-codemode-init-status" style="margin-top:6px"></div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;margin-bottom:4px">
               <span style="font-size:12px;color:var(--text-400)">Dateien im Arbeitsverzeichnis</span>
-              <button class="pt-act" type="button" title="Aktualisieren" onclick="refreshCodeWorkingTree()">⟳</button>
+              <span style="display:flex;gap:4px">
+                <button class="pt-act" type="button" title="Gesamtes Verzeichnis als ZIP herunterladen" onclick="ptDownloadProjectZip()">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </button>
+                <button class="pt-act" type="button" title="Aktualisieren" onclick="refreshCodeWorkingTree()">⟳</button>
+              </span>
             </div>
             <div id="project-codemode-tree" class="project-source-tree"></div>
             <!-- Legend: explain the per-file index dots. -->

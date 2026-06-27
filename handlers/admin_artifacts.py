@@ -1514,6 +1514,60 @@ class AdminArtifactsHandlers:
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    _ZIP_SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv",
+                      ".cbm-cache", ".brain-extracted", ".trash", "dist", "build",
+                      ".idea", ".vscode"}
+
+    def _handle_file_zip(self):
+        """GET /v1/files/zip?path=<absolute dir> — zip a directory tree (skipping
+        heavy/derived dirs) and stream it as application/zip. Path validated like
+        file download, so only allowed roots (incl. code-mode working dirs) zip."""
+        from urllib.parse import urlparse, parse_qs
+        import io
+        import zipfile
+        qs = parse_qs(urlparse(self.path).query)
+        dir_path = qs.get("path", [""])[0]
+        resolved = self._validate_file_path(dir_path)
+        if not resolved:
+            self._send_json({"error": "Invalid or disallowed path"}, 403)
+            return
+        if not os.path.isdir(resolved):
+            self._send_json({"error": "Not a directory"}, 404)
+            return
+        try:
+            buf = io.BytesIO()
+            root_name = os.path.basename(resolved.rstrip(os.sep)) or "project"
+            total = 0
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for dirpath, dirnames, filenames in os.walk(resolved):
+                    dirnames[:] = [d for d in dirnames
+                                   if d not in self._ZIP_SKIP_DIRS and not d.startswith(".")]
+                    for fn in filenames:
+                        fp = os.path.join(dirpath, fn)
+                        try:
+                            if os.path.islink(fp) or os.path.getsize(fp) > 20 * 1024 * 1024:
+                                continue  # skip symlinks + >20MB blobs
+                        except OSError:
+                            continue
+                        arc = os.path.join(root_name, os.path.relpath(fp, resolved))
+                        try:
+                            zf.write(fp, arc)
+                            total += 1
+                        except OSError:
+                            continue
+            data = buf.getvalue()
+            from urllib.parse import quote as _urlq
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", len(data))
+            self.send_header("Content-Disposition",
+                             f"attachment; filename*=UTF-8''{_urlq(root_name)}.zip")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     def _handle_file_preview(self):
         """GET /v1/files/preview?path=<absolute_path>&lines=100 — return file content for preview."""
         from urllib.parse import urlparse, parse_qs

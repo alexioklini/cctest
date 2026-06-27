@@ -510,7 +510,7 @@ already anonymises (see 05-internals).
 
 ## Files
 
-- `GET /v1/files/download?path=` / `/files/preview?path=` / `/files/tree?root=`
+- `GET /v1/files/download?path=` / `/files/preview?path=` / `/files/zip?path=<dir>` (zip a directory tree, skips .git/.cbm-cache/venvs) / `/files/tree?root=`
 
 ## Sharing / Teams / Favourites / Channels
 

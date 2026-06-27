@@ -1840,6 +1840,8 @@ class BrainAgentHandler(
             self._handle_tools_breakdown()
         elif path == "/v1/files/download":
             self._handle_file_download()
+        elif path == "/v1/files/zip":
+            self._handle_file_zip()
         elif path == "/v1/files/preview":
             self._handle_file_preview()
         elif path == "/v1/files/tree":

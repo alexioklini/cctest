@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.216.0",
+        "date": "2026-06-27",
+        "title": "Code-Projekte: Dateivorschau & Downloads",
+        "body": "In Code-Projekten können Sie jetzt direkt im Dateibaum auf eine Datei "
+                "klicken, um sie in einer Vorschau anzusehen — mit übersichtlicher "
+                "Syntaxhervorhebung und einem Umschalter zur unformatierten Roh"
+                "ansicht; Markdown und Bilder werden passend dargestellt. Jede Datei "
+                "lässt sich einzeln herunterladen, und über den Download-Knopf am "
+                "Dateibaum erhalten Sie das gesamte Arbeitsverzeichnis als ZIP-Archiv "
+                "(ohne technische Hilfsordner wie .git).",
+        "audience": "user",
+        "versions": ["9.216.0"],
+    },
+    {
         "version": "9.215.0",
         "date": "2026-06-27",
         "title": "Code-Projekte: stärkere Code-Suche & Index-Verwaltung",
