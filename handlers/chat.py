@@ -4671,8 +4671,22 @@ class ChatHandlerMixin:
         _FILE_WRITE_GROUPS = {"core", "documents", "code_exec"}
         _ctg = getattr(session, "_auto_tool_groups", None)
         _has_file_tools = (_ctg is None) or bool(set(_ctg) & _FILE_WRITE_GROUPS)
+        # Code-mode projects write into their working_dir, NOT the session
+        # artifact folder — so the artifact-folder pointer is wrong (and
+        # confuses the model into copying outputs into the artifact folder,
+        # see chat c88fb466). The preamble helper self-suppresses when
+        # ctx.working_dir is set, but working_dir is only populated later by
+        # apply_domain_context (inside run_session_turn) — too late for this
+        # build. Check code_mode directly here so the pointer is never emitted.
+        _is_code_mode = False
+        if project_name:
+            try:
+                _pcfg = engine.ProjectManager.get_project(session.agent_id, project_name)
+                _is_code_mode = bool(_pcfg and _pcfg.get("code_mode"))
+            except Exception:
+                _is_code_mode = False
         preamble_text = ""
-        if len(session.messages) == 0 and _has_file_tools:
+        if len(session.messages) == 0 and _has_file_tools and not _is_code_mode:
             _art_pre = engine._artifact_folder_preamble_text(session.agent_id, session.id)
             if _art_pre:
                 preamble_text = _art_pre

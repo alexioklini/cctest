@@ -45,7 +45,7 @@ function updateChatView() {
 
   // Render messages
   renderMessages();
-  scrollToBottom();
+  scrollToBottom(true);  // opening a chat lands at the bottom
 }
 
 // Role-gate: admins see everything; powerusers lose pool/queue (infra-internal);
@@ -294,21 +294,57 @@ function updateStatusBar() {
   applyStatusBarRoleVisibility();
 }
 
-function scrollToBottom() {
+// Distance (px) from the bottom within which we consider the user "stuck to the
+// bottom" and keep auto-scrolling as new streamed content arrives. Past this, the
+// user has scrolled up to read and we stop yanking them down.
+const STICK_BOTTOM_PX = 80;
+
+// True when the user is at (or near) the bottom of the message list. Computed
+// live; defaults to true (a freshly-opened chat lands at the bottom).
+function isStuckToBottom(el) {
+  el = el || document.getElementById('messages-scroll');
+  if (!el) return true;
+  return (el.scrollHeight - el.scrollTop - el.clientHeight) <= STICK_BOTTOM_PX;
+}
+
+// scrollToBottom(force):
+//   force=true  → always pin to bottom (user send, open chat, explicit button).
+//                 Re-establishes stickiness.
+//   force=false → only pin if the user is still stuck to the bottom. If they
+//                 scrolled up to read, this is a no-op (no auto-scroll on new
+//                 streamed data — requested behavior).
+function scrollToBottom(force) {
   const el = document.getElementById('messages-scroll');
-  if (el) {
-    // Pin synchronously FIRST so there's no painted intermediate frame. During
-    // streaming, renderMessages() replaces the whole turn-group node when a new
-    // tool card is added; that momentarily shrinks scrollHeight and the browser
-    // clamps scrollTop toward the top. Setting scrollTop now (same JS turn,
-    // before paint) corrects it so the view never visibly jumps up. The rAF
-    // follow-up catches any late layout (images/iframes/markdown reflow).
+  if (!el) return;
+  // During streaming, scrollToBottom fires on every event. Re-renders that
+  // replace the turn-group node transiently shrink scrollHeight; capture the
+  // sticky decision from the flag (set by the scroll listener) rather than
+  // re-measuring against the half-rendered DOM, so a mid-render shrink can't
+  // flip us off bottom and cause the up/down jitter.
+  // Only an explicit false (user scrolled up) blocks auto-scroll; an unset flag
+  // defaults to sticky (legacy behavior) so no path silently stops scrolling.
+  if (!force && el._stickToBottom === false) return;
+  // Programmatic-scroll guard: setting scrollTop fires a 'scroll' event; without
+  // this the listener could (on a transient shrink) misread it as a user
+  // scroll-up and clear stickiness. The guard tells the listener to ignore
+  // scroll events it didn't originate.
+  el._programmaticScroll = true;
+  el._stickToBottom = true;
+  // The container sets `scroll-behavior: smooth` (for user nav like scrollTurn);
+  // that would ANIMATE every streaming pin, and overlapping animations across
+  // rapid multi-round events read as up/down jitter. Pin INSTANTLY by forcing
+  // auto behavior just for this assignment, then restore. Pin synchronously
+  // FIRST so there's no painted intermediate frame; the rAF follow-up catches
+  // late layout (images/iframes/markdown reflow).
+  const prevBehavior = el.style.scrollBehavior;
+  el.style.scrollBehavior = 'auto';
+  el.scrollTop = el.scrollHeight;
+  requestAnimationFrame(() => {
     el.scrollTop = el.scrollHeight;
-    requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight;
-      updateScrollAnchors();
-    });
-  }
+    el.style.scrollBehavior = prevBehavior;
+    el._programmaticScroll = false;
+    updateScrollAnchors();
+  });
 }
 
 function scrollToTop() {
@@ -349,7 +385,7 @@ function scrollTurn(dir) {
   } else {
     for (let i = 0; i < tops.length; i++) { if (tops[i] > EPS) { target = groups[i]; break; } }
   }
-  if (!target) { if (dir < 0) scrollToTop(); else scrollToBottom(); return; }
+  if (!target) { if (dir < 0) scrollToTop(); else scrollToBottom(true); return; }
   target.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -401,12 +437,19 @@ function initScrollAnchors() {
   const el = document.getElementById('messages-scroll');
   if (!el || el._scrollAnchorsWired) return;
   el._scrollAnchorsWired = true;
+  el._stickToBottom = true;  // freshly-opened chat lands at the bottom
+  // Track stickiness on real user scrolls. Ignore programmatic scrolls (our own
+  // scrollToBottom) so a mid-render shrink can't be misread as a user scroll-up.
+  el.addEventListener('scroll', () => {
+    if (el._programmaticScroll) return;
+    el._stickToBottom = isStuckToBottom(el);
+  }, { passive: true });
   el.addEventListener('scroll', updateScrollAnchors, { passive: true });
   window.addEventListener('resize', updateScrollAnchors, { passive: true });
   const upBtn = document.getElementById('scroll-up');
   const downBtn = document.getElementById('scroll-down');
   wireLongPress(upBtn, () => scrollTurn(-1), () => scrollToTop());
-  wireLongPress(downBtn, () => scrollTurn(1), () => scrollToBottom());
+  wireLongPress(downBtn, () => scrollTurn(1), () => scrollToBottom(true));
   // Reveal the buttons only while the mouse is actively moving inside the chat
   // area; fade them out after a short idle pause or when the pointer leaves.
   // The buttons are position:fixed siblings (not children) of the scroll area,

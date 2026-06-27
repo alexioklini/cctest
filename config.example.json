@@ -2265,23 +2265,6 @@
       "is_local": false,
       "warmup": false
     },
-    "MarkItDown": {
-      "enabled": false,
-      "shortname": "MarkItDown",
-      "display_name": "MarkItDown",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Lokal",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": true,
-      "warmup": false
-    },
     "Lokal-M4/Qwen2.5-7B-Instruct-4bit": {
       "enabled": true,
       "shortname": "Qwen2.5-7B (M4)",
@@ -2441,7 +2424,7 @@
       "_caps_canonical": true,
       "is_local": true,
       "auto_lcm": true,
-      "warmup": true,
+      "warmup": false,
       "warmup_mode": "minimal"
     },
     "voxtral-mini-tts-mellon-greek-2606-solutions": {
@@ -2463,6 +2446,47 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false
+    },
+    "Ornith-1.0-9B-mlx-4Bit": {
+      "enabled": false,
+      "shortname": "Ornith-1.0-9B-mlx-4Bit",
+      "display_name": "Ornith-1.0-9B-mlx-4Bit",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": true,
+      "auto_lcm": true,
+      "warmup": false,
+      "warmup_mode": "minimal"
+    },
+    "Ornith-1.0-35B-MXFP4": {
+      "enabled": true,
+      "shortname": "Ornith-1.0-35B-MXFP4",
+      "display_name": "Ornith-1.0-35B-MXFP4",
+      "icon": "🤖",
+      "priority": 50,
+      "capabilities": [
+        "chat",
+        "image",
+        "audio"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": true,
+      "max_context": 256000,
+      "max_output": 8192,
+      "warmup": true,
+      "warmup_mode": "minimal"
     }
   },
   "nodes": {},

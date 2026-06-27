@@ -604,9 +604,21 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   };
 
   let bodyHtml = '';
-  for (const entry of bodyItems) {
+  for (let ei = 0; ei < bodyItems.length; ei++) {
+    const entry = bodyItems[ei];
     if (entry.kind === 'thinking') {
-      bodyHtml += renderMessage(entry.item.m, entry.item.idx);
+      // Coalesce a RUN of consecutive thinking rounds into ONE block (one rail,
+      // one "Denken" label, rounds stacked) — per-round thinking rows otherwise
+      // produce a noisy ladder of repeated labels (reported by user).
+      const texts = [];
+      while (ei < bodyItems.length && bodyItems[ei].kind === 'thinking') {
+        const t = bodyItems[ei].item.m;
+        const s = typeof t.content === 'string' ? t.content : '';
+        if (s) texts.push(s);
+        ei++;
+      }
+      ei--; // for-loop will ++ back to the first non-thinking entry
+      bodyHtml += renderThinkingBlock(texts);
     } else if (entry.kind === 'tool') {
       bodyHtml += renderMessage(entry.item.m, entry.item.idx);
     } else if (entry.kind === 'text') {
@@ -660,9 +672,16 @@ function renderMessage(msg, idx) {
 function renderThinkingMessage(msg, idx) {
   const text = typeof msg.content === 'string' ? msg.content : '';
   if (!text) return '';
-  // Inline thinking: flows in the conversation like output, in chat font/size
-  // but lighter + italic. No block, no collapse. (Claude-Code style.)
-  return `<div class="msg-thinking msg-content">${renderMarkdown(text)}</div>`;
+  return renderThinkingBlock([text]);
+}
+// Render one or more thinking rounds as a SINGLE block — one left rail + one
+// "Denken" label (CSS ::before), rounds stacked. Callers coalesce consecutive
+// thinking rows so a multi-round turn shows one block instead of a ladder of
+// repeated labels.
+function renderThinkingBlock(texts) {
+  const joined = (texts || []).filter(t => typeof t === 'string' && t.trim()).join('\n\n');
+  if (!joined) return '';
+  return `<div class="msg-thinking msg-content">${renderMarkdown(joined)}</div>`;
 }
 function renderUserMessage(msg, idx) {
   let textContent = '';

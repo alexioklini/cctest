@@ -252,7 +252,17 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # unaffected (check_warmup_prefix_stable.py --check still gates this).
     _exec_tools = {"python_exec", "execute_command", "write_file"}
     _has_exec = active_tool_names is None or bool(_exec_tools & set(active_tool_names))
-    if _has_exec:
+    # Code mode (ctx.working_dir set) writes into the project working directory,
+    # NOT the session artifact folder — the CODE MODE block below states the cwd.
+    # Emitting the generic artifact-folder cwd line here would contradict it
+    # (the model copied outputs into the artifact folder, see chat c88fb466).
+    # Gated on ctx.working_dir, which is in the cache key (_wd_key) and makes a
+    # code-mode chat a distinct warm prefix → KV-cache-safe. (task_working_dir
+    # from scheduled tasks is NOT code mode and keeps the artifact-folder line.)
+    _code_mode_cwd = bool(get_request_context().working_dir)
+    if _code_mode_cwd:
+        _cwd_line = ""
+    elif _has_exec:
         _cwd_line = (
             "Working directory: your session's artifact folder. This is where "
             "`python_exec` and `execute_command` run, and where relative-path "

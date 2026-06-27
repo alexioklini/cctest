@@ -474,7 +474,7 @@ async function sendMessage() {
 
   // Render user message immediately
   renderMessages();
-  scrollToBottom();
+  scrollToBottom(true);  // sending re-pins to the bottom (re-establishes stickiness)
 
   // Start streaming (generation counter prevents stale safety-net from killing newer streams)
   chat.streaming = true;

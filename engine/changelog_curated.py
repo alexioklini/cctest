@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.213.3",
+        "date": "2026-06-27",
+        "title": "Klarere Denk-Anzeige & ruhigeres Mitlaufen",
+        "body": "Die Gedankengänge des Assistenten sind im Chat jetzt deutlich besser "
+                "erkennbar: Jeder Denkabschnitt ist mit einer eigenen Leiste und der "
+                "Markierung „Denken“ vom eigentlichen Antworttext und den Werkzeug-Aufrufen "
+                "abgesetzt, und aufeinanderfolgende Denkschritte werden zu einem "
+                "übersichtlichen Block zusammengefasst statt vieler einzelner Zeilen. "
+                "Außerdem läuft die Ansicht beim Schreiben einer Antwort ruhiger mit: Es "
+                "wird nur dann automatisch nach unten gescrollt, wenn Sie sich ohnehin am "
+                "Ende befinden — haben Sie nach oben gescrollt, um etwas nachzulesen, bleibt "
+                "Ihre Position erhalten, und das frühere Hoch-/Runter-Springen bei längeren "
+                "Antworten entfällt.",
+        "audience": "user",
+        "versions": ["9.213.3"],
+    },
+    {
         "version": "9.213.0",
         "date": "2026-06-26",
         "title": "Deep Research: Grafiken & Projektwissen",

@@ -931,6 +931,11 @@ textarea { resize: none; }
   flex: 1;
   overflow-y: auto;
   scroll-behavior: smooth;
+  /* We manage auto-scroll ourselves (sticky-bottom in scrollToBottom). Let the
+     browser's own scroll-anchoring also nudge scrollTop when streamed content
+     resizes the list and it fights our pin → visible up/down jitter across
+     multi-round turns. Disable it; our logic is the single source of scroll. */
+  overflow-anchor: none;
   /* Edge fade mask (Claude-desktop style). --fade-top/--fade-bottom are the
      fade-band heights; updateScrollAnchors() flips data-fade-top/-bottom to
      toggle them so an edge only fades when content is hidden beyond it. The
@@ -1575,14 +1580,34 @@ textarea { resize: none; }
 .act-highlight { outline: 2px solid var(--accent-brand);
   outline-offset: 1px; transition: outline 0.2s; }
 
-/* Inline thinking — same font/size as chat body, lighter + italic, no block.
-   Renders directly in the message flow (chronological with tool lines). */
+/* Inline thinking — set off by a left rail + a small "Denken" label so it's
+   clearly distinct from tool lines and the final answer (which look identical
+   without it; see chat c88fb466). NOTE: italics are globally disabled by the
+   typography-normalization rule near the end of this file
+   (`* { font-style: normal !important }`), so the distinction is carried by the
+   rail + label + dimmer color, NOT by italic (the old "italic + lighter"
+   approach was dead — overridden by that rule). Renders directly in the message
+   flow (chronological with tool lines). */
 .msg-thinking {
   font-size: var(--font-body);
   color: var(--text-400);
-  font-style: italic;
-  margin: 2px 0;
+  margin: 8px 0;
   line-height: 1.5;
+  border-left: 2px solid var(--border-300);
+  padding-left: 12px;
+}
+/* "Denken" label above the block — small uppercase marker. CSS-only so it
+   applies to every thinking emit site (inline replay, reloaded, opaque-token,
+   live streaming). */
+.msg-thinking::before {
+  content: "Denken";
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-500);
+  margin-bottom: 3px;
 }
 .msg-thinking p:first-child { margin-top: 0; }
 .msg-thinking p:last-child { margin-bottom: 0; }
