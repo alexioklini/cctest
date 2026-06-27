@@ -66,6 +66,7 @@ async function terminalTogglePanel(force) {
     panel.style.display = 'flex';
     document.getElementById('main-content').classList.add('terminal-open');
     _term.open = true;
+    _terminalRestoreHeight();
     await _terminalLoadSessions();
   } else {
     panel.style.display = 'none';
@@ -230,11 +231,25 @@ function _terminalOnResize() {
 }
 window.addEventListener('resize', _terminalOnResize);
 
-// Vertical resize of the bottom panel by dragging its top handle.
+// Vertical resize of the bottom panel by dragging its top handle. The chosen
+// height is remembered in localStorage (like right-panel-width) and restored on
+// load, so the user's preferred terminal height persists across sessions.
+const _TERMINAL_HEIGHT_KEY = 'terminal-panel-height';
+
+function _terminalRestoreHeight() {
+  const panel = document.getElementById('terminal-panel');
+  if (!panel) return;
+  const saved = parseInt(localStorage.getItem(_TERMINAL_HEIGHT_KEY) || '', 10);
+  if (saved && saved >= 120) {
+    panel.style.height = Math.min(saved, window.innerHeight - 160) + 'px';
+  }
+}
+
 function _terminalInitResize() {
   const handle = document.getElementById('terminal-resize-handle');
   const panel = document.getElementById('terminal-panel');
   if (!handle || !panel) return;
+  _terminalRestoreHeight();
   let startY = 0, startH = 0, dragging = false;
   handle.addEventListener('mousedown', (e) => {
     dragging = true; startY = e.clientY; startH = panel.offsetHeight;
@@ -247,6 +262,10 @@ function _terminalInitResize() {
     _terminalOnResize();
   });
   window.addEventListener('mouseup', () => {
-    if (dragging) { dragging = false; document.body.style.userSelect = ''; _terminalOnResize(); }
+    if (!dragging) return;
+    dragging = false; document.body.style.userSelect = '';
+    // persist the chosen height as the preferred value
+    try { localStorage.setItem(_TERMINAL_HEIGHT_KEY, String(panel.offsetHeight)); } catch (_) {}
+    _terminalOnResize();
   });
 }
