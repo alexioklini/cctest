@@ -60,6 +60,8 @@ function updateWorkdirTabVisibility() {
   if (isCode && ['artifacts', 'references', 'websuche'].includes(state.rightPanelTab)) {
     if (typeof switchRightTab === 'function') switchRightTab('workdir');
   }
+  // Keep the code-mode terminal toggle in sync with the same code-mode signal.
+  if (typeof terminalRefreshToggle === 'function') terminalRefreshToggle();
 }
 
 // ── Tree (top area) ──────────────────────────────────────────────────────────

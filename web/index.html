@@ -14,6 +14,11 @@
 <link id="hljs-theme-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <link id="hljs-theme-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" disabled>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<!-- xterm.js: interactive terminal for code-mode projects (bottom panel).
+     Loaded as globals Terminal + FitAddon; used by panels_terminal.js. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 <!-- Mermaid: render ```mermaid code blocks as diagrams (org charts, flowcharts)
      in chat. Loaded as the global `mermaid`; renderMermaidBlocks() (chat_render.js)
      converts blocks after marked.parse. Used instead of generate_image for
@@ -1436,7 +1441,21 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <button class="compact-btn" id="status-inspect-btn" onclick="openInspectModal()" title="Sitzung untersuchen" style="padding:2px 6px;display:inline-flex;align-items:center">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       </button>
+      <button class="compact-btn" id="terminal-toggle-btn" onclick="terminalTogglePanel()" title="Terminal (Code-Mode)" style="padding:2px 6px;align-items:center">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+      </button>
     </div>
+  </div>
+  <!-- ═══ Code-mode terminal (bottom-docked, code-mode projects only) ═══ -->
+  <div id="terminal-panel" style="display:none">
+    <div id="terminal-resize-handle"></div>
+    <div id="terminal-bar">
+      <div id="terminal-tabs"></div>
+      <button class="pt-act" id="terminal-new-tab" onclick="terminalNewTab()" title="Neues Terminal">+</button>
+      <span style="flex:1"></span>
+      <button class="pt-act" id="terminal-close-panel" onclick="terminalTogglePanel(false)" title="Terminal schließen">✕</button>
+    </div>
+    <div id="terminal-body"></div>
   </div>
 </div>
 
@@ -1718,6 +1737,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/panels_projects.js"></script>
 <script src="js/panels_project_sync.js"></script>
 <script src="js/panels_project_tree.js"></script>
+<script src="js/panels_terminal.js"></script>
 <script src="js/panels_right.js"></script>
 <script src="js/panels_websuche.js"></script>
 <script src="js/panels_background.js"></script>

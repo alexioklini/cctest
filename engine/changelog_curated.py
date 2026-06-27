@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.217.0",
+        "date": "2026-06-27",
+        "title": "Code-Projekte: integriertes Terminal",
+        "body": "Code-Projekte haben jetzt ein vollwertiges Terminal direkt in der "
+                "Oberfläche — am unteren Rand auf- und zuklappbar. Es öffnet "
+                "automatisch im Arbeitsverzeichnis des Projekts und bleibt darauf "
+                "beschränkt (ein Wechsel aus dem Projektordner heraus wird "
+                "verhindert). Sie können mehrere Terminal-Tabs gleichzeitig "
+                "betreiben, und die laufenden Sitzungen sind sowohl in der "
+                "Projektansicht als auch im Projekt-Chat dieselben — Sie setzen "
+                "also nahtlos dort fort, wo Sie waren.",
+        "audience": "user",
+        "versions": ["9.217.0"],
+    },
+    {
         "version": "9.216.0",
         "date": "2026-06-27",
         "title": "Code-Projekte: Dateivorschau & Downloads",

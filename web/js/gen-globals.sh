@@ -103,6 +103,8 @@ marked
 hljs
 CodeMirror
 mermaid
+Terminal
+FitAddon
 electronAPI
 EOF
 )

@@ -435,6 +435,7 @@ async function loadProjectDetail(agentId, projectName) {
       if (typeof stopCodeModePoll === 'function') stopCodeModePoll();
       if (typeof stopCodeIndexPoll === 'function') stopCodeIndexPoll();
     }
+    if (typeof terminalRefreshToggle === 'function') terminalRefreshToggle();
     // Per-project KG method/profile overrides (empty = inherit the global
     // default). Profile is inert under the rule-based method (generic only).
     const kgMethodSel = document.getElementById('project-kg-method');

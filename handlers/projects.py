@@ -717,6 +717,137 @@ class ProjectsHandlerMixin:
             pass
         self._send_json({"status": "rebuilding", "agent": agent_id, "project": proj_name})
 
+    # ── Code-mode interactive terminal (PTY over SSE) ────────────────────────
+    def _terminal_project_ctx(self, path):
+        """Resolve + access-check a code-mode project from the path. Returns
+        (agent_id, proj_name, working_dir) or None (after sending the error)."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return None
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return None
+        if not project.get("code_mode"):
+            self._send_json({"error": "Terminal nur für Code-Mode-Projekte"}, 400)
+            return None
+        wd = (project.get("working_dir") or "").strip()
+        if not wd or not os.path.isdir(wd):
+            self._send_json({"error": "Kein gültiges Arbeitsverzeichnis"}, 400)
+            return None
+        return agent_id, proj_name, wd
+
+    def _handle_terminal_list(self, path: str):
+        """GET .../terminal/sessions — list live sessions for this project."""
+        ctx = self._terminal_project_ctx(path)
+        if not ctx:
+            return
+        agent_id, proj_name, _ = ctx
+        from server_lib.terminal import terminal_manager
+        self._send_json({"sessions": terminal_manager.list(agent_id, proj_name)})
+
+    def _handle_terminal_create(self, path: str):
+        """POST .../terminal/sessions — start a new PTY session in working_dir."""
+        ctx = self._terminal_project_ctx(path)
+        if not ctx:
+            return
+        agent_id, proj_name, wd = ctx
+        from server_lib.terminal import terminal_manager
+        try:
+            sess = terminal_manager.create(agent_id, proj_name, wd)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 400)
+            return
+        self._send_json(sess.info())
+
+    def _handle_terminal_close(self, path: str, sid: str):
+        """POST .../terminal/sessions/<sid>/close — kill a session."""
+        ctx = self._terminal_project_ctx(path)
+        if not ctx:
+            return
+        from server_lib.terminal import terminal_manager
+        ok = terminal_manager.close(sid)
+        self._send_json({"closed": ok})
+
+    def _handle_terminal_input(self, path: str, sid: str):
+        """POST .../terminal/sessions/<sid>/input {data|resize} — keystrokes or
+        a {rows,cols} resize."""
+        ctx = self._terminal_project_ctx(path)
+        if not ctx:
+            return
+        from server_lib.terminal import terminal_manager
+        sess = terminal_manager.get(sid)
+        if not sess:
+            self._send_json({"error": "Sitzung nicht gefunden"}, 404)
+            return
+        body = self._read_json() or {}
+        if "rows" in body and "cols" in body:
+            try:
+                sess.resize(int(body["rows"]), int(body["cols"]))
+            except (TypeError, ValueError):
+                pass
+        data = body.get("data")
+        if data is not None:
+            sess.write(data.encode("utf-8") if isinstance(data, str) else bytes(data))
+        self._send_json({"ok": True})
+
+    def _handle_terminal_stream(self, path: str, sid: str):
+        """GET .../terminal/sessions/<sid>/stream?since=N — SSE stream of PTY
+        output bytes (base64 frames) from absolute offset N."""
+        ctx = self._terminal_project_ctx(path)
+        if not ctx:
+            return
+        from server_lib.terminal import terminal_manager
+        import base64
+        from urllib.parse import urlparse, parse_qs
+        sess = terminal_manager.get(sid)
+        if not sess:
+            self._send_json({"error": "Sitzung nicht gefunden"}, 404)
+            return
+        qs = parse_qs(urlparse(self.path).query)
+        try:
+            offset = int(qs.get("since", ["0"])[0])
+        except (TypeError, ValueError):
+            offset = 0
+        try:
+            import socket as _sock
+            self.connection.setsockopt(_sock.IPPROTO_TCP, _sock.TCP_NODELAY, 1)
+        except OSError:
+            pass
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        ev = sess.subscribe()
+        try:
+            # initial replay from `since`
+            while True:
+                chunk, offset = sess.read_since(offset)
+                if chunk:
+                    frame = base64.b64encode(chunk).decode("ascii")
+                    self.wfile.write(f"event: out\ndata: {frame}\n\n".encode())
+                    self.wfile.flush()
+                if sess._closed:
+                    self.wfile.write(b"event: closed\ndata: {}\n\n")
+                    self.wfile.flush()
+                    break
+                # wait for more (or keepalive every 5s)
+                if not ev.wait(timeout=5.0):
+                    try:
+                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        break
+                ev.clear()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            sess.unsubscribe(ev)
+
     def _handle_code_index_history(self, path: str):
         """GET .../code-index/history — last N index runs (state/time/duration/
         trigger/nodes/edges), newest first."""

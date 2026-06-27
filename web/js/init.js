@@ -1323,6 +1323,9 @@ async function init() {
   // Start on welcome view
   navigateTo('welcome');
 
+  // Wire the code-mode terminal panel's drag-to-resize handle.
+  if (typeof _terminalInitResize === 'function') _terminalInitResize();
+
   // Spin up the floating ASCII companion (reads buddy_species from prefs).
   if (typeof buddyInit === 'function') buddyInit();
   // Fill Brainy's floating action button with its symbol (buddy or 🧠).

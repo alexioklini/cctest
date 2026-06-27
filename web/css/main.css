@@ -502,6 +502,44 @@ textarea { resize: none; }
   overflow: hidden;
 }
 
+/* ── Code-mode terminal (bottom-docked) ── */
+/* #main-content is flex-column; the terminal panel is a flex child pinned to
+ * the bottom. The views above are flex:1 so they shrink to make room. */
+#terminal-panel {
+  flex: 0 0 auto;
+  height: 280px;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+  border-top: 1px solid var(--border-200);
+  position: relative;
+}
+#terminal-resize-handle {
+  position: absolute; top: -3px; left: 0; right: 0; height: 6px;
+  cursor: ns-resize; z-index: 5;
+}
+#terminal-bar {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 8px; background: #252526; border-bottom: 1px solid #333;
+  flex: 0 0 auto;
+}
+#terminal-tabs { display: flex; gap: 2px; overflow-x: auto; }
+.terminal-tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 10px; font-size: 12px; color: #ccc;
+  background: #2d2d2d; border: 1px solid #333; border-bottom: none;
+  border-radius: 5px 5px 0 0; cursor: pointer; white-space: nowrap;
+}
+.terminal-tab.active { background: #1e1e1e; color: #fff; }
+.terminal-tab-close { opacity: .6; font-size: 10px; }
+.terminal-tab-close:hover { opacity: 1; color: #f85149; }
+#terminal-bar .pt-act { color: #ccc; }
+#terminal-body { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.terminal-xterm { position: absolute; inset: 0; padding: 4px 6px; }
+/* Toggle button (status bar) — only shown in code-mode contexts. */
+#terminal-toggle-btn { display: none; }
+#terminal-toggle-btn.code-mode-available { display: inline-flex; }
+
 /* ── Page Header ── */
 .page-header {
   height: 48px;

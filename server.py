@@ -1782,6 +1782,10 @@ class BrainAgentHandler(
             self._handle_project_docs(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/input-folders"):
             self._handle_project_input_folders_list(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/terminal/sessions"):
+            self._handle_terminal_list(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/terminal/sessions/" in path and path.endswith("/stream"):
+            self._handle_terminal_stream(path, path.split("/terminal/sessions/", 1)[1].rsplit("/stream", 1)[0])
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-index/status"):
             self._handle_code_index_status(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-index/graph"):
@@ -2193,6 +2197,12 @@ class BrainAgentHandler(
             self._handle_project_input_folders_add(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/input-folders/" in path:
             self._handle_project_input_folders_update(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/terminal/sessions"):
+            self._handle_terminal_create(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/terminal/sessions/" in path and path.endswith("/input"):
+            self._handle_terminal_input(path, path.split("/terminal/sessions/", 1)[1].rsplit("/input", 1)[0])
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/terminal/sessions/" in path and path.endswith("/close"):
+            self._handle_terminal_close(path, path.split("/terminal/sessions/", 1)[1].rsplit("/close", 1)[0])
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-index/refresh"):
             self._handle_code_index_refresh(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-index/rebuild"):
