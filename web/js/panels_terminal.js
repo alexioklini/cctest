@@ -398,9 +398,10 @@ function _terminalEditorPaint(tab) {
         value: tab.raw, mode: _cmModeFor(tab.ext), lineNumbers: true,
         lineWrapping: false, indentUnit: 4,
         extraKeys: {
-          // index-fed autocomplete (project symbols from the cbm index)
+          // index-fed autocomplete (project symbols from the cbm index).
+          // Ctrl-Space only — NOT Cmd-Space (that's macOS Spotlight, the OS
+          // grabs it before the browser sees it).
           'Ctrl-Space': (cm) => codeIndexComplete(cm),
-          'Cmd-Space': (cm) => codeIndexComplete(cm),
         },
       });
       tab.cm.setSize('100%', '100%');

@@ -409,8 +409,9 @@ Code-Index) und macht sie direkt nutzbar:
 - **Rechtsklick auf ein Symbol** im Editor: **Gehe zu Definition** (springt zur
   Fundstelle) und **Wer ruft das auf?** (zeigt die aufrufenden Stellen als
   klickbare Liste).
-- **Autovervollständigung**: **Strg-/Cmd-Leertaste** schlägt passende
-  Projekt-Symbole vor (rein aus dem Index, kein KI-Lauf, keine Wartezeit).
+- **Autovervollständigung**: **Strg-Leertaste** schlägt passende
+  Projekt-Symbole vor (rein aus dem Index, kein KI-Lauf, keine Wartezeit; auf
+  dem Mac Strg-Leertaste — nicht Cmd-Leertaste, das ist Spotlight).
 - **Hover**: Mit der Maus über ein Symbol fahren zeigt dessen Signatur,
   Beschreibung (Docstring) und wie oft es aufgerufen wird.
 - **Cypher-Suchleiste** (Power-User, Knopf **Cypher**): gezielte Abfragen an
