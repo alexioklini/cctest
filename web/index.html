@@ -583,25 +583,34 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
               </button>
             </div>
             <div class="project-panel-help" id="project-codemode-init-status" style="margin-top:6px"></div>
-            <!-- Code-Index (codebase-memory) management -->
-            <div style="margin-top:14px">
-              <div id="code-index-chip" class="project-sync-chip" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-                <span id="code-index-dot" class="pt-dot" data-state="pending"></span>
-                <span id="code-index-label" style="font-size:12px;color:var(--text-200)">Code-Index</span>
-                <span id="code-index-sublabel" style="font-size:11px;color:var(--text-400)"></span>
-              </div>
-              <div style="display:flex;flex-wrap:wrap;gap:6px">
-                <button id="code-index-action-refresh" class="btn-secondary" type="button" onclick="codeIndexRefresh()" title="Index neu aufbauen (inkrementell)">Aktualisieren</button>
-                <button id="code-index-action-rebuild" class="btn-secondary" type="button" onclick="codeIndexRebuild()" title="Index verwerfen und komplett neu aufbauen">Bereinigen &amp; neu</button>
-                <button id="code-index-action-graph" class="btn-secondary" type="button" onclick="codeIndexGraph()" title="Code-Graph / Architektur ansehen">Graph-Ansicht</button>
-                <button id="code-index-action-history" class="btn-secondary" type="button" onclick="codeIndexHistory()" title="Letzte Index-Läufe">Verlauf</button>
-              </div>
-            </div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;margin-bottom:4px">
               <span style="font-size:12px;color:var(--text-400)">Dateien im Arbeitsverzeichnis</span>
               <button class="pt-act" type="button" title="Aktualisieren" onclick="refreshCodeWorkingTree()">⟳</button>
             </div>
             <div id="project-codemode-tree" class="project-source-tree"></div>
+            <!-- Code-Index (codebase-memory): status chip + icon actions, below
+                 the files — mirrors normal projects' Speicher & Abgleich block. -->
+            <div id="code-index-chip" class="project-sync-chip" style="display:flex;margin:10px 0 8px 0">
+              <span class="project-sync-dot" id="code-index-dot"></span>
+              <span class="project-sync-text">
+                <span id="code-index-label">Code-Index</span>
+                <span id="code-index-sublabel" class="project-sync-sublabel"></span>
+              </span>
+            </div>
+            <div class="project-mem-actions" style="display:flex;gap:8px;align-items:center">
+              <button class="project-mem-iconbtn primary" id="code-index-action-refresh" onclick="codeIndexRefresh()" title="Index aktualisieren (inkrementell)" aria-label="Index aktualisieren">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              </button>
+              <button class="project-mem-iconbtn" id="code-index-action-graph" onclick="codeIndexGraph()" title="Code-Graph / Architektur ansehen" aria-label="Graph-Ansicht">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="7.7" y1="7.5" x2="10.3" y2="16.5"/><line x1="16.3" y1="7.5" x2="13.7" y2="16.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/></svg>
+              </button>
+              <button class="project-mem-iconbtn" id="code-index-action-history" onclick="codeIndexHistory()" title="Letzte Index-Läufe" aria-label="Verlauf">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </button>
+              <button class="project-mem-iconbtn danger" id="code-index-action-rebuild" onclick="codeIndexRebuild()" title="Index verwerfen und komplett neu aufbauen" aria-label="Bereinigen und neu">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
+              </button>
+            </div>
           </div>
         </div>
       </div>

@@ -3187,7 +3187,23 @@ _code_index_fp: dict[tuple[str, str], str] = {}     # (agent,proj) -> last finge
 _code_index_live: dict[tuple[str, str], dict] = {}  # (agent,proj) -> {state, indexed_at, ...}
 _code_index_requests: set[tuple[str, str]] = set()  # manual refresh / force
 _code_index_force: set[tuple[str, str]] = set()     # clean+rebuild (drop cache first)
+_code_index_history: dict[tuple[str, str], list] = {}  # (agent,proj) -> [run,…] newest-first
+_CODE_INDEX_HISTORY_MAX = 20
 _code_index_lock = threading.Lock()
+
+
+def _code_index_record_run(agent_id: str, project_name: str, run: dict):
+    """Append a finished index run to the per-project ring buffer (newest first)."""
+    key = (agent_id, project_name)
+    with _code_index_lock:
+        hist = _code_index_history.setdefault(key, [])
+        hist.insert(0, run)
+        del hist[_CODE_INDEX_HISTORY_MAX:]
+
+
+def _code_index_runs(agent_id: str, project_name: str) -> list:
+    with _code_index_lock:
+        return list(_code_index_history.get((agent_id, project_name), []))
 
 
 _CODE_INDEX_SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv",
@@ -3290,28 +3306,43 @@ def _code_index_sync_loop(srv):
                         pass
                 if not (changed or key in manual or is_forced):
                     continue
+                trigger = ("full_rebuild" if is_forced
+                           else "manual" if key in manual else "auto")
+                _t0 = time.time()
                 with _code_index_lock:
-                    _code_index_live[key] = {"state": "indexing", "started_at": time.time()}
+                    _code_index_live[key] = {"state": "indexing", "started_at": _t0}
                 try:
                     res = engine.cbm_index_repository(wd, cache_dir=cache) or {}
                     ok = not res.get("error")
                     _code_index_fp[key] = fp
+                    _done = time.time()
                     with _code_index_lock:
                         _code_index_live[key] = {
                             "state": "indexed" if ok else "error",
-                            "indexed_at": time.time(),
+                            "indexed_at": _done,
                             "nodes": res.get("nodes"), "edges": res.get("edges"),
                             "error": res.get("error"),
                         }
+                    _code_index_record_run(agent_id, name, {
+                        "state": "indexed" if ok else "error",
+                        "finished_at": _done, "duration": round(_done - _t0, 1),
+                        "trigger": trigger, "nodes": res.get("nodes"),
+                        "edges": res.get("edges"), "error": res.get("error"),
+                    })
                     if ok:
                         print(f"[code-index] {agent_id}/{name}: reindexed "
                               f"nodes={res.get('nodes')} edges={res.get('edges')}", flush=True)
                     else:
                         print(f"[code-index] {agent_id}/{name}: {res.get('error')}", flush=True)
                 except Exception as e:
+                    _done = time.time()
                     with _code_index_lock:
                         _code_index_live[key] = {"state": "error", "error": str(e),
-                                                 "indexed_at": time.time()}
+                                                 "indexed_at": _done}
+                    _code_index_record_run(agent_id, name, {
+                        "state": "error", "finished_at": _done,
+                        "duration": round(_done - _t0, 1), "trigger": trigger,
+                        "error": f"{type(e).__name__}: {e}"})
                     print(f"[code-index] {agent_id}/{name} failed: "
                           f"{type(e).__name__}: {e}", flush=True)
         except Exception as e:

@@ -717,6 +717,24 @@ class ProjectsHandlerMixin:
             pass
         self._send_json({"status": "rebuilding", "agent": agent_id, "project": proj_name})
 
+    def _handle_code_index_history(self, path: str):
+        """GET .../code-index/history — last N index runs (state/time/duration/
+        trigger/nodes/edges), newest first."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        try:
+            import server_daemons
+            runs = server_daemons._code_index_runs(agent_id, proj_name)
+        except Exception:
+            runs = []
+        self._send_json({"agent": agent_id, "project": proj_name, "runs": runs})
+
     def _handle_code_index_graph(self, path: str):
         """GET /v1/agents/{id}/projects/{name}/code-index/graph — architecture /
         graph-view payload for the code index."""

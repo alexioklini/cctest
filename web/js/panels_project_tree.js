@@ -549,7 +549,9 @@ async function refreshCodeWorkingTree(opts) {
     const tree = data.tree || [];
     const sig = _ptCodeTreeSig(tree);
     // No change since last render → leave the DOM (and expansion state) alone.
-    if (opts.silent && sig === state._codeTreeSig) return;
+    // `force` (used after an index-status refresh) re-renders anyway so the
+    // per-file index dots repaint even when the file set itself is unchanged.
+    if (opts.silent && !opts.force && sig === state._codeTreeSig) return;
     const openDirs = _ptCodeTreeOpenDirs(host);
     host.innerHTML = _ptRenderCodeTree(tree, openDirs);
     state._codeTreeSig = sig;
@@ -571,7 +573,7 @@ function _codeIndexCtx() {
 async function refreshCodeIndexStatus() {
   const { agentId, projectName } = _codeIndexCtx();
   if (!projectName) return;
-  const dot = document.getElementById('code-index-dot');
+  const chip = document.getElementById('code-index-chip');
   const label = document.getElementById('code-index-label');
   const sub = document.getElementById('code-index-sublabel');
   try {
@@ -581,14 +583,17 @@ async function refreshCodeIndexStatus() {
     state._codeIndexFiles = d.files || {};
     const live = d.live || {};
     const liveState = live.state;
-    let dotState = 'pending', txt = 'Code-Index', subtxt = '';
+    // Chip data-state mirrors MemPalace: idle (green) / syncing (pulsing accent)
+    // / error (red). The CSS .project-sync-chip[data-state=…] colors the dot.
+    let chipState = 'idle', txt = 'Code-Index', subtxt = '';
     if (liveState === 'indexing') {
-      dotState = 'syncing'; txt = 'Indexierung läuft …';
+      chipState = 'syncing'; txt = 'Indexierung läuft …';
+    } else if (liveState === 'error') {
+      chipState = 'error'; txt = 'Index-Fehler';
     } else if (!d.indexed) {
-      dotState = 'stale'; txt = 'Noch nicht indexiert';
+      chipState = 'syncing'; txt = 'Noch nicht indexiert';
     } else {
-      dotState = (liveState === 'error') ? 'error' : 'indexed';
-      txt = 'Indexiert';
+      chipState = 'idle'; txt = 'Indexiert';
       const nodes = d.nodes != null ? d.nodes : '?';
       const edges = d.edges != null ? d.edges : '?';
       const nFiles = d.files ? Object.keys(d.files).length : 0;
@@ -596,10 +601,11 @@ async function refreshCodeIndexStatus() {
       subtxt = `${nodes} Knoten · ${edges} Kanten · ${nFiles} Dateien` + (nStale ? ` · ${nStale} veraltet` : '');
     }
     if (live.error) subtxt = live.error;
-    if (dot) dot.dataset.state = (_PT_STATE[dotState] || _PT_STATE.pending).cls;
+    if (chip) chip.dataset.state = chipState;
     if (label) label.textContent = txt;
     if (sub) sub.textContent = subtxt;
-    // repaint the file tree dots from the fresh cache (silent: keep DOM)
+    // repaint the file tree dots from the fresh cache (force: file set unchanged
+    // but the index state may have, so re-render to repaint the per-file dots)
     refreshCodeWorkingTree({ silent: true, force: true });
   } catch (e) { /* transient */ }
 }
@@ -635,32 +641,84 @@ async function codeIndexRebuild() {
   } catch (e) { showToast && showToast('Fehler beim Neuaufbau'); }
 }
 
+// Small horizontal bar for a labeled count (used in the graph overview).
+function _ciBar(label, count, max, color) {
+  const pct = max > 0 ? Math.round((count / max) * 100) : 0;
+  return `<div class="ci-bar-row">
+    <span class="ci-bar-label">${esc(label)}</span>
+    <span class="ci-bar-track"><span class="ci-bar-fill" style="width:${pct}%;background:${color || 'var(--accent-brand)'}"></span></span>
+    <span class="ci-bar-count">${count}</span>
+  </div>`;
+}
+
 async function codeIndexGraph() {
   const { agentId, projectName } = _codeIndexCtx();
   if (!projectName) return;
   try {
     const d = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/code-index/graph`);
-    if (!d.indexed) { showToast && showToast('Noch kein Index vorhanden'); return; }
-    const arch = d.architecture ? JSON.stringify(d.architecture, null, 2) : '(keine Architektur-Daten)';
-    _codeIndexShowModal('Code-Graph / Architektur',
-      `<div style="font-size:12px;color:var(--text-300);margin-bottom:8px">${d.nodes || '?'} Knoten · ${d.edges || '?'} Kanten</div>` +
-      `<pre style="white-space:pre-wrap;font-size:11px;max-height:60vh;overflow:auto">${esc(arch)}</pre>`);
-  } catch (e) { showToast && showToast('Graph konnte nicht geladen werden'); }
+    if (!d.indexed) { if (typeof showToast === 'function') showToast('Noch kein Index vorhanden'); return; }
+    const a = d.architecture || {};
+    const labels = a.node_labels || [];
+    const edges = a.edge_types || [];
+    const langs = a.languages || [];
+    const pkgs = a.packages || [];
+    const entries = a.entry_points || [];
+    const hotspots = a.hotspots || [];
+    const maxL = Math.max(1, ...labels.map(x => x.count || 0));
+    const maxE = Math.max(1, ...edges.map(x => x.count || 0));
+    const chip = (t) => `<span class="ci-chip">${esc(t)}</span>`;
+    const section = (title, html) => html ? `<div class="ci-sec"><div class="ci-sec-title">${esc(title)}</div>${html}</div>` : '';
+    const body = `
+      <div class="ci-graph-head">
+        <div class="ci-stat"><div class="ci-stat-num">${a.total_nodes != null ? a.total_nodes : (d.nodes || '?')}</div><div class="ci-stat-lbl">Knoten</div></div>
+        <div class="ci-stat"><div class="ci-stat-num">${a.total_edges != null ? a.total_edges : (d.edges || '?')}</div><div class="ci-stat-lbl">Kanten</div></div>
+        <div class="ci-stat"><div class="ci-stat-num">${langs.length}</div><div class="ci-stat-lbl">Sprachen</div></div>
+        <div class="ci-stat"><div class="ci-stat-num">${pkgs.length}</div><div class="ci-stat-lbl">Pakete</div></div>
+      </div>
+      ${langs.length ? section('Sprachen', langs.map(l => chip(typeof l === 'string' ? l : (l.name || l.language || ''))).join('')) : ''}
+      ${labels.length ? section('Symbol-Typen', labels.slice(0, 10).map(x => _ciBar(x.label, x.count || 0, maxL)).join('')) : ''}
+      ${edges.length ? section('Beziehungen', edges.slice(0, 10).map(x => _ciBar(x.type, x.count || 0, maxE, '#8b5cf6')).join('')) : ''}
+      ${entries.length ? section('Einstiegspunkte', entries.slice(0, 12).map(e => chip(typeof e === 'string' ? e : (e.name || e.qualified_name || ''))).join('')) : ''}
+      ${hotspots.length ? section('Hotspots (am stärksten vernetzt)', hotspots.slice(0, 10).map(h => `<div class="ci-hotspot">${esc(typeof h === 'string' ? h : (h.name || h.qualified_name || ''))}${h.degree != null ? ` <span class="ci-deg">${h.degree}</span>` : ''}</div>`).join('')) : ''}
+    `;
+    _codeIndexShowModal('Code-Graph · Architektur', body);
+  } catch (e) { if (typeof showToast === 'function') showToast('Graph konnte nicht geladen werden'); }
 }
 
 async function codeIndexHistory() {
   const { agentId, projectName } = _codeIndexCtx();
   if (!projectName) return;
-  const d = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/code-index/status`).catch(() => null);
-  const live = (d && d.live) || {};
-  const when = live.indexed_at ? new Date(live.indexed_at * 1000).toLocaleString() : '—';
-  const body = `<div style="font-size:13px">
-    <div>Letzter Lauf: <b>${esc(live.state || 'unbekannt')}</b></div>
-    <div>Zeitpunkt: ${esc(when)}</div>
-    <div>Knoten: ${(d && d.nodes) != null ? d.nodes : '?'} · Kanten: ${(d && d.edges) != null ? d.edges : '?'}</div>
-    ${live.error ? `<div style="color:var(--danger)">Fehler: ${esc(live.error)}</div>` : ''}
-  </div>`;
-  _codeIndexShowModal('Index-Verlauf', body);
+  _codeIndexShowModal('Index-Verlauf', '<div class="pt-loading">Lädt…</div>');
+  try {
+    const d = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/code-index/history`);
+    const runs = (d && d.runs) || [];
+    if (!runs.length) {
+      _codeIndexShowModal('Index-Verlauf', '<p style="color:var(--text-400);font-size:.85rem">Noch keine Index-Läufe aufgezeichnet.</p>');
+      return;
+    }
+    const trig = { auto: 'Automatisch', manual: 'Manuell', full_rebuild: 'Neuaufbau' };
+    const rows = runs.map(r => {
+      const ok = r.state === 'indexed';
+      const when = r.finished_at ? new Date(r.finished_at * 1000).toLocaleString() : '—';
+      const dot = `<span class="project-sync-dot" style="background:${ok ? '#3fb950' : '#f85149'};margin-top:6px"></span>`;
+      const meta = ok
+        ? `${r.nodes != null ? r.nodes : '?'} Knoten · ${r.edges != null ? r.edges : '?'} Kanten`
+        : `<span style="color:var(--danger)">${esc(r.error || 'Fehler')}</span>`;
+      return `<div class="ci-run">
+        ${dot}
+        <div class="ci-run-body">
+          <div class="ci-run-top"><b>${ok ? 'Indexiert' : 'Fehler'}</b>
+            <span class="ci-chip">${esc(trig[r.trigger] || r.trigger || '')}</span>
+            ${r.duration != null ? `<span class="ci-run-dur">${r.duration}s</span>` : ''}</div>
+          <div class="ci-run-meta">${meta}</div>
+          <div class="ci-run-when">${esc(when)}</div>
+        </div>
+      </div>`;
+    }).join('');
+    _codeIndexShowModal('Index-Verlauf', `<div class="ci-runs">${rows}</div>`);
+  } catch (e) {
+    _codeIndexShowModal('Index-Verlauf', '<p style="color:var(--danger)">Verlauf konnte nicht geladen werden.</p>');
+  }
 }
 
 // Minimal reusable modal (reuses the app's modal styles if present, else inline).

@@ -1786,6 +1786,8 @@ class BrainAgentHandler(
             self._handle_code_index_status(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-index/graph"):
             self._handle_code_index_graph(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-index/history"):
+            self._handle_code_index_history(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-status"):
             self._handle_project_sync_status(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-runs"):

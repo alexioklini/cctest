@@ -4029,6 +4029,37 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   50% { opacity: 0.5; transform: scale(1.4); }
 }
 
+/* Code-index modal (graph overview + run history). Lightweight, matches the
+ * app's panel look. */
+.ci-graph-head { display: flex; gap: 10px; margin-bottom: 14px; }
+.ci-stat { flex: 1; background: var(--bg-100); border: 1px solid var(--border-100);
+  border-radius: 8px; padding: 10px; text-align: center; }
+.ci-stat-num { font-size: 20px; font-weight: 700; color: var(--text-100); }
+.ci-stat-lbl { font-size: 11px; color: var(--text-400); margin-top: 2px; }
+.ci-sec { margin: 14px 0; }
+.ci-sec-title { font-size: 12px; font-weight: 600; color: var(--text-300);
+  margin-bottom: 6px; text-transform: uppercase; letter-spacing: .04em; }
+.ci-bar-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+.ci-bar-label { flex: 0 0 130px; font-size: 12px; color: var(--text-200);
+  font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ci-bar-track { flex: 1; height: 8px; background: var(--bg-200); border-radius: 4px; overflow: hidden; }
+.ci-bar-fill { display: block; height: 100%; border-radius: 4px; }
+.ci-bar-count { flex: 0 0 auto; font-size: 11px; color: var(--text-400); min-width: 32px; text-align: right; }
+.ci-chip { display: inline-block; font-size: 11px; padding: 2px 8px; margin: 2px 4px 2px 0;
+  background: var(--bg-200); border: 1px solid var(--border-100); border-radius: 12px;
+  color: var(--text-200); font-family: var(--font-mono); }
+.ci-hotspot { font-size: 12px; font-family: var(--font-mono); color: var(--text-200);
+  padding: 2px 0; display: flex; justify-content: space-between; }
+.ci-deg { color: var(--text-400); }
+.ci-runs { display: flex; flex-direction: column; gap: 8px; }
+.ci-run { display: flex; gap: 10px; padding: 8px; background: var(--bg-100);
+  border: 1px solid var(--border-100); border-radius: 8px; }
+.ci-run-body { flex: 1; min-width: 0; }
+.ci-run-top { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.ci-run-dur { margin-left: auto; font-size: 11px; color: var(--text-400); }
+.ci-run-meta { font-size: 12px; color: var(--text-300); margin-top: 2px; }
+.ci-run-when { font-size: 11px; color: var(--text-400); margin-top: 2px; }
+
 /* Per-phase sync checklist (Indexierung / KG-Extraktion / Closet-Rerank).
  * Shown only while syncing; one row per phase with a status icon. */
 .project-sync-phases {
