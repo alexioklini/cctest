@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.218.0",
+        "date": "2026-06-27",
+        "title": "Code-Projekte: integrierter Code-Editor",
+        "body": "Im unteren Bereich von Code-Projekten können Sie Dateien jetzt nicht "
+                "nur ansehen, sondern direkt bearbeiten: Ein Klick auf eine Datei "
+                "öffnet sie als Tab mit Syntaxhervorhebung — umschaltbar zwischen "
+                "formatierter Ansicht und Bearbeiten-Modus, mit Speichern und "
+                "Herunterladen. Sie können neue Dateien anlegen, mehrere Editor- und "
+                "Terminal-Tabs nebeneinander offen halten, Tabs gebündelt schließen "
+                "(Rechtsklick) und den Bereich auf volle Höhe maximieren. Welche "
+                "Dateien geöffnet sind, wird pro Projekt gemerkt — auch "
+                "gerätübergreifend.",
+        "audience": "user",
+        "versions": ["9.218.0"],
+    },
+    {
         "version": "9.217.0",
         "date": "2026-06-27",
         "title": "Code-Projekte: integriertes Terminal",

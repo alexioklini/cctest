@@ -1568,6 +1568,44 @@ class AdminArtifactsHandlers:
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    def _handle_file_save(self):
+        """POST /v1/files/save {path, content} — write a text file (create or
+        overwrite). Same path validation as preview/download (allowed roots incl.
+        code-mode working_dir). For a NEW file, the parent dir must already exist
+        and be inside an allowed root. Returns {ok, path, size}."""
+        body = self._read_json() or {}
+        raw_path = (body.get("path") or "").strip()
+        content = body.get("content")
+        if not raw_path or content is None:
+            self._send_json({"error": "path und content erforderlich"}, 400)
+            return
+        if not isinstance(content, str):
+            self._send_json({"error": "content muss Text sein"}, 400)
+            return
+        # Validate the path. For a new file the target may not exist yet, so we
+        # validate its PARENT dir (which must be a real, allowed directory) and
+        # then re-validate the full path lands under the same allowed root.
+        resolved = self._validate_file_path(raw_path)
+        if not resolved:
+            parent = os.path.dirname(os.path.realpath(os.path.expanduser(raw_path)))
+            pv = self._validate_file_path(parent)
+            if pv and os.path.isdir(pv):
+                resolved = os.path.join(pv, os.path.basename(raw_path))
+        if not resolved:
+            self._send_json({"error": "Ungültiger oder nicht erlaubter Pfad"}, 403)
+            return
+        if len(content.encode("utf-8")) > 10 * 1024 * 1024:
+            self._send_json({"error": "Datei zu groß (>10MB)"}, 400)
+            return
+        try:
+            os.makedirs(os.path.dirname(resolved), exist_ok=True)
+            with open(resolved, "w", encoding="utf-8") as f:
+                f.write(content)
+            self._send_json({"ok": True, "path": resolved,
+                             "size": os.path.getsize(resolved)})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     def _handle_file_preview(self):
         """GET /v1/files/preview?path=<absolute_path>&lines=100 — return file content for preview."""
         from urllib.parse import urlparse, parse_qs

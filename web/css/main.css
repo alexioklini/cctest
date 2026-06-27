@@ -536,6 +536,23 @@ textarea { resize: none; }
 #terminal-bar .pt-act { color: #ccc; }
 #terminal-body { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 .terminal-xterm { position: absolute; inset: 0; padding: 4px 6px; }
+/* Maximized: the panel fills the whole main-content area. */
+#terminal-panel.maximized { position: absolute; inset: 0; height: auto !important; z-index: 40; }
+/* Editor tabs (CodeMirror) inside the bottom panel. */
+.terminal-editor { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg-000); }
+.editor-toolbar { display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+  background: #252526; border-bottom: 1px solid #333; flex: 0 0 auto; }
+.editor-toolbar .ed-mode.active { background: var(--accent-brand); color: #fff; border-color: var(--accent-brand); }
+.editor-render, .editor-cm { flex: 1; min-height: 0; overflow: auto; }
+.editor-cm .CodeMirror { height: 100%; font-size: 13px; font-family: var(--font-mono); }
+.editor-pre { margin: 0; padding: 10px 12px; font-size: 12px; line-height: 1.5;
+  font-family: var(--font-mono); white-space: pre; }
+/* Tab right-click bulk-close menu. */
+.terminal-tab-menu { position: fixed; z-index: 9999; background: var(--bg-000);
+  border: 1px solid var(--border-100); border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.3);
+  padding: 4px; min-width: 160px; font-size: 13px; }
+.terminal-tab-menu > div { padding: 6px 10px; border-radius: 4px; cursor: pointer; }
+.terminal-tab-menu > div:hover { background: var(--bg-200); }
 /* Toggle button (status bar) — only shown in code-mode contexts. */
 #terminal-toggle-btn { display: none; }
 #terminal-toggle-btn.code-mode-available { display: inline-flex; }
@@ -4067,14 +4084,6 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   0%,100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(1.4); }
 }
-
-/* Code-mode file preview modal (toolbar + code body). */
-.pt-preview-tb { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
-.pt-prev-mode.active { background: var(--accent-brand); color: #fff; border-color: var(--accent-brand); }
-.pt-preview-pre { max-height: 65vh; overflow: auto; margin: 0; background: var(--bg-100);
-  border: 1px solid var(--border-100); border-radius: 8px; padding: 12px;
-  font-size: 12px; line-height: 1.5; }
-.pt-preview-pre code { font-family: var(--font-mono); white-space: pre; }
 
 /* Code-index per-file dot legend. */
 .code-index-legend { list-style: none; margin: 8px 0 0; padding: 0;

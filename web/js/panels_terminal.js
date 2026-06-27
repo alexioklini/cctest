@@ -76,22 +76,51 @@ async function terminalTogglePanel(force) {
 }
 
 async function _terminalLoadSessions() {
-  // Attach to existing sessions for this project (reuse), else create one.
+  // 1) reattach live terminal sessions (reused server-side per project)
+  let existing = [];
   try {
     const d = await API.get(`/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}/terminal/sessions`);
-    const existing = (d && d.sessions) || [];
-    // drop tabs whose session no longer exists
+    existing = (d && d.sessions) || [];
     const liveIds = new Set(existing.map(s => s.id));
-    _term.tabs = _term.tabs.filter(t => liveIds.has(t.id) || t._fresh);
+    _term.tabs = _term.tabs.filter(t => t.kind !== 'terminal' || liveIds.has(t.id) || t._fresh);
     for (const s of existing) {
       if (!_term.tabs.find(t => t.id === s.id)) _terminalAddTab(s.id);
     }
-    if (!_term.tabs.length) { await terminalNewTab(); return; }
-    _terminalRenderTabs();
-    _terminalActivate(_term.active || _term.tabs[0].id);
-  } catch (e) {
-    if (typeof showToast === 'function') showToast('Terminal-Sitzungen konnten nicht geladen werden');
+  } catch (e) { /* terminal backend may be down — editors still work */ }
+  // 2) restore persisted editor tabs (open file paths) from bottom_workspace
+  let ws = null;
+  try {
+    const p = await API.get(`/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}`);
+    ws = p && p.bottom_workspace;
+  } catch (e) { /* ignore */ }
+  if (ws && Array.isArray(ws.editor_files)) {
+    for (const fp of ws.editor_files) {
+      if (!_term.tabs.find(t => t.kind === 'editor' && t.path === fp)) {
+        await terminalOpenFile(fp);  // appends an editor tab
+      }
+    }
   }
+  if (!_term.tabs.length) { await terminalNewTab(); return; }
+  _terminalRenderTabs();
+  const want = (ws && ws.active && _term.tabs.find(t => t.id === ws.active)) ? ws.active : _term.tabs[0].id;
+  _terminalActivate(want);
+}
+
+// Persist the bottom workspace (open editor file paths + active tab) to the
+// project (server-side, per-project, so it round-trips across devices). Live
+// terminal sessions are reattached from the server list, so we only persist the
+// editor file set + which tab was active. Debounced.
+let _terminalPersistTimer = null;
+function _terminalPersist() {
+  if (!_term.open || !_term.project) return;
+  clearTimeout(_terminalPersistTimer);
+  _terminalPersistTimer = setTimeout(() => {
+    const ws = {
+      editor_files: _term.tabs.filter(t => t.kind === 'editor').map(t => t.path),
+      active: _term.active || '',
+    };
+    try { API.updateProject(_term.agent, _term.project, { bottom_workspace: ws }); } catch (_) {}
+  }, 600);
 }
 
 async function terminalNewTab() {
@@ -118,7 +147,7 @@ function _terminalAddTab(id) {
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
-  const tab = { id, term, fit, offset: 0, attached: false, abort: null, el, _fresh: true };
+  const tab = { id, kind: 'terminal', term, fit, offset: 0, attached: false, abort: null, el, _fresh: true };
   // keystrokes → POST input
   term.onData(data => {
     fetch(`${BASE_URL}/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}/terminal/sessions/${id}/input`, {
@@ -136,9 +165,15 @@ function _terminalActivate(id) {
   _terminalRenderTabs();
   const tab = _term.tabs.find(t => t.id === id);
   if (!tab) return;
-  // (re)attach the output stream from our current offset
+  if (tab.kind === 'editor') {
+    setTimeout(() => { try { tab.cm.refresh(); tab.cm.focus(); } catch (_) {} }, 30);
+    _terminalPersist();
+    return;
+  }
+  // terminal: (re)attach the output stream from our current offset
   if (!tab.attached) _terminalAttach(tab);
   setTimeout(() => { try { tab.fit.fit(); tab.term.focus(); _terminalSendResize(tab); } catch (_) {} }, 30);
+  _terminalPersist();
 }
 
 // Stream PTY output via fetch+reader (NOT EventSource — like the chat stream,
@@ -193,41 +228,274 @@ function _terminalSendResize(tab) {
 async function terminalCloseTab(id, ev) {
   if (ev) ev.stopPropagation();
   const tab = _term.tabs.find(t => t.id === id);
-  if (tab) {
+  if (!tab) return;
+  // Warn on unsaved editor changes.
+  if (tab.kind === 'editor' && tab.dirty) {
+    if (!confirm(`„${tab.name}“ hat ungespeicherte Änderungen. Trotzdem schließen?`)) return;
+  }
+  if (tab.kind === 'editor') {
+    tab.el.remove();
+  } else {
     if (tab.abort) { try { tab.abort.abort(); } catch (_) {} }
     try { tab.term.dispose(); } catch (_) {}
     tab.el.remove();
+    fetch(`${BASE_URL}/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}/terminal/sessions/${id}/close`, {
+      method: 'POST', headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || '') },
+    }).catch(() => {});
   }
   _term.tabs = _term.tabs.filter(t => t.id !== id);
-  try {
-    await fetch(`${BASE_URL}/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}/terminal/sessions/${id}/close`, {
-      method: 'POST', headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || '') },
-    });
-  } catch (_) {}
   if (_term.active === id) {
     if (_term.tabs.length) _terminalActivate(_term.tabs[0].id);
     else terminalTogglePanel(false);
   }
   _terminalRenderTabs();
+  _terminalPersist();
+}
+
+// Bulk close (browser-style): 'all' | 'others' | 'right' relative to a tab id.
+async function terminalCloseTabs(mode, anchorId, ev) {
+  if (ev) ev.stopPropagation();
+  let ids = [];
+  if (mode === 'all') {
+    ids = _term.tabs.map(t => t.id);
+  } else if (mode === 'others') {
+    ids = _term.tabs.filter(t => t.id !== anchorId).map(t => t.id);
+  } else if (mode === 'right') {
+    const i = _term.tabs.findIndex(t => t.id === anchorId);
+    ids = i >= 0 ? _term.tabs.slice(i + 1).map(t => t.id) : [];
+  }
+  // close non-anchor first so the anchor stays active
+  for (const id of ids) {
+    // skip the confirm-loop spam: only the dirty ones prompt
+    await terminalCloseTab(id);
+  }
+}
+
+function _terminalTabMenu(id, ev) {
+  ev.preventDefault(); ev.stopPropagation();
+  const old = document.getElementById('terminal-tab-menu');
+  if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'terminal-tab-menu';
+  m.className = 'terminal-tab-menu';
+  m.style.left = ev.clientX + 'px';
+  m.style.top = ev.clientY + 'px';
+  m.innerHTML = `
+    <div onclick="terminalCloseTab('${id}'); document.getElementById('terminal-tab-menu').remove()">Tab schließen</div>
+    <div onclick="terminalCloseTabs('others','${id}'); document.getElementById('terminal-tab-menu').remove()">Andere schließen</div>
+    <div onclick="terminalCloseTabs('right','${id}'); document.getElementById('terminal-tab-menu').remove()">Rechte schließen</div>
+    <div onclick="terminalCloseTabs('all'); document.getElementById('terminal-tab-menu').remove()">Alle schließen</div>`;
+  document.body.appendChild(m);
+  const close = () => { const e = document.getElementById('terminal-tab-menu'); if (e) e.remove(); document.removeEventListener('click', close); };
+  setTimeout(() => document.addEventListener('click', close), 0);
 }
 
 function _terminalRenderTabs() {
   const bar = document.getElementById('terminal-tabs');
   if (!bar) return;
-  bar.innerHTML = _term.tabs.map((t, i) => {
+  let termN = 0;
+  bar.innerHTML = _term.tabs.map((t) => {
     const active = t.id === _term.active ? ' active' : '';
-    return `<div class="terminal-tab${active}" onclick="_terminalActivate('${t.id}')">
-      <span>Terminal ${i + 1}</span>
+    let label, icon;
+    if (t.kind === 'editor') {
+      label = (t.dirty ? '● ' : '') + esc(t.name);
+      icon = '';
+    } else {
+      termN += 1; label = 'Terminal ' + termN; icon = '';
+    }
+    return `<div class="terminal-tab${active}" title="${esc(t.path || label)}" onclick="_terminalActivate('${t.id}')" oncontextmenu="_terminalTabMenu('${t.id}', event)">
+      <span>${icon}${label}</span>
       <span class="terminal-tab-close" onclick="terminalCloseTab('${t.id}', event)">✕</span>
     </div>`;
   }).join('');
 }
 
-// Re-fit the active terminal on window resize.
+// ── Editor tabs (CodeMirror 5) ───────────────────────────────────────────────
+// Map a file extension → a CodeMirror mode (modes loaded in index.html).
+function _cmModeFor(ext) {
+  ext = (ext || '').toLowerCase();
+  const m = {
+    py: 'python', js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+    json: { name: 'javascript', json: true }, ts: 'javascript', jsx: 'javascript', tsx: 'javascript',
+    html: 'htmlmixed', htm: 'htmlmixed', xml: 'xml', svg: 'xml',
+    css: 'css', scss: 'css', less: 'css',
+    md: 'markdown', markdown: 'markdown',
+    c: 'text/x-csrc', h: 'text/x-csrc', cpp: 'text/x-c++src', cc: 'text/x-c++src',
+    hpp: 'text/x-c++src', java: 'text/x-java', cs: 'text/x-csharp',
+    yml: 'yaml', yaml: 'yaml', sh: 'shell', bash: 'shell', zsh: 'shell',
+    go: 'go', rs: 'rust',
+  };
+  return m[ext] || null;
+}
+
+// Open a file as an editor tab (or focus it if already open).
+async function terminalOpenFile(absPath) {
+  if (!absPath) return;
+  if (!_term.open) { await terminalTogglePanel(true); }
+  const existing = _term.tabs.find(t => t.kind === 'editor' && t.path === absPath);
+  if (existing) { _terminalActivate(existing.id); return; }
+  const name = absPath.split('/').pop();
+  const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+  const id = 'edit-' + absPath;
+  const el = document.createElement('div');
+  el.className = 'terminal-editor';
+  el.style.display = 'none';
+  el.innerHTML = `
+    <div class="editor-toolbar">
+      <button class="btn-secondary ed-mode active" data-mode="render" onclick="terminalEditorMode('${id}','render')">Ansicht</button>
+      <button class="btn-secondary ed-mode" data-mode="raw" onclick="terminalEditorMode('${id}','raw')">Bearbeiten</button>
+      <span style="flex:1"></span>
+      <button class="btn-secondary ed-save" onclick="terminalEditorSave('${id}')" disabled>Speichern</button>
+      <button class="btn-secondary" onclick="terminalEditorDownload('${id}')">Herunterladen</button>
+    </div>
+    <div class="editor-render"></div>
+    <div class="editor-cm" style="display:none"></div>`;
+  document.getElementById('terminal-body').appendChild(el);
+  const tab = { id, kind: 'editor', path: absPath, name, ext, el, cm: null,
+                raw: '', mode: 'render', dirty: false, loaded: false };
+  _term.tabs.push(tab);
+  _terminalRenderTabs();
+  _terminalActivate(id);
+  // load content
+  try {
+    const d = await API.get(`/v1/files/preview?path=${encodeURIComponent(absPath)}&lines=100000`);
+    if (d.error) { el.querySelector('.editor-render').innerHTML = `<div class="pt-empty">${esc(d.error)}</div>`; return; }
+    if (d.type === 'image') {
+      _terminalEditorShowImage(tab);
+      // images: no edit
+      el.querySelector('.ed-mode[data-mode="raw"]').style.display = 'none';
+      el.querySelector('.ed-save').style.display = 'none';
+      return;
+    }
+    tab.raw = d.content || '';
+    tab.truncated = !!d.truncated;
+    tab.loaded = true;
+    _terminalEditorPaint(tab);
+  } catch (e) {
+    el.querySelector('.editor-render').innerHTML = '<div class="pt-empty">Datei konnte nicht geladen werden.</div>';
+  }
+}
+
+function terminalEditorMode(id, mode) {
+  const tab = _term.tabs.find(t => t.id === id);
+  if (!tab) return;
+  tab.mode = mode;
+  tab.el.querySelectorAll('.ed-mode').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  _terminalEditorPaint(tab);
+}
+
+function _terminalEditorPaint(tab) {
+  const renderEl = tab.el.querySelector('.editor-render');
+  const cmEl = tab.el.querySelector('.editor-cm');
+  if (tab.mode === 'raw') {
+    // edit mode: CodeMirror
+    renderEl.style.display = 'none';
+    cmEl.style.display = 'block';
+    if (!tab.cm) {
+      tab.cm = CodeMirror(cmEl, {
+        value: tab.raw, mode: _cmModeFor(tab.ext), lineNumbers: true,
+        lineWrapping: false, indentUnit: 4,
+      });
+      tab.cm.setSize('100%', '100%');
+      tab.cm.on('change', () => {
+        tab.dirty = true;
+        const sv = tab.el.querySelector('.ed-save'); if (sv) sv.disabled = false;
+        _terminalRenderTabs();
+      });
+    } else {
+      // keep CM in sync if raw changed via save
+      if (tab.cm.getValue() !== tab.raw && !tab.dirty) tab.cm.setValue(tab.raw);
+    }
+    setTimeout(() => { try { tab.cm.refresh(); tab.cm.focus(); } catch (_) {} }, 20);
+  } else {
+    // render mode: syntax-highlighted read-only (or markdown)
+    cmEl.style.display = 'none';
+    renderEl.style.display = 'block';
+    const txt = (tab.cm && tab.dirty) ? tab.cm.getValue() : tab.raw;
+    if (tab.ext === 'md' && typeof renderMarkdown === 'function') {
+      renderEl.innerHTML = `<div class="ref-inline-md msg-content" style="padding:10px">${renderMarkdown(txt)}</div>`;
+      renderEl.querySelectorAll('pre code').forEach(el => { try { hljs.highlightElement(el); } catch (_) {} });
+    } else {
+      const lang = (typeof _ptLangFor === 'function') ? _ptLangFor(tab.ext) : 'plaintext';
+      let html; try { html = hljs.highlight(txt, { language: lang }).value; } catch (_) { html = esc(txt); }
+      renderEl.innerHTML = `<pre class="editor-pre"><code class="hljs">${html}</code></pre>`;
+    }
+  }
+}
+
+async function _terminalEditorShowImage(tab) {
+  try {
+    const resp = await fetch(`${BASE_URL}/v1/files/download?path=${encodeURIComponent(tab.path)}`,
+      { headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || '') } });
+    const blob = await resp.blob();
+    tab.el.querySelector('.editor-render').innerHTML =
+      `<img src="${URL.createObjectURL(blob)}" style="max-width:100%;padding:10px"/>`;
+  } catch (e) { /* ignore */ }
+}
+
+async function terminalEditorSave(id) {
+  const tab = _term.tabs.find(t => t.id === id);
+  if (!tab || !tab.cm) return;
+  const content = tab.cm.getValue();
+  try {
+    const r = await fetch(`${BASE_URL}/v1/files/save`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || ''), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: tab.path, content }),
+    });
+    const d = await r.json();
+    if (d.error) { if (typeof showToast === 'function') showToast(d.error); return; }
+    tab.raw = content; tab.dirty = false;
+    const sv = tab.el.querySelector('.ed-save'); if (sv) sv.disabled = true;
+    _terminalRenderTabs();
+    if (typeof showToast === 'function') showToast('Gespeichert');
+  } catch (e) { if (typeof showToast === 'function') showToast('Speichern fehlgeschlagen'); }
+}
+
+function terminalEditorDownload(id) {
+  const tab = _term.tabs.find(t => t.id === id);
+  if (tab && typeof _ptDownloadFile === 'function') _ptDownloadFile(tab.path, tab.name);
+}
+
+// Create a new file in the project tree (prompts for a relative path).
+async function terminalNewFile() {
+  if (!_term.wd) { const ctx = await _terminalCtx(); if (ctx) { _term.agent = ctx.agent; _term.project = ctx.project; _term.wd = ctx.wd; } }
+  if (!_term.wd) { if (typeof showToast === 'function') showToast('Kein Code-Mode-Projekt'); return; }
+  const rel = prompt('Neue Datei (relativer Pfad im Projekt):', 'neu.txt');
+  if (!rel) return;
+  const clean = rel.replace(/^\/+/, '').split('/').filter(p => p && p !== '..').join('/');
+  if (!clean) return;
+  const abs = _term.wd.replace(/\/+$/, '') + '/' + clean;
+  try {
+    const r = await fetch(`${BASE_URL}/v1/files/save`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || ''), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: abs, content: '' }),
+    });
+    const d = await r.json();
+    if (d.error) { if (typeof showToast === 'function') showToast(d.error); return; }
+    if (typeof refreshCodeWorkingTree === 'function') refreshCodeWorkingTree();
+    await terminalOpenFile(abs);
+    terminalEditorMode('edit-' + abs, 'raw');
+  } catch (e) { if (typeof showToast === 'function') showToast('Datei konnte nicht erstellt werden'); }
+}
+
+// Maximize / restore the bottom panel.
+function terminalToggleMaximize() {
+  const panel = document.getElementById('terminal-panel');
+  if (!panel) return;
+  _term.maximized = !_term.maximized;
+  panel.classList.toggle('maximized', _term.maximized);
+  setTimeout(_terminalOnResize, 30);
+}
+
+// Re-fit the active terminal on window resize (editors just need a refresh).
 function _terminalOnResize() {
   if (!_term.open) return;
   const tab = _term.tabs.find(t => t.id === _term.active);
-  if (tab) { try { tab.fit.fit(); _terminalSendResize(tab); } catch (_) {} }
+  if (!tab) return;
+  if (tab.kind === 'editor') { try { tab.cm.refresh(); } catch (_) {} return; }
+  try { tab.fit.fit(); _terminalSendResize(tab); } catch (_) {}
 }
 window.addEventListener('resize', _terminalOnResize);
 

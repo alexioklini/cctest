@@ -506,7 +506,7 @@ function _ptRenderCodeTree(nodes, openDirs) {
     const _ci = state._codeIndexFiles && state._codeIndexFiles[_ptRelToWorkingDir(n.path)];
     const _dot = _ci ? _ptDot(_ci.state) : '';
     const _nodes = _ci && _ci.nodes ? ` <span class="pt-count" style="color:var(--text-400);font-size:10px">${_ci.nodes}</span>` : '';
-    return `<div class="pt-row pt-realfile" title="${esc(n.path || n.name)}" data-filepath="${esc(n.path || '')}" onclick="ptShowFilePreview(this.dataset.filepath)" style="cursor:pointer">
+    return `<div class="pt-row pt-realfile" title="${esc(n.path || n.name)}" data-filepath="${esc(n.path || '')}" onclick="terminalOpenFile(this.dataset.filepath)" style="cursor:pointer">
       <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
       <span class="pt-label">${esc(n.name)}</span>${_nodes}${_dot}
     </div>`;
@@ -600,85 +600,8 @@ async function _ptDownloadFile(absPath, name) {
   } catch (e) { if (typeof showToast === 'function') showToast('Download fehlgeschlagen'); }
 }
 
-let _ptPreviewState = { abs: '', name: '', raw: '', ext: '', mode: 'render' };
-
-async function ptShowFilePreview(absPath) {
-  if (!absPath) return;
-  const name = absPath.split('/').pop();
-  const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
-  _ptPreviewState = { abs: absPath, name, raw: '', ext, mode: 'render' };
-  _codeIndexShowModal(esc(name),
-    `<div id="pt-preview-toolbar"></div><div id="pt-preview-body"><div class="pt-loading">Lädt…</div></div>`);
-  try {
-    // Ask for a generous line cap; the server still bounds bytes (~50KB).
-    const d = await API.get(`/v1/files/preview?path=${encodeURIComponent(absPath)}&lines=5000`);
-    if (d.error) { _ptPreviewRenderBody(`<div class="pt-empty">${esc(d.error)}</div>`); _ptPreviewToolbar(d); return; }
-    if (d.type === 'image') {
-      _ptPreviewRenderImage(absPath);
-      _ptPreviewToolbar(d);
-      return;
-    }
-    _ptPreviewState.raw = d.content || '';
-    _ptPreviewState.truncated = !!d.truncated;
-    _ptPreviewToolbar(d);
-    _ptPreviewPaint();
-  } catch (e) {
-    _ptPreviewRenderBody('<div class="pt-empty">Datei konnte nicht geladen werden.</div>');
-  }
-}
-
-function _ptPreviewToolbar(d) {
-  const tb = document.getElementById('pt-preview-toolbar');
-  if (!tb) return;
-  const isText = !d || d.type === 'text' || d.type === 'document';
-  tb.innerHTML = `
-    <div class="pt-preview-tb">
-      ${isText ? `<button class="btn-secondary pt-prev-mode" data-mode="render" onclick="_ptPreviewSetMode('render')">Ansicht</button>
-      <button class="btn-secondary pt-prev-mode" data-mode="raw" onclick="_ptPreviewSetMode('raw')">Roh</button>` : ''}
-      <span style="flex:1"></span>
-      ${_ptPreviewState.truncated ? '<span style="font-size:11px;color:var(--text-400);margin-right:8px">gekürzt — vollständig herunterladen</span>' : ''}
-      <button class="btn-secondary" onclick="_ptDownloadFile('${esc(_ptPreviewState.abs)}','${esc(_ptPreviewState.name)}')">Herunterladen</button>
-    </div>`;
-  _ptPreviewSyncModeButtons();
-}
-
-function _ptPreviewSetMode(m) { _ptPreviewState.mode = m; _ptPreviewPaint(); _ptPreviewSyncModeButtons(); }
-function _ptPreviewSyncModeButtons() {
-  document.querySelectorAll('.pt-prev-mode').forEach(b =>
-    b.classList.toggle('active', b.dataset.mode === _ptPreviewState.mode));
-}
-
-function _ptPreviewPaint() {
-  const txt = _ptPreviewState.raw || '';
-  if (_ptPreviewState.mode === 'raw') {
-    _ptPreviewRenderBody(`<pre class="pt-preview-pre"><code>${esc(txt)}</code></pre>`);
-    return;
-  }
-  if (_ptPreviewState.ext === 'md' && typeof renderMarkdown === 'function') {
-    _ptPreviewRenderBody(`<div class="ref-inline-md msg-content">${renderMarkdown(txt)}</div>`);
-    document.querySelectorAll('#pt-preview-body pre code').forEach(el => { try { hljs.highlightElement(el); } catch (_) {} });
-    return;
-  }
-  const lang = _ptLangFor(_ptPreviewState.ext);
-  let html;
-  try { html = hljs.highlight(txt, { language: lang }).value; } catch (_) { html = esc(txt); }
-  _ptPreviewRenderBody(`<pre class="pt-preview-pre"><code class="hljs">${html}</code></pre>`);
-}
-
-function _ptPreviewRenderBody(html) {
-  const b = document.getElementById('pt-preview-body');
-  if (b) b.innerHTML = html;
-}
-
-async function _ptPreviewRenderImage(absPath) {
-  try {
-    const resp = await fetch(`${BASE_URL}/v1/files/download?path=${encodeURIComponent(absPath)}`,
-      { headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || '') } });
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    _ptPreviewRenderBody(`<img src="${url}" style="max-width:100%;border-radius:6px"/>`);
-  } catch (e) { _ptPreviewRenderBody('<div class="pt-empty">Bild konnte nicht geladen werden.</div>'); }
-}
+// (File preview modal removed in favour of the bottom-panel code editor — a
+// click on a file now opens it as an editor tab via terminalOpenFile().)
 
 // Download the whole working-dir tree as a ZIP.
 async function ptDownloadProjectZip() {

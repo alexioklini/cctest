@@ -1890,6 +1890,9 @@ class BrainAgentHandler(
         if path == "/v1/auth/login":
             self._handle_auth_login()
             return
+        elif path == "/v1/files/save":
+            self._handle_file_save()
+            return
         elif path == "/v1/auth/register":
             self._handle_auth_register()
             return
