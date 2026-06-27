@@ -430,8 +430,10 @@ async function loadProjectDetail(agentId, projectName) {
       if (typeof refreshCodeWorkingTree === 'function') refreshCodeWorkingTree();
       _renderInitStatus({ state: 'idle' });
       if (typeof startCodeModePoll === 'function') startCodeModePoll();
-    } else if (typeof stopCodeModePoll === 'function') {
-      stopCodeModePoll();
+      if (typeof startCodeIndexPoll === 'function') startCodeIndexPoll();
+    } else {
+      if (typeof stopCodeModePoll === 'function') stopCodeModePoll();
+      if (typeof stopCodeIndexPoll === 'function') stopCodeIndexPoll();
     }
     // Per-project KG method/profile overrides (empty = inherit the global
     // default). Profile is inert under the rule-based method (generic only).

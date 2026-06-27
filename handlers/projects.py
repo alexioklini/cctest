@@ -648,6 +648,93 @@ class ProjectsHandlerMixin:
             pass
         self._send_json({"status": "queued", "agent": agent_id, "project": proj_name})
 
+    # ── Code-mode index (codebase-memory) ───────────────────────────────────
+    def _code_cache_dir(self, agent_id: str, proj_name: str, project: dict) -> str:
+        import os as _os
+        pdir = project.get("dir") or engine.ProjectManager._project_dir(agent_id, proj_name)
+        return _os.path.join(pdir, ".cbm-cache")
+
+    def _handle_code_index_status(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/code-index/status — per-file index
+        state (indexed/stale/not_indexed) + project node/edge counts + live daemon
+        state. Code-mode projects only."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        wd = (project.get("working_dir") or "").strip()
+        cache = self._code_cache_dir(agent_id, proj_name, project)
+        try:
+            state = engine.cbm_per_file_state(wd, cache) if wd else {"indexed": False, "files": {}}
+        except Exception as e:
+            state = {"indexed": False, "files": {}, "error": str(e)}
+        try:
+            import server_daemons
+            live = server_daemons._code_index_status(agent_id, proj_name) or {}
+        except Exception:
+            live = {}
+        self._send_json({"agent": agent_id, "project": proj_name,
+                         "code_mode": bool(project.get("code_mode")),
+                         "working_dir": wd, "live": live, **state})
+
+    def _handle_code_index_refresh(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/code-index/refresh — queue a
+        re-index of the working dir (incremental). UI polls status."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        try:
+            import server_daemons
+            server_daemons._code_index_request(agent_id, proj_name)
+        except Exception:
+            pass
+        self._send_json({"status": "queued", "agent": agent_id, "project": proj_name})
+
+    def _handle_code_index_rebuild(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/code-index/rebuild — clean & start
+        fresh: drop the tenant cache, then re-index. Admin/manage only."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        try:
+            import server_daemons
+            server_daemons._code_index_request(agent_id, proj_name, force=True)
+        except Exception:
+            pass
+        self._send_json({"status": "rebuilding", "agent": agent_id, "project": proj_name})
+
+    def _handle_code_index_graph(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/code-index/graph — architecture /
+        graph-view payload for the code index."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        cache = self._code_cache_dir(agent_id, proj_name, project)
+        try:
+            data = engine.cbm_graph_overview(cache)
+        except Exception as e:
+            data = {"indexed": False, "error": str(e)}
+        self._send_json({"agent": agent_id, "project": proj_name, **data})
+
     def _handle_project_full_resync(self, path: str):
         """POST /v1/agents/{id}/projects/{name}/full-resync — wipe all
         MemPalace drawers, KG triples, and all sync cursors for this project,

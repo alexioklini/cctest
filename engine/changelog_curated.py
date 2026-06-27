@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.215.0",
+        "date": "2026-06-27",
+        "title": "Code-Projekte: stärkere Code-Suche & Index-Verwaltung",
+        "body": "Code-Projekte verstehen jetzt deutlich größere Codebasen: Der Assistent "
+                "findet Funktionen, Aufrufer und Zusammenhänge zuverlässig über eine "
+                "automatisch aktualisierte Code-Indexierung — auch in sehr großen "
+                "Projekten, in denen einfaches Durchsuchen bisher scheiterte. In der "
+                "Projektansicht sehen Sie pro Datei den Index-Zustand (indexiert, veraltet, "
+                "nicht indexiert) und können den Index mit einem Klick aktualisieren, neu "
+                "aufbauen, den Code-Graphen ansehen oder den Verlauf prüfen — analog zur "
+                "Wissens-Verwaltung normaler Projekte. Der Index hält sich bei Datei"
+                "änderungen selbst aktuell; die Projektnotiz (BRAIN.md) konzentriert sich "
+                "dadurch auf das Dauerhafte (Zweck, Konventionen) statt auf schnell "
+                "veraltende Struktur.",
+        "audience": "admin",
+        "versions": ["9.214.0", "9.215.0"],
+    },
+    {
         "version": "9.213.3",
         "date": "2026-06-27",
         "title": "Klarere Denk-Anzeige & ruhigeres Mitlaufen",

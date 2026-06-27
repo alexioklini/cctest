@@ -107,6 +107,36 @@ def _mempalace_version() -> dict:
     return _probe_in_process("mempalace")
 
 
+def _cbm_version() -> dict:
+    """Probe the codebase-memory-mcp binary (standalone, not a pip lib).
+    Version via `<bin> --version`; installed = binary mtime; path from config."""
+    try:
+        import brain as _brain
+        cfg = (_brain._server_config() or {}).get("codebase_memory", {}) or {}
+    except Exception:
+        cfg = {}
+    binp = (cfg.get("bin") or "").strip()
+    if not binp or not os.path.exists(binp):
+        return {"version": None, "installed": "", "status": "missing",
+                "path": binp or "(not configured)"}
+    try:
+        import subprocess
+        out = subprocess.run([binp, "--version"], capture_output=True, text=True,
+                             timeout=10).stdout.strip()
+        # "codebase-memory-mcp 0.8.1" → "0.8.1"
+        ver = out.split()[-1] if out else None
+        try:
+            mt = os.path.getmtime(binp)
+            import datetime
+            installed = datetime.date.fromtimestamp(mt).isoformat()
+        except Exception:
+            installed = ""
+        return {"version": ver, "installed": installed,
+                "status": "ok" if ver else "error: no version output", "path": binp}
+    except Exception as e:
+        return {"version": None, "installed": "", "status": f"error: {e}", "path": binp}
+
+
 # Registry: ordered groups → list of (dist-name, friendly label). Edit here when
 # a dependency is added/retired. Grouped by the component each lib serves, NOT by
 # venv (that's an implementation detail; `source` below names the venv).
@@ -147,6 +177,9 @@ _GROUPS = [
         ("playwright", "playwright"),
         ("scrapling", "scrapling (Stealth-Render)"),
     ]),
+    ("Code-Intelligenz (Code-Mode)", "binary", [
+        ("codebase-memory-mcp", "codebase-memory-mcp"),
+    ]),
 ]
 
 _SOURCE_LABELS = {
@@ -154,6 +187,7 @@ _SOURCE_LABELS = {
     "mempalace": "MemPalace-venv",
     "venv_sdk": ".venv_sdk",
     "venv_crawl4ai": ".venv_crawl4ai",
+    "binary": "Standalone-Binary",
 }
 
 
@@ -182,6 +216,8 @@ def collect() -> dict:
             elif src == "venv_crawl4ai":
                 info = c4_probe.get(dist_name, {"version": None, "installed": "",
                                                 "status": "unprobed"})
+            elif src == "binary":
+                info = _cbm_version()
             else:  # pragma: no cover
                 info = {"version": None, "installed": "", "status": "unknown source"}
             rows.append({"name": label, "dist": dist_name, **info})

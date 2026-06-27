@@ -583,6 +583,20 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
               </button>
             </div>
             <div class="project-panel-help" id="project-codemode-init-status" style="margin-top:6px"></div>
+            <!-- Code-Index (codebase-memory) management -->
+            <div style="margin-top:14px">
+              <div id="code-index-chip" class="project-sync-chip" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <span id="code-index-dot" class="pt-dot" data-state="pending"></span>
+                <span id="code-index-label" style="font-size:12px;color:var(--text-200)">Code-Index</span>
+                <span id="code-index-sublabel" style="font-size:11px;color:var(--text-400)"></span>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                <button id="code-index-action-refresh" class="btn-secondary" type="button" onclick="codeIndexRefresh()" title="Index neu aufbauen (inkrementell)">Aktualisieren</button>
+                <button id="code-index-action-rebuild" class="btn-secondary" type="button" onclick="codeIndexRebuild()" title="Index verwerfen und komplett neu aufbauen">Bereinigen &amp; neu</button>
+                <button id="code-index-action-graph" class="btn-secondary" type="button" onclick="codeIndexGraph()" title="Code-Graph / Architektur ansehen">Graph-Ansicht</button>
+                <button id="code-index-action-history" class="btn-secondary" type="button" onclick="codeIndexHistory()" title="Letzte Index-Läufe">Verlauf</button>
+              </div>
+            </div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;margin-bottom:4px">
               <span style="font-size:12px;color:var(--text-400)">Dateien im Arbeitsverzeichnis</span>
               <button class="pt-act" type="button" title="Aktualisieren" onclick="refreshCodeWorkingTree()">⟳</button>

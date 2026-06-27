@@ -1782,6 +1782,10 @@ class BrainAgentHandler(
             self._handle_project_docs(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/input-folders"):
             self._handle_project_input_folders_list(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-index/status"):
+            self._handle_code_index_status(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-index/graph"):
+            self._handle_code_index_graph(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-status"):
             self._handle_project_sync_status(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-runs"):
@@ -2185,6 +2189,10 @@ class BrainAgentHandler(
             self._handle_project_input_folders_add(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/input-folders/" in path:
             self._handle_project_input_folders_update(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-index/refresh"):
+            self._handle_code_index_refresh(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-index/rebuild"):
+            self._handle_code_index_rebuild(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-now"):
             self._handle_project_sync_now(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/full-resync"):

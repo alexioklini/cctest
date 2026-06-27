@@ -121,6 +121,90 @@ def index_repository(repo_path: str, cache_dir: str | None = None) -> dict:
                 cache_dir, want_project=False)
 
 
+# ─── Index introspection (for the UI: per-file state, graph view, status) ────
+def index_status(cache_dir: str) -> dict:
+    """Project-level index status for a tenant cache: project name + node/edge
+    counts, or {indexed: False} if nothing built yet."""
+    out = _run("list_projects", {}, cache_dir, want_project=False)
+    projs = (out or {}).get("projects") or []
+    if not projs:
+        return {"indexed": False}
+    p = projs[0]
+    return {"indexed": True, "project": p.get("name"),
+            "nodes": p.get("nodes"), "edges": p.get("edges"),
+            "root_path": p.get("root_path")}
+
+
+def per_file_state(working_dir: str, cache_dir: str) -> dict:
+    """Map each source file under working_dir to an index state for the UI:
+      indexed  — in the cbm index, node count returned, mtime <= index time
+      stale    — in the index but the file's mtime is newer than the last index
+      not_indexed — a source file the index doesn't know
+    Derived from cbm (node counts per file via Cypher) + filesystem mtime, no
+    separate tracker. Returns {files: {relpath: {state, nodes}}, indexed_at}."""
+    st = index_status(cache_dir)
+    if not st.get("indexed"):
+        return {"indexed": False, "files": {}}
+    project = st["project"]
+    # node count per file_path
+    cy = ("MATCH (n) WHERE n.file_path IS NOT NULL "
+          "RETURN n.file_path AS f, count(n) AS c")
+    res = _run("query_graph", {"query": cy, "project": project}, cache_dir,
+               want_project=False)
+    counts: dict[str, int] = {}
+    for row in (res or {}).get("rows", []) or []:
+        # rows may be list-or-dict depending on cbm; handle both
+        if isinstance(row, dict):
+            f, c = row.get("f"), row.get("c")
+        elif isinstance(row, (list, tuple)) and len(row) >= 2:
+            f, c = row[0], row[1]
+        else:
+            continue
+        if f:
+            counts[os.path.abspath(str(f))] = int(c or 0)
+    # cbm index time ≈ the cache dir mtime (rewritten each index)
+    try:
+        idx_mtime = os.path.getmtime(cache_dir)
+    except OSError:
+        idx_mtime = 0
+    files: dict[str, dict] = {}
+    skip = {".git", "__pycache__", "node_modules", ".venv", "venv", ".cbm-cache",
+            ".brain-extracted", ".trash", "dist", "build"}
+    wd_abs = os.path.abspath(working_dir)
+    for dirpath, dirnames, filenames in os.walk(wd_abs):
+        dirnames[:] = [d for d in dirnames if d not in skip and not d.startswith(".")]
+        for fn in filenames:
+            fp = os.path.join(dirpath, fn)
+            rel = os.path.relpath(fp, wd_abs)
+            n = counts.get(os.path.abspath(fp))
+            try:
+                fmt = os.path.getmtime(fp)
+            except OSError:
+                fmt = 0
+            if n is None:
+                state = "not_indexed"
+            elif fmt > idx_mtime:
+                state = "stale"
+            else:
+                state = "indexed"
+            files[rel] = {"state": state, "nodes": n or 0}
+    return {"indexed": True, "files": files, "indexed_at": idx_mtime,
+            "nodes": st.get("nodes"), "edges": st.get("edges")}
+
+
+def graph_overview(cache_dir: str, limit: int = 200) -> dict:
+    """Lightweight graph-view payload: top nodes by degree + their edges, for a
+    project graph visualisation. Best-effort."""
+    st = index_status(cache_dir)
+    if not st.get("indexed"):
+        return {"indexed": False, "nodes": [], "edges": []}
+    project = st["project"]
+    res = _run("get_architecture", {"project": project}, cache_dir, want_project=False)
+    return {"indexed": True, "project": project,
+            "architecture": res if not (res or {}).get("error") else None,
+            "nodes": st.get("nodes"), "edges": st.get("edges")}
+
+
 # ─── Agent tools (TOOL_DISPATCH entries) ─────────────────────────────────────
 def tool_code_search(args: dict) -> str:
     """search_graph: discover code by BM25 (query), regex (name_pattern), or

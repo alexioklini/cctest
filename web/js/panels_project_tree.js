@@ -15,6 +15,7 @@ const _PT_STATE = {
   pending: { cls: 'pending', label: 'Ausstehend' },
   error:   { cls: 'error',   label: 'Fehler' },
   stale:   { cls: 'stale',   label: 'Veraltet' },
+  not_indexed: { cls: 'stale', label: 'Nicht indexiert' },
 };
 
 // Feather-style SVG icons (match the rest of the app — no emoji). 14px, inherit
@@ -488,9 +489,12 @@ function _ptRenderCodeTree(nodes, openDirs) {
         <div class="pt-children" style="display:${isOpen ? '' : 'none'}">${_ptRenderCodeTree(n.children || [], openDirs)}</div>
       </div>`;
     }
+    const _ci = state._codeIndexFiles && state._codeIndexFiles[n.path || ''];
+    const _dot = _ci ? _ptDot(_ci.state) : '';
+    const _nodes = _ci && _ci.nodes ? ` <span class="pt-count" style="color:var(--text-400);font-size:10px">${_ci.nodes}</span>` : '';
     return `<div class="pt-row pt-realfile" title="${esc(n.path || n.name)}">
       <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
-      <span class="pt-label">${esc(n.name)}</span>
+      <span class="pt-label">${esc(n.name)}</span>${_nodes}${_dot}
     </div>`;
   }).join('');
 }
@@ -552,6 +556,129 @@ async function refreshCodeWorkingTree(opts) {
   } catch (e) {
     if (!opts.silent) host.innerHTML = '<div class="pt-empty">Verzeichnis konnte nicht geladen werden.</div>';
   }
+}
+
+// ── Code-Index (codebase-memory) management ──────────────────────────────────
+// Polls /code-index/status, paints the status chip + caches per-file state for
+// the working-dir tree dots. Mirrors the project-sync chip pattern.
+function _codeIndexCtx() {
+  return {
+    agentId: state._projectDetailAgent || 'main',
+    projectName: state._projectDetailName || '',
+  };
+}
+
+async function refreshCodeIndexStatus() {
+  const { agentId, projectName } = _codeIndexCtx();
+  if (!projectName) return;
+  const dot = document.getElementById('code-index-dot');
+  const label = document.getElementById('code-index-label');
+  const sub = document.getElementById('code-index-sublabel');
+  try {
+    const d = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/code-index/status`);
+    if (d.error) return;
+    // cache per-file state (keyed by relpath) for the tree render
+    state._codeIndexFiles = d.files || {};
+    const live = d.live || {};
+    const liveState = live.state;
+    let dotState = 'pending', txt = 'Code-Index', subtxt = '';
+    if (liveState === 'indexing') {
+      dotState = 'syncing'; txt = 'Indexierung läuft …';
+    } else if (!d.indexed) {
+      dotState = 'stale'; txt = 'Noch nicht indexiert';
+    } else {
+      dotState = (liveState === 'error') ? 'error' : 'indexed';
+      txt = 'Indexiert';
+      const nodes = d.nodes != null ? d.nodes : '?';
+      const edges = d.edges != null ? d.edges : '?';
+      const nFiles = d.files ? Object.keys(d.files).length : 0;
+      const nStale = d.files ? Object.values(d.files).filter(f => f.state === 'stale' || f.state === 'not_indexed').length : 0;
+      subtxt = `${nodes} Knoten · ${edges} Kanten · ${nFiles} Dateien` + (nStale ? ` · ${nStale} veraltet` : '');
+    }
+    if (live.error) subtxt = live.error;
+    if (dot) dot.dataset.state = (_PT_STATE[dotState] || _PT_STATE.pending).cls;
+    if (label) label.textContent = txt;
+    if (sub) sub.textContent = subtxt;
+    // repaint the file tree dots from the fresh cache (silent: keep DOM)
+    refreshCodeWorkingTree({ silent: true, force: true });
+  } catch (e) { /* transient */ }
+}
+
+let _codeIndexPollTimer = null;
+function startCodeIndexPoll() {
+  stopCodeIndexPoll();
+  refreshCodeIndexStatus();
+  _codeIndexPollTimer = setInterval(refreshCodeIndexStatus, 5000);
+}
+function stopCodeIndexPoll() {
+  if (_codeIndexPollTimer) { clearInterval(_codeIndexPollTimer); _codeIndexPollTimer = null; }
+}
+
+async function codeIndexRefresh() {
+  const { agentId, projectName } = _codeIndexCtx();
+  if (!projectName) return;
+  try {
+    await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/code-index/refresh`, {});
+    showToast && showToast('Index-Aktualisierung angestoßen');
+    setTimeout(refreshCodeIndexStatus, 800);
+  } catch (e) { showToast && showToast('Fehler beim Anstoßen'); }
+}
+
+async function codeIndexRebuild() {
+  const { agentId, projectName } = _codeIndexCtx();
+  if (!projectName) return;
+  if (!confirm('Code-Index verwerfen und komplett neu aufbauen?')) return;
+  try {
+    await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/code-index/rebuild`, {});
+    showToast && showToast('Index wird neu aufgebaut');
+    setTimeout(refreshCodeIndexStatus, 800);
+  } catch (e) { showToast && showToast('Fehler beim Neuaufbau'); }
+}
+
+async function codeIndexGraph() {
+  const { agentId, projectName } = _codeIndexCtx();
+  if (!projectName) return;
+  try {
+    const d = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/code-index/graph`);
+    if (!d.indexed) { showToast && showToast('Noch kein Index vorhanden'); return; }
+    const arch = d.architecture ? JSON.stringify(d.architecture, null, 2) : '(keine Architektur-Daten)';
+    _codeIndexShowModal('Code-Graph / Architektur',
+      `<div style="font-size:12px;color:var(--text-300);margin-bottom:8px">${d.nodes || '?'} Knoten · ${d.edges || '?'} Kanten</div>` +
+      `<pre style="white-space:pre-wrap;font-size:11px;max-height:60vh;overflow:auto">${esc(arch)}</pre>`);
+  } catch (e) { showToast && showToast('Graph konnte nicht geladen werden'); }
+}
+
+async function codeIndexHistory() {
+  const { agentId, projectName } = _codeIndexCtx();
+  if (!projectName) return;
+  const d = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/code-index/status`).catch(() => null);
+  const live = (d && d.live) || {};
+  const when = live.indexed_at ? new Date(live.indexed_at * 1000).toLocaleString() : '—';
+  const body = `<div style="font-size:13px">
+    <div>Letzter Lauf: <b>${esc(live.state || 'unbekannt')}</b></div>
+    <div>Zeitpunkt: ${esc(when)}</div>
+    <div>Knoten: ${(d && d.nodes) != null ? d.nodes : '?'} · Kanten: ${(d && d.edges) != null ? d.edges : '?'}</div>
+    ${live.error ? `<div style="color:var(--danger)">Fehler: ${esc(live.error)}</div>` : ''}
+  </div>`;
+  _codeIndexShowModal('Index-Verlauf', body);
+}
+
+// Minimal reusable modal (reuses the app's modal styles if present, else inline).
+function _codeIndexShowModal(title, html) {
+  let m = document.getElementById('code-index-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'code-index-modal';
+    m.className = 'modal-overlay';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999';
+    m.onclick = (ev) => { if (ev.target === m) m.remove(); };
+    document.body.appendChild(m);
+  }
+  m.innerHTML = `<div style="background:var(--bg-000);border:1px solid var(--border-100);border-radius:10px;max-width:720px;width:90%;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="margin:0;font-size:15px">${esc(title)}</h3>
+      <button class="pt-act" type="button" onclick="document.getElementById('code-index-modal').remove()">✕</button>
+    </div>${html}</div>`;
 }
 
 function ptToggleRealDir(rowEl) {
