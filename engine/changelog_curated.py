@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.228.0",
+        "date": "2026-06-28",
+        "title": "Dateibaum: Umbenennen, Löschen, Ordner, Verschieben",
+        "body": "Der Dateibaum im Arbeitsverzeichnis lässt sich jetzt direkt "
+                "bearbeiten: Per Rechtsklick benennen Sie Dateien und Ordner um "
+                "oder löschen sie, legen neue Ordner und Dateien an; gelöschte "
+                "Elemente wandern in einen Papierkorb (.brain-trash) und sind "
+                "wiederherstellbar, statt unwiderruflich entfernt zu werden. "
+                "Dateien und Ordner lassen sich außerdem per Ziehen in einen "
+                "anderen Ordner verschieben. Neue Datei und neuer Ordner sind "
+                "auch über die Knöpfe oben im Baum erreichbar.",
+        "audience": "user",
+        "versions": ["9.228.0"],
+    },
+    {
         "version": "9.227.0",
         "date": "2026-06-28",
         "title": "Code-Bereich: sinnvolle Standard-Platzierung + Live-Dateibaum",

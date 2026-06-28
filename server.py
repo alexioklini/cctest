@@ -1899,6 +1899,15 @@ class BrainAgentHandler(
         elif path == "/v1/files/save":
             self._handle_file_save()
             return
+        elif path == "/v1/files/rename":
+            self._handle_file_rename()
+            return
+        elif path == "/v1/files/delete":
+            self._handle_file_delete()
+            return
+        elif path == "/v1/files/mkdir":
+            self._handle_file_mkdir()
+            return
         elif path == "/v1/files/open-external":
             self._handle_file_open_external()
             return

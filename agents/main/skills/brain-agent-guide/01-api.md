@@ -297,6 +297,17 @@ streaming call, per-USER history, fixed read-only tool set. See
   init (cancels the run's sidecar turn) → `{status: cancelling|not_running,
   cancelled}`. Manage-gated.
 - `GET .../ingested` — list ingested files under an agent
+- `POST /v1/files/rename {path, to}` / `POST /v1/files/delete {path}` /
+  `POST /v1/files/mkdir {path}` — file-tree editing for Code Mode (used by the
+  working-dir tree's context menu + drag-drop). `rename` = rename OR move (`to`
+  is a bare new name or a destination path; refuses to overwrite). `delete` is a
+  SOFT delete — moves the target into `.brain-trash/<timestamp>__name` at the
+  project root (recoverable; never a hard `rm`). `mkdir` creates a folder. All
+  share the same `_validate_file_path` allowed-roots gate as `save`/`preview`
+  (incl. the code-mode working_dir). NOTE: `_validate_file_path` treats the
+  synthetic-admin sentinel (`__system__`, auth-disabled) as see-all and skips
+  non-agent entries in `agents/` — fixing a latent bug that blocked writes into a
+  code-mode working_dir.
 - `GET .../projects/<name>/code-chats` — Code Mode: list the project's
   **Terminal-Chats** — sessions with `status='code_chat'` created by the
   bottom-workspace terminal-chat. These are deliberately EXCLUDED from the normal

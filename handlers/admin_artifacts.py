@@ -1361,6 +1361,14 @@ class AdminArtifactsHandlers:
         try:
             auth_user = getattr(self, '_auth_user', None) or _auth_mod.SYNTHETIC_ADMIN
             uid = auth_user.get("id", "")
+            # The synthetic-admin sentinel ('__system__') means "see everything"
+            # — but list_projects(user_id='__system__') visibility-filters it down
+            # to almost nothing. Normalise it to None so the admin/auth-disabled
+            # path sees ALL projects (incl. code-mode working_dirs), matching the
+            # rest of the admin surface. (This was why writing into a code-mode
+            # working_dir failed under auth-disabled / synthetic-admin requests.)
+            if uid == "__system__":
+                uid = ""
             team_ids = []
             if uid and uid != "__system__":
                 try:
@@ -1368,9 +1376,20 @@ class AdminArtifactsHandlers:
                 except Exception:
                     pass
             for agent_id in os.listdir(engine.AGENTS_DIR):
-                projects = engine.ProjectManager.list_projects(
-                    agent_id, user_id=uid or None, user_team_ids=team_ids,
-                )
+                # Skip non-agent entries (.DS_Store, auth.db, .trash, …). Without
+                # this guard a single bad entry's list_projects() can raise and —
+                # since the whole loop is in one try/except — abort validation of
+                # an otherwise-allowed project path (the bug that broke writing
+                # into a code-mode working_dir).
+                if agent_id.startswith(".") or not os.path.isdir(
+                        os.path.join(engine.AGENTS_DIR, agent_id)):
+                    continue
+                try:
+                    projects = engine.ProjectManager.list_projects(
+                        agent_id, user_id=uid or None, user_team_ids=team_ids,
+                    )
+                except Exception:
+                    continue
                 for proj in projects:
                     for folder in (proj.get("input_folders") or []):
                         p = (folder or {}).get("path", "").strip()
@@ -1413,6 +1432,14 @@ class AdminArtifactsHandlers:
         try:
             auth_user = getattr(self, '_auth_user', None) or _auth_mod.SYNTHETIC_ADMIN
             uid = auth_user.get("id", "")
+            # The synthetic-admin sentinel ('__system__') means "see everything"
+            # — but list_projects(user_id='__system__') visibility-filters it down
+            # to almost nothing. Normalise it to None so the admin/auth-disabled
+            # path sees ALL projects (incl. code-mode working_dirs), matching the
+            # rest of the admin surface. (This was why writing into a code-mode
+            # working_dir failed under auth-disabled / synthetic-admin requests.)
+            if uid == "__system__":
+                uid = ""
             team_ids = []
             if uid and uid != "__system__":
                 try:
@@ -1421,9 +1448,20 @@ class AdminArtifactsHandlers:
                     pass
             roots = []
             for agent_id in os.listdir(engine.AGENTS_DIR):
-                projects = engine.ProjectManager.list_projects(
-                    agent_id, user_id=uid or None, user_team_ids=team_ids,
-                )
+                # Skip non-agent entries (.DS_Store, auth.db, .trash, …). Without
+                # this guard a single bad entry's list_projects() can raise and —
+                # since the whole loop is in one try/except — abort validation of
+                # an otherwise-allowed project path (the bug that broke writing
+                # into a code-mode working_dir).
+                if agent_id.startswith(".") or not os.path.isdir(
+                        os.path.join(engine.AGENTS_DIR, agent_id)):
+                    continue
+                try:
+                    projects = engine.ProjectManager.list_projects(
+                        agent_id, user_id=uid or None, user_team_ids=team_ids,
+                    )
+                except Exception:
+                    continue
                 for proj in projects:
                     for folder in (proj.get("input_folders") or []):
                         p = (folder or {}).get("path", "").strip()
@@ -1603,6 +1641,122 @@ class AdminArtifactsHandlers:
                 f.write(content)
             self._send_json({"ok": True, "path": resolved,
                              "size": os.path.getsize(resolved)})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_file_rename(self):
+        """POST /v1/files/rename {path, to} — rename OR move a file/folder. Both
+        the source and the destination (and the destination's parent) must
+        validate to the same allowed roots as save/preview. `to` may be an
+        absolute path or a bare new name (resolved against the source's dir).
+        Refuses to overwrite an existing target. Returns {ok, path}."""
+        import shutil
+        body = self._read_json() or {}
+        raw_src = (body.get("path") or "").strip()
+        raw_to = (body.get("to") or "").strip()
+        if not raw_src or not raw_to:
+            self._send_json({"error": "path und to erforderlich"}, 400)
+            return
+        src = self._validate_file_path(raw_src)
+        if not src or not os.path.exists(src):
+            self._send_json({"error": "Quelle ungültig oder nicht vorhanden"}, 403)
+            return
+        # Bare name (no separator) → keep it in the source's directory.
+        if "/" not in raw_to and os.sep not in raw_to:
+            dst_raw = os.path.join(os.path.dirname(src), raw_to)
+        else:
+            dst_raw = os.path.expanduser(raw_to)
+        # Validate the destination via its parent (the target itself doesn't
+        # exist yet), mirroring the save handler.
+        dst = self._validate_file_path(dst_raw)
+        if not dst:
+            parent = os.path.dirname(os.path.realpath(dst_raw))
+            pv = self._validate_file_path(parent)
+            if pv and os.path.isdir(pv):
+                dst = os.path.join(pv, os.path.basename(dst_raw))
+        if not dst:
+            self._send_json({"error": "Zielpfad ungültig oder nicht erlaubt"}, 403)
+            return
+        if os.path.exists(dst):
+            self._send_json({"error": "Ziel existiert bereits"}, 409)
+            return
+        try:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(src, dst)
+            self._send_json({"ok": True, "path": dst})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_file_delete(self):
+        """POST /v1/files/delete {path} — SOFT-delete a file/folder by moving it
+        into a `.brain-trash/` folder at the root of its allowed tree (recoverable
+        — never a hard rm, per the no-permanent-delete rule). Returns
+        {ok, trashed}."""
+        import shutil
+        import time as _t
+        body = self._read_json() or {}
+        src = self._validate_file_path((body.get("path") or "").strip())
+        if not src or not os.path.exists(src):
+            self._send_json({"error": "Pfad ungültig oder nicht vorhanden"}, 403)
+            return
+        # Trash root: collect at the project working_dir the file sits under (so
+        # all deletes for a project land in one .brain-trash), else fall back to
+        # the file's own directory. We resolve the working_dir by re-validating
+        # each ancestor until validation stops accepting it — the last accepted
+        # ancestor is the allowed root. This keeps the trash INSIDE an allowed,
+        # writable root (never walks up to '/').
+        trash_dir = os.path.join(os.path.dirname(src), ".brain-trash")
+        try:
+            probe = os.path.dirname(src)
+            last_ok = probe
+            for _ in range(60):
+                parent = os.path.dirname(probe)
+                if parent == probe:
+                    break
+                # Stop at a project root marker (working_dir often == a git repo)
+                if os.path.isdir(os.path.join(probe, ".git")):
+                    last_ok = probe
+                    break
+                # Keep climbing only while the parent is still an allowed root.
+                if self._validate_file_path(parent):
+                    last_ok = parent
+                    probe = parent
+                else:
+                    break
+            trash_dir = os.path.join(last_ok, ".brain-trash")
+        except Exception:
+            pass
+        try:
+            os.makedirs(trash_dir, exist_ok=True)
+            # Timestamp-prefix to avoid collisions on repeated deletes of a name.
+            stamp = _t.strftime("%Y%m%d-%H%M%S")
+            dest = os.path.join(trash_dir, f"{stamp}__{os.path.basename(src)}")
+            shutil.move(src, dest)
+            self._send_json({"ok": True, "trashed": dest})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_file_mkdir(self):
+        """POST /v1/files/mkdir {path} — create a new folder. The parent must
+        validate to an allowed root. Returns {ok, path}."""
+        body = self._read_json() or {}
+        raw = (body.get("path") or "").strip()
+        if not raw:
+            self._send_json({"error": "path erforderlich"}, 400)
+            return
+        target_raw = os.path.realpath(os.path.expanduser(raw))
+        parent = os.path.dirname(target_raw)
+        pv = self._validate_file_path(parent)
+        if not pv or not os.path.isdir(pv):
+            self._send_json({"error": "Übergeordneter Ordner ungültig oder nicht erlaubt"}, 403)
+            return
+        resolved = os.path.join(pv, os.path.basename(target_raw))
+        if os.path.exists(resolved):
+            self._send_json({"error": "Ordner existiert bereits"}, 409)
+            return
+        try:
+            os.makedirs(resolved, exist_ok=False)
+            self._send_json({"ok": True, "path": resolved})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 

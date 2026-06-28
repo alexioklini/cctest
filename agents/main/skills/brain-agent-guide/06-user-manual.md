@@ -476,6 +476,15 @@ im Datei-Baum direkt im **Standardprogramm** des Rechners. Über das
 **Rechtsklick-Menü** einer Datei wählen Sie immer zwischen „Im Editor öffnen"
 und „In externem Programm öffnen".
 
+**Dateien verwalten**: Der Datei-Baum lässt sich direkt bearbeiten. **Rechtsklick
+auf eine Datei** bietet zusätzlich **Umbenennen** und **Löschen**; **Rechtsklick
+auf einen Ordner** bietet **Neue Datei**, **Neuer Ordner**, **Umbenennen** und
+**Löschen**. Gelöschte Elemente landen in einem **Papierkorb** (`.brain-trash`
+im Projekt) und sind wiederherstellbar — es wird nichts unwiderruflich entfernt.
+Dateien und Ordner lassen sich per **Ziehen** in einen anderen Ordner
+**verschieben**. Über die Knöpfe oben im Baum legen Sie eine **neue Datei** oder
+einen **neuen Ordner** direkt im Arbeitsverzeichnis an.
+
 **Terminal-Chat** (Code-Projekte): Neben Terminal und Editor öffnen Sie im
 unteren Bereich einen **Terminal-Chat** — eine schlanke, terminalartige
 Chat-Oberfläche („wie ein Coding-Assistent im Terminal"). Sie ist als

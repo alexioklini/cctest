@@ -118,8 +118,14 @@ function _wdRenderTree(nodes) {
   return nodes.map(n => {
     if (n.type === 'dir') {
       const open = _wdDirExpanded(n.path);
+      const dp = esc(n.path);
       return `<div class="pt-branch pt-realdir">
-        <div class="pt-row pt-realrow" onclick="wdToggleDir(this, '${esc(n.path)}')">
+        <div class="pt-row pt-realrow" data-dir="${dp}" draggable="true"
+          onclick="wdToggleDir(this, '${dp}')"
+          oncontextmenu="wdDirMenu(event, '${dp}')"
+          ondragstart="wdDragStart(event, '${dp}')" ondragend="wdDragEnd(event)"
+          ondragover="wdDragOver(event, this)" ondragleave="wdDragLeave(event, this)"
+          ondrop="wdDrop(event, '${dp}')">
           ${_ptCaret(open)}
           <span class="pt-icon">${_PT_ICON.folders}</span>
           <span class="pt-label">${esc(n.name)}</span>
@@ -142,9 +148,11 @@ function _wdRenderTree(nodes) {
     // '*' appended to the name = open in the editor with unsaved changes.
     const star = dirty ? '<span class="tt-dirty" title="Ungespeicherte Änderungen">*</span>' : '';
     const gitTip = git ? ` · Git: ${esc(_WD_GIT_TIP[git] || git)}` : '';
-    return `<div class="pt-row pt-realfile${sel}" data-path="${esc(n.path || '')}" data-git="${esc(git)}"
-         title="${esc(n.path || n.name)}${gitTip}" onclick="wdOpenFile('${esc(n.path || '')}')"
-         oncontextmenu="wdFileMenu(event, '${esc(n.path || '')}')">
+    const fp = esc(n.path || '');
+    return `<div class="pt-row pt-realfile${sel}" data-path="${fp}" data-git="${esc(git)}" draggable="true"
+         title="${esc(n.path || n.name)}${gitTip}" onclick="wdOpenFile('${fp}')"
+         oncontextmenu="wdFileMenu(event, '${fp}')"
+         ondragstart="wdDragStart(event, '${fp}')" ondragend="wdDragEnd(event)">
       <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
       <span class="pt-label">${esc(n.name)}${star}</span>
       <span style="flex:1"></span>${dot}
@@ -210,8 +218,8 @@ async function wdOpenExternal(absPath) {
   } catch (e) { if (typeof showToast === 'function') showToast('Öffnen fehlgeschlagen', true); }
 }
 
-// Right-click a file row → choose how to open it.
-function wdFileMenu(ev, absPath) {
+// Build + show a context menu at the event position from [{label, fn}] items.
+function _wdMenu(ev, items) {
   ev.preventDefault(); ev.stopPropagation();
   const old = document.getElementById('terminal-tab-menu');
   if (old) old.remove();
@@ -220,13 +228,148 @@ function wdFileMenu(ev, absPath) {
   m.className = 'terminal-tab-menu';
   m.style.left = ev.clientX + 'px';
   m.style.top = ev.clientY + 'px';
-  const p = absPath.replace(/'/g, "\\'");
-  m.innerHTML = `
-    <div onclick="terminalOpenFile('${p}'); document.getElementById('terminal-tab-menu').remove()">Im Editor öffnen</div>
-    <div onclick="wdOpenExternal('${p}'); document.getElementById('terminal-tab-menu').remove()">In externem Programm öffnen</div>`;
+  items.forEach((it, i) => {
+    if (it.sep) { const s = document.createElement('div'); s.className = 'ttm-sep'; m.appendChild(s); return; }
+    const d = document.createElement('div');
+    d.textContent = it.label;
+    if (it.danger) d.className = 'ttm-danger';
+    d.onclick = () => { m.remove(); try { it.fn(); } catch (_) {} };
+    m.appendChild(d);
+  });
   document.body.appendChild(m);
+  // keep the menu on-screen
+  const r = m.getBoundingClientRect();
+  if (r.right > window.innerWidth) m.style.left = (window.innerWidth - r.width - 4) + 'px';
+  if (r.bottom > window.innerHeight) m.style.top = (window.innerHeight - r.height - 4) + 'px';
   const close = () => { const e = document.getElementById('terminal-tab-menu'); if (e) e.remove(); document.removeEventListener('click', close); };
   setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+// Right-click a FILE row → open / rename / delete.
+function wdFileMenu(ev, absPath) {
+  _wdMenu(ev, [
+    { label: 'Im Editor öffnen', fn: () => terminalOpenFile(absPath) },
+    { label: 'In externem Programm öffnen', fn: () => wdOpenExternal(absPath) },
+    { sep: true },
+    { label: 'Umbenennen…', fn: () => wdRename(absPath) },
+    { label: 'Löschen…', danger: true, fn: () => wdDelete(absPath) },
+  ]);
+}
+
+// Right-click a FOLDER row → new file / new folder / rename / delete.
+function wdDirMenu(ev, absPath) {
+  _wdMenu(ev, [
+    { label: 'Neue Datei…', fn: () => wdNewFileIn(absPath) },
+    { label: 'Neuer Ordner…', fn: () => wdMkdir(absPath) },
+    { sep: true },
+    { label: 'Umbenennen…', fn: () => wdRename(absPath) },
+    { label: 'Löschen…', danger: true, fn: () => wdDelete(absPath) },
+  ]);
+}
+
+// ── File operations (rename/move · delete · mkdir · new file) ────────────────
+async function _wdFileOp(endpoint, body, okMsg) {
+  try {
+    const r = await fetch(`${BASE_URL}/v1/files/${endpoint}`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || ''), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.error) { if (typeof showToast === 'function') showToast(d.error, true); return null; }
+    if (okMsg && typeof showToast === 'function') showToast(okMsg);
+    if (typeof refreshTerminalTree === 'function') refreshTerminalTree();
+    return d;
+  } catch (e) { if (typeof showToast === 'function') showToast('Aktion fehlgeschlagen', true); return null; }
+}
+
+async function wdRename(absPath) {
+  const cur = absPath.split('/').pop();
+  const name = prompt('Neuer Name:', cur);
+  if (!name || name === cur) return;
+  if (/[/\\]/.test(name)) { if (typeof showToast === 'function') showToast('Name darf keinen Pfadtrenner enthalten', true); return; }
+  const d = await _wdFileOp('rename', { path: absPath, to: name }, 'Umbenannt');
+  if (d && d.path) _wdAfterMove(absPath, d.path);
+}
+
+async function wdDelete(absPath) {
+  const nm = absPath.split('/').pop();
+  if (!confirm(`„${nm}" in den Papierkorb verschieben?`)) return;
+  const d = await _wdFileOp('delete', { path: absPath }, 'In den Papierkorb verschoben');
+  if (d) _wdCloseTabFor(absPath);
+}
+
+async function wdMkdir(parentDir) {
+  const name = prompt('Name des neuen Ordners:', 'neuer-ordner');
+  if (!name) return;
+  if (/[/\\]/.test(name)) { if (typeof showToast === 'function') showToast('Name darf keinen Pfadtrenner enthalten', true); return; }
+  const target = parentDir.replace(/\/+$/, '') + '/' + name;
+  await _wdFileOp('mkdir', { path: target }, 'Ordner erstellt');
+  // expand the parent so the new folder is visible
+  if (typeof _wdSetExpanded === 'function') _wdSetExpanded(parentDir, true);
+}
+
+// Create a new file inside a specific folder (folder-menu "Neue Datei").
+async function wdNewFileIn(dir) {
+  const name = prompt('Name der neuen Datei:', 'neu.txt');
+  if (!name) return;
+  if (/[/\\]/.test(name)) { if (typeof showToast === 'function') showToast('Name darf keinen Pfadtrenner enthalten', true); return; }
+  const abs = dir.replace(/\/+$/, '') + '/' + name;
+  const d = await _wdFileOp('save', { path: abs, content: '' }, 'Datei erstellt');
+  if (d) { if (typeof _wdSetExpanded === 'function') _wdSetExpanded(dir, true); if (typeof terminalOpenFile === 'function') await terminalOpenFile(abs); }
+}
+
+// Header buttons: create at the working-dir ROOT.
+function _wdRoot() {
+  return (typeof _term !== 'undefined' && _term.wd) ||
+    (state._projectDetail && state._projectDetail.working_dir) || '';
+}
+function wdNewFileRoot() { const r = _wdRoot(); if (r) wdNewFileIn(r); else if (typeof showToast === 'function') showToast('Kein Arbeitsverzeichnis', true); }
+function wdNewFolderRoot() { const r = _wdRoot(); if (r) wdMkdir(r); else if (typeof showToast === 'function') showToast('Kein Arbeitsverzeichnis', true); }
+
+// If a renamed/moved file is open in an editor tab, re-point it (simplest: close
+// the stale tab so the user reopens from the tree at its new path).
+function _wdAfterMove(oldPath, newPath) { _wdCloseTabFor(oldPath); }
+function _wdCloseTabFor(absPath) {
+  if (typeof _term === 'undefined' || !_term.tabs) return;
+  const t = _term.tabs.find(x => x.kind === 'editor' && x.path === absPath);
+  if (t && typeof terminalCloseTab === 'function') { try { terminalCloseTab(t.id); } catch (_) {} }
+}
+
+// ── Drag & drop: move a file/folder into a target folder ─────────────────────
+let _wdDragPath = null;
+function wdDragStart(ev, absPath) {
+  _wdDragPath = absPath;
+  ev.dataTransfer.effectAllowed = 'move';
+  try { ev.dataTransfer.setData('text/plain', absPath); } catch (_) {}
+  ev.stopPropagation();
+}
+function wdDragEnd(ev) {
+  _wdDragPath = null;
+  document.querySelectorAll('.pt-row.wd-drop').forEach(e => e.classList.remove('wd-drop'));
+}
+function wdDragOver(ev, rowEl) {
+  if (!_wdDragPath) return;
+  ev.preventDefault(); ev.stopPropagation();
+  ev.dataTransfer.dropEffect = 'move';
+  rowEl.classList.add('wd-drop');
+}
+function wdDragLeave(ev, rowEl) { rowEl.classList.remove('wd-drop'); }
+async function wdDrop(ev, destDir) {
+  ev.preventDefault(); ev.stopPropagation();
+  document.querySelectorAll('.pt-row.wd-drop').forEach(e => e.classList.remove('wd-drop'));
+  const src = _wdDragPath; _wdDragPath = null;
+  if (!src || !destDir) return;
+  // No-op if dropping into its own current folder, or onto itself / its subtree.
+  const srcDir = src.replace(/\/[^/]+$/, '');
+  if (srcDir === destDir.replace(/\/+$/, '')) return;
+  if (destDir === src || destDir.indexOf(src.replace(/\/+$/, '') + '/') === 0) {
+    if (typeof showToast === 'function') showToast('Ordner kann nicht in sich selbst verschoben werden', true);
+    return;
+  }
+  const dest = destDir.replace(/\/+$/, '') + '/' + src.split('/').pop();
+  const d = await _wdFileOp('rename', { path: src, to: dest }, 'Verschoben');
+  if (d && d.path) { _wdAfterMove(src, d.path); if (typeof _wdSetExpanded === 'function') _wdSetExpanded(destDir, true); }
 }
 
 // Collect every directory path in the (cached) tree, recursively.

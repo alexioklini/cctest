@@ -929,6 +929,15 @@ textarea { resize: none; }
   display: flex; align-items: center; gap: 8px; }
 .terminal-tab-menu > div:hover { background: var(--bg-200); }
 .terminal-tab-menu .tlm-ico { display: inline-flex; color: var(--text-400); }
+.terminal-tab-menu .ttm-sep { height: 1px; margin: 4px 6px; padding: 0;
+  background: var(--border-200); cursor: default; }
+.terminal-tab-menu .ttm-sep:hover { background: var(--border-200); }
+.terminal-tab-menu .ttm-danger { color: var(--git-deleted); }
+.terminal-tab-menu .ttm-danger:hover { background: var(--git-deleted); color: #fff; }
+/* Drag-drop: highlight a folder row that's a valid drop target. */
+#terminal-tree .pt-row.wd-drop { outline: 1.5px dashed var(--accent-brand);
+  outline-offset: -1.5px; background: var(--bg-200); border-radius: 4px; }
+#terminal-tree .pt-row[draggable="true"] { cursor: pointer; }
 /* Toggle button (status bar) — only shown in code-mode contexts. */
 #terminal-toggle-btn { display: none; }
 #terminal-toggle-btn.code-mode-available { display: inline-flex; }

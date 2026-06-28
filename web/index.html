@@ -1472,6 +1472,12 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <div id="terminal-tree-head">
         <span class="tt-title">Arbeitsverzeichnis</span>
         <span style="flex:1"></span>
+        <button class="pt-act" id="terminal-tree-newfile" onclick="wdNewFileRoot()" title="Neue Datei im Arbeitsverzeichnis">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+        </button>
+        <button class="pt-act" id="terminal-tree-newfolder" onclick="wdNewFolderRoot()" title="Neuer Ordner im Arbeitsverzeichnis">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+        </button>
         <button class="pt-act" id="terminal-tree-expand" onclick="wdExpandAll(true)" title="Alle Ordner ausklappen">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 13 12 18 17 13"/><polyline points="7 6 12 11 17 6"/></svg>
         </button>
