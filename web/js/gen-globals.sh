@@ -20,7 +20,7 @@ OUT=.globals.json
 # playwright.config(s), smoke.spec, the Node-only brainy_* test files + helper)
 # is Node, not browser globals — exclude it from both globals-harvest and the
 # net-globals count, or it pollutes the invariant.
-SRC=$(ls *.js | grep -vE '^(eslint\.config|playwright\.config|playwright\.brainy\.config|smoke\.spec|brainy_helpers|brainy_[a-z0-9]+\.spec)\.js$' | tr '\n' ' ')
+SRC=$(ls *.js | grep -vE '^(eslint\.config|playwright\.config|playwright\.brainy\.config|smoke\.spec|termchat\.spec|brainy_helpers|brainy_[a-z0-9]+\.spec)\.js$' | tr '\n' ' ')
 
 # --- 1. Project globals: every column-0 definition across web/js/*.js ---------
 # Matches:  function NAME   async function NAME   const NAME   let NAME

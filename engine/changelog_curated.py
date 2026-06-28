@@ -29,6 +29,26 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.225.0",
+        "date": "2026-06-28",
+        "title": "Code-Projekte: Chat direkt im Terminal-Bereich",
+        "body": "In Code-Projekten gibt es jetzt einen Terminal-Chat: eine "
+                "schlanke, terminalartige Chat-Oberfläche direkt im unteren "
+                "Bereich, neben Terminal und Editor. Sie eignet sich als "
+                "vollwertiger Ersatz für die normale Chat-Ansicht beim Arbeiten "
+                "am Code — mit live gestreamten Antworten, sichtbaren "
+                "Werkzeugaufrufen, einer Statuszeile (Modell, Denkstufe, Token, "
+                "Kosten, Kontext) und Schrägstrich-Befehlen wie /model, /think, "
+                "/clear, /lcm, /sync oder /init. Sie lässt sich wie jeder andere "
+                "Bereich aufteilen — etwa links der Editor, rechts der Chat — und "
+                "maximieren. Diese Chats werden pro Projekt gespeichert und in "
+                "einer eigenen Liste „Terminal-Chats“ unter dem Datei-Baum "
+                "geführt; sie erscheinen bewusst nicht in der normalen Chat-Liste, "
+                "sondern bleiben dem Code-Bereich vorbehalten.",
+        "audience": "user",
+        "versions": ["9.225.0"],
+    },
+    {
         "version": "9.224.0",
         "date": "2026-06-28",
         "title": "Editor: Auto-Aktualisierung + externes Öffnen",

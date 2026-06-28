@@ -383,6 +383,37 @@ class ProjectsHandlerMixin:
         self.end_headers()
         self.wfile.write(blob)
 
+    def _handle_project_code_chats(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/code-chats — list the project's
+        code-mode terminal-chats (sessions with status='code_chat'). These are
+        kept OUT of the normal project/sidebar chat lists (db.list_sessions
+        excludes the status by default) and surfaced only here, under the
+        "Terminal-Chats" section of the code-mode bottom workspace."""
+        from server_lib.db import ChatDB
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        pid = project.get("id") or ""
+        # Same visibility scoping the normal session list uses.
+        auth_user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        visible = _auth_mod.get_visible_user_ids(auth_user)
+        vteam = None
+        caller_uid = None
+        if visible is not None:
+            vteam = [t["id"] for t in _auth_mod.AuthDB.get_user_teams(auth_user["id"])]
+            caller_uid = auth_user["id"]
+        chats = ChatDB.list_sessions(
+            agent_id=agent_id, status="code_chat",
+            project=proj_name, project_id=pid or None,
+            visible_user_ids=visible, visible_team_ids=vteam,
+            caller_user_id=caller_uid)
+        self._send_json({"sessions": chats})
+
     def _handle_project_delete(self, path: str):
         """DELETE /v1/agents/{id}/projects/{name}"""
         agent_id = self._parse_agent_from_path(path)

@@ -2919,9 +2919,12 @@ class ChatDB:
                     params.append(status)
             else:
                 # Default sidebar view excludes ephemeral statuses that have
-                # their own surfaces: note_chat (project notes editor) and
-                # workflow_run (inline workflow detail view follow-ups).
-                q += " AND s.status NOT IN ('note_chat', 'workflow_run')"
+                # their own surfaces: note_chat (project notes editor),
+                # workflow_run (inline workflow detail view follow-ups) and
+                # code_chat (the code-mode terminal-chat — listed under its own
+                # "Terminal-Chats" section in the bottom workspace, never in the
+                # normal project/sidebar chat lists).
+                q += " AND s.status NOT IN ('note_chat', 'workflow_run', 'code_chat')"
             # Hide orphan empty sessions: ensureSession() pre-creates a row
             # whenever a model is switched or a fresh chat is opened, even
             # if the user never types anything. Those linger as 0-message

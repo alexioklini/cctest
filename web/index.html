@@ -1486,6 +1486,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         </button>
       </div>
       <div id="terminal-tree" class="project-source-tree"></div>
+      <!-- Terminal-Chats: past code-mode chats for this project (status=code_chat),
+           kept out of the normal chat lists. Rendered by panels_termchat.js. -->
+      <div id="terminal-chats"></div>
     </div>
     <div id="terminal-tree-resize"></div>
     <!-- Right column: area strip (global controls) + split-pane container. Each
@@ -1766,6 +1769,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/panels_background.js"></script>
 <script src="js/panels_artifacts.js"></script>
 <script src="js/panels_workdir.js"></script>
+<script src="js/panels_termchat.js"></script>
 <script src="js/panels_studio.js"></script>
 <script src="js/panels_research.js"></script>
 <script src="js/panels_wiki.js"></script>

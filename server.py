@@ -1772,6 +1772,8 @@ class BrainAgentHandler(
             self._handle_notes(path, "GET")
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/init-status"):
             self._handle_project_init_status(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-chats"):
+            self._handle_project_code_chats(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/folder-tree" in path:
             self._handle_project_folder_tree(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/web-url-states" in path:

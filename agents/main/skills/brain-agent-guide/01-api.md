@@ -297,6 +297,16 @@ streaming call, per-USER history, fixed read-only tool set. See
   init (cancels the run's sidecar turn) → `{status: cancelling|not_running,
   cancelled}`. Manage-gated.
 - `GET .../ingested` — list ingested files under an agent
+- `GET .../projects/<name>/code-chats` — Code Mode: list the project's
+  **Terminal-Chats** — sessions with `status='code_chat'` created by the
+  bottom-workspace terminal-chat. These are deliberately EXCLUDED from the normal
+  session/project chat lists (`ChatDB.list_sessions` filters the status out by
+  default), so they surface ONLY here, under the "Terminal-Chats" section of the
+  code-mode bottom panel. Returns `{sessions:[…]}` in the standard list shape
+  (id/title/last_active/model/message_count). Each terminal-chat is a regular
+  session (created via `POST /v1/sessions {status:'code_chat', project}`) and
+  runs through the normal `POST /v1/chat` turn pipeline — same streaming, project
+  instructions, code-graph tools.
 
 ## Scheduler
 

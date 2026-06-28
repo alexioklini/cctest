@@ -100,13 +100,21 @@ function _terminalMakePane(slot) {
     <div class="tpane-bar" data-pane="pane-${slot}">
       <div class="tpane-tabs" data-pane="pane-${slot}"></div>
       <button class="pt-act" title="Neues Terminal" data-act="newterm">+</button>
+      <button class="pt-act" title="Neuer Terminal-Chat" data-act="newchat">◈</button>
       <button class="pt-act" title="Neue Datei" data-act="newfile">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
       </button>
     </div>
     <div class="tpane-body"></div>`;
-  // pane-scoped + / new-file (open in THIS pane); clicking the bar focuses the pane
+  // pane-scoped + / new-chat / new-file (open in THIS pane); clicking the bar focuses the pane
   pane.querySelector('[data-act="newterm"]').onclick = () => { _term.activePane = 'pane-' + slot; terminalNewTab(); };
+  pane.querySelector('[data-act="newchat"]').onclick = () => {
+    _term.activePane = 'pane-' + slot;
+    if (typeof _terminalAddChatTab === 'function') {
+      const t = _terminalAddChatTab('', 'pane-' + slot, 'Neuer Chat');
+      if (t) { const ta = t.el.querySelector('.tc-ta'); if (ta) setTimeout(() => ta.focus(), 40); }
+    }
+  };
   pane.querySelector('[data-act="newfile"]').onclick = () => { _term.activePane = 'pane-' + slot; terminalNewFile(); };
   const bar = pane.querySelector('.tpane-bar');
   bar.addEventListener('mousedown', () => { _term.activePane = 'pane-' + slot; _terminalPaintActivePane(); });
@@ -128,11 +136,14 @@ function _terminalMakeDivider(dir, which) {
   return d;
 }
 
-// Show only each pane's active tab element; hide the rest.
+// Show only each pane's active tab element; hide the rest. Chat panes lay out
+// as a column flex (scrollback grows, input pinned at the bottom), so they show
+// as 'flex' rather than 'block'.
 function _terminalShowActiveTabs() {
   for (const p of _term.panes) {
     for (const t of _terminalPaneTabs(p.id)) {
-      t.el.style.display = (t.id === p.active) ? 'block' : 'none';
+      const shown = t.kind === 'chat' ? 'flex' : 'block';
+      t.el.style.display = (t.id === p.active) ? shown : 'none';
     }
   }
   _terminalPaintActivePane();
@@ -360,6 +371,15 @@ async function _terminalLoadSessions() {
         _term.activePane = paneId;
         await terminalOpenFile(fp);
       }
+      // Restore open terminal-chats into their pane + load each transcript.
+      for (const sid of (paneMap[paneId].chat_sessions || [])) {
+        if (!sid || _term.tabs.find(t => t.kind === 'chat' && t.sessionId === sid)) continue;
+        _term.activePane = paneId;
+        if (typeof _terminalAddChatTab === 'function') {
+          const ct = _terminalAddChatTab(sid, paneId);
+          if (ct && typeof tcLoadTranscript === 'function') { try { await tcLoadTranscript(ct); } catch (_) {} }
+        }
+      }
     }
   } else if (ws && Array.isArray(ws.editor_files)) {
     _term.activePane = 'pane-a';
@@ -369,12 +389,16 @@ async function _terminalLoadSessions() {
   }
 
   if (!_term.tabs.length) { _term.activePane = 'pane-a'; await terminalNewTab(); return; }
-  // pick an active tab per pane (restore active_path where persisted)
+  // pick an active tab per pane (restore active_path / active_chat where persisted)
   for (const pane of _term.panes) {
     const pm = paneMap && paneMap[pane.id];
     let act = null;
     if (pm && pm.active_path) {
-      const t = _terminalPaneTabs(pane.id).find(x => x.path === pm.active_path);
+      const t = _terminalPaneTabs(pane.id).find(x => x.kind === 'editor' && x.path === pm.active_path);
+      if (t) act = t.id;
+    }
+    if (!act && pm && pm.active_chat) {
+      const t = _terminalPaneTabs(pane.id).find(x => x.kind === 'chat' && x.sessionId === pm.active_chat);
       if (t) act = t.id;
     }
     const tabs = _terminalPaneTabs(pane.id);
@@ -386,6 +410,7 @@ async function _terminalLoadSessions() {
   // activate pane-a's tab to wire streams/focus
   const aPane = _terminalGetPane('pane-a');
   if (aPane && aPane.active) _terminalActivate(aPane.active);
+  if (typeof renderTermchatHistory === 'function') renderTermchatHistory();
 }
 
 // Persist the bottom workspace (open editor file paths + active tab) to the
@@ -402,11 +427,16 @@ function _terminalPersist() {
     // workspace). Legacy flat editor_files kept for back-compat readers.
     const panes = {};
     for (const p of _term.panes) {
-      const eds = _terminalPaneTabs(p.id).filter(t => t.kind === 'editor');
-      const activeTab = eds.find(t => t.id === p.active);
+      const ptabs = _terminalPaneTabs(p.id);
+      const eds = ptabs.filter(t => t.kind === 'editor');
+      const chats = ptabs.filter(t => t.kind === 'chat' && t.sessionId);
+      const activeTab = ptabs.find(t => t.id === p.active);
       panes[p.id] = {
         editor_files: eds.map(t => t.path),
-        active_path: activeTab ? activeTab.path : '',
+        // Persist open terminal-chats (by session id) so they reopen on reload.
+        chat_sessions: chats.map(t => t.sessionId),
+        active_path: (activeTab && activeTab.kind === 'editor') ? activeTab.path : '',
+        active_chat: (activeTab && activeTab.kind === 'chat') ? (activeTab.sessionId || '') : '',
       };
     }
     const ws = {
@@ -483,6 +513,34 @@ function _terminalAddTab(id, paneId) {
   _term.tabs.push(tab);
 }
 
+// Add a terminal-CHAT tab (kind:'chat') — the body + behaviour live in
+// panels_termchat.js. `sessionId` may be '' for a fresh chat (the session is
+// created lazily on first send). `tmpId` lets the caller supply a stable id for
+// an as-yet-session-less tab. Returns the tab.
+function _terminalAddChatTab(sessionId, paneId, title, tmpId) {
+  const id = sessionId ? ('chat-' + sessionId) : (tmpId || ('chat-new-' + _term.tabs.length));
+  const exist = _term.tabs.find(t => t.id === id);
+  if (exist) { _terminalActivate(id); return exist; }
+  const pane = _terminalGetPane(paneId) || _terminalActivePane() || _term.panes[0];
+  const el = document.createElement('div');
+  el.style.display = 'none';
+  (pane ? pane.bodyEl : document.getElementById('terminal-panes')).appendChild(el);
+  const tab = {
+    id, kind: 'chat', sessionId: sessionId || '', name: title || 'Chat', el,
+    model: '', thinking: 'none', caveman: 0, showTools: true,
+    history: [], histIdx: -1, draft: '',
+    streaming: false, _abort: null, _spinTimer: null, _live: null,
+    log: [], tokensIn: 0, tokensOut: 0, cost: null, lastApiIn: 0, maxContext: 0,
+    pane: pane ? pane.id : 'pane-a',
+  };
+  _term.tabs.push(tab);
+  if (typeof tcBuildBody === 'function') tcBuildBody(tab);
+  _terminalRenderTabs();
+  _terminalActivate(id);
+  if (typeof renderTermchatHistory === 'function') renderTermchatHistory();
+  return tab;
+}
+
 function _terminalActivate(id) {
   const tab = _term.tabs.find(t => t.id === id);
   if (!tab) return;
@@ -504,6 +562,14 @@ function _terminalActivate(id) {
       } catch (_) {}
     }, 30);
     if (typeof repaintTerminalTree === 'function') repaintTerminalTree();  // highlight in tree
+    _terminalPersist();
+    return;
+  }
+  if (tab.kind === 'chat') {
+    // No stream/PTY to attach — just focus the input + refresh the status footer.
+    setTimeout(() => { try { const ta = tab.el.querySelector('.tc-ta'); if (ta) ta.focus(); } catch (_) {} }, 30);
+    if (typeof tcRenderStatus === 'function') tcRenderStatus(tab);
+    if (typeof renderTermchatHistory === 'function') renderTermchatHistory();
     _terminalPersist();
     return;
   }
@@ -572,6 +638,12 @@ async function terminalCloseTab(id, ev) {
   }
   if (tab.kind === 'editor') {
     tab.el.remove();
+  } else if (tab.kind === 'chat') {
+    // Abort an in-flight stream (the server worker is NOT cancelled — closing a
+    // view never cancels a turn; an explicit /cancel does). Then drop the el.
+    if (tab._abort) { try { tab._abort.abort(); } catch (_) {} }
+    if (tab._spinTimer) { try { clearInterval(tab._spinTimer); } catch (_) {} }
+    tab.el.remove();
   } else {
     if (tab.abort) { try { tab.abort.abort(); } catch (_) {} }
     try { tab.term.dispose(); } catch (_) {}
@@ -581,6 +653,7 @@ async function terminalCloseTab(id, ev) {
     }).catch(() => {});
   }
   const wasEditor = tab.kind === 'editor';
+  const wasChat = tab.kind === 'chat';
   const paneId = tab.pane;
   _term.tabs = _term.tabs.filter(t => t.id !== id);
   const pane = _terminalGetPane(paneId);
@@ -594,6 +667,7 @@ async function terminalCloseTab(id, ev) {
   _terminalShowActiveTabs();
   _terminalRenderTabs();
   if (wasEditor && typeof repaintTerminalTree === 'function') repaintTerminalTree();
+  if (wasChat && typeof renderTermchatHistory === 'function') renderTermchatHistory();
   _terminalPersist();
 }
 
@@ -651,6 +725,10 @@ function _terminalRenderTabs() {
         label = esc(t.name) + (t.dirty ? '*' : '');
         if (t.mode === 'raw') cls = ' ed-editing';
         if (t.extConflict) cls += ' ed-conflict';
+      } else if (t.kind === 'chat') {
+        // ◈ chat icon + title; pulse dot while a turn streams.
+        label = '◈ ' + esc(t.name || 'Chat');
+        if (t.streaming) cls = ' tc-tab-live';
       } else {
         label = 'Terminal ' + (termNum.get(t.id) || '');
       }

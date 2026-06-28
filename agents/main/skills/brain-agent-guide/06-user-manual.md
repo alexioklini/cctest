@@ -466,6 +466,36 @@ im Datei-Baum direkt im **Standardprogramm** des Rechners. Über das
 **Rechtsklick-Menü** einer Datei wählen Sie immer zwischen „Im Editor öffnen"
 und „In externem Programm öffnen".
 
+**Terminal-Chat** (Code-Projekte): Neben Terminal und Editor öffnen Sie im
+unteren Bereich einen **Terminal-Chat** — eine schlanke, terminalartige
+Chat-Oberfläche („wie ein Coding-Assistent im Terminal"). Sie ist als
+vollwertiger Ersatz für die normale Chat-Ansicht beim Arbeiten in einem
+Code-Projekt gedacht: Sie öffnen sie über den **◈-Knopf** in der Tab-Leiste eines
+Teilbereichs (oder „+ Neuer Terminal-Chat" in der Sektion **Terminal-Chats**).
+Ein Terminal-Chat lässt sich wie jeder Tab teilen — z. B. links ein Editor,
+rechts der Chat — und maximieren.
+
+Die Antworten **streamen** live mit einem Lauf-Anzeiger (Spinner); darunter
+zeigt eine **Statuszeile** das aktive Modell, die Denkstufe, Token (ein/aus),
+Kosten und die Kontext-Auslastung. Werkzeugaufrufe werden als kompakte Zeilen
+(`● Werkzeug Datei ✓`) eingeblendet (per `/tools` ein-/ausschaltbar). Mit
+**↑/↓** blättern Sie wie in einer Shell durch zuletzt gesendete Eingaben, mit
+**Tab** auf leerer Zeile holen Sie einen Eingabe-Vorschlag.
+
+**Schrägstrich-Befehle** steuern den Chat direkt: `/model <Name|auto>`
+(Modell wechseln), `/think off|low|medium|high` (Denktiefe), `/tools on|off`
+(Werkzeuganzeige), `/caveman 0-3` (Antwortstil), `/clear` (neue Sitzung, leerer
+Kontext), `/lcm` (Kontext komprimieren), `/sync` (Projekt-Sync anstoßen),
+`/init` (BRAIN.md erzeugen), `/suggest` (nächste Eingabe vorschlagen),
+`/cancel` (laufende Antwort abbrechen) und `/help` (Übersicht).
+
+Diese Chats werden **pro Projekt** gespeichert und in der Sektion
+**Terminal-Chats** unter dem Datei-Baum gelistet — ein Klick öffnet einen
+früheren Verlauf wieder, Rechtsklick löscht ihn. Sie erscheinen **bewusst nicht**
+in der normalen Chat-Liste des Projekts, sondern bleiben dem Code-Bereich
+vorbehalten. Offene Terminal-Chats werden — wie geöffnete Editor-Dateien — pro
+Projekt gemerkt und beim erneuten Öffnen wiederhergestellt.
+
 **Projekt-Anweisungen + Begleitdateien**: Über **Anweisungen bearbeiten**
 öffnet sich ein Dialog mit dem Freitext-Feld (Hinweise, an die sich das
 Projekt in jeder Antwort hält — Tonfall, Sprache, Formatvorgaben; Markdown +
