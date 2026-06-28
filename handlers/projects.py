@@ -1794,6 +1794,72 @@ class ProjectsHandlerMixin:
                 pass
         self._send_json({"agent": agent_id, "project": proj_name, "documents": docs})
 
+    @staticmethod
+    def _git_worktree_states(working_dir: str) -> dict:
+        """Map {realpath: status_code} for a code-mode project's git worktree.
+
+        One `git status --porcelain` over `working_dir`. Returns {} when the dir
+        is not a git repo (or git is missing) — the tree then shows no git dots.
+        The porcelain XY columns are (index, worktree); we collapse to a single
+        actionable code per file: '?' untracked · 'M' modified (staged or not) ·
+        'A' added · 'D' deleted · 'R' renamed · 'U' conflict."""
+        import os
+        import subprocess
+        wd = (working_dir or "").strip()
+        if not wd or not os.path.isdir(wd):
+            return {}
+        # Run git directly (NOT _run_git — it .strip()s the output, which would
+        # eat the leading status-column space of the first porcelain record and
+        # shift every path by one char). The XY status columns are positional.
+        try:
+            env = os.environ.copy()
+            env["GIT_TERMINAL_PROMPT"] = "0"
+            proc = subprocess.run(
+                ["git", "--no-pager", "status", "--porcelain", "-z"],
+                capture_output=True, cwd=wd, env=env, timeout=10,
+            )
+        except Exception:
+            return {}
+        if proc.returncode != 0:
+            return {}
+        out = proc.stdout.decode("utf-8", errors="replace")
+        if not out:
+            return {}
+        states = {}
+        # -z uses NUL record separators; a rename record is "XY new\0old".
+        records = out.split("\0")
+        i = 0
+        while i < len(records):
+            rec = records[i]
+            if len(rec) < 4:
+                i += 1
+                continue
+            xy = rec[:2]
+            fname = rec[3:]
+            # Rename/copy carries a trailing NUL-separated old path — skip it.
+            if xy and xy[0] in ("R", "C"):
+                i += 2
+            else:
+                i += 1
+            x, y = (xy[0] if len(xy) > 0 else " "), (xy[1] if len(xy) > 1 else " ")
+            if "U" in xy or (x == "D" and y == "D") or (x == "A" and y == "A"):
+                c = "U"          # unmerged / conflict
+            elif xy == "??":
+                c = "?"          # untracked
+            elif x == "R" or y == "R":
+                c = "R"          # renamed
+            elif x == "A" or y == "A":
+                c = "A"          # added
+            elif x == "D" or y == "D":
+                c = "D"          # deleted
+            elif x == "M" or y == "M":
+                c = "M"          # modified (staged and/or worktree)
+            else:
+                c = x.strip() or y.strip() or ""
+            if fname and c:
+                states[os.path.realpath(os.path.join(wd, fname))] = c
+        return states
+
     def _handle_project_folder_tree(self, path: str):
         """GET …/projects/{name}/folder-tree?path=<abs folder> — the REAL,
         read-only subtree of an ingested input folder, each file coloured by its
@@ -1835,6 +1901,15 @@ class ProjectsHandlerMixin:
         # lookups entirely; the tree just shows the real files.
         indexed = set()
         kg_states = {}
+        git_states = {}
+        if _code_mode:
+            # Per-file git working-tree state for the editor tree. One cheap
+            # `git status --porcelain` over the working_dir (NOT `real` — the
+            # status is relative to the repo root) → {realpath: code}. The two
+            # porcelain columns are XY (index, worktree); we surface the most
+            # actionable single code per file: '?' untracked, 'M' modified,
+            # 'A' added, 'D' deleted, 'R' renamed, 'C' conflict.
+            git_states = self._git_worktree_states(project.get("working_dir") or "")
         if not _code_mode:
             try:
                 palace_path = (engine._load_mempalace_config() or {}).get("palace_path", "")
@@ -1923,7 +1998,8 @@ class ProjectsHandlerMixin:
                                  "size": _size, "mtime": _mtime,
                                  "state": st["mined"], "mined": st["mined"],
                                  "kg": st["kg"], "skip_reason": st["skip_reason"],
-                                 "review": _review_for(fp)})
+                                 "review": _review_for(fp),
+                                 "git": git_states.get(os.path.realpath(fp), "")})
             return kids
 
         self._send_json({"path": real, "tree": _walk(real),

@@ -8,6 +8,10 @@ function setTheme(mode) {
   // Toggle hljs themes
   document.getElementById('hljs-theme-light').disabled = (mode === 'dark');
   document.getElementById('hljs-theme-dark').disabled = (mode === 'light');
+
+  // Re-theme the code-mode terminal (xterm reads CSS vars at construct time;
+  // re-apply so a live terminal follows the light/dark switch).
+  if (typeof terminalRetheme === 'function') terminalRetheme();
 }
 
 function toggleTheme() {
@@ -1323,8 +1327,10 @@ async function init() {
   // Start on welcome view
   navigateTo('welcome');
 
-  // Wire the code-mode terminal panel's drag-to-resize handle.
+  // Wire the code-mode terminal panel's drag-to-resize handles (vertical panel
+  // + horizontal file-tree column).
   if (typeof _terminalInitResize === 'function') _terminalInitResize();
+  if (typeof _terminalInitTreeResize === 'function') _terminalInitTreeResize();
 
   // Spin up the floating ASCII companion (reads buddy_species from prefs).
   if (typeof buddyInit === 'function') buddyInit();

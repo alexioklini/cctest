@@ -671,6 +671,9 @@ async function refreshCodeIndexStatus() {
       } else {
         chipState = 'idle'; txt = 'Code durchsuchbar';
         subtxt = `${nSource} ${nSource === 1 ? 'Datei' : 'Dateien'} erfasst — der Assistent kennt den Code.`;
+        // Append the last successful sync time when known (live daemon record).
+        const ts = live.indexed_at;
+        if (ts) subtxt += ` Zuletzt synchronisiert: ${new Date(ts * 1000).toLocaleString()}.`;
       }
     }
     if (live.error) subtxt = 'Der Code konnte nicht vollständig erfasst werden.';

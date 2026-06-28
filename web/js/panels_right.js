@@ -42,10 +42,13 @@ function _rightPanelTabCounts() {
   };
 }
 
-// First tab (in display order) that has data, or null if all empty.
+// First tab (in display order) that has data, or null if all empty. In a
+// code-mode chat the Artefakte tab is hidden, so don't auto-select it.
 function firstTabWithData() {
   const c = _rightPanelTabCounts();
-  for (const tab of ['attachments', 'references', 'artifacts']) {
+  const isCode = (typeof _workdirIsCodeChat === 'function') && _workdirIsCodeChat();
+  const order = isCode ? ['attachments', 'references'] : ['attachments', 'references', 'artifacts'];
+  for (const tab of order) {
     if (c[tab] > 0) return tab;
   }
   return null;
@@ -58,18 +61,15 @@ function openRightPanel(tab) {
   state.rightPanelOpen = true;
   // Any explicit open re-arms auto-open for subsequent new refs/artifacts.
   state.userClosedRightPanel = false;
-  // Code-mode chat: gate the tab set (show Arbeitsverzeichnis, hide
-  // artifacts/references/websuche) BEFORE picking the tab so a hidden tab
-  // isn't chosen. No-op in normal chats.
-  if (typeof updateWorkdirTabVisibility === 'function') updateWorkdirTabVisibility();
-  const _codeChat = (typeof _workdirIsCodeChat === 'function') && _workdirIsCodeChat();
+  // Code-mode chat: hide the tabs that don't apply (Artefakte / Web-Adressen)
+  // BEFORE picking the tab so a hidden tab isn't chosen. No-op in normal chats.
+  // (The working-directory tree now lives in the bottom panel, not a tab.)
+  if (typeof updateCodeModeTabs === 'function') updateCodeModeTabs();
   // Tab selection priority: explicit arg (e.g. artifact auto-open) wins;
   // else the user's last chosen tab if they've picked one this session;
-  // else the first tab that has data; else fall back to attachments. In a
-  // code chat, default to the working-directory tab.
+  // else the first tab that has data; else fall back to attachments.
   const chosen = tab
     || (state.userPickedTab ? state.rightPanelTab : null)
-    || (_codeChat ? 'workdir' : null)
     || firstTabWithData()
     || 'attachments';
   switchRightTab(chosen);
@@ -146,15 +146,14 @@ function refreshRightPanelContent() {
   // it up and the poll starts.
   if (typeof loadBackgroundTasks === 'function') loadBackgroundTasks();
   if (!state.rightPanelOpen) return;
-  // Code-mode chat: show the Arbeitsverzeichnis tab + hide the MemPalace-only
-  // tabs (artifacts/references/websuche). No-op in normal chats.
-  if (typeof updateWorkdirTabVisibility === 'function') updateWorkdirTabVisibility();
+  // Keep the code-mode tab set in sync (hide Artefakte/Web-Adressen). No-op
+  // in normal chats.
+  if (typeof updateCodeModeTabs === 'function') updateCodeModeTabs();
   const tab = state.rightPanelTab;
   if (tab === 'attachments') renderAttachmentsPane();
   else if (tab === 'references') renderReferencesPane();
   else if (tab === 'artifacts' && !state.activeArtifactId) showArtifactList();
   else if (tab === 'bgtasks' && typeof renderBackgroundTasksPane === 'function') renderBackgroundTasksPane();
-  else if (tab === 'workdir' && typeof renderWorkdirPane === 'function') renderWorkdirPane();
   if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);
 }
 
@@ -184,7 +183,6 @@ function switchRightTab(tabName) {
     if (typeof _bgLiveReconcile === 'function') _bgLiveReconcile();
     renderBackgroundTasksPane();
   }
-  if (tabName === 'workdir' && typeof renderWorkdirPane === 'function') renderWorkdirPane();
   updateRightPanelBadges();
   // Re-apply the active-turn focus to the freshly rendered pane.
   if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);

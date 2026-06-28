@@ -1258,10 +1258,12 @@ function buildStreamCallbacks(chat, isActive) {
               refreshCodeWorkingTree();
             }
           } catch (e) {}
-          // Same for the right-panel Arbeitsverzeichnis tab in a code-mode chat.
+          // Same for the bottom-panel file tree when the terminal is open (the
+          // agent may have created/modified files this turn → refresh git state).
           try {
-            if (state.rightPanelTab === 'workdir' && typeof refreshWorkdirPanelTree === 'function') {
-              refreshWorkdirPanelTree();
+            if (typeof _term !== 'undefined' && _term.open
+                && _term.treeVisible && typeof refreshTerminalTree === 'function') {
+              refreshTerminalTree();
             }
           } catch (e) {}
         }

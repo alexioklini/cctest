@@ -280,8 +280,12 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `GET .../projects/<name>/folder-tree?path=<abs>` — read-only subtree of an
   ingested input folder OR (Code Mode) the project's working_dir. Each file node
   carries `name/path/size/mtime` (+ MemPalace `mined`/`kg` state for non-code).
-  Code-Mode walks additionally skip heavy/vendored dirs (node_modules/.venv/dist/
-  build/target/…) so the poll-driven auto-refresh stays cheap.
+  Code-Mode file nodes ALSO carry a `git` field — the one-letter working-tree
+  status (`M`/`?`/`A`/`D`/`R`/`U`, empty when the working_dir is not a git repo),
+  from one `git status --porcelain -z` over the working_dir; the bottom-panel
+  file tree colours the name by it. Code-Mode walks additionally skip
+  heavy/vendored dirs (node_modules/.venv/dist/build/target/…) so the
+  poll-driven auto-refresh stays cheap.
 - `POST .../projects/<name>/init` — Code Mode only: run one agentic background
   turn whose cwd is the working_dir; it explores the tree and writes a `BRAIN.md`
   summary at the root (the project's plain-markdown memory). Returns immediately

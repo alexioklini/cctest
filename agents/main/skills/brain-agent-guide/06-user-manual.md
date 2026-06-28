@@ -420,6 +420,21 @@ Code-Index) und macht sie direkt nutzbar:
   bereit, **Cmd/Strg+Enter** führt aus, das Ergebnis erscheint als Tabelle, und
   ein Klick auf einen Dateipfad öffnet die Datei im Editor.
 
+**Datei-Baum im unteren Bereich** (Code-Projekte): Der Baum des
+Arbeitsverzeichnisses liegt als **linke Spalte** des unteren Bereichs, direkt
+neben Terminal und Editor (gleicher Look wie der Editor; der gesamte untere
+Bereich folgt dem Hell-/Dunkel-Modus der Oberfläche). Er lässt sich
+über den Knopf in der Bereichsleiste **ein-/ausblenden** und in der Breite
+ziehen; Sichtbarkeit, Breite und Aufklapp-Zustand werden **pro Projekt**
+gemerkt (standardmäßig sind alle Ordner zugeklappt — zwei Knöpfe klappen alles
+auf bzw. zu). Jede Datei zeigt drei Signale: die **Namensfarbe** spiegelt den
+**Git-Status** (geändert = amber, neu/unversioniert = grün, gelöscht = rot,
+umbenannt = blau), ein **Punkt** markiert im Editor geöffnete Dateien mit
+**ungespeicherten Änderungen**, und ein **Sync-Punkt** den Index-Status. Ein
+Klick öffnet die Datei im Editor; die gerade bearbeitete Datei ist im Baum
+hervorgehoben. Der **Ein-Editor-Modus** (Umschalter) lässt jeden Klick die
+aktuelle Datei **ersetzen**, statt immer einen neuen Tab zu öffnen.
+
 **Projekt-Anweisungen + Begleitdateien**: Über **Anweisungen bearbeiten**
 öffnet sich ein Dialog mit dem Freitext-Feld (Hinweise, an die sich das
 Projekt in jeder Antwort hält — Tonfall, Sprache, Formatvorgaben; Markdown +

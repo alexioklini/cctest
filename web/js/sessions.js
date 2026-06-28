@@ -247,11 +247,11 @@ async function openSession(sessionId, agentId) {
     // would carry a wrong body.project.
     chat.project = data.project || '';
     state.currentProject = chat.project || null;
-    // Pre-warm the code-mode project info (cached) so the right panel can gate
-    // its tabs synchronously when opened — and refresh tab visibility once known.
+    // Pre-warm the code-mode project info (cached) so the bottom-panel terminal
+    // toggle can show synchronously — and refresh it once known.
     if (state.currentProject && typeof _workdirActiveProject === 'function') {
       _workdirActiveProject().then(() => {
-        try { if (typeof updateWorkdirTabVisibility === 'function') updateWorkdirTabVisibility(); } catch (_) {}
+        try { if (typeof terminalRefreshToggle === 'function') terminalRefreshToggle(); } catch (_) {}
       });
     }
 

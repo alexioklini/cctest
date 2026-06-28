@@ -12,6 +12,10 @@ const _term = {
   tabs: [],          // [{id, term, fit, offset, es, el}]
   active: null,      // active session id
   open: false,
+  // Layout state (persisted PER-PROJECT in bottom_workspace, not per-chat):
+  treeVisible: true, // file-tree column shown?
+  treeWidth: 240,    // file-tree column width (px)
+  singleEditor: false, // single-editor mode: tree click replaces the editor tab
 };
 
 // Resolve the current code-mode project context from whichever view we're in.
@@ -68,6 +72,7 @@ async function terminalTogglePanel(force) {
     _term.open = true;
     _terminalRestoreHeight();
     await _terminalLoadSessions();
+    refreshTerminalTree();
   } else {
     panel.style.display = 'none';
     document.getElementById('main-content').classList.remove('terminal-open');
@@ -93,6 +98,13 @@ async function _terminalLoadSessions() {
     const p = await API.get(`/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}`);
     ws = p && p.bottom_workspace;
   } catch (e) { /* ignore */ }
+  // restore layout state (per-project) before painting tabs/tree
+  if (ws) {
+    if (typeof ws.tree_visible === 'boolean') _term.treeVisible = ws.tree_visible;
+    if (ws.tree_width >= 120) _term.treeWidth = Math.min(ws.tree_width, 700);
+    if (typeof ws.single_editor === 'boolean') _term.singleEditor = ws.single_editor;
+  }
+  _terminalApplyLayout();
   if (ws && Array.isArray(ws.editor_files)) {
     for (const fp of ws.editor_files) {
       if (!_term.tabs.find(t => t.kind === 'editor' && t.path === fp)) {
@@ -118,6 +130,9 @@ function _terminalPersist() {
     const ws = {
       editor_files: _term.tabs.filter(t => t.kind === 'editor').map(t => t.path),
       active: _term.active || '',
+      tree_visible: _term.treeVisible,
+      tree_width: _term.treeWidth,
+      single_editor: _term.singleEditor,
     };
     try { API.updateProject(_term.agent, _term.project, { bottom_workspace: ws }); } catch (_) {}
   }, 600);
@@ -133,6 +148,29 @@ async function terminalNewTab() {
   } catch (e) { if (typeof showToast === 'function') showToast('Terminal konnte nicht gestartet werden'); }
 }
 
+// Build an xterm theme from the app's CSS variables so the terminal follows the
+// light/dark mode of the rest of the UI (was hardcoded #1e1e1e → black in light
+// mode). Reads the resolved --bg-000 / --text-100 / --accent-brand off :root.
+function _terminalXtermTheme() {
+  let bg = '#1e1e1e', fg = '#eaeaec', accent = '#3b82f6';
+  try {
+    const cs = getComputedStyle(document.documentElement);
+    bg = (cs.getPropertyValue('--bg-000') || bg).trim() || bg;
+    fg = (cs.getPropertyValue('--text-100') || fg).trim() || fg;
+    accent = (cs.getPropertyValue('--accent-brand') || accent).trim() || accent;
+  } catch (_) { /* fall back to dark defaults */ }
+  return { background: bg, foreground: fg, cursor: accent,
+           selectionBackground: accent + '55' };
+}
+
+// Re-apply the theme to all live terminals (call after a light/dark switch).
+function terminalRetheme() {
+  const theme = _terminalXtermTheme();
+  for (const t of _term.tabs) {
+    if (t.kind === 'terminal' && t.term) { try { t.term.options.theme = theme; } catch (_) {} }
+  }
+}
+
 function _terminalAddTab(id) {
   if (_term.tabs.find(t => t.id === id)) return;
   const el = document.createElement('div');
@@ -142,7 +180,7 @@ function _terminalAddTab(id) {
   const term = new Terminal({
     fontSize: 13, fontFamily: 'var(--font-mono, monospace)',
     cursorBlink: true, scrollback: 5000,
-    theme: { background: '#1e1e1e' },
+    theme: _terminalXtermTheme(),
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
@@ -166,7 +204,17 @@ function _terminalActivate(id) {
   const tab = _term.tabs.find(t => t.id === id);
   if (!tab) return;
   if (tab.kind === 'editor') {
-    setTimeout(() => { try { tab.cm.refresh(); tab.cm.focus(); } catch (_) {} }, 30);
+    setTimeout(() => {
+      try {
+        if (!tab.cm) return;
+        tab.cm.refresh();
+        // restore the saved caret position, then refocus the editor
+        const cur = _terminalLoadCursor(tab.path);
+        if (cur) tab.cm.setCursor(cur);
+        tab.cm.focus();
+      } catch (_) {}
+    }, 30);
+    if (typeof repaintTerminalTree === 'function') repaintTerminalTree();  // highlight in tree
     _terminalPersist();
     return;
   }
@@ -243,12 +291,14 @@ async function terminalCloseTab(id, ev) {
       method: 'POST', headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || '') },
     }).catch(() => {});
   }
+  const wasEditor = tab.kind === 'editor';
   _term.tabs = _term.tabs.filter(t => t.id !== id);
   if (_term.active === id) {
     if (_term.tabs.length) _terminalActivate(_term.tabs[0].id);
     else terminalTogglePanel(false);
   }
   _terminalRenderTabs();
+  if (wasEditor && typeof repaintTerminalTree === 'function') repaintTerminalTree();
   _terminalPersist();
 }
 
@@ -296,21 +346,45 @@ function _terminalRenderTabs() {
   let termN = 0;
   bar.innerHTML = _term.tabs.map((t) => {
     const active = t.id === _term.active ? ' active' : '';
-    let label, icon;
+    let label, cls = '';
     if (t.kind === 'editor') {
-      label = (t.dirty ? '● ' : '') + esc(t.name);
-      icon = '';
+      // '*' = unsaved changes; italic (.ed-editing) when the tab is in edit mode.
+      label = esc(t.name) + (t.dirty ? '*' : '');
+      if (t.mode === 'raw') cls = ' ed-editing';
     } else {
-      termN += 1; label = 'Terminal ' + termN; icon = '';
+      termN += 1; label = 'Terminal ' + termN;
     }
-    return `<div class="terminal-tab${active}" title="${esc(t.path || label)}" onclick="_terminalActivate('${t.id}')" oncontextmenu="_terminalTabMenu('${t.id}', event)">
-      <span>${icon}${label}</span>
+    return `<div class="terminal-tab${active}${cls}" title="${esc(t.path || label)}" onclick="_terminalActivate('${t.id}')" oncontextmenu="_terminalTabMenu('${t.id}', event)">
+      <span class="tt-name">${label}</span>
       <span class="terminal-tab-close" onclick="terminalCloseTab('${t.id}', event)">✕</span>
     </div>`;
   }).join('');
 }
 
 // ── Editor tabs (CodeMirror 5) ───────────────────────────────────────────────
+// Per-file cursor persistence (UI-only, localStorage, keyed by project+path) so
+// reopening a file restores the caret line/col. Debounced on cursor activity.
+function _terminalCursorKey(absPath) {
+  return `brain.edcursor.${_term.project || 'p'}:${absPath}`;
+}
+let _terminalCursorTimer = null;
+function _terminalSaveCursor(tab) {
+  if (!tab || !tab.cm) return;
+  clearTimeout(_terminalCursorTimer);
+  _terminalCursorTimer = setTimeout(() => {
+    try {
+      const c = tab.cm.getCursor();
+      localStorage.setItem(_terminalCursorKey(tab.path), JSON.stringify({ line: c.line, ch: c.ch }));
+    } catch (_) {}
+  }, 300);
+}
+function _terminalLoadCursor(absPath) {
+  try {
+    const v = JSON.parse(localStorage.getItem(_terminalCursorKey(absPath)) || 'null');
+    return (v && typeof v.line === 'number') ? v : null;
+  } catch (_) { return null; }
+}
+
 // Map a file extension → a CodeMirror mode (modes loaded in index.html).
 function _cmModeFor(ext) {
   ext = (ext || '').toLowerCase();
@@ -334,45 +408,81 @@ async function terminalOpenFile(absPath) {
   if (!_term.open) { await terminalTogglePanel(true); }
   const existing = _term.tabs.find(t => t.kind === 'editor' && t.path === absPath);
   if (existing) { _terminalActivate(existing.id); return; }
+  // Single-editor mode: close the current (or any) open editor tab first so at
+  // most one editor stays open — the new file replaces it. A dirty editor still
+  // gets the unsaved-changes confirm via terminalCloseTab.
+  if (_term.singleEditor) {
+    const cur = _term.tabs.find(t => t.kind === 'editor');  // at most one open
+    if (cur) {
+      const before = _term.tabs.length;
+      await terminalCloseTab(cur.id);
+      // user cancelled the dirty-close confirm → abort opening the new file
+      if (_term.tabs.length === before) return;
+    }
+  }
   const name = absPath.split('/').pop();
   const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
   const id = 'edit-' + absPath;
   const el = document.createElement('div');
   el.className = 'terminal-editor';
   el.style.display = 'none';
+  // Toolbar buttons are SVG-only (no text labels, per the UI icon rule). The two
+  // mode buttons (Ansicht/Bearbeiten) toggle read-only vs editable — the editor
+  // LOOKS identical in both (CodeMirror, same line numbers + colouring); only a
+  // cursor distinguishes edit mode.
   el.innerHTML = `
     <div class="editor-toolbar">
-      <button class="btn-secondary ed-mode active" data-mode="render" onclick="terminalEditorMode('${id}','render')">Ansicht</button>
-      <button class="btn-secondary ed-mode" data-mode="raw" onclick="terminalEditorMode('${id}','raw')">Bearbeiten</button>
-      <button class="btn-secondary" onclick="codeSymbolPalette()" title="Symbol suchen (${_isMac()?'⌘':'Strg'}+P)">Symbole</button>
-      <button class="btn-secondary" onclick="codeCypherBar()" title="Code-Index per Cypher abfragen (Power-User)">Cypher</button>
+      <button class="ed-iconbtn ed-mode active" data-mode="render" onclick="terminalEditorMode('${id}','render')" title="Ansicht (nur lesen)" aria-label="Ansicht">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+      <button class="ed-iconbtn ed-mode" data-mode="raw" onclick="terminalEditorMode('${id}','raw')" title="Bearbeiten" aria-label="Bearbeiten">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+      </button>
+      <span class="ed-sep"></span>
+      <button class="ed-iconbtn" onclick="codeSymbolPalette()" title="Symbol suchen (${_isMac()?'⌘':'Strg'}+P)" aria-label="Symbole suchen">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+      </button>
+      <button class="ed-iconbtn" onclick="codeCypherBar()" title="Code-Index per Cypher abfragen (Power-User)" aria-label="Cypher-Abfrage">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+      </button>
       <span style="flex:1"></span>
-      <button class="btn-secondary ed-save" onclick="terminalEditorSave('${id}')" disabled>Speichern</button>
-      <button class="btn-secondary" onclick="terminalEditorDownload('${id}')">Herunterladen</button>
+      <button class="ed-iconbtn ed-save" onclick="terminalEditorSave('${id}')" title="Speichern" aria-label="Speichern" disabled>
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+      </button>
+      <button class="ed-iconbtn" onclick="terminalEditorDownload('${id}')" title="Herunterladen" aria-label="Herunterladen">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </button>
     </div>
-    <div class="editor-render"></div>
-    <div class="editor-cm" style="display:none"></div>`;
+    <div class="editor-render" style="display:none"></div>
+    <div class="editor-cm"></div>
+    <div class="editor-status"><span class="ed-stat-name"></span><span style="flex:1"></span><span class="ed-stat-meta"></span></div>`;
   document.getElementById('terminal-body').appendChild(el);
   const tab = { id, kind: 'editor', path: absPath, name, ext, el, cm: null,
-                raw: '', mode: 'render', dirty: false, loaded: false };
+                raw: '', mode: 'render', dirty: false, loaded: false,
+                size: 0, mtime: 0 };
   _term.tabs.push(tab);
   _terminalRenderTabs();
   _terminalActivate(id);
   // load content
   try {
     const d = await API.get(`/v1/files/preview?path=${encodeURIComponent(absPath)}&lines=100000`);
-    if (d.error) { el.querySelector('.editor-render').innerHTML = `<div class="pt-empty">${esc(d.error)}</div>`; return; }
+    if (d.error) { el.querySelector('.editor-render').style.display = 'block'; el.querySelector('.editor-cm').style.display = 'none'; el.querySelector('.editor-render').innerHTML = `<div class="pt-empty">${esc(d.error)}</div>`; return; }
+    tab.size = d.size || 0;
+    tab.mtime = d.mtime || 0;
     if (d.type === 'image') {
       _terminalEditorShowImage(tab);
       // images: no edit
+      el.querySelector('.editor-cm').style.display = 'none';
       el.querySelector('.ed-mode[data-mode="raw"]').style.display = 'none';
       el.querySelector('.ed-save').style.display = 'none';
+      _terminalEditorStats(tab);
       return;
     }
     tab.raw = d.content || '';
     tab.truncated = !!d.truncated;
     tab.loaded = true;
     _terminalEditorPaint(tab);
+    _terminalEditorStats(tab);
   } catch (e) {
     el.querySelector('.editor-render').innerHTML = '<div class="pt-empty">Datei konnte nicht geladen werden.</div>';
   }
@@ -384,55 +494,67 @@ function terminalEditorMode(id, mode) {
   tab.mode = mode;
   tab.el.querySelectorAll('.ed-mode').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   _terminalEditorPaint(tab);
+  _terminalRenderTabs();  // reflect edit-mode italic in the tab label
 }
 
+// BOTH modes use the SAME CodeMirror instance (same line numbers + syntax
+// colouring); 'render' = read-only (no cursor), 'raw' = editable. There is NO
+// separate highlight.js/markdown view — per the user, the only visible
+// difference between view and edit is the cursor.
 function _terminalEditorPaint(tab) {
-  const renderEl = tab.el.querySelector('.editor-render');
   const cmEl = tab.el.querySelector('.editor-cm');
-  if (tab.mode === 'raw') {
-    // edit mode: CodeMirror
-    renderEl.style.display = 'none';
-    cmEl.style.display = 'block';
-    if (!tab.cm) {
-      tab.cm = CodeMirror(cmEl, {
-        value: tab.raw, mode: _cmModeFor(tab.ext), lineNumbers: true,
-        lineWrapping: false, indentUnit: 4,
-        extraKeys: {
-          // index-fed autocomplete (project symbols from the cbm index).
-          // Ctrl-Space only — NOT Cmd-Space (that's macOS Spotlight, the OS
-          // grabs it before the browser sees it).
-          'Ctrl-Space': (cm) => codeIndexComplete(cm),
-        },
-      });
-      tab.cm.setSize('100%', '100%');
-      tab.cm.on('change', () => {
-        tab.dirty = true;
-        const sv = tab.el.querySelector('.ed-save'); if (sv) sv.disabled = false;
-        _terminalRenderTabs();
-      });
-      // right-click a symbol → go-to-definition / who-calls menu
-      tab.cm.on('contextmenu', (cm, e) => _codeIndexContextMenu(cm, e, tab));
-      // hover a symbol → signature + docstring + caller count tooltip
-      _codeIndexAttachHover(tab);
-    } else {
-      // keep CM in sync if raw changed via save
-      if (tab.cm.getValue() !== tab.raw && !tab.dirty) tab.cm.setValue(tab.raw);
-    }
-    setTimeout(() => { try { tab.cm.refresh(); tab.cm.focus(); } catch (_) {} }, 20);
+  cmEl.style.display = 'block';
+  if (!tab.cm) {
+    tab.cm = CodeMirror(cmEl, {
+      value: tab.raw, mode: _cmModeFor(tab.ext), lineNumbers: true,
+      lineWrapping: false, indentUnit: 4,
+      readOnly: tab.mode === 'raw' ? false : 'nocursor',
+      extraKeys: {
+        // index-fed autocomplete (project symbols from the cbm index).
+        // Ctrl-Space only — NOT Cmd-Space (that's macOS Spotlight, the OS
+        // grabs it before the browser sees it).
+        'Ctrl-Space': (cm) => codeIndexComplete(cm),
+      },
+    });
+    tab.cm.setSize('100%', '100%');
+    tab.cm.on('change', () => {
+      const wasDirty = tab.dirty;
+      tab.dirty = true;
+      const sv = tab.el.querySelector('.ed-save'); if (sv) sv.disabled = false;
+      _terminalRenderTabs();
+      // reflect the unsaved-'*' in the file tree (only on the false→true flip)
+      if (!wasDirty && typeof repaintTerminalTree === 'function') repaintTerminalTree();
+    });
+    // right-click a symbol → go-to-definition / who-calls menu
+    tab.cm.on('contextmenu', (cm, e) => _codeIndexContextMenu(cm, e, tab));
+    // hover a symbol → signature + docstring + caller count tooltip
+    _codeIndexAttachHover(tab);
+    // persist the cursor (line/ch) per file so reopening restores the position
+    tab.cm.on('cursorActivity', () => _terminalSaveCursor(tab));
+    // restore the saved cursor on first paint (after the doc is in the CM)
+    const cur = _terminalLoadCursor(tab.path);
+    if (cur) { try { tab.cm.setCursor(cur); } catch (_) {} }
   } else {
-    // render mode: syntax-highlighted read-only (or markdown)
-    cmEl.style.display = 'none';
-    renderEl.style.display = 'block';
-    const txt = (tab.cm && tab.dirty) ? tab.cm.getValue() : tab.raw;
-    if (tab.ext === 'md' && typeof renderMarkdown === 'function') {
-      renderEl.innerHTML = `<div class="ref-inline-md msg-content" style="padding:10px">${renderMarkdown(txt)}</div>`;
-      renderEl.querySelectorAll('pre code').forEach(el => { try { hljs.highlightElement(el); } catch (_) {} });
-    } else {
-      const lang = (typeof _ptLangFor === 'function') ? _ptLangFor(tab.ext) : 'plaintext';
-      let html; try { html = hljs.highlight(txt, { language: lang }).value; } catch (_) { html = esc(txt); }
-      renderEl.innerHTML = `<pre class="editor-pre"><code class="hljs">${html}</code></pre>`;
-    }
+    // keep CM in sync if raw changed via save; flip editability for the mode
+    if (tab.cm.getValue() !== tab.raw && !tab.dirty) tab.cm.setValue(tab.raw);
+    tab.cm.setOption('readOnly', tab.mode === 'raw' ? false : 'nocursor');
   }
+  // edit mode gets focus (so the cursor shows); view mode does not
+  setTimeout(() => { try { tab.cm.refresh(); if (tab.mode === 'raw') tab.cm.focus(); } catch (_) {} }, 20);
+}
+
+// Editor status line: file name + size + last-modified + (for text) line count
+// and a truncation hint. Reuses _fmtBytes (panels_workdir.js global).
+function _terminalEditorStats(tab) {
+  if (!tab || !tab.el) return;
+  const nameEl = tab.el.querySelector('.ed-stat-name');
+  const metaEl = tab.el.querySelector('.ed-stat-meta');
+  if (nameEl) nameEl.textContent = tab.name + (tab.truncated ? ' · (gekürzt angezeigt)' : '');
+  const bits = [];
+  if (tab.size) bits.push(typeof _fmtBytes === 'function' ? _fmtBytes(tab.size) : tab.size + ' B');
+  if (tab.cm) { try { bits.push(tab.cm.lineCount() + ' Zeilen'); } catch (_) {} }
+  if (tab.mtime) bits.push('geändert ' + new Date(tab.mtime * 1000).toLocaleString());
+  if (metaEl) metaEl.textContent = bits.join(' · ');
 }
 
 async function _terminalEditorShowImage(tab) {
@@ -458,8 +580,15 @@ async function terminalEditorSave(id) {
     const d = await r.json();
     if (d.error) { if (typeof showToast === 'function') showToast(d.error); return; }
     tab.raw = content; tab.dirty = false;
+    // refresh stats: size from the saved content, mtime = now (just written)
+    tab.size = new Blob([content]).size;
+    tab.mtime = Math.floor(Date.now() / 1000);
+    tab.truncated = false;
+    _terminalEditorStats(tab);
     const sv = tab.el.querySelector('.ed-save'); if (sv) sv.disabled = true;
     _terminalRenderTabs();
+    // a save clears the unsaved-'*' and may flip the file's git state → reload
+    if (typeof refreshTerminalTree === 'function') refreshTerminalTree();
     if (typeof showToast === 'function') showToast('Gespeichert');
   } catch (e) { if (typeof showToast === 'function') showToast('Speichern fehlgeschlagen'); }
 }
@@ -487,6 +616,7 @@ async function terminalNewFile() {
     const d = await r.json();
     if (d.error) { if (typeof showToast === 'function') showToast(d.error); return; }
     if (typeof refreshCodeWorkingTree === 'function') refreshCodeWorkingTree();
+    if (typeof refreshTerminalTree === 'function') refreshTerminalTree();
     await terminalOpenFile(abs);
     terminalEditorMode('edit-' + abs, 'raw');
   } catch (e) { if (typeof showToast === 'function') showToast('Datei konnte nicht erstellt werden'); }
@@ -547,6 +677,60 @@ function _terminalInitResize() {
     // persist the chosen height as the preferred value
     try { localStorage.setItem(_TERMINAL_HEIGHT_KEY, String(panel.offsetHeight)); } catch (_) {}
     _terminalOnResize();
+  });
+}
+
+// ── File-tree column (left of the terminal/editor) ───────────────────────────
+// Apply the persisted layout state (visibility, width, single-editor toggle) to
+// the DOM. Called on open and after each toggle.
+function _terminalApplyLayout() {
+  const panel = document.getElementById('terminal-panel');
+  const col = document.getElementById('terminal-tree-col');
+  if (panel) panel.classList.toggle('tree-hidden', !_term.treeVisible);
+  if (col) col.style.flexBasis = Math.max(120, _term.treeWidth || 240) + 'px';
+  const se = document.getElementById('terminal-single-editor');
+  if (se) se.classList.toggle('active', !!_term.singleEditor);
+  const show = document.getElementById('terminal-tree-show');
+  if (show) show.classList.toggle('active', !!_term.treeVisible);
+}
+
+function terminalToggleTree() {
+  _term.treeVisible = !_term.treeVisible;
+  _terminalApplyLayout();
+  if (_term.treeVisible) refreshTerminalTree();
+  _terminalPersist();
+  setTimeout(_terminalOnResize, 30);
+}
+
+function terminalToggleSingleEditor() {
+  _term.singleEditor = !_term.singleEditor;
+  _terminalApplyLayout();
+  if (typeof showToast === 'function') {
+    showToast(_term.singleEditor ? 'Ein-Editor-Modus: an' : 'Ein-Editor-Modus: aus');
+  }
+  _terminalPersist();
+}
+
+function _terminalInitTreeResize() {
+  const handle = document.getElementById('terminal-tree-resize');
+  const col = document.getElementById('terminal-tree-col');
+  if (!handle || !col) return;
+  let startX = 0, startW = 0, dragging = false;
+  handle.addEventListener('mousedown', (e) => {
+    dragging = true; startX = e.clientX; startW = col.offsetWidth;
+    document.body.style.userSelect = 'none'; e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const w = Math.max(120, Math.min(700, startW + (e.clientX - startX)));
+    col.style.flexBasis = w + 'px';
+    _term.treeWidth = w;
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false; document.body.style.userSelect = '';
+    _terminalPersist();
+    setTimeout(_terminalOnResize, 10);
   });
 }
 

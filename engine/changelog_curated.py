@@ -29,6 +29,32 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.221.0",
+        "date": "2026-06-28",
+        "title": "Code-Projekte: Dateibaum neben dem Editor",
+        "body": "Der Dateibaum Ihres Arbeitsverzeichnisses sitzt jetzt direkt links "
+                "neben Terminal und Editor — im selben dunklen Look wie der Editor, "
+                "ein- und ausblendbar und in der Breite verstellbar. Jede Datei zeigt "
+                "auf einen Blick ihren Zustand: die Farbe des Namens spiegelt den "
+                "Git-Status (geändert, neu, gelöscht …), ein Punkt markiert im Editor "
+                "geöffnete Dateien mit ungespeicherten Änderungen, und die gerade "
+                "bearbeitete Datei ist hervorgehoben. Mit zwei Knöpfen klappen Sie alle "
+                "Ordner auf oder zu; ein optionaler Ein-Editor-Modus lässt jeden "
+                "Klick die aktuelle Datei ersetzen, statt immer neue Tabs zu öffnen. "
+                "Layout und geöffnete Dateien werden pro Projekt gemerkt. Der "
+                "Code-Editor wurde überarbeitet: Ansicht und Bearbeiten sehen "
+                "identisch aus (gleiche Zeilennummern und Farben, nur im "
+                "Bearbeiten-Modus blinkt ein Cursor), der gesamte untere Bereich "
+                "inklusive Terminal und Editor folgt jetzt dem Hell-/Dunkel-Modus, "
+                "unten zeigt eine Statuszeile Größe, Zeilenzahl und Änderungsdatum, "
+                "die Cursor-Position wird je Datei gemerkt, und der Tab zeigt „*“ "
+                "bei ungespeicherten Änderungen. In Code-Projekten zeigt das rechte "
+                "Panel außerdem nur noch die passenden Bereiche (Artefakte und "
+                "Web-Adressen sind dort ausgeblendet).",
+        "audience": "user",
+        "versions": ["9.221.0"],
+    },
+    {
         "version": "9.220.0",
         "date": "2026-06-27",
         "title": "Code-Editor: Cypher-Abfragen (Power-User)",

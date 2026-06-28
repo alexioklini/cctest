@@ -1620,14 +1620,16 @@ class AdminArtifactsHandlers:
             self._send_json({"error": "File not found"}, 404)
             return
         try:
-            size = os.path.getsize(resolved)
+            _stt = os.stat(resolved)
+            size = _stt.st_size
+            mtime = int(_stt.st_mtime)
             name = os.path.basename(resolved)
             ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
             image_exts = {"jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"}
             office_exts = {"pdf", "docx", "xlsx", "pptx", "csv"}
             if ext in image_exts:
                 self._send_json({
-                    "path": resolved, "name": name, "size": size,
+                    "path": resolved, "name": name, "size": size, "mtime": mtime,
                     "type": "image", "ext": ext,
                 })
                 return
@@ -1649,7 +1651,7 @@ class AdminArtifactsHandlers:
                     all_lines = content.splitlines()
                     truncated = len(all_lines) > 200
                     self._send_json({
-                        "path": resolved, "name": name, "size": size,
+                        "path": resolved, "name": name, "size": size, "mtime": mtime,
                         "type": "document", "ext": ext,
                         "content": "\n".join(all_lines[:200]), "truncated": truncated,
                     })
@@ -1670,7 +1672,7 @@ class AdminArtifactsHandlers:
                 else:
                     truncated = False
             self._send_json({
-                "path": resolved, "name": name, "size": size,
+                "path": resolved, "name": name, "size": size, "mtime": mtime,
                 "type": "text",
                 "content": "".join(lines), "truncated": truncated,
             })
