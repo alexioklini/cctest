@@ -307,6 +307,14 @@ streaming call, per-USER history, fixed read-only tool set. See
   session (created via `POST /v1/sessions {status:'code_chat', project}`) and
   runs through the normal `POST /v1/chat` turn pipeline — same streaming, project
   instructions, code-graph tools.
+- `POST .../projects/<name>/terminal/run {command, timeout?}` — Code Mode: run a
+  ONE-SHOT shell command in the project's working_dir and return
+  `{command, exit_code, output}`. Backs the terminal-chat **`!`** command (e.g.
+  `! python forecast.py --region=X`). NOT a PTY (no streaming/stdin/TTY) — a
+  request/response exec sharing the `execute_command` config: banned-pattern
+  guard (`rm -rf /`/`mkfs`/`dd if=`), login-shell build (full PATH), timeout
+  (default 30s, max 300), ANSI-strip, 50k output cap. Code-mode-gated via the
+  same access check as the PTY terminal endpoints.
 
 ## Scheduler
 

@@ -8,8 +8,8 @@ metadata:
   #   reconciled against — a drift indicator. The pre-push hook warns when it
   #   falls behind brain.VERSION (override with SKILL_DOC_OK=1). Keep both in
   #   sync with the change that touches the skill.
-  skill_version: 1.100.32
-  brain_agent_version: 9.225.0
+  skill_version: 1.100.33
+  brain_agent_version: 9.226.0
 ---
 
 # Brain-Agent Operator Guide

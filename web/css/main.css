@@ -677,6 +677,13 @@ textarea { resize: none; }
 .tc-sys b, .tc-help-line b { color: var(--text-200); }
 .tc-help-line { font-size: 12px; color: var(--text-300); }
 .tc-err { color: var(--git-deleted); }
+/* `! <cmd>` shell execution: command echo + raw output block + exit code */
+.tc-shell { color: var(--text-200); }
+.tc-shprompt { color: var(--git-added); font-weight: 700; }
+.tc-shout { color: var(--text-100); background: var(--bg-200); border-radius: 5px;
+  padding: 6px 10px; white-space: pre-wrap; word-break: break-word;
+  border-left: 2px solid var(--border-200); font-size: 12px; }
+.tc-exit-bad { color: var(--git-deleted); font-weight: 600; }
 /* spinner row */
 .tc-spin { color: var(--text-400); min-height: 1em; }
 .tc-spinner { color: var(--accent-brand); }

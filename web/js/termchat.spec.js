@@ -29,8 +29,9 @@ async function login(page) {
     () => typeof state === 'object' && state && state.modelsConfigReady === true
       && typeof API === 'function' && typeof terminalTogglePanel === 'function'
       && typeof _terminalAddChatTab === 'function' && typeof renderTermchatHistory === 'function'
-      && typeof tcSend === 'function' && typeof tcSlash === 'function',
-    { timeout: 45000 });
+      && typeof tcSend === 'function' && typeof tcSlash === 'function'
+      && typeof tcShell === 'function',
+    { timeout: 40000 });
 }
 
 // Boot the terminal panel against the qb project WITHOUT relying on nav UI:
@@ -116,6 +117,54 @@ test('chat tab builds, slash commands work, history renders', async ({ page }) =
   await expect(page.locator('#terminal-chats .tc-hist-title')).toHaveText('Terminal-Chats');
 
   await page.waitForTimeout(300);
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
+test('! command runs a shell command in the working_dir', async ({ page }) => {
+  const errors = guard(page);
+  await login(page);
+  await openTerminalForQb(page);
+  const built = await page.evaluate(() => _terminalAddChatTab('', null, 'Shell').id);
+
+  // Run a deterministic command via the ! path (no LLM, no session needed).
+  await page.evaluate((id) => {
+    const t = _term.tabs.find(x => x.id === id);
+    return tcShell(t, 'echo TERMCHAT_OK && pwd');
+  }, built);
+
+  // Output block must show the echoed marker + the project working_dir (pwd).
+  await page.waitForFunction((id) => {
+    const t = _term.tabs.find(x => x.id === id);
+    const out = t && t.el.querySelector('.tc-shout');
+    return out && /TERMCHAT_OK/.test(out.textContent);
+  }, built, { timeout: 15000 });
+
+  const shellInfo = await page.evaluate((id) => {
+    const t = _term.tabs.find(x => x.id === id);
+    return {
+      out: t.el.querySelector('.tc-shout').textContent,
+      echo: !!t.el.querySelector('.tc-shell .tc-shprompt'),  // `$ echo …` echo line
+    };
+  }, built);
+  expect(shellInfo.echo).toBe(true);
+  expect(shellInfo.out).toContain('TERMCHAT_OK');
+  expect(shellInfo.out).toContain('/qb');   // pwd is the qb working_dir
+
+  // A nonzero exit prints an "exit N" line.
+  await page.evaluate((id) => tcShell(_term.tabs.find(x => x.id === id), 'exit 3'), built);
+  await page.waitForFunction((id) => {
+    const t = _term.tabs.find(x => x.id === id);
+    return /exit 3/.test(t.el.querySelector('.tc-log').textContent);
+  }, built, { timeout: 15000 });
+
+  // A banned command is rejected with an error line.
+  await page.evaluate((id) => tcShell(_term.tabs.find(x => x.id === id), 'rm -rf /'), built);
+  await page.waitForFunction((id) => {
+    const t = _term.tabs.find(x => x.id === id);
+    return /verbotenes Muster/.test(t.el.querySelector('.tc-log').textContent);
+  }, built, { timeout: 15000 });
+
+  await page.waitForTimeout(200);
   expect(errors, errors.join('\n')).toEqual([]);
 });
 

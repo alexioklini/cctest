@@ -45,7 +45,7 @@ function tcBuildBody(tab) {
     <div class="tc-input">
       <span class="tc-prompt">›</span>
       <textarea class="tc-ta" rows="1" spellcheck="false"
-        placeholder="Nachricht … (/help für Befehle · ↑↓ Verlauf)"></textarea>
+        placeholder="Nachricht … (/help · ! für Shell · ↑↓ Verlauf)"></textarea>
     </div>`;
   const ta = el.querySelector('.tc-ta');
   ta.addEventListener('keydown', (e) => _tcKeydown(e, tab));
@@ -99,8 +99,54 @@ function _tcKeydown(e, tab) {
 // ── Submit: slash command OR a chat turn ─────────────────────────────────────
 async function tcSubmit(tab, text) {
   tab.history.push(text);
+  if (text.startsWith('!')) { await tcShell(tab, text.slice(1).trim()); return; }
   if (text.startsWith('/')) { await tcSlash(tab, text); return; }
   await tcSend(tab, text);
+}
+
+// `! <command>` — run a one-shot shell command in the project's working_dir and
+// print stdout/stderr + exit code (no LLM, no chat session needed). Backed by
+// POST .../terminal/run.
+async function tcShell(tab, command) {
+  if (!command) { tcPrint(tab, 'Verwendung: ! &lt;Shell-Befehl&gt;', 'tc-err'); return; }
+  if (!_term || !_term.project) { tcPrint(tab, 'Kein Code-Mode-Projekt.', 'tc-err'); return; }
+  // Echo the command shell-style, then a running indicator.
+  tcPrint(tab, `<span class="tc-shprompt">$</span> ${esc(command)}`, 'tc-shell');
+  const running = document.createElement('div');
+  running.className = 'tc-row tc-spin';
+  _tcLog(tab).appendChild(running);
+  tab._shellSpin = setInterval(() => {
+    tab._spinIdx = ((tab._spinIdx || 0) + 1) % _TC_SPIN.length;
+    running.innerHTML = `<span class="tc-spinner">${_TC_SPIN[tab._spinIdx]}</span> läuft…`;
+  }, 80);
+  try {
+    // Own fetch (not API.post — that throws on a 4xx and swallows the server's
+    // error body; a banned/invalid command returns 400 {error} we want to show).
+    const resp = await fetch(`${BASE_URL}/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}/terminal/run`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || ''), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command }),
+    });
+    clearInterval(tab._shellSpin); tab._shellSpin = null; running.remove();
+    let r = {}; try { r = await resp.json(); } catch (_) {}
+    if (r && r.error) { tcPrint(tab, esc(r.error), 'tc-err'); return; }
+    const out = (r && r.output != null) ? String(r.output) : '';
+    const code = (r && typeof r.exit_code === 'number') ? r.exit_code : 0;
+    if (out.trim()) {
+      const pre = document.createElement('div');
+      pre.className = 'tc-row tc-shout';
+      pre.textContent = out.replace(/\n+$/, '');
+      _tcLog(tab).appendChild(pre);
+    }
+    // Exit-code line (green for 0, red otherwise; suppress the noisy "exit 0").
+    if (code !== 0) tcPrint(tab, `<span class="tc-exit-bad">exit ${code}</span>`, 'tc-shell');
+    _tcScroll(tab);
+    // A command may have written/changed files → refresh the working-dir tree.
+    if (typeof refreshTerminalTree === 'function') refreshTerminalTree();
+  } catch (e) {
+    clearInterval(tab._shellSpin); tab._shellSpin = null; running.remove();
+    tcPrint(tab, 'Befehl fehlgeschlagen.', 'tc-err');
+  }
 }
 
 // Print a terminal-style line into the log (system/ack/error rows).
@@ -388,6 +434,7 @@ function _tcHelp(tab) {
     '/init                  — Projektanweisungen generieren',
     '/suggest               — nächste Eingabe vorschlagen (auch Tab)',
     '/cancel                — laufende Antwort abbrechen',
+    '! &lt;befehl&gt;            — Shell-Befehl im Arbeitsverzeichnis ausführen',
   ].map(s => `<div class="tc-help-line">${s}</div>`).join(''), 'tc-sys');
 }
 

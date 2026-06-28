@@ -487,7 +487,11 @@ Kosten und die Kontext-Auslastung. Werkzeugaufrufe werden als kompakte Zeilen
 (Werkzeuganzeige), `/caveman 0-3` (Antwortstil), `/clear` (neue Sitzung, leerer
 Kontext), `/lcm` (Kontext komprimieren), `/sync` (Projekt-Sync anstoßen),
 `/init` (BRAIN.md erzeugen), `/suggest` (nächste Eingabe vorschlagen),
-`/cancel` (laufende Antwort abbrechen) und `/help` (Übersicht).
+`/cancel` (laufende Antwort abbrechen) und `/help` (Übersicht). Mit einem
+vorangestellten **Ausrufezeichen** führen Sie eine Zeile direkt als
+**Shell-Befehl** im Arbeitsverzeichnis aus — z. B.
+`! python wettervorhersage.py --region="München"` oder `! ls *.md`; die Ausgabe
+erscheint sofort im Chat (ohne Anfrage an das Sprachmodell).
 
 Diese Chats werden **pro Projekt** gespeichert und in der Sektion
 **Terminal-Chats** unter dem Datei-Baum gelistet — ein Klick öffnet einen

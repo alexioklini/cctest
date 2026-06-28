@@ -2209,6 +2209,8 @@ class BrainAgentHandler(
             self._handle_project_input_folders_add(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/input-folders/" in path:
             self._handle_project_input_folders_update(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/terminal/run"):
+            self._handle_terminal_run(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/terminal/sessions"):
             self._handle_terminal_create(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/terminal/sessions/" in path and path.endswith("/input"):

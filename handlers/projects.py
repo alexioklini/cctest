@@ -823,6 +823,63 @@ class ProjectsHandlerMixin:
             sess.write(data.encode("utf-8") if isinstance(data, str) else bytes(data))
         self._send_json({"ok": True})
 
+    def _handle_terminal_run(self, path: str):
+        """POST .../terminal/run {command, timeout?} — run a ONE-SHOT shell
+        command in the project's working_dir and return {exit_code, output}.
+
+        Backs the terminal-chat `!` command (e.g. `! python forecast.py --region=X`).
+        NOT a PTY: no streaming, no stdin/TTY — a request/response exec with the
+        same login-shell build + banned-command guard + timeout as the
+        execute_command tool, scoped to the code-mode working_dir."""
+        import subprocess
+        ctx = self._terminal_project_ctx(path)
+        if not ctx:
+            return
+        _agent_id, _proj_name, wd = ctx
+        body = self._read_json() or {}
+        command = str(body.get("command") or "").strip()
+        if not command:
+            self._send_json({"error": "Kein Befehl"}, 400)
+            return
+        # Reuse the execute_command config: banned patterns + default timeout +
+        # the login-shell builder (sources the user's profile → full PATH).
+        exec_cfg = engine.get_tool_config().get("execute_command", {})
+        for b in (exec_cfg.get("banned_commands", []) or []):
+            if b and b in command:
+                self._send_json({"error": f"Befehl enthält verbotenes Muster '{b}'"}, 400)
+                return
+        try:
+            timeout = int(body.get("timeout") or exec_cfg.get("timeout", 30))
+        except (TypeError, ValueError):
+            timeout = 30
+        timeout = max(1, min(timeout, 300))
+        from engine.tools.file_tools import _build_shell_command, _strip_ansi
+        shell_cmd, shell_flag = _build_shell_command(command)
+        env = os.environ.copy()
+        env.update({"TERM": "dumb", "NO_COLOR": "1", "PAGER": "cat",
+                    "COLUMNS": "200", "LINES": "50"})
+        try:
+            proc = subprocess.run(
+                shell_cmd, shell=shell_flag, cwd=wd, env=env,
+                stdin=subprocess.DEVNULL, capture_output=True,
+                timeout=timeout, start_new_session=True)
+        except subprocess.TimeoutExpired as e:
+            partial = _strip_ansi((e.stdout or b"").decode("utf-8", "replace"))
+            self._send_json({"command": command, "exit_code": -1, "timed_out": True,
+                             "output": partial + f"\n--- Zeitüberschreitung nach {timeout}s ---"})
+            return
+        except Exception as e:
+            self._send_json({"error": str(e)}, 400)
+            return
+        out = _strip_ansi(proc.stdout.decode("utf-8", "replace"))
+        err = _strip_ansi(proc.stderr.decode("utf-8", "replace"))
+        output = out
+        if err:
+            output += ("\n--- stderr ---\n" + err) if output else err
+        if len(output) > 50000:
+            output = output[:50000] + "\n... (gekürzt)"
+        self._send_json({"command": command, "exit_code": proc.returncode, "output": output})
+
     def _handle_terminal_stream(self, path: str, sid: str):
         """GET .../terminal/sessions/<sid>/stream?since=N — SSE stream of PTY
         output bytes (base64 frames) from absolute offset N."""

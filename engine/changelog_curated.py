@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.226.0",
+        "date": "2026-06-28",
+        "title": "Terminal-Chat: Shell-Befehle mit „!“",
+        "body": "Im Terminal-Chat führen Sie mit einem vorangestellten "
+                "Ausrufezeichen einen Befehl direkt in der Shell des "
+                "Arbeitsverzeichnisses aus — etwa „! python "
+                "wettervorhersage.py --region=München“ oder „! ls *.md“. Die "
+                "Ausgabe erscheint sofort im Chat, ohne dass eine Anfrage an "
+                "das Sprachmodell nötig ist. So wechseln Sie nahtlos zwischen "
+                "Fragen an den Assistenten und schnellen Befehlen, ohne den "
+                "Bereich zu verlassen.",
+        "audience": "user",
+        "versions": ["9.226.0"],
+    },
+    {
         "version": "9.225.0",
         "date": "2026-06-28",
         "title": "Code-Projekte: Chat direkt im Terminal-Bereich",
