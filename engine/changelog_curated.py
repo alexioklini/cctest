@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.222.0",
+        "date": "2026-06-28",
+        "title": "Code-Editor: Vorschau gerenderter Dateien",
+        "body": "In der Nur-Lesen-Ansicht des Code-Editors werden darstellbare "
+                "Dateien jetzt gerendert statt als Quelltext gezeigt: HTML- und "
+                "SVG-Dateien erscheinen als fertige Seite bzw. Grafik, Markdown als "
+                "formatierter Text. Zum Bearbeiten wechseln Sie wie gewohnt in den "
+                "Bearbeiten-Modus und sehen den Quelltext. Code-Dateien bleiben "
+                "unverändert.",
+        "audience": "user",
+        "versions": ["9.222.0"],
+    },
+    {
         "version": "9.221.0",
         "date": "2026-06-28",
         "title": "Code-Projekte: Dateibaum neben dem Editor",

@@ -469,6 +469,19 @@ async function terminalOpenFile(absPath) {
     if (d.error) { el.querySelector('.editor-render').style.display = 'block'; el.querySelector('.editor-cm').style.display = 'none'; el.querySelector('.editor-render').innerHTML = `<div class="pt-empty">${esc(d.error)}</div>`; return; }
     tab.size = d.size || 0;
     tab.mtime = d.mtime || 0;
+    // SVG is text we can edit + render — the preview endpoint reports it as an
+    // image, so fetch the raw XML and treat it as a renderable text file.
+    if (d.type === 'image' && tab.ext === 'svg') {
+      try {
+        const r = await fetch(`${BASE_URL}/v1/files/download?path=${encodeURIComponent(absPath)}`,
+          { headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || '') } });
+        tab.raw = await r.text();
+      } catch (_) { tab.raw = ''; }
+      tab.loaded = true;
+      _terminalEditorPaint(tab);
+      _terminalEditorStats(tab);
+      return;
+    }
     if (d.type === 'image') {
       _terminalEditorShowImage(tab);
       // images: no edit
@@ -500,9 +513,46 @@ function terminalEditorMode(id, mode) {
 // BOTH modes use the SAME CodeMirror instance (same line numbers + syntax
 // colouring); 'render' = read-only (no cursor), 'raw' = editable. There is NO
 // separate highlight.js/markdown view — per the user, the only visible
-// difference between view and edit is the cursor.
+// difference between view and edit is the cursor — EXCEPT renderable files
+// (html/md/svg), where read-only "Ansicht" shows the RENDERED output and edit
+// shows the CodeMirror source.
+const _ED_RENDERABLE = { html: 1, htm: 1, md: 1, markdown: 1, svg: 1 };
+function _terminalIsRenderable(ext) { return !!_ED_RENDERABLE[(ext || '').toLowerCase()]; }
+
+// Render a renderable file's content into the .editor-render pane (Ansicht mode).
+function _terminalEditorRender(tab) {
+  const renderEl = tab.el.querySelector('.editor-render');
+  if (!renderEl) return;
+  const txt = (tab.cm && tab.dirty) ? tab.cm.getValue() : tab.raw;
+  const ext = (tab.ext || '').toLowerCase();
+  if (ext === 'md' || ext === 'markdown') {
+    renderEl.innerHTML = (typeof renderMarkdown === 'function')
+      ? `<div class="ref-inline-md msg-content" style="padding:12px">${renderMarkdown(txt)}</div>`
+      : `<pre class="editor-pre">${esc(txt)}</pre>`;
+    renderEl.querySelectorAll('pre code').forEach(el => { try { hljs.highlightElement(el); } catch (_) {} });
+  } else {
+    // html/htm/svg → render the markup in a sandboxed iframe (srcdoc). No
+    // allow-scripts/allow-same-origin → a preview can't reach the app or run JS.
+    renderEl.innerHTML = '';
+    const frame = document.createElement('iframe');
+    frame.className = 'editor-render-frame';
+    frame.setAttribute('sandbox', '');
+    frame.srcdoc = txt;
+    renderEl.appendChild(frame);
+  }
+}
+
 function _terminalEditorPaint(tab) {
   const cmEl = tab.el.querySelector('.editor-cm');
+  const renderEl = tab.el.querySelector('.editor-render');
+  // Renderable file in Ansicht mode → show the rendered output, hide CM.
+  if (tab.mode === 'render' && _terminalIsRenderable(tab.ext)) {
+    cmEl.style.display = 'none';
+    if (renderEl) renderEl.style.display = 'block';
+    _terminalEditorRender(tab);
+    return;
+  }
+  if (renderEl) renderEl.style.display = 'none';
   cmEl.style.display = 'block';
   if (!tab.cm) {
     tab.cm = CodeMirror(cmEl, {
@@ -564,8 +614,9 @@ async function _terminalEditorShowImage(tab) {
     const resp = await fetch(`${BASE_URL}/v1/files/download?path=${encodeURIComponent(tab.path)}`,
       { headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || '') } });
     const blob = await resp.blob();
-    tab.el.querySelector('.editor-render').innerHTML =
-      `<img src="${URL.createObjectURL(blob)}" style="max-width:100%;padding:10px"/>`;
+    const renderEl = tab.el.querySelector('.editor-render');
+    renderEl.style.display = 'block';
+    renderEl.innerHTML = `<img src="${URL.createObjectURL(blob)}" style="max-width:100%;padding:10px"/>`;
   } catch (e) { /* ignore */ }
 }
 

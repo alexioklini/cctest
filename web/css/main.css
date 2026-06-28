@@ -621,7 +621,9 @@ textarea { resize: none; }
 .ed-iconbtn:disabled { opacity: .4; cursor: default; background: transparent; }
 .ed-iconbtn.ed-mode.active { background: var(--accent-brand); color: #fff; border-color: var(--accent-brand); }
 .editor-toolbar .ed-sep { width: 1px; height: 16px; background: var(--border-200); margin: 0 2px; }
-.editor-render { position: absolute; top: 33px; left: 0; right: 0; bottom: 24px; overflow: auto; }
+.editor-render { position: absolute; top: 33px; left: 0; right: 0; bottom: 24px; overflow: auto; background: var(--bg-000); }
+/* Rendered HTML/SVG preview fills the pane; white bg so pages render normally. */
+.editor-render-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
 /* CodeMirror owns its own scrolling (native CM scrollbars). The host must give
  * it a BOUNDED height (flex:1 + min-height:0) so the doc overflows → CM shows
  * its vertical+horizontal scrollbars. Do NOT override .CodeMirror-scroll

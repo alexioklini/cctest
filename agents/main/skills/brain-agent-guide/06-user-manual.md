@@ -427,13 +427,22 @@ Bereich folgt dem Hell-/Dunkel-Modus der Oberfläche). Er lässt sich
 über den Knopf in der Bereichsleiste **ein-/ausblenden** und in der Breite
 ziehen; Sichtbarkeit, Breite und Aufklapp-Zustand werden **pro Projekt**
 gemerkt (standardmäßig sind alle Ordner zugeklappt — zwei Knöpfe klappen alles
-auf bzw. zu). Jede Datei zeigt drei Signale: die **Namensfarbe** spiegelt den
-**Git-Status** (geändert = amber, neu/unversioniert = grün, gelöscht = rot,
-umbenannt = blau), ein **Punkt** markiert im Editor geöffnete Dateien mit
-**ungespeicherten Änderungen**, und ein **Sync-Punkt** den Index-Status. Ein
-Klick öffnet die Datei im Editor; die gerade bearbeitete Datei ist im Baum
-hervorgehoben. Der **Ein-Editor-Modus** (Umschalter) lässt jeden Klick die
-aktuelle Datei **ersetzen**, statt immer einen neuen Tab zu öffnen.
+auf bzw. zu). Jede Datei zeigt drei Signale: die **Farbe des Datei-Symbols**
+(links vom Namen) spiegelt den **Git-Status** (geändert = amber, neu/
+unversioniert = grün, gelöscht = rot, umbenannt = blau), ein **`*`** hinter dem
+Namen markiert im Editor geöffnete Dateien mit **ungespeicherten Änderungen**,
+und ein **Punkt** rechts zeigt den Index-Status. Ein Klick öffnet die Datei im
+Editor; die gerade bearbeitete Datei ist im Baum hervorgehoben. Der
+**Ein-Editor-Modus** (Umschalter) lässt jeden Klick die aktuelle Datei
+**ersetzen**, statt immer einen neuen Tab zu öffnen.
+
+**Ansicht vs. Bearbeiten im Editor**: In der **Ansicht** (nur lesen) werden
+**darstellbare Dateien gerendert** — HTML/SVG als fertige Seite bzw. Grafik,
+Markdown als formatierter Text. Alle anderen Dateien (Code) erscheinen in der
+Ansicht als nur-lesbarer Quelltext (gleiche Darstellung wie im Bearbeiten-Modus,
+nur ohne Cursor). Im **Bearbeiten**-Modus sehen Sie immer den Quelltext und
+können ihn ändern; eine Statuszeile unten zeigt Größe, Zeilenzahl und
+Änderungsdatum.
 
 **Projekt-Anweisungen + Begleitdateien**: Über **Anweisungen bearbeiten**
 öffnet sich ein Dialog mit dem Freitext-Feld (Hinweise, an die sich das
