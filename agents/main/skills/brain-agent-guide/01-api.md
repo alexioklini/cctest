@@ -514,7 +514,7 @@ already anonymises (see 05-internals).
 
 ## Files
 
-- `GET /v1/files/download?path=` / `/files/preview?path=` / `/files/zip?path=<dir>` / `POST /files/save {path,content}` (write/create a text file) (zip a directory tree, skips .git/.cbm-cache/venvs) / `/files/tree?root=`
+- `GET /v1/files/download?path=` / `/files/preview?path=` (returns content + `size`/`mtime`) / `/files/stat?path=` (just `{mtime,size}` — cheap poll for the editor auto-reload) / `/files/zip?path=<dir>` / `POST /files/save {path,content}` (write/create a text file) / `POST /files/open-external {path}` (open in the host's default app — Word/Excel/PDF/…, `_validate_file_path`-gated, OS opener detached) (zip a directory tree, skips .git/.cbm-cache/venvs) / `/files/tree?root=`
 
 ## Sharing / Teams / Favourites / Channels
 

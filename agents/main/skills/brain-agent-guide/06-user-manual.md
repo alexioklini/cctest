@@ -454,6 +454,18 @@ die Tab-Leiste eines anderen verschieben, und die Teilbereiche sind über die
 Trennlinien **größenverstellbar**. Aufteilung, Größen und geöffnete Dateien
 werden **pro Projekt** gemerkt.
 
+**Automatische Aktualisierung**: Ändert sich eine im Editor geöffnete Datei auf
+der Platte (durch den Assistenten, das Terminal oder ein externes Programm),
+wird sie **automatisch neu geladen**. Haben Sie selbst **ungespeicherte
+Änderungen** offen, wird nichts überschrieben — der Tab markiert den Konflikt
+(amber), bis Sie speichern.
+
+**In externem Programm öffnen**: Dateien, die sich nicht sinnvoll im Editor
+bearbeiten lassen (Word, Excel, PowerPoint, PDF, Medien), öffnen sich per Klick
+im Datei-Baum direkt im **Standardprogramm** des Rechners. Über das
+**Rechtsklick-Menü** einer Datei wählen Sie immer zwischen „Im Editor öffnen"
+und „In externem Programm öffnen".
+
 **Projekt-Anweisungen + Begleitdateien**: Über **Anweisungen bearbeiten**
 öffnet sich ein Dialog mit dem Freitext-Feld (Hinweise, an die sich das
 Projekt in jeder Antwort hält — Tonfall, Sprache, Formatvorgaben; Markdown +

@@ -1606,6 +1606,33 @@ class AdminArtifactsHandlers:
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    def _handle_file_open_external(self):
+        """POST /v1/files/open-external {path} — open a file in the host's default
+        external application (Word/Excel/PowerPoint/Acrobat/…). Same path
+        validation as preview/save (allowed roots incl. code-mode working_dir).
+        Uses the OS opener (`open` on macOS, `xdg-open` on Linux, `os.startfile`
+        on Windows). The file is launched DETACHED; no shell, args are a fixed
+        list (the path is the only variable) so there's no injection surface.
+        NOTE: this opens on the SERVER host — meaningful for a local single-user
+        deploy (the daemon runs on the user's machine)."""
+        import sys
+        import subprocess
+        body = self._read_json() or {}
+        resolved = self._validate_file_path((body.get("path") or "").strip())
+        if not resolved or not os.path.isfile(resolved):
+            self._send_json({"error": "Ungültiger oder nicht erlaubter Pfad"}, 403)
+            return
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", resolved])
+            elif sys.platform.startswith("win"):
+                os.startfile(resolved)  # noqa: S606 — Windows opener
+            else:
+                subprocess.Popen(["xdg-open", resolved])
+            self._send_json({"ok": True, "path": resolved})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     def _handle_file_preview(self):
         """GET /v1/files/preview?path=<absolute_path>&lines=100 — return file content for preview."""
         from urllib.parse import urlparse, parse_qs
@@ -1676,6 +1703,24 @@ class AdminArtifactsHandlers:
                 "type": "text",
                 "content": "".join(lines), "truncated": truncated,
             })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_file_stat(self):
+        """GET /v1/files/stat?path=<abs> → {mtime,size} only. Cheap poll target
+        for the editor auto-reload (no content read)."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        resolved = self._validate_file_path(qs.get("path", [""])[0])
+        if not resolved:
+            self._send_json({"error": "Invalid or disallowed file path"}, 403)
+            return
+        if not os.path.isfile(resolved):
+            self._send_json({"error": "File not found"}, 404)
+            return
+        try:
+            st = os.stat(resolved)
+            self._send_json({"mtime": int(st.st_mtime), "size": int(st.st_size)})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 

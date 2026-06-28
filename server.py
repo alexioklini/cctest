@@ -1850,6 +1850,8 @@ class BrainAgentHandler(
             self._handle_file_zip()
         elif path == "/v1/files/preview":
             self._handle_file_preview()
+        elif path == "/v1/files/stat":
+            self._handle_file_stat()
         elif path == "/v1/files/tree":
             self._handle_file_tree()
         elif path == "/v1/favourites":
@@ -1894,6 +1896,9 @@ class BrainAgentHandler(
             return
         elif path == "/v1/files/save":
             self._handle_file_save()
+            return
+        elif path == "/v1/files/open-external":
+            self._handle_file_open_external()
             return
         elif path == "/v1/auth/register":
             self._handle_auth_register()

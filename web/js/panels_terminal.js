@@ -309,10 +309,12 @@ async function terminalTogglePanel(force) {
     _terminalRestoreHeight();
     await _terminalLoadSessions();
     refreshTerminalTree();
+    startEditorFreshPoll();   // auto-reload editors when files change on disk
   } else {
     panel.style.display = 'none';
     document.getElementById('main-content').classList.remove('terminal-open');
     _term.open = false;
+    stopEditorFreshPoll();
   }
 }
 
@@ -644,8 +646,11 @@ function _terminalRenderTabs() {
       const active = t.id === pane.active ? ' active' : '';
       let label, cls = '';
       if (t.kind === 'editor') {
+        // '*' = unsaved; italic = edit mode; amber tab (.ed-conflict) = the file
+        // changed on disk while the tab had unsaved edits (not clobbered).
         label = esc(t.name) + (t.dirty ? '*' : '');
         if (t.mode === 'raw') cls = ' ed-editing';
+        if (t.extConflict) cls += ' ed-conflict';
       } else {
         label = 'Terminal ' + (termNum.get(t.id) || '');
       }
@@ -692,6 +697,67 @@ function _terminalLoadCursor(absPath) {
     const v = JSON.parse(localStorage.getItem(_terminalCursorKey(absPath)) || 'null');
     return (v && typeof v.line === 'number') ? v : null;
   } catch (_) { return null; }
+}
+
+// ── Auto-reload editors on external/disk change ──────────────────────────────
+// When a file open in an editor changes on disk (LLM write, terminal command,
+// external edit), reflect it. Cheap mtime poll via /v1/files/stat; on change,
+// re-fetch content. If the tab has UNSAVED edits we don't clobber — we mark the
+// tab and toast once so the user decides.
+async function _terminalReloadEditorContent(tab) {
+  try {
+    const d = await API.get(`/v1/files/preview?path=${encodeURIComponent(tab.path)}&lines=100000`);
+    if (d.error) return;
+    tab.size = d.size || 0;
+    tab.mtime = d.mtime || 0;
+    tab.raw = d.content || '';
+    tab.truncated = !!d.truncated;
+    tab.extConflict = false;
+    if (tab.cm) {
+      // preserve caret across the reload
+      const cur = tab.cm.getCursor();
+      tab.cm.setValue(tab.raw);
+      try { tab.cm.setCursor(cur); } catch (_) {}
+    }
+    tab.dirty = false;
+    const sv = tab.el.querySelector('.ed-save'); if (sv) sv.disabled = true;
+    if (tab.mode === 'render') _terminalEditorPaint(tab);  // re-render preview
+    _terminalEditorStats(tab);
+    _terminalRenderTabs();
+  } catch (_) { /* transient */ }
+}
+
+let _terminalFreshPollTimer = null;
+async function terminalCheckEditorsFresh() {
+  if (!_term.open) return;
+  const editors = _term.tabs.filter(t => t.kind === 'editor' && t.loaded);
+  for (const tab of editors) {
+    let st;
+    try { st = await API.get(`/v1/files/stat?path=${encodeURIComponent(tab.path)}`); }
+    catch (_) { continue; }
+    if (!st || st.error || typeof st.mtime !== 'number') continue;
+    if (tab.mtime && st.mtime > tab.mtime) {
+      if (tab.dirty) {
+        // don't clobber unsaved work — flag once
+        if (!tab.extConflict) {
+          tab.extConflict = true;
+          _terminalRenderTabs();
+          if (typeof showToast === 'function') showToast(`„${tab.name}" wurde extern geändert (ungespeicherte Änderungen — nicht überschrieben)`, true);
+        }
+      } else {
+        await _terminalReloadEditorContent(tab);
+        if (typeof showToast === 'function') showToast(`„${tab.name}" neu geladen (extern geändert)`);
+      }
+    }
+  }
+}
+
+function startEditorFreshPoll() {
+  stopEditorFreshPoll();
+  _terminalFreshPollTimer = setInterval(terminalCheckEditorsFresh, 4000);
+}
+function stopEditorFreshPoll() {
+  if (_terminalFreshPollTimer) { clearInterval(_terminalFreshPollTimer); _terminalFreshPollTimer = null; }
 }
 
 // Map a file extension → a CodeMirror mode (modes loaded in index.html).
@@ -942,7 +1008,7 @@ async function terminalEditorSave(id) {
     });
     const d = await r.json();
     if (d.error) { if (typeof showToast === 'function') showToast(d.error); return; }
-    tab.raw = content; tab.dirty = false;
+    tab.raw = content; tab.dirty = false; tab.extConflict = false;
     // refresh stats: size from the saved content, mtime = now (just written)
     tab.size = new Blob([content]).size;
     tab.mtime = Math.floor(Date.now() / 1000);

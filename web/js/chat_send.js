@@ -1259,11 +1259,12 @@ function buildStreamCallbacks(chat, isActive) {
             }
           } catch (e) {}
           // Same for the bottom-panel file tree when the terminal is open (the
-          // agent may have created/modified files this turn → refresh git state).
+          // agent may have created/modified files this turn → refresh git state),
+          // and auto-reload any open editors whose file the turn changed on disk.
           try {
-            if (typeof _term !== 'undefined' && _term.open
-                && _term.treeVisible && typeof refreshTerminalTree === 'function') {
-              refreshTerminalTree();
+            if (typeof _term !== 'undefined' && _term.open) {
+              if (_term.treeVisible && typeof refreshTerminalTree === 'function') refreshTerminalTree();
+              if (typeof terminalCheckEditorsFresh === 'function') terminalCheckEditorsFresh();
             }
           } catch (e) {}
         }

@@ -143,7 +143,8 @@ function _wdRenderTree(nodes) {
     const star = dirty ? '<span class="tt-dirty" title="Ungespeicherte Änderungen">*</span>' : '';
     const gitTip = git ? ` · Git: ${esc(_WD_GIT_TIP[git] || git)}` : '';
     return `<div class="pt-row pt-realfile${sel}" data-path="${esc(n.path || '')}" data-git="${esc(git)}"
-         title="${esc(n.path || n.name)}${gitTip}" onclick="wdOpenFile('${esc(n.path || '')}')">
+         title="${esc(n.path || n.name)}${gitTip}" onclick="wdOpenFile('${esc(n.path || '')}')"
+         oncontextmenu="wdFileMenu(event, '${esc(n.path || '')}')">
       <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
       <span class="pt-label">${esc(n.name)}${star}</span>
       <span style="flex:1"></span>${dot}
@@ -178,9 +179,54 @@ function wdToggleDir(rowEl, absPath) {
   _wdSetExpanded(absPath, show);
 }
 
+// File types that aren't usefully editable/viewable inline → open in the host's
+// external app (Word/Excel/PowerPoint/Acrobat/…) on click.
+const _WD_EXTERNAL_EXT = new Set([
+  'docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'pdf',
+  'odt', 'ods', 'odp', 'rtf', 'pages', 'numbers', 'key',
+  'zip', 'mp4', 'mov', 'avi', 'mp3', 'wav', 'm4a',
+]);
+function _wdExt(p) { const n = (p || '').split('/').pop(); return n.includes('.') ? n.split('.').pop().toLowerCase() : ''; }
+
 function wdOpenFile(absPath) {
-  if (!absPath || typeof terminalOpenFile !== 'function') return;
-  terminalOpenFile(absPath);
+  if (!absPath) return;
+  // Office/PDF/media → external app; everything else → in-app editor.
+  if (_WD_EXTERNAL_EXT.has(_wdExt(absPath))) { wdOpenExternal(absPath); return; }
+  if (typeof terminalOpenFile === 'function') terminalOpenFile(absPath);
+}
+
+// Open a file in the host's default external application.
+async function wdOpenExternal(absPath) {
+  if (!absPath) return;
+  try {
+    const r = await fetch(`${BASE_URL}/v1/files/open-external`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || ''), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: absPath }),
+    });
+    const d = await r.json();
+    if (d.error) { if (typeof showToast === 'function') showToast(d.error, true); return; }
+    if (typeof showToast === 'function') showToast('In externem Programm geöffnet');
+  } catch (e) { if (typeof showToast === 'function') showToast('Öffnen fehlgeschlagen', true); }
+}
+
+// Right-click a file row → choose how to open it.
+function wdFileMenu(ev, absPath) {
+  ev.preventDefault(); ev.stopPropagation();
+  const old = document.getElementById('terminal-tab-menu');
+  if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'terminal-tab-menu';
+  m.className = 'terminal-tab-menu';
+  m.style.left = ev.clientX + 'px';
+  m.style.top = ev.clientY + 'px';
+  const p = absPath.replace(/'/g, "\\'");
+  m.innerHTML = `
+    <div onclick="terminalOpenFile('${p}'); document.getElementById('terminal-tab-menu').remove()">Im Editor öffnen</div>
+    <div onclick="wdOpenExternal('${p}'); document.getElementById('terminal-tab-menu').remove()">In externem Programm öffnen</div>`;
+  document.body.appendChild(m);
+  const close = () => { const e = document.getElementById('terminal-tab-menu'); if (e) e.remove(); document.removeEventListener('click', close); };
+  setTimeout(() => document.addEventListener('click', close), 0);
 }
 
 // Collect every directory path in the (cached) tree, recursively.

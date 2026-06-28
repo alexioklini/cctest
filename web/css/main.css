@@ -631,6 +631,9 @@ textarea { resize: none; }
 }
 .terminal-tab.active { background: var(--bg-000); color: var(--text-100); }
 .terminal-tab.tp-dragging { opacity: .5; }
+/* file changed on disk while the tab had unsaved edits (conflict). */
+.terminal-tab.ed-conflict .tt-name { color: var(--git-modified); }
+.terminal-tab.ed-conflict { border-color: var(--git-modified); }
 .terminal-tab-close { opacity: .6; font-size: 10px; cursor: pointer; }
 .terminal-tab-close:hover { opacity: 1; color: var(--git-deleted); }
 /* xterm host fills the pane body; xterm paints its own (theme-aware) bg. */

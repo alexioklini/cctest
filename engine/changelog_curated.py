@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.224.0",
+        "date": "2026-06-28",
+        "title": "Editor: Auto-Aktualisierung + externes Öffnen",
+        "body": "Im Editor geöffnete Dateien aktualisieren sich jetzt automatisch, "
+                "wenn sie sich auf der Platte ändern — etwa weil der Assistent, das "
+                "Terminal oder ein externes Programm sie bearbeitet hat. Haben Sie "
+                "selbst ungespeicherte Änderungen offen, wird nichts überschrieben; "
+                "der Tab markiert stattdessen den Konflikt. Außerdem lassen sich "
+                "Dateien, die sich nicht sinnvoll im Editor bearbeiten lassen "
+                "(Word, Excel, PowerPoint, PDF, Medien), im jeweiligen externen "
+                "Programm öffnen — per Klick im Datei-Baum oder über das "
+                "Rechtsklick-Menü.",
+        "audience": "user",
+        "versions": ["9.224.0"],
+    },
+    {
         "version": "9.223.0",
         "date": "2026-06-28",
         "title": "Code-Projekte: geteilter Arbeitsbereich",
