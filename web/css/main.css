@@ -724,10 +724,13 @@ textarea { resize: none; }
 .tc-ac-hint { color: var(--text-400); overflow: hidden; text-overflow: ellipsis; }
 .tc-input { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 6px;
   padding: 6px 12px; background: var(--bg-000); border-top: 1px solid var(--border-200); }
-.tc-input .tc-prompt { padding-top: 2px; }
+/* Prompt shares the textarea's font metrics + line-height so the › sits exactly
+   on the first input line (no ad-hoc padding nudge). */
+.tc-input .tc-prompt { font-family: var(--font-mono); font-size: 12.5px;
+  line-height: 1.35; padding: 0; }
 .tc-ta { flex: 1; resize: none; border: none; outline: none; background: transparent;
   color: var(--text-100); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.35;
-  min-height: 19px; max-height: 160px; overflow-y: auto; }
+  min-height: 19px; max-height: 160px; overflow-y: auto; padding: 0; }
 .tc-ta::placeholder { color: var(--text-400); }
 /* live tab pulse */
 .terminal-tab.tc-tab-live .tt-name::after { content: ' ●'; color: var(--git-added);
