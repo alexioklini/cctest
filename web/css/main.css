@@ -649,17 +649,28 @@ textarea { resize: none; }
   background: var(--bg-000); font-family: var(--font-mono); overflow: hidden; }
 .tc-log { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px;
   font-size: 12.5px; line-height: 1.35; color: var(--text-100); }
-.tc-row { margin: 0 0 4px; white-space: pre-wrap; word-break: break-word; }
+.tc-row { margin: 0 0 4px; word-break: break-word; }
 .tc-row:last-child { margin-bottom: 0; }
+/* Raw-text rows (NOT rendered markdown) keep their literal newlines/spacing.
+   IMPORTANT: pre-wrap must NOT apply to .tc-asst — marked emits "\n" between
+   block tags, and pre-wrap would render that inter-tag whitespace as visible
+   blank lines (the "huge gaps between list items" bug). */
+.tc-user, .tc-sys, .tc-err, .tc-shell, .tc-shout, .tc-think, .tc-spin,
+.tc-help-line { white-space: pre-wrap; }
 /* user echo */
 .tc-user { color: var(--text-100); }
 .tc-user .tc-uprompt, .tc-prompt { color: var(--accent-brand); font-weight: 700; }
-/* assistant answer — rendered markdown; tighten block spacing for terminal feel */
-.tc-asst { color: var(--text-100); }
+/* assistant answer — rendered markdown; normal whitespace + tight block spacing */
+.tc-asst { color: var(--text-100); white-space: normal; }
 .tc-asst p { margin: 0 0 4px; }
 .tc-asst p:last-child { margin-bottom: 0; }
 .tc-asst ul, .tc-asst ol { margin: 2px 0; padding-left: 18px; }
 .tc-asst li { margin: 0; }
+/* Loose lists (blank line between items) render each item as <li><p>…</p></li>.
+   Collapse that inner paragraph's margins so a loose list is as tight as a tight
+   one — otherwise every bullet gets a full blank line above+below. */
+.tc-asst li > p { margin: 0; }
+.tc-asst li + li { margin-top: 1px; }
 .tc-asst h1, .tc-asst h2, .tc-asst h3, .tc-asst h4 { margin: 6px 0 2px; line-height: 1.25; }
 .tc-asst pre { background: var(--bg-200); border: 1px solid var(--border-200);
   border-radius: 5px; padding: 8px 10px; overflow-x: auto; margin: 6px 0; }
