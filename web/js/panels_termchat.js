@@ -54,6 +54,26 @@ function tcBuildBody(tab) {
   ta.addEventListener('keydown', (e) => _tcKeydown(e, tab));
   ta.addEventListener('input', () => { _tcAutosize(ta); tab.draft = ta.value; _tcAcUpdate(tab); });
   ta.addEventListener('blur', () => setTimeout(() => _tcAcClose(tab), 120));
+  // Esc cancels a running stream from ANYWHERE in the chat pane (not just the
+  // textarea) — e.g. after clicking into the scrollback. Pane-level listener;
+  // the textarea's own handler still covers the focused case (we guard against
+  // double-handling by only acting here when the textarea isn't the target).
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && tab.streaming && e.target !== ta) {
+      e.preventDefault();
+      tcCancel(tab);
+    }
+  });
+  // Make the pane focusable so it receives key events even when nothing inside
+  // is focused (clicking the log focuses the pane).
+  el.tabIndex = -1;
+  el.addEventListener('mousedown', (e) => {
+    // Clicking empty log area (not selecting text in it) → keep keys flowing to
+    // the textarea so typing continues to work.
+    if (e.target === el || (e.target.closest && e.target.closest('.tc-log') && !window.getSelection().toString())) {
+      setTimeout(() => { try { ta.focus(); } catch (_) {} }, 0);
+    }
+  });
   tab._ac = { open: false, items: [], sel: 0 };
   tcRenderStatus(tab);
 }
@@ -71,10 +91,24 @@ function _tcKeydown(e, tab) {
   const ta = e.target;
   // Autocomplete menu owns ↑/↓/Enter/Tab/Esc while it's open.
   if (_tcAcKey(e, tab)) return;
+  // Esc cancels a running stream (when the autocomplete menu isn't open).
+  if (e.key === 'Escape' && tab.streaming) {
+    e.preventDefault();
+    tcCancel(tab);
+    return;
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     const text = ta.value.trim();
-    if (!text || tab.streaming) return;
+    if (!text) return;
+    // While a turn streams, the only thing we accept is a cancel command — so
+    // /cancel and /stop work mid-stream (everything else is ignored until the
+    // turn ends). This is why a hung/long turn can always be stopped.
+    if (tab.streaming) {
+      const low = text.toLowerCase();
+      if (low === '/cancel' || low === '/stop') { ta.value = ''; _tcAutosize(ta); tab.draft = ''; tcCancel(tab); }
+      return;
+    }
     ta.value = ''; _tcAutosize(ta); tab.draft = '';
     tab.histIdx = -1;
     tcSubmit(tab, text);
@@ -197,15 +231,24 @@ function _tcAcPick(tab, i) {
   const ta = tab.el.querySelector('.tc-ta');
   if (it.kind === 'cmd') {
     const cmd = _TC_COMMANDS.find(c => c.name === it.value);
-    ta.value = '/' + it.value + (cmd && cmd.values ? ' ' : '');
+    if (cmd && cmd.values) {
+      // Value-taking command: fill "/name " and chain into the value menu.
+      ta.value = '/' + it.value + ' ';
+      _tcAcClose(tab);
+      ta.focus(); _tcAutosize(ta);
+      _tcAcUpdate(tab);
+      return;
+    }
+    // No-value command (/help, /clear, …) → EXECUTE immediately (no second Enter).
     _tcAcClose(tab);
-    if (cmd && cmd.values) _tcAcUpdate(tab);   // chain into the value menu
-    else { /* no-value command: ready to submit */ }
-  } else {
-    ta.value = '/' + it._cmd + ' ' + it.value;
-    _tcAcClose(tab);
+    ta.value = ''; _tcAutosize(ta); tab.draft = ''; tab.histIdx = -1;
+    tcSubmit(tab, '/' + it.value);
+    return;
   }
-  ta.focus(); _tcAutosize(ta);
+  // A value pick completes the command → EXECUTE immediately.
+  _tcAcClose(tab);
+  ta.value = ''; _tcAutosize(ta); tab.draft = ''; tab.histIdx = -1;
+  tcSubmit(tab, '/' + it._cmd + ' ' + it.value);
 }
 
 // Keyboard handling while the menu is open (called from _tcKeydown). Returns
@@ -322,11 +365,15 @@ async function tcSend(tab, text) {
     await _tcReadSSE(tab, resp, _tcCallbacks(tab, live));
   } catch (e) {
     if (e.name !== 'AbortError' && !/Load failed|Failed to fetch|NetworkError/i.test(e.message)) {
-      _tcFinishTurn(tab, live);
       tcPrint(tab, esc(e.message || 'Streaming-Fehler'), 'tc-err');
-    } else {
-      _tcFinishTurn(tab, live);
     }
+  } finally {
+    // GUARANTEED finalize: the SSE stream can close WITHOUT a terminal `done`/
+    // `error` event reaching our callback (a missed/unparsed frame, a long
+    // multi-round turn, a server-side stream close). If `done` already ran,
+    // tab.streaming is false and this is a cheap no-op; otherwise this is what
+    // stops the spinner so a finished turn never shows "running" forever.
+    if (tab.streaming) _tcFinishTurn(tab, live);
   }
 }
 
@@ -419,7 +466,7 @@ function _tcCallbacks(tab, live) {
       if (d.max_context) tab.maxContext = d.max_context;
       if (typeof d.last_tokens_in === 'number') tab.lastApiIn = d.last_tokens_in;
       tcRenderStatus(tab);
-      _tcFinishTurn(tab, live);
+      _tcFinishTurn(tab, live);   // also aborts the reader → loop exits promptly
       // Title may have been auto-generated server-side → refresh the history list.
       if (typeof renderTermchatHistory === 'function') setTimeout(() => renderTermchatHistory(), 1500);
     },
@@ -446,7 +493,10 @@ function _tcFinishTurn(tab, live) {
     tab.log.push({ role: 'turn' });
   }
   tab._live = null;
-  if (tab._abort) { tab._abort = null; }
+  // Abort the SSE reader so the read loop exits promptly even if the server
+  // keeps the connection open after the terminal event (prevents the spinner
+  // from lingering on a finished turn). Safe if already torn down.
+  if (tab._abort) { try { tab._abort.abort(); } catch (_) {} tab._abort = null; }
   tcRenderStatus(tab);
   const ta = tab.el && tab.el.querySelector('.tc-ta');
   if (ta) ta.focus();
@@ -482,7 +532,8 @@ function tcRenderStatus(tab) {
   if (tab.maxContext && tab.lastApiIn) ctx = ' · ctx ' + Math.min(100, Math.round(tab.lastApiIn / tab.maxContext * 100)) + '%';
   const toolsBadge = tab.showTools ? '' : ' · tools:aus';
   const dot = tab.streaming ? '<span class="tc-live">●</span> ' : '';
-  el.innerHTML = `${dot}<span class="tc-st-model">${esc(model)}</span> · think:${esc(think)} · ${tin}/${tout} tok · ${esc(cost)}${ctx}${toolsBadge}`;
+  const cancelHint = tab.streaming ? ' · <span class="tc-cancel-hint">Esc oder /cancel zum Abbrechen</span>' : '';
+  el.innerHTML = `${dot}<span class="tc-st-model">${esc(model)}</span> · think:${esc(think)} · ${tin}/${tout} tok · ${esc(cost)}${ctx}${toolsBadge}${cancelHint}`;
 }
 
 // ── Session lifecycle ────────────────────────────────────────────────────────
@@ -733,7 +784,9 @@ async function _tcAttachLive(tab) {
     const cbs = _tcCallbacks(tab, live);
     cbs.idle = () => _tcFinishTurn(tab, live);
     await _tcReadSSE(tab, resp, cbs);
-  } catch (e) { _tcFinishTurn(tab, live); }
+  } catch (e) { /* finalized in finally */ } finally {
+    if (tab.streaming) _tcFinishTurn(tab, live);   // guaranteed finalize
+  }
 }
 
 // ── "Terminal-Chats" history list (under the working-dir tree) ───────────────
@@ -753,12 +806,21 @@ async function renderTermchatHistory() {
     const title = s.title || 'Chat';
     return `<div class="tc-hist-row${active}" data-sid="${esc(s.id)}" onclick="tcOpenHistory('${esc(s.id)}','${esc(title)}')"
       oncontextmenu="tcHistMenu(event,'${esc(s.id)}')" title="${esc(title)}">
-      <span class="tc-hist-icon">◈</span><span class="tc-hist-label">${esc(title)}</span></div>`;
+      <span class="tc-hist-icon">◈</span><span class="tc-hist-label">${esc(title)}</span>
+      <span style="flex:1"></span>
+      <button class="tc-hist-del" title="Chat löschen"
+        onclick="event.stopPropagation();tcDeleteHistory('${esc(s.id)}')">✕</button></div>`;
   }).join('');
+  // "Delete all" only when there's something to delete.
+  const delAllBtn = sessions.length ? `
+      <button class="pt-act" onclick="event.stopPropagation();tcDeleteAllHistory()" title="Alle Terminal-Chats löschen">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+      </button>` : '';
   host.innerHTML = `
     <div class="tc-hist-head" onclick="tcHistToggle()">
       ${_tcHistCaret()}<span class="tc-hist-title">Terminal-Chats</span>
       <span style="flex:1"></span>
+      ${delAllBtn}
       <button class="pt-act" onclick="event.stopPropagation();tcNewChat()" title="Neuer Terminal-Chat">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       </button>
@@ -766,6 +828,26 @@ async function renderTermchatHistory() {
     <div class="tc-hist-body" style="display:${_tcHistCollapsed() ? 'none' : 'block'}">
       ${rows || '<div class="tc-hist-empty">Noch keine Chats.</div>'}
     </div>`;
+}
+
+// Delete ALL terminal-chats for this project (confirm first). Closes any open
+// chat tabs for them, then deletes each session.
+async function tcDeleteAllHistory() {
+  if (!_term || !_term.agent || !_term.project) return;
+  let sessions = [];
+  try {
+    const d = await API.get(`/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}/code-chats`);
+    sessions = (d && d.sessions) || [];
+  } catch (_) { return; }
+  if (!sessions.length) return;
+  if (!confirm(`Alle ${sessions.length} Terminal-Chats dieses Projekts löschen?`)) return;
+  for (const s of sessions) {
+    const open = (_term.tabs || []).find(t => t.kind === 'chat' && t.sessionId === s.id);
+    if (open && typeof terminalCloseTab === 'function') { try { await terminalCloseTab(open.id); } catch (_) {} }
+    try { await API.deleteSession(s.id); } catch (_) {}
+  }
+  if (typeof showToast === 'function') showToast('Alle Terminal-Chats gelöscht');
+  renderTermchatHistory();
 }
 
 function _tcHistKey() { return 'brain.tchist.collapsed.' + (_term && _term.project || 'p'); }
@@ -799,7 +881,8 @@ function tcHistMenu(ev, sid) {
   setTimeout(() => document.addEventListener('click', close), 0);
 }
 
-async function tcDeleteHistory(sid) {
+async function tcDeleteHistory(sid, skipConfirm) {
+  if (!skipConfirm && !confirm('Diesen Terminal-Chat löschen?')) return;
   // Close an open tab for it first.
   const open = (_term.tabs || []).find(t => t.kind === 'chat' && t.sessionId === sid);
   if (open && typeof terminalCloseTab === 'function') await terminalCloseTab(open.id);

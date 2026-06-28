@@ -516,9 +516,12 @@ vorangestellten **Ausrufezeichen** führen Sie eine Zeile direkt als
 `! python wettervorhersage.py --region="München"` oder `! ls *.md`; die Ausgabe
 erscheint sofort im Chat (ohne Anfrage an das Sprachmodell).
 
-Diese Chats werden **pro Projekt** gespeichert und in der Sektion
-**Terminal-Chats** unter dem Datei-Baum gelistet — ein Klick öffnet einen
-früheren Verlauf wieder, Rechtsklick löscht ihn. Sie erscheinen **bewusst nicht**
+Eine laufende Antwort brechen Sie jederzeit mit **Esc** oder **`/cancel`** ab —
+auch wenn der Cursor gerade nicht im Eingabefeld steht. Diese Chats werden **pro
+Projekt** gespeichert und in der Sektion **Terminal-Chats** unter dem Datei-Baum
+gelistet — ein Klick öffnet einen früheren Verlauf wieder; über das **✕** an
+einer Zeile löschen Sie einen einzelnen Chat, über den Knopf im Sektionskopf
+**alle auf einmal**. Sie erscheinen **bewusst nicht**
 in der normalen Chat-Liste des Projekts, sondern bleiben dem Code-Bereich
 vorbehalten. Offene Terminal-Chats werden — wie geöffnete Editor-Dateien — pro
 Projekt gemerkt und beim erneuten Öffnen wiederhergestellt.

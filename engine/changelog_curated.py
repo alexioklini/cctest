@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.230.0",
+        "date": "2026-06-28",
+        "title": "Terminal-Chat: Abbrechen, schnellere Befehle, Aufräumen",
+        "body": "Mehrere Verbesserungen im Terminal-Chat: Eine laufende Antwort "
+                "lässt sich jederzeit mit der Esc-Taste oder „/cancel“ "
+                "abbrechen — auch wenn der Cursor nicht im Eingabefeld steht. "
+                "Befehle ohne weitere Optionen (z. B. /help) werden nun direkt "
+                "mit einem Enter ausgeführt, und ein im Menü gewähltes Modell "
+                "oder eine Denkstufe greift sofort. Außerdem erkennt der Chat "
+                "das Ende einer Antwort jetzt zuverlässig (kein hängender "
+                "„läuft…“-Hinweis mehr). In der Liste der Terminal-Chats können "
+                "Sie einzelne Chats über das ✕ löschen oder alle auf einmal "
+                "entfernen.",
+        "audience": "user",
+        "versions": ["9.230.0"],
+    },
+    {
         "version": "9.229.0",
         "date": "2026-06-28",
         "title": "Terminal-Chat: Befehls-Auswahl beim Tippen von „/“",

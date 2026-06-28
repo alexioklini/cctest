@@ -1341,6 +1341,7 @@
     "TABLET_BREAKPOINT": "writable",
     "tcBuildBody": "writable",
     "tcCancel": "writable",
+    "tcDeleteAllHistory": "writable",
     "tcDeleteHistory": "writable",
     "tcHistMenu": "writable",
     "tcHistToggle": "writable",

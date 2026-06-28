@@ -707,6 +707,7 @@ textarea { resize: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tc-status .tc-st-model { color: var(--text-200); font-weight: 600; }
 .tc-status .tc-live { color: var(--git-added); animation: tc-pulse 1.1s infinite; }
+.tc-status .tc-cancel-hint { color: var(--accent-brand); }
 @keyframes tc-pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
 /* input line + slash-command autocomplete */
 .tc-input-wrap { flex: 0 0 auto; position: relative; }
@@ -755,6 +756,11 @@ textarea { resize: none; }
 .tc-hist-icon { color: var(--accent-brand); flex: 0 0 auto; }
 .tc-hist-label { overflow: hidden; text-overflow: ellipsis; }
 .tc-hist-empty { color: var(--text-400); padding: 4px 6px; font-size: 11px; }
+/* Per-row delete: hidden until the row is hovered. */
+.tc-hist-del { flex: 0 0 auto; border: none; background: transparent; cursor: pointer;
+  color: var(--text-400); font-size: 11px; padding: 0 2px; opacity: 0; transition: opacity .1s; }
+.tc-hist-row:hover .tc-hist-del { opacity: .7; }
+.tc-hist-del:hover { opacity: 1 !important; color: var(--git-deleted); }
 
 /* Editor tabs (CodeMirror) inside the bottom panel. */
 /* Absolute layout (NOT flex) so the editor area gets a DEFINITE height: flexbox
