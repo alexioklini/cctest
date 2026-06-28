@@ -565,6 +565,49 @@ textarea { resize: none; }
 #terminal-main {
   flex: 1; min-width: 0; display: flex; flex-direction: column;
 }
+/* Slim area strip: global controls (tree toggle · layout picker · maximize ·
+ * close). Per-pane tabs/+ live in each pane's own bar. */
+#terminal-strip {
+  display: flex; align-items: center; gap: 4px;
+  padding: 2px 8px; background: var(--bg-200); border-bottom: 1px solid var(--border-200);
+  flex: 0 0 auto;
+}
+#terminal-strip .pt-act { color: var(--text-300); }
+/* Split-pane container. data-layout drives a CSS grid of pane slots. Each pane
+ * is a .tpane with its own bar + body; dividers are .tpane-divider. */
+#terminal-panes { flex: 1; min-height: 0; position: relative; display: grid; gap: 0; }
+#terminal-panes[data-layout="single"] { grid-template: "a" 1fr / 1fr; }
+#terminal-panes[data-layout="lr"]     { grid-template: "a d b" 1fr / var(--tp-a,1fr) 5px var(--tp-b,1fr); }
+#terminal-panes[data-layout="tb"]     { grid-template: "a" var(--tp-a,1fr) "d" 5px "b" var(--tp-b,1fr) / 1fr; }
+/* L/R on top, full-width pane on the bottom. */
+#terminal-panes[data-layout="lrb"]    {
+  grid-template: "a dv b" var(--tp-top,1fr) "dh dh dh" 5px "c c c" var(--tp-bot,1fr)
+                 / var(--tp-a,1fr) 5px var(--tp-b,1fr);
+}
+.tpane { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.tpane[data-slot="a"] { grid-area: a; }
+.tpane[data-slot="b"] { grid-area: b; }
+.tpane[data-slot="c"] { grid-area: c; }
+.tpane-divider { background: transparent; z-index: 5; }
+.tpane-divider:hover { background: var(--accent-brand); }
+.tpane-divider[data-dir="v"] { cursor: ew-resize; }
+.tpane-divider[data-dir="h"] { cursor: ns-resize; }
+#terminal-panes[data-layout="lr"] .tpane-divider { grid-area: d; }
+#terminal-panes[data-layout="tb"] .tpane-divider { grid-area: d; }
+#terminal-panes[data-layout="lrb"] .tpane-divider[data-which="v"] { grid-area: dv; }
+#terminal-panes[data-layout="lrb"] .tpane-divider[data-which="h"] { grid-area: dh; }
+/* Per-pane tab bar. */
+.tpane-bar {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 6px; background: var(--bg-200); border-bottom: 1px solid var(--border-200);
+  flex: 0 0 auto;
+}
+.tpane.tp-active > .tpane-bar { background: var(--bg-300); }
+.tpane-tabs { display: flex; gap: 2px; overflow-x: auto; flex: 1; min-width: 0; }
+.tpane-bar .pt-act { color: var(--text-300); }
+.tpane-body { flex: 1; min-height: 0; position: relative; overflow: hidden; background: var(--bg-000); }
+/* drop target highlight when dragging a tab over a pane bar */
+.tpane-bar.tp-drop { outline: 2px dashed var(--accent-brand); outline-offset: -2px; }
 /* File-tree rows: tint to the editor palette (theme-aware). */
 #terminal-tree .pt-row { color: var(--text-200); }
 #terminal-tree .pt-row:hover { background: var(--bg-200); }
@@ -580,26 +623,17 @@ textarea { resize: none; }
 #terminal-tree .pt-row[data-git="R"] .pt-fileicon { color: var(--git-renamed); }
 /* '*' after the name = unsaved editor changes. */
 #terminal-tree .tt-dirty { color: var(--git-modified); font-weight: 700; margin-left: 2px; }
-#terminal-bar {
-  display: flex; align-items: center; gap: 4px;
-  padding: 4px 8px; background: var(--bg-200); border-bottom: 1px solid var(--border-200);
-  flex: 0 0 auto;
-}
-#terminal-tabs { display: flex; gap: 2px; overflow-x: auto; }
 .terminal-tab {
   display: flex; align-items: center; gap: 6px;
   padding: 3px 10px; font-size: 12px; color: var(--text-300);
   background: var(--bg-300); border: 1px solid var(--border-200); border-bottom: none;
-  border-radius: 5px 5px 0 0; cursor: pointer; white-space: nowrap;
+  border-radius: 5px 5px 0 0; cursor: grab; white-space: nowrap;
 }
 .terminal-tab.active { background: var(--bg-000); color: var(--text-100); }
-.terminal-tab-close { opacity: .6; font-size: 10px; }
+.terminal-tab.tp-dragging { opacity: .5; }
+.terminal-tab-close { opacity: .6; font-size: 10px; cursor: pointer; }
 .terminal-tab-close:hover { opacity: 1; color: var(--git-deleted); }
-#terminal-bar .pt-act { color: var(--text-300); }
-/* The terminal body hosts xterm; xterm paints its own background from the JS
- * theme (set theme-aware in panels_terminal.js), but give the host the app bg
- * so any gap matches the theme instead of flashing black/white. */
-#terminal-body { flex: 1; min-height: 0; position: relative; overflow: hidden; background: var(--bg-000); }
+/* xterm host fills the pane body; xterm paints its own (theme-aware) bg. */
 .terminal-xterm { position: absolute; inset: 0; padding: 4px 6px; }
 /* Maximized: the panel fills the whole main-content area. */
 #terminal-panel.maximized { position: absolute; inset: 0; height: auto !important; z-index: 40; }
@@ -788,8 +822,10 @@ textarea { resize: none; }
 .terminal-tab-menu { position: fixed; z-index: 9999; background: var(--bg-000);
   border: 1px solid var(--border-100); border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.3);
   padding: 4px; min-width: 160px; font-size: 13px; }
-.terminal-tab-menu > div { padding: 6px 10px; border-radius: 4px; cursor: pointer; }
+.terminal-tab-menu > div { padding: 6px 10px; border-radius: 4px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px; }
 .terminal-tab-menu > div:hover { background: var(--bg-200); }
+.terminal-tab-menu .tlm-ico { display: inline-flex; color: var(--text-400); }
 /* Toggle button (status bar) — only shown in code-mode contexts. */
 #terminal-toggle-btn { display: none; }
 #terminal-toggle-btn.code-mode-available { display: inline-flex; }

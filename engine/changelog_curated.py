@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.223.0",
+        "date": "2026-06-28",
+        "title": "Code-Projekte: geteilter Arbeitsbereich",
+        "body": "Der untere Bereich mit Terminal und Editor lässt sich jetzt "
+                "aufteilen — ideal, um zwei Dateien nebeneinander zu vergleichen "
+                "oder oben den Editor und unten das Terminal zu sehen. Über den "
+                "Aufteilungs-Knopf wählen Sie zwischen einzeln, links/rechts, "
+                "oben/unten oder „L/R + unten“. Jeder Teilbereich hat eigene "
+                "Tabs; Tabs lassen sich per Ziehen von einem Bereich in einen "
+                "anderen verschieben, und die Größen sind verstellbar. Aufteilung, "
+                "Größen und geöffnete Dateien werden pro Projekt gemerkt.",
+        "audience": "user",
+        "versions": ["9.223.0"],
+    },
+    {
         "version": "9.222.0",
         "date": "2026-06-28",
         "title": "Code-Editor: Vorschau gerenderter Dateien",

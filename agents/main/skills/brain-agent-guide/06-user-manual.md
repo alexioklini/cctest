@@ -444,6 +444,16 @@ nur ohne Cursor). Im **Bearbeiten**-Modus sehen Sie immer den Quelltext und
 können ihn ändern; eine Statuszeile unten zeigt Größe, Zeilenzahl und
 Änderungsdatum.
 
+**Geteilter Arbeitsbereich** (Code-Projekte): Über den **Aufteilungs-Knopf** in
+der Bereichsleiste teilen Sie den unteren Bereich in mehrere Teilbereiche:
+**einzeln**, **links/rechts** (zwei Dateien nebeneinander vergleichen),
+**oben/unten** (z. B. oben Editor, unten Terminal) oder **L/R + unten** (unten
+über die volle Breite). Jeder Teilbereich hat eigene Tabs und einen eigenen
+„+“/Neue-Datei-Knopf; **Tabs lassen sich per Ziehen** von einem Teilbereich auf
+die Tab-Leiste eines anderen verschieben, und die Teilbereiche sind über die
+Trennlinien **größenverstellbar**. Aufteilung, Größen und geöffnete Dateien
+werden **pro Projekt** gemerkt.
+
 **Projekt-Anweisungen + Begleitdateien**: Über **Anweisungen bearbeiten**
 öffnet sich ein Dialog mit dem Freitext-Feld (Hinweise, an die sich das
 Projekt in jeder Antwort hält — Tonfall, Sprache, Formatvorgaben; Markdown +

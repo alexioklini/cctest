@@ -9,14 +9,250 @@
 
 const _term = {
   agent: '', project: '', wd: '',
-  tabs: [],          // [{id, term, fit, offset, es, el}]
-  active: null,      // active session id
+  tabs: [],          // [{id, kind, el, pane, …}] — each tab is assigned to a pane
   open: false,
+  // Split-pane workspace (the bottom area can be one pane, left/right, top/bottom,
+  // or L/R + full-width bottom). Each pane has its own tab bar + body + active tab.
+  layout: 'single',  // 'single' | 'lr' | 'tb' | 'lrb'
+  panes: [],         // [{id, slot, barEl, bodyEl, active}]  slot ∈ a|b|c
+  activePane: null,  // pane id that owns keyboard focus / new tabs
+  sizes: {},         // grid sizings: {a,b} (lr/tb) or {top,bot,a,b} (lrb), CSS fr/px
   // Layout state (persisted PER-PROJECT in bottom_workspace, not per-chat):
   treeVisible: true, // file-tree column shown?
   treeWidth: 240,    // file-tree column width (px)
   singleEditor: false, // single-editor mode: tree click replaces the editor tab
 };
+
+// Which pane slots each layout uses, in DOM/visual order.
+const _TERM_LAYOUT_SLOTS = { single: ['a'], lr: ['a', 'b'], tb: ['a', 'b'], lrb: ['a', 'b', 'c'] };
+
+// ── Split-pane infrastructure ────────────────────────────────────────────────
+function _terminalGetPane(id) { return _term.panes.find(p => p.id === id); }
+function _terminalPaneTabs(paneId) { return _term.tabs.filter(t => t.pane === paneId); }
+function _terminalActivePane() {
+  return _terminalGetPane(_term.activePane) || _term.panes[0] || null;
+}
+
+// (Re)build the pane DOM for the current _term.layout, preserving existing tab
+// elements (re-parented into their pane bodies). Tabs whose pane no longer
+// exists in the new layout are reassigned to the first pane.
+function _terminalBuildPanes() {
+  const host = document.getElementById('terminal-panes');
+  if (!host) return;
+  const slots = _TERM_LAYOUT_SLOTS[_term.layout] || ['a'];
+  host.dataset.layout = _term.layout;
+  // detach existing tab els so re-parenting doesn't drop them
+  for (const t of _term.tabs) { if (t.el && t.el.parentNode) t.el.parentNode.removeChild(t.el); }
+  host.innerHTML = '';
+  // dividers per layout
+  if (_term.layout === 'lr' || _term.layout === 'tb') {
+    // a, divider, b
+    host.appendChild(_terminalMakePane('a'));
+    host.appendChild(_terminalMakeDivider(_term.layout === 'lr' ? 'v' : 'h', _term.layout === 'lr' ? 'd' : 'd'));
+    host.appendChild(_terminalMakePane('b'));
+  } else if (_term.layout === 'lrb') {
+    host.appendChild(_terminalMakePane('a'));
+    host.appendChild(_terminalMakeDivider('v', 'v'));
+    host.appendChild(_terminalMakePane('b'));
+    host.appendChild(_terminalMakeDivider('h', 'h'));
+    host.appendChild(_terminalMakePane('c'));
+  } else {
+    host.appendChild(_terminalMakePane('a'));
+  }
+  // rebuild _term.panes from the DOM, keeping prior active where possible
+  const prevActive = {};
+  _term.panes.forEach(p => { prevActive[p.slot] = p.active; });
+  _term.panes = slots.map(slot => {
+    const paneEl = host.querySelector(`.tpane[data-slot="${slot}"]`);
+    return { id: 'pane-' + slot, slot,
+             barEl: paneEl.querySelector('.tpane-tabs'),
+             bodyEl: paneEl.querySelector('.tpane-body'),
+             paneEl, active: prevActive[slot] || null };
+  });
+  // reassign orphaned tabs (pane gone) to the first pane
+  const validPanes = new Set(_term.panes.map(p => p.id));
+  const firstId = _term.panes[0] && _term.panes[0].id;
+  for (const t of _term.tabs) {
+    if (!validPanes.has(t.pane)) t.pane = firstId;
+  }
+  // re-parent each tab el into its pane body
+  for (const t of _term.tabs) {
+    const pane = _terminalGetPane(t.pane);
+    if (pane && t.el) pane.bodyEl.appendChild(t.el);
+  }
+  // ensure each pane has a valid active tab
+  for (const p of _term.panes) {
+    const tabs = _terminalPaneTabs(p.id);
+    if (!tabs.find(t => t.id === p.active)) p.active = tabs.length ? tabs[0].id : null;
+  }
+  if (!_terminalGetPane(_term.activePane)) _term.activePane = firstId;
+  _terminalApplySizes();
+  _terminalRenderTabs();
+  _terminalShowActiveTabs();
+  _terminalInitPaneDividers();
+}
+
+function _terminalMakePane(slot) {
+  const pane = document.createElement('div');
+  pane.className = 'tpane';
+  pane.dataset.slot = slot;
+  pane.innerHTML = `
+    <div class="tpane-bar" data-pane="pane-${slot}">
+      <div class="tpane-tabs" data-pane="pane-${slot}"></div>
+      <button class="pt-act" title="Neues Terminal" data-act="newterm">+</button>
+      <button class="pt-act" title="Neue Datei" data-act="newfile">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+      </button>
+    </div>
+    <div class="tpane-body"></div>`;
+  // pane-scoped + / new-file (open in THIS pane); clicking the bar focuses the pane
+  pane.querySelector('[data-act="newterm"]').onclick = () => { _term.activePane = 'pane-' + slot; terminalNewTab(); };
+  pane.querySelector('[data-act="newfile"]').onclick = () => { _term.activePane = 'pane-' + slot; terminalNewFile(); };
+  const bar = pane.querySelector('.tpane-bar');
+  bar.addEventListener('mousedown', () => { _term.activePane = 'pane-' + slot; _terminalPaintActivePane(); });
+  // drag-drop: accept a tab dropped onto this bar
+  bar.addEventListener('dragover', (e) => { e.preventDefault(); bar.classList.add('tp-drop'); });
+  bar.addEventListener('dragleave', () => bar.classList.remove('tp-drop'));
+  bar.addEventListener('drop', (e) => {
+    e.preventDefault(); bar.classList.remove('tp-drop');
+    const tabId = e.dataTransfer.getData('text/tab-id');
+    if (tabId) _terminalMoveTabToPane(tabId, 'pane-' + slot);
+  });
+  return pane;
+}
+
+function _terminalMakeDivider(dir, which) {
+  const d = document.createElement('div');
+  d.className = 'tpane-divider';
+  d.dataset.dir = dir; d.dataset.which = which;
+  return d;
+}
+
+// Show only each pane's active tab element; hide the rest.
+function _terminalShowActiveTabs() {
+  for (const p of _term.panes) {
+    for (const t of _terminalPaneTabs(p.id)) {
+      t.el.style.display = (t.id === p.active) ? 'block' : 'none';
+    }
+  }
+  _terminalPaintActivePane();
+}
+
+function _terminalPaintActivePane() {
+  for (const p of _term.panes) {
+    p.paneEl.classList.toggle('tp-active', p.id === _term.activePane);
+  }
+}
+
+// Move a tab to another pane (drag-drop). Re-parents the el, makes it active in
+// the target pane, collapses the source pane if it became empty (lrb→… ).
+function _terminalMoveTabToPane(tabId, paneId) {
+  const tab = _term.tabs.find(t => t.id === tabId);
+  const pane = _terminalGetPane(paneId);
+  if (!tab || !pane || tab.pane === paneId) return;
+  const srcId = tab.pane;
+  tab.pane = paneId;
+  pane.bodyEl.appendChild(tab.el);
+  pane.active = tab.id;
+  _term.activePane = paneId;
+  // fix the source pane's active tab
+  const src = _terminalGetPane(srcId);
+  if (src) {
+    const left = _terminalPaneTabs(srcId);
+    if (!left.find(t => t.id === src.active)) src.active = left.length ? left[0].id : null;
+  }
+  _terminalRenderTabs();
+  _terminalShowActiveTabs();
+  _terminalActivate(tab.id);
+  _terminalPersist();
+}
+
+// Layout switch (from the picker). Empties are fine — a pane with no tabs just
+// shows an empty bar; switching back to 'single' merges everything into pane a.
+function terminalSetLayout(layout) {
+  if (!_TERM_LAYOUT_SLOTS[layout]) return;
+  _term.layout = layout;
+  // collapsing to fewer slots: reassign tabs from dropped slots to 'a'
+  const keep = new Set(_TERM_LAYOUT_SLOTS[layout].map(s => 'pane-' + s));
+  for (const t of _term.tabs) { if (!keep.has(t.pane)) t.pane = 'pane-a'; }
+  _terminalBuildPanes();
+  _terminalPersist();
+  setTimeout(_terminalOnResize, 40);
+}
+
+function terminalLayoutMenu(ev) {
+  ev.stopPropagation();
+  const old = document.getElementById('terminal-layout-menu');
+  if (old) { old.remove(); return; }
+  const m = document.createElement('div');
+  m.id = 'terminal-layout-menu';
+  m.className = 'terminal-tab-menu';
+  const r = ev.currentTarget.getBoundingClientRect();
+  m.style.left = Math.max(8, r.right - 180) + 'px';
+  m.style.top = (r.bottom + 4) + 'px';
+  const opt = (key, label, svg) =>
+    `<div onclick="terminalSetLayout('${key}'); document.getElementById('terminal-layout-menu').remove()">
+       <span class="tlm-ico">${svg}</span>${label}${_term.layout === key ? ' ✓' : ''}</div>`;
+  const box = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">';
+  m.innerHTML =
+    opt('single', 'Einzeln', `${box}<rect x="3" y="3" width="18" height="18" rx="1"/></svg>`) +
+    opt('lr', 'Links / Rechts', `${box}<rect x="3" y="3" width="18" height="18" rx="1"/><line x1="12" y1="3" x2="12" y2="21"/></svg>`) +
+    opt('tb', 'Oben / Unten', `${box}<rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="12" x2="21" y2="12"/></svg>`) +
+    opt('lrb', 'L/R + Unten', `${box}<rect x="3" y="3" width="18" height="18" rx="1"/><line x1="12" y1="3" x2="12" y2="12"/><line x1="3" y1="12" x2="21" y2="12"/></svg>`);
+  document.body.appendChild(m);
+  const close = () => { const e = document.getElementById('terminal-layout-menu'); if (e) e.remove(); document.removeEventListener('click', close); };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+// Apply persisted pane sizings to the grid CSS custom props.
+function _terminalApplySizes() {
+  const host = document.getElementById('terminal-panes');
+  if (!host) return;
+  const s = _term.sizes || {};
+  host.style.setProperty('--tp-a', s.a || '1fr');
+  host.style.setProperty('--tp-b', s.b || '1fr');
+  host.style.setProperty('--tp-top', s.top || '1fr');
+  host.style.setProperty('--tp-bot', s.bot || '1fr');
+}
+
+// Wire drag-resize on the current layout's pane dividers (rebuilt each layout
+// change). The vertical divider splits a|b (px on a, b stays 1fr); the
+// horizontal divider splits top|bottom (lrb).
+function _terminalInitPaneDividers() {
+  const host = document.getElementById('terminal-panes');
+  if (!host) return;
+  host.querySelectorAll('.tpane-divider').forEach(div => {
+    const dir = div.dataset.dir;  // 'v' | 'h'
+    div.onmousedown = (e) => {
+      e.preventDefault();
+      const rect = host.getBoundingClientRect();
+      document.body.style.userSelect = 'none';
+      const move = (ev) => {
+        if (dir === 'v') {
+          const x = Math.max(80, Math.min(rect.width - 90, ev.clientX - rect.left));
+          host.style.setProperty('--tp-a', x + 'px');
+          host.style.setProperty('--tp-b', '1fr');
+          _term.sizes.a = x + 'px'; _term.sizes.b = '1fr';
+        } else {
+          const y = Math.max(60, Math.min(rect.height - 70, ev.clientY - rect.top));
+          // in lrb the top band is the L/R row; in tb it's pane a
+          if (_term.layout === 'lrb') { host.style.setProperty('--tp-top', y + 'px'); host.style.setProperty('--tp-bot', '1fr'); _term.sizes.top = y + 'px'; _term.sizes.bot = '1fr'; }
+          else { host.style.setProperty('--tp-a', y + 'px'); host.style.setProperty('--tp-b', '1fr'); _term.sizes.a = y + 'px'; _term.sizes.b = '1fr'; }
+        }
+        _terminalOnResize();
+      };
+      const up = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        document.body.style.userSelect = '';
+        _terminalPersist();
+        _terminalOnResize();
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    };
+  });
+}
 
 // Resolve the current code-mode project context from whichever view we're in.
 // Returns {agent, project, wd} or null if not a code-mode project.
@@ -81,7 +317,24 @@ async function terminalTogglePanel(force) {
 }
 
 async function _terminalLoadSessions() {
-  // 1) reattach live terminal sessions (reused server-side per project)
+  // Load persisted workspace (layout + per-pane editor files + sizes) FIRST so
+  // panes exist before we add tabs.
+  let ws = null;
+  try {
+    const p = await API.get(`/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}`);
+    ws = p && p.bottom_workspace;
+  } catch (e) { /* ignore */ }
+  if (ws) {
+    if (typeof ws.tree_visible === 'boolean') _term.treeVisible = ws.tree_visible;
+    if (ws.tree_width >= 120) _term.treeWidth = Math.min(ws.tree_width, 700);
+    if (typeof ws.single_editor === 'boolean') _term.singleEditor = ws.single_editor;
+    if (_TERM_LAYOUT_SLOTS[ws.layout]) _term.layout = ws.layout;
+    if (ws.sizes && typeof ws.sizes === 'object') _term.sizes = ws.sizes;
+  }
+  _terminalApplyLayout();
+  _terminalBuildPanes();   // creates pane DOM for _term.layout
+
+  // 1) reattach live terminal sessions (reused server-side per project) → pane-a
   let existing = [];
   try {
     const d = await API.get(`/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}/terminal/sessions`);
@@ -89,33 +342,48 @@ async function _terminalLoadSessions() {
     const liveIds = new Set(existing.map(s => s.id));
     _term.tabs = _term.tabs.filter(t => t.kind !== 'terminal' || liveIds.has(t.id) || t._fresh);
     for (const s of existing) {
-      if (!_term.tabs.find(t => t.id === s.id)) _terminalAddTab(s.id);
+      if (!_term.tabs.find(t => t.id === s.id)) _terminalAddTab(s.id, 'pane-a');
     }
   } catch (e) { /* terminal backend may be down — editors still work */ }
-  // 2) restore persisted editor tabs (open file paths) from bottom_workspace
-  let ws = null;
-  try {
-    const p = await API.get(`/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}`);
-    ws = p && p.bottom_workspace;
-  } catch (e) { /* ignore */ }
-  // restore layout state (per-project) before painting tabs/tree
-  if (ws) {
-    if (typeof ws.tree_visible === 'boolean') _term.treeVisible = ws.tree_visible;
-    if (ws.tree_width >= 120) _term.treeWidth = Math.min(ws.tree_width, 700);
-    if (typeof ws.single_editor === 'boolean') _term.singleEditor = ws.single_editor;
-  }
-  _terminalApplyLayout();
-  if (ws && Array.isArray(ws.editor_files)) {
-    for (const fp of ws.editor_files) {
-      if (!_term.tabs.find(t => t.kind === 'editor' && t.path === fp)) {
-        await terminalOpenFile(fp);  // appends an editor tab
+
+  // 2) restore persisted editor tabs into their panes. New shape: ws.panes =
+  // {<paneId>: {editor_files:[paths], active_path}}. Legacy shape: ws.editor_files.
+  const paneMap = (ws && ws.panes && typeof ws.panes === 'object') ? ws.panes : null;
+  if (paneMap) {
+    for (const paneId of Object.keys(paneMap)) {
+      const slot = paneId.replace('pane-', '');
+      if (!_TERM_LAYOUT_SLOTS[_term.layout].includes(slot)) continue;  // pane not in layout
+      for (const fp of (paneMap[paneId].editor_files || [])) {
+        if (_term.tabs.find(t => t.kind === 'editor' && t.path === fp)) continue;
+        _term.activePane = paneId;
+        await terminalOpenFile(fp);
       }
     }
+  } else if (ws && Array.isArray(ws.editor_files)) {
+    _term.activePane = 'pane-a';
+    for (const fp of ws.editor_files) {
+      if (!_term.tabs.find(t => t.kind === 'editor' && t.path === fp)) await terminalOpenFile(fp);
+    }
   }
-  if (!_term.tabs.length) { await terminalNewTab(); return; }
+
+  if (!_term.tabs.length) { _term.activePane = 'pane-a'; await terminalNewTab(); return; }
+  // pick an active tab per pane (restore active_path where persisted)
+  for (const pane of _term.panes) {
+    const pm = paneMap && paneMap[pane.id];
+    let act = null;
+    if (pm && pm.active_path) {
+      const t = _terminalPaneTabs(pane.id).find(x => x.path === pm.active_path);
+      if (t) act = t.id;
+    }
+    const tabs = _terminalPaneTabs(pane.id);
+    pane.active = act || (tabs.length ? tabs[0].id : null);
+  }
+  _term.activePane = 'pane-a';
+  _terminalShowActiveTabs();
   _terminalRenderTabs();
-  const want = (ws && ws.active && _term.tabs.find(t => t.id === ws.active)) ? ws.active : _term.tabs[0].id;
-  _terminalActivate(want);
+  // activate pane-a's tab to wire streams/focus
+  const aPane = _terminalGetPane('pane-a');
+  if (aPane && aPane.active) _terminalActivate(aPane.active);
 }
 
 // Persist the bottom workspace (open editor file paths + active tab) to the
@@ -127,9 +395,23 @@ function _terminalPersist() {
   if (!_term.open || !_term.project) return;
   clearTimeout(_terminalPersistTimer);
   _terminalPersistTimer = setTimeout(() => {
+    // Per-pane editor file assignment + active (terminals reattach from the
+    // server list into pane-a, so only editors carry a pane in the persisted
+    // workspace). Legacy flat editor_files kept for back-compat readers.
+    const panes = {};
+    for (const p of _term.panes) {
+      const eds = _terminalPaneTabs(p.id).filter(t => t.kind === 'editor');
+      const activeTab = eds.find(t => t.id === p.active);
+      panes[p.id] = {
+        editor_files: eds.map(t => t.path),
+        active_path: activeTab ? activeTab.path : '',
+      };
+    }
     const ws = {
-      editor_files: _term.tabs.filter(t => t.kind === 'editor').map(t => t.path),
-      active: _term.active || '',
+      panes,
+      layout: _term.layout,
+      sizes: _term.sizes,
+      editor_files: _term.tabs.filter(t => t.kind === 'editor').map(t => t.path),  // legacy
       tree_visible: _term.treeVisible,
       tree_width: _term.treeWidth,
       single_editor: _term.singleEditor,
@@ -171,12 +453,13 @@ function terminalRetheme() {
   }
 }
 
-function _terminalAddTab(id) {
+function _terminalAddTab(id, paneId) {
   if (_term.tabs.find(t => t.id === id)) return;
+  const pane = _terminalGetPane(paneId) || _terminalActivePane() || _term.panes[0];
   const el = document.createElement('div');
   el.className = 'terminal-xterm';
   el.style.display = 'none';
-  document.getElementById('terminal-body').appendChild(el);
+  (pane ? pane.bodyEl : document.getElementById('terminal-panes')).appendChild(el);
   const term = new Terminal({
     fontSize: 13, fontFamily: 'var(--font-mono, monospace)',
     cursorBlink: true, scrollback: 5000,
@@ -185,7 +468,8 @@ function _terminalAddTab(id) {
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
-  const tab = { id, kind: 'terminal', term, fit, offset: 0, attached: false, abort: null, el, _fresh: true };
+  const tab = { id, kind: 'terminal', term, fit, offset: 0, attached: false, abort: null, el, _fresh: true,
+                pane: pane ? pane.id : 'pane-a' };
   // keystrokes → POST input
   term.onData(data => {
     fetch(`${BASE_URL}/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}/terminal/sessions/${id}/input`, {
@@ -198,11 +482,14 @@ function _terminalAddTab(id) {
 }
 
 function _terminalActivate(id) {
-  _term.active = id;
-  _term.tabs.forEach(t => { t.el.style.display = (t.id === id) ? 'block' : 'none'; });
-  _terminalRenderTabs();
   const tab = _term.tabs.find(t => t.id === id);
   if (!tab) return;
+  // activate within the tab's pane (per-pane active tab; the pane becomes the
+  // active pane). Only that pane's tab visibility changes.
+  const pane = _terminalGetPane(tab.pane);
+  if (pane) { pane.active = id; _term.activePane = pane.id; }
+  _terminalShowActiveTabs();
+  _terminalRenderTabs();
   if (tab.kind === 'editor') {
     setTimeout(() => {
       try {
@@ -292,11 +579,17 @@ async function terminalCloseTab(id, ev) {
     }).catch(() => {});
   }
   const wasEditor = tab.kind === 'editor';
+  const paneId = tab.pane;
   _term.tabs = _term.tabs.filter(t => t.id !== id);
-  if (_term.active === id) {
-    if (_term.tabs.length) _terminalActivate(_term.tabs[0].id);
-    else terminalTogglePanel(false);
+  const pane = _terminalGetPane(paneId);
+  if (pane && pane.active === id) {
+    const left = _terminalPaneTabs(paneId);
+    pane.active = left.length ? left[0].id : null;
+    if (pane.active) _terminalActivate(pane.active);
   }
+  // close the whole bottom area only when NO tab remains anywhere
+  if (!_term.tabs.length) { terminalTogglePanel(false); return; }
+  _terminalShowActiveTabs();
   _terminalRenderTabs();
   if (wasEditor && typeof repaintTerminalTree === 'function') repaintTerminalTree();
   _terminalPersist();
@@ -341,24 +634,40 @@ function _terminalTabMenu(id, ev) {
 }
 
 function _terminalRenderTabs() {
-  const bar = document.getElementById('terminal-tabs');
-  if (!bar) return;
   let termN = 0;
-  bar.innerHTML = _term.tabs.map((t) => {
-    const active = t.id === _term.active ? ' active' : '';
-    let label, cls = '';
-    if (t.kind === 'editor') {
-      // '*' = unsaved changes; italic (.ed-editing) when the tab is in edit mode.
-      label = esc(t.name) + (t.dirty ? '*' : '');
-      if (t.mode === 'raw') cls = ' ed-editing';
-    } else {
-      termN += 1; label = 'Terminal ' + termN;
-    }
-    return `<div class="terminal-tab${active}${cls}" title="${esc(t.path || label)}" onclick="_terminalActivate('${t.id}')" oncontextmenu="_terminalTabMenu('${t.id}', event)">
-      <span class="tt-name">${label}</span>
-      <span class="terminal-tab-close" onclick="terminalCloseTab('${t.id}', event)">✕</span>
-    </div>`;
-  }).join('');
+  const termNum = new Map();   // stable "Terminal N" numbering across panes
+  for (const t of _term.tabs) { if (t.kind === 'terminal') termNum.set(t.id, ++termN); }
+  for (const pane of _term.panes) {
+    if (!pane.barEl) continue;
+    const tabs = _terminalPaneTabs(pane.id);
+    pane.barEl.innerHTML = tabs.map((t) => {
+      const active = t.id === pane.active ? ' active' : '';
+      let label, cls = '';
+      if (t.kind === 'editor') {
+        label = esc(t.name) + (t.dirty ? '*' : '');
+        if (t.mode === 'raw') cls = ' ed-editing';
+      } else {
+        label = 'Terminal ' + (termNum.get(t.id) || '');
+      }
+      return `<div class="terminal-tab${active}${cls}" draggable="true" data-tab-id="${esc(t.id)}"
+        title="${esc(t.path || label)}" onclick="_terminalActivate('${t.id}')"
+        oncontextmenu="_terminalTabMenu('${t.id}', event)"
+        ondragstart="_terminalTabDragStart(event,'${esc(t.id)}')" ondragend="_terminalTabDragEnd(event)">
+        <span class="tt-name">${label}</span>
+        <span class="terminal-tab-close" onclick="terminalCloseTab('${t.id}', event)">✕</span>
+      </div>`;
+    }).join('');
+  }
+}
+
+// Tab drag-and-drop between panes (HTML5 DnD; drop handled on each pane bar).
+function _terminalTabDragStart(ev, tabId) {
+  ev.dataTransfer.setData('text/tab-id', tabId);
+  ev.dataTransfer.effectAllowed = 'move';
+  ev.currentTarget.classList.add('tp-dragging');
+}
+function _terminalTabDragEnd(ev) {
+  ev.currentTarget.classList.remove('tp-dragging');
 }
 
 // ── Editor tabs (CodeMirror 5) ───────────────────────────────────────────────
@@ -456,10 +765,11 @@ async function terminalOpenFile(absPath) {
     <div class="editor-render" style="display:none"></div>
     <div class="editor-cm"></div>
     <div class="editor-status"><span class="ed-stat-name"></span><span style="flex:1"></span><span class="ed-stat-meta"></span></div>`;
-  document.getElementById('terminal-body').appendChild(el);
+  const _pane = _terminalActivePane() || _term.panes[0];
+  (_pane ? _pane.bodyEl : document.getElementById('terminal-panes')).appendChild(el);
   const tab = { id, kind: 'editor', path: absPath, name, ext, el, cm: null,
                 raw: '', mode: 'render', dirty: false, loaded: false,
-                size: 0, mtime: 0 };
+                size: 0, mtime: 0, pane: _pane ? _pane.id : 'pane-a' };
   _term.tabs.push(tab);
   _terminalRenderTabs();
   _terminalActivate(id);
@@ -684,13 +994,16 @@ function terminalToggleMaximize() {
   setTimeout(_terminalOnResize, 30);
 }
 
-// Re-fit the active terminal on window resize (editors just need a refresh).
+// Re-fit/refresh the active tab of EVERY pane on resize (each pane has its own
+// visible tab — a terminal needs a fit, an editor a refresh).
 function _terminalOnResize() {
   if (!_term.open) return;
-  const tab = _term.tabs.find(t => t.id === _term.active);
-  if (!tab) return;
-  if (tab.kind === 'editor') { try { tab.cm.refresh(); } catch (_) {} return; }
-  try { tab.fit.fit(); _terminalSendResize(tab); } catch (_) {}
+  for (const pane of _term.panes) {
+    const tab = _terminalPaneTabs(pane.id).find(t => t.id === pane.active);
+    if (!tab) continue;
+    if (tab.kind === 'editor') { try { tab.cm && tab.cm.refresh(); } catch (_) {} }
+    else { try { tab.fit.fit(); _terminalSendResize(tab); } catch (_) {} }
+  }
 }
 window.addEventListener('resize', _terminalOnResize);
 
