@@ -1331,6 +1331,7 @@ async function init() {
   // + horizontal file-tree column).
   if (typeof _terminalInitResize === 'function') _terminalInitResize();
   if (typeof _terminalInitTreeResize === 'function') _terminalInitTreeResize();
+  if (typeof _terminalInitTreeVsplit === 'function') _terminalInitTreeVsplit();
 
   // Spin up the floating ASCII companion (reads buddy_species from prefs).
   if (typeof buddyInit === 'function') buddyInit();

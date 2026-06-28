@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.232.0",
+        "date": "2026-06-28",
+        "title": "Code-Bereich: bessere Datei-Liste & Aufteilung",
+        "body": "Mehrere Verbesserungen im Code-Bereich: Lange Dateinamen im "
+                "Datei-Baum werden nun in voller Breite angezeigt statt unnötig "
+                "abgeschnitten. Datei-Baum und Terminal-Chats teilen sich die "
+                "linke Spalte standardmäßig zur Hälfte, und Sie können das "
+                "Verhältnis per Ziehen anpassen — die Einstellung wird pro "
+                "Projekt gemerkt. Im Terminal-Chat steht die Statuszeile jetzt "
+                "unter dem Eingabefeld, das bei mehrzeiligen Eingaben "
+                "automatisch mitwächst.",
+        "audience": "user",
+        "versions": ["9.232.0"],
+    },
+    {
         "version": "9.231.0",
         "date": "2026-06-28",
         "title": "Code-Projekte: Terminal direkt öffnen",

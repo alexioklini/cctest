@@ -41,7 +41,6 @@ function tcBuildBody(tab) {
   el.className = 'termchat';
   el.innerHTML = `
     <div class="tc-log" id="${esc(tab.id)}-log"></div>
-    <div class="tc-status" id="${esc(tab.id)}-status"></div>
     <div class="tc-input-wrap">
       <div class="tc-ac" id="${esc(tab.id)}-ac" style="display:none"></div>
       <div class="tc-input">
@@ -49,7 +48,8 @@ function tcBuildBody(tab) {
         <textarea class="tc-ta" rows="1" spellcheck="false"
           placeholder="Nachricht … (/ Befehle · ! für Shell · ↑↓ Verlauf)"></textarea>
       </div>
-    </div>`;
+    </div>
+    <div class="tc-status" id="${esc(tab.id)}-status"></div>`;
   const ta = el.querySelector('.tc-ta');
   ta.addEventListener('keydown', (e) => _tcKeydown(e, tab));
   ta.addEventListener('input', () => { _tcAutosize(ta); tab.draft = ta.value; _tcAcUpdate(tab); });
@@ -828,6 +828,13 @@ async function renderTermchatHistory() {
     <div class="tc-hist-body" style="display:${_tcHistCollapsed() ? 'none' : 'block'}">
       ${rows || '<div class="tc-hist-empty">Noch keine Chats.</div>'}
     </div>`;
+  // Collapsed → shrink to just the header (give the file tree the full height);
+  // expanded → share the column with the tree at the persisted split. Hide the
+  // drag handle when collapsed (no split to adjust).
+  const collapsed = _tcHistCollapsed();
+  host.classList.toggle('tc-collapsed', collapsed);
+  const col = document.getElementById('terminal-tree-col');
+  if (col) col.classList.toggle('chats-collapsed', collapsed);
 }
 
 // Delete ALL terminal-chats for this project (confirm first). Closes any open

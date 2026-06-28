@@ -155,7 +155,7 @@ function _wdRenderTree(nodes) {
          ondragstart="wdDragStart(event, '${fp}')" ondragend="wdDragEnd(event)">
       <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
       <span class="pt-label">${esc(n.name)}${star}</span>
-      <span style="flex:1"></span>${dot}
+      ${dot ? `<span class="pt-dot-wrap">${dot}</span>` : ''}
     </div>`;
   }).join('');
 }

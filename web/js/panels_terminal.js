@@ -20,6 +20,7 @@ const _term = {
   // Layout state (persisted PER-PROJECT in bottom_workspace, not per-chat):
   treeVisible: true, // file-tree column shown?
   treeWidth: 240,    // file-tree column width (px)
+  treeSplit: 0.5,    // file-tree vs Terminal-Chats height split (tree's fraction)
   singleEditor: false, // single-editor mode: tree click replaces the editor tab
 };
 
@@ -408,6 +409,7 @@ async function _terminalLoadSessions() {
   if (ws) {
     if (typeof ws.tree_visible === 'boolean') _term.treeVisible = ws.tree_visible;
     if (ws.tree_width >= 120) _term.treeWidth = Math.min(ws.tree_width, 700);
+    if (typeof ws.tree_split === 'number' && ws.tree_split > 0 && ws.tree_split < 1) _term.treeSplit = ws.tree_split;
     if (typeof ws.single_editor === 'boolean') _term.singleEditor = ws.single_editor;
     if (_TERM_LAYOUT_SLOTS[ws.layout]) _term.layout = ws.layout;
     if (ws.sizes && typeof ws.sizes === 'object') _term.sizes = ws.sizes;
@@ -514,6 +516,7 @@ function _terminalPersist() {
       editor_files: _term.tabs.filter(t => t.kind === 'editor').map(t => t.path),  // legacy
       tree_visible: _term.treeVisible,
       tree_width: _term.treeWidth,
+      tree_split: _term.treeSplit,
       single_editor: _term.singleEditor,
     };
     try { API.updateProject(_term.agent, _term.project, { bottom_workspace: ws }); } catch (_) {}
@@ -1314,6 +1317,7 @@ function _terminalApplyLayout() {
   const col = document.getElementById('terminal-tree-col');
   if (panel) panel.classList.toggle('tree-hidden', !_term.treeVisible);
   if (col) col.style.flexBasis = Math.max(120, _term.treeWidth || 240) + 'px';
+  _terminalApplyTreeSplit();
   const se = document.getElementById('terminal-single-editor');
   if (se) se.classList.toggle('active', !!_term.singleEditor);
   const show = document.getElementById('terminal-tree-show');
@@ -1351,6 +1355,43 @@ function _terminalInitTreeResize() {
     const w = Math.max(120, Math.min(700, startW + (e.clientX - startX)));
     col.style.flexBasis = w + 'px';
     _term.treeWidth = w;
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false; document.body.style.userSelect = '';
+    _terminalPersist();
+    setTimeout(_terminalOnResize, 10);
+  });
+}
+
+// Apply the file-tree ↔ Terminal-Chats height split (_term.treeSplit = the tree's
+// fraction, 0.1–0.9) as flex-grow CSS vars on the left column.
+function _terminalApplyTreeSplit() {
+  const col = document.getElementById('terminal-tree-col');
+  if (!col) return;
+  const f = Math.max(0.1, Math.min(0.9, _term.treeSplit || 0.5));
+  col.style.setProperty('--tree-grow', f.toFixed(3));
+  col.style.setProperty('--chats-grow', (1 - f).toFixed(3));
+}
+
+// Drag handle between the file tree and the Terminal-Chats section → adjust the
+// vertical split. Persisted per project (bottom_workspace.tree_split).
+function _terminalInitTreeVsplit() {
+  const handle = document.getElementById('terminal-tree-vsplit');
+  const col = document.getElementById('terminal-tree-col');
+  if (!handle || !col) return;
+  let dragging = false;
+  handle.addEventListener('mousedown', (e) => {
+    dragging = true; document.body.style.userSelect = ''; document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const r = col.getBoundingClientRect();
+    // Fraction of the column height above the cursor = the tree's share.
+    const f = Math.max(0.1, Math.min(0.9, (e.clientY - r.top) / r.height));
+    _term.treeSplit = f;
+    _terminalApplyTreeSplit();
   });
   window.addEventListener('mouseup', () => {
     if (!dragging) return;

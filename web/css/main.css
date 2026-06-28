@@ -551,13 +551,24 @@ textarea { resize: none; }
 #terminal-tree-head .tt-title {
   font-size: 11px; color: var(--text-400); text-transform: uppercase; letter-spacing: .04em;
   font-family: var(--font-mono);
+  /* Shrink + ellipsis so the long title never pushes the action buttons out of
+     the column (they were overflowing + clipping at the default width). */
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Tighten the header so all 6 actions fit the default column width. */
+#terminal-tree-head { gap: 2px; padding: 4px 6px; }
+#terminal-tree-head .pt-act { padding: 2px; flex: 0 0 auto; }
 #terminal-tree-head .pt-act { color: var(--text-300); }
 #terminal-tree-head .tt-toggle.active { color: var(--accent-brand); }
 #terminal-tree {
-  flex: 1; min-height: 0; overflow: auto; padding: 6px 4px;
+  flex: var(--tree-grow, 1) 1 0; min-height: 40px; overflow: auto; padding: 6px 4px;
   font-family: var(--font-mono); font-size: 12px; color: var(--text-100);
 }
+/* Horizontal drag handle between the file tree and the Terminal-Chats section. */
+#terminal-tree-vsplit { flex: 0 0 5px; cursor: ns-resize; background: transparent; }
+#terminal-tree-vsplit:hover { background: var(--accent-brand); }
+/* Hidden when the chats section is collapsed (no split to drag). */
+#terminal-tree-col.chats-collapsed #terminal-tree-vsplit { display: none; }
 #terminal-tree-resize {
   flex: 0 0 5px; cursor: ew-resize; background: transparent; z-index: 5;
 }
@@ -613,6 +624,11 @@ textarea { resize: none; }
 #terminal-tree .pt-row:hover { background: var(--bg-200); }
 #terminal-tree .pt-row.pt-selected { background: var(--bg-300); }
 #terminal-tree .pt-label { color: inherit; }
+/* Sync dot pinned to the right edge; the label flex-grows to fill ALL the space
+   up to it (a prior flex:1 spacer split the width with the label, so names
+   truncated with empty space to their right). */
+#terminal-tree .pt-dot-wrap { flex: 0 0 auto; margin-left: auto; padding-left: 6px;
+  display: inline-flex; align-items: center; }
 /* git status colours the FILE ICON (left of the name), VS Code-ish: modified=
  * amber, untracked/added=green, deleted/conflict=red, renamed=blue. */
 #terminal-tree .pt-row[data-git="M"] .pt-fileicon { color: var(--git-modified); }
@@ -738,8 +754,13 @@ textarea { resize: none; }
   animation: tc-pulse 1.1s infinite; }
 
 /* ── "Terminal-Chats" history section (under the working-dir tree) ─────────── */
-#terminal-chats { flex: 0 0 auto; max-height: 40%; display: flex; flex-direction: column;
+/* Shares the left column 50/50 with the file tree (its body scrolls). When the
+   section is COLLAPSED it shrinks to just its header (flex 0 0 auto via the
+   .tc-collapsed modifier), giving the tree the full height. */
+#terminal-chats { flex: var(--chats-grow, 1) 1 0; min-height: 40px; display: flex; flex-direction: column;
   border-top: 1px solid var(--border-200); overflow: hidden; }
+/* Collapsed → shrink to the header only (tree gets all the height). */
+#terminal-chats.tc-collapsed { flex: 0 0 auto; min-height: 0; }
 .tc-hist-head { display: flex; align-items: center; gap: 4px; padding: 4px 8px;
   background: var(--bg-200); cursor: pointer; flex: 0 0 auto; }
 .tc-hist-title { font-size: 11px; color: var(--text-400); text-transform: uppercase;
@@ -747,7 +768,7 @@ textarea { resize: none; }
 .tc-hist-head .pt-caret { display: inline-flex; transition: transform .12s; }
 .tc-hist-head .pt-caret.open { transform: rotate(90deg); }
 .tc-hist-head .pt-act { color: var(--text-300); }
-.tc-hist-body { overflow-y: auto; padding: 4px; min-height: 0;
+.tc-hist-body { flex: 1 1 auto; overflow-y: auto; padding: 4px; min-height: 0;
   font-family: var(--font-mono); font-size: 12px; }
 .tc-hist-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px;
   border-radius: 4px; color: var(--text-200); cursor: pointer; white-space: nowrap; }

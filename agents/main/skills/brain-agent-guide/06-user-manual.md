@@ -489,6 +489,10 @@ Dateien und Ordner lassen sich per **Ziehen** in einen anderen Ordner
 **verschieben**. Über die Knöpfe oben im Baum legen Sie eine **neue Datei** oder
 einen **neuen Ordner** direkt im Arbeitsverzeichnis an.
 
+Im unteren Bereich teilen sich der **Datei-Baum** und die **Terminal-Chats** die
+linke Spalte standardmäßig zur Hälfte; das Höhenverhältnis passen Sie über die
+**Trennlinie** dazwischen per Ziehen an (pro Projekt gemerkt).
+
 **Terminal-Chat** (Code-Projekte): Neben Terminal und Editor öffnen Sie im
 unteren Bereich einen **Terminal-Chat** — eine schlanke, terminalartige
 Chat-Oberfläche („wie ein Coding-Assistent im Terminal"). Sie ist als
