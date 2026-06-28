@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.229.0",
+        "date": "2026-06-28",
+        "title": "Terminal-Chat: Befehls-Auswahl beim Tippen von „/“",
+        "body": "Sobald Sie im Terminal-Chat ein „/“ eingeben, erscheint eine "
+                "Auswahlliste der verfügbaren Befehle mit kurzer Beschreibung. "
+                "Bei Befehlen mit Optionen — etwa /model oder /think — wird "
+                "anschließend direkt die Liste der möglichen Werte angeboten "
+                "(beim Modell die tatsächlich verfügbaren Modelle). Mit den "
+                "Pfeiltasten wählen Sie aus, mit Enter oder Tab übernehmen Sie — "
+                "so müssen Sie sich Befehle und Werte nicht merken.",
+        "audience": "user",
+        "versions": ["9.229.0"],
+    },
+    {
         "version": "9.228.0",
         "date": "2026-06-28",
         "title": "Dateibaum: Umbenennen, Löschen, Ordner, Verschieben",

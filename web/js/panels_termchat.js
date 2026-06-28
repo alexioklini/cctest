@@ -42,14 +42,19 @@ function tcBuildBody(tab) {
   el.innerHTML = `
     <div class="tc-log" id="${esc(tab.id)}-log"></div>
     <div class="tc-status" id="${esc(tab.id)}-status"></div>
-    <div class="tc-input">
-      <span class="tc-prompt">›</span>
-      <textarea class="tc-ta" rows="1" spellcheck="false"
-        placeholder="Nachricht … (/help · ! für Shell · ↑↓ Verlauf)"></textarea>
+    <div class="tc-input-wrap">
+      <div class="tc-ac" id="${esc(tab.id)}-ac" style="display:none"></div>
+      <div class="tc-input">
+        <span class="tc-prompt">›</span>
+        <textarea class="tc-ta" rows="1" spellcheck="false"
+          placeholder="Nachricht … (/ Befehle · ! für Shell · ↑↓ Verlauf)"></textarea>
+      </div>
     </div>`;
   const ta = el.querySelector('.tc-ta');
   ta.addEventListener('keydown', (e) => _tcKeydown(e, tab));
-  ta.addEventListener('input', () => { _tcAutosize(ta); tab.draft = ta.value; });
+  ta.addEventListener('input', () => { _tcAutosize(ta); tab.draft = ta.value; _tcAcUpdate(tab); });
+  ta.addEventListener('blur', () => setTimeout(() => _tcAcClose(tab), 120));
+  tab._ac = { open: false, items: [], sel: 0 };
   tcRenderStatus(tab);
 }
 
@@ -64,6 +69,8 @@ function _tcScroll(tab) { const l = _tcLog(tab); if (l) l.scrollTop = l.scrollHe
 // ── Input handling: Enter to send, Shift+Enter newline, ↑/↓ history ──────────
 function _tcKeydown(e, tab) {
   const ta = e.target;
+  // Autocomplete menu owns ↑/↓/Enter/Tab/Esc while it's open.
+  if (_tcAcKey(e, tab)) return;
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     const text = ta.value.trim();
@@ -102,6 +109,115 @@ async function tcSubmit(tab, text) {
   if (text.startsWith('!')) { await tcShell(tab, text.slice(1).trim()); return; }
   if (text.startsWith('/')) { await tcSlash(tab, text); return; }
   await tcSend(tab, text);
+}
+
+// ── Slash-command autocomplete ───────────────────────────────────────────────
+// Registry: each command has a description and (for value-taking commands) a
+// `values()` returning [{value, label, hint}] for the second-level menu.
+function _tcModelValues() {
+  const models = (state.models || []).map(m => (typeof m === 'string' ? m : (m.id || m.name))).filter(Boolean);
+  return [{ value: 'auto', label: 'auto', hint: 'automatische Wahl' }]
+    .concat(models.map(m => ({ value: m, label: m, hint: '' })));
+}
+const _TC_COMMANDS = [
+  { name: 'model', desc: 'Modell wechseln', values: _tcModelValues },
+  { name: 'think', desc: 'Denktiefe', values: () => [
+    { value: 'off', label: 'off', hint: 'Aus' }, { value: 'low', label: 'low', hint: 'Niedrig' },
+    { value: 'medium', label: 'medium', hint: 'Mittel' }, { value: 'high', label: 'high', hint: 'Hoch' } ] },
+  { name: 'tools', desc: 'Werkzeugaufrufe anzeigen', values: () => [
+    { value: 'on', label: 'on', hint: 'anzeigen' }, { value: 'off', label: 'off', hint: 'ausblenden' } ] },
+  { name: 'caveman', desc: 'Antwortstil', values: () => [
+    { value: '0', label: '0', hint: 'aus' }, { value: '1', label: '1', hint: 'leicht' },
+    { value: '2', label: '2', hint: 'stark' }, { value: '3', label: '3', hint: 'extrem' } ] },
+  { name: 'clear', desc: 'neue Sitzung (leerer Kontext)' },
+  { name: 'lcm', desc: 'Kontext komprimieren (LCM)' },
+  { name: 'sync', desc: 'Projekt-Sync anstoßen' },
+  { name: 'init', desc: 'BRAIN.md erzeugen' },
+  { name: 'suggest', desc: 'nächste Eingabe vorschlagen' },
+  { name: 'cancel', desc: 'laufende Antwort abbrechen' },
+  { name: 'help', desc: 'Befehlsübersicht' },
+];
+
+function _tcAcEl(tab) { return document.getElementById(tab.id + '-ac'); }
+
+// Recompute the autocomplete items from the current input + render. Two levels:
+// typing "/mod" → matching COMMANDS; typing "/model " → that command's VALUES.
+function _tcAcUpdate(tab) {
+  const ta = tab.el.querySelector('.tc-ta');
+  const v = ta.value;
+  if (!v.startsWith('/') || /\n/.test(v)) { _tcAcClose(tab); return; }
+  const m = v.match(/^\/(\S*)(\s+)(.*)$/);   // "/cmd <space> rest"
+  let items, mode;
+  if (m) {
+    const cmd = _TC_COMMANDS.find(c => c.name === m[1].toLowerCase());
+    if (!cmd || !cmd.values) { _tcAcClose(tab); return; }
+    const frag = (m[3] || '').toLowerCase();
+    items = cmd.values().filter(o => o.value.toLowerCase().includes(frag))
+      .slice(0, 50).map(o => ({ ...o, _cmd: cmd.name, kind: 'value' }));
+    mode = 'value';
+  } else {
+    const frag = v.slice(1).toLowerCase();
+    items = _TC_COMMANDS.filter(c => c.name.startsWith(frag))
+      .map(c => ({ value: c.name, label: '/' + c.name, hint: c.desc, kind: 'cmd' }));
+    mode = 'cmd';
+  }
+  if (!items.length) { _tcAcClose(tab); return; }
+  tab._ac = { open: true, items, sel: 0, mode };
+  _tcAcRender(tab);
+}
+
+function _tcAcRender(tab) {
+  const ac = _tcAcEl(tab); if (!ac) return;
+  const { items, sel } = tab._ac;
+  ac.innerHTML = items.map((it, i) => `
+    <div class="tc-ac-item${i === sel ? ' sel' : ''}" data-i="${i}"
+      onmousedown="event.preventDefault();_tcAcPick(_tcTab('${esc(tab.id)}'), ${i})"
+      onmousemove="_tcAcHover(_tcTab('${esc(tab.id)}'), ${i})">
+      <span class="tc-ac-label">${esc(it.label)}</span>
+      ${it.hint ? `<span class="tc-ac-hint">${esc(it.hint)}</span>` : ''}
+    </div>`).join('');
+  ac.style.display = 'block';
+  const selEl = ac.querySelector('.tc-ac-item.sel');
+  if (selEl) selEl.scrollIntoView({ block: 'nearest' });
+}
+
+function _tcAcClose(tab) {
+  if (tab._ac) tab._ac.open = false;
+  const ac = _tcAcEl(tab); if (ac) { ac.style.display = 'none'; ac.innerHTML = ''; }
+}
+function _tcAcHover(tab, i) { if (tab && tab._ac && tab._ac.open) { tab._ac.sel = i; _tcAcRender(tab); } }
+
+// Accept the selected suggestion. Command → fill "/name " (and immediately open
+// its value menu if it has values, else for no-value commands leave it ready to
+// Enter). Value → fill "/cmd value" complete.
+function _tcAcPick(tab, i) {
+  if (!tab || !tab._ac || !tab._ac.open) return;
+  const it = tab._ac.items[i != null ? i : tab._ac.sel];
+  if (!it) return;
+  const ta = tab.el.querySelector('.tc-ta');
+  if (it.kind === 'cmd') {
+    const cmd = _TC_COMMANDS.find(c => c.name === it.value);
+    ta.value = '/' + it.value + (cmd && cmd.values ? ' ' : '');
+    _tcAcClose(tab);
+    if (cmd && cmd.values) _tcAcUpdate(tab);   // chain into the value menu
+    else { /* no-value command: ready to submit */ }
+  } else {
+    ta.value = '/' + it._cmd + ' ' + it.value;
+    _tcAcClose(tab);
+  }
+  ta.focus(); _tcAutosize(ta);
+}
+
+// Keyboard handling while the menu is open (called from _tcKeydown). Returns
+// true if it consumed the key.
+function _tcAcKey(e, tab) {
+  const ac = tab._ac;
+  if (!ac || !ac.open || !ac.items.length) return false;
+  if (e.key === 'ArrowDown') { e.preventDefault(); ac.sel = (ac.sel + 1) % ac.items.length; _tcAcRender(tab); return true; }
+  if (e.key === 'ArrowUp') { e.preventDefault(); ac.sel = (ac.sel - 1 + ac.items.length) % ac.items.length; _tcAcRender(tab); return true; }
+  if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); _tcAcPick(tab, ac.sel); return true; }
+  if (e.key === 'Escape') { e.preventDefault(); _tcAcClose(tab); return true; }
+  return false;
 }
 
 // `! <command>` — run a one-shot shell command in the project's working_dir and

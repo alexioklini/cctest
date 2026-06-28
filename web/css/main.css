@@ -708,7 +708,20 @@ textarea { resize: none; }
 .tc-status .tc-st-model { color: var(--text-200); font-weight: 600; }
 .tc-status .tc-live { color: var(--git-added); animation: tc-pulse 1.1s infinite; }
 @keyframes tc-pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
-/* input line */
+/* input line + slash-command autocomplete */
+.tc-input-wrap { flex: 0 0 auto; position: relative; }
+/* Autocomplete popup floats ABOVE the input line (bottom-anchored). */
+.tc-ac { position: absolute; left: 8px; right: 8px; bottom: 100%; margin-bottom: 2px;
+  max-height: 220px; overflow-y: auto; z-index: 30;
+  background: var(--bg-000); border: 1px solid var(--border-100);
+  border-radius: 6px; box-shadow: 0 -4px 20px rgba(0,0,0,.25); padding: 3px;
+  font-family: var(--font-mono); font-size: 12px; }
+.tc-ac-item { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px;
+  border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.tc-ac-item.sel { background: var(--accent-brand); }
+.tc-ac-item.sel .tc-ac-label, .tc-ac-item.sel .tc-ac-hint { color: #fff; }
+.tc-ac-label { color: var(--text-100); font-weight: 600; }
+.tc-ac-hint { color: var(--text-400); overflow: hidden; text-overflow: ellipsis; }
 .tc-input { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 6px;
   padding: 6px 12px; background: var(--bg-000); border-top: 1px solid var(--border-200); }
 .tc-input .tc-prompt { padding-top: 2px; }

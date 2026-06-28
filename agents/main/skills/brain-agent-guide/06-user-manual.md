@@ -501,7 +501,11 @@ Kosten und die Kontext-Auslastung. Werkzeugaufrufe werden als kompakte Zeilen
 **↑/↓** blättern Sie wie in einer Shell durch zuletzt gesendete Eingaben, mit
 **Tab** auf leerer Zeile holen Sie einen Eingabe-Vorschlag.
 
-**Schrägstrich-Befehle** steuern den Chat direkt: `/model <Name|auto>`
+Sobald Sie ein **„/“** eingeben, erscheint eine **Auswahlliste** der Befehle
+(mit Beschreibung); bei Befehlen mit Optionen (z. B. `/model`, `/think`) folgt
+direkt die Werteliste — mit **↑/↓** auswählen, mit **Enter/Tab** übernehmen,
+**Esc** schließt. **Schrägstrich-Befehle** steuern den Chat direkt:
+`/model <Name|auto>`
 (Modell wechseln), `/think off|low|medium|high` (Denktiefe), `/tools on|off`
 (Werkzeuganzeige), `/caveman 0-3` (Antwortstil), `/clear` (neue Sitzung, leerer
 Kontext), `/lcm` (Kontext komprimieren), `/sync` (Projekt-Sync anstoßen),
