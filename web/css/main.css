@@ -604,9 +604,15 @@ textarea { resize: none; }
 /* Maximized: the panel fills the whole main-content area. */
 #terminal-panel.maximized { position: absolute; inset: 0; height: auto !important; z-index: 40; }
 /* Editor tabs (CodeMirror) inside the bottom panel. */
-.terminal-editor { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg-000); }
-.editor-toolbar { display: flex; align-items: center; gap: 4px; padding: 4px 8px;
-  background: var(--bg-200); border-bottom: 1px solid var(--border-200); flex: 0 0 auto; }
+/* Absolute layout (NOT flex) so the editor area gets a DEFINITE height: flexbox
+ * let .editor-cm grow to CM's content height (5940px → no scroll, status pushed
+ * off-screen). Toolbar pinned top, status pinned bottom, .editor-cm fills the
+ * gap with explicit top/bottom insets → CM has a real box to scroll inside. */
+.terminal-editor { position: absolute; inset: 0; background: var(--bg-000); overflow: hidden; }
+.editor-toolbar { position: absolute; top: 0; left: 0; right: 0; height: 33px;
+  box-sizing: border-box; z-index: 2;
+  display: flex; align-items: center; gap: 4px; padding: 4px 8px;
+  background: var(--bg-200); border-bottom: 1px solid var(--border-200); }
 /* SVG-only icon buttons (no text labels). */
 .ed-iconbtn { display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 24px; padding: 0; border: 1px solid transparent;
@@ -615,25 +621,35 @@ textarea { resize: none; }
 .ed-iconbtn:disabled { opacity: .4; cursor: default; background: transparent; }
 .ed-iconbtn.ed-mode.active { background: var(--accent-brand); color: #fff; border-color: var(--accent-brand); }
 .editor-toolbar .ed-sep { width: 1px; height: 16px; background: var(--border-200); margin: 0 2px; }
-.editor-render { flex: 1; min-height: 0; overflow: auto; }
+.editor-render { position: absolute; top: 33px; left: 0; right: 0; bottom: 24px; overflow: auto; }
 /* CodeMirror owns its own scrolling (native CM scrollbars). The host must give
  * it a BOUNDED height (flex:1 + min-height:0) so the doc overflows → CM shows
  * its vertical+horizontal scrollbars. Do NOT override .CodeMirror-scroll
  * overflow — that breaks CM's scrollbar measurement (the earlier bug: no bars). */
-.editor-cm { flex: 1; min-height: 0; overflow: hidden; }
+/* The flex column (.terminal-editor) is overflow:hidden + this item has
+ * min-height:0, so flex:1 caps .editor-cm to the leftover height (toolbar +
+ * status are flex:0). CM then fills it (height:100%) and scrolls internally —
+ * the earlier 5940px-tall CM / off-screen status came from the parent NOT
+ * clipping, so the flex item grew to content height. */
+.editor-cm { position: absolute; top: 33px; left: 0; right: 0; bottom: 24px; overflow: hidden; }
 .editor-cm .CodeMirror { height: 100%; font-size: 13px; font-family: var(--font-mono); }
-/* macOS hides overlay scrollbars until you scroll → the CM scrollbars looked
- * absent. Force them to a visible width/colour so they always show. */
+/* Make scrollbars always visible: let the REAL scroller (.CodeMirror-scroll)
+ * own the overflow + show styled webkit scrollbars, instead of CM's negative-
+ * margin trick that hides native bars and relies on macOS overlay bars (which
+ * stay invisible until you scroll). */
+.editor-cm .CodeMirror-scroll {
+  overflow: auto !important;
+  margin-right: 0 !important; margin-bottom: 0 !important;
+  padding-right: 0 !important;
+}
 .editor-cm .CodeMirror-vscrollbar,
-.editor-cm .CodeMirror-hscrollbar { overflow: scroll !important; }
-.editor-cm .CodeMirror-vscrollbar::-webkit-scrollbar,
-.editor-cm .CodeMirror-hscrollbar::-webkit-scrollbar { width: 10px; height: 10px; }
-.editor-cm .CodeMirror-vscrollbar::-webkit-scrollbar-thumb,
-.editor-cm .CodeMirror-hscrollbar::-webkit-scrollbar-thumb {
-  background: var(--border-300); border-radius: 5px; }
-.editor-cm .CodeMirror-vscrollbar::-webkit-scrollbar-thumb:hover,
-.editor-cm .CodeMirror-hscrollbar::-webkit-scrollbar-thumb:hover {
-  background: var(--text-500); }
+.editor-cm .CodeMirror-hscrollbar { display: none !important; }
+.editor-cm .CodeMirror-scroll::-webkit-scrollbar { width: 11px; height: 11px; }
+.editor-cm .CodeMirror-scroll::-webkit-scrollbar-track { background: var(--bg-100); }
+.editor-cm .CodeMirror-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-300); border-radius: 6px;
+  border: 2px solid var(--bg-100); }
+.editor-cm .CodeMirror-scroll::-webkit-scrollbar-thumb:hover { background: var(--text-500); }
 /* CodeMirror's default theme hardcodes a white surface → make the editor follow
  * the app's light/dark theme. Background + text + gutter + cursor from vars. */
 .editor-cm .CodeMirror {
@@ -670,8 +686,10 @@ textarea { resize: none; }
 :root[data-mode="dark"] .editor-cm .cm-link { color: #ce9178; }
 .editor-pre { margin: 0; padding: 10px 12px; font-size: 12px; line-height: 1.5;
   font-family: var(--font-mono); white-space: pre; }
-/* Editor status line (size · lines · last-modified). */
-.editor-status { flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+/* Editor status line (size · lines · last-modified) — pinned to the bottom. */
+.editor-status { position: absolute; bottom: 0; left: 0; right: 0; height: 24px;
+  box-sizing: border-box; z-index: 2;
+  display: flex; align-items: center; gap: 8px;
   padding: 3px 10px; font-size: 11px; color: var(--text-400);
   font-family: var(--font-mono); background: var(--bg-200);
   border-top: 1px solid var(--border-200); white-space: nowrap; overflow: hidden; }

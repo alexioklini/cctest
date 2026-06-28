@@ -516,7 +516,9 @@ function _terminalEditorPaint(tab) {
         'Ctrl-Space': (cm) => codeIndexComplete(cm),
       },
     });
-    tab.cm.setSize('100%', '100%');
+    // CSS drives the height (.editor-cm .CodeMirror { height:100% }); a
+    // refresh() after the element is laid out lets CM measure + show scrollbars.
+    // (setSize('100%','100%') broke CM's scroll measurement → no scrollbars.)
     tab.cm.on('change', () => {
       const wasDirty = tab.dirty;
       tab.dirty = true;
