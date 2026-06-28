@@ -648,16 +648,19 @@ textarea { resize: none; }
 .termchat { position: absolute; inset: 0; display: flex; flex-direction: column;
   background: var(--bg-000); font-family: var(--font-mono); overflow: hidden; }
 .tc-log { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px;
-  font-size: 12.5px; line-height: 1.5; color: var(--text-100); }
-.tc-row { margin: 0 0 8px; white-space: pre-wrap; word-break: break-word; }
+  font-size: 12.5px; line-height: 1.35; color: var(--text-100); }
+.tc-row { margin: 0 0 4px; white-space: pre-wrap; word-break: break-word; }
 .tc-row:last-child { margin-bottom: 0; }
 /* user echo */
 .tc-user { color: var(--text-100); }
 .tc-user .tc-uprompt, .tc-prompt { color: var(--accent-brand); font-weight: 700; }
 /* assistant answer — rendered markdown; tighten block spacing for terminal feel */
 .tc-asst { color: var(--text-100); }
-.tc-asst p { margin: 0 0 6px; }
+.tc-asst p { margin: 0 0 4px; }
 .tc-asst p:last-child { margin-bottom: 0; }
+.tc-asst ul, .tc-asst ol { margin: 2px 0; padding-left: 18px; }
+.tc-asst li { margin: 0; }
+.tc-asst h1, .tc-asst h2, .tc-asst h3, .tc-asst h4 { margin: 6px 0 2px; line-height: 1.25; }
 .tc-asst pre { background: var(--bg-200); border: 1px solid var(--border-200);
   border-radius: 5px; padding: 8px 10px; overflow-x: auto; margin: 6px 0; }
 .tc-asst code { font-family: var(--font-mono); font-size: 12px; }
@@ -699,8 +702,8 @@ textarea { resize: none; }
   padding: 6px 12px; background: var(--bg-000); border-top: 1px solid var(--border-200); }
 .tc-input .tc-prompt { padding-top: 2px; }
 .tc-ta { flex: 1; resize: none; border: none; outline: none; background: transparent;
-  color: var(--text-100); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5;
-  min-height: 20px; max-height: 160px; overflow-y: auto; }
+  color: var(--text-100); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.35;
+  min-height: 19px; max-height: 160px; overflow-y: auto; }
 .tc-ta::placeholder { color: var(--text-400); }
 /* live tab pulse */
 .terminal-tab.tc-tab-live .tt-name::after { content: ' ●'; color: var(--git-added);
