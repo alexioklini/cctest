@@ -26,11 +26,62 @@ const _term = {
 // Which pane slots each layout uses, in DOM/visual order.
 const _TERM_LAYOUT_SLOTS = { single: ['a'], lr: ['a', 'b'], tb: ['a', 'b'], lrb: ['a', 'b', 'c'] };
 
+// One-shot explicit-pane override: a pane-scoped action (the per-pane +/◈/
+// new-file button) sets this to its pane id so the next open lands there instead
+// of the content-type default. Consumed (cleared) by the open it triggers.
+let _termOpenInPane = null;
+
 // ── Split-pane infrastructure ────────────────────────────────────────────────
 function _terminalGetPane(id) { return _term.panes.find(p => p.id === id); }
 function _terminalPaneTabs(paneId) { return _term.tabs.filter(t => t.pane === paneId); }
 function _terminalActivePane() {
   return _terminalGetPane(_term.activePane) || _term.panes[0] || null;
+}
+
+// Visual slot → pane id for the CURRENT layout. Slots (per _TERM_LAYOUT_SLOTS):
+//   single: a=only · lr: a=left,b=right · tb: a=top,b=bottom ·
+//   lrb: a=top-left,b=top-right,c=bottom(full width).
+// Named positions resolve to the slot that visually occupies them, or null when
+// the layout has no such position.
+function _terminalSlotForPos(pos) {
+  const L = _term.layout;
+  switch (pos) {
+    case 'topleft': return 'a';                 // every layout has a top-left
+    case 'topright': return L === 'lrb' ? 'b' : (L === 'lr' ? 'b' : null);
+    case 'bottom':   return L === 'lrb' ? 'c' : (L === 'tb' ? 'b' : null);
+    default: return null;
+  }
+}
+
+// Pick the DEFAULT pane a freshly-opened tab of `kind` should land in, honouring
+// the layout + a position-preference fallback chain. `ext` distinguishes source
+// files (→ top-left) from other files (html/md/… → top-right→top-left).
+//   source file     : top-left
+//   other file      : top-right → top-left
+//   terminal        : bottom → top-right → top-left
+//   terminal-chat   : bottom → top-right → top-left
+// Returns a pane id that exists in the current layout (always resolvable since
+// 'topleft'='a' is the universal fallback).
+function _terminalDefaultPane(kind, ext) {
+  let chain;
+  if (kind === 'terminal' || kind === 'chat') chain = ['bottom', 'topright', 'topleft'];
+  else if (kind === 'editor' && _terminalIsSourceExt(ext)) chain = ['topleft'];
+  else chain = ['topright', 'topleft'];   // other files
+  for (const pos of chain) {
+    const slot = _terminalSlotForPos(pos);
+    if (slot) { const p = _terminalGetPane('pane-' + slot); if (p) return p.id; }
+  }
+  return (_term.panes[0] && _term.panes[0].id) || 'pane-a';
+}
+
+// A "source file" = a code file CodeMirror has a real language mode for, that
+// is NOT a renderable doc type (html/htm/md/markdown/svg open as views, so they
+// count as "other files" for placement). Everything without a code mode
+// (txt/csv/log/images/pdf/…) is also "other".
+function _terminalIsSourceExt(ext) {
+  ext = (ext || '').toLowerCase();
+  if (_terminalIsRenderable(ext)) return false;
+  return !!_cmModeFor(ext);
 }
 
 // (Re)build the pane DOM for the current _term.layout, preserving existing tab
@@ -106,8 +157,9 @@ function _terminalMakePane(slot) {
       </button>
     </div>
     <div class="tpane-body"></div>`;
-  // pane-scoped + / new-chat / new-file (open in THIS pane); clicking the bar focuses the pane
-  pane.querySelector('[data-act="newterm"]').onclick = () => { _term.activePane = 'pane-' + slot; terminalNewTab(); };
+  // pane-scoped + / new-chat / new-file: a per-pane button means "open HERE" —
+  // set _termOpenInPane so the content-type default is overridden for this open.
+  pane.querySelector('[data-act="newterm"]').onclick = () => { _term.activePane = 'pane-' + slot; terminalNewTab('pane-' + slot); };
   pane.querySelector('[data-act="newchat"]').onclick = () => {
     _term.activePane = 'pane-' + slot;
     if (typeof _terminalAddChatTab === 'function') {
@@ -115,7 +167,7 @@ function _terminalMakePane(slot) {
       if (t) { const ta = t.el.querySelector('.tc-ta'); if (ta) setTimeout(() => ta.focus(), 40); }
     }
   };
-  pane.querySelector('[data-act="newfile"]').onclick = () => { _term.activePane = 'pane-' + slot; terminalNewFile(); };
+  pane.querySelector('[data-act="newfile"]').onclick = () => { _term.activePane = 'pane-' + slot; _termOpenInPane = 'pane-' + slot; terminalNewFile(); };
   const bar = pane.querySelector('.tpane-bar');
   bar.addEventListener('mousedown', () => { _term.activePane = 'pane-' + slot; _terminalPaintActivePane(); });
   // drag-drop: accept a tab dropped onto this bar
@@ -452,11 +504,14 @@ function _terminalPersist() {
   }, 600);
 }
 
-async function terminalNewTab() {
+async function terminalNewTab(paneId) {
   try {
     const s = await API.post(`/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}/terminal/sessions`, {});
     if (s.error) { if (typeof showToast === 'function') showToast(s.error); return; }
-    _terminalAddTab(s.id);
+    // Explicit pane (per-pane + button) wins; otherwise default a terminal to
+    // bottom → top-right → top-left for the current layout.
+    const target = paneId || _terminalDefaultPane('terminal');
+    _terminalAddTab(s.id, target);
     _terminalRenderTabs();
     _terminalActivate(s.id);
   } catch (e) { if (typeof showToast === 'function') showToast('Terminal konnte nicht gestartet werden'); }
@@ -521,7 +576,10 @@ function _terminalAddChatTab(sessionId, paneId, title, tmpId) {
   const id = sessionId ? ('chat-' + sessionId) : (tmpId || ('chat-new-' + _term.tabs.length));
   const exist = _term.tabs.find(t => t.id === id);
   if (exist) { _terminalActivate(id); return exist; }
-  const pane = _terminalGetPane(paneId) || _terminalActivePane() || _term.panes[0];
+  // Explicit paneId (per-pane ◈ button / persistence restore) wins; otherwise a
+  // terminal-chat defaults to bottom → top-right → top-left for the layout.
+  const _targetPane = paneId || _terminalDefaultPane('chat');
+  const pane = _terminalGetPane(_targetPane) || _terminalActivePane() || _term.panes[0];
   const el = document.createElement('div');
   el.style.display = 'none';
   (pane ? pane.bodyEl : document.getElementById('terminal-panes')).appendChild(el);
@@ -830,9 +888,46 @@ async function terminalCheckEditorsFresh() {
   }
 }
 
+// Poll the working-dir tree so files created/deleted out-of-band (a terminal
+// command, the `!` shell command, the agent, an external program) show up
+// without a manual refresh. Cheap: re-fetch the tree, compare a signature of the
+// file/dir path set, and only re-render when it actually changed (so scroll +
+// expand state aren't disturbed every tick). Runs on the same cadence as the
+// editor-fresh poll, only while the panel is open + the tree is visible.
+function _wdTreeSignature(nodes, acc) {
+  acc = acc || [];
+  for (const n of (nodes || [])) {
+    acc.push((n.type === 'dir' ? 'd:' : 'f:') + n.path);
+    if (n.type === 'dir') _wdTreeSignature(n.children || [], acc);
+  }
+  return acc;
+}
+async function terminalPollTree() {
+  if (!_term.open || !_term.treeVisible) return;
+  if (typeof _workdirActiveProject !== 'function') return;
+  let proj;
+  try { proj = await _workdirActiveProject(); } catch (_) { return; }
+  if (!proj || !proj.working_dir) return;
+  let data;
+  try {
+    data = await API.get(`/v1/agents/${proj.agent}/projects/${encodeURIComponent(proj.name)}/folder-tree?path=${encodeURIComponent(proj.working_dir)}`);
+  } catch (_) { return; }
+  if (!data || data.error || !Array.isArray(data.tree)) return;
+  const sig = _wdTreeSignature(data.tree).sort().join('\n');
+  if (sig === _term._treeSig) return;   // no structural change → leave the tree alone
+  _term._treeSig = sig;
+  window._wdTreeData = data.tree;
+  // Also refresh the code-index sync dots, then repaint from the new data.
+  if (typeof _wdLoadCodeIndexState === 'function') { try { await _wdLoadCodeIndexState(proj); } catch (_) {} }
+  if (typeof repaintTerminalTree === 'function') repaintTerminalTree();
+}
+
 function startEditorFreshPoll() {
   stopEditorFreshPoll();
-  _terminalFreshPollTimer = setInterval(terminalCheckEditorsFresh, 4000);
+  _terminalFreshPollTimer = setInterval(() => {
+    terminalCheckEditorsFresh();
+    terminalPollTree();
+  }, 4000);
 }
 function stopEditorFreshPoll() {
   if (_terminalFreshPollTimer) { clearInterval(_terminalFreshPollTimer); _terminalFreshPollTimer = null; }
@@ -909,7 +1004,12 @@ async function terminalOpenFile(absPath) {
     <div class="editor-render" style="display:none"></div>
     <div class="editor-cm"></div>
     <div class="editor-status"><span class="ed-stat-name"></span><span style="flex:1"></span><span class="ed-stat-meta"></span></div>`;
-  const _pane = _terminalActivePane() || _term.panes[0];
+  // Default placement by file kind + layout (source → top-left, other →
+  // top-right→top-left). _termOpenInPane (set by the per-pane new-file button)
+  // overrides with an explicit pane so a pane-scoped action stays in its pane.
+  const _paneId = _termOpenInPane || _terminalDefaultPane('editor', ext);
+  _termOpenInPane = null;
+  const _pane = _terminalGetPane(_paneId) || _terminalActivePane() || _term.panes[0];
   (_pane ? _pane.bodyEl : document.getElementById('terminal-panes')).appendChild(el);
   const tab = { id, kind: 'editor', path: absPath, name, ext, el, cm: null,
                 raw: '', mode: 'render', dirty: false, loaded: false,

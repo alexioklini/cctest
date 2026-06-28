@@ -269,6 +269,11 @@ async function refreshTerminalTree() {
     window._wdTreeData = data.tree || [];
     host.innerHTML = _wdRenderTree(window._wdTreeData);
     host.dataset.loaded = '1';
+    // Keep the poll's change-detection signature in sync so a full refresh here
+    // doesn't trigger a redundant repaint on the next poll tick.
+    if (typeof _term !== 'undefined' && typeof _wdTreeSignature === 'function') {
+      _term._treeSig = _wdTreeSignature(window._wdTreeData).sort().join('\n');
+    }
   } catch (e) {
     host.innerHTML = '<div class="pt-empty">Verzeichnis konnte nicht geladen werden.</div>';
   }

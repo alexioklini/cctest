@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.227.0",
+        "date": "2026-06-28",
+        "title": "Code-Bereich: sinnvolle Standard-Platzierung + Live-Dateibaum",
+        "body": "Beim Arbeiten mit geteiltem Bereich öffnen sich neue Inhalte "
+                "jetzt automatisch dort, wo es Sinn ergibt: Quelldateien oben "
+                "links, andere Dateien (HTML, Markdown …) oben rechts, Terminal "
+                "und Terminal-Chat unten — passend zum gewählten Layout, mit "
+                "sinnvollem Ausweichen, wenn eine Position im aktuellen Layout "
+                "fehlt. Wer einen Bereich gezielt anspricht (über die "
+                "Knöpfe direkt am Bereich), öffnet weiterhin genau dort. "
+                "Außerdem aktualisiert sich der Dateibaum im Arbeitsverzeichnis "
+                "nun von selbst, wenn Dateien hinzukommen oder gelöscht werden — "
+                "etwa durch einen Terminal-Befehl, den „!“-Shell-Befehl oder ein "
+                "externes Programm.",
+        "audience": "user",
+        "versions": ["9.227.0"],
+    },
+    {
         "version": "9.226.0",
         "date": "2026-06-28",
         "title": "Terminal-Chat: Shell-Befehle mit „!“",

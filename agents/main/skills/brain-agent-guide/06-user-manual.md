@@ -454,11 +454,21 @@ die Tab-Leiste eines anderen verschieben, und die Teilbereiche sind über die
 Trennlinien **größenverstellbar**. Aufteilung, Größen und geöffnete Dateien
 werden **pro Projekt** gemerkt.
 
+**Standard-Platzierung**: Neue Inhalte landen je nach Layout automatisch im
+passenden Bereich — **Quelldateien** oben links, **andere Dateien** (HTML,
+Markdown, SVG …) oben rechts, **Terminal** und **Terminal-Chat** unten; fehlt
+eine Position im aktuellen Layout, wird sinnvoll ausgewichen (z. B. oben rechts
+→ oben links). Öffnen Sie gezielt über die **Knöpfe direkt am Bereich**
+(„+“ / ◈ / Neue Datei), landet der Inhalt weiterhin genau in diesem Bereich.
+
 **Automatische Aktualisierung**: Ändert sich eine im Editor geöffnete Datei auf
 der Platte (durch den Assistenten, das Terminal oder ein externes Programm),
 wird sie **automatisch neu geladen**. Haben Sie selbst **ungespeicherte
 Änderungen** offen, wird nichts überschrieben — der Tab markiert den Konflikt
-(amber), bis Sie speichern.
+(amber), bis Sie speichern. Auch der **Datei-Baum** des Arbeitsverzeichnisses
+hält sich von selbst aktuell: kommen Dateien hinzu oder werden gelöscht (etwa
+durch einen Terminal-Befehl, den „!“-Shell-Befehl oder ein externes Programm),
+erscheinen bzw. verschwinden sie automatisch.
 
 **In externem Programm öffnen**: Dateien, die sich nicht sinnvoll im Editor
 bearbeiten lassen (Word, Excel, PowerPoint, PDF, Medien), öffnen sich per Klick
