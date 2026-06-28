@@ -29,6 +29,17 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.231.0",
+        "date": "2026-06-28",
+        "title": "Code-Projekte: Terminal direkt öffnen",
+        "body": "In der Ansicht eines Code-Projekts gibt es jetzt oben einen "
+                "„Terminal“-Knopf, der den Terminal- und Editor-Arbeitsbereich "
+                "sofort im Vollbild öffnet — ohne dass Sie erst einen Chat "
+                "starten müssen.",
+        "audience": "user",
+        "versions": ["9.231.0"],
+    },
+    {
         "version": "9.230.0",
         "date": "2026-06-28",
         "title": "Terminal-Chat: Abbrechen, schnellere Befehle, Aufräumen",

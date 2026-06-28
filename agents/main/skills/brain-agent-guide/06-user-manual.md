@@ -454,6 +454,10 @@ die Tab-Leiste eines anderen verschieben, und die Teilbereiche sind über die
 Trennlinien **größenverstellbar**. Aufteilung, Größen und geöffnete Dateien
 werden **pro Projekt** gemerkt.
 
+**Terminal direkt öffnen**: In der **Projektansicht** eines Code-Projekts öffnet
+der **„Terminal“-Knopf** oben (neben Titel und Stern) den Terminal/Editor-Bereich
+sofort im **Vollbild** — ohne dass Sie erst einen Chat starten müssen.
+
 **Standard-Platzierung**: Neue Inhalte landen je nach Layout automatisch im
 passenden Bereich — **Quelldateien** oben links, **andere Dateien** (HTML,
 Markdown, SVG …) oben rechts, **Terminal** und **Terminal-Chat** unten; fehlt

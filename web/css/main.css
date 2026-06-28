@@ -3978,6 +3978,15 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   padding: 4px;
 }
 .project-detail-star:hover { color: var(--warning); }
+/* Code-mode "Terminal" header button — open the terminal/editor workspace directly. */
+.project-detail-terminal-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; margin-left: 4px; font-size: 12px; font-family: var(--font-mono);
+  color: var(--text-200); background: var(--bg-200);
+  border: 1px solid var(--border-200); border-radius: 6px; cursor: pointer; }
+.project-detail-terminal-btn:hover { background: var(--bg-300); color: var(--text-100);
+  border-color: var(--accent-brand); }
+.project-detail-terminal-btn svg { color: var(--accent-brand); }
 .project-detail-desc {
   margin-top: 8px;
   font-size: 14px;

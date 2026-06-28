@@ -1037,6 +1037,7 @@
     "projectFullResync": "writable",
     "projectItemPillHtml": "writable",
     "projectOpenKnowledgeGraph": "writable",
+    "projectOpenTerminal": "writable",
     "projectSchedCancel": "writable",
     "projectSchedCloseHistory": "writable",
     "projectSchedDelete": "writable",

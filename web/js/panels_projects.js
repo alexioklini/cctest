@@ -413,6 +413,10 @@ async function loadProjectDetail(agentId, projectName) {
     const cmSection = document.getElementById('project-codemode-section');
     const cmWd = document.getElementById('project-codemode-wd');
     const isCode = !!project.code_mode;
+    // Code projects get a header "Terminal" button to open the terminal/editor
+    // workspace directly — no need to start a chat first.
+    const termBtn = document.getElementById('project-detail-terminal-btn');
+    if (termBtn) termBtn.style.display = isCode ? 'inline-flex' : 'none';
     if (cmSection) cmSection.style.display = isCode ? '' : 'none';
     if (cmWd) cmWd.textContent = project.working_dir || '— (noch kein Verzeichnis gewählt)';
     // In code mode there is no MemPalace/ingest, so the project-mode, sources,

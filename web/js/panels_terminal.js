@@ -349,6 +349,22 @@ function terminalAvailable() {
   return false;
 }
 
+// Open the terminal/editor workspace DIRECTLY from the project-detail view
+// (the header "Terminal" button) — no chat needed. Opens MAXIMIZED (full-area):
+// a tiny bottom-docked strip makes no sense from the project view. If it comes up
+// with no terminal tab (only restored editors, or nothing), spawn a fresh one so
+// the user lands in terminal mode.
+async function projectOpenTerminal() {
+  await terminalTogglePanel(true);
+  if (!_term.open) return;   // not a code-mode project / ctx failed
+  // Force MAXIMIZED (full screen) when opened from the project view.
+  if (!_term.maximized) terminalToggleMaximize();
+  const hasTerminal = (_term.tabs || []).some(t => t.kind === 'terminal');
+  if (!hasTerminal) { await terminalNewTab(); return; }
+  const term = (_term.tabs || []).find(t => t.kind === 'terminal');
+  if (term) _terminalActivate(term.id);
+}
+
 // Show/hide the status-bar terminal toggle based on code-mode context. Also
 // auto-closes the panel if we navigated away from a code-mode project.
 function terminalRefreshToggle() {
