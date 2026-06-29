@@ -488,32 +488,55 @@ async function projectOpenTerminal() {
   if (ap && ap.active) _terminalActivate(ap.active);
 }
 
-// The project the CURRENT view belongs to (project-detail view or the active
-// chat's project), or '' when none. Sync — mirrors _terminalCtx's project pick.
-function _terminalCurrentViewProject() {
-  if (state._projectDetail && state._projectDetailName === state.currentProject
-      && state._projectDetail.code_mode) return state._projectDetailName || '';
-  return state.currentProject || (state.activeChat && state.activeChat.project) || '';
+// Snapshot the view the terminal is being opened FROM, so we can detect later when
+// that exact view is no longer shown. Two origin kinds:
+//   • 'project' — opened from the project-detail screen of a code-mode project →
+//     close once that project is no longer shown in the project-detail view.
+//   • 'chat'    — opened from a code-mode project chat (bound to that chat's
+//     sessionId) → close once that specific chat is no longer visible.
+// The chat id is `sessionId` (NOT `.id`, which doesn't exist on the chat object).
+function _terminalCaptureOrigin() {
+  if (state.currentView === 'project-detail' && state._projectDetail
+      && state._projectDetail.code_mode) {
+    _term.originKind = 'project';
+    _term.originProject = state._projectDetailName || '';
+    _term.originChatId = '';
+  } else {
+    _term.originKind = 'chat';
+    _term.originChatId = (state.activeChat && state.activeChat.sessionId) || '';
+    _term.originProject = (state.activeChat && state.activeChat.project)
+                          || state.currentProject || '';
+  }
+}
+
+// Is the originating view still the one currently shown? A project-origin requires
+// the project-detail view of the SAME project; a chat-origin requires the chat view
+// with the SAME active chat session. Anything else (welcome, list views, a different
+// project, a different/other chat) means the origin is no longer visible.
+function _terminalOriginStillShown() {
+  if (_term.originKind === 'project') {
+    return state.currentView === 'project-detail'
+        && (state._projectDetailName || '') === _term.originProject;
+  }
+  if (_term.originKind === 'chat') {
+    return state.currentView === 'chat'
+        && !!_term.originChatId
+        && (state.activeChat && state.activeChat.sessionId) === _term.originChatId;
+  }
+  return false;
 }
 
 // Show/hide the status-bar terminal toggle based on code-mode context. Also
-// auto-closes the panel when the view it was launched from is no longer shown:
-//   • navigated away from any code-mode context (terminalAvailable false), OR
-//   • switched to a DIFFERENT project than the one the terminal is bound to
-//     (the open workspace belongs to _term.project; showing it over another
-//     project's view would be stale/wrong).
+// auto-closes the panel the moment the view it was launched from is no longer
+// shown — the originating project-detail screen or the specific originating chat.
+// Bound to the ORIGIN (not just the project), so opening another chat in the same
+// project, or any list/welcome view, closes it too.
 function terminalRefreshToggle() {
   const btn = document.getElementById('terminal-toggle-btn');
   const avail = terminalAvailable();
   if (btn) btn.classList.toggle('code-mode-available', !!avail);
   if (!_term.open) return;
-  if (!avail) { terminalTogglePanel(false); return; }
-  const viewProject = _terminalCurrentViewProject();
-  // If the current view resolves to a project and it differs from the terminal's
-  // bound project, the launching view is no longer shown → close the panel.
-  if (_term.project && viewProject && viewProject !== _term.project) {
-    terminalTogglePanel(false);
-  }
+  if (!_terminalOriginStillShown()) terminalTogglePanel(false);
 }
 
 async function terminalTogglePanel(force) {
@@ -523,6 +546,10 @@ async function terminalTogglePanel(force) {
   if (want) {
     const ctx = await _terminalCtx();
     if (!ctx) { if (typeof showToast === 'function') showToast('Terminal nur in Code-Mode-Projekten'); return; }
+    // Bind to the ORIGINATING view so we can auto-close once it's no longer shown
+    // (project-detail screen, or a specific chat session). Captured every open/
+    // re-show so re-opening from a different view rebinds.
+    _terminalCaptureOrigin();
     // Already open for this same project? Just (re)show it — do NOT re-run
     // _terminalLoadSessions, which would re-add tabs / re-trigger the empty→spawn
     // path and pile a new terminal on top of the restored workspace.

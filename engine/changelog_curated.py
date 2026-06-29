@@ -45,7 +45,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "das Projekt bzw. den Chat, aus dem der Bereich geöffnet wurde, "
                 "schließt er sich automatisch.",
         "audience": "user",
-        "versions": ["9.233.0", "9.233.1"],
+        "versions": ["9.233.0", "9.233.1", "9.233.2"],
     },
     {
         "version": "9.232.0",
