@@ -983,13 +983,21 @@ class ProjectsHandlerMixin:
         cypher = (qs.get("cypher", [""])[0] or "").strip()
         outline = (qs.get("outline", [""])[0] or "").strip()
         usages = (qs.get("usages", [""])[0] or "").strip()
+        sql_meta = (qs.get("sql_meta", [""])[0] or "").strip()
+        sql_id = (qs.get("sql", [""])[0] or "").strip()
         wd = (project.get("working_dir") or "").strip()
         try:
             limit = int(qs.get("limit", ["30"])[0])
         except (TypeError, ValueError):
             limit = 30
         try:
-            if outline:
+            if sql_meta:
+                # Whether to offer SQL analyses + the card list (frontend gates on this).
+                out = {"has_sql": engine.cbm_project_has_sql(wd),
+                       "analyses": engine.cbm_sql_analyses_meta()}
+            elif sql_id:
+                out = engine.cbm_sql_analyze(sql_id, wd)
+            elif outline:
                 out = engine.cbm_code_outline(cache)
             elif usages:
                 out = engine.cbm_code_usages(usages, cache, working_dir=wd)

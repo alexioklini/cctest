@@ -1027,6 +1027,10 @@ textarea { resize: none; }
   display: flex; flex-direction: column; gap: 2px; }
 .code-an-sub { font-weight: 400; font-size: 11.5px; color: var(--text-300); }
 .code-an-cards { display: flex; flex-wrap: wrap; gap: 8px; }
+/* SQL analyses get their own labelled group below the code analyses. */
+.code-an-grouphead { font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--text-300); margin: 12px 0 6px; }
+.code-an-card.code-an-sql .code-an-card-label::before { content: "⛁ "; opacity: .7; }
 .code-an-card { display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
   text-align: left; padding: 8px 12px; border-radius: 8px; cursor: pointer;
   border: 1px solid var(--border-100); background: var(--bg-100); min-width: 150px;

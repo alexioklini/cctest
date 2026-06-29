@@ -425,6 +425,13 @@ nutzbar:
   Kennzahlen, Klick auf Pfad/Zeile springt in den Code). Für Power-User gibt es
   ganz unten einen Aufklapper **„Eigene Abfrage (erweitert)“** für rohe
   (nur lesende) Cypher-Abfragen.
+  - **SQL-Auswertungen**: Enthält das Projekt SQL-Dateien (`.sql` oder `.dbq`),
+    erscheint zusätzlich eine eigene Gruppe **SQL-Auswertungen** mit:
+    **Tabellen-Hotspots** (meistreferenzierte Tabellen über alle Abfragen),
+    **komplexeste Abfragen** (nach Anzahl der JOINs), **Linked-Server-Zugriffe**
+    (OPENQUERY-Abhängigkeiten) und einem **Prozeduren-&-Views-Inventar** (mit
+    Sprung zur Definition). Funktioniert auch mit großen, gemischten SQL-Sammlungen
+    inkl. IBM-DB2/iSeries-Syntax und in `.dbq` eingebetteten Abfragen.
 
 **Datei-Baum im unteren Bereich** (Code-Projekte): Der Baum des
 Arbeitsverzeichnisses liegt als **linke Spalte** des unteren Bereichs, direkt

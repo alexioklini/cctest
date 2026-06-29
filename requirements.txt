@@ -38,3 +38,8 @@ oletools
 # see diagram_render/package.json. One-time per machine: `cd diagram_render && npm install`
 # (bundles its own Chromium via Puppeteer). reportlab/python-docx/python-pptx (already
 # used by write_document) handle embedding the rendered chart into pdf/docx/pptx.
+
+# SQL-corpus analysis (code-mode "Code-Auswertungen" → SQL cards). OPTIONAL: the
+# analyzer is regex-based and works without this; sqlglot only adds column-lineage
+# on cleanly-parsable files. Gated by HAVE_SQLGLOT in engine/tools/sql_analysis.py.
+sqlglot>=20.0.0

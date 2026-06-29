@@ -2126,6 +2126,11 @@ const _CODE_ANALYSES = [
     cols: ['Klasse', 'erbt von / implementiert', 'Datei', 'Zeile'], fileCol: 2, lineCol: 3, barCol: -1 },
 ];
 
+// SQL analysis cards, fetched per project (only shown when the project has .sql/
+// .dbq files). Distinct from the Cypher analyses: they run server-side over the
+// raw SQL corpus (regex, dialect-tolerant) and already return the table shape.
+let _codeSqlCards = null;   // null = not yet fetched; [] = none/no sql
+
 function codeAnalysisDialog() {
   if (document.getElementById('code-analysis')) return;
   const ov = document.createElement('div');
@@ -2141,6 +2146,10 @@ function codeAnalysisDialog() {
       <div class="code-an-head">Code-Auswertungen
         <span class="code-an-sub">Analysen über den Code-Index — Pfad/Zeile anklicken springt in den Code</span></div>
       <div class="code-an-cards">${cards}</div>
+      <div id="code-an-sql-section" style="display:none">
+        <div class="code-an-grouphead">SQL-Auswertungen</div>
+        <div class="code-an-cards" id="code-an-sql-cards"></div>
+      </div>
       <div class="code-an-resultwrap">
         <div class="code-an-resulthead"><span id="code-an-title"></span><span id="code-an-status" class="code-an-status"></span></div>
         <div id="code-an-results" class="code-an-results"><div class="code-palette-hint">Wählen Sie eine Auswertung.</div></div>
@@ -2166,6 +2175,49 @@ function codeAnalysisDialog() {
       if (ta && document.activeElement === ta) { e.preventDefault(); _codeCypherRun(); }
     }
   });
+  _codeAnalysisLoadSqlCards();   // adds SQL cards if the project has .sql/.dbq
+}
+
+// Fetch + render the SQL analysis cards (only when the project actually has SQL).
+async function _codeAnalysisLoadSqlCards() {
+  const sec = document.getElementById('code-an-sql-section');
+  const wrap = document.getElementById('code-an-sql-cards');
+  if (!sec || !wrap) return;
+  const d = await _codeIndexFetch('sql_meta=1');
+  if (!d || !d.has_sql || !Array.isArray(d.analyses) || !d.analyses.length) return;
+  _codeSqlCards = d.analyses;
+  wrap.innerHTML = d.analyses.map(a =>
+    `<button class="code-an-card code-an-sql" data-id="${esc(a.id)}" onclick="_codeSqlRun('${esc(a.id)}')">
+       <span class="code-an-card-label">${esc(a.label)}</span>
+       <span class="code-an-card-hint">${esc(a.hint)}</span>
+     </button>`).join('');
+  sec.style.display = '';
+}
+
+// Run a SQL analysis (server-side over the raw SQL corpus). Reuses the analysis
+// result area + _codeAnalysisTable — the backend returns the same shape.
+async function _codeSqlRun(id) {
+  const card = _codeSqlCards && _codeSqlCards.find(x => x.id === id);
+  const title = document.getElementById('code-an-title');
+  const status = document.getElementById('code-an-status');
+  const box = document.getElementById('code-an-results');
+  if (!box) return;
+  document.querySelectorAll('.code-an-card').forEach(c => c.classList.toggle('active', c.dataset.id === id));
+  if (title) title.textContent = (card && card.label) || 'SQL';
+  if (status) status.textContent = 'Läuft …';
+  box.innerHTML = '';
+  const d = await _codeIndexFetch(`sql=${encodeURIComponent(id)}`);
+  if (!d || d.error) {
+    if (status) status.textContent = '';
+    box.innerHTML = `<div class="code-palette-hint code-cypher-err">${esc((d && d.error) || 'Auswertung fehlgeschlagen')}</div>`;
+    return;
+  }
+  const rows = d.rows || [];
+  if (status) status.textContent = `${rows.length} Treffer`;
+  if (!rows.length) { box.innerHTML = '<div class="code-palette-hint">Keine Daten.</div>'; return; }
+  // backend supplies the column spec (fileCol/lineCol/barCol) → reuse the renderer
+  const spec = { cols: d.columns || [], fileCol: (d.fileCol ?? -1), lineCol: (d.lineCol ?? -1), barCol: (d.barCol ?? -1) };
+  box.innerHTML = _codeAnalysisTable(spec, rows);
 }
 
 // Back-compat alias: the old entry point name still works (e.g. any cached HTML).

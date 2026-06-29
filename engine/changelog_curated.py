@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.235.0",
+        "date": "2026-06-29",
+        "title": "Code-Bereich: SQL-Auswertungen",
+        "body": "Enthält Ihr Code-Projekt SQL-Dateien (.sql oder .dbq), bietet "
+                "der Knopf 'Auswertungen' jetzt zusätzlich SQL-Analysen: die "
+                "meistgenutzten Tabellen über alle Abfragen (zentrale "
+                "Datenquellen), die komplexesten Abfragen (nach Anzahl der "
+                "Verknüpfungen — gute Review-Kandidaten), die Zugriffe auf "
+                "externe Datenbanken (Linked Server) sowie ein Inventar aller "
+                "Prozeduren und Views. Pfad und Zeile sind anklickbar und "
+                "springen direkt zur Stelle. Funktioniert auch mit "
+                "umfangreichen, gemischten SQL-Sammlungen.",
+        "audience": "user",
+        "versions": ["9.235.0"],
+    },
+    {
         "version": "9.234.2",
         "date": "2026-06-29",
         "title": "Terminal: Symbole & Schrift korrigiert",
