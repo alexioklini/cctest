@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.234.2",
+        "date": "2026-06-29",
+        "title": "Terminal: Symbole & Schrift korrigiert",
+        "body": "Im eingebauten Terminal werden Programme mit grafischen "
+                "Oberflächen (z. B. Systemmonitore wie htop) jetzt korrekt "
+                "dargestellt — Rahmen, Balken und Symbole erscheinen sauber "
+                "statt als wirres Zeichengewirr. Außerdem nutzen Terminal und "
+                "Terminal-Chat jetzt eine gut lesbare Terminal-Schrift (die "
+                "Standard-Schrift Ihres Systems), die alle Sonderzeichen "
+                "zuverlässig anzeigt.",
+        "audience": "user",
+        "versions": ["9.234.2"],
+    },
+    {
         "version": "9.234.0",
         "date": "2026-06-29",
         "title": "Code-Bereich: Symbol-Übersicht & Auswertungen",

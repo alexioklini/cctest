@@ -750,6 +750,21 @@ async function terminalNewTab(paneId) {
   } catch (e) { if (typeof showToast === 'function') showToast('Terminal konnte nicht gestartet werden'); }
 }
 
+// xterm needs a LITERAL font-family string — it does not resolve CSS `var()`
+// (passing 'var(--font-mono…)' silently fell back to a default, hurting
+// readability). We build a terminal-grade stack of each OS's DEFAULT terminal
+// font, all of which carry full box-drawing / block-shade / Powerline coverage so
+// TUIs (htop/btop/vim) render crisply:
+//   macOS Terminal.app → SF Mono, classic default Menlo
+//   Windows 11 Terminal → Cascadia Mono (Code = ligature variant); old Consolas
+//   Linux → DejaVu Sans Mono
+// `ui-monospace` maps to the OS default; literal monospace is the last resort.
+// NOTE: the app's --font-mono ("Anthropic Mono") is intentionally NOT first — it
+// lacks box-drawing glyphs, which is what garbled the monitor TUI.
+const _TERM_FONT_STACK = '"SF Mono", "Menlo", "Cascadia Mono", "Cascadia Code", '
+  + '"Consolas", "DejaVu Sans Mono", "Liberation Mono", ui-monospace, monospace';
+function _terminalFontFamily() { return _TERM_FONT_STACK; }
+
 // Build an xterm theme from the app's CSS variables so the terminal follows the
 // light/dark mode of the rest of the UI (was hardcoded #1e1e1e → black in light
 // mode). Reads the resolved --bg-000 / --text-100 / --accent-brand off :root.
@@ -781,7 +796,7 @@ function _terminalAddTab(id, paneId) {
   el.style.display = 'none';
   (pane ? pane.bodyEl : document.getElementById('terminal-panes')).appendChild(el);
   const term = new Terminal({
-    fontSize: 13, fontFamily: 'var(--font-mono, monospace)',
+    fontSize: 13, fontFamily: _terminalFontFamily(),
     cursorBlink: true, scrollback: 5000,
     theme: _terminalXtermTheme(),
   });
@@ -899,7 +914,19 @@ async function _terminalAttach(tab) {
           else if (line.startsWith('data: ')) data += line.slice(6);
         });
         if (ev === 'out' && data) {
-          try { const bytes = atob(data); tab.term.write(bytes); tab.offset += bytes.length; } catch (_) {}
+          // base64 → raw bytes. Write a Uint8Array (NOT the binary string): xterm
+          // decodes bytes as UTF-8, so multi-byte glyphs (box-drawing █ ─ │, block
+          // shades, powerline, emoji) render correctly. Passing the binary string
+          // would make xterm read each byte as a Latin-1 code point → 0xE2 shows as
+          // "â", the mojibake that garbled TUIs like htop/btop. offset stays the
+          // BYTE count (resume `since=` is byte-based server-side).
+          try {
+            const bin = atob(data);
+            const u8 = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+            tab.term.write(u8);
+            tab.offset += u8.length;
+          } catch (_) {}
         } else if (ev === 'closed') {
           tab.term.write('\r\n[Sitzung beendet]\r\n');
         }
