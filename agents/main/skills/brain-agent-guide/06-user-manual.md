@@ -399,26 +399,32 @@ Fehler). Der **Datei-Baum des Arbeitsverzeichnisses** darunter aktualisiert sich
 während `init` oder einer Chat-Antwort) — kein manuelles Neuladen nötig (der
 ⟳-Knopf bleibt für eine sofortige Aktualisierung).
 
-**Code-Index im Editor nutzen** (Code-Projekte): Der Code-Editor im unteren
-Bereich kennt alle Symbole des Projekts (aus dem automatisch gepflegten
-Code-Index) und macht sie direkt nutzbar:
-- **Symbol-Schnellsuche**: **Cmd/Strg+P** (oder der Knopf **Symbole** in der
-  Editor-Leiste) öffnet eine Suchleiste über alle Funktionen, Methoden und
-  Klassen. Tippen filtert live; mit **↑/↓** wählen, **Enter** oder Klick öffnet
-  die Datei und springt an die Definition (die Zeile blinkt kurz auf).
-- **Rechtsklick auf ein Symbol** im Editor: **Gehe zu Definition** (springt zur
-  Fundstelle) und **Wer ruft das auf?** (zeigt die aufrufenden Stellen als
-  klickbare Liste).
+**Code-Index nutzen** (Code-Projekte): Der untere Bereich kennt alle Symbole des
+Projekts (aus dem automatisch gepflegten Code-Index) und macht sie direkt
+nutzbar:
+- **Symbole-Panel** (unter dem Datei-Baum): zeigt alle **Klassen, Methoden,
+  Funktionen und Variablen** des Projekts, nach Datei gruppiert, jeweils mit
+  Signatur und Zeilennummer. Das **Suchfeld** oben filtert live. **Klick** auf
+  einen Eintrag öffnet die Datei und springt an die Definition (die Zeile blinkt
+  kurz auf). Über das **↗-Symbol** klappt ein Eintrag seine **Aufrufer** (wer
+  ruft das auf) und **Verwendungen** (alle Fundstellen im Projekt) auf — beide
+  ebenfalls anklickbar zum Hinspringen. Das Panel lässt sich einklappen.
+- **Symbol-Schnellsuche**: **Cmd/Strg+P** öffnet zusätzlich eine schnelle
+  Suchleiste über alle Funktionen, Methoden und Klassen (↑/↓ + Enter springt).
+- **Rechtsklick auf ein Symbol** im Editor: **Gehe zu Definition** und **Wer
+  ruft das auf?** (klickbare Liste der aufrufenden Stellen).
 - **Autovervollständigung**: **Strg-Leertaste** schlägt passende
-  Projekt-Symbole vor (rein aus dem Index, kein KI-Lauf, keine Wartezeit; auf
-  dem Mac Strg-Leertaste — nicht Cmd-Leertaste, das ist Spotlight).
-- **Hover**: Mit der Maus über ein Symbol fahren zeigt dessen Signatur,
-  Beschreibung (Docstring) und wie oft es aufgerufen wird.
-- **Cypher-Suchleiste** (Power-User, Knopf **Cypher**): gezielte Abfragen an
-  den Code-Index per Cypher (z. B. „komplexeste Methoden", „alle Klassen mit
-  Datei", „Funktionen ohne Tests"). Fertige Beispiel-Abfragen stehen als Chips
-  bereit, **Cmd/Strg+Enter** führt aus, das Ergebnis erscheint als Tabelle, und
-  ein Klick auf einen Dateipfad öffnet die Datei im Editor.
+  Projekt-Symbole vor (rein aus dem Index, kein KI-Lauf; auf dem Mac
+  Strg-Leertaste — nicht Cmd-Leertaste, das ist Spotlight).
+- **Hover**: Mit der Maus über ein Symbol fahren zeigt Signatur, Docstring und
+  Aufruf-Häufigkeit.
+- **Auswertungen** (Σ-Knopf im Symbole-Panel): fertige Analysen über den
+  Code-Index als Karten — **komplexeste Funktionen**, **meistgenutzte
+  Funktionen**, **aufruf-intensivste Funktionen**, **größte Dateien**,
+  **Klassenhierarchie** — mit übersichtlicher Ergebnistabelle (Balken für
+  Kennzahlen, Klick auf Pfad/Zeile springt in den Code). Für Power-User gibt es
+  ganz unten einen Aufklapper **„Eigene Abfrage (erweitert)“** für rohe
+  (nur lesende) Cypher-Abfragen.
 
 **Datei-Baum im unteren Bereich** (Code-Projekte): Der Baum des
 Arbeitsverzeichnisses liegt als **linke Spalte** des unteren Bereichs, direkt

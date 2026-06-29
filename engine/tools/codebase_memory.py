@@ -341,6 +341,133 @@ def code_query_raw(cypher: str, cache_dir: str) -> dict:
             "total": d.get("total")}
 
 
+# Symbol labels shown in the outline tree, in display order (top → leaf-ish).
+_OUTLINE_LABELS = ["Class", "Interface", "Struct", "Enum", "Trait",
+                   "Method", "Function", "Field", "Variable", "Constant"]
+
+
+def _cell(row, i):
+    """Pull column i from a cbm row that may be a list or a dict-by-position."""
+    if isinstance(row, (list, tuple)):
+        return row[i] if i < len(row) else None
+    return None
+
+
+def code_outline(cache_dir: str) -> dict:
+    """Whole-project symbol outline for the file-tree's 'Symbole' panel: every
+    class/method/function/variable with its file_path (repo-relative), start line
+    and signature. Grouped client-side by file → label. cbm's labels() returns a
+    count (not the names), so we query once PER symbol label and tag each row."""
+    st = index_status(cache_dir)
+    if not st.get("indexed"):
+        return {"indexed": False, "symbols": []}
+    project = st["project"]
+    out = []
+    for label in _OUTLINE_LABELS:
+        cy = (f"MATCH (n:{label}) WHERE n.file_path IS NOT NULL "
+              "RETURN n.name, n.file_path, n.start_line, n.signature, n.qualified_name "
+              "ORDER BY n.file_path, n.start_line")
+        d = _run("query_graph", {"query": cy, "project": project}, cache_dir,
+                 want_project=False)
+        if d.get("error"):
+            continue
+        for row in d.get("rows", []) or []:
+            name = _cell(row, 0)
+            if not name:
+                continue
+            line = _cell(row, 2)
+            try:
+                line = int(line) if line not in (None, "") else None
+            except (TypeError, ValueError):
+                line = None
+            out.append({
+                "name": str(name),
+                "label": label,
+                "file": _cell(row, 1) or "",
+                "line": line,
+                "signature": _cell(row, 3) or "",
+                "qualified_name": _cell(row, 4) or "",
+            })
+    return {"indexed": True, "symbols": out}
+
+
+def code_usages(name: str, cache_dir: str, working_dir: str = "") -> dict:
+    """Usage references for a symbol: precise CALLERS from the graph plus a fast
+    project-wide text-grep of the bare name for other mentions (imports, attribute
+    access, plain references the call graph doesn't carry). Each hit has file +
+    line for jumping. Grep is repo-relative, ripgrep if present else a bounded
+    Python walk; both skip the usual noise dirs."""
+    nm = (name or "").strip()
+    if not nm:
+        return {"callers": [], "usages": []}
+    callers = code_callers(nm, cache_dir).get("callers", [])
+    usages = _grep_symbol(nm, working_dir) if working_dir else []
+    return {"callers": callers, "usages": usages, "name": nm}
+
+
+_GREP_SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__",
+                   ".cbm-cache", ".brain-extracted", "dist", "build", ".mypy_cache"}
+_GREP_MAX_HITS = 200
+
+
+def _grep_symbol(name: str, working_dir: str) -> list:
+    """Whole-word text search for `name` under working_dir → [{file, line, text}]
+    (file repo-relative). Prefers ripgrep; falls back to a bounded Python walk."""
+    import shutil
+    wd = os.path.abspath(working_dir)
+    if not os.path.isdir(wd):
+        return []
+    rg = shutil.which("rg")
+    hits: list = []
+    if rg:
+        globs = []
+        for d in _GREP_SKIP_DIRS:
+            globs += ["-g", f"!{d}/"]
+        try:
+            p = subprocess.run(
+                [rg, "--no-heading", "--line-number", "--color", "never",
+                 "--word-regexp", "--max-count", "50", *globs, "--", name, wd],
+                capture_output=True, text=True, timeout=15,
+            )
+            for ln in (p.stdout or "").splitlines():
+                # format: <abs>:<line>:<text>
+                parts = ln.split(":", 2)
+                if len(parts) < 3:
+                    continue
+                fp, lno, text = parts
+                try:
+                    rel = os.path.relpath(fp, wd)
+                except ValueError:
+                    rel = fp
+                hits.append({"file": rel, "line": int(lno) if lno.isdigit() else None,
+                             "text": text.strip()[:200]})
+                if len(hits) >= _GREP_MAX_HITS:
+                    break
+            return hits
+        except Exception:
+            pass  # fall through to Python walk
+    # Python fallback: word-boundary regex over text files only.
+    import re as _re
+    pat = _re.compile(r"\b" + _re.escape(name) + r"\b")
+    for root, dirs, files in os.walk(wd):
+        dirs[:] = [d for d in dirs if d not in _GREP_SKIP_DIRS]
+        for f in files:
+            fp = os.path.join(root, f)
+            try:
+                if os.path.getsize(fp) > 2_000_000:
+                    continue
+                with open(fp, "r", encoding="utf-8", errors="ignore") as fh:
+                    for i, line in enumerate(fh, 1):
+                        if pat.search(line):
+                            hits.append({"file": os.path.relpath(fp, wd), "line": i,
+                                         "text": line.strip()[:200]})
+                            if len(hits) >= _GREP_MAX_HITS:
+                                return hits
+            except (OSError, UnicodeError):
+                continue
+    return hits
+
+
 def graph_overview(cache_dir: str, limit: int = 200) -> dict:
     """Lightweight graph-view payload: top nodes by degree + their edges, for a
     project graph visualisation. Best-effort."""

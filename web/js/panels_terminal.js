@@ -565,6 +565,8 @@ async function terminalTogglePanel(force) {
     _terminalRestoreHeight();
     await _terminalLoadSessions();
     refreshTerminalTree();
+    _codeOutline.loaded = false;             // reset for the (possibly new) project
+    if (typeof codeOutlineLoad === 'function') codeOutlineLoad();
     startEditorFreshPoll();   // auto-reload editors when files change on disk
   } else {
     panel.style.display = 'none';
@@ -1227,13 +1229,6 @@ async function terminalOpenFile(absPath) {
       <button class="ed-iconbtn ed-mode" data-mode="raw" onclick="terminalEditorMode('${id}','raw')" title="Bearbeiten" aria-label="Bearbeiten">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
       </button>
-      <span class="ed-sep"></span>
-      <button class="ed-iconbtn" onclick="codeSymbolPalette()" title="Symbol suchen (${_isMac()?'⌘':'Strg'}+P)" aria-label="Symbole suchen">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
-      </button>
-      <button class="ed-iconbtn" onclick="codeCypherBar()" title="Code-Index per Cypher abfragen (Power-User)" aria-label="Cypher-Abfrage">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-      </button>
       <span style="flex:1"></span>
       <button class="ed-iconbtn ed-save" onclick="terminalEditorSave('${id}')" title="Speichern" aria-label="Speichern" disabled>
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
@@ -1658,7 +1653,7 @@ function _codeIndexAbs(relOrAbs) {
 }
 
 // Open `absPath` in the editor and move the cursor to `line` (1-based), centred.
-async function _terminalJumpTo(absPath, line) {
+async function _terminalJumpTo(absPath, line, col) {
   if (!absPath) return;
   await terminalOpenFile(absPath);
   const id = 'edit-' + absPath;
@@ -1669,7 +1664,8 @@ async function _terminalJumpTo(absPath, line) {
   const doJump = () => {
     if (!tab.cm) { setTimeout(doJump, 40); return; }
     const ln = Math.max(0, (parseInt(line, 10) || 1) - 1);
-    tab.cm.setCursor({ line: ln, ch: 0 });
+    const ch = Math.max(0, (parseInt(col, 10) || 1) - 1);
+    tab.cm.setCursor({ line: ln, ch });
     // centre the target line in the viewport
     const t = tab.cm.charCoords({ line: ln, ch: 0 }, 'local').top;
     const h = tab.cm.getScrollInfo().clientHeight;
@@ -1679,6 +1675,153 @@ async function _terminalJumpTo(absPath, line) {
     tab.cm.focus();
   };
   setTimeout(doJump, 60);
+}
+
+// ─── Symbol outline panel (file-tree area) ───────────────────────────────────
+// Whole-project code outline (classes/methods/functions/variables) grouped by
+// file, fed by the code index (no LLM). Click an entry → jump to its definition;
+// expand an entry → its callers (from the graph) + usages (text-grep). A search
+// box filters live. Lives under the file tree; the Σ header button opens the
+// code-analysis dialog.
+let _codeOutline = { symbols: [], filter: '', loaded: false, expanded: {}, refs: {} };
+
+// Per-label glyph + CSS class for the outline rows (compact, monochrome).
+const _OUTLINE_GLYPH = {
+  Class:    { g: '◈', c: 'sym-class' },
+  Interface:{ g: '◈', c: 'sym-class' },
+  Struct:   { g: '◈', c: 'sym-class' },
+  Enum:     { g: '◈', c: 'sym-class' },
+  Trait:    { g: '◈', c: 'sym-class' },
+  Method:   { g: 'ƒ', c: 'sym-method' },
+  Function: { g: 'ƒ', c: 'sym-func' },
+  Field:    { g: '□', c: 'sym-var' },
+  Variable: { g: '□', c: 'sym-var' },
+  Constant: { g: '□', c: 'sym-const' },
+};
+function _outlineGlyph(label) { return _OUTLINE_GLYPH[label] || { g: '·', c: 'sym-other' }; }
+
+// Load (or reload) the project outline into the panel. force re-fetches even if
+// already loaded. Auto-called when the terminal panel opens for a code project.
+async function codeOutlineLoad(force) {
+  const tree = document.getElementById('terminal-symbols-tree');
+  if (!tree) return;
+  if (_codeOutline.loaded && !force) { _codeOutlineRender(); return; }
+  tree.innerHTML = '<div class="pt-loading">Lädt…</div>';
+  const d = await _codeIndexFetch('outline=1');
+  if (!d || d.error || !Array.isArray(d.symbols)) {
+    tree.innerHTML = `<div class="pt-empty">${esc((d && d.error) || 'Kein Code-Index.')}</div>`;
+    _codeOutline.symbols = []; _codeOutline.loaded = true;
+    return;
+  }
+  _codeOutline.symbols = d.symbols;
+  _codeOutline.loaded = true;
+  _codeOutline.expanded = {};
+  _codeOutline.refs = {};
+  _codeOutlineRender();
+}
+
+// Stable id for a symbol row (file + label + name + line) — used as expand key.
+function _outlineKey(s) { return `${s.file}|${s.label}|${s.name}|${s.line || 0}`; }
+
+function codeOutlineFilter(v) {
+  _codeOutline.filter = (v || '').toLowerCase().trim();
+  _codeOutlineRender();
+}
+
+function codeOutlineToggle() {
+  const panel = document.getElementById('terminal-symbols');
+  const btn = document.getElementById('terminal-symbols-toggle');
+  if (!panel) return;
+  const collapsed = panel.classList.toggle('sym-collapsed');
+  if (btn) btn.setAttribute('aria-expanded', String(!collapsed));
+}
+
+function _codeOutlineRender() {
+  const tree = document.getElementById('terminal-symbols-tree');
+  if (!tree) return;
+  const f = _codeOutline.filter;
+  let syms = _codeOutline.symbols;
+  if (f) syms = syms.filter(s => s.name.toLowerCase().includes(f)
+                              || (s.file || '').toLowerCase().includes(f));
+  if (!syms.length) {
+    tree.innerHTML = `<div class="pt-empty">${_codeOutline.symbols.length ? 'Keine Treffer.' : 'Keine Symbole.'}</div>`;
+    return;
+  }
+  // group by file (preserve first-seen order), within a file keep the symbol order
+  const byFile = new Map();
+  for (const s of syms) { if (!byFile.has(s.file)) byFile.set(s.file, []); byFile.get(s.file).push(s); }
+  let html = '';
+  for (const [file, items] of byFile) {
+    const fileName = (file || '').split('/').pop() || file;
+    html += `<div class="sym-file"><span class="sym-file-name" title="${esc(file)}">${esc(fileName)}</span><span class="sym-file-n">${items.length}</span></div>`;
+    for (const s of items) {
+      const k = _outlineKey(s);
+      const gl = _outlineGlyph(s.label);
+      const sig = s.signature ? `<span class="sym-sig">${esc(s.signature)}</span>` : '';
+      const ln = s.line ? `<span class="sym-line">:${s.line}</span>` : '';
+      const open = _codeOutline.expanded[k] ? ' sym-open' : '';
+      html += `<div class="sym-row${open}" data-key="${esc(k)}">
+        <span class="sym-glyph ${gl.c}">${gl.g}</span>
+        <span class="sym-name" onclick="_codeOutlineJump('${esc(k)}')" title="${esc(s.name)} → ${esc(s.file)}:${s.line || ''}">${esc(s.name)}</span>
+        ${sig}${ln}
+        <span class="sym-refs-btn" onclick="_codeOutlineRefs('${esc(k)}')" title="Aufrufer &amp; Verwendungen">↗</span>
+      </div>`;
+      if (_codeOutline.expanded[k]) html += _codeOutlineRefsHtml(k);
+    }
+  }
+  tree.innerHTML = html;
+}
+
+function _outlineByKey(k) { return _codeOutline.symbols.find(s => _outlineKey(s) === k); }
+
+async function _codeOutlineJump(k) {
+  const s = _outlineByKey(k);
+  if (!s) return;
+  await _terminalJumpTo(_codeIndexAbs(s.file), s.line || 1);
+}
+
+// Toggle the inline callers+usages sub-list for a symbol. Lazy-fetches once.
+async function _codeOutlineRefs(k) {
+  const s = _outlineByKey(k);
+  if (!s) return;
+  _codeOutline.expanded[k] = !_codeOutline.expanded[k];
+  if (_codeOutline.expanded[k] && !_codeOutline.refs[k]) {
+    _codeOutline.refs[k] = { loading: true };
+    _codeOutlineRender();
+    const d = await _codeIndexFetch(`usages=${encodeURIComponent(s.name)}`);
+    _codeOutline.refs[k] = {
+      loading: false,
+      callers: (d && d.callers) || [],
+      usages: (d && d.usages) || [],
+      err: d && d.error,
+    };
+  }
+  _codeOutlineRender();
+}
+
+function _codeOutlineRefsHtml(k) {
+  const r = _codeOutline.refs[k];
+  if (!r) return '';
+  if (r.loading) return '<div class="sym-refs"><div class="sym-refs-loading">Lädt…</div></div>';
+  if (r.err) return `<div class="sym-refs"><div class="sym-refs-empty">${esc(r.err)}</div></div>`;
+  const row = (file, line, text) => {
+    const abs = _codeIndexAbs(file);
+    const fn = (file || '').split('/').pop();
+    const label = text ? esc(text) : `${esc(fn)}:${line || ''}`;
+    return `<div class="sym-ref" onclick="_terminalJumpTo('${esc(abs)}', ${line || 1})" title="${esc(file)}:${line || ''}">
+      <span class="sym-ref-loc">${esc(fn)}:${line || '?'}</span><span class="sym-ref-text">${label}</span></div>`;
+  };
+  const callers = (r.callers || []).filter(c => c.file);
+  const usages = (r.usages || []);
+  let h = '<div class="sym-refs">';
+  h += `<div class="sym-refs-grp">Aufrufer <span class="sym-refs-n">${callers.length}</span></div>`;
+  h += callers.length ? callers.map(c => row(c.file, c.line, '')).join('')
+                       : '<div class="sym-refs-empty">keine</div>';
+  h += `<div class="sym-refs-grp">Verwendungen <span class="sym-refs-n">${usages.length}</span></div>`;
+  h += usages.length ? usages.map(u => row(u.file, u.line, u.text)).join('')
+                     : '<div class="sym-refs-empty">keine</div>';
+  h += '</div>';
+  return h;
 }
 
 // ─── Symbol palette (Cmd/Ctrl-P) ─────────────────────────────────────────────
@@ -1929,56 +2072,147 @@ document.addEventListener('keydown', (e) => {
 // Run read-only Cypher over the code index and show {columns, rows}. cbm honours
 // explicit property/aggregate projections (RETURN n.name, n.complexity); a bare
 // `RETURN n` collapses to the node name only — the examples reflect that.
-const _CYPHER_EXAMPLES = [
-  { label: 'Komplexeste Methoden', q: "MATCH (n:Method) WHERE n.complexity > 5 RETURN n.name, n.complexity, n.file_path ORDER BY n.complexity DESC LIMIT 20" },
-  { label: 'Alle Klassen + Datei', q: "MATCH (n:Class) RETURN n.name, n.file_path" },
-  { label: 'Methoden je Datei (Anzahl)', q: "MATCH (n:Method) RETURN n.file_path, count(n) ORDER BY count(n) DESC" },
-  { label: 'Funktionen ohne Tests', q: "MATCH (n:Method) WHERE NOT (n)-[:TESTED_BY]->() RETURN n.name, n.file_path LIMIT 30" },
+// ─── Code-Auswertungen (analysis dialog) ─────────────────────────────────────
+// Ready-made, genuinely useful analyses over the code index, shown as cards with
+// nicely-formatted results. The raw Cypher box is demoted to an "Eigene Abfrage"
+// expander at the bottom (power users only). Each analysis is a labelled Cypher
+// query + a renderer hint; queries use only labels/edges the cbm graph reliably
+// has (verified live): :Function/:Method/:Class/:Variable, CALLS, INHERITS,
+// n.complexity/n.file_path/n.start_line. cbm needs explicit property projections.
+const _CODE_ANALYSES = [
+  { id: 'complex', label: 'Komplexeste Funktionen', hint: 'Refactoring-Kandidaten',
+    q: "MATCH (n) WHERE (n:Function OR n:Method) AND n.complexity IS NOT NULL RETURN n.name, n.complexity, n.file_path, n.start_line ORDER BY n.complexity DESC LIMIT 25",
+    cols: ['Symbol', 'Komplexität', 'Datei', 'Zeile'], fileCol: 2, lineCol: 3, barCol: 1 },
+  { id: 'mostcalled', label: 'Meistgenutzte Funktionen', hint: 'zentrale/kritische Stellen',
+    q: "MATCH (n)<-[:CALLS]-(m) RETURN n.name, count(m) AS aufrufer, n.file_path, n.start_line ORDER BY aufrufer DESC LIMIT 25",
+    cols: ['Symbol', 'Aufrufer', 'Datei', 'Zeile'], fileCol: 2, lineCol: 3, barCol: 1 },
+  { id: 'orchestrators', label: 'Aufruf-intensivste Funktionen', hint: 'Orchestrierer / God-Functions',
+    q: "MATCH (n)-[:CALLS]->(m) RETURN n.name, count(m) AS ruft_auf, n.file_path, n.start_line ORDER BY ruft_auf DESC LIMIT 25",
+    cols: ['Symbol', 'ruft auf', 'Datei', 'Zeile'], fileCol: 2, lineCol: 3, barCol: 1 },
+  { id: 'biggest', label: 'Größte Dateien', hint: 'wo sich der Code ballt',
+    q: "MATCH (n) WHERE n.file_path IS NOT NULL AND NOT (n:File OR n:Module OR n:Folder OR n:Project) RETURN n.file_path, count(n) AS symbole ORDER BY symbole DESC LIMIT 25",
+    cols: ['Datei', 'Symbole'], fileCol: 0, lineCol: -1, barCol: 1 },
+  { id: 'hierarchy', label: 'Klassenhierarchie', hint: 'Vererbungsbeziehungen',
+    q: "MATCH (a)-[:INHERITS]->(b) RETURN a.name, b.name, a.file_path, a.start_line ORDER BY b.name, a.name LIMIT 50",
+    cols: ['Klasse', 'erbt von', 'Datei', 'Zeile'], fileCol: 2, lineCol: 3, barCol: -1 },
 ];
 
-function codeCypherBar() {
-  if (document.getElementById('code-cypher')) return;
+function codeAnalysisDialog() {
+  if (document.getElementById('code-analysis')) return;
   const ov = document.createElement('div');
-  ov.id = 'code-cypher';
+  ov.id = 'code-analysis';
   ov.className = 'code-palette-overlay';
-  const exHtml = _CYPHER_EXAMPLES.map((e, i) =>
-    `<button class="code-cypher-ex" onclick="_codeCypherExample(${i})">${esc(e.label)}</button>`).join('');
+  const cards = _CODE_ANALYSES.map(a =>
+    `<button class="code-an-card" data-id="${a.id}" onclick="_codeAnalysisRun('${a.id}')">
+       <span class="code-an-card-label">${esc(a.label)}</span>
+       <span class="code-an-card-hint">${esc(a.hint)}</span>
+     </button>`).join('');
   ov.innerHTML = `
-    <div class="code-palette code-cypher-box" onclick="event.stopPropagation()">
-      <div class="code-cypher-head">Cypher-Abfrage über den Code-Index
-        <span class="code-cypher-hint">${_isMac() ? '⌘' : 'Strg'}+Enter zum Ausführen · nur lesend</span></div>
-      <textarea id="code-cypher-input" spellcheck="false" autocomplete="off"
-        placeholder="MATCH (n:Method) WHERE n.complexity > 5 RETURN n.name, n.complexity ORDER BY n.complexity DESC LIMIT 20"></textarea>
-      <div class="code-cypher-examples">${exHtml}</div>
-      <div class="code-cypher-actions">
-        <button class="btn-primary" onclick="_codeCypherRun()">Ausführen</button>
-        <span id="code-cypher-status" class="code-cypher-status"></span>
+    <div class="code-palette code-an-box" onclick="event.stopPropagation()">
+      <div class="code-an-head">Code-Auswertungen
+        <span class="code-an-sub">Analysen über den Code-Index — Pfad/Zeile anklicken springt in den Code</span></div>
+      <div class="code-an-cards">${cards}</div>
+      <div class="code-an-resultwrap">
+        <div class="code-an-resulthead"><span id="code-an-title"></span><span id="code-an-status" class="code-an-status"></span></div>
+        <div id="code-an-results" class="code-an-results"><div class="code-palette-hint">Wählen Sie eine Auswertung.</div></div>
       </div>
-      <div id="code-cypher-results" class="code-cypher-results"></div>
+      <details class="code-an-advanced">
+        <summary>Eigene Abfrage (erweitert)</summary>
+        <div class="code-an-adv-body">
+          <textarea id="code-cypher-input" spellcheck="false" autocomplete="off"
+            placeholder="MATCH (n:Function) RETURN n.name, n.file_path, n.start_line ORDER BY n.start_line"></textarea>
+          <div class="code-an-adv-actions">
+            <span class="code-cypher-hint">Cypher, nur lesend · ${_isMac() ? '⌘' : 'Strg'}+Enter</span>
+            <button class="btn-primary" onclick="_codeCypherRun()">Ausführen</button>
+          </div>
+        </div>
+      </details>
     </div>`;
   ov.addEventListener('click', () => ov.remove());
   document.body.appendChild(ov);
-  const ta = document.getElementById('code-cypher-input');
-  ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { ov.remove(); return; }
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); _codeCypherRun(); }
+  ov.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') ov.remove();
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      const ta = document.getElementById('code-cypher-input');
+      if (ta && document.activeElement === ta) { e.preventDefault(); _codeCypherRun(); }
+    }
   });
-  ta.focus();
 }
 
-function _codeCypherExample(i) {
-  const e = _CYPHER_EXAMPLES[i];
-  const ta = document.getElementById('code-cypher-input');
-  if (e && ta) { ta.value = e.q; ta.focus(); }
+// Back-compat alias: the old entry point name still works (e.g. any cached HTML).
+function codeCypherBar() { codeAnalysisDialog(); }
+
+async function _codeAnalysisRun(id) {
+  const a = _CODE_ANALYSES.find(x => x.id === id);
+  if (!a) return;
+  const title = document.getElementById('code-an-title');
+  const status = document.getElementById('code-an-status');
+  const box = document.getElementById('code-an-results');
+  if (!box) return;
+  document.querySelectorAll('.code-an-card').forEach(c =>
+    c.classList.toggle('active', c.dataset.id === id));
+  if (title) title.textContent = a.label;
+  if (status) status.textContent = 'Läuft …';
+  box.innerHTML = '';
+  const d = await _codeIndexFetch(`cypher=${encodeURIComponent(a.q)}`);
+  if (!d || d.error) {
+    if (status) status.textContent = '';
+    box.innerHTML = `<div class="code-palette-hint code-cypher-err">${esc((d && d.error) || 'Auswertung fehlgeschlagen')}</div>`;
+    return;
+  }
+  const rows = d.rows || [];
+  if (status) status.textContent = `${rows.length} Treffer`;
+  if (!rows.length) { box.innerHTML = '<div class="code-palette-hint">Keine Daten für diese Auswertung in diesem Projekt.</div>'; return; }
+  box.innerHTML = _codeAnalysisTable(a, rows);
 }
 
+// Render an analysis result as a clean table: a leading bar-cell visualises the
+// numeric metric (barCol), path+line cells are clickable jumps.
+function _codeAnalysisTable(a, rows) {
+  // max for the bar scale
+  let max = 0;
+  if (a.barCol >= 0) for (const r of rows) { const v = Number(_cellAt(r, a.barCol)); if (v > max) max = v; }
+  const head = a.cols.map((c, i) => `<th${i === a.barCol ? ' class="an-num"' : ''}>${esc(c)}</th>`).join('');
+  const body = rows.map(r => {
+    const cells = a.cols.map((_, i) => {
+      const v = _cellAt(r, i);
+      const s = v === null || v === undefined ? '' : String(v);
+      if (i === a.fileCol && s) {
+        const abs = _codeIndexAbs(s);
+        const line = a.lineCol >= 0 ? (parseInt(_cellAt(r, a.lineCol), 10) || 1) : 1;
+        const fn = s.split('/').pop();
+        return `<td class="an-file"><a onclick="_terminalJumpTo('${esc(abs)}', ${line})" title="${esc(s)}">${esc(fn)}</a></td>`;
+      }
+      if (i === a.lineCol) return s ? `<td class="an-line">:${esc(s)}</td>` : '<td></td>';
+      if (i === a.barCol) {
+        const v = Number(s) || 0;
+        const pct = max > 0 ? Math.round((v / max) * 100) : 0;
+        return `<td class="an-num"><span class="an-bar" style="--an-pct:${pct}%"></span><span class="an-num-v">${esc(s)}</span></td>`;
+      }
+      return `<td>${esc(s)}</td>`;
+    }).join('');
+    return `<tr>${cells}</tr>`;
+  }).join('');
+  return `<table class="code-an-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function _cellAt(row, i) {
+  if (i < 0) return '';
+  if (Array.isArray(row)) return i < row.length ? row[i] : '';
+  return i === 0 ? row : '';
+}
+
+// Run the advanced raw-Cypher box → render into the shared analysis result area.
 async function _codeCypherRun() {
   const ta = document.getElementById('code-cypher-input');
-  const status = document.getElementById('code-cypher-status');
-  const box = document.getElementById('code-cypher-results');
+  const status = document.getElementById('code-an-status');
+  const box = document.getElementById('code-an-results');
+  const title = document.getElementById('code-an-title');
   if (!ta || !box) return;
   const q = ta.value.trim();
   if (!q) { return; }
+  document.querySelectorAll('.code-an-card.active').forEach(c => c.classList.remove('active'));
+  if (title) title.textContent = 'Eigene Abfrage';
   if (status) status.textContent = 'Läuft …';
   box.innerHTML = '';
   const d = await _codeIndexFetch(`cypher=${encodeURIComponent(q)}`);
@@ -1997,19 +2231,11 @@ async function _codeCypherRun() {
     const cells = (Array.isArray(r) ? r : [r]).map(v => {
       const s = v === null || v === undefined ? '' : String(v);
       if (/\.[a-z]{1,4}$/i.test(s) && /[\/\\]/.test(s) && !/\s/.test(s)) {
-        return `<td><a class="code-cypher-link" onclick="_codeCypherJump('${esc(s)}')">${esc(s)}</a></td>`;
+        return `<td class="an-file"><a onclick="_terminalJumpTo('${esc(_codeIndexAbs(s))}', 1)">${esc(s.split('/').pop())}</a></td>`;
       }
       return `<td>${esc(s)}</td>`;
     }).join('');
     return `<tr>${cells}</tr>`;
   }).join('');
-  box.innerHTML = `<table class="code-cypher-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
-}
-
-// Click a path cell → open that file in the editor (no line info in a generic
-// Cypher result, so just open at the top).
-function _codeCypherJump(relPath) {
-  const ov = document.getElementById('code-cypher');
-  if (ov) ov.remove();
-  _terminalJumpTo(_codeIndexAbs(relPath), 1);
+  box.innerHTML = `<table class="code-an-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }

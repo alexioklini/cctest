@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.234.0",
+        "date": "2026-06-29",
+        "title": "Code-Bereich: Symbol-Übersicht & Auswertungen",
+        "body": "Unter dem Datei-Baum gibt es jetzt ein Panel 'Symbole': es "
+                "zeigt alle Klassen, Methoden, Funktionen und Variablen des "
+                "Projekts auf einen Blick, nach Datei gruppiert und durchsuchbar. "
+                "Ein Klick springt direkt zur Definition; über das Pfeil-Symbol "
+                "sehen Sie zu jedem Eintrag die Aufrufer und Verwendungsstellen — "
+                "ebenfalls anklickbar. Neu ist außerdem der Knopf "
+                "'Auswertungen': fertige Analysen Ihres Codes (komplexeste "
+                "Funktionen, meistgenutzte Funktionen, größte Dateien, "
+                "Klassenhierarchie und mehr) mit übersichtlich aufbereiteten "
+                "Ergebnissen, aus denen Sie direkt in den Code springen können.",
+        "audience": "user",
+        "versions": ["9.234.0"],
+    },
+    {
         "version": "9.233.0",
         "date": "2026-06-29",
         "title": "Code-Bereich: Fenster frei anordnen",

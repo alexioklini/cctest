@@ -981,12 +981,19 @@ class ProjectsHandlerMixin:
         callers = (qs.get("callers", [""])[0] or "").strip()
         defn = (qs.get("def", [""])[0] or "").strip()
         cypher = (qs.get("cypher", [""])[0] or "").strip()
+        outline = (qs.get("outline", [""])[0] or "").strip()
+        usages = (qs.get("usages", [""])[0] or "").strip()
+        wd = (project.get("working_dir") or "").strip()
         try:
             limit = int(qs.get("limit", ["30"])[0])
         except (TypeError, ValueError):
             limit = 30
         try:
-            if cypher:
+            if outline:
+                out = engine.cbm_code_outline(cache)
+            elif usages:
+                out = engine.cbm_code_usages(usages, cache, working_dir=wd)
+            elif cypher:
                 out = engine.cbm_code_query_raw(cypher, cache)
             elif defn:
                 out = engine.cbm_code_def(defn, cache)

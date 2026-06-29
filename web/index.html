@@ -1497,6 +1497,31 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         </button>
       </div>
       <div id="terminal-tree" class="project-source-tree"></div>
+      <!-- Symbole: code-index outline (classes/methods/functions/variables) for the
+           whole project, grouped by file. Search filters live; each entry jumps to
+           its definition and can expand its callers + usage references. The Σ button
+           opens the code-analysis ("Auswertungen") dialog. -->
+      <div id="terminal-symbols">
+        <div id="terminal-symbols-head">
+          <button class="pt-act sym-collapse" id="terminal-symbols-toggle" onclick="codeOutlineToggle()" title="Symbole ein-/ausklappen" aria-expanded="true">
+            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <span class="sym-title">Symbole</span>
+          <span style="flex:1"></span>
+          <button class="pt-act" id="terminal-symbols-analyze" onclick="codeAnalysisDialog()" title="Code-Auswertungen" aria-label="Auswertungen">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          </button>
+          <button class="pt-act" id="terminal-symbols-refresh" onclick="codeOutlineLoad(true)" title="Symbole aktualisieren" aria-label="Aktualisieren">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+        </div>
+        <div id="terminal-symbols-body">
+          <div id="terminal-symbols-search">
+            <input type="text" id="terminal-symbols-filter" placeholder="Symbol suchen…" spellcheck="false" autocomplete="off" oninput="codeOutlineFilter(this.value)">
+          </div>
+          <div id="terminal-symbols-tree"></div>
+        </div>
+      </div>
       <!-- Drag handle: adjust the file-tree vs Terminal-Chats height split. -->
       <div id="terminal-tree-vsplit"></div>
       <!-- Terminal-Chats: past code-mode chats for this project (status=code_chat),
