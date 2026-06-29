@@ -177,6 +177,15 @@ function navigateTo(view, opts) {
   // session); hide it elsewhere and close any panel left open.
   if (typeof updateRightPanelButtonVisibility === 'function') updateRightPanelButtonVisibility();
 
+  // Re-evaluate the code-mode terminal panel on every navigation: it auto-closes
+  // when the project/chat it was launched from is no longer the shown view (e.g.
+  // navigating to welcome/projects/wiki, or to a different project). The view's
+  // own data (project-detail / chat) is set above, so the sync check inside
+  // terminalRefreshToggle resolves against the freshly-shown view.
+  if (typeof terminalRefreshToggle === 'function') {
+    try { terminalRefreshToggle(); } catch (_) {}
+  }
+
   closeMobileSidebar();
 }
 

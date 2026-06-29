@@ -39,9 +39,13 @@ CURATED_CHANGELOG: list[dict] = [
                 "ihn in die Mitte, wandert er einfach dorthin. Schließen Sie "
                 "das letzte Fenster eines Bereichs, wird der Platz automatisch "
                 "wieder freigegeben. Ihre Aufteilung wird pro Projekt gemerkt "
-                "und beim nächsten Öffnen wiederhergestellt.",
+                "und beim nächsten Öffnen wiederhergestellt — beim Öffnen wird "
+                "Ihr gespeicherter Arbeitsbereich wiederhergestellt (ein neues "
+                "Terminal entsteht nur, wenn er ganz leer ist). Verlassen Sie "
+                "das Projekt bzw. den Chat, aus dem der Bereich geöffnet wurde, "
+                "schließt er sich automatisch.",
         "audience": "user",
-        "versions": ["9.233.0"],
+        "versions": ["9.233.0", "9.233.1"],
     },
     {
         "version": "9.232.0",

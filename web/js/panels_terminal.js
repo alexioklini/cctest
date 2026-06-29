@@ -468,27 +468,52 @@ function terminalAvailable() {
 
 // Open the terminal/editor workspace DIRECTLY from the project-detail view
 // (the header "Terminal" button) — no chat needed. Opens MAXIMIZED (full-area):
-// a tiny bottom-docked strip makes no sense from the project view. If it comes up
-// with no terminal tab (only restored editors, or nothing), spawn a fresh one so
-// the user lands in terminal mode.
+// a tiny bottom-docked strip makes no sense from the project view. We RESTORE the
+// saved workspace (editors/chats/terminals) and only spawn a fresh terminal when
+// it comes up COMPLETELY EMPTY — opening must not keep adding terminal windows on
+// top of a restored workspace. _terminalLoadSessions (run by terminalTogglePanel)
+// already spawns one when there are zero tabs, so here we just focus a sensible
+// existing tab: a terminal if there is one, else the active pane's tab.
 async function projectOpenTerminal() {
   await terminalTogglePanel(true);
   if (!_term.open) return;   // not a code-mode project / ctx failed
   // Force MAXIMIZED (full screen) when opened from the project view.
   if (!_term.maximized) terminalToggleMaximize();
-  const hasTerminal = (_term.tabs || []).some(t => t.kind === 'terminal');
-  if (!hasTerminal) { await terminalNewTab(); return; }
+  if (!(_term.tabs || []).length) return;   // load spawned a fresh terminal already
   const term = (_term.tabs || []).find(t => t.kind === 'terminal');
-  if (term) _terminalActivate(term.id);
+  if (term) { _terminalActivate(term.id); return; }
+  // No terminal among the restored tabs — leave the restored workspace as-is and
+  // focus the active pane's current tab (don't force a new terminal window).
+  const ap = _terminalActivePane();
+  if (ap && ap.active) _terminalActivate(ap.active);
+}
+
+// The project the CURRENT view belongs to (project-detail view or the active
+// chat's project), or '' when none. Sync — mirrors _terminalCtx's project pick.
+function _terminalCurrentViewProject() {
+  if (state._projectDetail && state._projectDetailName === state.currentProject
+      && state._projectDetail.code_mode) return state._projectDetailName || '';
+  return state.currentProject || (state.activeChat && state.activeChat.project) || '';
 }
 
 // Show/hide the status-bar terminal toggle based on code-mode context. Also
-// auto-closes the panel if we navigated away from a code-mode project.
+// auto-closes the panel when the view it was launched from is no longer shown:
+//   • navigated away from any code-mode context (terminalAvailable false), OR
+//   • switched to a DIFFERENT project than the one the terminal is bound to
+//     (the open workspace belongs to _term.project; showing it over another
+//     project's view would be stale/wrong).
 function terminalRefreshToggle() {
   const btn = document.getElementById('terminal-toggle-btn');
   const avail = terminalAvailable();
   if (btn) btn.classList.toggle('code-mode-available', !!avail);
-  if (!avail && _term.open) terminalTogglePanel(false);
+  if (!_term.open) return;
+  if (!avail) { terminalTogglePanel(false); return; }
+  const viewProject = _terminalCurrentViewProject();
+  // If the current view resolves to a project and it differs from the terminal's
+  // bound project, the launching view is no longer shown → close the panel.
+  if (_term.project && viewProject && viewProject !== _term.project) {
+    terminalTogglePanel(false);
+  }
 }
 
 async function terminalTogglePanel(force) {
@@ -498,6 +523,14 @@ async function terminalTogglePanel(force) {
   if (want) {
     const ctx = await _terminalCtx();
     if (!ctx) { if (typeof showToast === 'function') showToast('Terminal nur in Code-Mode-Projekten'); return; }
+    // Already open for this same project? Just (re)show it — do NOT re-run
+    // _terminalLoadSessions, which would re-add tabs / re-trigger the empty→spawn
+    // path and pile a new terminal on top of the restored workspace.
+    if (_term.open && _term.project === ctx.project && _term.agent === ctx.agent) {
+      panel.style.display = 'flex';
+      document.getElementById('main-content').classList.add('terminal-open');
+      return;
+    }
     _term.agent = ctx.agent; _term.project = ctx.project; _term.wd = ctx.wd;
     panel.style.display = 'flex';
     document.getElementById('main-content').classList.add('terminal-open');

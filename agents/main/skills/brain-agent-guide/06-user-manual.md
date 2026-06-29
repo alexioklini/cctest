@@ -459,7 +459,12 @@ Bereiche füllen ihn aus. Aufteilung, Größen und geöffnete Dateien werden
 
 **Terminal direkt öffnen**: In der **Projektansicht** eines Code-Projekts öffnet
 der **„Terminal“-Knopf** oben (neben Titel und Stern) den Terminal/Editor-Bereich
-sofort im **Vollbild** — ohne dass Sie erst einen Chat starten müssen.
+sofort im **Vollbild** — ohne dass Sie erst einen Chat starten müssen. Beim Öffnen
+wird Ihr **gespeicherter Arbeitsbereich wiederhergestellt**; ein neues Terminal
+wird nur angelegt, wenn der Bereich vollständig leer ist. Wechseln Sie zu einer
+anderen Ansicht (Startseite, anderes Projekt, Chat ohne Bezug), **schließt sich
+der Bereich automatisch** — er bleibt an das Projekt/den Chat gebunden, aus dem
+Sie ihn geöffnet haben.
 
 **Standard-Platzierung**: Neue Inhalte landen je nach Layout automatisch im
 passenden Bereich — **Quelldateien** oben links, **andere Dateien** (HTML,

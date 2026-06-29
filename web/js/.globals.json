@@ -494,6 +494,7 @@
     "_terminalBuildPanes": "writable",
     "_terminalComputeGrid": "writable",
     "_terminalCtx": "writable",
+    "_terminalCurrentViewProject": "writable",
     "_terminalCursorKey": "writable",
     "_terminalCursorTimer": "writable",
     "_terminalDefaultPane": "writable",
