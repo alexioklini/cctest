@@ -1,0 +1,19 @@
+{
+  "_comment": "SQL/Showcase coding-ability eval task set. 5 task types x 5 cases = 25. Candidate model: mistral-small-latest. Judge: mistral-medium-3.5. Each task runs as a FULL Brain turn with tools so the model can use the SYNCED project data (SQL analysis + code search over the corpus). 'file' is repo-relative inside the SQL corpus project working_dir; cases span simple->complex (incl. OPENQUERY/DB2 + the 103-join ESG query). Built from the user's real Queries.zip + Abfragen_Neu.zip.",
+  "candidate_model": "mistral-small-latest",
+  "judge_model": "mistral-vibe/mistral-medium-3.5",
+  "task_types": {
+    "analyze": "Erkläre, was diese Abfrage tut, welche Tabellen/Joins/Filter sie nutzt und wo Risiken/Performance-Probleme liegen.",
+    "improve": "Verbessere diese Abfrage (Korrektheit, Performance, Lesbarkeit) ohne die Ergebnis-Semantik zu ändern. Nenne die Änderungen.",
+    "refactor": "Refactore diese Abfrage strukturell (CTEs statt Subqueries, sprechende Aliase, Formatierung) bei gleichem Ergebnis.",
+    "extend": "Ergänze die geforderte zusätzliche Spalte/Filterung. Nutze den Tabellen-/Spalten-Kontext aus dem Projekt.",
+    "rewrite": "Schreibe eine äquivalente Abfrage neu, die dasselbe Ergebnis liefert, aber in einem anderen/saubereren Stil (z. B. ANSI-Joins, ohne OPENQUERY-String wo möglich)."
+  },
+  "_note_cases": "The runner fills concrete (file, extra_instruction) per type at build time by sampling the corpus across complexity tiers; this file pins the TYPES + the rubric. Cases are emitted into the results dir for reproducibility.",
+  "rubric": {
+    "correctness": "Bleibt die Ergebnis-Semantik erhalten / ist die Antwort fachlich richtig? (0-4)",
+    "uses_synced_data": "Hat das Modell den Projekt-/Index-Kontext (Tabellen, verwandte Abfragen, Schema) tatsächlich genutzt statt nur die nackte Datei? (0-4)",
+    "sql_quality": "SQL-Idiomatik, Lesbarkeit, Performance-Bewusstsein, Umgang mit OPENQUERY/DB2-Eigenheiten (0-4)",
+    "completeness": "Ist die gestellte Aufgabe vollständig erfüllt (alle geforderten Teile)? (0-4)"
+  }
+}
