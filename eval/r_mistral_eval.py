@@ -67,10 +67,11 @@ CANDIDATE_MODEL = "mistral-small-latest"
 JUDGE_MODEL_DEFAULT = "mistral-medium"
 JUDGE_MODEL_FALLBACK = "mistral-medium-latest"
 
+# Default to the in-repo corpus (eval/r_corpus) so the eval is reproducible from
+# a clean checkout; override with R_CORPUS to point at another tree.
 CORPUS = os.environ.get(
     "R_CORPUS",
-    "/private/tmp/claude-501/-Users-alexander-Documents-dev-cctest/"
-    "ffd7a980-fdf7-4a0e-8849-59d3ffd31d84/scratchpad/rcorpus",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "r_corpus"),
 )
 
 R_EXCERPT_CAP = 6000

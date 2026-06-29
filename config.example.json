@@ -1224,7 +1224,7 @@
       "warmup": false
     },
     "codestral-latest": {
-      "enabled": false,
+      "enabled": true,
       "shortname": "codestral-latest",
       "display_name": "codestral-latest",
       "icon": "🤖",
@@ -1285,7 +1285,7 @@
       "warmup": false
     },
     "devstral-latest": {
-      "enabled": false,
+      "enabled": true,
       "shortname": "devstral-latest",
       "display_name": "devstral-latest",
       "icon": "🌬️",
