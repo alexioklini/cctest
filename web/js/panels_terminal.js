@@ -2092,9 +2092,11 @@ const _CODE_ANALYSES = [
   { id: 'biggest', label: 'Größte Dateien', hint: 'wo sich der Code ballt',
     q: "MATCH (n) WHERE n.file_path IS NOT NULL AND NOT (n:File OR n:Module OR n:Folder OR n:Project) RETURN n.file_path, count(n) AS symbole ORDER BY symbole DESC LIMIT 25",
     cols: ['Datei', 'Symbole'], fileCol: 0, lineCol: -1, barCol: 1 },
-  { id: 'hierarchy', label: 'Klassenhierarchie', hint: 'Vererbungsbeziehungen',
-    q: "MATCH (a)-[:INHERITS]->(b) RETURN a.name, b.name, a.file_path, a.start_line ORDER BY b.name, a.name LIMIT 50",
-    cols: ['Klasse', 'erbt von', 'Datei', 'Zeile'], fileCol: 2, lineCol: 3, barCol: -1 },
+  // Inheritance is :INHERITS in Python but :IMPLEMENTS for Rust/TS/JS/C# (verified
+  // live across all of them) — match BOTH so the hierarchy works cross-language.
+  { id: 'hierarchy', label: 'Klassenhierarchie', hint: 'Vererbung & Interfaces',
+    q: "MATCH (a)-[r:INHERITS|IMPLEMENTS]->(b) RETURN a.name, b.name, a.file_path, a.start_line ORDER BY b.name, a.name LIMIT 50",
+    cols: ['Klasse', 'erbt von / implementiert', 'Datei', 'Zeile'], fileCol: 2, lineCol: 3, barCol: -1 },
 ];
 
 function codeAnalysisDialog() {

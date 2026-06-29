@@ -43,7 +43,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "Klassenhierarchie und mehr) mit übersichtlich aufbereiteten "
                 "Ergebnissen, aus denen Sie direkt in den Code springen können.",
         "audience": "user",
-        "versions": ["9.234.0"],
+        "versions": ["9.234.0", "9.234.1"],
     },
     {
         "version": "9.233.0",
