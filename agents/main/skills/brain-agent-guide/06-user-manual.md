@@ -432,6 +432,13 @@ nutzbar:
     (OPENQUERY-Abhängigkeiten) und einem **Prozeduren-&-Views-Inventar** (mit
     Sprung zur Definition). Funktioniert auch mit großen, gemischten SQL-Sammlungen
     inkl. IBM-DB2/iSeries-Syntax und in `.dbq` eingebetteten Abfragen.
+  - **R-Auswertungen**: Enthält das Projekt R-Skripte (`.R`), erscheint eine
+    Gruppe **R-Auswertungen** mit: **Funktionen & Aufrufe** (inkl. Warnung bei
+    Funktionen, die mehrfach in verschiedenen Dateien definiert sind),
+    **Daten-Fluss & Quellen** (welches Skript welche Dateien liest/schreibt),
+    **Skript-Abhängigkeiten** (`source()`-Graph) und **Globaler Zustand &
+    Komplexität** (Funktionsgröße + Nutzung globaler Variablen — Hinweis auf
+    Refactoring-Risiken). Auf Base-R wie auch tidyverse-Stil ausgelegt.
 
 **Datei-Baum im unteren Bereich** (Code-Projekte): Der Baum des
 Arbeitsverzeichnisses liegt als **linke Spalte** des unteren Bereichs, direkt

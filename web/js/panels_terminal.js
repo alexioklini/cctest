@@ -2130,6 +2130,7 @@ const _CODE_ANALYSES = [
 // .dbq files). Distinct from the Cypher analyses: they run server-side over the
 // raw SQL corpus (regex, dialect-tolerant) and already return the table shape.
 let _codeSqlCards = null;   // null = not yet fetched; [] = none/no sql
+let _codeRCards = null;     // null = not yet fetched; [] = none/no R
 
 function codeAnalysisDialog() {
   if (document.getElementById('code-analysis')) return;
@@ -2149,6 +2150,10 @@ function codeAnalysisDialog() {
       <div id="code-an-sql-section" style="display:none">
         <div class="code-an-grouphead">SQL-Auswertungen</div>
         <div class="code-an-cards" id="code-an-sql-cards"></div>
+      </div>
+      <div id="code-an-r-section" style="display:none">
+        <div class="code-an-grouphead">R-Auswertungen</div>
+        <div class="code-an-cards" id="code-an-r-cards"></div>
       </div>
       <div class="code-an-resultwrap">
         <div class="code-an-resulthead"><span id="code-an-title"></span><span id="code-an-status" class="code-an-status"></span></div>
@@ -2176,6 +2181,7 @@ function codeAnalysisDialog() {
     }
   });
   _codeAnalysisLoadSqlCards();   // adds SQL cards if the project has .sql/.dbq
+  _codeAnalysisLoadRCards();     // adds R cards if the project has .R/.r
 }
 
 // Fetch + render the SQL analysis cards (only when the project actually has SQL).
@@ -2207,6 +2213,48 @@ async function _codeSqlRun(id) {
   if (status) status.textContent = 'Läuft …';
   box.innerHTML = '';
   const d = await _codeIndexFetch(`sql=${encodeURIComponent(id)}`);
+  if (!d || d.error) {
+    if (status) status.textContent = '';
+    box.innerHTML = `<div class="code-palette-hint code-cypher-err">${esc((d && d.error) || 'Auswertung fehlgeschlagen')}</div>`;
+    return;
+  }
+  const rows = d.rows || [];
+  if (status) status.textContent = `${rows.length} Treffer`;
+  if (!rows.length) { box.innerHTML = '<div class="code-palette-hint">Keine Daten.</div>'; return; }
+  // backend supplies the column spec (fileCol/lineCol/barCol) → reuse the renderer
+  const spec = { cols: d.columns || [], fileCol: (d.fileCol ?? -1), lineCol: (d.lineCol ?? -1), barCol: (d.barCol ?? -1) };
+  box.innerHTML = _codeAnalysisTable(spec, rows);
+}
+
+// Fetch + render the R analysis cards (only when the project actually has R).
+async function _codeAnalysisLoadRCards() {
+  const sec = document.getElementById('code-an-r-section');
+  const wrap = document.getElementById('code-an-r-cards');
+  if (!sec || !wrap) return;
+  const d = await _codeIndexFetch('r_meta=1');
+  if (!d || !d.has_r || !Array.isArray(d.analyses) || !d.analyses.length) return;
+  _codeRCards = d.analyses;
+  wrap.innerHTML = d.analyses.map(a =>
+    `<button class="code-an-card code-an-r" data-id="${esc(a.id)}" onclick="_codeRRun('${esc(a.id)}')">
+       <span class="code-an-card-label">${esc(a.label)}</span>
+       <span class="code-an-card-hint">${esc(a.hint)}</span>
+     </button>`).join('');
+  sec.style.display = '';
+}
+
+// Run an R analysis (server-side over the raw R corpus). Reuses the analysis
+// result area + _codeAnalysisTable — the backend returns the same shape.
+async function _codeRRun(id) {
+  const card = _codeRCards && _codeRCards.find(x => x.id === id);
+  const title = document.getElementById('code-an-title');
+  const status = document.getElementById('code-an-status');
+  const box = document.getElementById('code-an-results');
+  if (!box) return;
+  document.querySelectorAll('.code-an-card').forEach(c => c.classList.toggle('active', c.dataset.id === id));
+  if (title) title.textContent = (card && card.label) || 'R';
+  if (status) status.textContent = 'Läuft …';
+  box.innerHTML = '';
+  const d = await _codeIndexFetch(`r=${encodeURIComponent(id)}`);
   if (!d || d.error) {
     if (status) status.textContent = '';
     box.innerHTML = `<div class="code-palette-hint code-cypher-err">${esc((d && d.error) || 'Auswertung fehlgeschlagen')}</div>`;

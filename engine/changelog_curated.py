@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.236.0",
+        "date": "2026-06-29",
+        "title": "Code-Bereich: R-Auswertungen",
+        "body": "Enthält Ihr Code-Projekt R-Skripte (.R), bietet der Knopf "
+                "'Auswertungen' jetzt zusätzlich R-Analysen: alle Funktionen "
+                "mit Aufruf-Häufigkeit (inklusive Warnung, wenn dieselbe "
+                "Funktion mehrfach in verschiedenen Dateien definiert ist), den "
+                "Daten-Fluss (welches Skript welche Dateien liest und "
+                "schreibt), die Skript-Abhängigkeiten über source() sowie eine "
+                "Übersicht zu Funktionsgröße und Nutzung globaler Variablen "
+                "(ein Hinweis auf Wartungs- und Refactoring-Risiken). Pfad und "
+                "Zeile sind anklickbar und springen direkt zur Stelle.",
+        "audience": "user",
+        "versions": ["9.236.0"],
+    },
+    {
         "version": "9.235.0",
         "date": "2026-06-29",
         "title": "Code-Bereich: SQL-Auswertungen",

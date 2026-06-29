@@ -985,6 +985,8 @@ class ProjectsHandlerMixin:
         usages = (qs.get("usages", [""])[0] or "").strip()
         sql_meta = (qs.get("sql_meta", [""])[0] or "").strip()
         sql_id = (qs.get("sql", [""])[0] or "").strip()
+        r_meta = (qs.get("r_meta", [""])[0] or "").strip()
+        r_id = (qs.get("r", [""])[0] or "").strip()
         wd = (project.get("working_dir") or "").strip()
         try:
             limit = int(qs.get("limit", ["30"])[0])
@@ -997,6 +999,12 @@ class ProjectsHandlerMixin:
                        "analyses": engine.cbm_sql_analyses_meta()}
             elif sql_id:
                 out = engine.cbm_sql_analyze(sql_id, wd)
+            elif r_meta:
+                # Whether to offer R analyses + the card list (frontend gates on this).
+                out = {"has_r": engine.cbm_project_has_r(wd),
+                       "analyses": engine.cbm_r_analyses_meta()}
+            elif r_id:
+                out = engine.cbm_r_analyze(r_id, wd)
             elif outline:
                 out = engine.cbm_code_outline(cache)
             elif usages:
