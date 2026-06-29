@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.237.0",
+        "date": "2026-06-29",
+        "title": "Code-Modus: anpassbare Arbeitsanweisung",
+        "body": "Für Code-Projekte gibt es jetzt eine editierbare Arbeitsanweisung, "
+                "die der Assistent bei jeder Code-Aufgabe befolgt — unabhängig von "
+                "der Programmiersprache. Standardmäßig sorgt sie dafür, dass der "
+                "Assistent zuerst den bereits indexierten Projekt-Code heranzieht "
+                "statt zu raten, bei Änderungen die genutzten Abhängigkeiten und "
+                "globalen Variablen benennt, stets vollständigen lauffähigen Code "
+                "liefert und sich an den Projektstil hält. Administratoren können "
+                "diesen Text unter Einstellungen → Tools frei anpassen oder leeren.",
+        "audience": "admin",
+        "versions": ["9.237.0"],
+    },
+    {
         "version": "9.236.0",
         "date": "2026-06-29",
         "title": "Code-Bereich: R-Auswertungen",

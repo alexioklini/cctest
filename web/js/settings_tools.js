@@ -511,6 +511,28 @@ async function saveResearchModeDisciplines() {
   }
 }
 
+/* ── Code-mode prompt extension (language-agnostic, all code-mode projects) ── */
+
+function resetCodeModeExtension() {
+  const ta = document.getElementById('cme-text');
+  const dft = window._cmeResp?.default;
+  if (!ta || dft === undefined) { showToast('Kein Standardwert verfügbar', true); return; }
+  ta.value = dft;
+  showToast('Zurückgesetzt (nicht gespeichert — zum Übernehmen auf „Erweiterung speichern" klicken)');
+}
+
+async function saveCodeModeExtension() {
+  const ta = document.getElementById('cme-text');
+  if (!ta) return;
+  try {
+    const resp = await API.post('/v1/code-mode/extension', { text: ta.value });
+    showToast('Code-Mode-Erweiterung gespeichert');
+    if (window._cmeResp) window._cmeResp.text = resp.text;
+  } catch(e) {
+    showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
+  }
+}
+
 // Build the /v1/tools/config integration record for one tool from its form
 // fields. Returns the record, or null if the tool has no integration form.
 // (Integration-only pseudo-tools keep their own `enabled` — the integration

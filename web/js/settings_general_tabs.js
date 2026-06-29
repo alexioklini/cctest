@@ -1856,7 +1856,7 @@ async function _genTab_classification(C) {
 async function _genTab_tools(C) {
   /* ─── TOOLS ─── */
     try {
-      const [cfg, status, settingsResp, breakdown, rmdResp] = await Promise.all([
+      const [cfg, status, settingsResp, breakdown, rmdResp, cmeResp] = await Promise.all([
         API.get('/v1/tools/config'),
         API.get('/v1/tools/status'),
         API.get('/v1/tools/settings'),
@@ -1869,8 +1869,12 @@ async function _genTab_tools(C) {
         // gets injected into the system prompt for project chats with
         // research_mode=on.
         API.get('/v1/research-mode/disciplines').catch(() => null),
+        // Code-mode prompt extension — one editable prose block injected into
+        // EVERY code-mode project's system prompt (language-agnostic).
+        API.get('/v1/code-mode/extension').catch(() => null),
       ]);
       window._rmdResp = rmdResp;
+      window._cmeResp = cmeResp;
       const allTools = settingsResp.tools || [];
       // Stash on window so per-tool save handlers can read the latest fetched
       // record without refetching (gets clobbered on next tab switch).
@@ -2051,6 +2055,34 @@ async function _genTab_tools(C) {
           </div>`;
       }
 
+      // Code-mode prompt extension — one editable prose block, injected into the
+      // system prompt of EVERY code-mode project (all languages). Mirrors the
+      // research-mode disciplines panel.
+      let cmeHTML = '';
+      if (cmeResp && typeof cmeResp.text === 'string') {
+        const cmeIsDefault = cmeResp.text === (cmeResp.default || '');
+        cmeHTML = `
+          <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px;margin-bottom:14px;background:var(--bg-100)">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
+              <div style="font-size:12px;font-weight:600;color:var(--text-100)">Code-Mode-Prompt-Erweiterung</div>
+              <div style="font-size:11px;color:var(--text-400)">wird in JEDEN Code-Mode-Projekt-Chat (alle Sprachen) in den System-Prompt eingefügt</div>
+            </div>
+            <div style="font-size:10px;color:var(--text-400);margin-bottom:8px">
+              Allgemeine Arbeitsanweisung für Code-Aufgaben (Index zuerst nutzen, vollständigen Code liefern, Abhängigkeiten/globalen Zustand benennen, Projektstil/Duplikate beachten). Leeren Sie das Feld, um die Erweiterung ganz zu deaktivieren.
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+              <span style="font-size:10px;color:var(--text-400)">${cmeIsDefault ? '(Standard)' : '(benutzerdefiniert)'}</span>
+              <button class="btn-secondary" style="font-size:10px;padding:2px 8px;margin-left:auto"
+                      onclick="resetCodeModeExtension()" title="Werkseinstellung wiederherstellen">Zurücksetzen</button>
+            </div>
+            <textarea id="cme-text" rows="10" class="form-input"
+              style="width:100%;font-family:var(--font-mono);font-size:11px;resize:vertical">${esc(cmeResp.text)}</textarea>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+              <button class="btn-primary" onclick="saveCodeModeExtension()" style="padding:6px 14px;font-size:12px">Erweiterung speichern</button>
+            </div>
+          </div>`;
+      }
+
       // Header row: Tool · one column per use-case.
       const headTh = (label, extra) =>
         `<th style="padding:4px 8px;border:1px solid var(--border-100);background:var(--bg-200);font-size:10px;font-weight:600;color:var(--text-300);text-transform:uppercase;letter-spacing:0.04em;position:sticky;top:0;z-index:2;${extra||''}">${label}</th>`;
@@ -2104,6 +2136,7 @@ async function _genTab_tools(C) {
         </div>
 
         ${rmdHTML}
+        ${cmeHTML}
 
         ${matrixTable}
       </div>`);

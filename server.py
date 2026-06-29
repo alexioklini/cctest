@@ -1692,6 +1692,8 @@ class BrainAgentHandler(
             self._handle_data_review_get(path)
         elif path == "/v1/research-mode/disciplines":
             self._handle_research_mode_disciplines_get()
+        elif path == "/v1/code-mode/extension":
+            self._handle_code_mode_extension_get()
         elif path == "/v1/research/backend":
             self._handle_research_backend_status()
         elif path == "/v1/gdpr/ner-models":
@@ -2132,6 +2134,8 @@ class BrainAgentHandler(
             self._handle_data_review_state()
         elif path == "/v1/research-mode/disciplines":
             self._handle_research_mode_disciplines_save()
+        elif path == "/v1/code-mode/extension":
+            self._handle_code_mode_extension_save()
         elif path == "/v1/gdpr/ner-models":
             self._handle_gdpr_ner_models_post()
         elif path == "/v1/cache/clear":
@@ -3671,6 +3675,14 @@ def main():
             print(f"Research-mode disciplines: persist failed: {e}")
     server_config["research_mode_disciplines"] = rmd_cfg
     engine._research_mode_disciplines = server_config["research_mode_disciplines"]
+
+    # Code-mode prompt extension (single editable prose string; like the
+    # research-mode disciplines). None on disk → leave None so the built-in
+    # default applies (don't seed config.json — keeps it lean; the admin
+    # saving it materialises the key).
+    _cme = file_config.get("code_mode_extension")
+    server_config["code_mode_extension"] = _cme
+    engine._code_mode_extension = _cme
 
     # Snapshot BEFORE forward-migration so any rewrite below participates in
     # the persist gate below.

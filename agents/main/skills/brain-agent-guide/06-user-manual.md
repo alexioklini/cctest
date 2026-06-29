@@ -440,6 +440,12 @@ nutzbar:
     Komplexität** (Funktionsgröße + Nutzung globaler Variablen — Hinweis auf
     Refactoring-Risiken). Auf Base-R wie auch tidyverse-Stil ausgelegt.
 
+**Code-Mode-Prompt-Erweiterung** (Admin): Unter **Einstellungen → Tools** lässt
+sich eine sprachunabhängige Arbeitsanweisung bearbeiten, die in JEDEN
+Code-Mode-Projekt-Chat in den System-Prompt eingefügt wird (Index zuerst nutzen,
+vollständigen lauffähigen Code liefern, Abhängigkeiten/globalen Zustand benennen,
+Projektstil/Duplikate beachten). Das Feld leeren deaktiviert die Erweiterung.
+
 **Datei-Baum im unteren Bereich** (Code-Projekte): Der Baum des
 Arbeitsverzeichnisses liegt als **linke Spalte** des unteren Bereichs, direkt
 neben Terminal und Editor (gleicher Look wie der Editor; der gesamte untere

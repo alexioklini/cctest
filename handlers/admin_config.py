@@ -392,6 +392,60 @@ class AdminConfigHandlers:
             "sections": engine.get_research_mode_disciplines(),
         })
 
+    def _handle_code_mode_extension_get(self):
+        """GET /v1/code-mode/extension — admin-only. Returns the GENERAL,
+        language-agnostic code-mode prompt extension injected into every
+        code-mode project's system prompt.
+        Response: { text: <current>, default: <factory> }."""
+        user = self._require_role("admin")
+        if not user:
+            return
+        self._send_json({
+            "text": engine.get_code_mode_extension(),
+            "default": engine._CODE_MODE_EXTENSION_DEFAULT,
+        })
+
+    def _handle_code_mode_extension_save(self):
+        """POST /v1/code-mode/extension — admin-only. Body: { text: str }.
+        Empty string disables the extension; the key materialises in config.json
+        on first save."""
+        user = self._require_role("admin")
+        if not user:
+            return
+        body = self._read_json() or {}
+        text = body.get("text", "")
+        if not isinstance(text, str):
+            self._send_json({"error": "text must be a string"}, 400)
+            return
+        engine._code_mode_extension = text
+        try:
+            server_config["code_mode_extension"] = text
+        except Exception:
+            pass
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+            cfg = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    cfg = json.load(f)
+            cfg["code_mode_extension"] = text
+            with open(config_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+        except Exception as e:
+            self._send_json({"error": f"Persist failed: {e}"}, 500)
+            return
+        try:
+            if engine._audit_log:
+                engine._audit_log.log_action(
+                    agent="main", action_type="code_mode_extension_save",
+                    tool_name="-",
+                    args_summary=(f"by={user.get('username','')} "
+                                  f"len={len(text)} cleared={not text.strip()}"),
+                    result_status="ok")
+        except Exception:
+            pass
+        self._send_json({"status": "saved", "text": engine.get_code_mode_extension()})
+
     def _handle_gdpr_ner_models_get(self):
         """GET /v1/gdpr/ner-models — admin-only. List every spaCy NER
         language Brain knows about plus its load state.

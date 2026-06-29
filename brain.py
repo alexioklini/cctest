@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.236.0"
+VERSION = "9.237.0"
 VERSION_DATE = "2026-06-29"
 CHANGELOG = [
+    ("9.237.0", "2026-06-29", "feat(code-mode): GUI-EDITIERBARE Code-Mode-Prompt-Erweiterung (vom Nutzer gewünscht — analog zur Citation-/Research-Mode-Disziplin). Ein GENERELLER, sprachunabhängiger Disziplin-Block wird in den System-Prompt JEDES Code-Mode-Projekt-Chats injiziert (Python/R/SQL/JS/… gleichermaßen). Default-Text kodiert die EVAL-BELEGTEN Hebel: (1) zuerst den gesyncten Code-Index nutzen statt zu raten, (2) bei Funktionsänderungen genutzte Globals/Abhängigkeiten explizit benennen + zu Parametern machen oder Kopplung dokumentieren, (3) IMMER vollständigen, lauffähigen Code liefern (nichts abschneiden), (4) Projektstil/Konventionen einhalten + Duplikate/Versions-Drift melden. Diese Anweisung hob im Eval die Sync-Daten-Nutzung von mistral-small messbar (1.5→3.75 auf den schwächsten R-Fällen). MECHANIK spiegelt research_mode_disciplines: brain._CODE_MODE_EXTENSION_DEFAULT + get_code_mode_extension()/render_code_mode_extension(); Laufzeit-State brain._code_mode_extension aus config.json['code_mode_extension'] (None→Default, ''→deaktiviert; Key materialisiert beim ersten Speichern, kein Seeding). INJEKTION im bestehenden CODE-MODE-Block in engine/prompt_build.py (nach CODE-INDEX-Text, vor BRAIN.md) — KV-prefix-sicher, da working_dir bereits im Cache-Key. ENDPOINTS: GET/POST /v1/code-mode/extension (admin-only, handlers/admin_config.py, in server.py geroutet). GUI: neue Sektion 'Code-Mode-Prompt-Erweiterung' im Einstellungen→Tools-Tab (settings_general_tabs.js, eine Textarea + Zurücksetzen/Speichern; settings_tools.js saveCodeModeExtension/resetCodeModeExtension). Live verifiziert: GET liefert 913-Zeichen-Default + default für Reset; POST-Roundtrip ('TEST…' gespeichert+zurückgelesen+Default wiederhergestellt); GUI-Textarea rendert mit Default; Injektion steht nachweislich im code-mode-Zweig (gleiche Bedingung wie der bereits live laufende Code-Mode-Text), 0 Konsolenfehler. JS-Gate grün (eslint clean, net-globals 1742→1744, Smoke 5/5). py_compile OK. Server-Restart noetig. KURATIERTER Eintrag (nutzer-/admin-sichtbar)."),
     ("9.236.0", "2026-06-29", "feat(code-mode): R-AUSWERTUNGEN in den Code-Auswertungen (vom Nutzer gewünscht, analog zu SQL — er bekam echte R-Skripte). Neues Modul engine/tools/r_analysis.py analysiert R-Skripte (.R/.r) eines Projekts und bietet im Auswertungen-Dialog eine eigene Gruppe 'R-Auswertungen' (nur sichtbar, wenn das Projekt R enthält): (1) Funktionen & Aufrufe inkl. DUPLIKAT-Warnung (gleiche Funktion in mehreren Dateien → ⚠), (2) Daten-Fluss & Quellen (welche Datei liest/schreibt welche Pfade via read.csv2/write.xlsx/…), (3) Skript-Abhängigkeiten (source()-Graph), (4) Globaler Zustand & Komplexität (Funktionen nach Zeilen + Anzahl genutzter Top-Level-/Globalvariablen — der Refactoring-Risiko-Indikator). AN ECHTEM CODE entwickelt+verifiziert (6 IFRS-9-Skripte des Nutzers: ECL/PIT/TTC/TL, Base-R, kein tidyverse, starke Global-State-Kopplung). Der ursprüngliche tidyverse/lm-orientierte Prototyp wurde verworfen — diese Skripte sind funktionsbasiertes Quant-Risiko mit handimplementierten Modellen; der gebaute Analyzer ist regexbasiert + Base-R-tauglich. ZWEI Prototyp-Bugs gefixt: Aufruf-Zahl nie negativ bei Duplikaten (max(0, calls-defs)); READ-Pfad nimmt das String-Literal (nicht komma-abgeschnitten). ENDPOINT: GET .../code-index/symbols um ?r_meta=1 (→ {has_r, analyses}) + ?r=<id> (→ {columns, rows, fileCol, lineCol, barCol}, gleiche Form wie Cypher/SQL → Wiederverwendung von _codeAnalysisTable) erweitert. Helfer project_has_r/r_analyses_meta/r_analyze, re-exportiert cbm_r_*. FRONTEND (panels_terminal.js +3 Globals: _codeRCards/_codeAnalysisLoadRCards/_codeRRun) zeigt die R-Karten nur bei has_r. CSS .code-an-card.code-an-r ('R '-Marker). Live verifiziert (echte 6 Skripte als Projekt): has_r true, 14 Funktionen (alle 6 ECL-Funktionen als Duplikat ECL_Hilfsfunktion.R vs _2.R markiert), Daten-Fluss 25 Zeilen, source() ECL_122025.R→ECL_Hilfsfunktion_2.R, Globals 14, UI 4 Karten + Tabelle, 0 Konsolenfehler; Screenshot bestätigt. JS-Gate grün (eslint clean, net-globals 1739→1742, Smoke 5/5). py_compile OK. Server-Restart noetig. KURATIERTER Eintrag (nutzersichtbares Code-Mode-Feature)."),
     ("9.235.0", "2026-06-29", "feat(code-mode): SQL-AUSWERTUNGEN in den Code-Auswertungen (vom Nutzer gewünscht — SQL wird sehr häufig eingesetzt). Neues Backend-Modul engine/tools/sql_analysis.py analysiert die SQL-Dateien eines Code-Projekts (.sql + .dbq) und bietet im Auswertungen-Dialog eine eigene Gruppe 'SQL-Auswertungen' (nur sichtbar, wenn das Projekt SQL enthält): (1) Tabellen-Hotspots (meistreferenzierte Tabellen über alle Abfragen), (2) Komplexeste Abfragen (nach Join-Zahl, Review-Kandidaten), (3) Linked-Server-Zugriffe (OPENQUERY-Abhängigkeiten), (4) Prozeduren & Views-Inventar (mit Sprung zur Definition). WICHTIGE EMPIRISCHE ENTSCHEIDUNG (an echtem 882-Abfragen-Bankkorpus gemessen): der Analyzer ist REGEX-basiert, NICHT sqlglot-getrieben — die Abfragen sind T-SQL-Wrapper (BEGIN/EXECUTE/DECLARE) um OPENQUERY-Strings mit verschachteltem IBM-DB2/iSeries-SQL (Lib/Schema/Tabelle mit Schrägstrichen, kein Standard-SQL); sqlglot parst davon nur 39% und findet 29 Tabellen, Regex 100% und 1168 Tabellen. sqlglot ist daher OPTIONAL (HAVE_SQLGLOT, try/except ImportError; nur Spalten-Lineage-Bonus auf parsebaren Dateien) und KEINE harte Abhängigkeit. .dbq = IBM-XML-Export → SQL aus <Body> extrahiert. ENDPOINT: GET .../code-index/symbols um ?sql_meta=1 (→ {has_sql, analyses}) + ?sql=<id> (→ {columns, rows, fileCol, lineCol, barCol}, gleiche Form wie die Cypher-Auswertungen → Wiederverwendung von _codeAnalysisTable) erweitert. Neue Helfer project_has_sql/sql_analyses_meta/sql_analyze, re-exportiert (cbm_sql_*). FRONTEND (panels_terminal.js +3 Globals: _codeSqlCards/_codeAnalysisLoadSqlCards/_codeSqlRun) lädt die SQL-Karten beim Dialog-Öffnen via ?sql_meta=1, zeigt sie nur bei has_sql, rendert Ergebnisse über den bestehenden Tabellen-Renderer (Pfad/Zeile klickbar → Sprung). CSS .code-an-grouphead + ⛁-Karten-Icon. DEPENDENCY: sqlglot>=20.0.0 in requirements.txt (optional), in die Server-Python (Homebrew, --break-system-packages wie die übrigen Deps) installiert. Live verifiziert (echter 882-Abfragen-Korpus als Projekt): has_sql true, 4 Karten, Tabellen-Hotspots PS00 1295×/504 Abfragen mit Balken, Komplexeste ESG_Abfrage 103 Joins, Linked-Server linked_tambas_iwpb_prd 484×, 235 Procs+Views, 0 Konsolenfehler; Screenshot bestätigt. JS-Gate grün (eslint clean, net-globals 1736→1739, Smoke 5/5). py_compile OK. Server-Restart noetig. KURATIERTER Eintrag (großes nutzersichtbares Code-Mode-Feature)."),
     ("9.234.2", "2026-06-29", "fix(code-mode): Terminal stellte TUIs (htop/btop/Monitore) als KAUFFEN-Salat dar (â â¢ Â statt █ ─ │) + schlecht lesbare Schrift (vom Nutzer gemeldet). ZWEI Ursachen: (1) UTF-8-DEKODIERUNG — _terminalStreamOutput schrieb `atob(data)` (eine Binär-String, je Zeichen = 1 Byte 0-255) direkt in xterm via term.write(string); xterm interpretiert jedes Zeichen als Unicode-Codepoint → Byte 0xE2 (Anfang von █/─) wurde zu 'â'. FIX: Base64 → Uint8Array (charCodeAt je Byte) → term.write(u8); xterm dekodiert ein Uint8Array als UTF-8 → Mehrbyte-Glyphen (Box-Drawing █ ─ │, Block-Shades, Powerline, Emoji) rendern korrekt. offset bleibt Byte-Zahl (Resume since= ist byte-basiert). Standalone verifiziert: alte Variante zeigt 'ââ ââ box', neue '██ ── box', Bytes identisch. (2) SCHRIFT — xterm bekam fontFamily:'var(--font-mono, monospace)', aber xterm löst CSS-var() NICHT auf → stille Fallback-Schrift; zudem hat 'Anthropic Mono' keine Box-Drawing-Glyphen. FIX: neuer literaler Terminal-Font-Stack _TERM_FONT_STACK / CSS --font-term aus den DEFAULT-Terminal-Schriften je OS, alle mit voller Box-Drawing/Block/Powerline-Abdeckung: macOS SF Mono + Menlo, Windows 11 Cascadia Mono/Code + Consolas, Linux DejaVu Sans Mono. Angewandt auf xterm (literaler String statt var()) UND den Terminal-Chat (--font-term auf .tc-log/.tc-shout/.tc-ta/.tc-prompt/.tc-asst code — Shell-Ausgabe + Eingabe lesen jetzt sauber, Prompt-Ausrichtung bleibt da Prompt+Textarea dieselbe Schrift teilen). Live verifiziert: xterm-fontFamily ist jetzt der literale Stack. REIN FRONTEND (panels_terminal.js + main.css), KEIN Server-Restart nötig (nur VERSION → Restart für /v1/status). JS-Gate grün (eslint clean, net-globals 1734→1736 [+_terminalFontFamily/_TERM_FONT_STACK], Smoke 5/5). KURATIERTER Eintrag (nutzersichtbare Code-Mode-Korrektur)."),
@@ -923,6 +924,51 @@ def active_research_discipline_sections() -> list[str]:
         else:
             out.append(k)  # missing → default text
     return out
+
+
+# ── Code-Mode prompt extension (GUI-editable, like research-mode disciplines) ──
+# A GENERAL (language-agnostic) discipline block injected into the system prompt
+# of EVERY code-mode project turn — Python, R, SQL, JS, … alike. Mirrors the
+# research-mode-disciplines mechanism: admin-editable prose in config.json, GET/
+# POST endpoints, GUI textarea. Default text encodes the eval-backed levers
+# (use the synced index first; emit complete, runnable code; name dependencies /
+# global state on a change; match the project's style; watch for duplication).
+# An admin who saves "" clears it entirely.
+_CODE_MODE_EXTENSION_DEFAULT = (
+    "**CODE-MODE-ARBEITSWEISE** (gilt für alle Sprachen):\n"
+    "Du arbeitest in einem Projekt, dessen Code bereits indexiert (gesynct) ist. "
+    "Bevor du Code analysierst, änderst, ergänzt oder neu schreibst:\n"
+    "1. NUTZE ZUERST den Projekt-Kontext über die Code-Werkzeuge (Symbol-/"
+    "Struktursuche, Aufrufer/Verwendungen, Daten-/Abhängigkeits-Analysen) statt zu "
+    "raten — der Index ist die frische Quelle der Wahrheit für Struktur.\n"
+    "2. Wenn du eine Funktion änderst: benenne explizit, welche globalen Variablen "
+    "oder externen Abhängigkeiten sie nutzt, und mache sie zu Parametern ODER "
+    "dokumentiere die Kopplung — verändere die Ergebnis-Semantik nicht unbeabsichtigt.\n"
+    "3. Gib IMMER VOLLSTÄNDIGEN, LAUFFÄHIGEN Code aus — nichts abschneiden; wird es "
+    "lang, fasse Unwichtiges zusammen, liefere die Lösung aber komplett.\n"
+    "4. Halte dich an den vorhandenen Projektstil und die Konventionen; achte auf "
+    "Duplikate / Versions-Drift und weise darauf hin."
+)
+
+# Runtime state populated by server.py at startup from
+# config.json["code_mode_extension"]. A single prose string; "" means "no
+# extension injected" (admin cleared it).
+_code_mode_extension: str | None = None
+
+
+def get_code_mode_extension() -> str:
+    """Effective code-mode prompt extension. Returns the admin-set text if any
+    is configured (incl. an explicit "" → empty = disabled), else the default."""
+    if _code_mode_extension is None:
+        return _CODE_MODE_EXTENSION_DEFAULT
+    return _code_mode_extension
+
+
+def render_code_mode_extension() -> str:
+    """The code-mode extension text to inject into the system prompt, or "" when
+    the admin cleared it. Default applies when never configured."""
+    txt = get_code_mode_extension()
+    return txt.strip() if isinstance(txt, str) else ""
 
 
 def render_research_mode_disciplines() -> str:

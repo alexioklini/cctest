@@ -343,6 +343,16 @@ def _build_system_prompt(include_memory_summary: bool = True,
                     "truth for structure — prefer it over grep and over BRAIN.md "
                     "for anything about files/functions/relationships.\n"
                 )
+                # GUI-editable, language-agnostic code-mode discipline (mirrors the
+                # research-mode disciplines). Admin can edit/clear it in Settings.
+                # In the system prompt (working_dir is already in the cache key, so
+                # this is KV-prefix-safe across warmup vs. code-mode turns).
+                try:
+                    _cme = _brain.render_code_mode_extension()
+                except Exception:
+                    _cme = ""
+                if _cme:
+                    system_instruction += f"\n{_cme}\n"
                 # BRAIN.md (if present at the working-dir root) holds DURABLE,
                 # non-derivable project knowledge (purpose, conventions, how to
                 # build/run) — NOT structure, which the auto-updated code index

@@ -4656,5 +4656,6 @@
     "enabled": true,
     "bin": "/Users/alexander/Documents/dev/cctest/.codebase-memory/bin/codebase-memory-mcp",
     "cache_root": "/Users/alexander/Documents/dev/cctest/.codebase-memory/cache"
-  }
+  },
+  "code_mode_extension": "**CODE-MODE-ARBEITSWEISE** (gilt für alle Sprachen):\nDu arbeitest in einem Projekt, dessen Code bereits indexiert (gesynct) ist. Bevor du Code analysierst, änderst, ergänzt oder neu schreibst:\n1. NUTZE ZUERST den Projekt-Kontext über die Code-Werkzeuge (Symbol-/Struktursuche, Aufrufer/Verwendungen, Daten-/Abhängigkeits-Analysen) statt zu raten — der Index ist die frische Quelle der Wahrheit für Struktur.\n2. Wenn du eine Funktion änderst: benenne explizit, welche globalen Variablen oder externen Abhängigkeiten sie nutzt, und mache sie zu Parametern ODER dokumentiere die Kopplung — verändere die Ergebnis-Semantik nicht unbeabsichtigt.\n3. Gib IMMER VOLLSTÄNDIGEN, LAUFFÄHIGEN Code aus — nichts abschneiden; wird es lang, fasse Unwichtiges zusammen, liefere die Lösung aber komplett.\n4. Halte dich an den vorhandenen Projektstil und die Konventionen; achte auf Duplikate / Versions-Drift und weise darauf hin."
 }
