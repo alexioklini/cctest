@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.233.0",
+        "date": "2026-06-29",
+        "title": "Code-Bereich: Fenster frei anordnen",
+        "body": "Den Arbeitsbereich im Code-Modus teilen Sie jetzt frei per "
+                "Ziehen auf — die feste Layout-Auswahl entfällt. Ziehen Sie "
+                "einen Tab an den linken, rechten, oberen oder unteren Rand "
+                "eines Bereichs, teilt er sich in diese Richtung; ziehen Sie "
+                "ihn in die Mitte, wandert er einfach dorthin. Schließen Sie "
+                "das letzte Fenster eines Bereichs, wird der Platz automatisch "
+                "wieder freigegeben. Ihre Aufteilung wird pro Projekt gemerkt "
+                "und beim nächsten Öffnen wiederhergestellt.",
+        "audience": "user",
+        "versions": ["9.233.0"],
+    },
+    {
         "version": "9.232.0",
         "date": "2026-06-28",
         "title": "Code-Bereich: bessere Datei-Liste & Aufteilung",

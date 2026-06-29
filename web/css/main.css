@@ -584,29 +584,89 @@ textarea { resize: none; }
   flex: 0 0 auto;
 }
 #terminal-strip .pt-act { color: var(--text-300); }
-/* Split-pane container. data-layout drives a CSS grid of pane slots. Each pane
- * is a .tpane with its own bar + body; dividers are .tpane-divider. */
-#terminal-panes { flex: 1; min-height: 0; position: relative; display: grid; gap: 0; }
-#terminal-panes[data-layout="single"] { grid-template: "a" 1fr / 1fr; }
-#terminal-panes[data-layout="lr"]     { grid-template: "a d b" 1fr / var(--tp-a,1fr) 5px var(--tp-b,1fr); }
-#terminal-panes[data-layout="tb"]     { grid-template: "a" var(--tp-a,1fr) "d" 5px "b" var(--tp-b,1fr) / 1fr; }
-/* L/R on top, full-width pane on the bottom. */
-#terminal-panes[data-layout="lrb"]    {
-  grid-template: "a dv b" var(--tp-top,1fr) "dh dh dh" 5px "c c c" var(--tp-bot,1fr)
-                 / var(--tp-a,1fr) 5px var(--tp-b,1fr);
+/* Dynamic split-pane container. The grid is DERIVED from pane occupancy (no preset
+ * layout): data-grid is computed in JS from which of the a/b/c/d slots hold tabs.
+ * Slots: a=top-left, b=top-right, c=bottom-left, d=bottom-right. Empty cells are
+ * never rendered, so their space is reclaimed by neighbours. The column split
+ * (--tp-col) and row split (--tp-row) are 0..1 fractions set by the dividers. */
+/* NOTE: track sizes use percentages, NOT calc(... * 1fr). `fr` units are illegal
+ * inside calc(), so calc(var(--tp-col) * 1fr) makes the WHOLE grid-template invalid
+ * (computes to `none` → panes overlap). Percentages are valid in calc(); we size
+ * the two fractional tracks as fractions of (100% - 5px) so they + the 5px divider
+ * total exactly 100%. --tp-col/--tp-row are unitless 0..1 from the dividers. */
+#terminal-panes { flex: 1; min-height: 0; position: relative; display: grid; gap: 0;
+  --tp-col: .5; --tp-row: .5;
+  --tp-cl: calc(var(--tp-col) * (100% - 5px)); --tp-cr: calc((1 - var(--tp-col)) * (100% - 5px));
+  --tp-rt: calc(var(--tp-row) * (100% - 5px)); --tp-rb: calc((1 - var(--tp-row)) * (100% - 5px)); }
+/* one cell */
+#terminal-panes[data-grid="single"] { grid-template: "a" 1fr / 1fr; }
+/* two side-by-side (a | b) */
+#terminal-panes[data-grid="cols"] {
+  grid-template: "a d b" 1fr / var(--tp-cl) 5px var(--tp-cr);
+}
+/* two stacked (a / c) */
+#terminal-panes[data-grid="rows"] {
+  grid-template: "a" var(--tp-rt) "d" 5px "c" var(--tp-rb) / 1fr;
+}
+/* full 2×2 — any of a/b/c/d may be empty; an empty cell's grid-area simply has no
+ * .tpane, so the track stays but renders blank. Two vertical dividers (top + bottom
+ * rows) + one horizontal. */
+#terminal-panes[data-grid="quad"] {
+  grid-template:
+    "a  dv b" var(--tp-rt)
+    "dh dh dh" 5px
+    "c  db d" var(--tp-rb)
+    / var(--tp-cl) 5px var(--tp-cr);
+}
+/* top row split, bottom row full-width (a|b over c) */
+#terminal-panes[data-grid="quad-tr"] {
+  grid-template:
+    "a  dv b" var(--tp-rt)
+    "dh dh dh" 5px
+    "c  c  c" var(--tp-rb)
+    / var(--tp-cl) 5px var(--tp-cr);
+}
+/* top row full-width, bottom row split (a over c|d) */
+#terminal-panes[data-grid="quad-br"] {
+  grid-template:
+    "a  a  a" var(--tp-rt)
+    "dh dh dh" 5px
+    "c  db d" var(--tp-rb)
+    / var(--tp-cl) 5px var(--tp-cr);
 }
 .tpane { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .tpane[data-slot="a"] { grid-area: a; }
 .tpane[data-slot="b"] { grid-area: b; }
 .tpane[data-slot="c"] { grid-area: c; }
+.tpane[data-slot="d"] { grid-area: d; }
 .tpane-divider { background: transparent; z-index: 5; }
 .tpane-divider:hover { background: var(--accent-brand); }
 .tpane-divider[data-dir="v"] { cursor: ew-resize; }
 .tpane-divider[data-dir="h"] { cursor: ns-resize; }
-#terminal-panes[data-layout="lr"] .tpane-divider { grid-area: d; }
-#terminal-panes[data-layout="tb"] .tpane-divider { grid-area: d; }
-#terminal-panes[data-layout="lrb"] .tpane-divider[data-which="v"] { grid-area: dv; }
-#terminal-panes[data-layout="lrb"] .tpane-divider[data-which="h"] { grid-area: dh; }
+/* cols/rows have a single divider in grid-area d. quad has named dividers. */
+#terminal-panes[data-grid="cols"] .tpane-divider,
+#terminal-panes[data-grid="rows"] .tpane-divider { grid-area: d; }
+#terminal-panes[data-grid^="quad"] .tpane-divider[data-which="vt"] { grid-area: dv; }
+#terminal-panes[data-grid^="quad"] .tpane-divider[data-which="vb"] { grid-area: db; }
+#terminal-panes[data-grid^="quad"] .tpane-divider[data-which="h"]  { grid-area: dh; }
+/* Edge drop-zone overlay. INERT by default (pointer-events:none, hidden) so it
+ * never blocks clicks/scroll in the pane. While a tab drag is active the host gets
+ * `.tp-dnd`, which raises every overlay to cover its pane (pointer-events:auto) so
+ * dragover/drop land on the overlay — pane content (xterm/editor/chat) can't eat
+ * them. The highlighted quarter is driven by data-zone set on dragover. */
+.tpane-drop { position: absolute; inset: 0; pointer-events: none; z-index: 30; display: none; }
+#terminal-panes.tp-dnd .tpane-drop { display: block; pointer-events: auto; }
+.tpane-drop::after {
+  content: ""; position: absolute; opacity: 0;
+  background: color-mix(in srgb, var(--accent-brand) 28%, transparent);
+  border: 2px solid var(--accent-brand); border-radius: 4px; transition: opacity .06s ease;
+}
+.tpane-drop[data-zone]::after { opacity: 1; }
+.tpane-drop[data-zone="center"]::after { inset: 8px; }
+.tpane-drop[data-zone="left"]::after   { left: 0; top: 0; bottom: 0; width: 50%; }
+.tpane-drop[data-zone="right"]::after  { right: 0; top: 0; bottom: 0; width: 50%; }
+.tpane-drop[data-zone="top"]::after    { left: 0; right: 0; top: 0; height: 50%; }
+.tpane-drop[data-zone="bottom"]::after { left: 0; right: 0; bottom: 0; height: 50%; }
 /* Per-pane tab bar. */
 .tpane-bar {
   display: flex; align-items: center; gap: 4px;

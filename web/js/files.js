@@ -302,13 +302,19 @@ function removePendingFile(idx) {
     overlay.style.display = 'flex';
   });
   document.addEventListener('dragleave', (e) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
     e.preventDefault();
     dragCounter--;
     if (dragCounter <= 0) { dragCounter = 0; overlay.style.display = 'none'; }
   });
   document.addEventListener('dragover', (e) => {
+    // ONLY claim FILE drags (upload-to-attach). Internal element drags (e.g. the
+    // code-mode terminal tab drag, which carries text/tab-id, NOT Files) must be
+    // left alone — forcing dropEffect='copy' here clashes with their 'move'
+    // effectAllowed → the browser shows a no-drop cursor + rejects the drop.
+    if (!e.dataTransfer?.types?.includes('Files')) return;
     e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    e.dataTransfer.dropEffect = 'copy';
   });
   // Read a single browser File into a pending-file entry. Shared by the
   // top-level drop path and the recursive directory walk so a file dragged
@@ -394,6 +400,10 @@ function removePendingFile(idx) {
   }
 
   document.addEventListener('drop', async (e) => {
+    // Only handle FILE drops here (upload-to-attach). An internal element drag
+    // (terminal tab, wiki page, …) carries no Files and is handled by its own
+    // target listener — don't preventDefault/consume it at the document level.
+    if (!e.dataTransfer?.types?.includes('Files')) return;
     e.preventDefault();
     dragCounter = 0;
     overlay.style.display = 'none';

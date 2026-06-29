@@ -444,15 +444,18 @@ nur ohne Cursor). Im **Bearbeiten**-Modus sehen Sie immer den Quelltext und
 können ihn ändern; eine Statuszeile unten zeigt Größe, Zeilenzahl und
 Änderungsdatum.
 
-**Geteilter Arbeitsbereich** (Code-Projekte): Über den **Aufteilungs-Knopf** in
-der Bereichsleiste teilen Sie den unteren Bereich in mehrere Teilbereiche:
-**einzeln**, **links/rechts** (zwei Dateien nebeneinander vergleichen),
-**oben/unten** (z. B. oben Editor, unten Terminal) oder **L/R + unten** (unten
-über die volle Breite). Jeder Teilbereich hat eigene Tabs und einen eigenen
-„+“/Neue-Datei-Knopf; **Tabs lassen sich per Ziehen** von einem Teilbereich auf
-die Tab-Leiste eines anderen verschieben, und die Teilbereiche sind über die
-Trennlinien **größenverstellbar**. Aufteilung, Größen und geöffnete Dateien
-werden **pro Projekt** gemerkt.
+**Geteilter Arbeitsbereich** (Code-Projekte): Sie teilen den unteren Bereich
+**dynamisch per Ziehen** auf — es gibt keine feste Layout-Auswahl mehr. Ziehen
+Sie einen Tab an den **linken, rechten, oberen oder unteren Rand** eines
+Teilbereichs, teilt sich der Bereich in diese Richtung und der Tab landet im neuen
+Teilbereich; ziehen Sie ihn in die **Mitte** (oder auf die Tab-Leiste), wandert er
+nur dorthin. So entstehen bis zu vier Teilbereiche (ein 2×2-Raster: oben links,
+oben rechts, unten links, unten rechts). Jeder Teilbereich hat eigene Tabs und
+einen eigenen „+“/◈/Neue-Datei-Knopf, und die Teilbereiche sind über die
+Trennlinien **größenverstellbar**. **Schließen Sie das letzte Fenster eines
+Teilbereichs, wird der Platz automatisch wieder freigegeben** und die übrigen
+Bereiche füllen ihn aus. Aufteilung, Größen und geöffnete Dateien werden
+**pro Projekt** gemerkt.
 
 **Terminal direkt öffnen**: In der **Projektansicht** eines Code-Projekts öffnet
 der **„Terminal“-Knopf** oben (neben Titel und Stern) den Terminal/Editor-Bereich

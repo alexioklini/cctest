@@ -11,12 +11,14 @@ const _term = {
   agent: '', project: '', wd: '',
   tabs: [],          // [{id, kind, el, pane, …}] — each tab is assigned to a pane
   open: false,
-  // Split-pane workspace (the bottom area can be one pane, left/right, top/bottom,
-  // or L/R + full-width bottom). Each pane has its own tab bar + body + active tab.
-  layout: 'single',  // 'single' | 'lr' | 'tb' | 'lrb'
-  panes: [],         // [{id, slot, barEl, bodyEl, active}]  slot ∈ a|b|c
+  // Dynamic split-pane workspace. A 2×2 grid of slots — a=top-left, b=top-right,
+  // c=bottom-left, d=bottom-right — but the VISIBLE layout is DERIVED from which
+  // slots actually hold tabs (empty cells collapse, neighbours reclaim the space).
+  // There is no preset layout to pick: the user drags a tab onto a pane's edge to
+  // split toward that direction. Slot 'a' is the always-present home cell.
+  panes: [],         // [{id, slot, barEl, bodyEl, active}]  slot ∈ a|b|c|d
   activePane: null,  // pane id that owns keyboard focus / new tabs
-  sizes: {},         // grid sizings: {a,b} (lr/tb) or {top,bot,a,b} (lrb), CSS fr/px
+  sizes: {},         // {col, row}: left-column + top-row fraction (CSS fr/px), 0..1
   // Layout state (persisted PER-PROJECT in bottom_workspace, not per-chat):
   treeVisible: true, // file-tree column shown?
   treeWidth: 240,    // file-tree column width (px)
@@ -24,8 +26,13 @@ const _term = {
   singleEditor: false, // single-editor mode: tree click replaces the editor tab
 };
 
-// Which pane slots each layout uses, in DOM/visual order.
-const _TERM_LAYOUT_SLOTS = { single: ['a'], lr: ['a', 'b'], tb: ['a', 'b'], lrb: ['a', 'b', 'c'] };
+// Slot order (DOM/visual): top-left, top-right, bottom-left, bottom-right.
+const _TERM_SLOTS = ['a', 'b', 'c', 'd'];
+// Per-slot grid position: which row/column each slot occupies in the 2×2.
+const _TERM_SLOT_POS = {
+  a: { row: 'top', col: 'left' },  b: { row: 'top', col: 'right' },
+  c: { row: 'bot', col: 'left' },  d: { row: 'bot', col: 'right' },
+};
 
 // One-shot explicit-pane override: a pane-scoped action (the per-pane +/◈/
 // new-file button) sets this to its pane id so the next open lands there instead
@@ -39,40 +46,91 @@ function _terminalActivePane() {
   return _terminalGetPane(_term.activePane) || _term.panes[0] || null;
 }
 
-// Visual slot → pane id for the CURRENT layout. Slots (per _TERM_LAYOUT_SLOTS):
-//   single: a=only · lr: a=left,b=right · tb: a=top,b=bottom ·
-//   lrb: a=top-left,b=top-right,c=bottom(full width).
-// Named positions resolve to the slot that visually occupies them, or null when
-// the layout has no such position.
-function _terminalSlotForPos(pos) {
-  const L = _term.layout;
-  switch (pos) {
-    case 'topleft': return 'a';                 // every layout has a top-left
-    case 'topright': return L === 'lrb' ? 'b' : (L === 'lr' ? 'b' : null);
-    case 'bottom':   return L === 'lrb' ? 'c' : (L === 'tb' ? 'b' : null);
-    default: return null;
-  }
+// Which slots currently hold ≥1 tab (real occupancy, before any normalization).
+function _terminalRawOccupied() {
+  const occ = new Set();
+  for (const t of _term.tabs) { const s = (t.pane || '').replace('pane-', ''); if (_TERM_SLOT_POS[s]) occ.add(s); }
+  return _TERM_SLOTS.filter(s => occ.has(s));
 }
 
-// Pick the DEFAULT pane a freshly-opened tab of `kind` should land in, honouring
-// the layout + a position-preference fallback chain. `ext` distinguishes source
-// files (→ top-left) from other files (html/md/… → top-right→top-left).
-//   source file     : top-left
-//   other file      : top-right → top-left
-//   terminal        : bottom → top-right → top-left
-//   terminal-chat   : bottom → top-right → top-left
-// Returns a pane id that exists in the current layout (always resolvable since
-// 'topleft'='a' is the universal fallback).
-function _terminalDefaultPane(kind, ext) {
-  let chain;
-  if (kind === 'terminal' || kind === 'chat') chain = ['bottom', 'topright', 'topleft'];
-  else if (kind === 'editor' && _terminalIsSourceExt(ext)) chain = ['topleft'];
-  else chain = ['topright', 'topleft'];   // other files
-  for (const pos of chain) {
-    const slot = _terminalSlotForPos(pos);
-    if (slot) { const p = _terminalGetPane('pane-' + slot); if (p) return p.id; }
+// Compact the workspace so there is never an EMPTY cell sitting between/around
+// occupied ones (which would render as a big blank band — the drag bug). We
+// relabel the real occupied slots into a canonical minimal arrangement and RETAG
+// every tab's `.pane` to match, in place. Rules, by occupied-cell count:
+//   1 cell  → always 'a' (single)
+//   2 cells → if they share a row → a|b (cols); if a column → a/c (rows);
+//             diagonal → keep as a 2-of-4 (quad with the two real cells)
+//   3/4     → keep positions (already a real 2×2 sub-grid)
+// Returns the post-compaction occupied-slot list. Mutates tab.pane.
+function _terminalNormalizeSlots() {
+  const occ = _terminalRawOccupied();
+  if (occ.length === 0) return ['a'];           // empty → home cell a
+  let remap = null;
+  if (occ.length === 1) {
+    if (occ[0] !== 'a') remap = { [occ[0]]: 'a' };   // lone tab → top-left
+  } else if (occ.length === 2) {
+    const [p, q] = occ.map(s => _TERM_SLOT_POS[s]);
+    if (p.row === q.row) {                       // same row → collapse to top a|b
+      remap = {}; occ.forEach((s, i) => { remap[s] = i === 0 ? 'a' : 'b'; });
+    } else {
+      // same column OR diagonal → collapse to a stacked a/c so there is never a
+      // half-empty row (a diagonal b+c would otherwise leave top-left + bottom-
+      // right blank). First (visually higher/left) slot → a, the other → c.
+      remap = {}; occ.forEach((s, i) => { remap[s] = i === 0 ? 'a' : 'c'; });
+    }
   }
-  return (_term.panes[0] && _term.panes[0].id) || 'pane-a';
+  if (remap) {
+    for (const t of _term.tabs) {
+      const s = (t.pane || '').replace('pane-', '');
+      if (remap[s]) t.pane = 'pane-' + remap[s];
+    }
+    return _terminalRawOccupied();
+  }
+  return occ;
+}
+
+// Derive the visible grid from (normalized) occupancy: which slots render, which
+// dividers exist, and the data-grid key the CSS uses. Empty cells are dropped
+// entirely (space reclaimed). Always run AFTER _terminalNormalizeSlots.
+function _terminalComputeGrid() {
+  const occ = _terminalNormalizeSlots();
+  const has = (s) => occ.includes(s);
+  const topR = has('b');                 // right column present in the top row?
+  const bot = has('c') || has('d');      // any bottom row at all?
+  const botR = has('d');                 // right column present in the bottom row?
+  const cols = (topR || botR);           // grid has two columns?
+  // Pick the most specific data-grid key so empty cells get absorbed (e.g. a top
+  // row with no right cell spans full width). Dividers are emitted to match.
+  let key = 'single';
+  if (!bot && cols) key = 'cols';                  // a | b
+  else if (bot && !cols) key = 'rows';             // a / c
+  else if (bot && cols) {
+    // 2 rows, 2 columns, but a row may be missing its right cell → span that row.
+    if (topR && botR) key = 'quad';                // all four columns present
+    else if (topR && !botR) key = 'quad-tr';       // a|b over c(full)
+    else if (!topR && botR) key = 'quad-br';       // a(full) over c|d
+    else key = 'rows';                             // neither right cell (shouldn't reach)
+  }
+  return { occ, topR, bot, botR, cols, key };
+}
+
+// Pick the DEFAULT pane a freshly-opened tab of `kind` should land in. Prefers an
+// already-occupied slot suited to the content (source → top-left; other files →
+// top-right then top-left; terminals/chats → bottom then top-right then top-left),
+// but never CREATES a new cell — splitting is a drag gesture, not an auto-open. So
+// the chain is filtered to slots that already exist; falls back to the active pane
+// then 'pane-a'.
+function _terminalDefaultPane(kind, ext) {
+  // Use the panes that actually exist right now (already compacted at build time).
+  const live = new Set(_term.panes.map(p => p.slot));
+  let chain;
+  if (kind === 'terminal' || kind === 'chat') chain = ['c', 'd', 'b', 'a'];
+  else if (kind === 'editor' && _terminalIsSourceExt(ext)) chain = ['a'];
+  else chain = ['b', 'a'];   // other files
+  for (const s of chain) {
+    if (live.has(s)) { const p = _terminalGetPane('pane-' + s); if (p) return p.id; }
+  }
+  return (_terminalActivePane() && _terminalActivePane().id) || 'pane-a';
 }
 
 // A "source file" = a code file CodeMirror has a real language mode for, that
@@ -85,32 +143,29 @@ function _terminalIsSourceExt(ext) {
   return !!_cmModeFor(ext);
 }
 
-// (Re)build the pane DOM for the current _term.layout, preserving existing tab
-// elements (re-parented into their pane bodies). Tabs whose pane no longer
-// exists in the new layout are reassigned to the first pane.
+// (Re)build the pane DOM from the CURRENT occupancy (the dynamic grid), preserving
+// existing tab elements (re-parented into their pane bodies). Empty cells are not
+// rendered — their space is reclaimed by the remaining panes. Dividers appear only
+// between cells that actually share an edge. Idempotent: safe to call after every
+// tab move / close / split.
 function _terminalBuildPanes() {
   const host = document.getElementById('terminal-panes');
   if (!host) return;
-  const slots = _TERM_LAYOUT_SLOTS[_term.layout] || ['a'];
-  host.dataset.layout = _term.layout;
+  const g = _terminalComputeGrid();
+  const slots = g.occ;
+  host.dataset.grid = g.key;
   // detach existing tab els so re-parenting doesn't drop them
   for (const t of _term.tabs) { if (t.el && t.el.parentNode) t.el.parentNode.removeChild(t.el); }
   host.innerHTML = '';
-  // dividers per layout
-  if (_term.layout === 'lr' || _term.layout === 'tb') {
-    // a, divider, b
-    host.appendChild(_terminalMakePane('a'));
-    host.appendChild(_terminalMakeDivider(_term.layout === 'lr' ? 'v' : 'h', _term.layout === 'lr' ? 'd' : 'd'));
-    host.appendChild(_terminalMakePane('b'));
-  } else if (_term.layout === 'lrb') {
-    host.appendChild(_terminalMakePane('a'));
-    host.appendChild(_terminalMakeDivider('v', 'v'));
-    host.appendChild(_terminalMakePane('b'));
-    host.appendChild(_terminalMakeDivider('h', 'h'));
-    host.appendChild(_terminalMakePane('c'));
-  } else {
-    host.appendChild(_terminalMakePane('a'));
-  }
+  // Panes in slot order; dividers between adjacent cells. The CSS grid (keyed by
+  // data-grid) maps each slot's grid-area, so DOM order only needs to include the
+  // right elements — positions come from CSS.
+  for (const s of slots) host.appendChild(_terminalMakePane(s));
+  // vertical divider(s): between left & right columns (top row and/or bottom row)
+  if (g.topR) host.appendChild(_terminalMakeDivider('v', 'vt'));
+  if (g.botR) host.appendChild(_terminalMakeDivider('v', 'vb'));
+  // horizontal divider: between top & bottom rows
+  if (g.bot) host.appendChild(_terminalMakeDivider('h', 'h'));
   // rebuild _term.panes from the DOM, keeping prior active where possible
   const prevActive = {};
   _term.panes.forEach(p => { prevActive[p.slot] = p.active; });
@@ -119,6 +174,7 @@ function _terminalBuildPanes() {
     return { id: 'pane-' + slot, slot,
              barEl: paneEl.querySelector('.tpane-tabs'),
              bodyEl: paneEl.querySelector('.tpane-body'),
+             dropEl: paneEl.querySelector('.tpane-drop'),
              paneEl, active: prevActive[slot] || null };
   });
   // reassign orphaned tabs (pane gone) to the first pane
@@ -157,7 +213,9 @@ function _terminalMakePane(slot) {
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
       </button>
     </div>
-    <div class="tpane-body"></div>`;
+    <div class="tpane-body">
+      <div class="tpane-drop"></div>
+    </div>`;
   // pane-scoped + / new-chat / new-file: a per-pane button means "open HERE" —
   // set _termOpenInPane so the content-type default is overridden for this open.
   pane.querySelector('[data-act="newterm"]').onclick = () => { _term.activePane = 'pane-' + slot; terminalNewTab('pane-' + slot); };
@@ -171,7 +229,7 @@ function _terminalMakePane(slot) {
   pane.querySelector('[data-act="newfile"]').onclick = () => { _term.activePane = 'pane-' + slot; _termOpenInPane = 'pane-' + slot; terminalNewFile(); };
   const bar = pane.querySelector('.tpane-bar');
   bar.addEventListener('mousedown', () => { _term.activePane = 'pane-' + slot; _terminalPaintActivePane(); });
-  // drag-drop: accept a tab dropped onto this bar
+  // drag-drop onto the BAR: plain move into this existing cell (no split).
   bar.addEventListener('dragover', (e) => { e.preventDefault(); bar.classList.add('tp-drop'); });
   bar.addEventListener('dragleave', () => bar.classList.remove('tp-drop'));
   bar.addEventListener('drop', (e) => {
@@ -179,7 +237,55 @@ function _terminalMakePane(slot) {
     const tabId = e.dataTransfer.getData('text/tab-id');
     if (tabId) _terminalMoveTabToPane(tabId, 'pane-' + slot);
   });
+  // drag-drop onto the BODY: edge zones split the grid toward that direction; the
+  // centre is a plain move into this cell. The overlay highlights the target zone.
+  _terminalWirePaneDrop(pane, slot);
   return pane;
+}
+
+// Wire the drop overlay for a pane. The overlay (.tpane-drop) is the DROP TARGET,
+// not the body: pane content (xterm / CodeMirror / chat DOM) would otherwise eat
+// the dragover/drop (HTML5 DnD requires preventDefault on the element UNDER the
+// cursor, which inner content doesn't do → drop never fires + the cursor shows
+// "no-drop"). While a tab drag is active, #terminal-panes gets a `tp-dnd` class
+// that raises every overlay above the content (pointer-events:auto, full inset),
+// so dragover/drop always land here. Outside a drag the overlay is inert.
+function _terminalWirePaneDrop(pane, slot) {
+  const drop = pane.querySelector('.tpane-drop');
+  if (!drop) return;
+  // Edge zone under the cursor, measured against the overlay (== body) rect.
+  const zoneFor = (e) => {
+    const r = drop.getBoundingClientRect();
+    const fx = (e.clientX - r.left) / Math.max(1, r.width);
+    const fy = (e.clientY - r.top) / Math.max(1, r.height);
+    const edge = 0.28;
+    const dl = fx, dr = 1 - fx, dt = fy, db = 1 - fy;
+    const m = Math.min(dl, dr, dt, db);
+    if (m > edge) return 'center';
+    if (m === dl) return 'left';
+    if (m === dr) return 'right';
+    if (m === dt) return 'top';
+    return 'bottom';
+  };
+  drop.addEventListener('dragenter', (e) => { e.preventDefault(); });
+  drop.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    drop.dataset.zone = zoneFor(e);   // CSS highlights only the active quarter
+  });
+  drop.addEventListener('dragleave', (e) => {
+    // clear only when the cursor actually leaves this overlay
+    if (!drop.contains(e.relatedTarget)) drop.removeAttribute('data-zone');
+  });
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const z = zoneFor(e);
+    drop.removeAttribute('data-zone');
+    const tabId = e.dataTransfer.getData('text/tab-id');
+    if (!tabId) return;
+    if (z === 'center') { _terminalMoveTabToPane(tabId, 'pane-' + slot); return; }
+    _terminalSplitToSlot(tabId, slot, z);
+  });
 }
 
 function _terminalMakeDivider(dir, which) {
@@ -208,83 +314,95 @@ function _terminalPaintActivePane() {
   }
 }
 
-// Move a tab to another pane (drag-drop). Re-parents the el, makes it active in
-// the target pane, collapses the source pane if it became empty (lrb→… ).
+// Move a tab into an EXISTING pane (drag onto its bar / centre). Re-parents the el,
+// makes it active there. If the source cell empties, the next _terminalBuildPanes
+// collapses it and reclaims the space.
 function _terminalMoveTabToPane(tabId, paneId) {
   const tab = _term.tabs.find(t => t.id === tabId);
   const pane = _terminalGetPane(paneId);
   if (!tab || !pane || tab.pane === paneId) return;
   const srcId = tab.pane;
   tab.pane = paneId;
-  pane.bodyEl.appendChild(tab.el);
-  pane.active = tab.id;
   _term.activePane = paneId;
+  pane.active = tab.id;
   // fix the source pane's active tab
   const src = _terminalGetPane(srcId);
   if (src) {
     const left = _terminalPaneTabs(srcId);
     if (!left.find(t => t.id === src.active)) src.active = left.length ? left[0].id : null;
   }
-  _terminalRenderTabs();
-  _terminalShowActiveTabs();
-  _terminalActivate(tab.id);
-  _terminalPersist();
+  _terminalReflow(tab.id);
 }
 
-// Layout switch (from the picker). Empties are fine — a pane with no tabs just
-// shows an empty bar; switching back to 'single' merges everything into pane a.
-function terminalSetLayout(layout) {
-  if (!_TERM_LAYOUT_SLOTS[layout]) return;
-  _term.layout = layout;
-  // collapsing to fewer slots: reassign tabs from dropped slots to 'a'
-  const keep = new Set(_TERM_LAYOUT_SLOTS[layout].map(s => 'pane-' + s));
-  for (const t of _term.tabs) { if (!keep.has(t.pane)) t.pane = 'pane-a'; }
+// Resolve a (sourceSlot, direction) split into the concrete 2×2 slot the tab should
+// land in, then move it there. Directions: left/right (same row, other column),
+// top/bottom (same column, other row). If the resolved slot is the source itself or
+// can't be expressed in the 2×2, fall back to a plain move into the source.
+function _terminalSplitToSlot(tabId, srcSlot, dir) {
+  const tab = _term.tabs.find(t => t.id === tabId);
+  if (!tab) return;
+  const pos = _TERM_SLOT_POS[srcSlot]; if (!pos) return;
+  let row = pos.row, col = pos.col;
+  if (dir === 'left') col = 'left';
+  else if (dir === 'right') col = 'right';
+  else if (dir === 'top') row = 'top';
+  else if (dir === 'bottom') row = 'bot';
+  // map (row,col) → slot
+  const target = _TERM_SLOTS.find(s => _TERM_SLOT_POS[s].row === row && _TERM_SLOT_POS[s].col === col);
+  if (!target || ('pane-' + target) === tab.pane) {
+    // dropped on an edge that maps back to the same cell — keep it here
+    if ('pane-' + srcSlot !== tab.pane) _terminalMoveTabToPane(tabId, 'pane-' + srcSlot);
+    return;
+  }
+  const srcId = tab.pane;
+  // creating a new cell: ensure a pane object exists after rebuild; just retag.
+  tab.pane = 'pane-' + target;
+  _term.activePane = 'pane-' + target;
+  const src = _terminalGetPane(srcId);
+  if (src) {
+    const left = _terminalPaneTabs(srcId);
+    if (!left.find(t => t.id === src.active)) src.active = left.length ? left[0].id : null;
+  }
+  // The new pane DOM doesn't exist yet — rebuild from occupancy, then activate.
   _terminalBuildPanes();
+  const np = _terminalGetPane('pane-' + target);
+  if (np) np.active = tab.id;
+  _terminalReflow(tab.id, true);
+}
+
+// Common tail after a move/split: rebuild panes (collapses emptied cells), re-render
+// tabs, activate the moved tab, persist. `built` skips the rebuild when the caller
+// already did it (split path).
+function _terminalReflow(activateId, built) {
+  if (!built) _terminalBuildPanes();
+  _terminalRenderTabs();
+  _terminalShowActiveTabs();
+  if (activateId) _terminalActivate(activateId);
   _terminalPersist();
   setTimeout(_terminalOnResize, 40);
 }
 
-function terminalLayoutMenu(ev) {
-  ev.stopPropagation();
-  const old = document.getElementById('terminal-layout-menu');
-  if (old) { old.remove(); return; }
-  const m = document.createElement('div');
-  m.id = 'terminal-layout-menu';
-  m.className = 'terminal-tab-menu';
-  const r = ev.currentTarget.getBoundingClientRect();
-  m.style.left = Math.max(8, r.right - 180) + 'px';
-  m.style.top = (r.bottom + 4) + 'px';
-  const opt = (key, label, svg) =>
-    `<div onclick="terminalSetLayout('${key}'); document.getElementById('terminal-layout-menu').remove()">
-       <span class="tlm-ico">${svg}</span>${label}${_term.layout === key ? ' ✓' : ''}</div>`;
-  const box = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">';
-  m.innerHTML =
-    opt('single', 'Einzeln', `${box}<rect x="3" y="3" width="18" height="18" rx="1"/></svg>`) +
-    opt('lr', 'Links / Rechts', `${box}<rect x="3" y="3" width="18" height="18" rx="1"/><line x1="12" y1="3" x2="12" y2="21"/></svg>`) +
-    opt('tb', 'Oben / Unten', `${box}<rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="12" x2="21" y2="12"/></svg>`) +
-    opt('lrb', 'L/R + Unten', `${box}<rect x="3" y="3" width="18" height="18" rx="1"/><line x1="12" y1="3" x2="12" y2="12"/><line x1="3" y1="12" x2="21" y2="12"/></svg>`);
-  document.body.appendChild(m);
-  const close = () => { const e = document.getElementById('terminal-layout-menu'); if (e) e.remove(); document.removeEventListener('click', close); };
-  setTimeout(() => document.addEventListener('click', close), 0);
-}
-
-// Apply persisted pane sizings to the grid CSS custom props.
+// Apply persisted pane sizings to the grid CSS custom props. The grid uses ONE
+// column split (--tp-col = left fraction) and ONE row split (--tp-row = top
+// fraction), shared by both rows/columns so the 2×2 stays rectangular.
 function _terminalApplySizes() {
   const host = document.getElementById('terminal-panes');
   if (!host) return;
   const s = _term.sizes || {};
-  host.style.setProperty('--tp-a', s.a || '1fr');
-  host.style.setProperty('--tp-b', s.b || '1fr');
-  host.style.setProperty('--tp-top', s.top || '1fr');
-  host.style.setProperty('--tp-bot', s.bot || '1fr');
+  const col = (typeof s.col === 'number' && s.col > 0.08 && s.col < 0.92) ? s.col : 0.5;
+  const row = (typeof s.row === 'number' && s.row > 0.08 && s.row < 0.92) ? s.row : 0.5;
+  host.style.setProperty('--tp-col', col);
+  host.style.setProperty('--tp-row', row);
 }
 
-// Wire drag-resize on the current layout's pane dividers (rebuilt each layout
-// change). The vertical divider splits a|b (px on a, b stays 1fr); the
-// horizontal divider splits top|bottom (lrb).
+// Wire drag-resize on the current grid's dividers (rebuilt on every reflow). A
+// vertical divider sets the column split (left fraction); a horizontal divider sets
+// the row split (top fraction). Both are stored as 0..1 fractions so they stay sane
+// across panel-size changes.
 function _terminalInitPaneDividers() {
   const host = document.getElementById('terminal-panes');
   if (!host) return;
+  if (!_term.sizes || typeof _term.sizes !== 'object') _term.sizes = {};
   host.querySelectorAll('.tpane-divider').forEach(div => {
     const dir = div.dataset.dir;  // 'v' | 'h'
     div.onmousedown = (e) => {
@@ -293,15 +411,13 @@ function _terminalInitPaneDividers() {
       document.body.style.userSelect = 'none';
       const move = (ev) => {
         if (dir === 'v') {
-          const x = Math.max(80, Math.min(rect.width - 90, ev.clientX - rect.left));
-          host.style.setProperty('--tp-a', x + 'px');
-          host.style.setProperty('--tp-b', '1fr');
-          _term.sizes.a = x + 'px'; _term.sizes.b = '1fr';
+          const f = Math.max(0.1, Math.min(0.9, (ev.clientX - rect.left) / Math.max(1, rect.width)));
+          host.style.setProperty('--tp-col', f);
+          _term.sizes.col = f;
         } else {
-          const y = Math.max(60, Math.min(rect.height - 70, ev.clientY - rect.top));
-          // in lrb the top band is the L/R row; in tb it's pane a
-          if (_term.layout === 'lrb') { host.style.setProperty('--tp-top', y + 'px'); host.style.setProperty('--tp-bot', '1fr'); _term.sizes.top = y + 'px'; _term.sizes.bot = '1fr'; }
-          else { host.style.setProperty('--tp-a', y + 'px'); host.style.setProperty('--tp-b', '1fr'); _term.sizes.a = y + 'px'; _term.sizes.b = '1fr'; }
+          const f = Math.max(0.1, Math.min(0.9, (ev.clientY - rect.top) / Math.max(1, rect.height)));
+          host.style.setProperty('--tp-row', f);
+          _term.sizes.row = f;
         }
         _terminalOnResize();
       };
@@ -398,6 +514,35 @@ async function terminalTogglePanel(force) {
   }
 }
 
+// Map a legacy bottom_workspace (old fixed-layout slots) onto the new dynamic
+// a/b/c/d 2×2 scheme. Old slots by layout:
+//   single → a   ·   lr → a(left) b(right)   ·   tb → a(top) b(bottom)
+//   lrb → a(top-left) b(top-right) c(bottom full-width)
+// New slots: a=TL b=TR c=BL d=BR. So tb's b(bottom) must become c; lr/lrb already
+// align (lrb's c = bottom-left, which the new grid spans as the bottom row when no
+// d exists). Idempotent for already-new workspaces (no `layout` field).
+function _terminalMigrateWorkspace(ws) {
+  if (!ws || typeof ws !== 'object') return ws;
+  if (!ws.layout) return ws;            // already new shape (or empty)
+  const remap = (ws.layout === 'tb') ? { 'pane-a': 'pane-a', 'pane-b': 'pane-c' } : null;
+  if (remap && ws.panes && typeof ws.panes === 'object') {
+    const next = {};
+    for (const [k, v] of Object.entries(ws.panes)) next[remap[k] || k] = v;
+    ws = { ...ws, panes: next };
+  }
+  delete ws.layout;
+  return ws;
+}
+
+// Old sizes were {a,b,top,bot} as px/fr strings; the new model is {col,row} as
+// 0..1 fractions. We can't recover exact fractions from px, so legacy sizes reset
+// to a centred split (0.5/0.5) — a one-time, harmless loss of an old drag position.
+function _terminalMigrateSizes(sizes, layout) {
+  if (sizes && (typeof sizes.col === 'number' || typeof sizes.row === 'number')) return sizes;
+  if (layout) return {};   // legacy px sizes → drop, fall back to centred
+  return sizes || {};
+}
+
 async function _terminalLoadSessions() {
   // Load persisted workspace (layout + per-pane editor files + sizes) FIRST so
   // panes exist before we add tabs.
@@ -411,11 +556,11 @@ async function _terminalLoadSessions() {
     if (ws.tree_width >= 120) _term.treeWidth = Math.min(ws.tree_width, 700);
     if (typeof ws.tree_split === 'number' && ws.tree_split > 0 && ws.tree_split < 1) _term.treeSplit = ws.tree_split;
     if (typeof ws.single_editor === 'boolean') _term.singleEditor = ws.single_editor;
-    if (_TERM_LAYOUT_SLOTS[ws.layout]) _term.layout = ws.layout;
-    if (ws.sizes && typeof ws.sizes === 'object') _term.sizes = ws.sizes;
+    if (ws.sizes && typeof ws.sizes === 'object') _term.sizes = _terminalMigrateSizes(ws.sizes, ws.layout);
   }
+  ws = _terminalMigrateWorkspace(ws);   // map legacy lr/tb/lrb panes → a/b/c/d
   _terminalApplyLayout();
-  _terminalBuildPanes();   // creates pane DOM for _term.layout
+  _terminalBuildPanes();   // creates pane DOM for the current occupancy
 
   // 1) reattach live terminal sessions (reused server-side per project) → pane-a
   let existing = [];
@@ -435,11 +580,15 @@ async function _terminalLoadSessions() {
   if (paneMap) {
     for (const paneId of Object.keys(paneMap)) {
       const slot = paneId.replace('pane-', '');
-      if (!_TERM_LAYOUT_SLOTS[_term.layout].includes(slot)) continue;  // pane not in layout
+      if (!_TERM_SLOTS.includes(slot)) continue;  // unknown slot
+      // The pane DOM may not exist yet (panes are occupancy-derived); we just tag
+      // each tab's `.pane` and rebuild once at the end so b/c/d cells materialise.
       for (const fp of (paneMap[paneId].editor_files || [])) {
         if (_term.tabs.find(t => t.kind === 'editor' && t.path === fp)) continue;
         _term.activePane = paneId;
         await terminalOpenFile(fp);
+        const t = _term.tabs.find(x => x.kind === 'editor' && x.path === fp);
+        if (t) t.pane = paneId;
       }
       // Restore open terminal-chats into their pane + load each transcript.
       for (const sid of (paneMap[paneId].chat_sessions || [])) {
@@ -447,10 +596,12 @@ async function _terminalLoadSessions() {
         _term.activePane = paneId;
         if (typeof _terminalAddChatTab === 'function') {
           const ct = _terminalAddChatTab(sid, paneId);
+          if (ct) ct.pane = paneId;
           if (ct && typeof tcLoadTranscript === 'function') { try { await tcLoadTranscript(ct); } catch (_) {} }
         }
       }
     }
+    _terminalBuildPanes();   // materialise b/c/d cells from the restored occupancy
   } else if (ws && Array.isArray(ws.editor_files)) {
     _term.activePane = 'pane-a';
     for (const fp of ws.editor_files) {
@@ -511,7 +662,8 @@ function _terminalPersist() {
     }
     const ws = {
       panes,
-      layout: _term.layout,
+      // No stored layout: the grid is derived from pane occupancy on load. `sizes`
+      // is the {col,row} split (0..1 fractions).
       sizes: _term.sizes,
       editor_files: _term.tabs.filter(t => t.kind === 'editor').map(t => t.path),  // legacy
       tree_visible: _term.treeVisible,
@@ -741,11 +893,14 @@ async function terminalCloseTab(id, ev) {
   }
   // close the whole bottom area only when NO tab remains anywhere
   if (!_term.tabs.length) { terminalTogglePanel(false); return; }
-  _terminalShowActiveTabs();
-  _terminalRenderTabs();
+  // Rebuild from occupancy so an emptied cell collapses and neighbours reclaim its
+  // space (the dynamic-grid contract). _terminalBuildPanes re-renders + re-shows.
+  _terminalBuildPanes();
+  if (pane && pane.active) _terminalActivate(pane.active);
   if (wasEditor && typeof repaintTerminalTree === 'function') repaintTerminalTree();
   if (wasChat && typeof renderTermchatHistory === 'function') renderTermchatHistory();
   _terminalPersist();
+  setTimeout(_terminalOnResize, 40);
 }
 
 // Bulk close (browser-style): 'all' | 'others' | 'right' relative to a tab id.
@@ -820,14 +975,21 @@ function _terminalRenderTabs() {
   }
 }
 
-// Tab drag-and-drop between panes (HTML5 DnD; drop handled on each pane bar).
+// Tab drag-and-drop between panes (HTML5 DnD). While a drag is active, raise the
+// per-pane drop overlays above the pane content (via the `tp-dnd` class on the
+// host) so dragover/drop land on the overlay, not the xterm/editor/chat DOM that
+// would otherwise swallow them.
 function _terminalTabDragStart(ev, tabId) {
   ev.dataTransfer.setData('text/tab-id', tabId);
   ev.dataTransfer.effectAllowed = 'move';
   ev.currentTarget.classList.add('tp-dragging');
+  const host = document.getElementById('terminal-panes');
+  if (host) host.classList.add('tp-dnd');
 }
 function _terminalTabDragEnd(ev) {
   ev.currentTarget.classList.remove('tp-dragging');
+  const host = document.getElementById('terminal-panes');
+  if (host) { host.classList.remove('tp-dnd'); host.querySelectorAll('.tpane-drop[data-zone]').forEach(d => d.removeAttribute('data-zone')); }
 }
 
 // ── Editor tabs (CodeMirror 5) ───────────────────────────────────────────────
