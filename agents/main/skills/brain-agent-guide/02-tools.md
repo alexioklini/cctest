@@ -376,7 +376,10 @@ session).
   opened from (model, project, message count, …).
 - `helpdesk_user_context()` — the caller's profile / preferences.
 - `helpdesk_user_activity()` — the caller's recent chats / schedules /
-  usage.
+  usage, **plus their code-mode terminal chats** (`terminal_chats[]`, each
+  with a `live` flag; `terminal_chats_live_now` counts those with a turn
+  streaming right now — `code_chat` sessions are excluded from the normal
+  chat list, so this is how Brainy sees whether a terminal chat is active).
 
 Brainy's full fixed read-only set (`_HELPDESK_TOOLS`): `use_skill`, the
 three `helpdesk_*` tools, `mempalace_query`, `read_document`, `read_file`,

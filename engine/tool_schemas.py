@@ -1034,8 +1034,12 @@ TOOL_DEFINITIONS = [
         "name": "helpdesk_user_activity",
         "description": (
             "Helpdesk only. List what the user has done in this system: their recent chat sessions, "
-            "their projects, and their scheduled tasks. Use it to give concrete, personalised tips "
-            "that refer to the user's actual work instead of generic instructions."
+            "their projects, their scheduled tasks, AND their code-mode terminal chats. The "
+            "`terminal_chats` list covers the bottom-workspace terminal chats of code projects "
+            "(excluded from the normal session list); each entry has a `live` flag and "
+            "`terminal_chats_live_now` counts those with a turn streaming RIGHT NOW — use these to "
+            "answer whether a terminal chat is currently active. Use it to give concrete, "
+            "personalised tips that refer to the user's actual work instead of generic instructions."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },

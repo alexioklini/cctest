@@ -168,6 +168,36 @@ def tool_helpdesk_user_activity(args: dict) -> str:
     except Exception:
         schedules = []
 
+    # Terminal-chats (code-mode bottom-workspace chats, status='code_chat').
+    # Deliberately excluded from the normal session list above (db default
+    # filter), so list them explicitly. Cross-reference active_turns — the
+    # cross-process record of turns running right now — to flag which ones are
+    # LIVE (a turn is streaming this instant), the signal Brainy needs to say
+    # "there's a terminal chat active right now".
+    terminal_chats = []
+    live_count = 0
+    try:
+        live_ids = {row[0] for row in (ChatDB.list_active_turns() or [])}
+        rows = ChatDB.list_sessions(
+            status='code_chat',
+            caller_user_id=(uid or None),
+            visible_user_ids=([uid] if uid else None),
+        ) or []
+        for s in rows[:_MAX_LIST]:
+            is_live = s.get("id") in live_ids
+            if is_live:
+                live_count += 1
+            terminal_chats.append({
+                "title": s.get("title") or "(ohne Titel)",
+                "project": s.get("project") or "",
+                "messages": s.get("message_count", 0),
+                "updated_at": s.get("updated_at") or s.get("created_at") or "",
+                "live": is_live,
+            })
+    except Exception:
+        terminal_chats = []
+        live_count = 0
+
     return _ok({
         "sessions": sessions,
         "session_count": len(sessions),
@@ -175,4 +205,7 @@ def tool_helpdesk_user_activity(args: dict) -> str:
         "project_count": len(projects),
         "schedules": schedules,
         "schedule_count": len(schedules),
+        "terminal_chats": terminal_chats,
+        "terminal_chat_count": len(terminal_chats),
+        "terminal_chats_live_now": live_count,
     })
