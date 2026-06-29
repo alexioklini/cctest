@@ -1,0 +1,19 @@
+{
+  "_comment": "R-Script coding-ability eval task set. 5 task types. Candidate model: mistral-small-latest. Judge: mistral-medium. Each task runs as a FULL agentic OpenAI tool-loop so the model can use the SYNCED R-analysis project data (engine.tools.r_analysis: r_functions / r_dataflow / r_sources / r_globals, plus r_grep + r_read_file over the corpus). 'target' is a corpus .R file OR a 'file::function' — cases span whole scripts AND individual functions; the corpus is Base-R IFRS-9 quant-risk (ECL/PIT/TTC) with heavy GLOBAL STATE and source()-chained, duplicated helper files. Cases are SAMPLED deterministically (sorted targets, fixed seed) and written to the results dir (cases.json) for reproducibility.",
+  "candidate_model": "mistral-small-latest",
+  "judge_model": "mistral-medium",
+  "task_types": {
+    "analyze": "Erkläre, was dieses R-Skript bzw. diese Funktion tut: Eingaben/Ausgaben, welche Daten gelesen/geschrieben werden, Abhängigkeiten zu Hilfsfunktionen, und wo Risiken liegen (globaler Zustand, duplizierte Helfer, Base-R-Fallstricke, IFRS-9-Logik).",
+    "improve": "Verbessere diesen R-Code (Korrektheit, Robustheit, Lesbarkeit) ohne die fachliche Semantik zu ändern. Nenne die Änderungen. Achte auf den globalen Zustand und die vorhandenen Hilfsfunktionen.",
+    "refactor": "Refactore diesen R-Code strukturell: lokalisiere globalen Zustand über explizite Funktionsargumente/Rückgaben, sprechende Namen, klare Struktur (Base-R bleibt zulässig; tidyverse nur wenn es passt) — bei gleichem Ergebnis. Prüfe vorher die Global-Kopplung.",
+    "extend": "Ergänze die geforderte zusätzliche Funktionalität (neuer Parameter mit sinnvollem Default und dessen Nutzung). Halte den Stil des Skripts (Base-R) ein und nutze den vorhandenen Funktions-/Daten-Kontext aus dem Projekt.",
+    "rewrite": "Schreibe diesen R-Code äquivalent neu in einem saubereren, idiomatischeren Stil (klare Funktionsgrenzen, weniger globale Kopplung, konsistente Base-R- oder tidyverse-Idiomatik), der dasselbe Ergebnis liefert."
+  },
+  "_note_cases": "The runner fills concrete (target, code_excerpt, extra_instruction) per type at build time by sampling the corpus across whole-script and individual-function targets; this file pins the TYPES + the rubric. Cases are emitted into the results dir for reproducibility.",
+  "rubric": {
+    "correctness": "Bleibt die fachliche Semantik erhalten / ist die Antwort fachlich richtig (IFRS-9 ECL/PIT/TTC-Logik, R-Semantik, kein Bruch der Ergebnisse)? (0-4)",
+    "uses_synced_data": "Hat das Modell den Projekt-/Index-Kontext (r_functions/r_dataflow/r_sources/r_globals, r_grep, r_read_file der Hilfsfunktionen) tatsächlich genutzt — insbesondere die Global-Kopplung VOR einem Refactor geprüft — statt nur die nackte Datei zu lesen? (0-4)",
+    "r_quality": "R-Idiomatik & Lesbarkeit: bewusster Umgang mit Base-R vs. tidyverse, korrekte Behandlung der Global-State-Kopplung (kein versehentliches Brechen von <<- / globalen Variablen), saubere Funktionsgrenzen, idiomatische Vektorisierung. (0-4)",
+    "completeness": "Ist die gestellte Aufgabe vollständig erfüllt (alle geforderten Teile, lauffähiger / vollständiger R-Code wo gefordert)? (0-4)"
+  }
+}
