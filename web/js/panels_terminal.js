@@ -1216,6 +1216,7 @@ function _cmModeFor(ext) {
     hpp: 'text/x-c++src', java: 'text/x-java', cs: 'text/x-csharp',
     yml: 'yaml', yaml: 'yaml', sh: 'shell', bash: 'shell', zsh: 'shell',
     go: 'go', rs: 'rust',
+    r: 'text/x-rsrc',
   };
   return m[ext] || null;
 }

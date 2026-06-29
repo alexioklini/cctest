@@ -29,6 +29,17 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.237.1",
+        "date": "2026-06-29",
+        "title": "Code-Editor: R-Syntaxhervorhebung",
+        "body": "R-Dateien (.R) werden im Code-Editor jetzt mit "
+                "Syntaxhervorhebung angezeigt — Schlüsselwörter, Funktionen, "
+                "Zeichenketten und Kommentare sind farblich abgesetzt, genau "
+                "wie bei den übrigen Programmiersprachen.",
+        "audience": "user",
+        "versions": ["9.237.1"],
+    },
+    {
         "version": "9.237.0",
         "date": "2026-06-29",
         "title": "Code-Modus: anpassbare Arbeitsanweisung",
