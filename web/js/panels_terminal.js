@@ -1469,12 +1469,14 @@ function terminalEditorMode(id, mode) {
   // .dbq: before switching views, fold the CURRENT view's edits back into
   // tab.raw (the XML) so the other view shows them. SQL view → re-embed into
   // <DisplaySQL>/<Body>; XML view → it already IS tab.raw.
-  if (_isDbq(tab) && tab.cm && tab.mode !== mode) {
+  // (the tree view is read-only → never fold its CM, which still holds the
+  // previous editable view's text).
+  if (_isDbq(tab) && tab.cm && tab.mode !== mode && tab.mode !== 'tree') {
     const cur = tab.cm.getValue();
     if (tab.mode === 'render') {            // leaving the SQL view
       const merged = _dbqEmbedSql(tab.raw, cur);
       if (merged !== null) tab.raw = merged;
-    } else {                               // leaving the XML view
+    } else if (tab.mode === 'raw') {        // leaving the XML source view
       tab.raw = cur;
     }
   }
@@ -1547,6 +1549,18 @@ function _terminalDbqRelabelModes(tab) {
     xmlBtn.title = 'XML-Quelle — bearbeitbar';
     xmlBtn.setAttribute('aria-label', 'XML-Quelle');
     xmlBtn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+    // Add a THIRD .dbq view: the structured XML tree (read-only, collapsible) —
+    // right after the XML-Quelle button. Inserted once (guard on existing node).
+    if (!tab.el.querySelector('.ed-mode[data-mode="tree"]')) {
+      const treeBtn = document.createElement('button');
+      treeBtn.className = 'ed-iconbtn ed-mode';
+      treeBtn.dataset.mode = 'tree';
+      treeBtn.setAttribute('onclick', `terminalEditorMode('${tab.id}','tree')`);
+      treeBtn.title = 'XML-Baum (auf-/zuklappen)';
+      treeBtn.setAttribute('aria-label', 'XML-Baum');
+      treeBtn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="6" x2="20" y2="6"/><line x1="12" y1="12" x2="20" y2="12"/><line x1="12" y1="18" x2="20" y2="18"/><path d="M4 5v4a2 2 0 0 0 2 2h2"/><path d="M6 11v4a2 2 0 0 0 2 2h2"/></svg>';
+      xmlBtn.insertAdjacentElement('afterend', treeBtn);
+    }
   }
 }
 // JSON/XML: 'render' = collapsible data tree, 'raw' = editable source (with fold
@@ -1566,6 +1580,35 @@ function _terminalTreeRelabelModes(tab) {
   }
 }
 
+// Paint a collapsible data tree from `txt` into `renderEl`. treeKind: 'xml' →
+// DOM-parse; otherwise a JSON variant ('json'/'jsonl'/'geojson'). Shared by the
+// JSON/XML Ansicht and the .dbq XML-tree view. Read-only; errors fall back to a
+// hint pointing at the source/edit view.
+function _terminalPaintTree(renderEl, txt, treeKind) {
+  renderEl.innerHTML = '';
+  const host = document.createElement('div');
+  host.className = 'editor-tree';
+  let rootNode;
+  try {
+    rootNode = (treeKind === 'xml') ? _treeFromXml(txt) : _treeFromJson(txt, treeKind);
+  } catch (e) {
+    host.innerHTML = `<div class="pt-empty">Konnte ${String(treeKind).toUpperCase()} nicht als Baum darstellen: ${esc(String(e.message || e))}<br><span style="opacity:.7">Nutzen Sie die Quelltext-Ansicht für die Rohdaten.</span></div>`;
+    renderEl.appendChild(host);
+    return;
+  }
+  host.appendChild(_treeRenderNode(rootNode, true));
+  const bar = document.createElement('div');
+  bar.className = 'editor-tree-bar';
+  bar.innerHTML = '<button class="ed-tree-btn" data-act="expand">Alles aufklappen</button>'
+                + '<button class="ed-tree-btn" data-act="collapse">Alles zuklappen</button>';
+  bar.querySelector('[data-act="expand"]').onclick = () =>
+    host.querySelectorAll('.etree-node.collapsible').forEach(n => n.classList.remove('etree-collapsed'));
+  bar.querySelector('[data-act="collapse"]').onclick = () =>
+    host.querySelectorAll('.etree-node.collapsible').forEach(n => n.classList.add('etree-collapsed'));
+  renderEl.appendChild(bar);
+  renderEl.appendChild(host);
+}
+
 // Render a renderable file's content into the .editor-render pane (Ansicht mode).
 function _terminalEditorRender(tab) {
   const renderEl = tab.el.querySelector('.editor-render');
@@ -1575,31 +1618,7 @@ function _terminalEditorRender(tab) {
   if (_terminalHasTreeView(ext)) {
     // JSON / XML → a collapsible data tree (read-only). Editing happens in the
     // 'Bearbeiten' view (CodeMirror source, with fold arrows in the gutter).
-    renderEl.innerHTML = '';
-    const host = document.createElement('div');
-    host.className = 'editor-tree';
-    let rootNode;
-    try {
-      rootNode = (ext === 'xml')
-        ? _treeFromXml(txt)
-        : _treeFromJson(txt, ext);
-    } catch (e) {
-      host.innerHTML = `<div class="pt-empty">Konnte ${ext.toUpperCase()} nicht als Baum darstellen: ${esc(String(e.message || e))}<br><span style="opacity:.7">Nutzen Sie „Bearbeiten" für die Rohansicht.</span></div>`;
-      renderEl.appendChild(host);
-      return;
-    }
-    host.appendChild(_treeRenderNode(rootNode, true));
-    // toolbar: expand-all / collapse-all
-    const bar = document.createElement('div');
-    bar.className = 'editor-tree-bar';
-    bar.innerHTML = '<button class="ed-tree-btn" data-act="expand">Alles aufklappen</button>'
-                  + '<button class="ed-tree-btn" data-act="collapse">Alles zuklappen</button>';
-    bar.querySelector('[data-act="expand"]').onclick = () =>
-      host.querySelectorAll('.etree-node.collapsible').forEach(n => n.classList.remove('etree-collapsed'));
-    bar.querySelector('[data-act="collapse"]').onclick = () =>
-      host.querySelectorAll('.etree-node.collapsible').forEach(n => n.classList.add('etree-collapsed'));
-    renderEl.appendChild(bar);
-    renderEl.appendChild(host);
+    _terminalPaintTree(renderEl, txt, (ext === 'xml') ? 'xml' : ext);
     return;
   }
   if (ext === 'md' || ext === 'markdown') {
@@ -1743,6 +1762,12 @@ function _treeRenderNode(node, isRoot) {
 function _terminalEditorPaint(tab) {
   const cmEl = tab.el.querySelector('.editor-cm');
   const renderEl = tab.el.querySelector('.editor-render');
+  // .dbq XML-tree view → render tab.raw (the XML) as a collapsible tree.
+  if (tab.mode === 'tree' && _isDbq(tab)) {
+    cmEl.style.display = 'none';
+    if (renderEl) { renderEl.style.display = 'block'; _terminalPaintTree(renderEl, tab.raw, 'xml'); }
+    return;
+  }
   // Renderable file in Ansicht mode → show the rendered output, hide CM.
   if (tab.mode === 'render' && _terminalIsRenderable(tab.ext)) {
     cmEl.style.display = 'none';

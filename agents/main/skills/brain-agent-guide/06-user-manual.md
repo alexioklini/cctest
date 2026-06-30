@@ -500,7 +500,8 @@ SQL-Abfrage. Der Editor bietet dafür **zwei bearbeitbare Ansichten**, die Sie
 Abfrage mit SQL-Farbhervorhebung, die XML-Ansicht die vollständige Rohdatei.
 Sie können in **beiden** Ansichten editieren — beim Speichern wird eine in der
 SQL-Ansicht geänderte Abfrage automatisch wieder in die XML-Datei eingesetzt,
-sodass immer die vollständige `.dbq` geschrieben wird.
+sodass immer die vollständige `.dbq` geschrieben wird. Ein dritter Knopf
+**„XML-Baum"** zeigt die XML-Struktur als aufklappbaren Baum (nur lesen).
 
 **Geteilter Arbeitsbereich** (Code-Projekte): Sie teilen den unteren Bereich
 **dynamisch per Ziehen** auf — es gibt keine feste Layout-Auswahl mehr. Ziehen

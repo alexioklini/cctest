@@ -39,9 +39,11 @@ CURATED_CHANGELOG: list[dict] = [
                 "Bearbeiten-Modus zeigen kleine Pfeile am linken Rand jede "
                 "Verschachtelung, sodass Sie einzelne Abschnitte einklappen und "
                 "lange Dateien übersichtlich halten können. Beides gilt für "
-                "XML, SVG und JSON (auch JSON-Lines und GeoJSON).",
+                "XML, SVG und JSON (auch JSON-Lines und GeoJSON). ShowCase-Dateien "
+                "(.dbq) erhalten zusätzlich eine eigene Baum-Ansicht für ihre "
+                "XML-Struktur.",
         "audience": "user",
-        "versions": ["9.242.0"],
+        "versions": ["9.242.0", "9.242.1"],
     },
     {
         "version": "9.241.0",
