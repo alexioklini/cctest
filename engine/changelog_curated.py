@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.240.0",
+        "date": "2026-06-30",
+        "title": "Code-Editor: SQL-Farbhervorhebung & ShowCase-Doppelansicht",
+        "body": "SQL-Dateien werden im Code-Editor jetzt farblich hervorgehoben "
+                "(Schlüsselwörter, Zeichenketten, Kommentare). ShowCase-Dateien "
+                "(.dbq) — XML-Hüllen um eine SQL-Abfrage — lassen sich in zwei "
+                "Ansichten öffnen und bearbeiten: „SQL (extrahiert)“ zeigt allein "
+                "die Abfrage mit SQL-Hervorhebung, „XML-Quelle“ die vollständige "
+                "Datei. Sie können in beiden Ansichten Änderungen vornehmen; beim "
+                "Speichern wird die bearbeitete SQL automatisch wieder korrekt in "
+                "die XML-Datei eingesetzt.",
+        "audience": "user",
+        "versions": ["9.240.0"],
+    },
+    {
         "version": "9.239.0",
         "date": "2026-06-30",
         "title": "Code-Modus: SQL- und ShowCase-Dateien korrekt indexiert",

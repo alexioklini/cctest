@@ -479,7 +479,16 @@ Markdown als formatierter Text. Alle anderen Dateien (Code) erscheinen in der
 Ansicht als nur-lesbarer Quelltext (gleiche Darstellung wie im Bearbeiten-Modus,
 nur ohne Cursor). Im **Bearbeiten**-Modus sehen Sie immer den Quelltext und
 können ihn ändern; eine Statuszeile unten zeigt Größe, Zeilenzahl und
-Änderungsdatum.
+Änderungsdatum. **SQL-Dateien** (`.sql`) werden farblich hervorgehoben.
+
+**ShowCase-Dateien (`.dbq`)**: Diese Dateien sind XML-Hüllen um eine
+SQL-Abfrage. Der Editor bietet dafür **zwei bearbeitbare Ansichten**, die Sie
+über dieselben zwei Knöpfe oben umschalten (für `.dbq` beschriftet als
+**„SQL (extrahiert)"** und **„XML-Quelle"**): die SQL-Ansicht zeigt allein die
+Abfrage mit SQL-Farbhervorhebung, die XML-Ansicht die vollständige Rohdatei.
+Sie können in **beiden** Ansichten editieren — beim Speichern wird eine in der
+SQL-Ansicht geänderte Abfrage automatisch wieder in die XML-Datei eingesetzt,
+sodass immer die vollständige `.dbq` geschrieben wird.
 
 **Geteilter Arbeitsbereich** (Code-Projekte): Sie teilen den unteren Bereich
 **dynamisch per Ziehen** auf — es gibt keine feste Layout-Auswahl mehr. Ziehen

@@ -1313,6 +1313,10 @@ function _cmModeFor(ext) {
     yml: 'yaml', yaml: 'yaml', sh: 'shell', bash: 'shell', zsh: 'shell',
     go: 'go', rs: 'rust',
     r: 'text/x-rsrc',
+    sql: 'text/x-sql',
+    // ShowCase .dbq files are XML wrappers around SQL — the editor shows the
+    // raw file (XML), so highlight as XML, not SQL.
+    dbq: 'xml',
   };
   return m[ext] || null;
 }
@@ -1408,6 +1412,7 @@ async function terminalOpenFile(absPath) {
     tab.raw = d.content || '';
     tab.truncated = !!d.truncated;
     tab.loaded = true;
+    if (_isDbq(tab)) _terminalDbqRelabelModes(tab);
     _terminalEditorPaint(tab);
     _terminalEditorStats(tab);
   } catch (e) {
@@ -1418,6 +1423,18 @@ async function terminalOpenFile(absPath) {
 function terminalEditorMode(id, mode) {
   const tab = _term.tabs.find(t => t.id === id);
   if (!tab) return;
+  // .dbq: before switching views, fold the CURRENT view's edits back into
+  // tab.raw (the XML) so the other view shows them. SQL view → re-embed into
+  // <DisplaySQL>/<Body>; XML view → it already IS tab.raw.
+  if (_isDbq(tab) && tab.cm && tab.mode !== mode) {
+    const cur = tab.cm.getValue();
+    if (tab.mode === 'render') {            // leaving the SQL view
+      const merged = _dbqEmbedSql(tab.raw, cur);
+      if (merged !== null) tab.raw = merged;
+    } else {                               // leaving the XML view
+      tab.raw = cur;
+    }
+  }
   tab.mode = mode;
   tab.el.querySelectorAll('.ed-mode').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   _terminalEditorPaint(tab);
@@ -1432,6 +1449,62 @@ function terminalEditorMode(id, mode) {
 // shows the CodeMirror source.
 const _ED_RENDERABLE = { html: 1, htm: 1, md: 1, markdown: 1, svg: 1 };
 function _terminalIsRenderable(ext) { return !!_ED_RENDERABLE[(ext || '').toLowerCase()]; }
+
+// ── ShowCase .dbq handling ───────────────────────────────────────────────────
+// A .dbq is an XML wrapper around SQL. The editor offers TWO editable views,
+// toggled by the Ansicht/Bearbeiten buttons (relabelled "SQL"/"XML-Quelle"):
+//   • 'render' mode → just the extracted SQL (SQL highlighting)
+//   • 'raw'    mode → the full raw XML (XML highlighting)
+// tab.raw is the source of truth (always the XML). Saving in SQL mode splices
+// the edited SQL back into <DisplaySQL>/<Body>; saving in XML mode writes verbatim.
+function _dbqDecodeEntities(s) {
+  const t = document.createElement('textarea');
+  t.innerHTML = s;             // decode &lt; &amp; &quot; … via the DOM
+  return t.value;
+}
+function _dbqEncodeEntities(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+// Pull the SQL out of <DisplaySQL> (preferred — formatted, always present) or
+// <Body>. Mirrors the server-side _extract_dbq_sql so the SQL view matches
+// what gets indexed.
+function _dbqExtractSql(xml) {
+  const m = /<DisplaySQL>([\s\S]*?)<\/DisplaySQL>/.exec(xml)
+         || /<Body>([\s\S]*?)<\/Body>/.exec(xml);
+  return m ? _dbqDecodeEntities(m[1]).trim() : '';
+}
+// Re-embed edited SQL into the XML: replace the inner text of <DisplaySQL> AND
+// <Body> (both, so the wire query Showcase actually runs stays in sync) with the
+// entity-encoded SQL. Returns the updated XML (or null if no tag was found).
+function _dbqEmbedSql(xml, sql) {
+  const enc = _dbqEncodeEntities(sql);
+  let hit = false;
+  let out = xml.replace(/(<DisplaySQL>)[\s\S]*?(<\/DisplaySQL>)/,
+                        (_m, a, b) => { hit = true; return a + enc + b; });
+  out = out.replace(/(<Body>)[\s\S]*?(<\/Body>)/,
+                    (_m, a, b) => { hit = true; return a + enc + b; });
+  return hit ? out : null;
+}
+function _isDbq(tab) { return (tab.ext || '').toLowerCase() === 'dbq'; }
+// Relabel the two mode buttons for a .dbq tab: 'render' = "SQL (extrahiert)",
+// 'raw' = "XML-Quelle". Both are editable for .dbq (unlike html/md/svg, where
+// 'render' is a read-only preview), so the eye icon would mislead → swap it for
+// a database icon on the SQL button.
+function _terminalDbqRelabelModes(tab) {
+  if (!tab || !tab.el) return;
+  const sqlBtn = tab.el.querySelector('.ed-mode[data-mode="render"]');
+  const xmlBtn = tab.el.querySelector('.ed-mode[data-mode="raw"]');
+  if (sqlBtn) {
+    sqlBtn.title = 'SQL (extrahiert) — bearbeitbar';
+    sqlBtn.setAttribute('aria-label', 'SQL');
+    sqlBtn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></svg>';
+  }
+  if (xmlBtn) {
+    xmlBtn.title = 'XML-Quelle — bearbeitbar';
+    xmlBtn.setAttribute('aria-label', 'XML-Quelle');
+    xmlBtn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+  }
+}
 
 // Render a renderable file's content into the .editor-render pane (Ansicht mode).
 function _terminalEditorRender(tab) {
@@ -1468,11 +1541,17 @@ function _terminalEditorPaint(tab) {
   }
   if (renderEl) renderEl.style.display = 'none';
   cmEl.style.display = 'block';
+  // .dbq: the CM content + language depend on the mode — SQL view (render)
+  // shows the extracted query, XML view (raw) the whole wrapper. Both editable.
+  const _dbq = _isDbq(tab);
+  const _dbqWantSql = _dbq && tab.mode === 'render';
+  const _initVal = _dbq ? (_dbqWantSql ? _dbqExtractSql(tab.raw) : tab.raw) : tab.raw;
+  const _initMode = _dbq ? (_dbqWantSql ? 'text/x-sql' : 'xml') : _cmModeFor(tab.ext);
   if (!tab.cm) {
     tab.cm = CodeMirror(cmEl, {
-      value: tab.raw, mode: _cmModeFor(tab.ext), lineNumbers: true,
+      value: _initVal, mode: _initMode, lineNumbers: true,
       lineWrapping: false, indentUnit: 4,
-      readOnly: tab.mode === 'raw' ? false : 'nocursor',
+      readOnly: _dbq ? false : (tab.mode === 'raw' ? false : 'nocursor'),
       extraKeys: {
         // index-fed autocomplete (project symbols from the cbm index).
         // Ctrl-Space only — NOT Cmd-Space (that's macOS Spotlight, the OS
@@ -1484,6 +1563,8 @@ function _terminalEditorPaint(tab) {
     // refresh() after the element is laid out lets CM measure + show scrollbars.
     // (setSize('100%','100%') broke CM's scroll measurement → no scrollbars.)
     tab.cm.on('change', () => {
+      // ignore the change fired by a programmatic setValue (e.g. .dbq view swap)
+      if (tab._suppressDirty) return;
       const wasDirty = tab.dirty;
       tab.dirty = true;
       const sv = tab.el.querySelector('.ed-save'); if (sv) sv.disabled = false;
@@ -1500,13 +1581,24 @@ function _terminalEditorPaint(tab) {
     // restore the saved cursor on first paint (after the doc is in the CM)
     const cur = _terminalLoadCursor(tab.path);
     if (cur) { try { tab.cm.setCursor(cur); } catch (_) {} }
+  } else if (_dbq) {
+    // .dbq: swap the CM doc + language to match the active view. tab.raw was
+    // already updated (in terminalEditorMode, before the switch) so the freshly
+    // shown view reflects edits made in the other view. Both views editable.
+    tab.cm.setOption('mode', _initMode);
+    if (tab.cm.getValue() !== _initVal) {
+      tab._suppressDirty = true;            // a view swap is not a user edit
+      tab.cm.setValue(_initVal);
+      tab._suppressDirty = false;
+    }
   } else {
     // keep CM in sync if raw changed via save; flip editability for the mode
     if (tab.cm.getValue() !== tab.raw && !tab.dirty) tab.cm.setValue(tab.raw);
     tab.cm.setOption('readOnly', tab.mode === 'raw' ? false : 'nocursor');
   }
-  // edit mode gets focus (so the cursor shows); view mode does not
-  setTimeout(() => { try { tab.cm.refresh(); if (tab.mode === 'raw') tab.cm.focus(); } catch (_) {} }, 20);
+  // edit mode gets focus (so the cursor shows); view mode does not. For .dbq
+  // both modes are editable, so always focus.
+  setTimeout(() => { try { tab.cm.refresh(); if (_dbq || tab.mode === 'raw') tab.cm.focus(); } catch (_) {} }, 20);
 }
 
 // Editor status line: file name + size + last-modified + (for text) line count
@@ -1537,7 +1629,20 @@ async function _terminalEditorShowImage(tab) {
 async function terminalEditorSave(id) {
   const tab = _term.tabs.find(t => t.id === id);
   if (!tab || !tab.cm) return;
-  const content = tab.cm.getValue();
+  let content = tab.cm.getValue();
+  // .dbq always writes the full XML wrapper. In the SQL view, splice the edited
+  // query back into <DisplaySQL>/<Body>; in the XML view the CM value IS the file.
+  if (_isDbq(tab)) {
+    if (tab.mode === 'render') {
+      const merged = _dbqEmbedSql(tab.raw, content);
+      if (merged === null) {
+        if (typeof showToast === 'function') showToast('Kein <DisplaySQL>/<Body> zum Einsetzen gefunden');
+        return;
+      }
+      content = merged;
+    }
+    tab.raw = content;  // keep the XML source of truth current for the other view
+  }
   try {
     const r = await fetch(`${BASE_URL}/v1/files/save`, {
       method: 'POST',
